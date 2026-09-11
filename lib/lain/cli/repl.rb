@@ -75,8 +75,11 @@ module Lain
       # between turns, so an ask-scoped consumer answers nothing while they work
       # -- and the rail is their only signal a gesture landed. {ConversationScope}
       # owns that lifetime, closed by the ensure on every path out.
-      def run(nvim:, store:, session:, first_prompt: nil)
-        frontend = attach_editor(nvim, store:, session:)
+      #
+      # `epic:` is what the editor's lain://status draws, resolved by {Wiring};
+      # like `store:` and `session:` it reaches only the frontend built here.
+      def run(nvim:, store:, session:, first_prompt: nil, epic: Lain::Frontend::Neovim::StatusView::Unmounted)
+        frontend = attach_editor(nvim, store:, session:, epic:)
         @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers, approvals: frontend&.approval_view)
         # The frontend ITSELF, not a piece of it: a changeset review needs three
         # things no single collaborator answers -- where the diff is drawn, the
@@ -118,10 +121,10 @@ module Lain
       # is built BY the frontend, so nil means there is nothing to construct
       # rather than a capability left unwired, and it is what leaves the fourth
       # watch fiber unspawned for a headless chat.
-      def attach_editor(nvim, store:, session:)
+      def attach_editor(nvim, store:, session:, epic:)
         bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
                                           journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
-        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, resend_bridge: bridge,
+        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, epic:, resend_bridge: bridge,
                                                       compose_notify: @tty.method(:render_warning), **nvim)
         @surfaces.bind_editor(frontend&.approval_view)
         frontend

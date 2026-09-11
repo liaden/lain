@@ -116,7 +116,13 @@ module Lain
       #   is b:lain_approval_rows-shaped (one entry per row, 1-based) and
       #   names which member of `calls` the row resolves to --
       #   `calls[call_index[N]]` is row N's command in full.
-      PROTOCOL = "14"
+      # "15": lain://status joins the runtime's BUFFERS set, so the User
+      #   LainAttach payload names it, and it is built with the "markdown"
+      #   filetype rather than the shared "lain" one: it carries a mermaid code
+      #   fence of the epic's issue graph, and markdown is the filetype an
+      #   image plugin draws one under. It rides the existing __lain.set_view
+      #   entry point; no new command.
+      PROTOCOL = "15"
 
       # Seconds teardown waits on the resend worker before giving up the join. A
       # bridged offer holds that worker for a whole model round trip, so a bare
@@ -181,9 +187,12 @@ module Lain
       #   a SEPARATE seam because the two say different things about different
       #   surfaces; a caller wiring both hands over the same renderer.
       # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
+      # @param epic [#lines] what lain://status draws: {StatusView::Mounted}
+      #   for a chat seated in an epic, which {CLI::Wiring} resolves, and
+      #   {StatusView::Unmounted} by default, whose buffer says none is mounted
       def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
-                     journal: Channel::Null.instance, resend_bridge: Unbridged,
+                     journal: Channel::Null.instance, resend_bridge: Unbridged, epic: StatusView::Unmounted,
                      compose_notify: Compose::SILENT, question_notify: QuestionView::SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
@@ -212,7 +221,7 @@ module Lain
         # drifted apart silently, with every live assertion still passing --
         # which is why {Surfaces} takes it WITHOUT a default.
         @surfaces = Surfaces.new(rpc: @rpc, store:, session:, journal:, questions: @question_view,
-                                 approval_view: @approval_view)
+                                 approval_view: @approval_view, epic:)
         @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge,
                                  request_buffer: @surfaces.request_buffer)
       end
@@ -523,6 +532,7 @@ require_relative "neovim/unbridged"
 require_relative "neovim/compose"
 require_relative "neovim/resender"
 require_relative "neovim/inbox_view"
+require_relative "neovim/status_view"
 require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"

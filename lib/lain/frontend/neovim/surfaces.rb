@@ -34,9 +34,12 @@ module Lain
         #   here and rendered from its own watch fiber thereafter. REQUIRED --
         #   see below.
         #
+        # @param epic [#lines] what lain://status draws ({StatusView}),
+        #   {StatusView::Unmounted} by default
+        #
         # The other three views are INJECTED and merely defaulted: `store:`,
-        # `session:`, `journal:` and `questions:` exist only to build those
-        # defaults.
+        # `session:`, `journal:`, `questions:` and `epic:` exist only to build
+        # those defaults.
         #
         # `approval_view:` is REQUIRED where they are defaulted, and the
         # asymmetry is the point. The object the editor's `y` resolves through
@@ -48,10 +51,10 @@ module Lain
         def initialize(rpc:, approval_view:, store: Buffers::DetachedStore.instance,
                        session: Session::Null.instance, journal: Channel::Null.instance,
                        questions: InboxView::Unwired, journal_view: JournalView.new, buffers: nil,
-                       request_buffer: nil)
+                       request_buffer: nil, epic: StatusView::Unmounted)
           @rpc = rpc
           @journal_view = journal_view
-          @buffers = buffers || Buffers.new(store:, session:, questions:)
+          @buffers = buffers || Buffers.new(store:, session:, questions:, epic:)
           @request_buffer = request_buffer || RequestBuffer.new(journal:)
           @approval_view = approval_view
         end

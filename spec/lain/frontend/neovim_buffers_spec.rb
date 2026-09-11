@@ -408,6 +408,146 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # lain://status over a REAL epic home and REAL session journals, because the
+  # records it shows are written by other processes and only disk can stage
+  # that. The state home is swapped through the environment rather than
+  # injected: the chat's own {Lain::CLI::EpicMount} resolves its home through a
+  # defaulted `Paths.new`, and the buffer must fold the epic that mount found.
+  describe "lain://status" do
+    around do |example|
+      Dir.mktmpdir do |tmp|
+        @tmp = tmp
+        FileUtils.mkdir_p(epic_root)
+        saved = ENV.fetch("XDG_STATE_HOME", nil)
+        ENV["XDG_STATE_HOME"] = File.join(tmp, "state")
+        example.run
+      ensure
+        ENV["XDG_STATE_HOME"] = saved
+      end
+    end
+
+    def epic_root = File.join(@tmp, "project")
+    def epic_paths = Lain::Paths.new
+    def epic_config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
+    def epic_issue(id, **rest) = Lain::Epic::Issue.new(id:, title: "the #{id} issue", **rest)
+
+    def write_demo
+      graph = Lain::Epic::Graph.new(issues: [epic_issue("a", blocks: ["b"]), epic_issue("b")])
+      Lain::Epic::Home.resolve(config: epic_config, paths: epic_paths, root: epic_root, slug: "demo").write_epic(graph)
+    end
+
+    def another_process_writes(name, record)
+      File.open(File.join(epic_paths.sessions_dir, name), "w") do |io|
+        Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" }).record(record)
+      end
+    end
+
+    def started(issue_id)
+      Lain::Epic::IssueTransition.new(epic_slug: "demo", issue_id:, from_status: "pending", to_status: "in_flight")
+    end
+
+    def demo
+      Lain::Frontend::Neovim::StatusView::Mounted.new(
+        slug: "demo", status: Lain::CLI::Epic.new(root: epic_root, paths: epic_paths, config: epic_config)
+      )
+    end
+
+    def turn = Lain::Telemetry::TurnUsage.new(digest: "blake3:t", model: "m", stop_reason: :end_turn, usage: {})
+
+    def status_text = buffer_lines("lain://status").join("\n")
+
+    it "shows the epic's progress, a mermaid fence of its issues, and the fleet" do
+      write_demo
+      spawn = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-one", from: "parent", to: nil)
+      frontend = described_class.new(channel:, socket_path: @socket, epic: demo)
+
+      frontend.run do
+        channel.push(spawn)
+
+        wait_until { status_text.include?(spawn.digest) }
+        expect(status_text).to include("demo", "0/2 done", "```mermaid", "flowchart TD", "n_a --> n_b")
+        expect(buffer_lines("lain://status")).to include("```")
+      end
+    end
+
+    it "shows a transition another process wrote once a turn completes" do
+      write_demo
+      frontend = described_class.new(channel:, socket_path: @socket, epic: demo)
+
+      frontend.run do
+        wait_until { status_text.match?(/`a`.*pending/) }
+        another_process_writes("other.ndjson", started("a"))
+        channel.push(turn)
+
+        wait_until { status_text.match?(/`a`.*in_flight/) }
+        expect(status_text).to include("class n_a in_flight")
+      end
+    end
+
+    it "draws a fold error while the other views keep updating" do
+      write_demo
+      another_process_writes("torn.ndjson", started("ghost"))
+      frontend = described_class.new(channel:, socket_path: @socket, epic: demo)
+
+      frontend.run do
+        channel.push(turn)
+        wait_until { status_text.include?("status unavailable") }
+        expect(status_text).to include("ghost")
+
+        channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "after", stream: :stdout, bytes: "still alive"))
+        expect(wait_until { buffer_lines("lain://journal").grep(/still alive/).first }).to include("still alive")
+      end
+    end
+
+    it "says no epic is mounted in a chat that has none" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        expect(wait_until { status_text if status_text.include?("no epic is mounted") }).to be_a(String)
+      end
+    end
+
+    # The whole thread, from the one place the slug is resolved: a chat's
+    # `--epic` reaches the buffer only if Wiring hands it to the Repl and the
+    # Repl to the frontend it builds. A seam threaded but never injected looks
+    # exactly like an absent one to every example above.
+    describe "reached from `lain chat --epic`", :seam do
+      def backend
+        mock = Lain::Provider::Mock.new(responses: [])
+        Class.new(Lain::CLI::Backend) do
+          define_method(:provider) { |**| mock }
+        end.new({ provider: "ollama", model: nil, max_tokens: 64 })
+      end
+
+      def chat(input)
+        tty_factory = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, input:, history_path: File.join(@tmp, "history"))
+        end
+        project = Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project, detected_by: :flag)
+        Lain::CLI::Wiring.new(options: { grace: 5, epic: "demo" }, chronicle: Lain::CLI::Chronicle::Null.new,
+                              tty_factory:, project:, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @tmp }),
+                              status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+      end
+
+      it "draws the mounted epic in the editor the chat attached" do
+        write_demo
+        reader, writer = IO.pipe
+        wiring = chat(reader)
+        running = Thread.new do
+          wiring.run(backend:, resumed: nil, nvim: { channel: Lain::Channel::DropOldest.new, socket_path: @socket })
+        end
+
+        wait_until { status_text.include?("demo") }
+        expect(status_text).to include("```mermaid", "n_a --> n_b")
+      ensure
+        writer&.puts("quit")
+        writer&.close
+        running&.join(20)
+        wiring&.conductor&.close(reason: :exit)
+      end
+    end
+  end
+
   describe "read-only and unobtrusive (4-2.2)" do
     it "keeps every lain:// view buffer nomodifiable at rest and never steals focus" do
       timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])

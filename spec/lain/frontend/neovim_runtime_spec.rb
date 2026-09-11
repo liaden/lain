@@ -44,7 +44,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   # Every buffer the runtime owns -- the contract surface this file pins.
   def all_views
-    %w[lain://journal lain://timeline lain://workspace lain://diff lain://inbox lain://request]
+    %w[lain://journal lain://timeline lain://workspace lain://diff lain://inbox lain://request lain://status]
   end
 
   # What is on SCREEN at attach, which since the approval prime is one more than
@@ -257,6 +257,32 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(state["buftype"]).to eq("nofile")
         expect(state["modifiable"]).to be(false)
         expect(state["lain_view"]).to eq("lain://workspace")
+      end
+    end
+  end
+
+  # Markdown rather than the shared "lain" filetype, because the buffer carries
+  # a ```mermaid fence and markdown is what an image plugin (snacks.image)
+  # renders one in. Read-only and claimed like every other projection.
+  describe "status view has a lua-side home" do
+    it "renders lain://status as a read-only markdown buffer" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        wait_until { buffer_lines("lain://status").any? }
+
+        state = inspector.exec_lua(<<~LUA, [])
+          local buf = vim.fn.bufnr("lain://status")
+          return {
+            filetype = vim.bo[buf].filetype,
+            buftype = vim.bo[buf].buftype,
+            modifiable = vim.bo[buf].modifiable,
+            lain_view = vim.b[buf].lain_view,
+          }
+        LUA
+
+        expect(state).to eq("filetype" => "markdown", "buftype" => "nofile", "modifiable" => false,
+                            "lain_view" => "lain://status")
       end
     end
   end
@@ -765,12 +791,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 14 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 15 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "14" }
-        expect(described_class::PROTOCOL).to eq("14")
+        wait_until { inspector.get_var("lain_rpc_version") == "15" }
+        expect(described_class::PROTOCOL).to eq("15")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end

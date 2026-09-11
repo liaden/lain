@@ -9,6 +9,7 @@ local INBOX = "lain://inbox"
 local REQUEST = "lain://request"
 local COMPOSE = "lain://compose"
 local QUESTION = "lain://question"
+local STATUS = "lain://status"
 
 -- The full buffer set, in render order, as ONE value user config can iterate
 -- (it rides the User LainAttach payload below). A rendered name absent from
@@ -23,7 +24,7 @@ local QUESTION = "lain://question"
 -- still not in this set. It is created by 62_approval's own set_approval rather
 -- than by set_view, so nothing here needs its name, and its prime takes no
 -- window because that function opens one only `if rows > 0`.
-local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST }
+local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST, STATUS }
 
 -- Filetype attached at buffer CREATION (see `named_buf`/`editable_buf`
 -- below), never re-set on re-attach -- both constructors already return
@@ -35,10 +36,16 @@ local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST }
 -- they share ONE small namespaced regex syntax ("lain", set up further down)
 -- -- the recorded default: a single lain filetype, with b:lain_view naming the
 -- view, never per-view filetypes.
+--
+-- lain://status is the one read-only markdown buffer: it carries a ```mermaid
+-- fence of the epic's issue graph, and markdown is the filetype an image plugin
+-- (snacks.image) draws one under. It stays nofile and nomodifiable like every
+-- projection -- markdown is how it is READ, never an invitation to edit it.
 local READONLY_FILETYPES = {
   [DIFF] = "diff",
   [TIMELINE] = "lain",
   [JOURNAL] = "lain",
   [INBOX] = "lain",
   [WORKSPACE] = "lain",
+  [STATUS] = "markdown",
 }

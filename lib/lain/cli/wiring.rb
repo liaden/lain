@@ -6,6 +6,7 @@ require_relative "wiring/agent_build"
 require_relative "wiring/askers"
 require_relative "wiring/base_tools"
 require_relative "wiring/board_build"
+require_relative "wiring/epic_seat"
 require_relative "wiring/handback"
 require_relative "wiring/run_state"
 require_relative "wiring/toolset_build"
@@ -18,9 +19,9 @@ module Lain
     # and exposes the asker/question pair so #run_chat can give the Repl the
     # reply path this object wired.
     #
-    # It lives against a 110-line `Metrics/ClassLength` budget and has spent four
-    # extractions reaching it: {ToolsetBuild}, {EpicMount}, {AgentBuild}, then
-    # {Askers} with {RunState}. MEASURE the headroom -- `rubocop --only
+    # It lives against a 110-line `Metrics/ClassLength` budget and has spent five
+    # extractions reaching it: {ToolsetBuild}, {EpicMount}, {AgentBuild},
+    # {Askers} with {RunState}, then {EpicSeat}. MEASURE the headroom -- `rubocop --only
     # Metrics/ClassLength` with the Max forced low enough to report -- rather
     # than trusting a number written here; three of the four readings found
     # single-digit headroom, which is not room for a feature. The tell each time
@@ -143,8 +144,7 @@ module Lain
         tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
         @conductor = open_conductor(tty)
         @conductor.guard do
-          build_repl(tty:, agent:, backend:).run(nvim:, store: bind_hud_store(agent), session:,
-                                                 first_prompt: @options[:prompt])
+          build_repl(tty:, agent:, backend:).run(**editor_seams(nvim, agent, session), first_prompt: @options[:prompt])
         end
       end
 
@@ -227,6 +227,14 @@ module Lain
       # Named for the BINDING rather than the value, and private, because it is a
       # command that happens to answer -- a query name would hide the write.
       def bind_hud_store(agent) = agent.timeline.store.tap { |store| @status_feed.bind_store(store) }
+
+      # What the Repl builds its editor from, as the one set it is: the views
+      # to attach, the Store and Session its buffers read, and the epic
+      # lain://status draws. {ReviewSeams}' splatted-hash shape, for the same
+      # reason -- the keywords travel together.
+      def editor_seams(nvim, agent, session)
+        { nvim:, store: bind_hud_store(agent), session:, epic: epic_seat.status }
+      end
 
       # The backend a run leases every worker's WorkerEnv from -- the actors a
       # {Supervisor} adopts AND the children a model dispatches, which
@@ -370,25 +378,18 @@ module Lain
                                    notice:)
       end
 
-      # Over the PROJECT's root, so a chat started in `services/ingest` mounts
-      # the epic its project declares rather than whichever the working
-      # directory happened to name.
-      def epic_mount(notice)
-        EpicMount.for(chronicle:, options:, notice:, notify: @notifier, root:,
-                      bindings: replies, **ReviewSeams.for(replies, root:))
-      end
+      # Which epic this chat is seated in, memoized so the toolset's tools and
+      # the editor's lain://status read ONE mount ({EpicSeat} says why one).
+      def epic_seat = @epic_seat ||= EpicSeat.new(chronicle:, options:, notify: @notifier, root:, replies:)
+
+      # One send rather than two at its call site, which is what keeps
+      # #build_toolset inside Metrics/AbcSize.
+      def epic_mount(notice) = epic_seat.mount(notice)
 
       # The run's ONE live {HumanReplies}, late: it is built in #build_repl,
       # strictly AFTER the toolset, so every seam that needs it takes this same
       # thunk and reads it at CALL time. Closing over an IVAR rather than a local
       # is what makes it actually late.
-      #
-      # The splat of {ReviewSeams} above is what turned the changeset half of
-      # `request_review` on. Passing only the notify and bindings keywords left
-      # `changesets:` and `surface:` nil, so `Implementation#hold` answered
-      # `Refusals.no_changeset` in every real process and the surface resolved to
-      # the Null -- invisible to all 10865 examples, because a threaded-but-never
-      # -injected seam looks identical to an absent one.
       def replies = -> { @replies }
 
       # The board owns Gate's policy behind the ONE PolicySwitch, writing it

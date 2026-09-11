@@ -46,10 +46,18 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
 
   def tool_output(bytes) = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes:)
 
+  def turn_usage = Lain::Telemetry::TurnUsage.new(digest: "blake3:x", model: "m", stop_reason: :end_turn, usage: {})
+
+  # The epic duck lain://status draws from, reduced to the lines it answers.
+  def epic_lines(*lines) = Struct.new(:lines).new(lines)
+
+  # The lines of the LAST post to one buffer, which is what the editor shows.
+  def posted(name) = rpc.views.reverse.find { |view| view.first == name }&.at(1)
+
   describe "#prime" do
-    # The six views that ride `post_view`. lain://approval is primed too (see
+    # The seven views that ride `post_view`. lain://approval is primed too (see
     # below) and is deliberately NOT in this list: it goes out through
-    # `set_approval`, so a seventh name here would mean the buffer had been
+    # `set_approval`, so an eighth name here would mean the buffer had been
     # created without its row count.
     it "posts every projection's at-rest state, so an idle session shows the whole buffer set" do
       surfaces.prime
@@ -59,7 +67,20 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
                                            Lain::Frontend::Neovim::Buffers::WORKSPACE,
                                            Lain::Frontend::Neovim::Buffers::DIFF,
                                            Lain::Frontend::Neovim::InboxView::NAME,
+                                           Lain::Frontend::Neovim::StatusView::NAME,
                                            Lain::Frontend::Neovim::RequestBuffer::REQUEST)
+    end
+
+    it "primes lain://status with the epic it was handed" do
+      described_class.new(rpc:, approval_view:, epic: epic_lines("# epic `demo`")).prime
+
+      expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include("# epic `demo`")
+    end
+
+    it "primes lain://status saying so when no epic was handed" do
+      surfaces.prime
+
+      expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include(a_string_including("no epic is mounted"))
     end
 
     # A human who went looking for the approval surface at rest found no
@@ -225,6 +246,30 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       dead = closed_rpc
 
       expect { over(dead).post(tool_output("hello")) }.not_to raise_error
+    end
+
+    # This runs on the frontend's one drain thread, where a raise records a
+    # worker death and takes EVERY view dark -- so a fold that fails costs the
+    # status buffer its content and nothing else.
+    it "draws a failing epic fold into lain://status while the other views keep updating" do
+      failing = Class.new { def progress(_slug) = raise(Lain::Error, "torn journal") }.new
+      epic = Lain::Frontend::Neovim::StatusView::Mounted.new(slug: "demo", status: failing)
+      surfaces = described_class.new(rpc:, approval_view:, epic:)
+
+      expect { surfaces.post(turn_usage) }.not_to raise_error
+      expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include(a_string_including("torn journal"))
+      expect(rpc.names).to include(Lain::Frontend::Neovim::Buffers::TimelineView::NAME)
+    end
+
+    # The fleet half runs on the same drain thread: a `:spawn` lookalike with
+    # no digest raises inside the fleet, and that must cost the status buffer
+    # its fleet listing and nothing else.
+    it "draws a malformed spawn into lain://status while the other views keep updating" do
+      malformed = Struct.new(:kind).new(:spawn)
+
+      expect { surfaces.post(malformed) }.not_to raise_error
+      expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include(a_string_including("fleet unavailable"))
+      expect(rpc.names).to include(Lain::Frontend::Neovim::Buffers::WORKSPACE)
     end
   end
 

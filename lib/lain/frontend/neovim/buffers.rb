@@ -207,10 +207,12 @@ module Lain
         #   over {InboxView::Unwired} and every `<CR>` is refused however well
         #   the consumer is wired -- invisible to a spec that injects `inbox:`
         #   ready-made.
+        # @param epic [#lines] what lain://status draws ({StatusView})
         def initialize(store: DetachedStore.instance, session: Session::Null.instance, inbox: nil, timeline: nil,
-                       questions: InboxView::Unwired)
+                       questions: InboxView::Unwired, epic: StatusView::Unmounted)
           @inbox = inbox || InboxView.new(store:, questions:)
           @timeline = timeline || TimelineView.new(store:, session:)
+          @status = StatusView.new(epic:)
           @session = session
           @last_reminders = nil
           @last_payload = nil
@@ -262,7 +264,7 @@ module Lain
         # @return [Hash{String=>Array<String>}] buffer name => initial lines
         def initial
           { TimelineView::NAME => @timeline.initial, WORKSPACE => workspace_update,
-            DIFF => ["(no requests yet)"] }.compact.merge(@inbox.initial)
+            DIFF => ["(no requests yet)"], StatusView::NAME => @status.initial }.compact.merge(@inbox.initial)
         end
 
         # @param event [Object] one Channel event
@@ -270,7 +272,8 @@ module Lain
         #   lines, for every view this event moved -- empty when it moved none
         def updates(event)
           { TimelineView::NAME => @timeline.update(event), WORKSPACE => workspace_update,
-            DIFF => diff_update(event), InboxView::NAME => @inbox.update(event) }.compact
+            DIFF => diff_update(event), InboxView::NAME => @inbox.update(event),
+            StatusView::NAME => @status.update(event) }.compact
         end
 
         private
