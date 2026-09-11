@@ -485,6 +485,35 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  # A flip that moves the ladder or the capability set used to leave no trace
+  # of what the model was shown afterward -- a reader had to re-derive the
+  # posture's attenuation by hand to know. The record now carries it.
+  describe "a posture flip's journaled record" do
+    let(:journal) { RecordingChannel.new }
+    # See the note on wiring_spec's other recording examples: Chronicle#spool
+    # derives the WAL path by pure string manipulation, and a Provider::Mock
+    # run never writes a frame.
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "t1-modeswitch-spec-fake-session.ndjson") }
+
+    def mode_switches = journal.events.grep(Lain::Telemetry::ModeSwitch)
+
+    it "carries the plan toolset's digest and names, without edit_file, from the resolution the flip applied" do
+      wire_agent
+      board = wiring.instance_variable_get(:@switchboard)
+
+      board.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+
+      flip = mode_switches.last
+      expect(flip.to).to eq("plan")
+      expect(flip.tool_names).not_to include("edit_file")
+      # The resolution the flip APPLIED, read back off the board's own live
+      # slot after the flip -- proving the record named what actually took
+      # effect, not merely what some other computation would have answered.
+      expect(flip.tool_names).to eq(board.toolset.names)
+      expect(flip.toolset_digest).to eq(board.toolset.digest)
+    end
+  end
+
   # The tool-phase guard was constructed bare (`RefuseSecretWrites.new`
   # with no `journal:`), so a live credential-shaped refusal journaled to
   # `Channel::Null` and left no record while every other mount of this
@@ -1493,6 +1522,42 @@ RSpec.describe Lain::CLI::Wiring do
 
         expect(composed).to include(Lain::Provider::Ollama::DEFAULT_MODEL)
         expect(composed.lines.last).to eq("> ")
+      end
+
+      # The modes chunk wired the live switch and the shipped format's $mode
+      # segment both; what never happened is THIS class handing the RunState the
+      # switch to read. `accept_edits` is the default posture and its lighter is
+      # the empty String on purpose (default.toml's own note), so a chat that
+      # never flips renders exactly as it did before this card -- the honest
+      # reading is "nothing to say", not a literal word on the line. A flip is
+      # where the wiring becomes observable: the SAME renderer, called again,
+      # reads the switchboard's live slot and the chrome changes with it.
+      it "wires the run's live mode switch into the prompt, so a posture flip shows at the next render" do
+        agent = wire_agent
+        board = wiring.instance_variable_get(:@switchboard)
+        renderer = wiring.send(:prompt_renderer, agent, nil)
+
+        before_flip = renderer.call(text: "> ", theme: plain_theme)
+        expect(before_flip).not_to include("PLAN", "MAN", "AUTO")
+
+        board.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+        after_flip = renderer.call(text: "> ", theme: plain_theme)
+
+        expect(after_flip).to include("PLAN")
+      end
+
+      # The object identity behind the render above: the state the renderer was
+      # BUILT with already names the switchboard's own mode_switch, not a copy
+      # taken at construction time -- reached directly so this example fails for
+      # the wiring reason rather than for a rendering or elision one.
+      it "hands the RunState the switchboard's own mode_switch object" do
+        agent = wire_agent
+        board = wiring.instance_variable_get(:@switchboard)
+        renderer = wiring.send(:prompt_renderer, agent, nil)
+        state = renderer.instance_variable_get(:@state)
+
+        expect(state.instance_variable_get(:@mode)).to be(board.mode_switch)
+        expect(state.instance_variable_get(:@mode).posture.name).to eq(:accept_edits)
       end
 
       # A project config that does not parse is reported through the same

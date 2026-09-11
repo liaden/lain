@@ -5,8 +5,12 @@
 # composition itself -- which is where the "one rule, one home" argument for
 # publishing a composed lighter instead of the raw names actually has to hold.
 RSpec.describe Lain::StatusFeed::ModeState do
-  def record(to:, to_layers: [], from: :manual, from_layers: [], surface: "tty")
-    Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers:, to_layers:, surface:)
+  # `toolset:` defaults to an empty Toolset named HERE, at this helper's own
+  # call site, rather than inside the record: none of this file's examples is
+  # about what a flip resolved to, only about how a mode_switch renders.
+  def record(to:, to_layers: [], from: :manual, from_layers: [], surface: "tty", toolset: Lain::Toolset.new)
+    Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers:, to_layers:, surface:, toolset_digest: toolset.digest,
+                                    tool_names: toolset.names)
   end
 
   describe ".of" do

@@ -270,8 +270,15 @@ module Lain
       # prompt format writes against. A malformed config reports through the same
       # startup-notice seam a resumed chat's notices use, which is why the block
       # is threaded down.
+      #
+      # `mode: @switchboard.mode_switch` is the ivar, not the private
+      # `#switchboard` method: by the time #run calls this, #wire_agent has
+      # already memoized it, and reaching for the live slot directly is what
+      # makes a later `/mode` flip show at the very next prompt -- the whole
+      # point of handing the RunState a switch rather than a snapshotted Mode.
       def prompt_renderer(agent, notice)
-        state = Frontend::PromptComposer::RunState.new(agent:, clock: run_clock, status_feed: @status_feed)
+        state = Frontend::PromptComposer::RunState.new(agent:, clock: run_clock, status_feed: @status_feed,
+                                                       mode: @switchboard.mode_switch)
         Frontend::PromptComposer.renderer(state:, notify: notice || Frontend::PromptComposer::SILENT)
       end
 

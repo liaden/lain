@@ -1,6 +1,19 @@
 # frozen_string_literal: true
 
+require "delegate"
 require "stringio"
+
+# The stand-in this file drives as `env.mode_switch`. Production's own call
+# site (`cli/command/mode.rb:66`) reaches `env.mode_switch.switch(mode,
+# surface:)` with no `toolset:` at all, because a real chat's `env.mode_switch`
+# is always a {Lain::CLI::Switchboard::BoundSwitch}, which resolves one
+# internally before handing it down. `toolset:` is REQUIRED on the raw
+# {Lain::Mode::Switch} this file builds directly, so it cannot take that same
+# two-argument call any more -- this wraps one exactly the way BoundSwitch
+# does, minus the resolve/apply machinery no example here exercises.
+class ModeSwitchStandIn < SimpleDelegator
+  def switch(mode, surface:) = __getobj__.switch(mode, surface:, toolset: Lain::Toolset.new)
+end
 
 RSpec.describe Lain::CLI::Command::Mode do
   subject(:command) { described_class.new }
@@ -9,7 +22,7 @@ RSpec.describe Lain::CLI::Command::Mode do
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
   def switch_for(posture, *layers)
-    Lain::Mode::Switch.new(Lain::Mode.new(posture:, layers:), journal:)
+    ModeSwitchStandIn.new(Lain::Mode::Switch.new(Lain::Mode.new(posture:, layers:), journal:))
   end
 
   def env_for(switch) = instance_double(Lain::CLI::Command::Env, mode_switch: switch)

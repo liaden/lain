@@ -482,4 +482,32 @@ RSpec.describe Lain::CLI::Switchboard do
     expect(pending.surface).to eq("tty")
     expect(pending).to be_approved
   end
+
+  # A direct unit spec over the decorator itself, collaborators doubled --
+  # the `board.mode_switch.switch(...)` examples above prove the end-to-end
+  # behaviour through a real Toolset; this one proves the ORDER the
+  # implementation comment claims: the toolset handed to the inner switch is
+  # read off the resolution BEFORE #apply gets a chance to move anything, not
+  # re-read from a live slot afterward.
+  describe Lain::CLI::Switchboard::BoundSwitch do
+    it "passes the toolset of the resolution it applies, read before apply moves anything" do
+      mode = Lain::Mode.new(posture: :plan)
+      resolution = Lain::Mode::Resolution.new(toolset: Lain::Toolset.new, gate_policy: ->(*) { false },
+                                              snapshot_scope: :write_set)
+      seen = []
+      inner_switch = Object.new
+      inner_switch.define_singleton_method(:switch) { |_mode, surface:, toolset:| seen << [:switch, surface, toolset] }
+      inner_switch.define_singleton_method(:current) { mode }
+      resolve = ->(candidate) { candidate == mode ? resolution : raise("unexpected mode: #{candidate.inspect}") }
+      apply = ->(res, surface:) { seen << [:apply, surface, res.toolset] }
+
+      described_class.new(inner_switch, resolve:, apply:).switch(mode, surface: "spec")
+
+      # ORDER is the claim: `switch` sees the resolution's toolset FIRST, and
+      # `apply` -- the only thing that could have moved a live slot -- runs
+      # only after. Both entries also carry the SAME toolset object, so a
+      # reader cannot mistake this for two resolutions agreeing by accident.
+      expect(seen).to eq([[:switch, "spec", resolution.toolset], [:apply, "spec", resolution.toolset]])
+    end
+  end
 end

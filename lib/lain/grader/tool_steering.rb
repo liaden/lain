@@ -21,6 +21,14 @@ module Lain
     # prose; scoring a description's promise against what a tool actually DOES
     # is a separate, model-backed grader.
     #
+    # N narrows when a `/mode` flip attenuates the toolset mid-run: a call made
+    # after the flip is graded against the declared set THAT flip's
+    # {Telemetry::ModeSwitch} record named, never against the header's widest
+    # declaration, which would read "the model stopped choosing this" for a
+    # tool the posture had simply taken away. Every call before the first flip,
+    # and every call in a run that never flips at all, still grades against the
+    # header -- the pre-card behaviour, unchanged.
+    #
     #   ToolSteering.new(journal_entries).flags
     #   #=> [Flag(name: "dosing_lookup", ratio: 2.4, ...)]
     class ToolSteering
@@ -84,24 +92,71 @@ module Lain
       def build_flags
         return [] if total_calls.zero?
 
-        declared.filter_map { |name, description| flag_for(name, description) }
-                .sort_by { |flag| [-flag.ratio, flag.name] }
+        regimes.flat_map { |names, calls| flags_within(names, calls) }
+               .sort_by { |flag| [-flag.ratio, flag.name] }
       end
 
-      def flag_for(name, description)
-        ratio = share_for(name) / declared_share
+      # One cohort per distinct declared set a call was made under, {#regimes}'
+      # own reason: a call graded against the header's widest declaration
+      # while a `/mode` flip had already narrowed it mistakes "this tool left
+      # the model's hands" for "the model stopped choosing it".
+      def regimes
+        @tool_call_index.calls.each_with_object(Hash.new do |grouped, key|
+          grouped[key] = []
+        end) do |(digest, calls), grouped|
+          grouped[declared_names_for(digest)].concat(calls)
+        end
+      end
+
+      def flags_within(names, calls)
+        return [] if names.empty?
+
+        counts = calls.map(&:name).tally
+        cohort_share = 1.0 / names.size
+        names.filter_map { |name| flag_for(name, counts, calls.size, cohort_share) }
+      end
+
+      def flag_for(name, counts, cohort_size, cohort_share)
+        count = counts.fetch(name, 0)
+        observed_share = count.fdiv(cohort_size)
+        ratio = observed_share / cohort_share
         return nil unless ratio > @threshold
 
-        Flag.new(name:, description:, observed_count: observed_counts.fetch(name, 0),
-                 observed_share: share_for(name), declared_share:, ratio:)
+        Flag.new(name:, description: declared.fetch(name), observed_count: count, observed_share:,
+                 declared_share: cohort_share, ratio:)
       end
 
-      def share_for(name)
-        observed_counts.fetch(name, 0).fdiv(total_calls)
+      # The declared set in force when the turn `turn_digest` issued its
+      # call: the LATEST mode_switch record before it, carrying exactly the
+      # tool_names {Mode::Switch#switch} journaled for that flip -- or the
+      # session header, for a turn before the first switch and for a run
+      # that never switched at all.
+      def declared_names_for(turn_digest)
+        switch_at_turn.fetch(turn_digest, nil) || declared.keys
       end
 
-      def declared_share
-        1.0 / declared.size
+      def switch_at_turn
+        @switch_at_turn ||= build_switch_at_turn
+      end
+
+      # One pass over every record, in the order they were journaled, so
+      # "the latest switch before it" is answered by ordinary file order
+      # rather than by comparing timestamps a fixture may not even carry.
+      #
+      # `record["tool_names"]`, not `#fetch`: a mode_switch journaled before
+      # this card carries no such key at all -- not even as nil -- and a
+      # raise on an old journal is worse than the record it is missing. `nil`
+      # here reads exactly as "no switch happened yet", which is honest: this
+      # feature has nothing to read off that record, so a turn after it falls
+      # back to the header, precisely as a run with no switch at all does.
+      def build_switch_at_turn
+        current = nil
+        Journal.records(@entries).each_with_object({}) do |record, map|
+          case record["type"].to_s
+          when "mode_switch" then current = record["tool_names"]
+          when "turn" then map[record["digest"]] = current
+          end
+        end
       end
 
       def declared
@@ -140,10 +195,16 @@ module Lain
         flags.map { |flag| describe(flag) }.join("; ")
       end
 
+      # `total` is the flagged tool's own COHORT size, recovered from
+      # `count / observed_share` rather than threaded as a fourth Flag field:
+      # `count` and `observed_share` already determine it exactly, and adding
+      # a field this message alone would read is the kind of state a Data
+      # class should not carry for one caller's convenience.
       def describe(flag)
+        cohort_size = flag.observed_count.fdiv(flag.observed_share).round
         format("%<name>s: %<count>d/%<total>d calls (share %<share>.2f) vs uniform declared share " \
                "%<declared>.2f -- %<ratio>.2fx over-selected",
-               name: flag.name, count: flag.observed_count, total: total_calls,
+               name: flag.name, count: flag.observed_count, total: cohort_size,
                share: flag.observed_share, declared: flag.declared_share, ratio: flag.ratio)
       end
     end

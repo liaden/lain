@@ -46,8 +46,20 @@ module Lain
       # `.posture` while the old mode is still in force. Answering `@current`
       # and not `mode` for the same reason: a dropped assignment must not still
       # confirm the new mode to its caller.
-      def switch(mode, surface:)
-        record = flip(@current, mode, surface)
+      #
+      # The `toolset:` keyword names the capability set THIS flip resolves to,
+      # so the record can say what the model is shown -- required, with no
+      # empty-Toolset default: a default here is exactly how a future caller
+      # that forgot to resolve one would go on journaling a false "nothing
+      # declared" set instead of failing at the call site. {CLI::Switchboard::
+      # BoundSwitch} is the only production caller, and it always hands in the
+      # resolution it just computed; a caller driving this object directly as
+      # a stand-in for the `mode_switch:` duck (Command::Mode's and
+      # StatusFeed's specs both do) has to pass one too, real or a bare
+      # `Lain::Toolset.new` named at the call site where a reader can see it
+      # was a deliberate choice, not a silent fallback.
+      def switch(mode, surface:, toolset:)
+        record = flip(@current, mode, surface, toolset)
         @current = mode
         @journal.record(record)
         @current
@@ -57,10 +69,10 @@ module Lain
 
       # The naming lives here rather than on the record, which is the dumb
       # carrier its two siblings are: this object is the one that knows a Mode.
-      def flip(from, to, surface)
+      def flip(from, to, surface, toolset)
         Telemetry::ModeSwitch.new(from: from.posture.name, to: to.posture.name,
                                   from_layers: from.layers.names, to_layers: to.layers.names,
-                                  surface:)
+                                  surface:, toolset_digest: toolset.digest, tool_names: toolset.names)
       end
     end
   end

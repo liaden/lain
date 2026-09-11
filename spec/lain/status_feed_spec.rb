@@ -1178,8 +1178,12 @@ RSpec.describe Lain::StatusFeed do
   # rendering, so none of the three renderers reading `.lain/state.json` needs
   # its own copy of the posture/layer ladder.
   describe "the mode" do
-    def mode_switch(to:, from: :manual, from_layers: [], to_layers: [], surface: "tty")
-      Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers:, to_layers:, surface:)
+    # `toolset:` defaults to an empty Toolset named HERE, at this helper's own
+    # call site: nothing in this describe block is about what a flip resolved
+    # to, only about the sink's own publish/republish rules.
+    def mode_switch(to:, from: :manual, from_layers: [], to_layers: [], surface: "tty", toolset: Lain::Toolset.new)
+      Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers:, to_layers:, surface:, toolset_digest: toolset.digest,
+                                      tool_names: toolset.names)
     end
 
     # This sink is built in ChatLaunch#open_chronicle, BEFORE Wiring exists,
@@ -1371,7 +1375,7 @@ RSpec.describe Lain::StatusFeed do
       switch = Lain::Mode::Switch.new(Lain::Mode.new(posture: :manual),
                                       journal: chronicle_teed_to(feed).record_journal)
 
-      switch.switch(Lain::Mode.new(posture: :plan, layers: %i[auto_approve]), surface: "tty")
+      switch.switch(Lain::Mode.new(posture: :plan, layers: %i[auto_approve]), surface: "tty", toolset: Lain::Toolset.new)
 
       expect(published.values_at("posture", "layers", "mode_lighter"))
         .to eq(["plan", %w[auto_approve], "PLAN AA"])

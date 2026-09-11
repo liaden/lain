@@ -291,12 +291,16 @@ RSpec.describe Lain::Compare do
   # mode can be switched mid-run and neither end of that switch describes what
   # produced the outcome on its own.
   describe Lain::Compare::Posture do
+    # `toolset:` a fresh empty Toolset named HERE: nothing this describe block
+    # tests is about what any of these flips resolved to, only about the
+    # trajectory their from/to pairs describe.
     def journaled(*flips)
       io = StringIO.new
       journal = Lain::Journal.new(io:)
+      toolset = Lain::Toolset.new
       flips.each do |from, to|
-        journal.record(Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers: [], to_layers: [],
-                                                       surface: "tty"))
+        journal.record(Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers: [], to_layers: [], surface: "tty",
+                                                       toolset_digest: toolset.digest, tool_names: toolset.names))
       end
       described_class.from_journal(io.string.lines)
     end

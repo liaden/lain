@@ -396,9 +396,14 @@ module Lain
           @apply = apply
         end
 
+        # `resolution.toolset` is what {Mode::Switch#switch} journals as this
+        # flip's declared set -- read off the PURE resolution computed above,
+        # never off `@resolved`, which {#apply} has not moved yet at this line.
+        # Reading the live slot here would journal the OUTGOING posture's set
+        # under the incoming flip's record.
         def switch(mode, surface:)
           resolution = @resolve.call(mode)
-          @switch.switch(mode, surface:)
+          @switch.switch(mode, surface:, toolset: resolution.toolset)
           @apply.call(resolution, surface:)
           @switch.current
         end
