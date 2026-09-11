@@ -39,10 +39,34 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
-  def seam(provider:, parent: self.parent, **extra)
+  def seam(provider:, parent: self.parent, tool_middleware: ToolRegistry::UNGUARDED, **extra)
     described_class.new(
-      provider:, context_factory: -> { child_context }, toolset: union, parent:, slots:, **extra
+      provider:, context_factory: -> { child_context }, toolset: union, parent:, slots:, tool_middleware:, **extra
     )
+  end
+
+  # ---- The role's child runs behind the seam's tool guard ---------------------
+
+  it "runs the chosen role's child through the seam's tool middleware" do
+    seen = []
+    guard = Class.new(Lain::Middleware::Base) do
+      define_method(:call) do |env, &app|
+        seen << env.fetch(:effect).name
+        downstream(env, &app)
+      end
+    end.new
+    provider = mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]), text_response("done"))
+
+    seam(provider:, tool_middleware: ->(_worker_env) { Lain::Middleware::Stack.new([guard]) }).call(:dev, :fresh, "go")
+
+    expect(seen).to eq(["read_file"])
+  end
+
+  it "refuses loose seam members that name no tool middleware" do
+    expect do
+      described_class.new(provider: mock(text_response("unused")), context_factory: -> { child_context },
+                          parent:, toolset: union, slots:)
+    end.to raise_error(ArgumentError, /tool_middleware/)
   end
 
   # ---- A chosen role at call time, inherit prefix, persona in system ---------
@@ -133,7 +157,8 @@ RSpec.describe Lain::Skill::RoleSpawn do
   # beside this block's is the additive claim: both styles are valid.
   describe "the spawn Seam" do
     def seam_value(provider:, **extra)
-      Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, **extra)
+      Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:,
+                                      tool_middleware: ToolRegistry::UNGUARDED, **extra)
     end
 
     it "spawns over an injected seam, holding no loose collaborators of its own" do
@@ -173,7 +198,8 @@ RSpec.describe Lain::Skill::RoleSpawn do
     it "refuses a loose keyword that is not a seam member" do
       expect do
         described_class.new(provider: mock(text_response("unused")), context_factory: -> { child_context },
-                            parent:, observers: [], toolset: union, slots:)
+                            parent:, tool_middleware: ToolRegistry::UNGUARDED, observers: [],
+                            toolset: union, slots:)
       end.to raise_error(ArgumentError, /unknown keyword: :observers/)
     end
 

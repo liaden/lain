@@ -33,7 +33,8 @@ module Lain
       # per {Tools::Subagent}. The Null defaults live on the Seam and MATCH
       # Subagent's own, so omitting them is byte-identical to spawning the tool
       # directly; the loose pre-Seam keywords still work through `**spawn_over`,
-      # and passing a seam AND its members raises.
+      # and passing a seam AND its members raises. The tool guard is the one
+      # member with no default, on the loose path as on the seam.
       def initialize(toolset:, slots:, seam: nil, max_depth: 1, **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
         @toolset = toolset

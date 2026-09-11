@@ -187,7 +187,8 @@ RSpec.describe Lain::Middleware::SkillDispatch do
                                  Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
       child_context = Lain::Context.new(model: "child-model", max_tokens: 256)
       Lain::Skill::RoleSpawn.new(provider: Lain::Provider::Mock.new(responses: [text_response("the plan")]),
-                                 context_factory: -> { child_context }, toolset: union, parent:, slots:)
+                                 context_factory: -> { child_context }, toolset: union, parent:, slots:,
+                                 tool_middleware: ToolRegistry::UNGUARDED)
     end
 
     it "folds the child's final answer into env[:response] without moving the parent head" do

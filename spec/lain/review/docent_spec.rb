@@ -1096,6 +1096,7 @@ RSpec.describe Lain::Review::Docent do
     def spawn_docent(provider, union, posture: :schema, askers: Lain::CLI::Wiring::Askers.unwired)
       role = Lain::Role::Catalog.fetch(described_class::ROLE)
       seam = Lain::Tools::Subagent::Seam.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider:, context_factory: -> { Lain::Context.new(model: "docent-model", max_tokens: 128) },
         parent: Lain::Timeline.empty(store: Lain::Store.new), askers:
       )

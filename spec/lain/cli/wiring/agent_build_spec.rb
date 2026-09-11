@@ -136,6 +136,14 @@ class AgentBuildSpecBoard
     )
   end
 
+  # The one value the tool guard is built over, as a real board holds it: these
+  # same slots, and a test layout run declaring none.
+  def guard_inputs
+    @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(
+      ledger:, approvals:, sensitivity:, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared
+    )
+  end
+
   def gate(inner:)
     @gate_calls << inner
     Lain::Effect::Handler::Gate.new(policy: Lain::Tools::Subagent::UNGATED, inner:)
@@ -247,10 +255,10 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     # an unreleased region is masked out of a read in the same phase, before its
     # bytes can reach an Event or the prompt-cache prefix, and a sensitive path
     # is dropped out of a listing before the enumeration is believed.
-    it "puts all three secret guards in the tool phase" do
+    it "puts all three secret guards, then the test layout guard, in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths])
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
     end
 
     # An unattended run leaves {Lain::CLI::Switchboard#approvals} nil, and the

@@ -46,6 +46,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
 
   def actor_tool(provider:, journal: Lain::Channel::Null.instance, supervisor: Lain::Supervisor::Null)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
       toolset: Lain::Toolset.new([EchoTool.new]),
       policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),

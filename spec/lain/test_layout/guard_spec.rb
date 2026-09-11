@@ -13,6 +13,29 @@ RSpec.describe Lain::TestLayout::Guard do
 
   def guard_over(root) = described_class.new(layout: Lain::Config.test_layout(root:), root:)
 
+  # Callers set policy per rule, and a record names the rule it refused under,
+  # so the guard publishes the list rather than leave each reader a copy.
+  describe "the rules it refuses under" do
+    it "publishes them, frozen" do
+      expect(described_class::REFUSING).to be_frozen
+      expect(described_class::REFUSING).to include(:stray, :no_source, :elsewhere, :ambiguous, :missing)
+    end
+
+    it "names none that a passing or unguarded verdict carries" do
+      expect(described_class::REFUSING & %i[mirrors exempt no_layout not_a_test unmirrored outside]).to be_empty
+    end
+
+    it "refuses only under a rule it publishes" do
+      with_copy do |root|
+        verdicts = [guard_over(root).check("spec/unit/models/order_extra_spec.rb", spec_for("Order")),
+                    guard_over(root).check("spec/order_extra_spec.rb", spec_for("Order")),
+                    guard_over(root).check_file("spec/unit/models/nothing_spec.rb")]
+
+        expect(verdicts.map(&:rule)).to all(satisfy { |rule| described_class::REFUSING.include?(rule) })
+      end
+    end
+  end
+
   def spec_for(constant, *tags)
     metadata = tags.map { |tag| ", #{tag}" }.join
     "RSpec.describe #{constant}#{metadata} do\n  it(\"works\") { expect(1).to eq(1) }\nend\n"

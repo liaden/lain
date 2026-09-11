@@ -782,12 +782,23 @@ module Lain
       # which direction it moves that claim; the current ones move it nowhere
       # new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
-      Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
+      Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :supervisor, :observer,
                          :gate_policy, :permits, :askers, :sensitivity, :denial, :isolation, :escalation) do
-        # Everything after `parent` defaults to its Null object; {UNGATED} and
-        # {Mode::Posture::Permits::All} are the two that say "no posture has
-        # been bound to this seam". The first three stay required, so Data's own
-        # missing-keyword error is the loud failure, unwritten.
+        # Everything after `tool_middleware` defaults to its Null object;
+        # {UNGATED} and {Mode::Posture::Permits::All} are the two that say "no
+        # posture has been bound to this seam". The first four stay required,
+        # so Data's own missing-keyword error is the loud failure, unwritten.
+        #
+        # `tool_middleware` has no default and no named Null in lib/: a child's
+        # tools run behind the guard this names, and a defaulted guard is how a
+        # production spawn would run with none while nothing said so. A caller
+        # that wants none builds an empty {Middleware::Stack} and says so.
+        # It is a thunk over the child's {WorkerEnv}, called once per child as
+        # that child is built, on `denial`'s reason -- a chat's guard reads a
+        # board that does not exist yet when this seam does -- and because a
+        # stack is mutable, so one shared between children would let a `#use`
+        # on one reach them all. The environment is what tells a guard where a
+        # child leased into a checkout of its own writes.
         #
         # `escalation` defaults to `[AskHuman::HUMAN]`: absent a spawn, `parent`
         # IS the run's own chat, so a question asked FROM it need go no further
@@ -795,7 +806,7 @@ module Lain
         # ({ChildBuilder#own_chain}) replaces this with whatever `parent`'s OWN
         # further hops are, so a grandchild's relay carries the whole road
         # rather than only its immediate parent's name.
-        def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
+        def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers,
                        sensitivity: UNJUDGED, denial: GENERIC_DENIAL, isolation: NO_ISOLATION,
@@ -1126,11 +1137,16 @@ module Lain
         # sibling's reads into the next. This builder is never handed the
         # parent's Session, so the child's read-set starts empty by
         # construction.
+        #
+        # Its tool phase is whatever guard the seam names, built for THIS child:
+        # a chat's is the parent's own stack over the parent's board, so a
+        # child's read is masked, parked and released exactly as the parent's.
         def spawn_agent(chain, union, allowed, worker_env)
           Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
             timeline: chain.base, turn_middleware: recorded_turns(chain),
+            tool_middleware: @seam.tool_middleware.call(worker_env),
             session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
           )
         end

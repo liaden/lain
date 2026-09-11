@@ -50,6 +50,7 @@ RSpec.describe "a spawned role's persona" do
   # the double-bulk trap the seam must resolve by REPLACING, not appending.
   def role_subagent(slots, provider:, role:)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider:,
       context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256, system: slots.render) },
       toolset: union, policy: role.spawn_policy, parent:,

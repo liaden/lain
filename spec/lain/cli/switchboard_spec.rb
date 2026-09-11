@@ -18,6 +18,8 @@ RSpec.describe Lain::CLI::Switchboard do
 
   def mode(posture) = Lain::Mode.new(posture:)
 
+  def layout_run = Lain::Middleware::GuardTestLayout::Run.undeclared
+
   def gated_call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")
 
   def mode_records = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
@@ -33,7 +35,45 @@ RSpec.describe Lain::CLI::Switchboard do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
 
     def board_for(**options)
-      described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base)
+      described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base, test_layout: layout_run)
+    end
+
+    # The session's ONE layout run, which the parent's tool guard and every
+    # child's read off the board. `.for` requires it: a chat with no layout
+    # decision behind it is a mis-wire, not a default.
+    describe "the test layout it carries" do
+      it "holds the run it was handed, by identity" do
+        run = layout_run
+        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    test_layout: run)
+
+        expect(board.test_layout).to be(run)
+      end
+
+      it "refuses a wiring entry that names no test layout" do
+        expect { described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base) }
+          .to raise_error(ArgumentError, /test_layout/)
+      end
+
+      # The tool guard is built over ONE value, and it holds the board's own
+      # slots rather than copies of them.
+      it "holds the guard's inputs as one value, over the board's own slots" do
+        run = layout_run
+        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    test_layout: run)
+        inputs = board.guard_inputs
+
+        expect(inputs).to be_a(Lain::CLI::ToolGuard::Inputs)
+        expect([inputs.ledger, inputs.approvals, inputs.sensitivity, inputs.test_layout])
+          .to eq([board.ledger, board.approvals, board.sensitivity, run])
+        expect(inputs.approvals).to be(board.approvals)
+        expect(inputs.ledger).to be(board.ledger)
+      end
+
+      it "gives a directly built board a run of its own that declares no layout" do
+        expect(switchboard.test_layout.layout).to be(Lain::TestLayout::None)
+        expect(switchboard.test_layout).not_to be(switchboard.test_layout)
+      end
     end
 
     # `.for` is the only construction a real chat reaches, so a classifier this
@@ -41,7 +81,7 @@ RSpec.describe Lain::CLI::Switchboard do
     it "carries the classifier factory through to the ladder's triage rung" do
       factory = ->(_cwd) { Lain::Approval::Escalation::Triage::AnyPath.new }
       board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
-                                  classifiers: factory)
+                                  classifiers: factory, test_layout: layout_run)
 
       expect(board.ladder.first.instance_variable_get(:@sensitivity)).to be(factory)
     end
@@ -158,7 +198,7 @@ RSpec.describe Lain::CLI::Switchboard do
       # `new` stayed green.
       it "carries it through the wiring entry to the ladder" do
         board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
-                                    verdict: excluding_curl)
+                                    verdict: excluding_curl, test_layout: layout_run)
 
         expect(verdict_of(board)).to be(excluding_curl)
       end

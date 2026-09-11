@@ -29,6 +29,7 @@ RSpec.describe "Subagent posture equivalence" do
 
   def build_subagent(provider:, posture:, journal: Lain::Channel::Null.instance)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { child_context }, toolset: union,
       policy: spawn_policy(posture:), parent:, journal:,
       budget: Lain::Agent::Budget.new, max_depth: 3

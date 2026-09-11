@@ -1396,7 +1396,8 @@ RSpec.describe Lain::StatusFeed do
       # An empty base set says what this example is not about: it wants the
       # board's queue, and a posture never attenuates on this path.
       Lain::CLI::Switchboard.for(chronicle: chronicle_teed_to(feed), options: {},
-                                 model: "claude-opus-4-8", toolset: Lain::Toolset.new).approvals
+                                 model: "claude-opus-4-8", toolset: Lain::Toolset.new,
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared).approvals
     end
   end
 

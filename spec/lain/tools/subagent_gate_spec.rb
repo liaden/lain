@@ -106,7 +106,8 @@ RSpec.describe "Subagent gating" do
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
   def seam(provider:, **over)
-    Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, journal:, **over)
+    Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, journal:,
+                                    tool_middleware: ToolRegistry::UNGUARDED, **over)
   end
 
   def build_subagent(provider:, role: :dev, posture: :schema, **over)
@@ -334,7 +335,8 @@ RSpec.describe "Subagent gating" do
     end
 
     it "is still a value: two all-default seams with the same members compare equal" do
-      members = { provider: mock, context_factory: -> { child_context }, parent: }
+      members = { provider: mock, context_factory: -> { child_context }, parent:,
+                  tool_middleware: ToolRegistry::UNGUARDED }
 
       expect(Lain::Tools::Subagent::Seam.new(**members)).to eq(Lain::Tools::Subagent::Seam.new(**members))
     end

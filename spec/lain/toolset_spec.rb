@@ -312,6 +312,7 @@ RSpec.describe Lain::Toolset do
 
     def subagent_over(union)
       Lain::Tools::Subagent.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: Lain::Provider::Mock.new(responses: []),
         context_factory: -> { Lain::Context.new(model: "m", max_tokens: 8) },
         toolset: union,

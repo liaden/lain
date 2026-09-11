@@ -77,6 +77,10 @@ module Lain
       # rebuild one thing: what the model has seen of each file.
       def restore_reads(fresh)
         reads.each { |record| fresh.record_read(record.fetch("path"), complete: completeness(record)) }
+        # A known limit: a child's guard journals into this same record, and
+        # nothing on a mask says whose read it was, so a child's masked read
+        # resumes as the parent's. It fails closed -- the parent is refused a
+        # write over a file the child saw masked.
         redactions.each { |record| fresh.record_masked_read(record.fetch("path")) }
       end
 

@@ -18,13 +18,19 @@
 # these properties are declarations on the CLASS actually wired into the
 # toolset, not on a name assumed to exist.
 module ToolRegistry
+  # What a spawn a spec builds says when its children run behind no tool
+  # guard. It lives here and never in lib/, so no production constant means
+  # "no guard": every real spawn names the guard it runs behind.
+  UNGUARDED = ->(_worker_env) { Lain::Middleware::Stack.new }.freeze
+
   def self.build_subagent
     Lain::Tools::Subagent.new(
       provider: Lain::Provider::Mock.new,
       context_factory: -> { Lain::Context.new(model: "child", max_tokens: 8) },
       toolset: Lain::Toolset.new([]),
       policy: Lain::Tool::SpawnPolicy.new,
-      parent: Lain::Timeline.empty(store: Lain::Store.new)
+      parent: Lain::Timeline.empty(store: Lain::Store.new),
+      tool_middleware: ToolRegistry::UNGUARDED
     )
   end
 

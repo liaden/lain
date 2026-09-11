@@ -83,6 +83,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
 
   def build_subagent(child_provider:, parent:)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider: child_provider,
       context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
       toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]),

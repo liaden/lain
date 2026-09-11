@@ -35,13 +35,16 @@ module Lain
       #   a no-op (the {Null} case), so no caller guards on a missing action
       # @param origin [Origin] where the leased checkout came from
       def initialize(worker_env:, on_release: -> {}, origin: Origin.new)
-        @worker_env = worker_env
+        # The environment names the checkout, from the one object that knows
+        # it: every decorator keeps the origin, and some rebuild the env.
+        @worker_env = worker_env.with(checkout: origin.path)
         @on_release = on_release
         @origin = origin
         @released = false
       end
 
-      # @return [WorkerEnv] the leased cwd and env
+      # @return [WorkerEnv] the leased cwd and env, naming the checkout
+      #   {#origin} names
       attr_reader :worker_env
 
       # @return [Origin] where the leased checkout came from

@@ -112,6 +112,22 @@ module Lain
         # load -- the same debt `mode/resolution.rb` records and defers the
         # same way.
         NoSwitchboard = Class.new do
+          # The one value {ToolGuard} reads. One ledger, for {Switchboard}'s
+          # reason; no queue, which the guard reads as a run nobody attends --
+          # every region is released, byte-for-byte what a child read before
+          # children were guarded; and no test layout, so nothing is refused.
+          # `lain/cli` loads `cli/tool_guard` before `cli/wiring`, so this may
+          # be built with the class.
+          attr_reader :guard_inputs
+
+          def initialize
+            super
+            @guard_inputs = ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil,
+                                                  sensitivity: Lain::Sensitivity::Policy::Null.instance,
+                                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+          end
+
+          def approvals = nil
           def policy_switch = Lain::Tools::Subagent::UNGATED
           def mode_switch = UNSWITCHED
           def sensitivity = Lain::Sensitivity::Policy::Null.instance
@@ -246,8 +262,8 @@ module Lain
           @epic = epic
           @askers = askers
           @usage = usage
-          @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:,
-                             observer: chronicle.observer, isolation:, handback:)
+          @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
+                             isolation:, handback:)
         end
 
         # The run's toolset: the capability floor, plus the child seams and the
@@ -304,10 +320,13 @@ module Lain
         # count. The backend arrives already journalled, nearest the concrete,
         # and nothing here wraps it again. The same Leases is where the run's
         # handoff reaches a child, so every lease on the spawn lane ends in it.
-        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:, isolation:,
+        #
+        # `tool_middleware:` is the parent's own guard, over the same thunk.
+        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:, isolation:,
                        handback:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
-                                          journal:, supervisor:, observer:, askers:,
+                                          tool_middleware: guard(chronicle, switchboard),
+                                          journal:, supervisor:, observer: chronicle.observer, askers:,
                                           isolation: Lain::Tools::Subagent::Leases.new(backend: isolation,
                                                                                        handoff: handback.handoff,
                                                                                        sync: handback.sync),
@@ -315,6 +334,16 @@ module Lain
                                           permits: PosturePermits.new(board: switchboard),
                                           sensitivity: LiveSensitivity.new(board: switchboard),
                                           denial: -> { switchboard.call.denial })
+        end
+
+        # The stack {AgentBuild} mounts in the parent's tool phase, built again
+        # for each child over the same board and the same chronicle: one region
+        # ledger, one approval queue, one filter and one layout for the whole
+        # run. The board thunk is read when a child is built, so a board still
+        # nil then raises rather than handing the child a guard over nothing.
+        # The child's environment says where its writes land.
+        def guard(chronicle, switchboard)
+          ->(worker_env) { ToolGuard.child_stack(chronicle, switchboard.call, worker_env) }
         end
 
         # One seam serves every role: role, policy and persona are chosen PER

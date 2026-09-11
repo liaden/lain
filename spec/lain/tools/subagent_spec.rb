@@ -90,6 +90,22 @@ class SubagentSpecCwdTool < Lain::Tool
   end
 end
 
+# A tool guard that records the name of every call it is handed and passes it
+# on, so an example can see which tools really ran behind it.
+class SubagentSpecToolGuard < Lain::Middleware::Base
+  attr_reader :seen
+
+  def initialize
+    super
+    @seen = []
+  end
+
+  def call(env, &app)
+    @seen << env.fetch(:effect).name
+    downstream(env, &app)
+  end
+end
+
 # The handoff duck a lease ends in, recorded: which of the two completions ran,
 # for which worker, and whether the lease was still live when it did -- the
 # handback has nothing to read from a checkout that is already gone. It
@@ -192,10 +208,11 @@ RSpec.describe Lain::Tools::Subagent do
   # gating pair, in practice -- so an example can wire one without restating the
   # six collaborators every other example shares.
   def build_subagent(provider:, policy: spawn_policy, parent: self.parent,
-                     journal: Lain::Channel::Null.instance, max_depth: 3, toolset: union, **seam)
+                     journal: Lain::Channel::Null.instance, max_depth: 3, toolset: union,
+                     tool_middleware: ToolRegistry::UNGUARDED, **seam)
     described_class.new(
       provider:, context_factory: -> { child_context }, toolset:, policy:,
-      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:, **seam
+      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:, tool_middleware:, **seam
     )
   end
 
@@ -380,6 +397,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "bounds an actor's oversized reply the same way before it folds into the parent" do
       log = Lain::Tools::Subagent::Log.new
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(text_response(oversized), text_response("the short version")),
         context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
         parent:, mode: :actor, log:
@@ -448,6 +466,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "keeps an actor's answer when its summarizing ask fails, and leaves it alive to settle" do
       log = Lain::Tools::Subagent::Log.new
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: failing_second_call(text_response(oversized)),
         context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
         parent:, mode: :actor, log:
@@ -534,6 +553,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "hands an injected ceiling to a descended child and to an actor it launches" do
       log = Lain::Tools::Subagent::Log.new
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(text_response("an answer well over eight bytes")),
         context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
         parent:, log:, answer: Lain::Tools::Subagent::Answer.new(bounds: Lain::Tool::Bounds::Artifact.new(limit: 8))
@@ -793,6 +813,7 @@ RSpec.describe Lain::Tools::Subagent do
       journal = Lain::Channel.new
       provider = mock(text_response("done"))
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider:, context_factory: -> { marked_context }, toolset: union,
         policy: sibling_template_policy(template), parent:, journal:
       )
@@ -822,6 +843,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "journals the floor note on an actor-mode launch too" do
       journal = Lain::Channel.new
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(text_response("actor done")), context_factory: -> { child_context },
         toolset: union, policy: sibling_template_policy("tiny"), parent:, journal:,
         mode: :actor, log: Lain::Tools::Subagent::Log.new
@@ -860,6 +882,7 @@ RSpec.describe Lain::Tools::Subagent do
                                         Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
         provider = mock(text_response("done"))
         tool = described_class.new(
+          tool_middleware: ToolRegistry::UNGUARDED,
           provider:, context_factory: -> { child_context }, toolset: read_union,
           policy: role.spawn_policy, parent:, persona: Lain::Role::Persona.new(role:, slots:)
         )
@@ -1140,7 +1163,8 @@ RSpec.describe Lain::Tools::Subagent do
       tool = described_class.new(provider: mock(text_response("unused")),
                                  context_factory: -> { raise "this child gets no context" },
                                  toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                                 parent:, isolation: leases, budget: Lain::Agent::Budget.new)
+                                 parent:, isolation: leases, budget: Lain::Agent::Budget.new,
+                                 tool_middleware: ToolRegistry::UNGUARDED)
 
       expect { tool.run("go") }.to raise_error("this child gets no context")
       expect(backend.leased.size).to eq(1)
@@ -1286,7 +1310,8 @@ RSpec.describe Lain::Tools::Subagent do
         tool = described_class.new(provider: mock(text_response("unused")),
                                    context_factory: -> { raise "this child gets no context" },
                                    toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                                   parent:, isolation: handing, budget: Lain::Agent::Budget.new)
+                                   parent:, isolation: handing, budget: Lain::Agent::Budget.new,
+                                   tool_middleware: ToolRegistry::UNGUARDED)
 
         expect { tool.run("go") }.to raise_error("this child gets no context")
         expect(handoff.calls).to eq([[:surrender, spawned_id, false]])
@@ -1354,7 +1379,8 @@ RSpec.describe Lain::Tools::Subagent do
         tool = described_class.new(provider: mock(text_response("unused")),
                                    context_factory: -> { raise "this child gets no context" },
                                    toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                                   parent:, isolation: syncing, budget: Lain::Agent::Budget.new)
+                                   parent:, isolation: syncing, budget: Lain::Agent::Budget.new,
+                                   tool_middleware: ToolRegistry::UNGUARDED)
 
         expect { tool.run("go") }.to raise_error("this child gets no context")
         expect(calls).to eq([[:surrender, spawned_id, false]])
@@ -1573,7 +1599,8 @@ RSpec.describe Lain::Tools::Subagent do
       def builder(sensitivity:, gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new)
         Lain::Tools::Subagent::ChildBuilder.new(
           seam: Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context },
-                                                parent: -> { parent }, gate_policy:, sensitivity:),
+                                                parent: -> { parent }, gate_policy:, sensitivity:,
+                                                tool_middleware: ToolRegistry::UNGUARDED),
           toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]),
           policy: spawn_policy, budget: Lain::Agent::Budget.new
         )
@@ -1605,7 +1632,8 @@ RSpec.describe Lain::Tools::Subagent do
       it "stays INSIDE RefusingHandler on the union posture, where the chain is wrapped" do
         child = Lain::Tools::Subagent::ChildBuilder.new(
           seam: Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context },
-                                                parent: -> { parent }, sensitivity:),
+                                                parent: -> { parent }, sensitivity:,
+                                                tool_middleware: ToolRegistry::UNGUARDED),
           toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]),
           policy: spawn_policy(posture: :handler_union), budget: Lain::Agent::Budget.new
         ).build(parent, ceiling: 1).agent
@@ -1681,11 +1709,13 @@ RSpec.describe Lain::Tools::Subagent do
     # nobody taught about paths must carry the ONE shared Null, or two otherwise
     # identical Seams stop comparing equal.
     it "defaults to the one shared Null policy, so unwired seams still compare equal" do
-      seam = Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: -> {}, parent: :pa)
+      seam = Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: -> {}, parent: :pa,
+                                             tool_middleware: ToolRegistry::UNGUARDED)
 
       expect(seam.sensitivity).to be(Lain::Sensitivity::Policy::Null.instance)
       expect(seam).to eq(Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: seam.context_factory,
-                                                         parent: :pa))
+                                                         parent: :pa,
+                                                         tool_middleware: ToolRegistry::UNGUARDED))
     end
   end
 
@@ -1705,6 +1735,7 @@ RSpec.describe Lain::Tools::Subagent do
       seen = []
       log = Lain::Tools::Subagent::Log.new
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(text_response("did the thing")), context_factory: -> { child_context },
         toolset: union, policy: spawn_policy, parent:,
         log:, observer: seen.method(:push)
@@ -1781,7 +1812,8 @@ RSpec.describe Lain::Tools::Subagent do
     before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
 
     def asking_seam(provider)
-      Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, askers:)
+      Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, askers:,
+                                      tool_middleware: ToolRegistry::UNGUARDED)
     end
 
     def asking_subagent(provider, toolset: union, max_depth: 1, name: "subagent",
@@ -1885,7 +1917,8 @@ RSpec.describe Lain::Tools::Subagent do
                         policy: spawn_policy(only: []), max_depth: 1)
         described_class.new(
           seam: Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context },
-                                                parent:, askers:, observer:),
+                                                parent:, askers:, observer:,
+                                                tool_middleware: ToolRegistry::UNGUARDED),
           toolset:, policy:, max_depth:
         )
       end
@@ -2605,6 +2638,7 @@ RSpec.describe Lain::Tools::Subagent do
       journal = Lain::Channel.new
       provider = mock(text_response("a"), text_response("b"))
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider:, context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256, stream: false) },
         toolset: union, policy: sibling_template_policy(template), parent:, journal:
       )
@@ -2630,6 +2664,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     def actor_mode_tool(*responses, supervisor:)
       described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(*responses), context_factory: -> { child_context },
         toolset: union, policy: spawn_policy, parent:,
         mode: :actor, log: actor_log, supervisor:
@@ -2687,6 +2722,7 @@ RSpec.describe Lain::Tools::Subagent do
     # byte-identically to the refusal that stood before.
     it "still refuses with today's message when no supervisor is wired" do
       tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(text_response("unused")), context_factory: -> { child_context },
         toolset: union, policy: spawn_policy, parent:, mode: :actor, log: actor_log
       )
@@ -2725,7 +2761,8 @@ RSpec.describe Lain::Tools::Subagent do
   describe "the spawn Seam" do
     let(:seam) do
       Lain::Tools::Subagent::Seam.new(provider: mock(text_response("seamed")),
-                                      context_factory: -> { child_context }, parent:)
+                                      context_factory: -> { child_context }, parent:,
+                                      tool_middleware: ToolRegistry::UNGUARDED)
     end
 
     it "spawns over an injected seam, with no loose collaborator keywords" do
@@ -2768,15 +2805,69 @@ RSpec.describe Lain::Tools::Subagent do
     # seams over identical collaborators compared unequal while their two
     # singleton neighbours compared equal.
     it "equates two seams built from the same collaborators, defaults included" do
-      members = { provider: :p, context_factory: :cf, parent: :pa }
+      members = { provider: :p, context_factory: :cf, parent: :pa, tool_middleware: :tm }
 
       expect(Lain::Tools::Subagent::Seam.new(**members))
         .to eq(Lain::Tools::Subagent::Seam.new(**members))
     end
 
-    it "requires the three that have no Null: provider, context factory, and parent" do
+    it "requires the four that have no Null: provider, context factory, parent, and tool middleware" do
       expect { Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context }) }
-        .to raise_error(ArgumentError, /parent/)
+        .to raise_error(ArgumentError, /parent.*tool_middleware/)
+    end
+
+    # Nothing in lib/ may SAY "no guard": a named unguarded thunk there is one
+    # a production caller could reach for. The specs keep theirs in support.
+    it "defines no production constant meaning a spawn runs behind no guard" do
+      expect(described_class.const_defined?(:UNGUARDED, false)).to be(false)
+    end
+
+    # The guard has no Null for the reason the other three have none: a
+    # default is how a production spawn would run with no guard at all while
+    # nothing anywhere said so.
+    it "refuses a seam that names no tool middleware, so no child goes unguarded by omission" do
+      expect { Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context }, parent:) }
+        .to raise_error(ArgumentError, /tool_middleware/)
+    end
+
+    it "runs every tool call a child makes through the seam's tool middleware" do
+      guard = SubagentSpecToolGuard.new
+      tool = build_subagent(provider: mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]),
+                                           text_response("done")),
+                            tool_middleware: ->(_worker_env) { Lain::Middleware::Stack.new([guard]) })
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(guard.seen).to eq(["read_file"])
+    end
+
+    # A THUNK, read when a child is built: a chat's board does not exist yet
+    # when the seam does, so the guard over it cannot be built any earlier.
+    it "asks the seam for the guard once per child, when that child is built" do
+      built = 0
+      tool = build_subagent(provider: mock(text_response("a"), text_response("b")),
+                            tool_middleware: ->(_worker_env) { (built += 1) && Lain::Middleware::Stack.new })
+
+      expect(built).to eq(0)
+      2.times { tool.call({ "prompt" => "go" }, invocation) }
+
+      expect(built).to eq(2)
+    end
+
+    # A child leased into a checkout of its own writes there, so its guard has
+    # to know where it stands: the thunk is handed the child's environment.
+    it "hands the guard the environment the child runs in, its leased checkout included" do
+      Dir.mktmpdir do |dir|
+        cwds = []
+        tool = build_subagent(provider: mock(text_response("done")),
+                              isolation: Lain::Tools::Subagent::Leases.new(backend: SubagentSpecIsolation.new(dir)),
+                              tool_middleware: ->(env) { (cwds << env.cwd) && Lain::Middleware::Stack.new })
+
+        tool.call({ "prompt" => "go" }, invocation)
+
+        expect(cwds.size).to eq(1)
+        expect(cwds.first).to start_with(dir)
+      end
     end
 
     # Both styles are valid; holding both at once is the one thing that cannot
@@ -2792,6 +2883,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "refuses a loose keyword that is not a seam member" do
       expect do
         described_class.new(provider: mock, context_factory: -> { child_context }, parent:,
+                            tool_middleware: ToolRegistry::UNGUARDED,
                             observers: [], toolset: union, policy: spawn_policy)
       end.to raise_error(ArgumentError, /unknown keyword: :observers/)
     end

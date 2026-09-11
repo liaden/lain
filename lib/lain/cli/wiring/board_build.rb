@@ -44,6 +44,10 @@ module Lain
         NO_EXCLUSIONS = "this project's [shell] exclusions are not in force (no program is refused by name): " \
                         "%<reason>s"
 
+        # The third restricting table's sentence. It names what it costs: no
+        # test layout is enforced for the session.
+        IGNORED_LAYOUT = "this project's [tests] table is ignored, so no test layout is enforced: %<reason>s"
+
         module_function
 
         # @param chronicle [CLI::Chronicle] resolves the journal the switches record onto
@@ -78,7 +82,7 @@ module Lain
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: approving(Project::Consent.for(project:, notice:).rules, factory),
                           sensitivity: policy(project:, paths:, table:),
-                          classifiers: factory)
+                          classifiers: factory, test_layout: test_layout(project:, notice:))
         end
 
         # The deterministic rung's chain: this root's remembered answers, and
@@ -131,6 +135,30 @@ module Lain
           (notice || SILENT).call(format(NO_EXCLUSIONS, reason: e.message))
           Lain::Shell::Verdict.new
         end
+
+        # The session's ONE layout guard, which the parent's tool phase and
+        # every child's share.
+        #
+        # No `framework:` is passed, because enforcement is opt-in: a detected
+        # preset would hold a project that declared nothing to level roots it
+        # never chose, and refuse its existing flat specs as strays.
+        #
+        # A malformed `[tests]` table is dropped and SAID, where a broken
+        # `[shell]` table refuses the chat. Dropping this one fails open too,
+        # but only to where a project stands before it opts in, and the
+        # land-time check still refuses a misplaced test.
+        #
+        # @param project [Lain::Project]
+        # @param notice [#call, nil]
+        # @return [Lain::Middleware::GuardTestLayout::Run]
+        def test_layout(project:, notice: nil)
+          layout_run(Config.test_layout(root: project.root), project)
+        rescue Lain::TestLayout::Refusal, Config::Malformed => e
+          (notice || SILENT).call(format(IGNORED_LAYOUT, reason: e.message))
+          layout_run(Lain::TestLayout::None, project)
+        end
+
+        def layout_run(layout, project) = Lain::Middleware::GuardTestLayout::Run.new(layout:, root: project.root)
 
         # The run's path boundary, wrapped in the policy both gates read
         # through -- {Effect::Handler::Sensitivity} for what may not be touched

@@ -70,7 +70,8 @@ RSpec.describe Lain::Gherkin::TestGeneration do
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
   def role_spawn(provider:)
-    Lain::Skill::RoleSpawn.new(provider:, context_factory: -> { child_context }, toolset: union, parent:, slots:)
+    Lain::Skill::RoleSpawn.new(provider:, context_factory: -> { child_context }, toolset: union, parent:, slots:,
+                               tool_middleware: ToolRegistry::UNGUARDED)
   end
 
   def generation(spawn) = described_class.new(renderer:, role_spawn: spawn, guard:)

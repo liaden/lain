@@ -25,6 +25,28 @@ RSpec.describe Lain::WorkerEnv do
     end
   end
 
+  # Where a leased worker's work lands, said by the lease rather than guessed
+  # from the filesystem: a guard holds a child's writes at the checkout its
+  # lease cut, and at nothing a directory merely looks like.
+  describe "#checkout" do
+    it "names no checkout for the host's own environment" do
+      expect(described_class.default.checkout).to be_nil
+    end
+
+    it "carries the checkout root it was given, and stays shareable" do
+      env = described_class.new(cwd: "/srv/w1/app", env: {}, checkout: +"/srv/w1")
+
+      expect(env.checkout).to eq("/srv/w1")
+      expect(Ractor.shareable?(env)).to be(true)
+    end
+
+    it "keeps its checkout when its cwd moves" do
+      env = described_class.new(cwd: "/srv/w1", env: {}, checkout: "/srv/w1")
+
+      expect(env.with(cwd: "/srv/w1/app").checkout).to eq("/srv/w1")
+    end
+  end
+
   # The ONE cwd-resolution rule both exec arms (Tools::Bash, Tools::CoreExec)
   # share -- extracted here so the two transports cannot drift apart on it
   # (a panel fix).

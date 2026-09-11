@@ -149,6 +149,31 @@ RSpec.describe Lain::CLI::Improve do
     end
   end
 
+  # The improver reads the session's files, and nobody is at an out-of-chat
+  # surface to release a credential region it finds there.
+  describe "the read guard masks what the improver reads" do
+    let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
+
+    def blocks_sent(provider) = provider.requests.flat_map { |request| request.messages.flat_map { |m| m["content"] } }
+
+    def result_of(provider, id)
+      block = blocks_sent(provider).grep(Hash).find { |b| b["type"] == "tool_result" && b["tool_use_id"] == id }
+      Array(block.fetch("content")).map { |part| part.is_a?(Hash) ? part["text"] : part }.join("\n")
+    end
+
+    it "masks a credential region in a file the improver reads" do
+      path = File.join(@root, "creds.txt")
+      File.write(path, "harmless line\naws_access_key_id = #{secret}\ntail\n")
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_r", "read_file", { "path" => path }]),
+                                                      text_response("done")])
+
+      improve(provider).report("s1")
+
+      expect(result_of(provider, "tu_r")).to include("<redacted:1>")
+      expect(result_of(provider, "tu_r")).not_to include(secret)
+    end
+  end
+
   # A separate METHOD, not `report(dry_run: true)`: a boolean that changes what a
   # method means is the smell, and the dry surface renders a different sentence
   # from a different half of the pass.

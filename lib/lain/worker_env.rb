@@ -22,7 +22,12 @@ module Lain
   #
   # `Data` freezes the instance but not a contained mutable String or Hash, so
   # the constructor freezes `cwd` and makes `env` recursively shareable.
-  WorkerEnv = Data.define(:cwd, :env) do
+  #
+  # `checkout` is the root of the checkout an isolation lease cut for this
+  # worker, and nil for the host's own environment. The lease sets it
+  # ({Isolation::Lease}), because only the lease knows: a directory that looks
+  # like a checkout proves nothing about whether this worker was given one.
+  WorkerEnv = Data.define(:cwd, :env, :checkout) do
     # The live process working directory plus a snapshot of its environment, so a
     # run injecting no isolation shells out under the same `Dir.pwd` and `ENV` it
     # would read directly. Computed fresh, not a frozen constant, so a caller
@@ -43,8 +48,8 @@ module Lain
       new(cwd: Dir.pwd, env: snapshot)
     end
 
-    def initialize(cwd:, env:)
-      super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h))
+    def initialize(cwd:, env:, checkout: nil)
+      super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h), checkout: checkout&.dup&.freeze)
     end
 
     # The ONE cwd-resolution rule both exec arms share (Tools::Bash in process,

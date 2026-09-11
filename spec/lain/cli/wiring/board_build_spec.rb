@@ -198,6 +198,67 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # because this is where a project's config is read, and its refusal postures
   # have to match `.rules`' -- a table that RESTRICTS is loud about a typo, and
   # a file nobody can parse costs the project its additions and says so.
+  # The `[tests]` table restricts where a test may be written, and a table the
+  # project wrote wrong must not take a chat down with it: enforcement is
+  # opt-in, so the honest degradation is "no layout", said out loud.
+  describe ".test_layout" do
+    def run_at(root, notice: nil) = described_class.test_layout(project: project_at(root), notice:)
+
+    it "holds the project to the layout its [tests] table declares" do
+      in_tree(config: "[tests]\npreset = \"rspec\"\nsource_roots = [\"app\"]\n") do |root, _home|
+        told = []
+
+        expect(run_at(root, notice: told.method(:push)).guard.layout.in_force?).to be(true)
+        expect(told).to be_empty
+      end
+    end
+
+    it "holds a project with no [tests] table to nothing, silently" do
+      in_tree(config: "[shell]\ndeny = []\n") do |root, _home|
+        told = []
+
+        expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
+        expect(told).to be_empty
+      end
+    end
+
+    it "ignores a malformed [tests] table and tells the human so, rather than refusing the chat" do
+      in_tree(config: "[tests]\nprest = \"rspec\"\n") do |root, _home|
+        told = []
+
+        expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
+        expect(told.join).to include("[tests]", "prest")
+      end
+    end
+
+    # `.for` is what a chat reaches, so the run it builds is the board's.
+    it "hands the board the project's layout, which every tool guard reads" do
+      in_tree(config: "[tests]\npreset = \"rspec\"\nsource_roots = [\"app\"]\n") do |root, home|
+        expect(board_for(root, home).test_layout.guard.layout.in_force?).to be(true)
+      end
+    end
+
+    it "tells the human through the board's notice seam when the table is malformed" do
+      in_tree(config: "[tests]\nprest = \"rspec\"\n") do |root, home|
+        told = []
+
+        board = board_for(root, home, notice: told.method(:push))
+
+        expect(board.test_layout.layout).to be(Lain::TestLayout::None)
+        expect(told.join).to include("[tests]", "ignored")
+      end
+    end
+
+    it "ignores a file that will not parse, and says so" do
+      in_tree(config: "[tests\n") do |root, _home|
+        told = []
+
+        expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
+        expect(told.join).to include("[tests]")
+      end
+    end
+  end
+
   describe ".shell_verdict" do
     def verdict_at(root, notice: nil) = described_class.shell_verdict(project: project_at(root), notice:)
 

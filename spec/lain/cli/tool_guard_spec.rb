@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # The Switchboard's side of this seam. Only the two slots {ToolGuard} reads --
 # a real Ledger and a real Queue, never doubles, because every claim here is
@@ -9,7 +11,7 @@ require "stringio"
 # ledger from a freshly constructed second one, which is exactly the mistake
 # this file exists to catch.
 class ToolGuardSpecBoard
-  attr_reader :ledger, :approvals, :sensitivity
+  attr_reader :ledger, :approvals, :sensitivity, :test_layout
 
   # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
   # for this file's own reason, one slot over: the claim is that the listing
@@ -17,12 +19,18 @@ class ToolGuardSpecBoard
   # filter built beside it, and a double answering `filter` cannot tell those
   # apart. The default is the live one because that is what {CLI::Wiring} now
   # builds; a queueless board with no classifier passes the Null.
-  def initialize(approvals: nil, sensitivity: nil)
+  def initialize(approvals: nil, sensitivity: nil, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
+    @test_layout = test_layout
     @sensitivity = sensitivity || Lain::Sensitivity::Policy.new(
       sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
     )
+  end
+
+  # The one value a real {Lain::CLI::Switchboard} holds, over these same slots.
+  def guard_inputs
+    @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:)
   end
 end
 
@@ -76,10 +84,34 @@ RSpec.describe Lain::CLI::ToolGuard do
   def read_call(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
   describe "the stack it builds" do
-    it "puts the write, read and listing guards in the tool phase, in that order" do
+    it "puts the write, read, listing and test layout guards in the tool phase, in that order" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths])
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+    end
+
+    # Everything the guards are built over is ONE value on the board, so a
+    # board answering nothing else is enough to build the stack from.
+    it "reads every input off the board's one value" do
+      inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: queue,
+                                                sensitivity: Lain::Sensitivity::Policy::Null.instance,
+                                                test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+      bare = Data.define(:guard_inputs).new(guard_inputs: inputs)
+
+      read = described_class.stack(chronicle, bare).to_a.grep(Lain::Middleware::RedactSecretReads).first
+
+      expect(read.ledger).to be(inputs.ledger)
+      expect(read.queue).to be(queue)
+    end
+
+    # The board's ONE run, for the ledger's reason: a second would keep a
+    # second constant index and say the absence of a layout a second time.
+    it "judges writes through the board's own layout run, at the project root alone" do
+      board = ToolGuardSpecBoard.new
+      layout = guards(board).grep(Lain::Middleware::GuardTestLayout).first
+
+      expect(layout.run).to be(board.test_layout)
+      expect(layout.roots).to eq([board.test_layout.root])
     end
 
     # This example was the Null pin -- "wires the listing guard with the Null
@@ -197,6 +229,104 @@ RSpec.describe Lain::CLI::ToolGuard do
       read_guard(board).ledger.release("/repo/.env", regions)
 
       expect(board.ledger.released?("/repo/.env", regions.first.digest)).to be(true)
+    end
+  end
+
+  # A child's stack is the parent's, guard for guard, over the same board --
+  # except that a child leased into a checkout of its own writes THERE, so its
+  # layout guard also holds that checkout's root. The layout is repo-relative,
+  # so the checkout maps onto the project path for path.
+  describe ".child_stack" do
+    def layout_of(stack) = stack.to_a.grep(Lain::Middleware::GuardTestLayout).first
+
+    def env_at(cwd, checkout: nil) = Lain::WorkerEnv.default.with(cwd:, checkout:)
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @project = File.join(dir, "project")
+        @checkout = File.join(dir, "checkout")
+        FileUtils.mkdir_p([File.join(@project, "lib"), @checkout])
+        File.write(File.join(@checkout, ".git"), "gitdir: #{File.join(@project, ".git")}\n")
+        example.run
+      end
+    end
+
+    let(:run) { Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::TestLayout::None, root: @project) }
+    let(:board) { ToolGuardSpecBoard.new(test_layout: run) }
+
+    it "is the parent's stack, guard for guard" do
+      expect(described_class.child_stack(chronicle, board, env_at(@checkout, checkout: @checkout)).to_a.map(&:class))
+        .to eq(guards(board).map(&:class))
+    end
+
+    it "judges a leased child's writes at its own checkout too, through the board's one run" do
+      layout = layout_of(described_class.child_stack(chronicle, board, env_at(@checkout, checkout: @checkout)))
+
+      expect(layout.run).to be(board.test_layout)
+      expect(layout.roots).to eq([@project, @checkout])
+    end
+
+    it "judges an unleased child standing in another repository at the project root alone" do
+      expect(layout_of(described_class.child_stack(chronicle, board, env_at(@checkout))).roots).to eq([@project])
+    end
+
+    it "judges an unleased child standing in the project at the project root alone" do
+      expect(layout_of(described_class.child_stack(chronicle, board, env_at(File.join(@project, "lib")))).roots)
+        .to eq([@project])
+    end
+  end
+
+  # Out of chat there is no board to borrow: the run builds its own, once, and
+  # every child it spawns reads behind a stack over that one board.
+  describe ".detached" do
+    let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
+
+    def detached_read(stack, path)
+      Sync do
+        stack.call({ effect: read_call(path), context: Lain::Session.new }) do |inner|
+          invocation = Lain::Tool::Invocation.new(tool_use_id: inner.fetch(:effect).tool_use_id,
+                                                  context: inner.fetch(:context))
+          inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
+        end
+      end.fetch(:result).content
+    end
+
+    def detached_guards(thunk) = thunk.call(Lain::WorkerEnv.default).to_a
+
+    it "answers a thunk building the chat's four guards, in the chat's order" do
+      expect(detached_guards(described_class.detached(journal:)).map(&:class))
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+    end
+
+    # The thunk is called once per child, and every child must release into the
+    # same ledger or a region one of them released stays masked for the next.
+    it "builds every stack over ONE ledger, however many children ask" do
+      thunk = described_class.detached(journal:)
+      first, second = Array.new(2) { detached_guards(thunk).grep(Lain::Middleware::RedactSecretReads).first }
+
+      expect(first).not_to be(second)
+      expect(first.ledger).to be(second.ledger)
+    end
+
+    it "records into the journal it was handed" do
+      read = detached_guards(described_class.detached(journal:)).grep(Lain::Middleware::RedactSecretReads).first
+
+      expect(read.journal).to be(journal)
+    end
+
+    # Nobody is at an out-of-chat run's surface to release a region, and the
+    # chat's unattended stand-in APPROVES. This one must not.
+    it "masks a credential region, because nobody out of chat can release it" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "creds.txt")
+        File.write(path, "harmless line\naws_access_key_id = #{secret}\ntail\n")
+
+        content = detached_read(described_class.detached(journal:).call(Lain::WorkerEnv.default), path)
+
+        expect(content).to include("<redacted:1>").and include("harmless line")
+        expect(content).not_to include(secret)
+      end
     end
   end
 

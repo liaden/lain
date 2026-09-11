@@ -27,6 +27,7 @@ RSpec.describe Lain::Supervisor do
 
   def actor_tool(*responses, journal: Lain::Channel::Null.instance)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider: Lain::Provider::Mock.new(responses:),
       context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
       toolset: Lain::Toolset.new([EchoTool.new]),
@@ -57,6 +58,7 @@ RSpec.describe Lain::Supervisor do
 
   def parking_tool(entered:, release:, journal: Lain::Channel::Null.instance)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider: SupervisorParkProvider.new(entered:, release:, responses: [text_response("late")]),
       context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
       toolset: Lain::Toolset.new([EchoTool.new]),
@@ -548,6 +550,7 @@ RSpec.describe Lain::Supervisor do
     # The child's first turn calls the probe, then settles.
     def probing_actor_tool(collector)
       Lain::Tools::Subagent.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: Lain::Provider::Mock.new(responses: [tool_response(%w[p env_probe] << {}), text_response("done")]),
         context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
         toolset: Lain::Toolset.new([EnvProbe.new(collector)]),

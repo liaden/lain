@@ -365,6 +365,36 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         expect(child_sensitivity.board.call.sensitivity).to be(parent_policy)
       end
 
+      # The tool guard, the fourth thing a child inherits over the board: the
+      # SAME stack the parent's tool phase runs, built over the SAME board, so
+      # a child's read releases into the run's one ledger and parks on its one
+      # queue. Asserted by identity for {Lain::CLI::ToolGuard}'s own reason.
+      describe "the tool guard a child runs behind" do
+        def child_guards
+          toolset_build.build(recorder, ask_human:)
+          toolset_build.role_spawn.seam.tool_middleware.call(Lain::WorkerEnv.default).to_a
+        end
+
+        it "judges a child's writes by the board's one test layout run" do
+          expect(child_guards.grep(Lain::Middleware::GuardTestLayout).first.run).to be(switchboard.test_layout)
+        end
+
+        it "is the parent's tool-phase stack, guard for guard" do
+          expect(child_guards.map(&:class)).to eq(Lain::CLI::ToolGuard.stack(chronicle, switchboard).to_a.map(&:class))
+        end
+
+        it "releases into the board's own ledger and parks on the board's own queue" do
+          read = child_guards.grep(Lain::Middleware::RedactSecretReads).first
+
+          expect(read.ledger).to be(switchboard.ledger)
+          expect(read.queue).to be(switchboard.approvals)
+        end
+
+        it "withholds a listing through the board's own filter" do
+          expect(child_guards.grep(Lain::Middleware::WithholdSecretPaths).first.filter).to be(sensitivity.filter)
+        end
+      end
+
       # And that the delegator really delegates: a child's gate asking
       # `gates?` must reach that policy, not a Null it was quietly built with.
       # The parent's own gate is driven beside it, over the same effect, so the
@@ -662,6 +692,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(seam.permits.include?(:bash)).to be(true)
       expect(seam.sensitivity.gates?(Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "read_file",
                                                                 input: { "path" => ".env" }))).to be(false)
+      expect(seam.tool_middleware.call(Lain::WorkerEnv.default).to_a.grep(Lain::Middleware::RedactSecretReads).first.queue)
+        .to be(Lain::Middleware::RedactSecretReads::Unqueued.instance)
     end
 
     # The live thunk reads nil until {Wiring#build_agent} has run. That must
@@ -685,6 +717,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect { seam.permits.include?(:bash) }.to raise_error(NoMethodError, /mode_switch/)
       expect { seam.gate_policy.call(nil, nil) }.to raise_error(NoMethodError, /policy_switch/)
       expect { seam.sensitivity.gates?(nil) }.to raise_error(NoMethodError, /sensitivity/)
+      expect { seam.tool_middleware.call(Lain::WorkerEnv.default) }.to raise_error(NoMethodError, /guard_inputs/)
     end
 
     # The pair arrives as one keyword and it is required: a forgotten library

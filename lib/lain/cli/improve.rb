@@ -20,14 +20,13 @@ module Lain
     #
     # == The guard is self-built
     #
-    # The role-spawn seam builds a child's dispatch WITHOUT tool middleware, so
-    # an `improvement_write` whose input looked like a credential would reach
-    # the sink unguarded -- and the improvements file is durable and
-    # cross-project. This class therefore builds the improver's OWN dispatch
-    # chain and mounts {Middleware::RefuseSecretWrites} in its tool phase,
-    # exactly as {Lain::Consolidation} does for the clerk, RoleSpawn having no
-    # tool_middleware seam of its own. A refusal is contained: the improver's
-    # loop continues on the error result.
+    # The improver is built here rather than spawned, and no chat lends it a
+    # guard, so it runs the stack a detached run builds for itself
+    # ({ToolGuard.detached}): an `improvement_write` whose input looked like a
+    # credential is refused before the durable, cross-project sink, and a
+    # credential region in a file it reads stays masked, since nobody is there
+    # to release it. A refusal is contained: the improver's loop continues on
+    # the error result.
     #
     # == Fresh-root
     #
@@ -170,8 +169,6 @@ module Lain
                    scaffold: Scaffold.new(Journal.records(File.foreach(path)).to_a))
       end
 
-      # The point of this class: a tool-phase {Middleware::RefuseSecretWrites}
-      # the spawn seam would not have supplied.
       def build_improver(session)
         allowed = role.attenuate(improver_union(session))
         Agent.new(
@@ -195,8 +192,8 @@ module Lain
 
       def improver_context = role.child_context(@context, slots: @slots)
 
-      # Journals {Telemetry::WriteRefused} to the raw `@journal`.
-      def guard_stack = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)])
+      # Refusals and masks are recorded into the raw `@journal`.
+      def guard_stack = ToolGuard.detached(journal: @journal).call(WorkerEnv.default)
 
       def role = @role ||= Role::Catalog.fetch(ROLE)
     end

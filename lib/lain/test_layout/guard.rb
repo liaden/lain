@@ -51,6 +51,12 @@ module Lain
         def to_s = reason
       end
 
+      # Every rule a verdict can be refused under, published so a caller
+      # setting policy per rule, and a record naming the rule it refused
+      # under, read the one list rather than each keeping a copy.
+      REFUSING = %i[stray no_describe not_a_constant unparseable source_unparseable no_source elsewhere level
+                    ambiguous missing].freeze
+
       # What a test file says about itself: the constants its top-level
       # describes name, what any other describe names instead, and every
       # level its groups and examples are tagged with.

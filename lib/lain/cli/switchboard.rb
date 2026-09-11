@@ -52,7 +52,7 @@ module Lain
       # silently releases nothing. Constructed for a queueless session too: the
       # posture decides who is asked, not whether the run has somewhere to
       # record an answer.
-      attr_reader :approvals, :ladder, :ledger, :policy_switch, :model_switch, :mode_switch, :toolset, :sensitivity
+      attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset
 
       # The wiring entry: resolves the journal the chronicle carries, then
       # builds the switches over it. `--auto-approve` is deliberately NOT read
@@ -84,17 +84,28 @@ module Lain
       # @param classifiers [#call] the triage rung's `cwd -> #classify` factory,
       #   on `new`'s terms
       # @param verdict [#call] the triage rung's shell verdict, on `new`'s terms
+      # @param test_layout [Middleware::GuardTestLayout::Run] the session's
+      #   one test layout run. REQUIRED here: a chat with no layout decision
+      #   behind it is a mis-wire, not a default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal -- the only flag this entry reads off `options`, so
       #   a board built here differs from `new` in exactly that one resolution
       # @return [Switchboard]
-      def self.for(chronicle:, options:, model:, toolset:, rules: [],
+      def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [],
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:, classifiers:, verdict:,
-            attended: !options[:non_interactive])
+            test_layout:, attended: !options[:non_interactive])
       end
+
+      # What the tool guard is built over, as ONE value: the ledger and the
+      # path policy described above, the approval queue, and the session's one
+      # test layout run, which the parent's guard and every child's read, so
+      # they hold one layout and say its absence once.
+      attr_reader :guard_inputs
+
+      delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
 
       # @param journal [#record] where flips and approval decisions land
       # @param model [String] the model in force until the first /model
@@ -154,19 +165,21 @@ module Lain
       #   refusing beats the two alternatives. Spelled positively all the way
       #   down the chain ({CLI::Wiring#attended?}, {Repl}, {Wiring::Askers}), so
       #   no reader has to un-negate it twice.
+      # @param test_layout [Middleware::GuardTestLayout::Run] as on {.for};
+      #   a board of its own that declares no layout by default, so the
+      #   direct-construction seams a spec drives enforce nothing
       def initialize(journal:, model:, toolset:, rules: [],
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
-                     verdict: Lain::Shell::Verdict.new, attended: true)
+                     verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
+                     attended: true)
         @attended = attended
-        @sensitivity = sensitivity
         # The rung itself, not the two things it is built from: a board that
         # held them apart would be holding a constructor's argument list, and
         # both are read at exactly one place. It is frozen and holds no state,
         # so building it before the ladder that may not want it costs nothing.
         @triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict:)
         @rules = rules.to_a.freeze
-        @ledger = Sensitivity::Ledger.new
         # Kept, where the switches merely borrow it: {#gate}'s path refusals
         # are journaled as they happen, and re-resolving one per gate would
         # leak an fd -- {Chronicle::Null#record_journal} opens the null device
@@ -175,6 +188,8 @@ module Lain
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:) if @attended
+        @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
+                                              test_layout:)
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(posture: :accept_edits), journal:)

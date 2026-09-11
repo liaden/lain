@@ -223,7 +223,7 @@ RSpec.describe LainCLI do
       # a reading of the Null chronicle and not of an unwired instrumentation.
       expect(instrumentation.tool_middleware.to_a.map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths])
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
     end
   end
 

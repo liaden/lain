@@ -19,6 +19,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
 
   def actor_tool(*responses, policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []))
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider: Lain::Provider::Mock.new(responses:),
       context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
       toolset: Lain::Toolset.new([EchoTool.new]), policy:, parent: parent_timeline,
@@ -233,6 +234,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
 
     def parking_actor_tool(entered:)
       Lain::Tools::Subagent.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: ParkingChildProvider.new(entered:),
         context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
         toolset: Lain::Toolset.new([EchoTool.new]),

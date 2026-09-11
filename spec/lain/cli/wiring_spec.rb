@@ -2434,7 +2434,7 @@ RSpec.describe Lain::CLI::Wiring do
 
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
             .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                    Lain::Middleware::WithholdSecretPaths])
+                    Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
           expect(listing_guard(board).filter).to be(board.sensitivity.filter)
           expect(listing_guard(board).filter).not_to be(Lain::Sensitivity::Filter::Null.instance)
         end

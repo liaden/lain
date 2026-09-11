@@ -373,6 +373,7 @@ RSpec.describe Lain::Approval::AutoSurface do
       project = project_at(root)
       table = Lain::CLI::Wiring::BoardBuild.rules(project:)
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m", toolset:,
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
                                  rules: Lain::Project::Consent.for(project:).rules,
                                  sensitivity: Lain::CLI::Wiring::BoardBuild.policy(project:, paths: paths_at(home),
                                                                                    table:))

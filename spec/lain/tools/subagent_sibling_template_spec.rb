@@ -24,6 +24,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
 
   def build_tool(provider:, policy:, journal: Lain::Channel::Null.instance, context: child_context)
     Lain::Tools::Subagent.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { context }, toolset: union, policy:,
       parent:, journal:, budget: Lain::Agent::Budget.new, max_depth: 3
     )
@@ -204,6 +205,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
     journal = Lain::Channel.new
     provider = mock(text_response("actor done"))
     tool = described_class.new(
+      tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { child_context }, toolset: union,
       policy: policy(prefix: sibling_template.new(template: "tiny"), posture: :schema),
       parent:, journal:, budget: Lain::Agent::Budget.new,

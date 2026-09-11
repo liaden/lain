@@ -34,8 +34,9 @@ RSpec.describe Lain::CLI::EpicSubmit::Adjudication do
     )
   end
 
-  def pair(gates = adjudicating, backend: -> { backend("the evidence") }, **seam)
-    described_class.pair(config: config(gates), paths:, root:, backend:, **seam)
+  def pair(gates = adjudicating, backend: -> { backend("the evidence") },
+           tool_middleware: ToolRegistry::UNGUARDED, **rest)
+    described_class.pair(config: config(gates), paths:, root:, backend:, tool_middleware:, **rest)
   end
 
   def text_of(result)
@@ -76,29 +77,32 @@ RSpec.describe Lain::CLI::EpicSubmit::Adjudication do
 
     # A child spawned here gets no tool middleware from any chat, so the guard
     # its reads go through must be HANDED IN -- and the spawn seam is where a
-    # guard reaches a child. Every further seam member is forwarded verbatim.
-    it "forwards further spawn-seam members, which is where a guard is handed in" do
-      marker = Object.new
+    # guard reaches a child.
+    it "hands its spawned children the tool middleware it was given" do
+      guard = ->(_worker_env) { Lain::Middleware::Stack.new }
 
-      expect(pair(gate_policy: marker).role_spawn.seam.gate_policy).to be(marker)
-    end
-
-    it "refuses a seam member the spawn seam does not carry, naming it" do
-      expect { pair(tool_middlewere: Object.new) }.to raise_error(ArgumentError, /tool_middlewere/)
+      expect(pair(tool_middleware: guard).role_spawn.seam.tool_middleware).to be(guard)
     end
   end
 
-  # The forwarded members are checked on EVERY path: a typo that only raised
-  # once some stage was adjudicated would wait for the night it mattered.
-  describe "the seam members it forwards" do
-    it "refuses a misspelt member even when nothing is adjudicated" do
+  # The guard is the one seam member the pair takes, and it takes it by name,
+  # on EVERY path: a guard that was only required once some stage was
+  # adjudicated would be missed on the night it mattered.
+  describe "the tool middleware it requires" do
+    it "refuses a pair built with no tool middleware, even when nothing is adjudicated" do
+      expect do
+        described_class.pair(config: config(interactive), paths:, root:, backend: -> { raise "built a backend" })
+      end.to raise_error(ArgumentError, /tool_middleware/)
+    end
+
+    it "refuses a misspelt keyword even when nothing is adjudicated" do
       expect { pair(interactive, backend: -> { raise "built a backend" }, tool_middlewere: :guard) }
         .to raise_error(ArgumentError, /tool_middlewere/)
     end
 
-    %i[provider context_factory parent].each do |owned|
-      it "refuses #{owned}, which the pair sets itself" do
-        expect { pair(owned => :smuggled) }.to raise_error(ArgumentError, /#{owned}/)
+    %i[provider context_factory parent gate_policy].each do |member|
+      it "takes no #{member}, which is not the pair's to be handed" do
+        expect { pair(member => :smuggled) }.to raise_error(ArgumentError, /#{member}/)
       end
     end
   end

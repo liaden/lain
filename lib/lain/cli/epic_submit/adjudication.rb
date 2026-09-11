@@ -28,10 +28,6 @@ module Lain
         # model turn needs a ceiling.
         MAX_TOKENS = 4_096
 
-        # The seam members the pair sets itself, from the backend. Forwarding
-        # one would silently replace the provider the flags chose.
-        OWNED = %i[provider context_factory parent].freeze
-
         # @param config [#gate_policy_for]
         def self.wanted?(config)
           Lain::Epic::STAGES.any? do |stage|
@@ -45,18 +41,18 @@ module Lain
         # @param backend [#call] answers a {Backend}-shaped duck (`#provider`,
         #   `#context`, `#slots`), and is CALLED only when a stage is
         #   adjudicated -- which is what keeps the provider unbuilt otherwise
-        # @param seam [Hash] further {Tools::Subagent::Seam} members, forwarded
-        #   verbatim: the spawn seam is where a guard reaches a child, so it is
-        #   where a tool guard for the spawned children is handed in
+        # @param tool_middleware [#call] the guard the spawned children run
+        #   behind, as the thunk {Tools::Subagent::Seam} carries. Required on
+        #   every path, adjudicated or not: out of chat no guard reaches a child
+        #   unless it is handed in here, and a default would be how one went
+        #   without in silence.
         # @return [Pair]
-        # @raise [ArgumentError] naming a member that cannot be forwarded,
-        #   whether or not any stage is adjudicated
-        def self.pair(config:, paths:, root:, backend:, **seam)
-          ensure_forwardable!(seam)
+        def self.pair(config:, paths:, root:, backend:, tool_middleware:)
           return NONE unless wanted?(config)
 
           built = backend.call
-          spawner = new(provider: built.provider, context_factory: -> { built.context }, slots: built.slots, **seam)
+          spawner = new(provider: built.provider, context_factory: -> { built.context }, slots: built.slots,
+                        tool_middleware:)
           Pair.new(role_spawn: spawner.role_spawn, brief: Brief.new(config:, paths:, root:))
         end
 
@@ -72,23 +68,9 @@ module Lain
             max_tokens: options[:max_tokens] || MAX_TOKENS }.compact
         end
 
-        # Checked on EVERY path, adjudicated or not: a typo that only raised
-        # once some stage was adjudicated would wait for the night it mattered.
-        #
-        # @raise [ArgumentError] naming each member that cannot be forwarded
-        def self.ensure_forwardable!(seam)
-          refused = seam.keys - (Lain::Tools::Subagent::Seam.members - OWNED)
-          return if refused.empty?
-
-          raise ArgumentError, "the adjudication pair cannot forward #{refused.map(&:inspect).join(", ")} to its " \
-                               "spawn seam -- it sets #{OWNED.join(", ")} itself, and forwards only " \
-                               "#{(Lain::Tools::Subagent::Seam.members - OWNED).join(", ")}"
-        end
-
-        # @raise [ArgumentError] naming a seam member that cannot be forwarded
-        def initialize(provider:, context_factory:, slots:, **seam)
-          self.class.ensure_forwardable!(seam)
-          @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, parent: Lain::Timeline.empty, **seam)
+        def initialize(provider:, context_factory:, slots:, tool_middleware:)
+          @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, parent: Lain::Timeline.empty,
+                                                  tool_middleware:)
           @slots = slots
         end
 

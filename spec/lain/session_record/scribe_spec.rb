@@ -51,6 +51,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   def subagent(parent, child_responses, prefix:)
     Lain::Tools::Subagent.new(
       seam: Lain::Tools::Subagent::Seam.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
         provider: Lain::Provider::Mock.new(responses: child_responses),
         context_factory: -> { child_context }, parent:, observer: ->(event) { scribe.call(event) }
       ),
