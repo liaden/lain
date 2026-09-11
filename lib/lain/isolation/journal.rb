@@ -34,6 +34,12 @@ module Lain
       # @return [#name, #tip, #current_in?] the wrapped backend's working branch
       def base = @backend.base
 
+      # Forwarded for the same reason: a handback record says whether release
+      # kept a dirty checkout, and only the backend that released it knows.
+      # @param path [String] a lease's checkout, as its origin names it
+      # @return [Boolean]
+      def retained?(path) = @backend.retained?(path)
+
       # @param worker_id [Object] the worker leasing an environment
       # @return [Lease] wraps the backend's own lease so its release is
       #   journaled too

@@ -189,6 +189,12 @@ module Lain
       # @return [#name, #tip, #current_in?] the inner backend's working branch
       def base = @inner.base
 
+      # Forwarded: whether release kept a dirty checkout is the inner
+      # backend's to answer.
+      # @param path [String] a lease's checkout, as its origin names it
+      # @return [Boolean]
+      def retained?(path) = @inner.retained?(path)
+
       # The lease's WorkerEnv carries the inner cwd plus the service URLs, and
       # its release tears the stack down then releases inner, whose origin it
       # hands back unchanged.

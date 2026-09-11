@@ -556,12 +556,15 @@ module Lain
       # `chat_preflight:` is injected for a reason a spec cannot get around: the
       # real one SPAWNS the launching binary, which under rspec is rspec. A
       # group driving real tmux hands in a no-op so it keeps measuring tmux.
+      # `gc_schedule:` spawns the launching binary too, and declines to when
+      # that binary is not lain.
       def initialize(session: DEFAULT_SESSION, socket: nil, cwd: Dir.pwd,
                      state_path: ProjectDir.new(root: cwd).state_path,
                      chat_command: nil, chat_args: [], status_interval: Hud::DEFAULT_INTERVAL,
                      nvim: nil, paths: Paths.new,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new),
-                     chat_preflight: ChatPreflight.new(shell_out_factory:, cwd:))
+                     chat_preflight: ChatPreflight.new(shell_out_factory:, cwd:),
+                     gc_schedule: GcSchedule.for(cwd:, paths:))
         @session = session
         @tmux = Tmux.new(socket:, shell_out_factory:)
         @cwd = cwd
@@ -571,13 +574,16 @@ module Lain
         @cockpit = Cockpit.new(option: nvim, cwd:, paths:)
         @binaries = Binaries.new(shell_out_factory:)
         @chat_preflight = chat_preflight
-        @warnings = []
+        @gc_schedule = gc_schedule
       end
 
       # @return [Report]
       # @raise [TmuxUnavailable] no tmux on PATH, or a real tmux failure --
       #   never a bare Errno/Mixlib exception past this boundary.
       def call
+        # Per call, so a second launch through one Up reports only its own.
+        @warnings = []
+        @gc_schedule.call
         created = !session_exists?
         created ? create_session : reattach_session
         configure_session

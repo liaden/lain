@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "tmpdir"
 require "mixlib/shellout"
 
 # Runs the REAL `git` -- the worktree backend genuinely checks out, and git is
@@ -454,6 +455,45 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
       lease.release
       expect(system("sh", "-c", "psql -lqt | cut -d'|' -f1 | grep -qw #{db}")).to be(false)
       expect(File.directory?(lease.worker_env.cwd)).to be(false)
+    end
+  end
+
+  # Public, so every reader of a repository's worktrees -- the chat backend
+  # and the reaper alike -- answers from this one search and one formula.
+  describe "the shared repository search" do
+    around do |example|
+      Dir.mktmpdir("lain-backend-search") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:search_paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+
+    def found_from(dir)
+      described_class.repository_in(described_class.search_from(dir, paths: search_paths, home: Dir.home))
+    end
+
+    it "finds the nearest ancestor holding a .git entry" do
+      repo = File.join(@dir, "repo")
+      FileUtils.mkdir_p(File.join(repo, ".git"))
+      FileUtils.mkdir_p(File.join(repo, "a", "b"))
+
+      expect(found_from(File.join(repo, "a", "b"))).to eq(repo)
+    end
+
+    it "answers empty outside any repository" do
+      expect(found_from(@dir)).to eq("")
+    end
+
+    it "refuses a search with no usable home" do
+      expect { described_class.search_from(@dir, paths: search_paths, home: nil) }
+        .to raise_error(Lain::Project::Resolver::UnusableHome)
+    end
+
+    it "keys a repository's worktree root under state_home" do
+      expect(described_class.worktree_root("/r", paths: search_paths))
+        .to eq(File.join(search_paths.state_home, "worktrees", search_paths.project_hash("/r")))
     end
   end
 end

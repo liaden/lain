@@ -17,6 +17,8 @@ end
 require_relative "cli/env_defaults"
 require_relative "cli/backend"
 require_relative "cli/isolation_backend"
+require_relative "cli/worktrees"
+require_relative "cli/gc_schedule"
 require_relative "cli/exec_backend"
 require_relative "cli/compaction_strategy"
 require_relative "cli/chronicle"

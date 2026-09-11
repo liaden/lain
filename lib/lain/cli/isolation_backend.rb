@@ -31,13 +31,13 @@ module Lain
     #
     # ONE PROJECT, ONE CONCURRENT ISOLATED RUN -- a precondition of this
     # backend, and a deliberate trade. The worktree root is keyed on the
-    # REPOSITORY (see {#worktree_root}) and worker ids restart from 1 per
+    # REPOSITORY (see {.worktree_root}) and worker ids restart from 1 per
     # process, so two concurrent `--isolation worktree` runs of one project
-    # target identical checkout paths; {Isolation::Worktree}'s already-leased
-    # guard is a per-instance Set, so the second run's `#reap` would
-    # force-remove the first's LIVE checkout. The repo-keyed root is what lets
-    # that reap clear a CRASHED run's leftovers before the next add, which a
-    # per-run root would leak forever.
+    # target identical checkout paths. The second run's acquire finds the
+    # first's checkout locked by a live process and REFUSES, naming it, rather
+    # than touching it ({Isolation::Worktree::Leftover}). The repo-keyed root
+    # is what lets a later run clear a CRASHED run's leftovers -- moved aside,
+    # never destroyed -- which a per-run root would leak forever.
     class IsolationBackend
       # An unrecognized `--isolation` name. Subclasses {Lain::Error} next to
       # the object that raises it, so the exe layer maps it to a clean
@@ -81,6 +81,52 @@ module Lain
 
       # @return [#acquire] the resolved, decorated backend
       def self.resolve(...) = new(...).backend
+
+      # The ancestry a repository search may climb from `root`. Public, with
+      # {.repository_in} and {.worktree_root}, so the chat backend and the
+      # reaper find one repository and one worktree root, never two.
+      #
+      # THE SAME STOP RULE as the project resolver, and it is not decoration.
+      # This walk once had no ceiling, so on a box whose `$HOME` is itself a
+      # git work-tree -- the `~/.cfg` dotfiles convention -- a chat started
+      # anywhere under home resolved HOME as the repository and branched
+      # worker checkouts off the dotfiles repo. {Project::Resolver::Walk} cuts
+      # the ancestry at the first refused directory, so a repository BELOW one
+      # is still found and one AT or above it is not reachable at all.
+      #
+      # @param root [String] a resolved absolute directory
+      # @param paths [Paths] supplies the XDG bases the stop rule names
+      # @param home [String, nil] the user's home directory
+      # @return [Project::Resolver::Walk]
+      # @raise [Project::Resolver::UnusableHome] when `home` cannot bound the search
+      def self.search_from(root, paths:, home:)
+        refusals = Project::Resolver::Refusals.new(cwd: root, home: Project::Resolver::Home.new(home, File),
+                                                   paths:, filesystem: File)
+        Project::Resolver::Walk.new(cwd: root, refusals:)
+      end
+
+      # `.git` is a FILE inside a linked worktree and a directory in a primary
+      # one, and `exist?` covers both, which is why {Project::Resolver::GIT_ENTRY}
+      # is shared rather than re-spelled: two walks looking for the same thing
+      # must agree on what it looks like.
+      #
+      # @param walk [Project::Resolver::Walk]
+      # @return [String] the nearest directory holding a `.git` entry, or "" for none
+      def self.repository_in(walk)
+        walk.find { |dir| File.exist?(File.join(dir, Project::Resolver::GIT_ENTRY)) } || ""
+      end
+
+      # Keyed on the REPOSITORY, never on the cwd: two runs started in
+      # different subdirectories of one project lease out of one root (so the
+      # clearing of a leftover checkout finds it), while two projects never
+      # collide. Under {Paths#state_home}, not the tmpfs runtime dir, because a
+      # checkout is retained for `[isolation] retain_days` and a reboot must not
+      # cut that short.
+      #
+      # @param repo [String] the repository, as {.repository_in} found it
+      # @param paths [Paths]
+      # @return [String]
+      def self.worktree_root(repo, paths:) = File.join(paths.state_home, "worktrees", paths.project_hash(repo))
 
       # `realpath`, not `expand_path`. This object and {Project::Resolver} both
       # ascend for `.git`, and they once ascended DIFFERENT ancestries: a
@@ -145,8 +191,8 @@ module Lain
 
       def worktree
         repo = repo_root
-        Isolation::Worktree.new(root: worktree_root(repo), repo_root: repo, base: working_branch(repo),
-                                paths: @paths, shell_out_factory: @shell_out_factory)
+        Isolation::Worktree.new(root: self.class.worktree_root(repo, paths: @paths), repo_root: repo,
+                                base: working_branch(repo), paths: @paths, shell_out_factory: @shell_out_factory)
       end
 
       # Named HERE, which for chat is launch: the branch the parent stands on
@@ -157,31 +203,12 @@ module Lain
         Isolation::WorkingBranch.checked_out(repo_root: repo, shell_out_factory: @shell_out_factory)
       end
 
-      # Keyed on the REPOSITORY, never on the cwd: two runs started in
-      # different subdirectories of one project lease out of one root (so the
-      # reap of a leftover checkout finds it), while two projects never
-      # collide. Under {Paths#state_home}, not the tmpfs runtime dir, because a
-      # checkout is retained for `[isolation] retain_days` and a reboot must not
-      # cut that short.
-      def worktree_root(repo) = File.join(@paths.state_home, "worktrees", @paths.project_hash(repo))
-
       # The repository `git worktree add` branches from, found by ascending
-      # from the project. `.git` is a FILE inside a linked worktree and a
-      # directory in a primary one, and `exist?` covers both, which is why
-      # {Project::Resolver::GIT_ENTRY} is shared rather than re-spelled: two
-      # walks looking for the same thing must agree on what it looks like.
-      #
-      # THE SAME STOP RULE, and it is not decoration. This walk had no ceiling,
-      # so on a box whose `$HOME` is itself a git work-tree -- the `~/.cfg`
-      # dotfiles convention -- a chat started anywhere under home resolved HOME
-      # as the repository and branched worker checkouts off the dotfiles repo.
-      # {Project::Resolver::Walk} cuts the ancestry at the first refused
-      # directory, so a repository BELOW one is still found and one AT or above
-      # it is not reachable at all.
+      # from the project through {.search_from}.
       def repo_root
-        walk = Project::Resolver::Walk.new(cwd: @root, refusals:)
-        found = walk.find { |dir| File.exist?(File.join(dir, Project::Resolver::GIT_ENTRY)) }
-        return found if found
+        walk = search
+        found = self.class.repository_in(walk)
+        return found unless found.empty?
 
         raise NotARepository, "--isolation worktree needs a git repository to branch checkouts from, and " \
                               "#{@root} is not inside one up to #{walk.boundary} (#{walk.reason}); run it " \
@@ -191,9 +218,8 @@ module Lain
       # Built HERE and not in #initialize, so `--isolation none` pays neither
       # the `stat` per ancestor nor the {Project::Resolver::UnusableHome}
       # refusal an absent `$HOME` earns: only the worktree branch walks.
-      def refusals
-        Project::Resolver::Refusals.new(cwd: @root, home: Project::Resolver::Home.new(@home, File),
-                                        paths: @paths, filesystem: File)
+      def search
+        self.class.search_from(@root, paths: @paths, home: @home)
       rescue Project::Resolver::UnusableHome => e
         raise UnboundedSearch, e
       end

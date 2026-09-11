@@ -27,6 +27,11 @@ RSpec.describe Lain::Isolation::Null do
     expect(backend.base).to equal(Lain::Isolation::WorkingBranch::NONE)
   end
 
+  # No checkout is cut, so none is ever kept back on release.
+  it "never retains a checkout" do
+    expect(backend.retained?("/any/path")).to be(false)
+  end
+
   describe "the lease" do
     subject(:lease) { backend.acquire("worker-1") }
 

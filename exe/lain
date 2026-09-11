@@ -423,6 +423,18 @@ class LainCLI < Thor
     end
   end
 
+  # The worktrees subcommand, on the same thin-wiring rule as epic:
+  # Lain::CLI::Worktrees finds the repository, runs the reaper and returns a
+  # String; this class says it.
+  class Worktrees < Thor
+    include Boundary
+
+    def self.exit_on_failure? = true
+
+    desc "gc", "Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere"
+    def gc = render { Lain::CLI::Worktrees.new(root: Lain::Project::Resolver.default_project.root).gc }
+  end
+
   # The review subcommand, on the same thin-wiring rule as epic: Lain::CLI::Review
   # resolves the source, opens the round, and returns a String; this class parses
   # argv and says it.
@@ -661,6 +673,9 @@ class LainCLI < Thor
 
   desc "epic SUBCOMMAND ...ARGS", "The epic tier: artifact home, issue graph, and sign-off queue"
   subcommand "epic", Epic
+
+  desc "worktrees SUBCOMMAND", "lain's worker checkouts: gc reaps the ones whose work is safe elsewhere"
+  subcommand "worktrees", Worktrees
 
   desc "review [open] TARGET", "Review a pull request or a branch: `lain review 4821`, " \
                                "`lain review feature/foo`. Say `open` when the target " \

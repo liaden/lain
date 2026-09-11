@@ -16,6 +16,10 @@ module Lain
       # No checkout is cut, so there is no branch to hand work back to.
       # @return [WorkingBranch::NONE]
       def base = WorkingBranch::NONE
+
+      # No checkout is cut, so none is ever kept back on release.
+      # @return [false]
+      def retained?(_path) = false
     end
   end
 end

@@ -16,6 +16,8 @@ class FakeIsolationBackend
 
   def base = :the_working_branch
 
+  def retained?(path) = path == "/fake/retained"
+
   def acquire(worker_id)
     @acquired << worker_id
     Lease.new(worker_env: Lain::WorkerEnv.new(cwd: "/fake/#{worker_id}", env: {}))
@@ -36,6 +38,12 @@ RSpec.describe Lain::Isolation::Journal do
   # sits between that caller and the backend that knows it.
   it "answers the wrapped backend's working branch" do
     expect(decorator.base).to eq(:the_working_branch)
+  end
+
+  # A handback record says whether release kept a dirty checkout, and only the
+  # backend that released it knows.
+  it "answers whether the wrapped backend retained a checkout on release" do
+    expect([decorator.retained?("/fake/retained"), decorator.retained?("/fake/other")]).to eq([true, false])
   end
 
   describe "#acquire" do

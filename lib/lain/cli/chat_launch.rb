@@ -44,6 +44,9 @@ module Lain
       #   `context_window:` so published occupancy divides by the window the
       #   provider says it is serving rather than by {ContextWindow}'s
       #   conservative fallback -- see {Backend#context_window}.
+      # @param gc_schedule_factory [#call] builds the daily reap's {GcSchedule}
+      #   for the project's root; the real one spawns with the real process
+      #   spawner
       # @option options [Boolean] :journal whether the run records one
       # @option options [Boolean] :btw whether asides join the record
       # @option options [Boolean] :nvim whether the editor views open
@@ -58,6 +61,7 @@ module Lain
                      wiring_factory: Wiring.public_method(:new),
                      run_clock_factory: -> { Lain::RunClock.new },
                      project_factory: Lain::Project::Resolver.public_method(:default_project),
+                     gc_schedule_factory: GcSchedule.public_method(:new),
                      status_feed_factory: lambda { |run_clock:, context_window:|
                        Lain::StatusFeed.new(run_clock:, context_window:)
                      })
@@ -69,6 +73,7 @@ module Lain
         @run_clock_factory = run_clock_factory
         @project_factory = project_factory
         @status_feed_factory = status_feed_factory
+        @gc_schedule_factory = gc_schedule_factory
       end
 
       attr_reader :wiring, :live_views
@@ -85,10 +90,10 @@ module Lain
       def call(&notice)
         return preflight(&notice) if self.class.preflight?
 
-        refuse_windows_without_journal!
-        refuse_headless_without_prompt!
+        refuse_contradictory_flags!
         resumed = resumed_run(backend)
         resolve_project!
+        schedule_gc
         open_chronicle
         converse(backend:, resumed:, &notice)
       ensure
@@ -124,8 +129,7 @@ module Lain
       # @return [nil]
       # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
       def preflight(&notice)
-        refuse_windows_without_journal!
-        refuse_headless_without_prompt!
+        refuse_contradictory_flags!
         resolve_project!
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is
@@ -250,6 +254,13 @@ module Lain
                        "shell that has it"
       end
 
+      # The flag combinations that can never run, refused alike by a launch and
+      # by a pre-flight, before either reads the terminal or opens a record.
+      def refuse_contradictory_flags!
+        refuse_windows_without_journal!
+        refuse_headless_without_prompt!
+      end
+
       # --windows observes the live-view tee, which --no-journal never builds;
       # refuse loudly up front rather than opening a chat whose flag is silently
       # dead.
@@ -282,6 +293,10 @@ module Lain
       end
 
       def nvim_views = @live_views&.views
+
+      # Keyed on the project's root, so it waits for the resolution. A
+      # pre-flight never reaches it: that process only checks the flags.
+      def schedule_gc = @gc_schedule_factory.call(root: project.root).call
 
       # Instance state, because the ensure in #call closes the wiring's
       # conductor.

@@ -1129,7 +1129,9 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       expect(outcome.kind).to eq(:failed)
       expect(outcome.ref).to be_nil
       expect(journal.map(&:outcome)).to eq([:failed])
-      expect(worker_refs).to be_empty
+      # Release itself anchors a clean checkout's unreached commit before
+      # removing it, so a worker ref may exist; the handback wrote none of its own.
+      expect(worker_refs).not_to include(Lain::Isolation::Worktree::Handback::Naming.new("worker-1").ref)
     end
 
     # `update-ref <ref> <new> <old>` is git's compare-and-swap, and `<old>` is

@@ -55,6 +55,84 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
 
   def head_commit(dir) = run_git(dir, "rev-parse", "HEAD").strip
 
+  def lock_line(path)
+    registered_worktrees.split("\n\n").find { |entry| entry.include?("worktree #{path}\n") }
+                                      .to_s[/^locked.*$/].to_s
+  end
+
+  # A pid that existed a moment ago and has exited: what a crashed lain leaves
+  # in its lease lock.
+  def dead_pid = Process.spawn("true").tap { |pid| Process.wait(pid) }
+
+  # A backend whose leases name a process that is already gone, so a fresh
+  # backend in this same process reads them as a crash's leftovers.
+  def crashed_backend
+    described_class.new(repo_root: @repo_root, root: @root, base:,
+                        process_table: Lain::Isolation::LeaseLock::ProcessTable.new(pid: dead_pid))
+  end
+
+  describe "the lease lock" do
+    it "locks every checkout it adds, naming this process, its start time and this host" do
+      lease = backend.acquire("worker-1")
+
+      expect(lock_line(worktree_path("worker-1")))
+        .to match(/\Alocked lain-lease pid=#{Process.pid} start=\S+ host=#{Regexp.escape(Socket.gethostname)}\z/)
+    ensure
+      lease&.release
+    end
+
+    it "takes the lock in the add itself, so no moment exists without it" do
+      calls = []
+      real = Lain::Shell::Out.public_method(:new)
+      recording = lambda do |*argv, **kwargs|
+        calls << argv
+        real.call(*argv, **kwargs)
+      end
+
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: recording)
+                             .acquire("worker-1")
+      add = calls.find { |argv| argv.include?("add") }
+      reason = lock_line(worktree_path("worker-1")).delete_prefix("locked ")
+
+      expect(add[add.index("add")..])
+        .to eq(["add", "--lock", "--reason", reason, "--detach", worktree_path("worker-1"), base.tip])
+    ensure
+      lease&.release
+    end
+
+    it "clears a crash's leftover under worktree.useRelativePaths, where git records relative paths" do
+      run_git(@repo_root, "config", "worktree.useRelativePaths", "true")
+      crashed_backend.acquire("worker-1")
+
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:).acquire("worker-1")
+
+      expect(lease.worker_env.cwd).to eq(worktree_path("worker-1"))
+    ensure
+      lease&.release
+    end
+
+    it "refuses a leftover beside an interrupted lock claim, naming it" do
+      crashed_backend.acquire("worker-1")
+      path = worktree_path("worker-1")
+      admin = File.expand_path(File.read(File.join(path, ".git"))[/\Agitdir: (.+)$/, 1], path)
+      File.rename(File.join(admin, "locked"), File.join(admin, "locked.lain-claim-deadbeef0000"))
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
+
+      expect { restarted.acquire("worker-1") }.to raise_error(described_class::Refused, /interrupted lock claim/)
+      expect(File.directory?(path)).to be(true)
+    end
+
+    it "refuses to reap a leftover whose lock names a live process" do
+      held = backend.acquire("worker-1")
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
+
+      expect { restarted.acquire("worker-1") }.to raise_error(described_class::Refused, /live process #{Process.pid}/)
+      expect(File.directory?(held.worker_env.cwd)).to be(true)
+    ensure
+      held&.release
+    end
+  end
+
   describe "#acquire" do
     it "creates a git worktree at the per-worker path and points the lease there" do
       lease = backend.acquire("worker-1")
@@ -75,18 +153,21 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       end
     end
 
-    it "reaps a leftover worktree at the target path rather than leaking or failing" do
-      backend.acquire("worker-1")
+    # A crash kills the process, taking the in-memory lease-set with it; the
+    # restart is a FRESH backend that finds the on-disk leftover, whose lock
+    # names a dead process, and moves it out of the way.
+    it "moves a crashed leftover aside, retained, rather than leaking or failing" do
+      crashed_backend.acquire("worker-1")
       path = worktree_path("worker-1")
-      expect(registered_worktrees).to include(path)
 
-      # A crash kills the process, taking the in-memory lease-set with it; the
-      # restart is a FRESH backend that finds the on-disk leftover and reaps it.
-      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
-      lease = restarted.acquire("worker-1")
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:).acquire("worker-1")
+      aside = registered_worktrees.scan(/^worktree (.*)$/).flatten.find do |dir|
+        dir.start_with?(File.join(@root, "retained"))
+      end
 
-      expect(File.directory?(path)).to be(true)
       expect(lease.worker_env.cwd).to eq(path)
+      expect(File.directory?(aside)).to be(true)
+      expect(lock_line(aside)).to match(/\Alocked lain-retained since=\S+\z/)
     ensure
       lease&.release
     end
@@ -178,8 +259,8 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(branches(@repo_root)).to eq(before)
     end
 
-    it "re-acquires at the base's tip, not a crashed worker's committed tip" do
-      crashed = backend.acquire("worker-1")
+    it "re-acquires at the base's tip, not a crashed worker's committed tip, and keeps that commit aside" do
+      crashed = crashed_backend.acquire("worker-1")
       path = crashed.worker_env.cwd
       File.write(File.join(path, "leaked_work.txt"), "worker committed this\n")
       run_git(path, "add", "leaked_work.txt")
@@ -194,6 +275,7 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
 
       expect(head_commit(fresh)).to eq(base.tip)
       expect(File.exist?(File.join(fresh, "leaked_work.txt"))).to be(false)
+      expect(Dir.glob(File.join(@root, "retained", "*", "leaked_work.txt")).size).to eq(1)
     ensure
       lease&.release
     end
@@ -276,14 +358,67 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(registered_worktrees).not_to include(path)
     end
 
-    it "removes a worktree with uncommitted changes anyway (never leaks silently)" do
+    it "unlocks a clean checkout and answers that it was not retained" do
       lease = backend.acquire("worker-1")
       path = worktree_path("worker-1")
-      File.write(File.join(path, "dirty.txt"), "uncommitted\n")
+
+      lease.release
+
+      expect([File.exist?(path), backend.retained?(path)]).to eq([false, false])
+    end
+
+    # A worker's uncommitted work is never optional: release keeps the tree
+    # on disk under a retention lock, and the reaper ages it from then.
+    it "retains a checkout with uncommitted changes, re-locked as retained, and says so" do
+      lease = backend.acquire("worker-1")
+      path = worktree_path("worker-1")
       File.write(File.join(path, "README"), "modified\n")
 
-      expect { lease.release }.not_to raise_error
-      expect(File.exist?(path)).to be(false)
+      expect(lease.release).to be(true)
+      expect(File.read(File.join(path, "README"))).to eq("modified\n")
+      expect(lock_line(path)).to match(/\Alocked lain-retained since=\d{4}-\d\d-\d\dT[\d:]+Z\z/)
+      expect(backend.retained?(path)).to be(true)
+    end
+
+    it "retains a checkout whose state git cannot read" do
+      lease = backend.acquire("worker-1")
+      path = worktree_path("worker-1")
+      File.write(File.join(path, "untracked.txt"), "worker output\n")
+      File.write(run_git(path, "rev-parse", "--path-format=absolute", "--git-path", "index").strip, "garbage")
+
+      lease.release
+
+      expect([File.exist?(File.join(path, "untracked.txt")), backend.retained?(path)]).to eq([true, true])
+    end
+
+    it "anchors a clean checkout's commit that nothing else reaches before removing it" do
+      lease = backend.acquire("worker-1")
+      path = worktree_path("worker-1")
+      File.write(File.join(path, "c.txt"), "c\n")
+      run_git(path, "add", "c.txt")
+      run_git(path, "commit", "-q", "-m", "c")
+      head = head_commit(path)
+
+      lease.release
+
+      anchored = run_git(@repo_root, "for-each-ref", "--format=%(objectname)", "refs/lain/worker/").split("\n")
+      expect([File.exist?(path), backend.retained?(path), anchored]).to eq([false, false, [head]])
+    end
+
+    it "writes no anchor for a clean checkout a branch already reaches" do
+      backend.acquire("worker-1").release
+
+      expect(run_git(@repo_root, "for-each-ref", "refs/lain/worker/")).to eq("")
+    end
+
+    it "counts an untracked file alone as uncommitted work" do
+      lease = backend.acquire("worker-1")
+      path = worktree_path("worker-1")
+      File.write(File.join(path, "scratch.txt"), "untracked\n")
+
+      lease.release
+
+      expect([File.exist?(File.join(path, "scratch.txt")), backend.retained?(path)]).to eq([true, true])
     end
 
     it "is idempotent-loud: the worktree is removed once, a second release is false" do

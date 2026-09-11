@@ -11,6 +11,81 @@ RSpec.describe Lain::CLI::ChatLaunch do
   # is asserted without a TTY, a network edge, or global ENV mutation.
   def launch(options = {}, **factories) = described_class.new(options, **factories)
 
+  # Every launch reads the reap stamp; a stale one starts exactly one detached
+  # `lain worktrees gc`. The spawner and the launching binary are injected, so
+  # no example here starts a lain process or touches the real state dir.
+  describe "the daily worktree reap" do
+    around do |example|
+      Dir.mktmpdir("lain-chat-gc") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:now) { Time.now }
+    let(:spawned) { [] }
+    let(:stamp) { Lain::CLI::GcSchedule.new(root: @dir, paths:).stamp_path }
+
+    def schedule_factory
+      spawner = ->(argv, **options) { spawned << [argv, options] }
+      lambda do |root:|
+        Lain::CLI::GcSchedule.new(root:, paths:, clock: -> { now }, spawner:, program: "/opt/lain/exe/lain")
+      end
+    end
+
+    def stamp_aged(hours)
+      FileUtils.mkdir_p(File.dirname(stamp))
+      File.write(stamp, "stamped\n")
+      File.utime(now - (hours * 3600), now - (hours * 3600), stamp)
+    end
+
+    def launch_chat
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+      project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+      launch({ journal: false }, wiring_factory: ->(**) { wiring }, project_factory: -> { project },
+                                 gc_schedule_factory: schedule_factory).call { |_notice| nil }
+    end
+
+    it "spawns exactly one detached gc through the process spawner on a stale stamp, and renews it" do
+      stamp_aged(25)
+
+      launch_chat
+
+      expect(spawned.map { |argv, _options| argv.last(2) }).to eq([%w[worktrees gc]])
+      expect(spawned.first.last).to include(chdir: @dir, pgroup: true)
+      expect(File.mtime(stamp)).to be_within(1).of(now)
+    end
+
+    it "spawns nothing on a fresh stamp" do
+      stamp_aged(2)
+
+      launch_chat
+
+      expect(spawned).to be_empty
+    end
+
+    # Built exactly as `exe/lain chat` builds it, through Thor. Only three
+    # things are swapped: the process spawner (so nothing runs), the wiring
+    # (so no conversation starts) and the program name (rspec is not lain).
+    it "spawns once through the launch exe/lain builds, with only the spawner swapped" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      stub_const("Lain::CLI::GcSchedule::SPAWN", ->(argv, **options) { spawned << [argv, options] })
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+      allow(Lain::CLI::Wiring).to receive(:new).and_return(wiring)
+      program = $PROGRAM_NAME
+      $PROGRAM_NAME = File.expand_path("../../../exe/lain", __dir__)
+
+      with_env("XDG_STATE_HOME" => File.join(@dir, "state")) { LainCLI.start(%w[chat --no-journal], debug: true) }
+
+      expect(spawned.map { |argv, _options| argv }).to eq([[RbConfig.ruby, $PROGRAM_NAME, "worktrees", "gc"]])
+    ensure
+      $PROGRAM_NAME = program
+    end
+  end
+
   describe "#chronicle" do
     it "defaults a bare instance to the Null chronicle" do
       expect(launch.chronicle).to be_a(Lain::CLI::Chronicle::Null)

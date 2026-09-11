@@ -557,6 +557,62 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
+  # `lain up` reads the same reap stamp chat does. The schedule is injected
+  # with a recording spawner and a stated binary: the real one would spawn
+  # the launching program, which under rspec is rspec.
+  describe "the daily worktree reap" do
+    around do |example|
+      Dir.mktmpdir("lain-up-gc") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:now) { Time.now }
+    let(:spawned) { [] }
+    let(:schedule) do
+      Lain::CLI::GcSchedule.new(root: @dir, paths:, clock: -> { now }, program: "/opt/lain/exe/lain",
+                                spawner: ->(argv, **options) { spawned << [argv, options] })
+    end
+    let(:tmux) { ->(*args, **) { FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "") } }
+
+    def stamp_aged(hours)
+      FileUtils.mkdir_p(File.dirname(schedule.stamp_path))
+      File.write(schedule.stamp_path, "stamped\n")
+      File.utime(now - (hours * 3600), now - (hours * 3600), schedule.stamp_path)
+    end
+
+    def up
+      described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir,
+                          shell_out_factory: tmux, gc_schedule: schedule)
+    end
+
+    it "spawns no gc process on a fresh stamp" do
+      stamp_aged(2)
+
+      up.call
+
+      expect(spawned).to be_empty
+    end
+
+    it "spawns exactly one on a stale stamp" do
+      stamp_aged(25)
+
+      up.call
+
+      expect(spawned.map { |argv, _options| argv.last(2) }).to eq([%w[worktrees gc]])
+    end
+
+    it "builds its schedule for the project its chat pane resolves, not the raw directory" do
+      allow(Lain::CLI::GcSchedule).to receive(:for).and_call_original
+
+      described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, shell_out_factory: tmux)
+
+      expect(Lain::CLI::GcSchedule).to have_received(:for).with(cwd: @dir, paths: anything)
+    end
+  end
+
   # The status feed, this HUD and the TTY prompt all default to the project's
   # `.lain/state.json`. Each used to carry its own literal; all three now name
   # the ONE locator, which is a THIRD object none of them owns -- so the
