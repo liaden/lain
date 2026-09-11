@@ -1662,6 +1662,7 @@ Cards landed:
 - **T8** `971f90ba`. `Verdict#rule` is machine-readable; `TestGeneration.new(renderer:, role_spawn:, guard:)`; enforcement is opt-in. The pre-commit example that failed, `neovim_runtime_spec`'s "parked approval … end to end", is the documented load flake, and passed alone.
 - **T7** `9982c1d2`. One `WorkerHandoff` serves chat: SelfSync anchors first and checks each patch survives, handbacks run one at a time per parent, and the sync facts ride `Telemetry::Handback`. The pre-commit example that failed, `up_spec` "…one socket and one cwd", is the recorded load flake, and passed alone twice on T7's tree.
 - **T9** `d4d424a5`. Suite 17114 examples, 0 failures, on T9's tree. Leases take a git worktree lock recording the owning process; gc claims a lock by renaming it, and acts only if the bytes are unchanged; `worktree.useRelativePaths` resolves; a stray claim file keeps the tree.
+- **Follow-up** `6e7d07f9`: `Worktree#repo_root`, forwarded through the lease decorators. `Null#repo_root` searches from the root it was built with, and raises `NoRepository` when it has none. The chat handoff reads the backend's root, and no longer runs `rev-parse --show-toplevel`.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1755,3 +1756,15 @@ Rulings made during execution:
     model call.
   - Self-sync re-matches by authorship only commits that touched a conflicted path. An in-place
     gutting of a resolved commit is a documented limit.
+- **T10 escalation, ruled 2026-09-11.** A ShadowGit snapshot is a delta: that turn's changes plus
+  lain's writes. `Restore` treats a snapshot as the whole workspace, so undo as carded would delete
+  files it should restore.
+  - `/undo` reverts exactly the undone turn's delta, path by path. Each path gets the bytes of its
+    latest earlier record; it is deleted if the baseline shows it was absent; and `/undo` refuses,
+    naming the path, when that path has no earlier record. Paths outside the delta are never
+    touched.
+  - Under ShadowGit, one whole-tree baseline is taken before the first turn. It measured 0.48 s on
+    lain's own tree.
+  - The whole-workspace restore, and so `restart.rb`, is unchanged.
+  - **Follow-up card:** record a file's bytes before its first write under `write_set`. Until then,
+    undoing that first write refuses by name.
