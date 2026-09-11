@@ -1663,6 +1663,7 @@ Cards landed:
 - **T7** `9982c1d2`. One `WorkerHandoff` serves chat: SelfSync anchors first and checks each patch survives, handbacks run one at a time per parent, and the sync facts ride `Telemetry::Handback`. The pre-commit example that failed, `up_spec` "…one socket and one cwd", is the recorded load flake, and passed alone twice on T7's tree.
 - **T9** `d4d424a5`. Suite 17114 examples, 0 failures, on T9's tree. Leases take a git worktree lock recording the owning process; gc claims a lock by renaming it, and acts only if the bytes are unchanged; `worktree.useRelativePaths` resolves; a stray claim file keeps the tree.
 - **Follow-up** `6e7d07f9`: `Worktree#repo_root`, forwarded through the lease decorators. `Null#repo_root` searches from the root it was built with, and raises `NoRepository` when it has none. The chat handoff reads the backend's root, and no longer runs `rev-parse --show-toplevel`.
+- **T12** `9f81a3c9`. Suite 17326 examples, 0 failures, on T12's tree. `Isolation::LandingQueue`, `Forge::LocalLanding`, `lain epic finish`, `Isolation::ParentLock` (shared with the chat handback). The pre-commit example that failed, the nvim parked-approval "wrapped command unwrapped", is the documented load flake, and passed alone. **Follow-up:** a merge whose handback record never reached the journal refuses both `land` and `--resume`, with no command to adopt it. It needs a way out, e.g. `lain epic land --adopt`.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1768,3 +1769,58 @@ Rulings made during execution:
   - The whole-workspace restore, and so `restart.rb`, is unchanged.
   - **Follow-up card:** record a file's bytes before its first write under `write_set`. Until then,
     undoing that first write refuses by name.
+- **Rulings on T12's hand-back.**
+  - The `implementation` artifact digest now composes the issue id, so an approval for one issue can
+    never read as approval for another. That changes every implementation digest; no back-compat is
+    owed.
+  - One parent-checkout lock (an `flock` under the git common dir) is taken by both the landing queue
+    and `WorkerHandoff`'s `one_at_a_time`.
+  - The QA doc's old `lain epic land ISSUE SHA` is **T18's** to rewrite.
+- **T11 escalation, ruled.**
+  - T11 may make a minimal `switchboard.rb` edit, a `test_layout:` slot on `.for`/`new`, while T10
+    owns the rest of that file. The orchestrator's three-way port resolves the overlap.
+  - A worktree-isolated child's writes are checked against the root of the checkout they land in.
+    The layout is repo-relative.
+  - A child's `read_redacted` replaying as the parent's after `--resume` fails closed. It is a
+    documented limit.
+- **Orchestrator touch-up, after T10 lands:** `spec/spec_helper.rb` points `XDG_STATE_HOME` at a
+  per-worker temp dir for the whole suite. Two cards this chunk (T9's stray gc and T10's shadow
+  store) found specs writing into the real `~/.local/state`.
+- **T11 review rulings.**
+  - A child's checkout comes from its lease, never from finding a `.git` file on disk.
+  - `Switchboard` holds one guard-inputs value, the duck `ToolGuard.stack` reads. The model switch
+    goes back out of `#seed`, where it had moved only to satisfy MethodLength.
+  - `UNGUARDED` moves to `spec/support/`.
+  - Layout records are journaled only after the gate lets the write through.
+  - **For T12:** an `edit_file` that changes a test's subject passes at write time and is caught at
+    land time.
+- **T10 review ruling, replacing the earlier baseline ruling.**
+  - Every turn stages a before-tree at prime and an after-tree at settle. The pair is held in the
+    in-process `SnapshotLog`; the `:snapshot` event and `restart.rb` are unchanged.
+  - `/undo` reverts exactly the `git diff-tree` rows between the pair: adds, modifications,
+    deletions and modes. It dirty-checks each path against the after-blob first, and refuses by name
+    when a path fails.
+  - Paths are normalized to UTF-8 in one place.
+  - A refused `/undo` offers `/undo skip`.
+  - A ShadowGit failure degrades that turn to `write_set`. Each session uses its own
+    `GIT_INDEX_FILE`.
+  - **Follow-ups:**
+    - the cold first prime on large trees (3.86 s on 60k files);
+    - the shadow store needs its own `gc`;
+    - recording pre-images under `write_set`.
+- **T12 review rulings.**
+  - `nothing_to_do` counts as landed only when this issue's own merge is already journaled.
+  - Finish steps settle on their action and their params, so a moved `epic/<slug>` tip is a new
+    finish and a second PR.
+  - A PR that is already `MERGED` reads as done.
+  - Worker refs are required.
+  - `ParentLock` names its holder.
+  - `rebase_retries` is honoured as a count.
+  - `BRANCH_DELETE` joins `Forge::ACTIONS`.
+- **Toolchain trap found in this run.** CLAUDE.md's quiet check, `pgrep -f '[p]re-commit'`, matches any
+  process whose command text holds the plain word, including another agent's background waiter.
+  That left agents reading "busy" indefinitely.
+  - The precise check is `pgrep -af '[p]re-commit (hook-impl|run)'`: a real hook runs as
+    `pre-commit hook-impl …`.
+  - **At close-out:** add this to `docs/toolchain-traps.md`, and propose the CLAUDE.md wording to the
+    human.
