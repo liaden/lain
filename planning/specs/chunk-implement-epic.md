@@ -1667,6 +1667,7 @@ Cards landed:
 - **T11** `5f2c1d6d`. Suite 17350 examples, 0 failures, on T11's tree. The spawn seam takes a required `tool_middleware:`, built by `ToolGuard.child_stack` or `ToolGuard.detached`; `ToolGuard::Inputs` rides the Switchboard; `WorkerEnv#checkout` comes from the lease. **T18 must delete** the stale "guard does not reach subagents" comment at `agent_build.rb:68`.
 - **T10** `feba7cf9`. Suite 17392 examples, 0 failures, on T10's tree. `/undo` reverts the `diff-tree` rows between the per-turn tree pair; `/undo skip`; `SnapshotSlot`, rebound on a `/mode` flip that changes scope; `Revert`/`TreePair`/`Repository` extracted. Pre-commit failed on a YARD duplicate docstring for `SnapshotLog::Undo`, consolidated onto its reopen, and on the `annotate_spec` load flake.
 - **T14** `229db3ce`. Suite 17676 examples, 0 failures, on T14's tree. `StatusView` and `CLI::Wiring::EpicSeat`; PROTOCOL 15, with `plugin/nvim/doc/lain.txt` updated to match; a fleet error is drawn, not raised. Pre-commit yard-lint failed twice, on `EpicSeat`'s `@option` tag and on two ```mermaid mentions in prose; both fixed.
+- **T13** `ae6a5441`. Suite 17579 examples, 0 failures, on T13's tree. `ToolsetBuild#epic_subagent(isolation:, handoff:, lane:)`, `Supervisor#retire` (anchor-only, `Retirement::Anchor` compare-and-swap), `AlreadyRetired`/`AlreadyReleased`/`OutsideLease`, and the `issue_orchestrator` role. Pre-commit caught two yard issues, `WorkerHandoff#reclaim`'s tag order and a duplicate `Leases::Lane` docstring, both fixed, plus the vsock load flake.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1881,3 +1882,11 @@ Rulings made during execution:
     the issue handoff's target check requires.
   - **For T16:** `issue_orchestrator` is attended, so its tier-3 `bash` would park on the chat's
     approval gate during an unattended run. The driver has to decide the gate policy for actors.
+- **From T13's re-review, for T15 and T16:** an actor's `worker_id:` carries its **attempt**, as in
+  `issue.<slug>.<id>.<n>`. A retry under the same id is refused for as long as the first attempt's
+  anchor stands, which is loud and loses nothing but blocks every retry. **T15** builds the id;
+  **T16** increments `n` when it retries an issue. The anchor refusal is `kind: :failed` with a nil
+  SHA, and **T16** stops that issue on it.
+- **Another load-sensitive example:** `support_vsock_availability_spec` "VsockAvailability.available?
+  leaks no descriptor across repeated probing". It failed in T13's pre-commit run and passed 2/2
+  alone.
