@@ -28,7 +28,8 @@ module Lain
     #
     # Nothing here holds state between invocations. A verdict is a journaled
     # {Approval::GateDecision}; a deferral is that record plus a park the next
-    # fold rebuilds; a stage advance is two {Epic::StageTransition} records.
+    # fold rebuilds; an epic-wide stage advance is two {Epic::StageTransition}
+    # records, and an approved issue plan is one {Epic::IssueTransition}.
     #
     # == Every constant from the epic tier is reached at CALL time
     #
@@ -45,6 +46,11 @@ module Lain
       # something else already computed that address, and a second opinion on the
       # same content is how two records of one thing start disagreeing.
       class NeedsDigest < Error; end
+
+      # An implementation is built to an approved plan, so its gate refuses to
+      # open until the issue's plan AS IT STANDS -- criteria included -- carries
+      # an approval. Its own class because the remedy is a different command.
+      class PlanNotApproved < Error; end
 
       # The y/n prompt this command owns, on the streams it was handed. Both are
       # INJECTED and neither defaults to the process's own, because only the
@@ -126,6 +132,11 @@ module Lain
           end
         end
 
+        # What must already be approved before this stage's gate may open: an
+        # implementation needs its issue's plan, rebuilt from the files as they
+        # stand now, so an edited plan or criterion is caught here.
+        def required(stage) = stage.name == "implementation" ? [plan_for(issue!(stage))] : []
+
         private
 
         def unnamed_artifact(stage)
@@ -133,9 +144,14 @@ module Lain
             "the stages it can submit are #{Lain::Epic::STAGES.join(", ")}"
         end
 
-        def issue_plan(stage)
-          id = issue!(stage)
-          Lain::Epic::Submission.issue_plan(text: @home.plan(id).read, slug: @home.slug, issue_id: id)
+        def issue_plan(stage) = plan_for(issue!(stage))
+
+        # The criteria come from the issue in epic.md, which is also what
+        # refuses an issue the epic does not hold -- before anything is decided.
+        def plan_for(id)
+          criteria_digest = @home.read_epic.fetch(id).criteria_digest
+          Lain::Epic::Submission.issue_plan(text: @home.plan(id).read, slug: @home.slug, issue_id: id,
+                                            criteria_digest:)
         end
 
         def implementation(stage)
@@ -157,17 +173,63 @@ module Lain
         end
       end
 
+      # A journal handed in belongs to its caller -- the driver runs this
+      # command in-process over the chat's own -- so it is lent for one
+      # decision and left open.
+      Lent = Data.define(:journal) do
+        def hold = yield(journal)
+      end
+
+      # Otherwise this command opens its own session journal around the
+      # decision and closes it after. Nothing is lost: a Journal that CREATED
+      # its file and wrote no record removes it on close.
+      Owned = Data.define(:paths) do
+        def hold
+          journal = Journal.open(paths:)
+          begin
+            yield journal
+          ensure
+            journal.close
+          end
+        end
+      end
+
+      # One handle an adjudicated gate can write through AND read back, which
+      # {Approval::Gate::Policy::Adjudicated} demands and a {Journal} cannot
+      # give: it only writes. A read re-walks the session journals the
+      # decision's journal lives among, so the terminal-verdict guard sees what
+      # this command itself just wrote. That is also the contract on a lent
+      # journal: it must live in that same sessions directory, as the chat's
+      # does.
+      class ReadBack
+        include Enumerable
+
+        def initialize(journal, dir:)
+          @journal = journal
+          @dir = dir
+        end
+
+        def record(entry)
+          @journal.record(entry)
+          self
+        end
+        alias << record
+
+        def each(&block) = SessionJournals.new(dir: @dir, types: [Approval::SignoffQueue::JOURNAL_TYPE]).each(&block)
+      end
+
       # One submission, decided and reported. Its own object because reaching a
       # verdict is a different job from resolving a home, a policy, a queue and a
       # journal: by the time this is built every one of those is settled.
       class Verdict
-        def initialize(submission:, stage:, policy:, gate:, queue:, scribe:)
+        def initialize(submission:, stage:, policy:, gate:, queue:, scribe:, in_flight:)
           @submission = submission
           @stage = stage
           @policy = policy
           @gate = gate
           @queue = queue
           @scribe = scribe
+          @in_flight = in_flight
         end
 
         # `Sync` because {Approval::Gate#call} parks on the asker's promise, and
@@ -176,28 +238,49 @@ module Lain
         #
         # @return [String]
         # @raise [Epic::StageBlocked] before anything is journaled, when an
-        #   earlier stage of this epic still holds sign-offs parked
+        #   earlier stage of this epic (or of this issue) still holds sign-offs
+        #   parked
         def call
-          decided = Sync { @policy.decide(@submission, gate: @gate, stage: @stage.name, epic_slug: slug) }
-          decided ? advance : refused
+          decided = Sync do
+            @policy.decide(@submission, gate: @gate, stage: @stage.name, epic_slug: slug,
+                                        issue_id: @submission.issue_id, criteria_digest: @submission.criteria_digest)
+          end
+          decided ? approved : refused
         end
 
         private
 
         def slug = @submission.slug
 
-        # The last stage COMPLETES only: {Epic::Stage#next} raises there, and
-        # inventing a successor would claim work began that no record shows.
-        def advance
-          @scribe.stage_completed(@stage)
-          @scribe.stage_started(@stage.next) unless @stage.last?
+        def approved
           ["approved #{@submission.digest}", "  #{@stage} for epic #{slug} (#{@submission.fact})",
-           "  #{advanced}"].join("\n")
+           "  #{advance}"].join("\n")
         end
 
-        def advanced
-          return "#{@stage} is the last stage -- nothing follows it" if @stage.last?
+        # An epic-wide verdict completes its stage and starts the next. An
+        # issue-scoped one is ONE issue's, so it moves that issue alone and no
+        # epic-wide stage: a plan puts its issue in flight, and an
+        # implementation moves nothing until it lands.
+        def advance
+          return @in_flight.call if starts_issue?
+          return awaiting_landing if @stage.issue_scoped?
 
+          advance_epic
+        end
+
+        # {Epic::InFlight} owns the rule, so a verdict and a queue sign-off
+        # cannot disagree about which approvals start an issue.
+        def starts_issue?
+          Lain::Epic::InFlight.starts?(approved: true, stage: @stage.name, issue_id: @submission.issue_id)
+        end
+
+        def awaiting_landing
+          "issue #{@submission.issue_id}'s #{@stage} is approved -- nothing moves until it lands"
+        end
+
+        def advance_epic
+          @scribe.stage_completed(@stage)
+          @scribe.stage_started(@stage.next)
           "#{@stage} completed, #{@stage.next} started"
         end
 
@@ -212,7 +295,7 @@ module Lain
 
         def deferred(item)
           ["deferred #{item.artifact_digest}",
-           "  parked in #{item.epic_slug}/#{item.stage} -- nothing advanced",
+           "  parked in #{item.partition} -- nothing advanced",
            "  review it: lain epic queue #{item.epic_slug}"].join("\n")
         end
 
@@ -238,16 +321,54 @@ module Lain
       #   states as the fact {Policies::Deps} expects
       # @param output [IO, nil] where the gate question is written -- injected,
       #   because only the frontend may touch the process's own streams
+      # @param asker [#ask, nil] who answers an interactive gate; by default the
+      #   y/n {Prompt} over the two streams above, and handed in by a caller
+      #   that answers some other way
+      # @param journal [#record, nil] where verdicts land. nil opens this
+      #   command's own session journal per decision; one handed in stays open,
+      #   and must live in the sessions directory for {ReadBack}'s reason
+      # @param role_spawn [#call, nil] the spawn seam an adjudicated gate runs
+      #   its two roles through; nil means not wired, which such a stage refuses
+      #   by name
+      # @param brief [#call, nil] the adjudicated gate's spike prompt, from the
+      #   artifact ({Adjudication::Brief}); nil means not wired, as above
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means.
       #   Asked rather than reimplemented: two spellings of "the sole epic in the
       #   home" would disagree without either of them raising.
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
-                     input: nil, output: nil, epics: Epic.new(root:, paths:, config:))
+                     input: nil, output: nil, asker: Prompt.on(input:, output:), journal: nil, role_spawn: nil,
+                     brief: nil, epics: Epic.new(root:, paths:, config:))
         @root = root
         @paths = paths
         @config = config
-        @asker = Prompt.on(input:, output:)
+        @asker = asker
+        @journal = journal ? Lent.new(journal) : Owned.new(paths)
+        @role_spawn = role_spawn
+        @brief = brief
         @epics = epics
+      end
+
+      # The exe's assembly seam: the command, plus the adjudication pair when a
+      # stage is configured to need one. The assembly lives here, not in the
+      # exe, so it carries specs.
+      #
+      # @param options [Hash] the invoked command's parsed flags (`provider`, `model`)
+      # @option options [String] :provider the backend provider for an adjudicated stage
+      # @option options [String] :model the model for an adjudicated stage
+      # @param input [IO, nil] as for {#initialize}
+      # @param output [IO, nil] as for {#initialize}
+      # @param root [String] as for {#initialize}
+      # @param paths [Paths] as for {#initialize}
+      # @param config [Config] as for {#initialize}, and what decides whether
+      #   a pair is built at all
+      # @param backend [#call] answers the {Backend} the pair spawns over;
+      #   called only when some stage is adjudicated
+      # @return [EpicSubmit]
+      def self.from_options(options, input:, output:, root: Project::Resolver.default_project.root,
+                            paths: Paths.new, config: Config.load(root:),
+                            backend: -> { Backend.new(Adjudication.flags(options)) })
+        pair = Adjudication.pair(config:, paths:, root:, backend:)
+        new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief)
       end
 
       # @param stage [String] one of {Epic::STAGES}
@@ -260,41 +381,75 @@ module Lain
       #   stage boundary
       def submit(stage, slug = nil, issue: nil, digest: nil)
         staged = Lain::Epic::Stage.new(stage)
-        home = Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root,
-                                        slug: @epics.resolve_slug(slug, command: "epic submit STAGE"))
-        decide(staged, Artifacts.new(home:, issue:, digest:).submission(staged))
+        decide(staged, Artifacts.new(home: home(slug), issue:, digest:))
+      end
+
+      # The question an issue's launch asks before any work starts: is this
+      # issue's plan, as it stands now, approved? Read-only -- it decides and
+      # journals nothing.
+      #
+      # @param issue [String] the issue id
+      # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @return [String] the approved issue_plan digest
+      # @raise [PlanNotApproved] naming the plan digest that carries no approval
+      def ensure_plan_approved!(issue, slug = nil)
+        plan = Artifacts.new(home: home(slug), issue:).submission(Lain::Epic::Stage.new("issue_plan"))
+        ensure_approved!(Approval::Gate.from_journal(journals.to_a, journal: Channel::Null.instance), plan)
       end
 
       private
 
-      # Opened around the WHOLE decision, wiring refusal included, because
+      def home(slug)
+        Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root,
+                                 slug: @epics.resolve_slug(slug, command: "epic submit STAGE"))
+      end
+
+      # Held around the WHOLE decision, wiring refusal included, because
       # {Approval::Gate::Policies::Deps} carries a `journal` seam an adjudicating
-      # policy needs before it is built. Nothing is lost: a Journal that CREATED
-      # its file and wrote no record removes it on close.
-      def decide(stage, submission)
+      # policy needs before it is built.
+      def decide(stage, artifacts)
+        submission = artifacts.submission(stage)
+        required = artifacts.required(stage)
         records = journals.to_a
-        journal = Journal.open(paths: @paths)
-        begin
-          settled(stage, submission, records, journal)
-        ensure
-          journal.close
+        @journal.hold do |journal|
+          settled(stage, submission, required, records, ReadBack.new(journal, dir: @paths.sessions_dir))
         end
       end
 
-      def settled(stage, submission, records, journal)
+      def settled(stage, submission, required, records, journal)
         queue = Approval::SignoffQueue.from_journal(records)
         policy = policy_for(stage, queue, journal)
         gate = Approval::Gate.from_journal(records, journal:)
-        return standing(submission) if gate.approved?(submission.digest)
+        scribe = Lain::Epic::Scribe.new(epic_slug: submission.slug, journal:)
+        in_flight = in_flight_for(scribe, submission)
+        return standing(submission, in_flight) if gate.approved?(submission.digest)
 
-        Verdict.new(submission:, stage:, policy:, gate:, queue:,
-                    scribe: Lain::Epic::Scribe.new(epic_slug: submission.slug, journal:)).call
+        required.each { |plan| ensure_approved!(gate, plan) }
+        Verdict.new(submission:, stage:, policy:, gate:, queue:, scribe:, in_flight:).call
+      end
+
+      def in_flight_for(scribe, submission)
+        Lain::Epic::InFlight.new(scribe:, progress: -> { @epics.progress(submission.slug) },
+                                 issue_id: submission.issue_id)
+      end
+
+      # Refused by NAME, before anything is decided or journaled, naming the
+      # plan address that carries no approval: never approved, still parked, or
+      # edited since -- all three are the same address the registry never saw.
+      def ensure_approved!(gate, plan)
+        return plan.digest if gate.approved?(plan.digest)
+
+        raise PlanNotApproved, "issue #{plan.issue_id.inspect} cannot open its implementation gate -- its " \
+                               "issue_plan #{plan.digest} is not approved (never approved, still parked, or " \
+                               "its plan or criteria changed since): lain epic submit issue_plan --issue " \
+                               "#{plan.issue_id}"
       end
 
       # `for_all`, never `for`: resolving one stage at a time refuses LATE, and
       # late is exactly the failure the factory exists to prevent.
       def policy_for(stage, queue, journal)
-        deps = Approval::Gate::Policies::Deps.new(queue:, asker: @asker, journal:)
+        deps = Approval::Gate::Policies::Deps.new(queue:, asker: @asker, journal:, role_spawn: @role_spawn,
+                                                  brief: @brief)
         Approval::Gate::Policies.for_all(config: @config, deps:).fetch(stage.name)
       end
 
@@ -314,10 +469,21 @@ module Lain
       # The registry is add-only, so a second verdict over a standing approval
       # can neither revoke nor strengthen it -- only add a record nobody asked
       # for, with a latency for a wait nobody waited. Reported, never decided.
-      def standing(submission)
+      # A standing PLAN still runs {Epic::InFlight}, for the repair its header
+      # names.
+      def standing(submission, in_flight)
         ["already approved #{submission.digest}",
-         "  #{submission.stage} for epic #{submission.slug} -- nothing was decided or journaled again"].join("\n")
+         "  #{submission.stage} for epic #{submission.slug} -- nothing was decided or journaled again",
+         *(starts_issue?(submission) ? ["  #{in_flight.call}"] : [])].join("\n")
+      end
+
+      def starts_issue?(submission)
+        Lain::Epic::InFlight.starts?(approved: true, stage: submission.stage, issue_id: submission.issue_id)
       end
     end
   end
 end
+
+# This file is the epic_submit/ subtree's index. The pair reopens the class
+# above, so it loads after the class body.
+require_relative "epic_submit/adjudication"

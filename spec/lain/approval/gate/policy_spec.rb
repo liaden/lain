@@ -21,7 +21,7 @@ module PolicySpecSupport
       @asked = []
     end
 
-    def drained?(epic_slug, stage)
+    def drained?(epic_slug, stage, **scope)
       @asked << stage
       super
     end

@@ -146,7 +146,12 @@ module Lain
     #
     # Which address each stage digests is a decision per stage. Prose digests its
     # BYTES: two renderings of the same words are two approvals, because a human
-    # signed off on THOSE words. `epic_plan` reuses {Epic::Graph#digest} -- over
+    # signed off on THOSE words. An `issue_plan` composes its bytes with the
+    # issue it is for and that issue's {Gherkin::Criteria#digest}: a plan is
+    # written to satisfy its criteria, so approving one approves both, and an
+    # edited criterion is a different, un-approved plan -- which is what keeps
+    # an implementation from passing against criteria nobody signed off.
+    # `epic_plan` reuses {Epic::Graph#digest} -- over
     # the normalized issue set rather than the markdown -- so re-rendering an
     # unchanged graph costs no fresh sign-off. `implementation` takes its digest
     # as GIVEN, because the changeset already computed the address that names it
@@ -155,7 +160,13 @@ module Lain
     # Disk-free on purpose: a Submission holds only what it is handed, never a
     # path, so it stays a pure value the gate can journal and replay without ever
     # touching {Epic::Home}.
-    Submission = Data.define(:stage, :slug, :content_digest, :fact) do
+    #
+    # `issue_id` names the issue an issue-scoped submission is about, and
+    # `criteria_digest` the criteria an issue plan carries; both are nil for the
+    # epic's own two documents. They ride beside the gate identity as well as
+    # inside a plan's content address, because the gate decision and the
+    # sign-off queue partition on the issue, and a grader joins on the criteria.
+    Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest) do
       def self.research(text:, slug:)
         Contracts::Prose.check!(text:)
         new(stage: "research", slug:, content_digest: Canonical.digest(text), fact: "#{text.bytesize} bytes")
@@ -166,16 +177,23 @@ module Lain
         new(stage: "epic_plan", slug:, content_digest: graph.digest, fact: "#{graph.issues.size} issues")
       end
 
-      def self.issue_plan(text:, slug:, issue_id:)
+      # `criteria_digest` is REQUIRED and may be nil: an issue with no criteria
+      # says so, where a forgotten keyword would gate a plan as if it had none.
+      def self.issue_plan(text:, slug:, issue_id:, criteria_digest:)
         Contracts::Prose.check!(text:)
         issue_id = clean_issue_id(issue_id)
-        new(stage: "issue_plan", slug:, content_digest: Canonical.digest(text),
-            fact: "issue #{issue_id}, #{text.bytesize} bytes")
+        new(stage: "issue_plan", slug:, content_digest: planned(text, issue_id, criteria_digest),
+            fact: "issue #{issue_id}, #{text.bytesize} bytes", issue_id:, criteria_digest:)
       end
+
+      def self.planned(text, issue_id, criteria_digest)
+        Canonical.digest("plan" => Canonical.digest(text), "issue" => issue_id, "criteria" => criteria_digest)
+      end
+      private_class_method :planned
 
       def self.implementation(slug:, issue_id:, digest:)
         issue_id = clean_issue_id(issue_id)
-        new(stage: "implementation", slug:, content_digest: digest, fact: "issue #{issue_id}")
+        new(stage: "implementation", slug:, content_digest: digest, fact: "issue #{issue_id}", issue_id:)
       end
 
       # Interned and stripped BEFORE the contract, so `presence:` judges the
@@ -188,7 +206,7 @@ module Lain
       end
       private_class_method :clean_issue_id
 
-      def initialize(stage:, slug:, content_digest:, fact:)
+      def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil)
         # Interned BEFORE the contract, so `presence:` judges the bytes that
         # actually get asked and journaled.
         stage = -stage.to_s
@@ -200,7 +218,8 @@ module Lain
         # only ever happens to a value already agreed to be a String. The three
         # interned members are shareable already and pass through untouched, so
         # nothing loses its deduplication.
-        super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:))
+        super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
+              issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s)
       end
 
       # THE GATE IDENTITY, which {Approval::Gate#call}/`#ensure_approved!` key

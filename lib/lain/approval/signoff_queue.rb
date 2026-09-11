@@ -32,10 +32,16 @@ module Lain
     #
     # == The partition
     #
-    # Both members of `(epic_slug, stage)` are required for one reason:
-    # {Epic::Stage}'s boundary rule asks whether an EARLIER stage of THIS epic
-    # is drained, so a global drain would let one epic's parked research block
-    # another's plan.
+    # `(epic_slug, stage)` are required for one reason: {Epic::Stage}'s
+    # boundary rule asks whether an EARLIER stage of THIS epic is drained, so a
+    # global drain would let one epic's parked research block another's plan.
+    #
+    # `issue_id` is the third member, nil for the epic-wide stages, and the
+    # same argument one level down: an issue's plan is that issue's work, so
+    # one issue's parked plan must not hold a sibling's implementation shut.
+    # A question naming no issue is answered for EVERY issue, and an item
+    # naming none is seen by every issue's question -- both the conservative
+    # reading, so nothing that could not name its issue ever opens a gate.
     class SignoffQueue
       include Enumerable
 
@@ -61,8 +67,11 @@ module Lain
         class Partition < Declarative::Carrier
           attribute :epic_slug
           attribute :stage
+          attribute :issue_id
           validates :epic_slug, presence: { message: "must name the epic this sign-off belongs to, got nil" }
           validates :stage, presence: { message: "must name the stage it was parked at, got nil" }
+          validates :issue_id, presence: { message: "must name the issue when it names one at all, got a blank id" },
+                               allow_nil: true
         end
 
         # A parked sign-off is an ADDRESS waiting to be answered; without the
@@ -108,19 +117,42 @@ module Lain
       # rule all share -- named because three call sites passing the same pair
       # around is an object, and because `policy` is a different axis that must
       # never be folded into it.
-      Partition = Data.define(:epic_slug, :stage) do
-        def initialize(epic_slug:, stage:)
+      # An issue id as it arrives off a record: nil for an epic-wide stage,
+      # otherwise the issue's name as text. Anything else is a damaged line,
+      # refused BEFORE `to_s` -- a stringified Array names an issue nobody has,
+      # parks where no issue's question looks, and reads as drained for every
+      # real one. {Approval::GateDecision} reads its own through this too.
+      module IssueId
+        def self.read(value)
+          return value if value.nil?
+          raise ArgumentError, "issue_id must be text naming the issue, got #{value.inspect}" unless value.is_a?(String)
+
+          -value
+        end
+      end
+
+      Partition = Data.define(:epic_slug, :stage, :issue_id) do
+        def initialize(epic_slug:, stage:, issue_id: nil)
           # Interned before the guard, so `presence:` judges the bytes that get
           # COMPARED: a stage whose #to_s is blank passes a presence check on
           # the raw object and then keys a partition nothing can match.
           epic_slug = -epic_slug.to_s
           stage = -stage.to_s
-          Contracts::Partition.check!(epic_slug:, stage:)
+          issue_id = IssueId.read(issue_id)
+          Contracts::Partition.check!(epic_slug:, stage:, issue_id:)
 
           super
         end
 
-        def to_s = "#{epic_slug}/#{stage}"
+        # Whether a question asked of this partition must see what is parked
+        # in `other`. A nil issue on EITHER side overlaps every issue -- the
+        # class header's conservative reading.
+        def overlaps?(other)
+          epic_slug == other.epic_slug && stage == other.stage &&
+            (issue_id.nil? || other.issue_id.nil? || issue_id == other.issue_id)
+        end
+
+        def to_s = [epic_slug, stage, issue_id].compact.join("/")
       end
 
       # One artifact awaiting a human's sign-off.
@@ -131,9 +163,13 @@ module Lain
       # storing prose in the decision record would duplicate what
       # content-addressing already guarantees.
       #
-      # `evidence_digest` IS recoverable, because the decision record carries it.
-      Item = Data.define(:artifact_digest, :epic_slug, :stage, :question, :evidence_digest) do
-        def initialize(artifact_digest:, epic_slug:, stage:, question: nil, evidence_digest: nil)
+      # `evidence_digest` and `criteria_digest` ARE recoverable, because the
+      # decision record carries them -- so a later sign-off can carry the
+      # criteria the parked plan was submitted with.
+      Item = Data.define(:artifact_digest, :epic_slug, :stage, :issue_id, :question, :evidence_digest,
+                         :criteria_digest) do
+        def initialize(artifact_digest:, epic_slug:, stage:, issue_id: nil, question: nil, evidence_digest: nil,
+                       criteria_digest: nil)
           # Stringified BEFORE the guard, and before this becomes half of the
           # queue's key: {#drain} reconstructs that key through `to_s`, so an
           # Item holding the raw object would park under an address drain could
@@ -141,20 +177,20 @@ module Lain
           # again.
           artifact_digest = artifact_digest.to_s
           Contracts::Item.check!(artifact_digest:)
-          partition = Partition.new(epic_slug:, stage:)
+          partition = Partition.new(epic_slug:, stage:, issue_id:)
 
           # Every member settled into frozen bytes, prose included: deep
           # immutability cannot be conditional on what a caller passed, and one
           # object with a mutable ivar would make the whole value
           # non-`Ractor.shareable?`.
           super(artifact_digest: artifact_digest.dup.freeze, epic_slug: partition.epic_slug,
-                stage: partition.stage, question: frozen_text(question),
-                evidence_digest: frozen_text(evidence_digest))
+                stage: partition.stage, issue_id: partition.issue_id, question: frozen_text(question),
+                evidence_digest: frozen_text(evidence_digest), criteria_digest: frozen_text(criteria_digest))
         end
 
         # Derived rather than stored: the members ARE the partition, and a
         # second copy could disagree with the first.
-        def partition = Partition.new(epic_slug:, stage:)
+        def partition = Partition.new(epic_slug:, stage:, issue_id:)
 
         private
 
@@ -163,37 +199,45 @@ module Lain
         def frozen_text(value) = value && value.to_s.dup.freeze
       end
 
-      # No partition holds anything until something parks in one.
-      NOTHING = {}.freeze
-
       def initialize
-        # Indexed the way it is read: {Partition} => digest => {Item}. Every
-        # query this class answers names a PARTITION, so a flat map would scan
-        # the whole queue and rebuild a Partition per item per call. Both levels
-        # are insertion-ordered, so parking one gate twice is one sign-off and
-        # enumeration reads oldest-first -- the order a morning review wants.
+        # Indexed {Partition} => digest => {Item}, so a drain finds its item
+        # without a scan. A QUESTION scans the partition keys -- never the
+        # items -- because a question naming no issue must see every issue's
+        # partition. Both levels are insertion-ordered, so parking one gate
+        # twice is one sign-off and enumeration reads oldest-first -- the order
+        # a morning review wants.
         @parked = {}
       end
 
-      # Idempotent on `(artifact_digest, epic_slug, stage)`: an artifact
-      # deferred twice is still one thing to sign off, and an EDITED artifact
-      # hashes differently, so it parks as the separate decision it is.
+      # Idempotent on `(artifact_digest, epic_slug, stage, issue_id)`: an
+      # artifact deferred twice is still one thing to sign off, and an EDITED
+      # artifact hashes differently, so it parks as the separate decision it is.
       #
+      # @param artifact_digest [#to_s] the artifact awaiting sign-off
+      # @param epic_slug [#to_s] the epic it belongs to
+      # @param stage [#to_s] the stage it was parked at
+      # @param issue_id [String, nil] the issue, for an issue-scoped stage
+      # @param question [#to_s, nil] the gate's question, for the review surface
+      # @param evidence_digest [#to_s, nil] the evidence gathered, if any
+      # @param criteria_digest [#to_s, nil] the criteria a parked plan carries
       # @return [Item] the item now parked
-      def park(artifact_digest:, epic_slug:, stage:, question: nil, evidence_digest: nil)
-        item = Item.new(artifact_digest:, epic_slug:, stage:, question:, evidence_digest:)
+      def park(artifact_digest:, epic_slug:, stage:, issue_id: nil, question: nil, evidence_digest: nil,
+               criteria_digest: nil)
+        item = Item.new(artifact_digest:, epic_slug:, stage:, issue_id:, question:, evidence_digest:,
+                        criteria_digest:)
         (@parked[item.partition] ||= {})[item.artifact_digest] = item
       end
 
       # Remove a parked sign-off by address -- what a terminal decision does to
-      # the live view of the fold.
+      # the live view of the fold. The address is EXACT, issue included: a
+      # decision drains only the partition it was made in.
       #
       # @return [Item, nil] the item that was holding, or nil if none was
-      def drain(artifact_digest:, epic_slug:, stage:)
+      def drain(artifact_digest:, epic_slug:, stage:, issue_id: nil)
         artifact_digest = artifact_digest.to_s
         Contracts::Item.check!(artifact_digest:)
 
-        partition = Partition.new(epic_slug:, stage:)
+        partition = Partition.new(epic_slug:, stage:, issue_id:)
         # A throwaway Hash rather than the frozen {NOTHING} the read paths get:
         # deleting from an absent partition is a no-op on a hash nobody keeps.
         items = @parked.fetch(partition, {})
@@ -205,13 +249,25 @@ module Lain
         drained
       end
 
-      # Whether nothing awaits sign-off in this `(epic_slug, stage)` partition --
-      # the question {Epic::Stage}'s boundary rule asks of every earlier stage.
-      def drained?(epic_slug, stage) = items_in(Partition.new(epic_slug:, stage:)).empty?
+      # Whether nothing awaits sign-off where this question reaches -- the
+      # question {Epic::Stage}'s boundary rule asks of every earlier stage.
+      #
+      # @param epic_slug [#to_s] the epic asked about
+      # @param stage [#to_s] the stage asked about
+      # @param issue_id [String, nil] one issue's partition; nil asks for every issue's
+      def drained?(epic_slug, stage, issue_id: nil) = parked(epic_slug, stage, issue_id:).empty?
 
-      # The items in one partition, for a review surface that shows one stage of
-      # one epic at a time.
-      def parked(epic_slug, stage) = items_in(Partition.new(epic_slug:, stage:)).values
+      # The items this question reaches, for a review surface that shows one
+      # stage of one epic at a time.
+      #
+      # @param epic_slug [#to_s] the epic asked about
+      # @param stage [#to_s] the stage asked about
+      # @param issue_id [String, nil] one issue's partition; nil asks for every issue's
+      # @return [Array<Item>]
+      def parked(epic_slug, stage, issue_id: nil)
+        asked = Partition.new(epic_slug:, stage:, issue_id:)
+        @parked.select { |partition, _| asked.overlaps?(partition) }.flat_map { |_, items| items.values }
+      end
 
       # Everything parked, oldest first within each partition.
       def each(&block)
@@ -256,15 +312,16 @@ module Lain
 
       def deferred?(decision) = decision["policy"].to_s == DEFERRED_POLICY
 
-      def items_in(partition) = @parked.fetch(partition, NOTHING)
-
+      # A record written before decisions named their issue has no key at all,
+      # which reads as nil -- the epic-wide reading, which is what it was.
       def address_attributes(decision)
         { artifact_digest: decision["artifact_digest"], epic_slug: decision["epic_slug"],
-          stage: decision["stage"] }
+          stage: decision["stage"], issue_id: decision["issue_id"] }
       end
 
       def parked_attributes(decision)
-        address_attributes(decision).merge(evidence_digest: decision["evidence_digest"])
+        address_attributes(decision).merge(evidence_digest: decision["evidence_digest"],
+                                           criteria_digest: decision["criteria_digest"])
       end
     end
   end

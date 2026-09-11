@@ -7,6 +7,11 @@ module Lain
     # position are the same fact and neither may be spelled twice.
     STAGES = %w[research epic_plan issue_plan implementation].freeze
 
+    # The stages whose artifact is about ONE issue, so their gates are opened,
+    # parked and approved per issue. research and epic_plan are the epic's own
+    # documents and stay epic-wide.
+    ISSUE_STAGES = %w[issue_plan implementation].freeze
+
     # Loud at construction, because a stage is a partition key: a typo that
     # constructs folds onto a partition nothing writes to, and reads as drained.
     class UnknownStage < Error; end
@@ -27,10 +32,12 @@ module Lain
     #
     # Partitions are keyed `(epic_slug, stage)`, so the check is scoped to ONE
     # epic: a global drain would let one epic's unreviewed research block every
-    # other epic's planning, and concurrent epics are the normal case. The queue
-    # arrives as an argument answering `#drained?(epic_slug, stage)` rather than
-    # as a stored collaborator -- a Stage is a frozen value, and which queue it
-    # is asked about is the caller's fact, not the value's.
+    # other epic's planning, and concurrent epics are the normal case. The same
+    # argument scopes the issue-scoped stages to one issue: a sibling's parked
+    # plan is not this issue's boundary. The queue arrives as an argument
+    # answering `#drained?(epic_slug, stage, issue_id:)` rather than as a stored
+    # collaborator -- a Stage is a frozen value, and which queue it is asked
+    # about is the caller's fact, not the value's.
     Stage = Data.define(:name) do
       include Comparable
       include Declarative
@@ -80,6 +87,8 @@ module Lain
 
       def last? = name == STAGES.last
 
+      def issue_scoped? = ISSUE_STAGES.include?(name)
+
       # @raise [NoSuccessor] at the terminal stage
       def next
         raise NoSuccessor, "#{name} is the last epic stage -- nothing follows it" if last?
@@ -93,13 +102,17 @@ module Lain
 
       # The boundary check a gate runs before it opens at this stage.
       #
-      # @param queue [#drained?] the sign-off queue, asked per earlier partition
+      # @param queue [#drained?, #parked] the sign-off queue, asked per earlier
+      #   partition; `#parked` only once the check has refused, to name a park
+      #   that holds every issue's gate
       # @param epic_slug [#to_s] the epic being walked; nothing outside it is consulted
+      # @param issue_id [String, nil] the issue whose gate is opening; nil
+      #   checks every issue, the conservative reading
       # @return [Stage] self, so the check reads as a precondition in a chain
       # @raise [StageBlocked] naming the epic and every earlier stage still holding
-      def ensure_open!(queue, epic_slug:)
-        blocked = preceding.reject { |earlier| queue.drained?(epic_slug, earlier.name) }
-        raise StageBlocked, blocked_message(blocked, epic_slug) unless blocked.empty?
+      def ensure_open!(queue, epic_slug:, issue_id: nil)
+        blocked = preceding.reject { |earlier| queue.drained?(epic_slug, earlier.name, issue_id:) }
+        raise StageBlocked, blocked_message(blocked, queue, epic_slug, issue_id) unless blocked.empty?
 
         self
       end
@@ -108,11 +121,31 @@ module Lain
 
       private
 
-      def blocked_message(blocked, epic_slug)
-        "epic #{epic_slug.to_s.inspect} cannot open its #{name} stage -- " \
+      def blocked_message(blocked, queue, epic_slug, issue_id)
+        "epic #{epic_slug.to_s.inspect} cannot open its #{name} stage#{for_issue(issue_id)} -- " \
           "#{blocked.map(&:name).join(", ")} still holds sign-offs parked " \
-          "(approve or deny them before the boundary opens)"
+          "(approve or deny them before the boundary opens)#{unscoped(blocked, queue, epic_slug, issue_id)}"
       end
+
+      # A park in an issue-scoped stage that names no issue -- written before
+      # gates named their issue -- holds EVERY issue's gate. Named, or a reader
+      # goes looking for a parked sibling that is not there. Asked of the queue
+      # only once the check has already refused.
+      def unscoped(blocked, queue, epic_slug, issue_id)
+        return "" unless issue_id
+
+        blocked.select(&:issue_scoped?)
+               .flat_map { |earlier| queue.parked(epic_slug, earlier.name, issue_id:) }
+               .reject(&:issue_id)
+               .map { |item| legacy_note(item) }
+               .join
+      end
+
+      def legacy_note(item)
+        "; #{item.artifact_digest} (#{item.stage}) names no issue, so it holds every issue's gate"
+      end
+
+      def for_issue(issue_id) = issue_id ? " for issue #{issue_id.to_s.inspect}" : ""
     end
   end
 end

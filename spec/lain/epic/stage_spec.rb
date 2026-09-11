@@ -10,8 +10,8 @@ RSpec.describe Lain::Epic::Stage do
 
   def stage(name) = described_class.new(name)
 
-  def park(epic_slug:, stage:, digest: "blake3:plan")
-    queue.park(artifact_digest: digest, epic_slug:, stage:, question: "Approve?")
+  def park(epic_slug:, stage:, digest: "blake3:plan", **scope)
+    queue.park(artifact_digest: digest, epic_slug:, stage:, question: "Approve?", **scope)
   end
 
   describe "the closed set" do
@@ -147,6 +147,53 @@ RSpec.describe Lain::Epic::Stage do
       park(epic_slug: "alpha", stage: "research")
 
       expect { stage("research").ensure_open!(queue, epic_slug: "alpha") }.not_to raise_error
+    end
+  end
+
+  # research and epic_plan are the epic's own documents; an issue's plan and
+  # its implementation are ONE issue's work, so a boundary between two
+  # issue-scoped stages is crossed per issue.
+  describe "issue-scoped stages" do
+    it "names issue_plan and implementation as the stages tracked per issue" do
+      expect(described_class.all.select(&:issue_scoped?).map(&:name)).to eq(%w[issue_plan implementation])
+    end
+
+    # Scenario: a parked issue does not block a sibling
+    it "opens b's implementation while a's issue_plan is parked" do
+      park(epic_slug: "alpha", stage: "issue_plan", issue_id: "a")
+
+      expect(stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "b"))
+        .to eq(stage("implementation"))
+    end
+
+    it "still blocks a's own implementation, naming the issue" do
+      park(epic_slug: "alpha", stage: "issue_plan", issue_id: "a")
+
+      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "a") }
+        .to raise_error(Lain::Epic::StageBlocked, /alpha.*issue "a".*issue_plan/m)
+    end
+
+    it "blocks every issue while an epic-wide stage still holds a sign-off" do
+      park(epic_slug: "alpha", stage: "epic_plan")
+
+      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "b") }
+        .to raise_error(Lain::Epic::StageBlocked, /epic_plan/)
+    end
+
+    # A park written before gates named their issue holds every issue's
+    # boundary; the refusal says which one, and why it reaches this issue.
+    it "names a park that names no issue, by digest, when it holds an issue's gate" do
+      park(epic_slug: "alpha", stage: "issue_plan", digest: "blake3:legacy")
+
+      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "b") }
+        .to raise_error(Lain::Epic::StageBlocked, /blake3:legacy.*names no issue/m)
+    end
+
+    it "reads a check that names no issue as every issue's" do
+      park(epic_slug: "alpha", stage: "issue_plan", issue_id: "a")
+
+      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /issue_plan/)
     end
   end
 

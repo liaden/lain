@@ -396,10 +396,14 @@ class LainCLI < Thor
 
     method_option :issue, type: :string, desc: "Which issue -- issue_plan and implementation gate one issue"
     method_option :digest, type: :string, desc: "The changeset content address -- implementation only"
+    method_option :provider, type: :string, default: "anthropic",
+                             desc: "Model provider for an adjudicated gate, built only when a stage is " \
+                                   "configured adjudicated: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
+    method_option :model, type: :string, desc: "Model id for an adjudicated gate; the provider's own default when unset"
     desc "submit STAGE [SLUG]", "Put a stage's artifact in front of its gate and journal the verdict"
     def submit(stage, slug = nil)
       render do
-        Lain::CLI::EpicSubmit.new(input: $stdin, output: $stdout)
+        Lain::CLI::EpicSubmit.from_options(options, input: $stdin, output: $stdout)
                              .submit(stage, slug, issue: options[:issue], digest: options[:digest])
       end
     end

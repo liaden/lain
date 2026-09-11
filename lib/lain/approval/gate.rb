@@ -37,6 +37,9 @@ module Lain
         validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :answered_by, presence: { message: "must name who answered, got nil" }
         validates :policy, presence: { message: "must name the policy that reached the verdict, got nil" }
+        attribute :issue_id
+        validates :issue_id, presence: { message: "must name the issue when it names one at all, got a blank id" },
+                             allow_nil: true
         # Guarded rather than coerced: `to_f` turns nil and "quick" alike into
         # 0.0, writing "answered instantly" -- a measurement nobody made -- into
         # the experiment record.
@@ -73,18 +76,22 @@ module Lain
     # INDEPENDENT: a `"deferred"` policy still journals a real surface, and
     # reading either off the other would be a guess.
     #
-    # `evidence_digest` and `reason` are nil on every path shipped so far, and
-    # exist now because a durable wire shape is designed ONCE: a field added
-    # later would split the journal into two shapes for one record type -- a
-    # migration, not an addition. Nullable is a value here ("nothing was
-    # gathered", "no rationale was given"), not a missing field. Later paths
-    # POPULATE these two; nothing may widen the shape again.
+    # `evidence_digest` and `reason` are nullable, and nullable is a value here
+    # ("nothing was gathered", "no rationale was given"), not a missing field.
+    #
+    # `issue_id` is the partition's third member: nil for the epic-wide
+    # stages, the issue's id for `issue_plan` and `implementation`, whose gates
+    # are one issue's. `criteria_digest` is the {Gherkin::Criteria#digest} an
+    # issue plan was approved WITH -- the same join key a grade record carries,
+    # so a later grade can be matched to the criteria somebody signed off.
+    # Both joined the shape after records were already on disk; a record
+    # written before reads them as nil, which is exactly what it was.
     GateDecision = Data.define(:artifact_digest, :epic_slug, :stage, :approved, :answered_by, :policy,
-                               :latency, :evidence_digest, :reason) do
+                               :latency, :evidence_digest, :reason, :issue_id, :criteria_digest) do
       include Telemetry::Journalable
 
       def initialize(artifact_digest:, epic_slug:, stage:, approved:, answered_by:, policy:, latency:,
-                     evidence_digest: nil, reason: nil)
+                     evidence_digest: nil, reason: nil, issue_id: nil, criteria_digest: nil)
         # Stringified BEFORE the guard, so `presence:` judges the bytes that
         # actually get journaled: a stage object whose `#to_s` is blank passes a
         # presence check on the raw object and then writes an empty partition
@@ -94,11 +101,13 @@ module Lain
         stage = interned(stage)
         answered_by = interned(answered_by)
         policy = interned(policy)
+        issue_id = SignoffQueue::IssueId.read(issue_id)
         Contracts::GateDecision.check!(artifact_digest:, epic_slug:, stage:, approved:, answered_by:, policy:,
-                                       latency:)
+                                       latency:, issue_id:)
 
         super(artifact_digest: artifact_digest.dup.freeze, epic_slug:, stage:, approved:, answered_by:, policy:,
-              latency: latency.to_f, evidence_digest: evidence_digest&.dup&.freeze, reason: reason&.dup&.freeze)
+              latency: latency.to_f, evidence_digest: frozen(evidence_digest), reason: frozen(reason),
+              issue_id:, criteria_digest: frozen(criteria_digest))
       end
 
       private
@@ -106,6 +115,9 @@ module Lain
       # Interned where the digests are dup'd-and-frozen: a stage or a surface
       # repeats across every record in a run, a digest does not.
       def interned(value) = -value.to_s
+
+      # nil stays nil: "nothing was carried" is a value on this record.
+      def frozen(value) = value&.dup&.freeze
     end
 
     # The ARTIFACT gate: the fail-closed approval any artifact answering
@@ -116,16 +128,15 @@ module Lain
     # signed by the clock: an unattended gate must refuse, never wedge, and
     # never default open.
     #
-    # == Three things in this codebase are called a gate
+    # == Two things in this codebase are called a gate
     #
     # * {Approval::Gate} (here) gates an ARTIFACT by its content address, across
-    #   a whole stage of work.
+    #   a whole stage of work. An issue's acceptance criteria are gated HERE
+    #   too, composed into that issue's plan, rather than by a gate of their
+    #   own that could approve criteria no plan was written to.
     # * {Effect::Handler::Gate} gates one TOOL CALL at interpretation time,
     #   through a `#call(effect, context) -> Boolean` policy seam. It knows
     #   nothing about artifacts or digests.
-    # * {Gherkin::Approval} is this class's ancestor, specialized to a
-    #   {Gherkin::Criteria}. It is deliberately UNTOUCHED by this class;
-    #   converging the two is a named follow-up, not a silent refactor.
     #
     # == The registry, and content-addressed refusal
     #
@@ -148,9 +159,9 @@ module Lain
     # on the POLICY seam ({Gate::Policy#decide}), not here. {#call} is public and
     # skips it entirely, so calling this directly can approve an
     # implementation-stage artifact while that epic's research sign-offs are
-    # still parked. Deliberate: the check needs {Epic}, and pulling that
-    # vocabulary in next to {Gherkin::Approval}, which knows nothing of epics,
-    # would cost more than the hole does. Go through a Policy for the boundary.
+    # still parked. Deliberate: the check needs {Epic}'s vocabulary, and this
+    # class stays blind to what it gates -- the bench wires it under artifacts
+    # that are not epic stages at all. Go through a Policy for the boundary.
     #
     # == The asker duck, and where attribution lives
     #
@@ -187,11 +198,6 @@ module Lain
 
       # A verdict plus the surface that gave it. Deeply frozen, so it is
       # Ractor-shareable like every value that crosses a fiber boundary.
-      #
-      # Structurally identical to {Gherkin::Approval::Answer} and deliberately
-      # not shared: this namespace loads BEFORE gherkin/, and the general gate
-      # must not depend on the specialized one. Either satisfies the other's
-      # duck, which is what makes the follow-up convergence cheap.
       Answer = Data.define(:approved, :surface) do
         def self.approve(surface) = new(approved: true, surface:)
         def self.deny(surface) = new(approved: false, surface:)
@@ -244,8 +250,11 @@ module Lain
       #   answer on every asker-delegating path
       # @param reason [String, nil] the prose beside the verdict -- the note a
       #   deferred gate parks with, or why a denial denied
+      # @param issue_id [String, nil] the issue an issue-scoped gate is about
+      # @param criteria_digest [String, nil] the criteria the artifact carries
       # @return [Boolean] whether the artifact was approved
-      def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil)
+      def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil,
+               issue_id: nil, criteria_digest: nil)
         digest = artifact.digest
         answer, latency = await(asker.ask(artifact.gate_question))
 
@@ -254,7 +263,8 @@ module Lain
         # must leave NO standing approval behind, or `ensure_approved!` would
         # open for a digest with no record of anyone approving it. Fail-closed
         # is about this ordering as much as about the timeout.
-        record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:)
+        record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:,
+                       issue_id:, criteria_digest:)
         @approved << digest if answer.approved?
         answer.approved?
       end
@@ -337,9 +347,8 @@ module Lain
       # `evidence_digest`/`reason` are FORWARDED, never derived: this class
       # gathers nothing and judges nothing, so the only honest value is the one
       # its caller handed down. A later path adds a VALUE here, never a column.
-      def record(answer, artifact_digest:, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:)
-        @journal.record(GateDecision.new(artifact_digest:, epic_slug:, stage:, approved: answer.approved?,
-                                         answered_by: answer.surface, policy:, latency:, evidence_digest:, reason:))
+      def record(answer, **decided)
+        @journal.record(GateDecision.new(approved: answer.approved?, answered_by: answer.surface, **decided))
       end
 
       # An expired window denies through the same {Answer} the surfaces build,

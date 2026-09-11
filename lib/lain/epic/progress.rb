@@ -12,6 +12,10 @@ module Lain
     # nor sufficient (this epic's records beside another's are partitioned away).
     class ForeignJournal < Error; end
 
+    # A {Progress} asked to describe no epic at all. A {Lain::Error}, like its
+    # sibling above, so `exe/lain` reports it rather than printing a backtrace.
+    class UnnamedEpic < Error; end
+
     # The provenance a graph's LIVE issues declare, and the two questions the
     # fold asks of an id: is it CURRENT, and if not, is it HISTORY?
     #
@@ -173,8 +177,15 @@ module Lain
       # rescue here and must not be one: an empty queue reads as drained, and
       # drained opens the next stage over work nobody signed off.
       def parked_at(stage)
-        Approval::SignoffQueue.from_journal(@records).parked(@epic_slug, stage.name)
+        queue = Approval::SignoffQueue.from_journal(@records)
+        watched(stage).flat_map { |shown| queue.parked(@epic_slug, shown.name) }
       end
+
+      # An issue-scoped verdict moves no epic-wide stage, so once the epic is
+      # planning its issues the stage reads the first issue-scoped one for the
+      # rest of the run -- and from there every issue-scoped partition is this
+      # epic's current business.
+      def watched(stage) = stage.issue_scoped? ? Stage.all.select(&:issue_scoped?) : [stage]
 
       def of_type(type) = Journal.records(@records, type:)
     end
@@ -211,7 +222,8 @@ module Lain
       end
 
       def initialize(graph:, stage:, epic_slug:, parked:)
-        super(graph:, stage:, epic_slug: named_epic(epic_slug), parked: signoffs(parked))
+        slug = named_epic(epic_slug)
+        super(graph:, stage:, epic_slug: slug, parked: signoffs(parked, slug))
       end
 
       # One issue's effective status.
@@ -235,10 +247,12 @@ module Lain
       # `Array#freeze` is shallow, so this value is deeply frozen -- and
       # `Ractor.shareable?` -- only because every member is itself frozen. Copied
       # before freezing, so the caller keeps ownership of the array it passed.
-      def signoffs(parked)
+      def signoffs(parked, slug)
         refuse_stranger!(parked) unless parked.is_a?(Array)
         stranger = parked.find { |item| !item.is_a?(Approval::SignoffQueue::Item) }
         refuse_stranger!(stranger) if stranger
+        foreign = parked.find { |item| item.epic_slug != slug }
+        refuse_foreign!(foreign, slug) if foreign
 
         parked.dup.freeze
       end
@@ -246,6 +260,12 @@ module Lain
       def refuse_stranger!(offender)
         raise ArgumentError,
               "parked must be an Array of #{Approval::SignoffQueue::Item} values (got #{offender.inspect})"
+      end
+
+      def refuse_foreign!(item, slug)
+        raise ForeignJournal, "progress for epic #{slug.inspect} was handed a sign-off parked in epic " \
+                              "#{item.epic_slug.inspect} (#{item.artifact_digest}) -- one epic's fold never " \
+                              "carries another's"
       end
 
       # Interned first, so the check judges the bytes that get stored: a slug
@@ -260,7 +280,7 @@ module Lain
       end
 
       def refuse_unnamed!(offender)
-        raise ArgumentError, "epic_slug must name the epic this progress is about (got #{offender.inspect})"
+        raise UnnamedEpic, "epic_slug must name the epic this progress is about (got #{offender.inspect})"
       end
     end
   end

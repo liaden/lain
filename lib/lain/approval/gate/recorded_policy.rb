@@ -21,8 +21,8 @@ module Lain
       # -- decided before any run has happened -- could ever name a digest to
       # replay. Composing {Policy::Boundary} rather than inheriting keeps that
       # family exactly the configurable four while still answering the same
-      # `#decide(artifact, gate:, stage:, epic_slug:)` duck every caller of a
-      # policy sends. A caller wires it directly, the way `bench altitude`'s
+      # `#decide(artifact, gate:, stage:, epic_slug:, issue_id:, criteria_digest:)`
+      # duck every caller of a policy sends. A caller wires it directly, the way `bench altitude`'s
       # progressive arm does.
       class RecordedPolicy
         NAME = "recorded"
@@ -66,17 +66,22 @@ module Lain
         # @param gate [Gate]
         # @param stage [#to_s]
         # @param epic_slug [#to_s]
+        # @param issue_id [String, nil] the issue an issue-scoped gate is about:
+        #   its boundary is checked for that issue alone, and the replayed
+        #   decision names it, so it drains that issue's parked sign-off
+        # @param criteria_digest [String, nil] the criteria the artifact carries
         # @return [Boolean] whether the recorded verdict approved
-        # @raise [Epic::StageBlocked] when an earlier stage of this epic still
-        #   holds sign-offs parked
+        # @raise [Epic::StageBlocked] when an earlier stage of this epic (or of
+        #   this issue) still holds sign-offs parked
         # @raise [Unrecorded] naming the digest when nothing was recorded for it
-        def decide(artifact, gate:, stage:, epic_slug:)
-          @boundary.ensure_open!(stage, epic_slug:)
+        def decide(artifact, gate:, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
+          @boundary.ensure_open!(stage, epic_slug:, issue_id:)
           recorded = @decisions.fetch(artifact.digest) do
             raise Unrecorded, "no recorded gate decision for artifact #{artifact.digest.inspect} -- " \
                               "replaying a verdict nobody gave would make this run a fiction"
           end
-          gate.call(artifact, asker: Policy::StandingAnswer.new(answer_for(recorded)), stage:, epic_slug:, policy: NAME)
+          gate.call(artifact, asker: Policy::StandingAnswer.new(answer_for(recorded)), stage:, epic_slug:,
+                              policy: NAME, issue_id:, criteria_digest:)
         end
 
         private

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "json"
 require "tmpdir"
 
@@ -34,9 +35,9 @@ RSpec.describe Lain::CLI::EpicQueue do
   # Built through the real producers, so the fixture cannot drift from the wire
   # shape production actually writes (the sessions_spec `header` idiom).
   def decision(digest:, at:, policy:, approved: false, slug: "alpha", stage: "research",
-               answered_by: "gate_adjudicator", evidence_digest: nil, reason: nil)
+               answered_by: "gate_adjudicator", evidence_digest: nil, reason: nil, **scope)
     Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
-                                     answered_by:, policy:, latency: 1.5, evidence_digest:, reason:)
+                                     answered_by:, policy:, latency: 1.5, evidence_digest:, reason:, **scope)
                                 .to_journal.merge("ts" => at)
   end
 
@@ -63,6 +64,53 @@ RSpec.describe Lain::CLI::EpicQueue do
   def gate_decisions = journal_records.select { |record| record["type"] == "gate_decision" }
 
   def refolded = Lain::Approval::SignoffQueue.from_journal(journal_records)
+
+  # An approved issue plan puts its issue in flight whichever surface approved
+  # it: the epic driver launches only issues in flight, so a plan signed off
+  # here and left pending would never run.
+  describe "approving a parked issue plan" do
+    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+
+    let(:root) { File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+    let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {})) }
+    let(:epics) { Lain::CLI::Epic.new(root:, paths:, config:) }
+    let(:home) { Lain::Epic::Home.resolve(config:, paths:, root:, slug: "alpha") }
+
+    def progress = Lain::Epic::Progress.fold(journal_records, graph: home.read_epic, epic_slug: "alpha")
+
+    before do
+      home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "A"),
+                                                     Lain::Epic::Issue.new(id: "b", title: "B")]))
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "issue_plan", issue_id: "a")])
+    end
+
+    it "puts that issue in flight and says so, leaving its sibling pending" do
+      said = queue.approve(digest_a)
+
+      expect(said).to include("issue a moved pending -> in_flight")
+      expect([progress.status("a"), progress.status("b")]).to eq(%w[in_flight pending])
+    end
+
+    it "moves nothing when the plan is denied" do
+      queue.deny(digest_a)
+
+      expect(progress.status("a")).to eq("pending")
+    end
+
+    # The queue is global to the sessions directory, but an issue's status is
+    # folded from the epic's own document. Approved from another project, the
+    # default epics resolve the WRONG home: refused, readably, before the
+    # sign-off lands -- never a raw missing-file error naming another path.
+    it "refuses an approval run outside the project that owns the epic, journaling nothing" do
+      outside = described_class.new(paths:, clock:)
+
+      expect { outside.approve(digest_a) }
+        .to raise_error(described_class::OutsideProject, /"alpha".*inside the project that owns it/m)
+      expect(gate_decisions.map { |record| record["policy"] }).to eq(["deferred"])
+    end
+  end
 
   # Scenario: approving a parked item drains it
   describe "#approve" do

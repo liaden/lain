@@ -312,10 +312,121 @@ RSpec.describe Lain::Approval::SignoffQueue do
     end
   end
 
+  # An issue's plan and its implementation are ONE issue's work, so a sign-off
+  # parked for issue a must not hold issue b's gate shut. A question that names
+  # no issue is answered for EVERY issue -- the conservative reading -- and an
+  # item that names no issue (an epic-wide stage, or a record written before
+  # issues were scoped) is seen by every issue's question for the same reason.
+  describe "issue-scoped partitions" do
+    def issue_park(queue, issue_id, digest: "blake3:#{issue_id}")
+      park(queue, digest:, stage: "issue_plan", issue_id:)
+    end
+
+    def damaged_approval
+      approval(stage: "issue_plan", issue_id: "a", digest: "blake3:a").to_journal.merge("approved" => [])
+    end
+
+    it "keeps one issue's parked sign-off out of a sibling's partition" do
+      queue = described_class.new
+      issue_park(queue, "a")
+
+      expect(queue.drained?("alpha", "issue_plan", issue_id: "b")).to be(true)
+      expect(queue.drained?("alpha", "issue_plan", issue_id: "a")).to be(false)
+    end
+
+    it "answers for every issue when the question names none" do
+      queue = described_class.new
+      issue_park(queue, "a")
+      issue_park(queue, "b")
+
+      expect(queue.drained?("alpha", "issue_plan")).to be(false)
+      expect(queue.parked("alpha", "issue_plan").map(&:issue_id)).to eq(%w[a b])
+    end
+
+    it "narrows the review surface to one issue when asked" do
+      queue = described_class.new
+      issue_park(queue, "a")
+      issue_park(queue, "b")
+
+      expect(queue.parked("alpha", "issue_plan", issue_id: "b").map(&:artifact_digest)).to eq(["blake3:b"])
+    end
+
+    it "lets an item that names no issue hold every issue's question" do
+      queue = described_class.new
+      park(queue, stage: "issue_plan")
+
+      expect(queue.drained?("alpha", "issue_plan", issue_id: "b")).to be(false)
+    end
+
+    it "folds an issue's deferral and drains it only by a decision for the same issue" do
+      held = described_class.from_journal(journaled(deferral(stage: "issue_plan", issue_id: "a"),
+                                                    approval(stage: "issue_plan", issue_id: "b")))
+      answered = described_class.from_journal(journaled(deferral(stage: "issue_plan", issue_id: "a"),
+                                                        approval(stage: "issue_plan", issue_id: "a")))
+
+      expect(held.map(&:issue_id)).to eq(["a"])
+      expect(answered.to_a).to be_empty
+    end
+
+    it "recovers the criteria digest the deferral carried" do
+      queue = described_class.from_journal(journaled(deferral(stage: "issue_plan", issue_id: "a",
+                                                              criteria_digest: "blake3:criteria")))
+
+      expect(queue.first).to have_attributes(issue_id: "a", criteria_digest: "blake3:criteria")
+    end
+
+    it "refuses a blank issue id -- it would key a partition no issue can match" do
+      expect { park(described_class.new, issue_id: " ") }.to raise_error(ArgumentError, /issue_id/)
+    end
+
+    # A damaged line: an issue id that is not text would stringify into an
+    # issue nobody has, park where no issue's question looks, and read as
+    # drained for every real issue. Refused before anything stringifies it.
+    [[], ["a"], 7, { "a" => 1 }].each do |damaged|
+      it "refuses a deferral whose issue_id is #{damaged.inspect}, rather than parking it out of sight" do
+        line = deferral(stage: "issue_plan").to_journal.merge("issue_id" => damaged)
+
+        expect { described_class.from_journal([line]) }.to raise_error(ArgumentError, /issue_id/)
+      end
+    end
+
+    it "keeps #park's keywords explicit, so its signature says what an item carries" do
+      expect(described_class.instance_method(:park).parameters.map(&:last))
+        .to eq(%i[artifact_digest epic_slug stage issue_id question evidence_digest criteria_digest])
+    end
+
+    # Scenario: a damaged decision line cannot drain a parked sign-off
+    it "refuses a live decision whose approved is [], leaving the issue's sign-off parked" do
+      queue = described_class.new
+      issue_park(queue, "a")
+
+      expect { queue.apply(damaged_approval) }.to raise_error(ArgumentError, /approved/)
+      expect(queue.drained?("alpha", "issue_plan", issue_id: "a")).to be(false)
+    end
+
+    it "refuses the whole rebuild over the same damaged line" do
+      lines = journaled(deferral(stage: "issue_plan", issue_id: "a", digest: "blake3:a")) +
+              ["#{JSON.generate(damaged_approval)}\n"]
+
+      expect { described_class.from_journal(lines) }.to raise_error(ArgumentError, /approved/)
+    end
+  end
+
   describe Lain::Approval::SignoffQueue::Partition do
     it "is equal for the same pair, so it can key the fold" do
       expect(described_class.new(epic_slug: "alpha", stage: "research"))
         .to eq(described_class.new(epic_slug: :alpha, stage: :research))
+    end
+
+    it "tells two issues' partitions apart, and names the issue when it renders" do
+      a = described_class.new(epic_slug: "alpha", stage: "issue_plan", issue_id: "a")
+
+      expect(a).not_to eq(described_class.new(epic_slug: "alpha", stage: "issue_plan", issue_id: "b"))
+      expect(a.to_s).to eq("alpha/issue_plan/a")
+    end
+
+    it "stays Ractor-shareable with an issue in it" do
+      expect(described_class.new(epic_slug: +"alpha", stage: +"issue_plan", issue_id: +"a")).to be_deeply_frozen
     end
 
     it "is Ractor-shareable (two interned Strings)" do

@@ -36,9 +36,10 @@ RSpec.describe Lain::Epic::Progress do
     Lain::Epic::StageTransition.new(epic_slug:, stage:, event:)
   end
 
-  def gate(policy: "deferred", approved: false, stage: "research", epic_slug: "alpha", digest: "blake3:plan")
+  def gate(policy: "deferred", approved: false, stage: "research", epic_slug: "alpha", digest: "blake3:plan",
+           **scope)
     Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
-                                     answered_by: policy, policy:, latency: 0.1)
+                                     answered_by: policy, policy:, latency: 0.1, **scope)
   end
 
   def fold(entries, graph:, epic_slug: "alpha") = described_class.fold(entries, graph:, epic_slug:)
@@ -224,6 +225,18 @@ RSpec.describe Lain::Epic::Progress do
     it "holds nothing when the journal is empty" do
       expect(fold([], graph: chain).parked).to be_empty
     end
+
+    # Issue-scoped verdicts move no epic-wide stage, so once the epic is
+    # planning its issues the stage reads issue_plan for the rest of the run --
+    # and a parked implementation is as much this epic's business as a parked
+    # plan.
+    it "shows every issue-scoped park once the epic is in its per-issue stages" do
+      entries = journaled(stage_event(stage: "issue_plan"),
+                          gate(stage: "issue_plan", digest: "blake3:plan-a", issue_id: "a"),
+                          gate(stage: "implementation", digest: "blake3:change-b", issue_id: "b"))
+
+      expect(fold(entries, graph: chain).parked.map(&:issue_id)).to eq(%w[a b])
+    end
   end
 
   describe "the epic it folds" do
@@ -250,6 +263,13 @@ RSpec.describe Lain::Epic::Progress do
 
       expect { fold(entries, graph: chain) }
         .to raise_error(Lain::Epic::ForeignJournal, /"alpha".*"beta".*"gamma"/m)
+    end
+
+    # Scenario: a journal for another epic is refused as a lain error
+    it "refuses a journal naming only another epic as a Lain::Error naming both" do
+      entries = journaled(transition(issue_id: "a", epic_slug: "other"))
+
+      expect { fold(entries, graph: chain) }.to raise_error(Lain::Error, /"alpha".*"other"/m)
     end
 
     it "folds a fresh epic whose journal holds nothing at all" do
@@ -304,9 +324,18 @@ RSpec.describe Lain::Epic::Progress do
     # blank slug interns to "" and would name a partition nothing can match.
     # A constructor that refuses a bad `parked` and shrugs at a nil slug is
     # inconsistent in the one direction this unit keeps getting bitten by.
-    it "refuses an epic slug that names nothing" do
-      expect { built(epic_slug: nil) }.to raise_error(ArgumentError, /epic_slug/)
-      expect { built(epic_slug: "  ") }.to raise_error(ArgumentError, /epic_slug/)
+    it "refuses an epic slug that names nothing, as a lain error" do
+      expect { built(epic_slug: nil) }.to raise_error(Lain::Error, /epic_slug/)
+      expect { built(epic_slug: "  ") }.to raise_error(Lain::Error, /epic_slug/)
+    end
+
+    # The fold only ever hands in this epic's own sign-offs; the constructor is
+    # public, so the value checks the same thing rather than trusting it.
+    it "refuses a parked sign-off from another epic, naming both" do
+      stray = Lain::Approval::SignoffQueue::Item.new(artifact_digest: "blake3:x", epic_slug: "other",
+                                                     stage: "research")
+
+      expect { built(parked: [stray]) }.to raise_error(Lain::Error, /"alpha".*"other"/m)
     end
 
     def built(**overrides)

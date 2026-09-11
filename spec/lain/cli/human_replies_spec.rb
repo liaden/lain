@@ -234,10 +234,10 @@ RSpec.describe Lain::CLI::HumanReplies do
     announced_text(asker, announcement(question))
   end
 
-  # The bare-String arm, which is production too: the approval gate and
-  # {Gherkin::Approval} ask through an `#ask`-shaped duck, and `Notifying`
-  # hands the thunk the String they passed rather than the set `#ask` wraps it
-  # in. Named so an example that means this arm says so.
+  # The bare-String arm, which is production too: the approval gate asks
+  # through an `#ask`-shaped duck, and `Notifying` hands the thunk the String
+  # it passed rather than the set `#ask` wraps it in. Named so an example that
+  # means this arm says so.
   def announced_text(asker, question)
     asker.ask(question)
     Lain::CLI::HumanReplies::InboxItem.asked(question, asker.last_question)

@@ -44,6 +44,12 @@ module Lain
       # nothing alike.
       class UnreadableRecord < Error; end
 
+      # An approved issue plan's issue status is folded from the epic's own
+      # document, and the queue -- global to the sessions directory -- can be
+      # drained from anywhere. Run outside the owning project, that document
+      # is another project's, so the approval refuses before anything lands.
+      class OutsideProject < Error; end
+
       # `answered_by` names WHO decided, `policy` names HOW the verdict was
       # reached -- independent axes ({Approval::GateDecision}'s contract), both
       # known here without asking anything.
@@ -62,9 +68,14 @@ module Lain
       # @param clock [#call] returns "now" as a Time; injected so the wait a
       #   sign-off records is a function of the journal rather than of when the
       #   command ran
-      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK)
+      # @param epics [CLI::Epic, nil] folds an epic's progress, asked only when
+      #   an approved issue plan has an issue to put in flight; nil builds the
+      #   default one at that moment, so a drain that moves nothing never
+      #   resolves a project
+      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil)
         @paths = paths
         @clock = clock
+        @epics = epics
       end
 
       # @param slug [String, nil] narrow to one epic; every epic when omitted
@@ -111,28 +122,32 @@ module Lain
         raise UnknownDigest, unknown_message(digest, approved:) if rows.empty?
 
         decisions = rows.map { |row| row.terminal(approved:, reason:) }
-        append(decisions)
-        confirmation(digest, decisions)
+        starts = Starts.new(decisions) { |slug| epics.progress(slug) }
+        confirmation(digest, decisions, append(decisions, starts))
       end
+
+      def epics = @epics ||= Epic.new(paths: @paths)
 
       # {Journal.open} creates a fresh file under `sessions_dir`, deliberately:
       # the fold reads every file there, so a decision journaled from a one-shot
-      # CLI lands in the same truth the next fold sees.
-      def append(decisions)
+      # CLI lands in the same truth the next fold sees. The decisions go first,
+      # and any issue they start after them, as a verdict writes them.
+      def append(decisions, starts)
         journal = Journal.open(paths: @paths)
         begin
           decisions.each { |decision| journal.record(decision) }
+          starts.write(journal)
         ensure
           journal.close
         end
       end
 
-      def confirmation(digest, decisions)
+      def confirmation(digest, decisions, moved)
         signed = decisions.map do |decision|
           "  #{decision.epic_slug}/#{decision.stage} — #{decision.approved ? "approved" : "denied"} by " \
             "#{decision.answered_by} after #{Row.waited_label(decision.latency)}"
         end
-        ["signed off #{digest}", *signed].join("\n")
+        ["signed off #{digest}", *signed, *moved.map { |line| "  #{line}" }].join("\n")
       end
 
       # `review.rows(nil)` widens to every epic: the near-miss beside what was
@@ -221,7 +236,8 @@ module Lain
         def terminal(approved:, reason:)
           Approval::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
                                      stage: item.stage, approved:, answered_by: HUMAN, policy: SIGNOFF_POLICY,
-                                     latency: waited, evidence_digest: item.evidence_digest, reason:)
+                                     latency: waited, evidence_digest: item.evidence_digest, reason:,
+                                     issue_id: item.issue_id, criteria_digest: item.criteria_digest)
         end
 
         def to_s
@@ -237,6 +253,45 @@ module Lain
         # `Lain::Epic`, spelled out: {CLI::Epic} is a sibling of this class, so a
         # bare `Epic` resolves to THAT one and finds no STAGES.
         def stage_index = Lain::Epic::STAGES.index(item.stage) || Lain::Epic::STAGES.size
+      end
+
+      # The issues a drain starts. An approved issue plan puts its issue in
+      # flight whichever surface approved it -- the epic driver launches only
+      # issues in flight, so a plan signed off here and left pending would
+      # never run. Progress is read BEFORE anything is journaled, so an epic
+      # whose document is not here refuses before the sign-off lands.
+      class Starts
+        # Yields each epic slug with an approved plan, for that epic's progress.
+        #
+        # @raise [OutsideProject] when that epic's document is not where this
+        #   process looks -- the approver stands in another project
+        def initialize(decisions)
+          @plans = decisions.select { |decision| plan_approval?(decision) }
+          @progress = @plans.map(&:epic_slug).uniq.to_h do |slug|
+            [slug, yield(slug)]
+          rescue Lain::Epic::Home::MissingArtifact => e
+            raise OutsideProject, outside_message(slug, e)
+          end
+        end
+
+        # @return [Array<String>] one line per approved plan, saying what moved
+        def write(journal)
+          @plans.map do |plan|
+            Lain::Epic::InFlight.new(scribe: Lain::Epic::Scribe.new(epic_slug: plan.epic_slug, journal:),
+                                     progress: -> { @progress.fetch(plan.epic_slug) }, issue_id: plan.issue_id).call
+          end
+        end
+
+        private
+
+        def plan_approval?(decision)
+          Lain::Epic::InFlight.starts?(approved: decision.approved, stage: decision.stage, issue_id: decision.issue_id)
+        end
+
+        def outside_message(slug, cause)
+          "approving an issue_plan of epic #{slug.inspect} puts its issue in flight, which reads the epic's own " \
+            "document, so it must run inside the project that owns it -- nothing was journaled (#{cause.message})"
+        end
       end
 
       # The fold, joined. Held apart from {EpicQueue} because rebuilding the

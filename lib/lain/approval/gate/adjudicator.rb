@@ -161,16 +161,18 @@ module Lain
         # @param artifact [#digest, #gate_question] the thing being gated
         # @param stage [#to_s] the stage this gate sits on
         # @param epic_slug [#to_s] the epic it belongs to
+        # @param issue_id [String, nil] the issue an issue-scoped gate is about
+        # @param criteria_digest [String, nil] the criteria the artifact carries
         # @return [Boolean] whether the artifact was approved
         # @raise [AlreadyDecided] when the journal already holds a terminal
         #   adjudication of this address, whichever way it went
         # @raise [Epic::StageBlocked] when an earlier stage of this epic still
         #   holds sign-offs parked. Both refusals happen before either spawn, so
         #   a refused gate spends no tokens and journals nothing.
-        def call(artifact, stage:, epic_slug:)
-          gated = admit(artifact, stage:, epic_slug:)
+        def call(artifact, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
+          gated = admit(artifact, stage:, epic_slug:, issue_id:)
           evidence = gather(artifact, gated)
-          settle(artifact, decide(artifact, evidence), evidence, gated)
+          settle(artifact, decide(artifact, evidence), evidence, gated, issue_id:, criteria_digest:)
         end
 
         private
@@ -180,20 +182,23 @@ module Lain
         # what an operator can do about it: a blocked epic names sign-offs
         # somebody can go approve, where "already decided" is a dead end. This
         # order is a diagnosis choice, not a safety one.
-        def admit(artifact, stage:, epic_slug:)
-          @boundary.ensure_open!(stage, epic_slug:)
+        #
+        # The answer is exactly what {GateEvidence} is built from, so the
+        # issue scope rides beside it into {#settle} rather than inside it.
+        def admit(artifact, stage:, epic_slug:, issue_id:)
+          @boundary.ensure_open!(stage, epic_slug:, issue_id:)
           @decided.ensure_undecided!(artifact.digest)
           { artifact_digest: artifact.digest, epic_slug:, stage:, question: artifact.gate_question }
         end
 
-        def settle(artifact, outcome, evidence, gated)
+        def settle(artifact, outcome, evidence, gated, **scope)
           approved = @gate.call(artifact, asker: outcome.asker, stage: gated[:stage],
                                           epic_slug: gated[:epic_slug], policy: outcome.policy,
-                                          evidence_digest: evidence.digest, reason: outcome.reason)
+                                          evidence_digest: evidence.digest, reason: outcome.reason, **scope)
           # Journal first, park second: the queue is a fold of journaled
           # deferrals, so a park with no record behind it vanishes on restart
           # and leaves a partition that reads drained.
-          outcome.park(@queue, **gated, evidence_digest: evidence.digest)
+          outcome.park(@queue, **gated, **scope, evidence_digest: evidence.digest)
           approved
         end
 

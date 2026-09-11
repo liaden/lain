@@ -4,6 +4,21 @@ require "fileutils"
 require "stringio"
 require "tmpdir"
 
+module EpicSubmitSpecSupport
+  # A {Lain::Skill::RoleSpawn} stand-in scripted per role: an adjudicated gate
+  # spawns the evidence spike and the verdict as two roles in one decision.
+  class ScriptedRoleSpawn
+    def initialize(answers)
+      @answers = answers
+    end
+
+    def call(role, _context_mode, _prompt) = Lain::Tool::Result.ok(@answers.fetch(role))
+  end
+
+  # The three things the adjudication pair reads off a backend.
+  FakeBackend = Data.define(:provider, :context, :slots)
+end
+
 # `lain epic submit` is the one verb that puts an epic's artifact in front of a
 # gate. Everything it does is assembled from objects that already carry their
 # own specs -- {Lain::Epic::Submission} addresses the artifact,
@@ -132,15 +147,108 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(progress.stage.name).to eq("epic_plan")
     end
 
-    # The last stage completes only -- there is no successor to start, and
-    # inventing one would claim work began that nothing shows.
-    it "completes the last stage without starting a successor" do
-      session("started.ndjson", stage_event("implementation"))
+    # An issue's implementation is ONE issue's; approving it says nothing about
+    # the epic's other issues, so it moves no epic-wide stage.
+    it "moves no epic-wide stage when one issue's implementation is approved" do
+      session("started.ndjson", stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+      command.submit("issue_plan", issue: "a")
 
       command.submit("implementation", issue: "a", digest: "blake3:#{"f" * 64}")
 
-      expect(stage_events).to eq([%w[implementation started], %w[implementation completed]])
-      expect(progress.stage.name).to eq("implementation")
+      expect(stage_events).to eq([%w[issue_plan started]])
+      expect(gate_decisions.map { |record| record.values_at("stage", "issue_id", "approved") })
+        .to eq([["issue_plan", "a", true], ["implementation", "a", true]])
+    end
+
+    # `Bench::EpicMetrics` folds round trips on the record's `issue_id`, and an
+    # epic-wide decision is the nil member of that key -- present, not absent.
+    it "journals an epic-wide decision with a nil issue" do
+      command(gates: { "research" => "hands_off" }).submit("research")
+
+      expect(gate_decisions.first).to include("issue_id" => nil)
+    end
+  end
+
+  # Scenarios: a parked issue does not block a sibling; approving an issue's
+  # plan puts that issue in flight, and only it.
+  describe "issue-scoped gates" do
+    before do
+      write_epic
+      session("started.ndjson", stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+      home.plan("b").write("the plan for b\n")
+    end
+
+    def deferring = command(gates: hands_off.merge("issue_plan" => "deferred"))
+    def changeset = "blake3:#{"e" * 64}"
+    def parked_plans = Lain::Approval::SignoffQueue.from_journal(journal_records).parked("alpha", "issue_plan")
+
+    it "opens b's implementation gate while a's issue_plan is parked" do
+      deferring.submit("issue_plan", issue: "a")
+      command.submit("issue_plan", issue: "b")
+
+      said = command.submit("implementation", issue: "b", digest: changeset)
+
+      expect(said).to start_with("approved")
+      expect(parked_plans.map(&:issue_id)).to eq(["a"])
+    end
+
+    it "still refuses a's own implementation while a's plan is parked" do
+      deferring.submit("issue_plan", issue: "a")
+
+      expect { command.submit("implementation", issue: "a", digest: changeset) }
+        .to raise_error(Lain::Error, /"a".*issue_plan/m)
+    end
+
+    it "puts a in flight when a's plan is approved, leaves b pending, and takes a out of the ready set" do
+      expect(progress.ready.map(&:id)).to eq(["a"])
+
+      said = command.submit("issue_plan", issue: "a")
+
+      expect(said).to include("issue a moved pending -> in_flight")
+      expect([progress.status("a"), progress.status("b")]).to eq(%w[in_flight pending])
+      expect(progress.ready.map(&:id)).not_to include("a")
+    end
+
+    it "moves an issue only once -- re-approving a revised plan for an issue in flight moves nothing" do
+      command.submit("issue_plan", issue: "a")
+      home.plan("a").write("the plan for a, revised\n")
+
+      command.submit("issue_plan", issue: "a")
+
+      expect(journal_records.count { |record| record["type"] == "issue_transition" }).to eq(1)
+    end
+
+    # A plan the adjudicator would not call parks, and a human approves it
+    # from the queue -- the designed path. The driver launches only issues in
+    # flight, so the queue's approval must move the issue exactly as a verdict
+    # here would.
+    it "puts a in flight when a's parked plan is approved from the queue" do
+      deferring.submit("issue_plan", issue: "a")
+      queue = Lain::CLI::EpicQueue.new(paths:, epics: Lain::CLI::Epic.new(root:, paths:, config: config(hands_off)))
+
+      said = queue.approve(parked_plans.first.artifact_digest)
+
+      expect(said).to include("issue a moved pending -> in_flight")
+      expect([progress.status("a"), progress.status("b")]).to eq(%w[in_flight pending])
+    end
+
+    it "names the issue's own partition when its plan parks" do
+      expect(deferring.submit("issue_plan", issue: "a")).to include("parked in alpha/issue_plan/a")
+    end
+
+    it "moves no epic-wide stage for one issue's plan" do
+      command.submit("issue_plan", issue: "a")
+
+      expect(stage_events).to eq([%w[issue_plan started]])
+    end
+
+    it "journals the issue on the decision and on the park" do
+      deferring.submit("issue_plan", issue: "a")
+
+      expect(gate_decisions.map { |record| record["issue_id"] }).to eq(["a"])
+      expect(parked_plans.map(&:issue_id)).to eq(["a"])
     end
   end
 
@@ -201,11 +309,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
   # Scenario: an unconstructable policy refuses loudly.
   #
-  # `adjudicated` (the card's example) is not yet a policy name, so the seam
-  # exercised here is the one the shipped catalog actually declares: the
-  # `interactive` recipe needs an `asker`, and a session with no TTY has none.
-  # The mechanism is identical -- {Policies::MissingSeam}, raised by `for_all`
-  # at WIRING time, naming the stage, the policy, and the seam.
+  # The seam exercised here is the `interactive` recipe's `asker`, which a
+  # session with no TTY does not have. An `adjudicated` stage in a session that
+  # wired no role spawn and brief refuses the same way -- the last example --
+  # and in both cases it is {Policies::MissingSeam}, raised by `for_all` at
+  # WIRING time, naming the stage, the policy, and the seam.
   describe "a policy this session cannot construct" do
     before do
       write_research
@@ -229,6 +337,109 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect { unaskable.submit("epic_plan") }.to raise_error(Lain::Approval::Gate::Policies::MissingSeam)
 
       expect(gate_decisions).to be_empty
+    end
+
+    # The CLI always wires the pair when a stage wants it; an in-process
+    # caller that constructs this command without one is refused by name.
+    it "refuses an adjudicated stage in a session that wired no role spawn or brief" do
+      expect { command(gates: hands_off.merge("implementation" => "adjudicated")).submit("research") }
+        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /implementation.*adjudicated.*role_spawn, brief/m)
+    end
+  end
+
+  # Scenarios: an adjudicated research gate decides and journals evidence; an
+  # ambiguous artifact parks, and unadjudicated stages build no backend.
+  describe "an adjudicated gate" do
+    before do
+      write_research
+      write_epic
+    end
+
+    def adjudicating = hands_off.merge("research" => "adjudicated")
+    def brief = ->(artifact) { "gather evidence on #{artifact.digest}" }
+
+    def scripted(verdict)
+      EpicSubmitSpecSupport::ScriptedRoleSpawn.new(
+        researcher: "the research names its sources, its method and two open questions", gate_adjudicator: verdict
+      )
+    end
+
+    def adjudicated(verdict)
+      described_class.new(root:, paths:, config: config(adjudicating), role_spawn: scripted(verdict), brief:)
+    end
+
+    def from_options(gates, backend:)
+      described_class.from_options({}, input: tty, output: StringIO.new, root:, paths:, config: config(gates),
+                                       backend:)
+    end
+
+    def real_backend(*answers)
+      EpicSubmitSpecSupport::FakeBackend.new(
+        provider: Lain::Provider::Mock.new(responses: answers.map { |answer| text_response(answer) }),
+        context: Lain::Context.new(model: "judge", max_tokens: 256), slots: Lain::Prompt::Slots.load(root:)
+      )
+    end
+
+    it "decides a clear artifact, journaling the evidence and a terminal adjudicated decision" do
+      said = adjudicated("APPROVE").submit("research")
+
+      expect(said).to start_with("approved")
+      expect(journal_records.map { |record| record["type"] }).to include("gate_evidence")
+      expect(gate_decisions.last).to include("policy" => "adjudicated", "approved" => true)
+    end
+
+    it "parks an artifact the adjudicator will not call, for a human" do
+      said = adjudicated("It is one sentence -- I cannot tell whether it covers the epic.").submit("research")
+
+      expect(said).to start_with("deferred")
+      expect(Lain::Approval::SignoffQueue.from_journal(journal_records).drained?("alpha", "research")).to be(false)
+    end
+
+    it "builds its own pair from the backend flags and decides through a real spawn" do
+      said = from_options(adjudicating, backend: -> { real_backend("the evidence, gathered", "APPROVE") })
+             .submit("research")
+
+      expect(said).to start_with("approved")
+      expect(gate_decisions.last).to include("policy" => "adjudicated")
+    end
+
+    it "builds no backend when every stage is interactive" do
+      interactive = Lain::Epic::STAGES.to_h { |stage| [stage, "interactive"] }
+
+      said = from_options(interactive, backend: -> { raise "built a backend with nothing to adjudicate" })
+             .submit("research")
+
+      expect(said).to start_with("approved")
+    end
+  end
+
+  # The driver runs this command in-process, so everything it would otherwise
+  # build for itself can be handed in instead.
+  describe "injected collaborators" do
+    before do
+      write_research
+      write_epic
+    end
+
+    it "asks through an injected asker, with no terminal at all" do
+      asker = Lain::Approval::Gate::Policy::StandingAnswer.new(Lain::Approval::Gate::Answer.approve("driver"))
+
+      described_class.new(root:, paths:, config: config(hands_off.merge("research" => "interactive")), asker:)
+                     .submit("research")
+
+      expect(gate_decisions.last).to include("answered_by" => "driver", "approved" => true)
+    end
+
+    it "journals into an injected journal, and leaves it open for its owner" do
+      path = File.join(sessions_dir, "driver.ndjson")
+      journal = Lain::Journal.open(path)
+
+      described_class.new(root:, paths:, config: config(hands_off), journal:).submit("research")
+
+      expect(journal).not_to be_closed
+      expect(Lain::Journal.records(File.foreach(path), type: "gate_decision").count).to eq(1)
+    ensure
+      journal&.close
     end
   end
 
@@ -350,6 +561,86 @@ RSpec.describe Lain::CLI::EpicSubmit do
       said = command.submit("research", "beta")
 
       expect(said).to include("beta", research_digest("beta's research\n", slug: "beta"))
+    end
+  end
+
+  # Scenario: approving an issue plan approves its criteria, and editing them
+  # reopens the gate. The criteria are the issue's Gherkin block in epic.md --
+  # the source {Lain::Epic::Issue#criteria_digest} reads -- so that is where the
+  # edit lands.
+  describe "an issue plan's criteria" do
+    def criteria(outcome)
+      <<~GHERKIN
+        ```gherkin
+        Scenario: the thing works
+          Given the thing
+          Then #{outcome}
+        ```
+      GHERKIN
+    end
+
+    def graph_with(outcome)
+      Lain::Epic::Graph.new(issues: [issue("a", blocks: ["b"], criteria: criteria(outcome)), issue("b")])
+    end
+
+    def criteria_digest_of(outcome) = Lain::Gherkin::Criteria.parse(criteria(outcome)).digest
+    def changeset = "blake3:#{"c" * 64}"
+
+    def plan_digest(outcome)
+      Lain::Epic::Submission.issue_plan(text: "the plan for a\n", slug: "alpha", issue_id: "a",
+                                        criteria_digest: criteria_digest_of(outcome)).digest
+    end
+
+    before do
+      home.write_epic(graph_with("it works"))
+      session("started.ndjson", stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+    end
+
+    it "journals the criteria the plan was approved with" do
+      command.submit("issue_plan", issue: "a")
+
+      expect(gate_decisions.last).to include("artifact_digest" => plan_digest("it works"), "issue_id" => "a",
+                                             "criteria_digest" => criteria_digest_of("it works"))
+    end
+
+    it "refuses the implementation once a criterion is edited, naming the un-approved plan digest" do
+      command.submit("issue_plan", issue: "a")
+      home.write_epic(graph_with("it works, and says so"))
+
+      expect { command.submit("implementation", issue: "a", digest: changeset) }
+        .to raise_error(described_class::PlanNotApproved, /"a".*issue_plan.*#{plan_digest("it works, and says so")}/m)
+    end
+
+    it "journals nothing when it refuses" do
+      command.submit("issue_plan", issue: "a")
+      home.write_epic(graph_with("it works, and says so"))
+      before_records = journal_records
+
+      expect { command.submit("implementation", issue: "a", digest: changeset) }
+        .to raise_error(described_class::PlanNotApproved)
+
+      expect(journal_records).to eq(before_records)
+    end
+
+    it "opens the implementation again once the edited plan is approved" do
+      command.submit("issue_plan", issue: "a")
+      home.write_epic(graph_with("it works, and says so"))
+      command.submit("issue_plan", issue: "a")
+
+      expect(command.submit("implementation", issue: "a", digest: changeset)).to start_with("approved")
+    end
+
+    it "refuses an implementation for an issue whose plan was never approved" do
+      expect { command.submit("implementation", issue: "a", digest: changeset) }
+        .to raise_error(described_class::PlanNotApproved, /lain epic submit issue_plan --issue a/)
+    end
+
+    it "refuses a plan for an issue the epic does not hold, before anything is journaled" do
+      home.plan("ghost").write("a plan for nothing\n")
+
+      expect { command.submit("issue_plan", issue: "ghost") }.to raise_error(Lain::Epic::UnknownIssue, /ghost/)
+      expect(gate_decisions).to be_empty
     end
   end
 

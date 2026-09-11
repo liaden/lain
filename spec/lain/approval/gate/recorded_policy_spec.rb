@@ -111,6 +111,49 @@ RSpec.describe Lain::Approval::Gate::RecordedPolicy do
     end
   end
 
+  # An issue's plan and implementation are that issue's gates, so a replay
+  # answers the issue-scoped duck every other policy answers: it checks the
+  # boundary for that issue alone, and journals the issue, so the replayed
+  # verdict drains that issue's parked sign-off rather than nobody's.
+  describe "issue-scoped replay" do
+    def decide_for(policy, digest:, issue_id:, stage: "implementation")
+      Sync do
+        policy.decide(artifact(digest:), gate:, stage:, epic_slug: "lain-epics", issue_id:,
+                                         criteria_digest: "blake3:criteria")
+      end
+    end
+
+    it "answers the issue-scoped duck and journals the issue and criteria it decided" do
+      policy = described_class.from_journal(recorded_journal { |recording| approve(recording, digest: "blake3:D") },
+                                            queue: drained)
+
+      expect(decide_for(policy, digest: "blake3:D", issue_id: "a", stage: "issue_plan")).to be(true)
+      expect(decisions.first).to include("issue_id" => "a", "criteria_digest" => "blake3:criteria")
+    end
+
+    it "drains the issue's parked sign-off when it replays that issue's verdict" do
+      parked = Lain::Approval::GateDecision.new(artifact_digest: "blake3:D", epic_slug: "lain-epics",
+                                                stage: "issue_plan", approved: false, answered_by: "deferred",
+                                                policy: "deferred", latency: 0.1, issue_id: "a")
+      policy = described_class.from_journal(recorded_journal { |recording| approve(recording, digest: "blake3:D") },
+                                            queue: drained)
+
+      decide_for(policy, digest: "blake3:D", issue_id: "a", stage: "issue_plan")
+
+      folded = Lain::Approval::SignoffQueue.from_journal([parked.to_journal, *decisions])
+      expect(folded.drained?("lain-epics", "issue_plan", issue_id: "a")).to be(true)
+    end
+
+    it "opens one issue's gate while a sibling's plan is parked, and not the parked issue's own" do
+      queue.park(artifact_digest: "blake3:plan-a", epic_slug: "lain-epics", stage: "issue_plan", issue_id: "a")
+      policy = described_class.from_journal(recorded_journal { |recording| approve(recording, digest: "blake3:D") },
+                                            queue:)
+
+      expect(decide_for(policy, digest: "blake3:D", issue_id: "b")).to be(true)
+      expect { decide_for(policy, digest: "blake3:D", issue_id: "a") }.to raise_error(Lain::Epic::StageBlocked)
+    end
+  end
+
   # Scenario: config cannot name the recorded policy.
   describe "config cannot name the recorded policy" do
     it "is absent from the catalog config validates configurable policy names against" do

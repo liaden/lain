@@ -4,14 +4,13 @@ require "stringio"
 
 # Approval::Gate is the artifact gate: any artifact answering #digest and
 # #gate_question must pass it before an irreversible action consumes that
-# digest. It is Gherkin::Approval's shape generalized off Criteria -- ask
-# through an ask_human-shaped duck, block on the promise with a timeout ->
-# deny, journal a gate_decision attributed to the answering surface, and
-# remember the approved digest so ensure_approved! refuses loudly otherwise.
+# digest. It asks through an ask_human-shaped duck, blocks on the promise with
+# a timeout -> deny, journals a gate_decision attributed to the answering
+# surface, and remembers the approved digest so ensure_approved! refuses
+# loudly otherwise.
 #
-# Only the asker-delegating path ships today; `policy:` is carried onto the
-# record as a label so later policies (hands_off, deferred) wrap this one
-# without ever widening the durable wire shape.
+# `policy:` is carried onto the record as a label, so the policies wrap this
+# one rather than branching inside it.
 RSpec.describe Lain::Approval::Gate do
   # An ask_human-shaped duck: #ask returns a Promise the injected block may
   # resolve (the degenerate sync case) or leave pending forever (the
@@ -212,6 +211,25 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
+  describe "an issue-scoped decision" do
+    it "journals the issue and the criteria it was handed" do
+      call(gate, asker: approve_asker, stage: "issue_plan", issue_id: "a", criteria_digest: "blake3:criteria")
+
+      expect(decisions.last).to include("stage" => "issue_plan", "issue_id" => "a",
+                                        "criteria_digest" => "blake3:criteria")
+    end
+  end
+
+  # Scenario: the old approval is gone. It gated a bare Criteria and was
+  # constructed nowhere; an issue's criteria now ride its plan through this
+  # gate instead, so the two could only ever have drifted apart.
+  describe "the criteria-only gate this one replaced" do
+    it "is gone, together with the record it journaled" do
+      expect(defined?(Lain::Gherkin::Approval)).to be_nil
+      expect(defined?(Lain::Telemetry::GherkinApproval)).to be_nil
+    end
+  end
+
   describe Lain::Approval::GateDecision do
     def record(**overrides)
       described_class.new(artifact_digest: "blake3:abc", epic_slug: "lain-epics", stage: "epic_plan",
@@ -227,16 +245,37 @@ RSpec.describe Lain::Approval::Gate do
       expect(record.to_journal["type"]).to eq("gate_decision")
     end
 
-    it "carries the full wire shape on day one, evidence_digest and reason included" do
+    it "carries the full wire shape, evidence, reason and issue scope included" do
       expect(record(evidence_digest: "blake3:spike", reason: "researcher spawn failed").to_journal.keys)
         .to contain_exactly("type", "artifact_digest", "epic_slug", "stage", "approved", "answered_by",
-                            "policy", "latency", "evidence_digest", "reason")
+                            "policy", "latency", "evidence_digest", "reason", "issue_id", "criteria_digest")
     end
 
-    # The rationale field: nullable like evidence_digest, and for the same
-    # reason -- a shape a later card can populate but must never widen.
+    # The rationale field: nullable like evidence_digest -- "no rationale was
+    # given" is a value, not a missing field.
     it "defaults reason to nil, so a verdict with no rationale journals one" do
       expect(record.to_journal).to include("reason" => nil)
+    end
+
+    # An epic-wide decision names no issue, and says so with the key present:
+    # the round-trip metric folds on it and an absent key would read the same
+    # only by accident.
+    it "journals an epic-wide decision with a nil issue and no criteria" do
+      expect(record.to_journal).to include("issue_id" => nil, "criteria_digest" => nil)
+    end
+
+    it "keeps an issue's scope frozen, so the record stays shareable" do
+      expect(record(issue_id: +"a", criteria_digest: +"blake3:criteria")).to be_deeply_frozen
+    end
+
+    it "refuses a blank issue id -- it would name a partition no issue can match" do
+      expect { record(issue_id: "  ") }.to raise_error(ArgumentError, /issue_id/)
+    end
+
+    [[], ["a"], 7, { "a" => 1 }].each do |damaged|
+      it "refuses an issue_id of #{damaged.inspect} -- an issue is named by text or not at all" do
+        expect { record(issue_id: damaged) }.to raise_error(ArgumentError, /issue_id/)
+      end
     end
 
     it "keeps a supplied reason frozen, so the record stays shareable" do

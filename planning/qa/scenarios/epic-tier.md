@@ -137,14 +137,17 @@ adjudicated`. **Every unknown key is reported in one pass**, not just the first 
 and check both are named.
 
 **Then the property that makes this worth doing at launch at all:** `Policies.for_all` resolves
-EVERY stage's policy, not only the stage being submitted. So configure `implementation =
-"adjudicated"` in a session with no `role_spawn` seam and submit **`research`** — an entirely
-different stage. It must still refuse at wiring:
+EVERY stage's policy, not only the stage being submitted. `lain epic submit` builds the
+adjudication pair — a role spawn over `--provider`/`--model`, and a brief — whenever ANY stage is
+configured `adjudicated`, and builds no provider at all otherwise. So configure `implementation =
+"adjudicated"`, unset the provider's API key, and submit **`research`** — an entirely different
+stage. It must still refuse at wiring, before anything is journaled, naming the missing key. Then
+set every stage `interactive` and submit again with the key still unset: that must succeed, because
+a session with nothing to adjudicate never constructs a provider.
 
-```
-epic stage "implementation" is configured for the "adjudicated" gate policy, but this session is
-missing role_spawn, brief
-```
+The seam refusal itself (`... but this session is missing role_spawn, brief`) is no longer reachable
+from the command line — the CLI always wires the pair when it is needed. It is what an in-process
+caller that constructs `EpicSubmit` without one gets, and `epic_submit_spec.rb` pins it there.
 
 A run that submits `research` happily and only discovers the broken `implementation` wiring at 3am
 on the overnight gate is the regression. This check is the whole reason `for_all` exists, and it

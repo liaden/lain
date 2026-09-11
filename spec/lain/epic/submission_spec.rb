@@ -83,9 +83,8 @@ RSpec.describe Lain::Epic::Submission do
 
     it "differs for the same text submitted as research versus as an issue_plan" do
       research = described_class.research(text: "same words", slug: "demo")
-      plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1")
+      plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1", criteria_digest: nil)
 
-      expect(research.content_digest).to eq(plan.content_digest) # same content, by construction
       expect(research.digest).not_to eq(plan.digest)
     end
 
@@ -112,7 +111,7 @@ RSpec.describe Lain::Epic::Submission do
 
       it "does not let approving research open an issue_plan resubmitting the same words" do
         research = described_class.research(text: "same words", slug: "demo")
-        plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1")
+        plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1", criteria_digest: nil)
         Sync { gate.call(research, asker: approve_asker, stage: "research", epic_slug: "demo") }
 
         expect(gate.approved?(plan.digest)).to be(false)
@@ -133,6 +132,51 @@ RSpec.describe Lain::Epic::Submission do
                                        fact: "1 bytes")
 
       expect(submission.digest).to eq("blake3:73eb704a23cea63e1a24793f89ec8a4da2bcf188d04a3174a5344dfffa9d133d")
+    end
+  end
+
+  # An issue's plan is approved together with that issue's acceptance
+  # criteria: the plan is written to satisfy them, so a sign-off on the plan is
+  # a sign-off on both, and editing either is a different, un-approved address.
+  # The issue is composed in too, so two issues that happen to share a plan and
+  # criteria are still two approvals.
+  describe "an issue plan carries its issue's criteria" do
+    def plan(text: "the plan", issue_id: "a", criteria_digest: "blake3:criteria")
+      described_class.issue_plan(text:, slug: "demo", issue_id:, criteria_digest:)
+    end
+
+    it "moves its address when the criteria change, with the plan untouched" do
+      expect(plan.digest).not_to eq(plan(criteria_digest: "blake3:criteria-edited").digest)
+    end
+
+    it "moves its address when only the issue differs" do
+      expect(plan.digest).not_to eq(plan(issue_id: "b").digest)
+    end
+
+    it "keeps its address for the same plan, issue and criteria" do
+      expect(plan.digest).to eq(plan.digest)
+    end
+
+    it "carries the issue and the criteria digest for the gate decision" do
+      expect(plan).to have_attributes(issue_id: "a", criteria_digest: "blake3:criteria")
+    end
+
+    it "accepts an issue with no criteria, stated rather than forgotten" do
+      expect(plan(criteria_digest: nil).criteria_digest).to be_nil
+    end
+
+    it "refuses to be built without saying what the criteria are" do
+      expect { described_class.issue_plan(text: "the plan", slug: "demo", issue_id: "a") }
+        .to raise_error(ArgumentError, /criteria_digest/)
+    end
+
+    it "stays deeply frozen with the criteria on it" do
+      expect(plan(criteria_digest: +"blake3:criteria")).to be_deeply_frozen
+    end
+
+    it "leaves the epic's own documents with neither" do
+      expect(described_class.research(text: "hello", slug: "demo"))
+        .to have_attributes(issue_id: nil, criteria_digest: nil)
     end
   end
 
@@ -184,7 +228,7 @@ RSpec.describe Lain::Epic::Submission do
 
     it "names the issue for an issue_plan, plus its byte size" do
       text = "as a user I want..."
-      submission = described_class.issue_plan(text:, slug: "demo", issue_id: "T7")
+      submission = described_class.issue_plan(text:, slug: "demo", issue_id: "T7", criteria_digest: nil)
 
       expect(submission.gate_question).to include("issue_plan", "T7", text.bytesize.to_s)
     end
@@ -220,12 +264,12 @@ RSpec.describe Lain::Epic::Submission do
   # to approve an unnamed issue. Found by probe_t1.rb.
   describe "issue_id validation" do
     it "refuses a nil issue_id on issue_plan, naming the field" do
-      expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: nil) }
+      expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: nil, criteria_digest: nil) }
         .to raise_error(ArgumentError, /issue_id/)
     end
 
     it "refuses a blank issue_id on issue_plan" do
-      expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: "") }
+      expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: "", criteria_digest: nil) }
         .to raise_error(ArgumentError, /issue_id/)
     end
 
@@ -251,7 +295,7 @@ RSpec.describe Lain::Epic::Submission do
     end
 
     it "refuses nil text on issue_plan" do
-      expect { described_class.issue_plan(text: nil, slug: "demo", issue_id: "T7") }
+      expect { described_class.issue_plan(text: nil, slug: "demo", issue_id: "T7", criteria_digest: nil) }
         .to raise_error(ArgumentError, /text/)
     end
 

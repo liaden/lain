@@ -44,10 +44,10 @@ module Lain
       end
 
       # Back OUT to the house format the parser accepts. It lives on the value
-      # because the two consumers that quote a scenario -- {Approval}'s question
-      # to the human and {TestGeneration}'s prompt -- each held their own copy of
-      # these lines, and a scenario asked in one wording and generated from in
-      # another is a difference nothing would report.
+      # so a consumer that quotes a scenario -- {TestGeneration}'s prompt --
+      # quotes it in the parser's own wording rather than a copy of these
+      # lines, and a scenario quoted one way and parsed another is a difference
+      # nothing would report.
       #
       # NOT {#canonical}'s business, which is the digest's wire form: this one is
       # read by people, so it may be reformatted without changing an address.
@@ -288,4 +288,3 @@ end
 # A plain sibling class, not a reopen, but it depends on Criteria/Scenario
 # existing first, so it loads after the module body above.
 require_relative "gherkin/test_generation"
-require_relative "gherkin/approval"
