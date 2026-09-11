@@ -174,10 +174,13 @@ module Lain
 
       private
 
+      # The `none` branch is built with the same root/paths/home this object
+      # resolves `worktree` from, so its `#repo_root` answers the repository
+      # THIS run would cut from, not an unrelated one found from the process cwd.
       def concrete
         case backend_name
         when "worktree" then worktree
-        else Isolation::Null.new
+        else Isolation::Null.new(root: @root, paths: @paths, home: @home)
         end
       end
 

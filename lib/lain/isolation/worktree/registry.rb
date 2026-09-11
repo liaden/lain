@@ -29,6 +29,9 @@ module Lain
           @shell_out_factory = shell_out_factory
         end
 
+        # @return [String] the repository every command below runs against
+        attr_reader :repo_root
+
         # `-z`, because a path and a lock reason are free text, and the plain
         # porcelain quotes any holding a newline. Records end in an extra NUL.
         # @return [Array<Entry>]

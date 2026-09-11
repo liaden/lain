@@ -50,6 +50,8 @@ class RecordingInner
 
   def retained?(path) = path == "/state/worktrees/w"
 
+  def repo_root = "/repo"
+
   def acquire(_worker_id)
     origin = Lain::Isolation::Lease::Origin.new(path: "/state/worktrees/w", base: "a" * 40, branch: "feat")
     Lease.new(Lain::WorkerEnv.default, 0, origin).tap { |lease| @leases << lease }
@@ -95,6 +97,13 @@ RSpec.describe Lain::Isolation::DbIndex do
                                       shell_out_factory: shell)
 
       expect([decorated.retained?("/state/worktrees/w"), decorated.retained?("/elsewhere")]).to eq([true, false])
+    end
+
+    it "answers the inner backend's repository" do
+      decorated = described_class.new(services: [], inner: RecordingInner.new, paths: stub_paths,
+                                      shell_out_factory: shell)
+
+      expect(decorated.repo_root).to eq("/repo")
     end
   end
 

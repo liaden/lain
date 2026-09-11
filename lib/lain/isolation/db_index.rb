@@ -95,6 +95,11 @@ module Lain
       # @return [Boolean]
       def retained?(path) = @inner.retained?(path)
 
+      # Forwarded: the repository a lease was cut from is the inner backend's
+      # to answer.
+      # @return [String] the inner backend's repository
+      def repo_root = @inner.repo_root
+
       # The lease's WorkerEnv carries the inner cwd plus the service URLs, and
       # its release reclaims the services then the inner lease, whose origin
       # it hands back unchanged.

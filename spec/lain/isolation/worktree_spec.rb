@@ -240,6 +240,14 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(backend.base).to equal(base)
     end
 
+    # A handback merges into this, and a caller re-deriving it independently
+    # (a separate `rev-parse --show-toplevel`) can disagree with the backend
+    # under GIT_CEILING_DIRECTORIES -- the repository this backend was
+    # constructed with is the one honest answer.
+    it "answers the repository it was constructed with, as a caller's one authority for where to merge back" do
+      expect(backend.repo_root).to eq(@repo_root)
+    end
+
     it "names its checkout's path, the commit it was cut from, and the branch" do
       lease = backend.acquire("worker-1")
 

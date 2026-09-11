@@ -42,8 +42,11 @@ module Lain
 
         def self.none = new(handoff: Isolation::WorkerHandoff::Null)
 
-        # @param isolation [#base] the fleet's backend; its working branch is
-        #   the only branch a handback lands on and the one a worker syncs onto
+        # @param isolation [#base, #repo_root] the fleet's backend; its working
+        #   branch is the only branch a handback lands on and the one a worker
+        #   syncs onto, and its repository is the one a handback merges into --
+        #   the same repository it cut worker checkouts from, so this never
+        #   re-derives a root that could disagree with the backend's own
         # @param root [String] the project root `.lain/config.toml` is read under
         # @param journal [#<<] where the handback and sync records land
         # @param role_spawn [#call] a thunk reading the run's {Skill::RoleSpawn}
@@ -55,7 +58,7 @@ module Lain
 
           settings = settings(root, notice)
           strategy = Isolation::MergeStrategy.from(settings)
-          new(handoff: Isolation::WorkerHandoff.over(repo_root: toplevel(root), base:, journal:, strategy:,
+          new(handoff: Isolation::WorkerHandoff.over(repo_root: isolation.repo_root, base:, journal:, strategy:,
                                                      resolver: LateResolver.new(role_spawn:)),
               sync: Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries))
         end
@@ -67,17 +70,7 @@ module Lain
           Config::Isolation.empty
         end
 
-        # The checkout the human is standing in, which is the one the fleet's
-        # worktrees were cut from: conflicted paths come back relative to it,
-        # and a project root below it would name files that are not there.
-        def self.toplevel(root)
-          shell = Isolation::Checkout.new(File.expand_path(root)).run("rev-parse", "--show-toplevel")
-          return shell.stdout.strip if shell.exitstatus.zero?
-
-          raise Error, "#{root} is in no git checkout to hand workers back to: #{shell.stderr.strip}"
-        end
-
-        private_class_method :settings, :toplevel
+        private_class_method :settings
       end
     end
   end

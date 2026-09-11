@@ -40,6 +40,12 @@ module Lain
       # @return [Boolean]
       def retained?(path) = @backend.retained?(path)
 
+      # Forwarded for the same reason: the repository a lease was cut from is
+      # the backend's to answer, and this decorator stands between that caller
+      # and the backend that knows it.
+      # @return [String] the wrapped backend's repository
+      def repo_root = @backend.repo_root
+
       # @param worker_id [Object] the worker leasing an environment
       # @return [Lease] wraps the backend's own lease so its release is
       #   journaled too

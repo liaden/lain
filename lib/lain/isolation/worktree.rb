@@ -123,6 +123,15 @@ module Lain
       #   the one a handback of that lease's work targets
       attr_reader :base
 
+      # {Registry} already holds the expanded path every git call in it runs
+      # against, so this reads that rather than keeping a second copy.
+      # @return [String] the repository every lease is cut FROM -- the one a
+      #   handback merges into, read here rather than re-derived by a caller
+      #   that would otherwise shell its own `rev-parse --show-toplevel` and
+      #   risk answering a different repository than the one this backend cuts
+      #   worktrees from
+      def repo_root = @registry.repo_root
+
       # The clear+add+register is serialized, so a concurrent acquire of the
       # SAME worker_id refuses rather than clobbering.
       # @param worker_id [Object] keyed through {Paths#project_hash} into a

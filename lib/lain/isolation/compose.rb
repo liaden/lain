@@ -80,7 +80,7 @@ module Lain
         #   invocation to this worker's own stack
         # @param compose_file [String] the `-f` path every compose invocation
         #   on this Stack targets
-        # @param shell_out_factory [#call] builds the shell-out object each
+        # @param shell_out_factory [#call] builds the subprocess runner each
         #   `docker compose` invocation runs through
         # @param env [#[]] the environment SNAPSHOTTED at acquire for the daemon
         #   vars, defaulting to the live process ENV -- see {DOCKER_DAEMON_VARS}
@@ -194,6 +194,11 @@ module Lain
       # @param path [String] a lease's checkout, as its origin names it
       # @return [Boolean]
       def retained?(path) = @inner.retained?(path)
+
+      # Forwarded: the repository a lease was cut from is the inner backend's
+      # to answer.
+      # @return [String] the inner backend's repository
+      def repo_root = @inner.repo_root
 
       # The lease's WorkerEnv carries the inner cwd plus the service URLs, and
       # its release tears the stack down then releases inner, whose origin it

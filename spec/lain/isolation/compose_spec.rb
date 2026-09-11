@@ -55,6 +55,8 @@ class RecordingComposeInner
 
   def retained?(path) = path == "/state/worktrees/w"
 
+  def repo_root = "/repo"
+
   def acquire(_worker_id)
     origin = Lain::Isolation::Lease::Origin.new(path: "/state/worktrees/w", base: "a" * 40, branch: "feat")
     Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, origin:).tap { |lease| @leases << lease }
@@ -223,6 +225,10 @@ RSpec.describe Lain::Isolation::Compose do
       decorated = build([db], shell: happy_shell, inner: RecordingComposeInner.new)
 
       expect([decorated.retained?("/state/worktrees/w"), decorated.retained?("/elsewhere")]).to eq([true, false])
+    end
+
+    it "answers the inner backend's repository" do
+      expect(build([db], shell: happy_shell, inner: RecordingComposeInner.new).repo_root).to eq("/repo")
     end
 
     it "scrubs COMPOSE_PROJECT_NAME/COMPOSE_FILE so ambient config never redirects our -p/-f" do

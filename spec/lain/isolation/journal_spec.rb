@@ -18,6 +18,8 @@ class FakeIsolationBackend
 
   def retained?(path) = path == "/fake/retained"
 
+  def repo_root = "/fake/repo"
+
   def acquire(worker_id)
     @acquired << worker_id
     Lease.new(worker_env: Lain::WorkerEnv.new(cwd: "/fake/#{worker_id}", env: {}))
@@ -44,6 +46,12 @@ RSpec.describe Lain::Isolation::Journal do
   # backend that released it knows.
   it "answers whether the wrapped backend retained a checkout on release" do
     expect([decorator.retained?("/fake/retained"), decorator.retained?("/fake/other")]).to eq([true, false])
+  end
+
+  # A handback merges into the repository the backend cut its checkouts from,
+  # and only the backend that cut them knows which one that is.
+  it "answers the wrapped backend's repository" do
+    expect(decorator.repo_root).to eq("/fake/repo")
   end
 
   describe "#acquire" do

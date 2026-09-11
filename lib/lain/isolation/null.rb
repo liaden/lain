@@ -9,6 +9,27 @@ module Lain
     # {WorkerEnv.default} is recomputed per `acquire`, never a frozen constant,
     # so a lease taken after a `Dir.chdir` still names the current directory.
     class Null
+      # {#repo_root} either has no root to search from, or finds no repository
+      # above the one it was built with. Raised rather than answering nil or
+      # the cwd -- either would let a caller mistake "this backend cuts no
+      # checkouts" for "there is nothing to merge into".
+      class NoRepository < Error; end
+
+      # `root:` has no default -- the root-defaults discipline
+      # (`spec/lain/project/root_defaults_spec.rb`) exists precisely to stop a
+      # root being inferred from the process cwd, and every zero-arg
+      # `Null.new` call site in `lib/` never asks {#repo_root} a question, so
+      # there is nothing for a default here to serve.
+      # @param root [String, nil] where {#repo_root}'s search starts; nil
+      #   means this backend was built with no root to search from
+      # @param paths [Paths] supplies the XDG bases {#repo_root}'s search stops at
+      # @param home [String, nil] the user's home directory, bounding that search
+      def initialize(root: nil, paths: Paths.new, home: ENV.fetch("HOME", nil)) # rubocop:disable Style/EnvHome -- see CLI::IsolationBackend#initialize's `home:` tag
+        @root = root
+        @paths = paths
+        @home = home
+      end
+
       # @param _worker_id [Object] ignored -- every worker shares one env
       # @return [Lease] a lease over the shared process env; release is a no-op
       def acquire(_worker_id = nil) = Lease.new(worker_env: WorkerEnv.default)
@@ -20,6 +41,28 @@ module Lain
       # No checkout is cut, so none is ever kept back on release.
       # @return [false]
       def retained?(_path) = false
+
+      # No checkout was cut FROM anywhere, so this answers the repository the
+      # way {CLI::IsolationBackend} itself would find one -- the same search,
+      # the same stop rule -- rather than inventing a second walk that could
+      # disagree with it. A handback built over `--isolation none` still needs
+      # a real repository to merge a worker's commits into.
+      # @return [String] the nearest repository at or above the root this
+      #   backend was built with
+      # @raise [NoRepository] when this backend was built with no root, or the
+      #   search from it finds no repository
+      # @raise [Project::Resolver::UnusableHome] when `home` cannot bound the search
+      def repo_root
+        raise NoRepository, "this Isolation::Null was built with no root to search from" unless @root
+
+        resolved = Project::Resolver.resolved(File.expand_path(@root), File)
+        walk = CLI::IsolationBackend.search_from(resolved, paths: @paths, home: @home)
+        found = CLI::IsolationBackend.repository_in(walk)
+        return found unless found.empty?
+
+        raise NoRepository, "--isolation none has no checkout to answer with, and #{resolved} is not inside a " \
+                            "git repository up to #{walk.boundary} (#{walk.reason})"
+      end
     end
   end
 end
