@@ -1659,6 +1659,7 @@ Cards landed:
 - **T6** `9aca31e9`. `RecordedPolicy` moved to `Approval::Gate::RecordedPolicy`, which answers the policy duck without subclassing `Policy`, because `shipped_skills_spec` pins `Policy.subclasses` as the configurable family.
 - **T5** `b164b66b`. Merge flags `--ff --no-squash --commit --no-verify-signatures` are pinned; `landed` confirms the parent contains the worker; a handback declines when the parent is off the working branch; `base:` is required on `Handback` and `WorkerHandoff.over`; `Worktree#base` is forwarded by the lease decorators. Suite on main after it: **17006 examples, 0 failures, 14 pending**.
 - **T3** `8f7fd7aa`. `Epic::InFlight` is the one rule that starts an issue, and both submit and the queue drain ask it. Approving an `issue_plan` from the wrong project refuses as `EpicQueue::OutsideProject`.
+- **T8** `971f90ba`. `Verdict#rule` is machine-readable; `TestGeneration.new(renderer:, role_spawn:, guard:)`; enforcement is opt-in. The pre-commit example that failed, `neovim_runtime_spec`'s "parked approval … end to end", is the documented load flake, and passed alone.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1725,3 +1726,21 @@ Rulings made during execution:
     `rev-parse --show-toplevel`. That derivation fails under `GIT_CEILING_DIRECTORIES`.
   - **For T13:** `Supervisor#adopt` hands an actor its raw lease environment. `retire`'s self-sync
     must run with the editorless environment the spawn lane uses.
+- **Rulings from T9's review.**
+  - gc re-reads a worktree's lock right before it acts, and acts only if the lock is byte-equal to
+    the one it judged. It never unlocks a tree it judged unlocked.
+  - A registration whose directory has vanished gets its HEAD anchored before it is pruned.
+  - A failed dirty check counts as dirty.
+  - Release anchors a clean checkout's unreached HEAD before it removes the checkout.
+  - The snapshot records the index as a second parent. A tree holding a nested repository is kept,
+    never removed. Ignored files are excluded, by design.
+  - An epic branch being rebased in another worktree is kept.
+  - gc runs take an `flock`.
+  - A stray real stamp and log that gc wrote under `~/.local/state/lain/gc` during implementation
+    were deleted. They had reaped nothing.
+- **T8 re-review ruling: layout enforcement is opt-in.**
+  - **T11's write-time middleware and T12's land-time check never pass `framework:`.** No `[tests]`
+    table means `TestLayout::None`: no refusals, and one `test_layout_absent` record.
+  - Detection only picks the harness command. A detected preset would impose `spec/{unit,seam,…}` on a
+    project that never declared them, and refuse its existing flat specs as stray.
+  - **For T15:** the issue test step refuses, naming `[tests]`, when the project declares no layout.
