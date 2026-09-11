@@ -1,6 +1,6 @@
 # Chunk — the epic loop closed: undo, worktree lifecycle, issue-scoped gates, test layout, the driver and its arms
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime for T14)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; TJ DeVries joins
@@ -1641,3 +1641,44 @@ verified every grounding premise it spot-checked. Every finding below was applie
 - `git mv` stated on T2.
 - `StatusView` rescues its own folds (T14).
 - A dirty-worktree scenario on T7.
+
+## Execution log
+
+- **2026-09-11, base.** Lands on `main`. Head `109a17e3`; `origin/main` is `b1927ce7`, 137 behind —
+  never a base. The docs pre-step was already committed (`e74fd058`, `109a17e3`); `30e0f751..HEAD`
+  touches only planning docs and ROADMAP, so the grounding holds as written.
+- **Baseline suite:** `rake pspec` — **16788 examples, 0 failures, 14 pending**, 68 s wall (not the
+  documented 21–27 s; nothing else was running).
+- Worktrees are cut from the branch head into `tmp/worktrees/<card>`; each carries a copy of the
+  compiled `lib/lain/lain.so` and its own `TMPDIR` under `~/tmp/lain/wt-<card>`.
+
+Cards landed:
+- **T2** `a3fbaa14`. Suite 16800 examples, 0 failures, 14 pending: T2 added 12 net, including the five duplicate workspace examples it deleted.
+- **T1** `e038fc14`.
+- **T4** `67fe1314`.
+- **T6** `9aca31e9`. `RecordedPolicy` moved to `Approval::Gate::RecordedPolicy`, which answers the policy duck without subclassing `Policy`, because `shipped_skills_spec` pins `Policy.subclasses` as the configurable family.
+
+Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
+- `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
+- The `wire_marks <= 4` example in `role_prelude_wiring_spec` or `subagent_sibling_template_spec`.
+- `Lain::CLI::Up` against a real tmux server: "--nvim cockpit splits the chat window into an nvim pane and a chat pane sharing one socket and one cwd".
+- `lain.rb` without the compiled extension: "keeps Ruby's own LoadError message".
+
+Rulings made during execution:
+- **T6.** Rework folds on (epic, issue). Round-trips fold on (epic, stage, `issue_id`), with `issue_id`
+  nil on a record that has none, so **T3 names the gate decision's issue field `issue_id`**. An
+  unmeasured cache-write reads "not measured" in its own arm's cell, never for the whole column.
+- **T1.** `toolset:` is required on `Mode::Switch#switch` and `Telemetry::ModeSwitch`, with the four
+  fixture specs (status_feed, mode_state, compare, command/mode) updated. A `mode_switch` record
+  written before T1 grades against the header.
+- **T4.** Mermaid node ids are injective, and labels escape `& < > " #`. `epic.md` is written before
+  the `graph_revision` is journaled, and that crash window is documented, not closed.
+- **T2.** Carrier also overrides `validates_inclusion_of`. The duplicated examples in
+  `workspace_spec.rb` are deleted, a deliberate reduction in the example count.
+- **T5.** A fast-forward stays `kind: :merged` with a measured `fast_forward` field; no new Outcome
+  kind. T5 takes `worker_handoff.rb` (`Report` carries `sha` and `fast_forward`; `.over` takes
+  `strategy:`). The arms construct no `Worktree`; they get their base through `IsolationBackend`.
+  **Open for T7 and T9:** release still deletes a worktree at once, so a *dirty* worker tree is lost
+  on release and the `retain_days` retention has nothing to retain. T7 must not release a dirty tree
+  it refused to rebase. A decorated lease (`DbIndex`, `Compose`) drops `Lease#origin`. The D/F ref
+  conflict recurs **on the remote** for T12's `finish` if old per-issue branches survive there.
