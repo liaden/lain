@@ -1668,6 +1668,7 @@ Cards landed:
 - **T10** `feba7cf9`. Suite 17392 examples, 0 failures, on T10's tree. `/undo` reverts the `diff-tree` rows between the per-turn tree pair; `/undo skip`; `SnapshotSlot`, rebound on a `/mode` flip that changes scope; `Revert`/`TreePair`/`Repository` extracted. Pre-commit failed on a YARD duplicate docstring for `SnapshotLog::Undo`, consolidated onto its reopen, and on the `annotate_spec` load flake.
 - **T14** `229db3ce`. Suite 17676 examples, 0 failures, on T14's tree. `StatusView` and `CLI::Wiring::EpicSeat`; PROTOCOL 15, with `plugin/nvim/doc/lain.txt` updated to match; a fleet error is drawn, not raised. Pre-commit yard-lint failed twice, on `EpicSeat`'s `@option` tag and on two ```mermaid mentions in prose; both fixed.
 - **T13** `ae6a5441`. Suite 17579 examples, 0 failures, on T13's tree. `ToolsetBuild#epic_subagent(isolation:, handoff:, lane:)`, `Supervisor#retire` (anchor-only, `Retirement::Anchor` compare-and-swap), `AlreadyRetired`/`AlreadyReleased`/`OutsideLease`, and the `issue_orchestrator` role. Pre-commit caught two yard issues, `WorkerHandoff#reclaim`'s tag order and a duplicate `Leases::Lane` docstring, both fixed, plus the vsock load flake.
+- **T15** `591bf1dc`. Suite 17777 examples, 0 failures, on T15's tree. `IssueActor`, `IssueTests`, `PlanSubject`, `Leases::InPlace`, `WorkingBranch.owned`, and the `reviewer_code` role.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1890,3 +1891,28 @@ Rulings made during execution:
 - **Another load-sensitive example:** `support_vsock_availability_spec` "VsockAvailability.available?
   leaks no descriptor across repeated probing". It failed in T13's pre-commit run and passed 2/2
   alone.
+- **T15's subject gap, ruled: the issue's PLAN declares the subject.** `TestGeneration` places a test
+  by mirroring a source file, and an `Epic::Issue` names none.
+  - `plans/<id>.md` carries a `Subject:` line, and optionally `Level:`. The driver parses them.
+  - Rejected: a field on the issue (it changes every issue digest for a fact that belongs to the
+    plan), asking the model (a non-deterministic target path), and reading the criteria (Gherkin
+    prose does not name files).
+  - The `issue_plan` digest already covers the plan's content, so the subject is approved with the
+    plan and editing it reopens the gate.
+  - A missing, duplicated or out-of-root subject refuses by name; the path need not exist yet, since
+    a test written before its class is the normal case.
+  - **T18** documents the `Subject:` line in `plan-epic` and `create-epic-issues`.
+  - **Follow-up:** an issue whose work spans several source files.
+- **T15 review rulings.**
+  - A declared subject must be canonical: no `..`, no `.`, no doubled or trailing slash, never
+    absolute. Without that, the generated test is written outside the checkout.
+  - `Isolation::WorkingBranch` gains a general owned-branch constructor, and both `epic/<slug>` and
+    `lain/issue/<slug>/<id>` use it. An existing unmarked branch is refused, never moved or marked.
+  - The children's lane carries the attempt, like the actor's own id.
+  - A lent lease (`Leases::InPlace`) admits one dispatch at a time, by construction.
+  - The reviewing children get a new read-only, network-free reviewer role, not `researcher`, which
+    holds `web_fetch`/`web_search` but no `grep`/`glob`.
+  - `--no-verify` on the red commit stays: the commit is red by design. **T18** surfaces it in the
+    docs.
+- **Orchestrator close-out:** `spec/lain/epic/mermaid_spec.rb:110` carries a `T4` ticket citation this
+  chunk introduced in `67fe1314`. Clear it before the chunk closes.
