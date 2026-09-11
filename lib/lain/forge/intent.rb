@@ -8,8 +8,8 @@ module Lain
     # command by another name -- the tier-3 shape the forge tier exists to avoid.
     #
     # Promotion IS the push. There is no separate `push` action: pushing a ref to
-    # `epic/<slug>/<issue>` is the whole of what promoting means here, and a
-    # second spelling would fold as different work.
+    # `epic/<slug>` is the whole of what promoting means here, and a second
+    # spelling would fold as different work.
     PROMOTE = "promote"
     PR_CREATE = "pr_create"
     PR_MERGE = "pr_merge"
@@ -24,7 +24,13 @@ module Lain
     # judging it -- an effect this tier performs and cannot observe must be NAMED
     # as such, or a resume folds it to needs_retry and posts the review twice.
     REVIEW_SUBMIT = "review_submit"
-    ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE, REVIEW_SUBMIT].freeze
+
+    # Deleting an epic's remote branch once its pull request has merged.
+    # Observable the way a promote is -- the branch is on the remote or it is
+    # not -- so a resume asks the remote rather than deleting a second time,
+    # and a branch GitHub deleted on merge reads as done.
+    BRANCH_DELETE = "branch_delete"
+    ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE, REVIEW_SUBMIT, BRANCH_DELETE].freeze
 
     # Construction contracts for the tier's two journal records, in the house
     # validate-then-freeze convention: a throwaway {Lain::Declarative::Carrier}
@@ -104,8 +110,8 @@ module Lain
       # intents differing only in `epic_slug` or `issue_id` share an id, and one
       # issue's outcome will then settle the other's intent.
       #
-      # Today's actions honour that by construction: a promote carries
-      # `refs/heads/epic/<slug>/<issue>` and a pr_merge a repo-unique number. An
+      # Today's actions honour that by construction: a promote and a branch
+      # delete carry `refs/heads/epic/<slug>` and a pr_merge a repo-unique number. An
       # action whose params could repeat across two issues does not belong in
       # {ACTIONS} until they cannot -- widening the digest instead would break the
       # positional pairing this tier is built on, since a repeat of ONE action

@@ -153,7 +153,7 @@ module Lain
           end
 
           def implementation_sources(home, artifact)
-            ["the changeset #{artifact.content_digest} in this project's git history",
+            ["the changeset #{artifact.changeset} in this project's git history",
              home.plan(artifact.issue_id).path]
           end
         end

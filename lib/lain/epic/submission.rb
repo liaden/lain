@@ -153,9 +153,11 @@ module Lain
     # an implementation from passing against criteria nobody signed off.
     # `epic_plan` reuses {Epic::Graph#digest} -- over
     # the normalized issue set rather than the markdown -- so re-rendering an
-    # unchanged graph costs no fresh sign-off. `implementation` takes its digest
-    # as GIVEN, because the changeset already computed the address that names it
-    # and re-hashing would be a second, possibly-diverging opinion.
+    # unchanged graph costs no fresh sign-off. `implementation` composes the
+    # changeset address it is GIVEN -- never re-deriving it, which would be a
+    # second, possibly-diverging opinion -- with the issue it is offered for:
+    # one commit can be offered as two issues' work, and an address keyed on
+    # the commit alone would let an approval for one open the other's gate.
     #
     # Disk-free on purpose: a Submission holds only what it is handed, never a
     # path, so it stays a pure value the gate can journal and replay without ever
@@ -163,10 +165,12 @@ module Lain
     #
     # `issue_id` names the issue an issue-scoped submission is about, and
     # `criteria_digest` the criteria an issue plan carries; both are nil for the
-    # epic's own two documents. They ride beside the gate identity as well as
+    # epic's own two documents. `changeset` is the address an implementation
+    # was given, kept because its content address no longer is that address and
+    # a reader asked to look at the commit needs the commit. They ride beside the gate identity as well as
     # inside a plan's content address, because the gate decision and the
     # sign-off queue partition on the issue, and a grader joins on the criteria.
-    Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest) do
+    Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest, :changeset) do
       def self.research(text:, slug:)
         Contracts::Prose.check!(text:)
         new(stage: "research", slug:, content_digest: Canonical.digest(text), fact: "#{text.bytesize} bytes")
@@ -191,10 +195,18 @@ module Lain
       end
       private_class_method :planned
 
+      # The changeset address is checked as given, before it is composed: a
+      # Hash would otherwise canonicalize into a real gate identity.
       def self.implementation(slug:, issue_id:, digest:)
         issue_id = clean_issue_id(issue_id)
-        new(stage: "implementation", slug:, content_digest: digest, fact: "issue #{issue_id}", issue_id:)
+        fact = "issue #{issue_id}"
+        Contracts::Submission.check!(stage: "implementation", slug:, content_digest: digest, fact:)
+        new(stage: "implementation", slug:, content_digest: implemented(digest, issue_id), fact:, issue_id:,
+            changeset: digest)
       end
+
+      def self.implemented(digest, issue_id) = Canonical.digest("changeset" => digest, "issue" => issue_id)
+      private_class_method :implemented
 
       # Interned and stripped BEFORE the contract, so `presence:` judges the
       # bytes that actually land in `fact` -- {Records::IssueTransition}'s
@@ -206,7 +218,7 @@ module Lain
       end
       private_class_method :clean_issue_id
 
-      def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil)
+      def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil, changeset: nil)
         # Interned BEFORE the contract, so `presence:` judges the bytes that
         # actually get asked and journaled.
         stage = -stage.to_s
@@ -219,7 +231,8 @@ module Lain
         # interned members are shareable already and pass through untouched, so
         # nothing loses its deduplication.
         super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
-              issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s)
+              issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s,
+              changeset: changeset && -changeset.to_s)
       end
 
       # THE GATE IDENTITY, which {Approval::Gate#call}/`#ensure_approved!` key

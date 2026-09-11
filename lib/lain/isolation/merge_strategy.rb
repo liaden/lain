@@ -39,6 +39,16 @@ module Lain
       # @return [Array<String>] git's arguments after `git -C <dir>`
       def rebase(upstream) = [*style, "rebase", *algorithm, upstream]
 
+      # A merge of `commit` into `tip` written as a tree and nothing else, so
+      # asking whether a worker integrates moves no index and no working tree.
+      # Spelt beside {#merge} because a probe with another style or algorithm
+      # would predict conflicts the merge itself does not have.
+      #
+      # @return [Array<String>] git's arguments after `git -C <dir>`
+      def probe(tip, commit)
+        [*style, "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", *algorithm, tip, commit]
+      end
+
       def to_s = "conflict_style=#{conflict_style} diff_algorithm=#{diff_algorithm}"
 
       DEFAULT = from(Config::Isolation.empty)

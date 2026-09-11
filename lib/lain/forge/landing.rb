@@ -2,48 +2,48 @@
 
 module Lain
   module Forge
-    # The serial protocol that lands ONE approved issue: check the gate, promote
-    # the anchored commit, open a pull request against main, merge it, move the
-    # issue to done. Every external effect goes through {Journaled}, so each is
-    # an {Intent} on the journal before it is attempted and an {Outcome} after.
+    # The serial protocol that takes a finished epic to main as one pull
+    # request: promote its working branch, open the pull request against main,
+    # merge it, delete the remote branch. Every external effect goes through
+    # {Journaled}, so each is an {Intent} on the journal before it is attempted
+    # and an {Outcome} after.
+    #
+    # Each issue already landed onto the working branch through
+    # {LocalLanding}, behind its own implementation gate; whether the epic may
+    # finish at all -- every issue done -- is decided before this is built.
     #
     # == There is ONE sequence here, and it is a fold
     #
     # {#call} and {#resume_from} differ in the EVIDENCE they fold against and in
     # nothing else: a fresh landing folds the plan against {Evidence::NONE}, a
-    # resume folds the same plan against what {Reconcile} read back. The first
-    # version inlined the sequence twice and the two copies disagreed in five
-    # ways -- a skipped verdict, a repeated transition, an uncaught
-    # {Unobservable}, a raw Report returned where an Answer was, and a `settled?`
-    # that did not look at `ok`. A second copy of a protocol is a second
-    # protocol; there is one, and it is {Plan}.
+    # resume folds the same plan against what {Reconcile} read back. A second
+    # copy of a protocol is a second protocol; there is one, and it is {Plan}.
     #
     # == Every verdict is READ, and any step can stop the run
     #
     # {Promotion} refuses a diverged remote, an occupied namespace, an
-    # unreachable remote and an inexact sha as `ok: false` VALUES. A caller that
-    # discards those answers opens a pull request from a branch standing at
-    # somebody else's commit and merges it as this issue's approved work. So
-    # {Step#missing} reads the answer it got, and a not-ok answer stops the fold
-    # by turning the {Running} into a {Stopped} that every later step answers
-    # with itself -- no `break`, no early return threaded through two methods.
+    # unreachable remote and an inexact sha as `ok: false` VALUES, so {Step#missing}
+    # reads the answer it got, and a not-ok answer turns the {Running} run into a
+    # {Stopped} one that every later step answers with itself.
     #
     # == Refusals are values here too
     #
     # A conflict, an unreadable merge state, an inconsistent journal: each
     # answers a not-ok {Gh::Answer} carrying a `reason` a human can act on --
-    # never a raise, and never a bare {Reconcile::Report}, which a caller sending
-    # `ok?` meets as a NoMethodError. `base` is always main.
+    # never a raise, and never a bare {Reconcile::Report}.
     class Landing
-      # Serial landing means one base, and it is main. A repo that ever targets
-      # two would need {Reconcile}'s `pr_for(head:)` sharpened first -- it
-      # cannot name a base -- which is the cascade chunk's boundary, not this
-      # one's.
+      # The one base. {Reconcile}'s `pr_for(head:)` cannot name a base, so a
+      # repo targeting two would need that sharpened first.
       BASE = "main"
 
+      # The issue an epic-wide intent is attributed to. An {Intent} names the
+      # issue its work is for, and the epic's one pull request is for every
+      # issue at once.
+      WHOLE_EPIC = "*"
+
       # GitHub's own merge-state words, and the two verdicts this class draws
-      # from them. Constants rather than sentences: {CLI::EpicLand} renders
-      # `reason` to a human and a reworded string must not move a decision.
+      # from them. Constants rather than sentences: a reworded string must not
+      # move a decision.
       CLEAN = "CLEAN"
       DIRTY = "DIRTY"
       CONFLICTED = "conflicted"
@@ -53,36 +53,24 @@ module Lain
       # the world cannot be asked about, a head ref that answers ambiguously.
       INCONSISTENT = "inconsistent_journal"
 
-      # The status an issue holds while its implementation is in flight. Not
-      # {Epic::DONE}'s neighbour in a constant of its own over there, so it is
-      # named here where the transition is written.
-      IN_FLIGHT = "in_flight"
+      # A pull request somebody else merged: the merge step's effect, found in place.
+      ALREADY_MERGED = "already_merged"
 
-      # @param epic_slug [String] the epic this issue belongs to
-      # @param issue_id [String] the issue being landed
-      # @param artifact [#digest] the implementation submission the gate judged
-      # @param sha [String] the full object name of the approved commit
-      # @param gate [#ensure_approved!] {Approval::Gate}
-      # @param promotion [#call] {Promotion}, wired for this same issue
+      # @param epic_slug [String] the epic whose working branch lands
+      # @param sha [String] the full object name of `epic/<slug>`'s tip
+      # @param promotion [#call, #delete] {Promotion}, for this same epic
       # @param journaled [#pr_create, #pr_merge, #merge_state, #attempt] the
       #   intent/outcome bracket. ONE executor collaborator, not two:
-      #   {Journaled#merge_state} and {Journaled#pr_view} forward untouched and
-      #   journal nothing, so a caller needs no second handle on the raw {Gh} --
-      #   a second one could be wired to a different repo than the bracket.
-      # @param scribe [#issue_moved] {Epic::Scribe}
-      # @param base [String] the branch the pull request lands against; {BASE}
-      #   unless the epic is targeting something other than the trunk
-      # @param title [String, nil] the pull request title; nil falls back to
-      #   the issue id itself
-      # @param body [String, nil] the pull request body; nil falls back to
-      #   "Land #{issue_id}"
-      def initialize(epic_slug:, issue_id:, artifact:, sha:, gate:, promotion:, journaled:, scribe:,
-                     base: BASE, title: nil, body: nil)
-        @artifact = artifact
-        @gate = gate
-        @head = "epic/#{epic_slug}/#{issue_id}".freeze
-        @plan = Plan.new(promotion:, journaled:, scribe:, sha:, base:, issue_id:, head: @head,
-                         title: title || issue_id.to_s, body: body || "Land #{issue_id}")
+      #   {Journaled#merge_state} forwards untouched and journals nothing, so a
+      #   second handle on the raw {Gh} could only be wired to a different repo
+      # @param base [String] the branch the pull request lands against
+      # @param title [String, nil] the pull request title
+      # @param body [String, nil] the pull request body
+      def initialize(epic_slug:, sha:, promotion:, journaled:, base: BASE, title: nil, body: nil)
+        @head = "epic/#{epic_slug}".freeze
+        @sha = sha
+        @plan = Plan.new(promotion:, journaled:, sha:, base:, head: @head, title: title || "epic #{epic_slug}",
+                         body: body || "Land epic #{epic_slug}: every issue is done")
         freeze
       end
 
@@ -90,13 +78,12 @@ module Lain
       #
       # @return [Gh::Answer] ok carrying the merged pull request's number, or
       #   not-ok carrying the reason the run stopped
-      # @raise [Approval::Gate::NotApproved] before the first intent
       def call = land(Evidence::NONE)
 
       # Continue a landing from what its journal and the world can be made to
       # agree on.
       #
-      # @param entries [Enumerable<Hash, String>] this issue's journal records
+      # @param entries [Enumerable<Hash, String>] this epic's journal records
       # @param world [#ref_exists?, #sha_of, #pr_state, #pr_for] {Reconcile}'s
       #   observation seam
       # @param wiring [Hash] {#initialize}'s keywords
@@ -104,15 +91,28 @@ module Lain
       def self.resume(entries:, world:, **wiring) = new(**wiring).resume_from(entries:, world:)
 
       # @return [Gh::Answer]
-      def resume_from(entries:, world:) = land(Evidence.gathered(entries:, world:, head: @head))
+      def resume_from(entries:, world:)
+        records = Journal.records(entries).to_a
+        land(Evidence.gathered(entries: current(records), whole: records, world:, head: @head))
+      end
 
       private
 
-      # The whole protocol, and the only place it is spelled.
-      def land(evidence)
-        @gate.ensure_approved!(@artifact)
-        @plan.inject(evidence.opening) { |run, step| run.advance(step, evidence) }.answer
+      # A landing is addressed by the sha it lands: its records start at the
+      # first promote of that sha to this branch. An epic that gained an issue
+      # after it finished lands again at its new tip, and the earlier
+      # landing's settled steps are that landing's, not this one's.
+      def current(records)
+        start = records.index { |record| promotes_this?(record) }
+        start.nil? ? [] : records.drop(start)
       end
+
+      def promotes_this?(record)
+        record["type"] == Intent::JOURNAL_TYPE && record["action"] == PROMOTE &&
+          record["params"].to_h.values_at("ref", "sha") == ["refs/heads/#{@head}", @sha]
+      end
+
+      def land(evidence) = @plan.inject(evidence.opening) { |run, step| run.advance(step, evidence) }.answer
     end
   end
 end
@@ -123,5 +123,4 @@ end
 require_relative "landing/run"
 require_relative "landing/evidence"
 require_relative "landing/step"
-require_relative "landing/transition"
 require_relative "landing/plan"

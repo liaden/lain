@@ -301,6 +301,7 @@ module Lain
           when PR_CREATE then opened?(intent)
           when PR_MERGE then merged?(intent)
           when REVIEW_SUBMIT then raise Unobservable, unrepeatable(intent)
+          when BRANCH_DELETE then deleted?(intent)
           else raise UnknownAction, "no way to observe a #{intent.action.inspect} intent"
           end
         end
@@ -335,6 +336,10 @@ module Lain
         def opened?(intent) = !@world.pr_for(head: address(intent, "head")).nil?
 
         def merged?(intent) = @world.pr_state(address(intent, "number")).to_s.casecmp?(MERGED_STATE)
+
+        # Gone is deleted, whoever deleted it: GitHub can delete a merged
+        # pull request's head branch itself.
+        def deleted?(intent) = !@world.ref_exists?(address(intent, "ref"))
 
         # An address is a non-blank String or a number, and nothing else.
         #

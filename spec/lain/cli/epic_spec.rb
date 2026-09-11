@@ -466,7 +466,7 @@ RSpec.describe Lain::CLI::Epic do
       write_epic("alpha", chain)
       write_epic("beta", graph_of(issue("z")))
       triggers = { "status" => %w[epic status], "submit" => %w[epic submit research],
-                   "land" => ["epic", "land", "a1", "b" * 40], "resume" => %w[epic land --resume a1] }
+                   "land" => %w[epic land a1], "resume" => %w[epic land --resume a1] }
 
       advised = triggers.transform_values { |argv| remedy_advised_by(argv) }
       [described_class, Lain::CLI::EpicSubmit,
@@ -628,7 +628,7 @@ RSpec.describe Lain::CLI::Epic do
     # bug: a user whose status, queue and land match the chat while submit does
     # not has a harder thing to diagnose than four that disagree together.
     {
-      "lain epic land" => -> { Lain::CLI::EpicLand.new(github: instance_double(Lain::Forge::Gh)) },
+      "lain epic land" => -> { Lain::CLI::EpicLand.new },
       "lain epic submit" => -> { Lain::CLI::EpicSubmit.new(input: nil, output: nil) }
     }.each do |command, build|
       it "hands #{command} the same root, so the epic it resolves is the same one" do

@@ -1,298 +1,150 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module CLI
-    # `lain epic land ISSUE_ID SHA [SLUG]`: put one approved issue's commit on
-    # the remote, open its pull request, merge it, and move the issue to done.
-    # `--resume` continues one that crashed. Returns Strings and prints nothing.
+    # `lain epic land ISSUE_ID [SLUG]`: land one approved issue's commit onto
+    # the epic's working branch in this checkout, and move the issue to done.
+    # `--resume` finishes a landing that merged and then stopped. Nothing is
+    # pushed; `lain epic finish` takes the epic to the remote, once. Returns
+    # Strings and prints nothing.
     #
-    # == The sha is an ARGUMENT, and that is the design
+    # THE COMMIT IS FOUND, NOT NAMED. A handback anchors a worker's commits
+    # under `refs/lain/worker/`, and the implementation gate approved one of
+    # them by its address, so the commit that lands is the anchored one whose
+    # address the gate holds. Nothing re-hashes a working tree, and a commit
+    # nobody approved has no address the registry has seen.
     #
-    # No record binds an approved implementation to a commit:
-    # {Approval::GateDecision} journals the COMPOSED `(stage, slug, content)`
-    # hash and nothing journals the content, so the approved sha is genuinely
-    # unrecoverable from the journal.
-    #
-    # The binding is the HASH. This command rebuilds the same Submission from the
-    # sha it was handed and lets {Approval::Gate#ensure_approved!} answer: a sha
-    # nobody approved hashes to an address the registry has never seen, and the
-    # run refuses before the first intent. Landing an unapproved commit is
-    # unrepresentable here, not merely detected.
-    #
-    # Nothing re-hashes a working tree to discover the sha, and nothing journals
-    # the content digest at submit time to make discovery possible -- that
-    # reverses {Approval::Gate}'s deliberate ignorance of what it gates.
-    # {Forge::Promotion::Remote#anchored!} separately refuses anything that is not
-    # a full object name naming a commit.
-    #
-    # == `--resume` takes no sha
-    #
-    # It DERIVES one from the journaled `promote` intent, which by construction
-    # carries the sha the gate already cleared. Accepting one would let a human
-    # resume a landing onto a different commit than the one that was approved.
-    #
-    # == Every constant from the epic and forge tiers is reached at CALL time
-    #
-    # This unit loads BEFORE `lain/epic` and `lain/forge`, so every
-    # `Lain::Epic::...` and `Lain::Forge::...` reference below sits inside a
-    # method body -- and is spelled in full, because a bare `Epic` resolves to
-    # the sibling {CLI::Epic}.
+    # Every constant from the epic, forge and isolation tiers is reached at
+    # call time and spelled in full: this unit loads before them, and a bare
+    # `Epic` resolves to the sibling {CLI::Epic}.
     class EpicLand
-      # Its own class, because "nothing was ever started" and "the run refused"
-      # have nothing alike as remedies.
-      class NothingToResume < Error; end
-
-      # Named for {EpicSubmit::NeedsIssue}'s reason: "you did not say which" must
-      # be distinguishable from a gate that refused.
+      # Its own class so "you did not say which" reads apart from a refusal.
       class NeedsArguments < Error; end
 
-      # The two forge record types, narrowed to one issue of one epic. One epic
-      # holds several landing histories, so a resume folding all of them could
-      # read another issue's settled promote as this one's -- the double-land
-      # this filter exists to prevent.
-      #
-      # Attribution is read from two places because the records are shaped
-      # differently: a {Forge::Intent} carries `epic_slug`/`issue_id` as fields,
-      # while a {Forge::Outcome} carries only a digest and gets the pair stamped
-      # into its `detail` by {Forge::Journaled}, so an orphaned outcome can still
-      # be traced. ONE writer stamps both off one object's state, so reading each
-      # where it lives cannot split a settled pair and {Forge::Reconcile}'s
-      # positional pairing survives the narrowing intact.
-      class Scoped
-        include Enumerable
+      USAGE = "lain epic land ISSUE_ID [SLUG]"
 
-        def initialize(records:, epic_slug:, issue_id:)
-          @records = records
-          @attribution = [epic_slug.to_s, issue_id.to_s].freeze
+      # `root:` defaults to the RESOLVED project's, for {CLI::Epic#initialize}'s
+      # reason: this command asks that object which epic a bare invocation means.
+      #
+      # @param root [String] the project root, which is also the parent checkout
+      # @param paths [Paths] injected, so a spec resolves a throwaway state home
+      # @param config [Config] `.lain/config.toml`, already read
+      # @param epics [CLI::Epic] answers WHICH epic a bare invocation means
+      # @param shell_out_factory [#call] every git subprocess the landing runs
+      # @param notice [#call] told who holds the parent checkout when a landing
+      #   waits on it for long
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+                     epics: Epic.new(root:, paths:, config:), shell_out_factory: Shell::Out.public_method(:new),
+                     notice: Lain::Isolation::ParentLock::Silent)
+        @root = root
+        @paths = paths
+        @config = config
+        @epics = epics
+        @shell_out_factory = shell_out_factory
+        @notice = notice
+      end
+
+      # @return [String]
+      # @raise [Lain::Error] every refusal, each before anything merges
+      def land(issue_id, slug = nil)
+        epic_slug = @epics.resolve_slug(slug, command: "epic land ISSUE_ID")
+        issue = named!(issue_id)
+        wired(epic_slug) { |landing| Told.new(epic_slug).landed(landing.land(landing.anchored(issue))) }
+      end
+
+      # @return [String]
+      # @raise [Forge::LocalLanding::NothingToResume] when nothing merged
+      def resume(issue_id, slug = nil)
+        epic_slug = @epics.resolve_slug(slug, command: "epic land --resume ISSUE_ID")
+        issue = named!(issue_id)
+        wired(epic_slug) { |landing| Told.new(epic_slug).resumed(landing.resume(issue)) }
+      end
+
+      # What a landing came to, as the text a human acts on.
+      class Told
+        def initialize(epic_slug)
+          @epic_slug = epic_slug
+          @branch = "epic/#{epic_slug}"
         end
 
-        def each(&block)
-          return to_enum(:each) unless block
+        def landed(result) = result.landed.map { |entry| entry.done ? done(entry) : stopped(entry) }.join("\n")
 
-          @records.select { |record| attribution(record) == @attribution }.each(&block)
-          self
+        def resumed(result)
+          result.landed.map do |entry|
+            ["resumed #{entry.issue_id} at #{entry.sha}: #{@branch} already holds it, so nothing was merged",
+             moved(entry)].join("\n")
+          end.join("\n")
         end
 
         private
 
-        # An empty attribution for anything else, so a record of another tier
-        # matches nothing rather than needing a type test at the call site.
-        def attribution(record)
-          case record["type"].to_s
-          when Lain::Forge::Intent::JOURNAL_TYPE then [record["epic_slug"].to_s, record["issue_id"].to_s]
-          when Lain::Forge::Outcome::JOURNAL_TYPE then detailed(record["detail"].to_h)
-          else []
+        def done(entry)
+          ["landed #{entry.issue_id} at #{entry.sha} onto #{@branch} -- #{how(entry.report)}", moved(entry),
+           "  nothing was pushed; `lain epic finish #{@epic_slug}` takes the epic to the remote once every " \
+           "issue is done"].join("\n")
+        end
+
+        def how(report)
+          case report.kind
+          when :nothing_to_do then "it was already there"
+          when :resolved then "resolved in #{report.paths.join(", ")}, merged as #{report.sha}"
+          else report.fast_forward ? "a fast-forward" : "merged as #{report.sha}"
           end
         end
 
-        def detailed(detail) = [detail["epic_slug"].to_s, detail["issue_id"].to_s]
-      end
+        def moved(entry) = "  #{entry.issue_id} moved in_flight -> done"
 
-      # What one landing answered, as the text a human acts on. The branch is
-      # named on EVERY outcome: a stop is actionable only if the reader is told
-      # which ref to look at, and the conflicted answer {Forge::Landing} builds
-      # carries a merge state and no address at all.
-      class Report
-        def initialize(issue_id:, branch:, sha:, answer:, skipped: [])
-          @issue_id = issue_id
-          @branch = branch
-          @sha = sha
-          @answer = answer
-          @skipped = skipped
+        def stopped(entry)
+          ["stopped #{entry.issue_id} at #{entry.sha} -- nothing landed on #{@branch}",
+           "  #{entry.report.summary.empty? ? entry.report.kind : entry.report.summary}"].join("\n")
         end
-
-        def to_s = [headline, "  branch #{@branch}", *@skipped, *outcome].join("\n")
-
-        private
-
-        def headline = "#{@answer.ok? ? "landed" : "stopped"} #{@issue_id} at #{@sha}"
-
-        def outcome
-          return ["  pull request #{numbered} -- merged"] if @answer.ok?
-
-          ["  #{refusal}", "  act on #{@branch} -- nothing else will land this issue"]
-        end
-
-        def numbered = @answer.value.nil? ? "(number unrecorded)" : "##{@answer.value}"
-
-        # Read leniently because the producers differ: {Forge::Landing}'s
-        # conflict carries a `state`, a {Forge::Gh} refusal a `message`, a
-        # {Forge::Promotion} refusal both -- none of them all three.
-        def refusal
-          said = %w[reason state message].filter_map { |key| @answer.detail[key].to_s }.reject(&:empty?)
-          said.empty? ? "refused, with no reason recorded" : said.join(" -- ")
-        end
-      end
-
-      # Everything one landing needs, wired for one issue against one open
-      # journal. Its own object because `land` and `resume` need the SAME six
-      # collaborators, and a second wiring site would be a second chance for the
-      # promotion and the journal bracket to be built for different issues -- a
-      # disagreement neither object can detect.
-      class Crew
-        def initialize(epic_slug:, issue_id:, sha:, journal:, records:, github:, repo_root:, shell_out_factory:)
-          journaled = Lain::Forge::Journaled.new(github, journal:, epic_slug:, issue_id:)
-          @wiring = { epic_slug:, issue_id:, sha:, journaled:,
-                      artifact: Lain::Epic::Submission.implementation(slug: epic_slug, issue_id:, digest: sha),
-                      gate: Approval::Gate.from_journal(records, journal:),
-                      scribe: Lain::Epic::Scribe.new(epic_slug:, journal:),
-                      promotion: Lain::Forge::Promotion.new(epic_slug:, issue_id:, journaled:, repo_root:,
-                                                            shell_out_factory:) }.freeze
-        end
-
-        def land = Lain::Forge::Landing.new(**@wiring).call
-
-        def resume(entries:, world:) = Lain::Forge::Landing.resume(entries:, world:, **@wiring)
-      end
-
-      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
-      # reason {CLI::Epic#initialize} states: this command ASKS that object which
-      # epic a bare invocation means, so a root that travels differently would
-      # have it answering about a different home.
-      #
-      # @param root [String] the project root: the config, a repo-mode epic
-      #   home, and the checkout holding the anchored commit all resolve under it
-      # @param paths [Paths] injected, so a spec resolves against a throwaway
-      #   XDG state home
-      # @param config [Config] `.lain/config.toml`, already read
-      # @param epics [CLI::Epic] answers WHICH epic a bare invocation means.
-      #   Asked rather than reimplemented, for {CLI::EpicSubmit}'s reason: two
-      #   spellings of "the sole epic in the home" would disagree silently.
-      # @param shell_out_factory [#call] every git subprocess this command's
-      #   collaborators run, injected so no spec needs a repository or a remote
-      # @param github [#pr_create, #pr_merge, #pr_view, #pr_list, #merge_state]
-      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
-                     epics: Epic.new(root:, paths:, config:),
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new),
-                     github: Lain::Forge::Gh.new(cwd: root, shell_out_factory:))
-        @root = root
-        @paths = paths
-        @epics = epics
-        @shell_out_factory = shell_out_factory
-        @github = github
-      end
-
-      # @param issue_id [String] the issue whose implementation is landing
-      # @param sha [String] the FULL object name of the approved commit
-      # @param slug [String, nil] the epic; omitted resolves to the sole one
-      # @return [String]
-      # @raise [Approval::Gate::NotApproved] before any forge intent, when
-      #   nothing approved this (slug, issue, sha)
-      def land(issue_id, sha, slug = nil)
-        epic_slug = @epics.resolve_slug(slug, command: "epic land ISSUE_ID SHA")
-        issue = named!(issue_id, "lain epic land names one issue")
-        anchor = named!(sha, "lain epic land takes the full object name of the approved commit")
-        answer = crewed(epic_slug, issue, anchor, &:land)
-        Report.new(issue_id: issue, branch: branch(epic_slug, issue), sha: anchor, answer:).to_s
-      end
-
-      # @param issue_id [String] the issue whose landing is being continued
-      # @param slug [String, nil]
-      # @return [String]
-      # @raise [NothingToResume] when this issue's journal holds no promote
-      #   intent, before anything is journaled
-      def resume(issue_id, slug = nil)
-        # Its OWN spelling, not `land`'s: `--resume` takes no sha, so advising
-        # `ISSUE_ID SHA SLUG` would name an argument this command rejects.
-        epic_slug = @epics.resolve_slug(slug, command: "epic land --resume ISSUE_ID")
-        issue = named!(issue_id, "lain epic land --resume names one issue")
-        records = journals.to_a
-        resumed(epic_slug, issue, records, Scoped.new(records:, epic_slug:, issue_id: issue).to_a)
       end
 
       private
 
-      # The world is asked ONCE and shared: {Forge::Reconcile} folds these
-      # entries twice, and a second {World} would cost a second `ls-remote`
-      # against a remote that can move between them.
-      def resumed(epic_slug, issue, records, entries)
-        anchor = resumable!(entries, issue)
-        world = Lain::Forge::Reconcile::World.live(repo_root: @root, github: @github,
-                                                   shell_out_factory: @shell_out_factory)
-        report = Lain::Forge::Reconcile.new(entries:, world:).report
-        return escalation(report, epic_slug, issue) unless report.orphans.empty? && report.unaddressable.empty?
-
-        answer = crewed(epic_slug, issue, anchor, records) { |crew| crew.resume(entries:, world:) }
-        Report.new(issue_id: issue, branch: branch(epic_slug, issue), sha: anchor, answer:,
-                   skipped: skipped(report)).to_s
-      end
-
-      # {CLI::EpicSubmit}'s bracket, and for its reason: a Journal that CREATED
-      # its file and wrote no record removes it on close, so a refusal leaves no
-      # trace on disk.
-      def crewed(epic_slug, issue_id, sha, records = journals.to_a)
+      # {CLI::EpicSubmit}'s bracket: a Journal that created its file and wrote
+      # no record removes it on close, so a refusal leaves no trace on disk.
+      def wired(epic_slug)
         journal = Journal.open(paths: @paths)
         begin
-          yield Crew.new(epic_slug:, issue_id:, sha:, journal:, records:, github: @github, repo_root: @root,
-                         shell_out_factory: @shell_out_factory)
-        rescue Approval::Gate::NotApproved => e
-          raise Approval::Gate::NotApproved, unapproved(e, epic_slug, issue_id, sha)
+          yield landing(epic_slug, journal)
         ensure
           journal.close
         end
       end
 
-      # Re-raised rather than returned: a String returned here would exit 0 and
-      # read as a decision. The message is widened because the gate names only
-      # the composed digest, and a human standing here needs the command that
-      # would approve it.
-      def unapproved(error, epic_slug, issue_id, sha)
-        "#{error.message} -- nothing was promoted for #{issue_id}; approve it first with " \
-          "`lain epic submit implementation #{epic_slug} --issue #{issue_id} --digest #{sha}`"
+      def landing(epic_slug, journal)
+        base = Lain::Isolation::WorkingBranch.new("epic/#{epic_slug}", repo_root: @root, git: checkout)
+        Lain::Forge::LocalLanding.new(
+          epic_slug:, repo_root: @root, base:, approvals:,
+          plan: ->(issue) { submit.ensure_plan_approved!(issue, epic_slug) },
+          progress: -> { @epics.progress(epic_slug) }, scribe: Lain::Epic::Scribe.new(epic_slug:, journal:),
+          queue: queue(base, journal), layout: Config.test_layout(root: @root), landings: -> { landings.to_a },
+          shell_out_factory: @shell_out_factory
+        )
       end
 
-      # Read off the promote intent this issue's own journal recorded, which by
-      # construction is the sha the gate cleared. The LAST one, because a re-land
-      # after a refused promotion journals a second intent.
-      def resumable!(entries, issue_id)
-        promoted = entries.select do |record|
-          record["type"] == Lain::Forge::Intent::JOURNAL_TYPE && record["action"] == Lain::Forge::PROMOTE
-        end
-        sha = promoted.last.to_h.dig("params", "sha").to_s.strip
-        raise NothingToResume, nothing_started(issue_id) if sha.empty?
-
-        sha
+      def queue(base, journal)
+        Lain::Isolation::LandingQueue.new(repo_root: @root, base:, journal:, retries: @config.isolation.rebase_retries,
+                                          strategy: Lain::Isolation::MergeStrategy.from(@config.isolation),
+                                          notice: @notice, shell_out_factory: @shell_out_factory)
       end
 
-      def nothing_started(issue_id)
-        "no promote intent for issue #{issue_id} -- nothing was ever started, so there is nothing to resume; " \
-          "land it with `lain epic land #{issue_id} SHA`"
-      end
+      def checkout = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
+
+      def approvals = Lain::Forge::LocalLanding::Approvals.from(journals.to_a)
+
+      def submit = EpicSubmit.new(root: @root, paths: @paths, config: @config, epics: @epics)
 
       # FRESH per invocation, never memoized, for {CLI::EpicSubmit#journals}'
-      # reason: {SessionJournals} caches its own walk, so one held here would
-      # make a REUSED command fold the world as it was before its first landing.
-      def journals
-        SessionJournals.new(dir: @paths.sessions_dir,
-                            types: [Approval::SignoffQueue::JOURNAL_TYPE, Lain::Forge::Intent::JOURNAL_TYPE,
-                                    Lain::Forge::Outcome::JOURNAL_TYPE])
-      end
+      # reason: {SessionJournals} caches its own walk.
+      def journals = SessionJournals.new(dir: @paths.sessions_dir, types: [Approval::SignoffQueue::JOURNAL_TYPE])
 
-      def skipped(report)
-        report.settled.map { |item| "  skipped #{item.intent.action} -- already settled" } +
-          report.unsettled.select(&:completed_externally?)
-                .map { |item| "  skipped #{item.intent.action} -- found already in place" }
-      end
+      def landings = SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Forge::LocalLanding::LANDED])
 
-      # Corruption, reported rather than raised, for the forge tier's own reason:
-      # every refusal there is a value the journal can carry.
-      def escalation(report, epic_slug, issue_id)
-        ["cannot resume #{issue_id}", "  branch #{branch(epic_slug, issue_id)}",
-         *report.orphans.map { |item| "  an outcome answers no intent this journal holds (#{item.intent_id})" },
-         *report.unaddressable.map { |item| "  #{item.reason}" },
-         "  escalate: this issue's journal is inconsistent, and no landing may continue from it"].join("\n")
-      end
-
-      # Spelled the way {Forge::Landing} spells it, and restated here
-      # deliberately: the conflicted answer that class builds carries a merge
-      # state and no address for a reader to go look at.
-      def branch(epic_slug, issue_id) = "epic/#{epic_slug}/#{issue_id}"
-
-      def named!(value, what)
+      def named!(value)
         named = value.to_s.strip
-        raise NeedsArguments, "#{what} -- lain epic land ISSUE_ID SHA [SLUG]" if named.empty?
+        raise NeedsArguments, "lain epic land names one issue -- #{USAGE}" if named.empty?
 
         named
       end

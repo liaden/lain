@@ -48,11 +48,11 @@ module Lain
         def advanced(run, _answer) = run
       end
 
-      # Put the approved commit on the remote as `epic/<slug>/<issue>`.
+      # Put the epic branch's tip on the remote as `epic/<slug>`.
       #
-      # The sha is constructor state, not a per-call argument: it is the one the
-      # gate cleared, and a step that could be handed another would be a step
-      # that could land an unapproved commit.
+      # The sha is constructor state, not a per-call argument: it is the tip the
+      # finished epic was read at, and a step that could be handed another could
+      # put some other commit in front of main.
       class Promote
         include Step
 
@@ -67,7 +67,7 @@ module Lain
         def call(_run) = @promotion.call(sha: @sha)
       end
 
-      # Open the pull request, against main.
+      # Open the epic's one pull request, against main.
       class Open
         include Step
 
@@ -103,6 +103,9 @@ module Lain
       class Merge
         include Step
 
+        # The `--json` field a pull request's state is read from.
+        STATE = "state"
+
         def initialize(journaled:)
           @journaled = journaled
           freeze
@@ -115,6 +118,8 @@ module Lain
         # no bet to record. Which is why this class needs no second handle on the
         # raw {Gh}.
         def call(run)
+          return merged_elsewhere(run.number) if merged?(run.number)
+
           state = @journaled.merge_state(number: run.number)
           return state unless state.ok?
           return refusal(state.value) unless state.value.to_s == CLEAN
@@ -123,6 +128,21 @@ module Lain
         end
 
         private
+
+        # A merged pull request's merge state is never CLEAN, so without this a
+        # pull request somebody else merged would stop every run forever.
+        def merged?(number)
+          view = @journaled.pr_view(ref: number, fields: [STATE])
+          view.ok? && view.value.is_a?(Hash) && view.value[STATE].to_s.casecmp?(Reconcile::MERGED_STATE)
+        end
+
+        # Journaled as the merge it stands for, found already in place, so a
+        # resume folds it as settled.
+        def merged_elsewhere(number)
+          @journaled.attempt(action: PR_MERGE, params: { "number" => number }) do
+            Gh::Answer.new(ok: true, observed: true, detail: { "value" => number, "reason" => ALREADY_MERGED })
+          end
+        end
 
         # Only DIRTY is a merge CONFLICT. {Gh::Poll} answers UNKNOWN when its own
         # bound runs out (GitHub has not finished computing mergeability, usually
@@ -135,6 +155,23 @@ module Lain
           Gh::Answer.new(ok: false,
                          detail: { "reason" => state.to_s == DIRTY ? CONFLICTED : NOT_MERGEABLE, "state" => state })
         end
+      end
+
+      # Delete the remote branch the pull request merged from. It runs only
+      # after a merge, and a branch GitHub already deleted on merge is found
+      # gone rather than deleted twice.
+      class Delete
+        include Step
+
+        def initialize(promotion:, sha:)
+          @promotion = promotion
+          @sha = sha
+          freeze
+        end
+
+        def action = BRANCH_DELETE
+
+        def call(_run) = @promotion.delete(sha: @sha)
       end
     end
   end

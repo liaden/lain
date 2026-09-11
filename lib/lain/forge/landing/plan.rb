@@ -6,18 +6,18 @@ module Lain
       # The serial protocol, in order, as the objects that run it.
       #
       # `Enumerable` because a landing IS the fold over these four and nothing
-      # else -- "a method that yields is a method that composes". {Landing#call}
-      # and {Landing#resume_from} both `inject` over one Plan and differ only in
-      # the {Evidence} they fold against, so the sequence exists once and cannot
-      # drift between the fresh path and the resumed one.
+      # else. {Landing#call} and {Landing#resume_from} both `inject` over one
+      # Plan and differ only in the {Evidence} they fold against, so the
+      # sequence exists once and cannot drift between the fresh path and the
+      # resumed one.
       class Plan
         include Enumerable
 
-        def initialize(promotion:, journaled:, scribe:, sha:, base:, head:, issue_id:, title:, body:)
+        def initialize(promotion:, journaled:, sha:, base:, head:, title:, body:)
           @steps = [Promote.new(promotion:, sha:),
                     Open.new(journaled:, base:, head:, title:, body:),
                     Merge.new(journaled:),
-                    Transition.new(scribe:, issue_id:)].freeze
+                    Delete.new(promotion:, sha:)].freeze
           freeze
         end
 

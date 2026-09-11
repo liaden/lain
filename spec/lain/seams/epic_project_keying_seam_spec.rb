@@ -76,7 +76,7 @@ RSpec.describe "the epic tier's project keying", :seam do
   def verbs
     { "lain epic status" => Lain::CLI::Epic.new,
       "lain epic submit" => Lain::CLI::EpicSubmit.new(input: nil, output: nil),
-      "lain epic land" => Lain::CLI::EpicLand.new(github: instance_double(Lain::Forge::Gh)),
+      "lain epic land" => Lain::CLI::EpicLand.new,
       "lain epic queue" => Lain::CLI::EpicQueue.new }
   end
 

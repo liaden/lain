@@ -233,10 +233,38 @@ RSpec.describe Lain::Epic::Submission do
       expect(submission.gate_question).to include("issue_plan", "T7", text.bytesize.to_s)
     end
 
-    it "takes an implementation's content_digest as given, rather than deriving it" do
+    it "composes an implementation's content_digest from the changeset address and its issue" do
       submission = described_class.implementation(slug: "demo", issue_id: "T7", digest: "blake3:impl")
 
-      expect(submission.content_digest).to eq("blake3:impl")
+      expect(submission.content_digest).to eq(Lain::Canonical.digest("changeset" => "blake3:impl", "issue" => "T7"))
+    end
+
+    # One commit can be offered as two issues' work. Keyed on the commit alone,
+    # approving it for issue c would open issue b's gate over the same commit.
+    it "gives two issues' implementations of the same commit two gate identities" do
+      mine = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40)
+      theirs = described_class.implementation(slug: "demo", issue_id: "b", digest: "a" * 40)
+
+      expect(theirs.digest).not_to eq(mine.digest)
+      expect(theirs.content_digest).not_to eq(mine.content_digest)
+    end
+
+    it "is not approved by a gate that approved another issue's implementation of the same commit" do
+      mine = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40)
+      approval = Lain::Approval::GateDecision.new(artifact_digest: mine.digest, epic_slug: "demo",
+                                                  stage: "implementation", approved: true, answered_by: "human",
+                                                  policy: "hands_off", latency: 0.0, issue_id: "c")
+      gate = Lain::Approval::Gate.from_journal([approval.to_journal], journal: Lain::Channel::Null.instance)
+
+      expect(gate.approved?(described_class.implementation(slug: "demo", issue_id: "b", digest: "a" * 40).digest))
+        .to be(false)
+    end
+
+    it "keeps the changeset address it was given, for a reader asked to look at the commit" do
+      submission = described_class.implementation(slug: "demo", issue_id: "T7", digest: "blake3:impl")
+
+      expect(submission.changeset).to eq("blake3:impl")
+      expect(described_class.research(text: "words", slug: "demo").changeset).to be_nil
     end
 
     it "names the issue for an implementation" do

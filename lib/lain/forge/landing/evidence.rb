@@ -39,8 +39,13 @@ module Lain
         # @param entries [Enumerable<Hash, String>] this issue's journal records
         # @param world [#ref_exists?, #sha_of, #pr_state, #pr_for]
         # @param head [String] the ref a pull request would be opened from
-        def self.gathered(entries:, world:, head:)
-          new(report: Reconcile.new(entries:, world:).report, **located(world, head))
+        # @param whole [Enumerable<Hash, String>] the whole journal `entries`
+        #   was narrowed from: a landing reads its own steps, but corruption
+        #   anywhere in the journal still stops it
+        def self.gathered(entries:, world:, head:, whole: entries)
+          report = Reconcile.new(entries:, world:).report
+          suspect = whole.equal?(entries) ? report : Reconcile.new(entries: whole, world:).report
+          new(report:, suspect:, **located(world, head))
         end
 
         # The one question asked outside {Reconcile}'s own protection, with its
@@ -72,8 +77,9 @@ module Lain
         end
         private_class_method :unnumbered
 
-        def initialize(report:, opened: NOWHERE, unreadable: [])
+        def initialize(report:, suspect: report, opened: NOWHERE, unreadable: [])
           @report = report
+          @suspect = suspect
           @opened = opened
           @unreadable = unreadable.dup.freeze
           freeze
@@ -130,8 +136,8 @@ module Lain
         def recorded_value(action) = settled_ok(action).map { |item| item.outcome.detail["value"] }.last
 
         def escalations
-          @report.orphans.map { |outcome| "an outcome answers no intent this journal holds (#{outcome.intent_id})" } +
-            @report.unaddressable.map(&:reason) + @unreadable
+          @suspect.orphans.map { |outcome| "an outcome answers no intent this journal holds (#{outcome.intent_id})" } +
+            @suspect.unaddressable.map(&:reason) + @unreadable
         end
 
         # Every exit from a landing answers the same duck. A raw

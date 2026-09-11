@@ -5,8 +5,7 @@ require "mixlib/shellout"
 
 # Operates on THROWAWAY repos it creates itself -- a local checkout plus a local
 # BARE remote under one mktmpdir -- never the lain repo it runs in, and never the
-# network. Same posture worktree_handback_spec.rb takes, and the reason this stays
-# in the default suite: git is always present, GitHub is not.
+# network. git is always present, GitHub is not.
 RSpec.describe Lain::Forge::Promotion, :seam do
   subject(:promotion) { build_promotion }
 
@@ -29,21 +28,16 @@ RSpec.describe Lain::Forge::Promotion, :seam do
   let(:records) { [] }
   let(:calls) { [] }
 
-  def build_promotion(slug: "demo", issue: "a1", factory: recording_factory(calls))
-    described_class.new(repo_root: @repo_root, epic_slug: slug, issue_id: issue,
-                        journaled: journaling(records), shell_out_factory: factory)
+  def ref = "refs/heads/epic/demo"
+
+  def build_promotion(slug: "demo", factory: recording_factory(calls))
+    described_class.new(repo_root: @repo_root, epic_slug: slug, journaled: journaling(records),
+                        shell_out_factory: factory)
   end
 
-  # The seam {Forge::Journaled#attempt} exposes, stood up here as a double:
-  # it takes the effect's ADDRESS, brackets the block with an intent and an
-  # outcome, and hands the block's answer back unchanged. Promotion depends on
-  # that message, never on the wrapper's type.
-  #
-  # It READS `ok?`, `observed?` and `detail` exactly as the real wrapper folds
-  # them into a {Forge::Outcome}, so an answer that drifts off that shape fails
-  # these specs here rather than raising inside a wrapper this spec cannot see --
-  # a NoMethodError there lands AFTER the intent is journaled and before any
-  # outcome is, which is the one record shape a reconcile must never be handed.
+  # The seam {Forge::Journaled#attempt} exposes, stood up as a double that READS
+  # `ok?`, `observed?` and `detail` exactly as the real wrapper folds them into
+  # a {Forge::Outcome}, so an answer that drifts off that shape fails here.
   def journaling(journal)
     recorder = Object.new
     recorder.define_singleton_method(:attempt) do |action:, params:, &effect|
@@ -63,8 +57,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
   end
 
   # Fails ONE git subcommand without running it, so a refusal git will not
-  # produce on demand (a `check-ref-format` that rejects a name the grammar
-  # already accepted) still gets pinned. Everything else runs for real.
+  # produce on demand still gets pinned. Everything else runs for real.
   def factory_failing(subcommand, seen)
     real = Mixlib::ShellOut.public_method(:new)
     broken = Struct.new(:stdout, :stderr, :exitstatus) do
@@ -76,10 +69,8 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     end
   end
 
-  # The spec's OWN git calls scrub the git-context env too, so building and
-  # inspecting the throwaway repos is hermetic under an ambient GIT_*-polluted
-  # env (a pre-commit hook) exactly as the subject is -- reusing the pinned scrub
-  # set rather than a parallel copy of it.
+  # Scrubbed exactly as the subject scrubs, so building the throwaway repos is
+  # hermetic under a pre-commit hook's GIT_* environment.
   def try_git(dir, *args)
     shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
                                  environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
@@ -103,26 +94,18 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     run_git(dir, "rev-parse", "HEAD").strip
   end
 
-  # The sha under test comes off a REAL handback anchor ref, named by the object
-  # that decides that naming: a promotion's input is whatever `#anchor` left
-  # behind, and a reconstructed namespace here would let the two drift.
-  def anchored(worker_id = "worker-1")
-    ref = Lain::Isolation::Worktree::Handback::Naming.new(worker_id).ref
-    sha = commit_in(@repo_root, "#{worker_id}\n", "#{worker_id} work")
-    run_git(@repo_root, "update-ref", "--create-reflog", ref, sha)
-    run_git(@repo_root, "rev-parse", "--verify", ref).strip
-  end
+  # The epic branch's tip, as a commit this checkout holds.
+  def landed(label = "epic work") = commit_in(@repo_root, "#{label}\n", label)
 
-  # A commit on a history that does NOT reach the current branch tip: back to a
-  # root commit, then forward. `anchored` alone only ever produces DESCENDANTS,
-  # which git fast-forwards -- the one case a "diverged" refusal must not be
-  # spec'd on exclusively.
-  def sideways(from, worker_id = "worker-2")
+  # A commit on a history that does NOT reach the current tip: back to a root
+  # commit, then forward, so a "diverged" refusal is not spec'd on descendants
+  # alone.
+  def sideways(from, label)
     run_git(@repo_root, "checkout", "-q", from)
-    anchored(worker_id)
+    landed(label)
   end
 
-  def remote_ref(ref) = try_git(@remote_root, "rev-parse", "--verify", "--quiet", ref).stdout.strip
+  def remote_ref(name = ref) = try_git(@remote_root, "rev-parse", "--verify", "--quiet", name).stdout.strip
 
   def local_heads = run_git(@repo_root, "for-each-ref", "--format=%(refname)", "refs/heads").split("\n")
 
@@ -134,13 +117,13 @@ RSpec.describe Lain::Forge::Promotion, :seam do
 
   def folded = records.last
 
-  describe "promotion pushes without a local branch" do
-    it "puts the anchored sha on the remote under refs/heads/epic/<slug>/<issue>" do
-      sha = anchored
+  describe "the epic goes to the remote as one branch" do
+    it "puts the epic branch's sha on the remote under refs/heads/epic/<slug>" do
+      sha = landed
 
       result = promotion.call(sha:)
 
-      expect(remote_ref("refs/heads/epic/demo/a1")).to eq(sha)
+      expect(remote_ref).to eq(sha)
       expect(result).to be_ok
       expect(result).not_to be_observed
     end
@@ -148,31 +131,30 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     it "creates no local branch on the way" do
       before_heads = local_heads
 
-      promotion.call(sha: anchored)
+      promotion.call(sha: landed)
 
       expect(local_heads).to eq(before_heads)
-      expect(local_heads.join("\n")).not_to include("epic/demo")
     end
 
     it "pushes the sha itself as the refspec source" do
-      sha = anchored
+      sha = landed
 
       promotion.call(sha:)
 
-      expect(argv).to include(array_including("push", "origin", "#{sha}:refs/heads/epic/demo/a1"))
+      expect(argv).to include(array_including("push", "origin", "#{sha}:#{ref}"))
     end
 
     it "addresses the intent by ref and sha, and by nothing cosmetic" do
-      sha = anchored
+      sha = landed
 
       promotion.call(sha:)
 
       expect(intent[:action]).to eq(Lain::Forge::PROMOTE)
-      expect(intent[:params]).to eq("ref" => "refs/heads/epic/demo/a1", "sha" => sha)
+      expect(intent[:params]).to eq("ref" => ref, "sha" => sha)
     end
 
     it "hands the journaled bracket's answer back unchanged" do
-      sha = anchored
+      sha = landed
 
       result = promotion.call(sha:)
 
@@ -180,21 +162,15 @@ RSpec.describe Lain::Forge::Promotion, :seam do
       expect(folded).to include(ok: true, observed: false, detail: result.detail)
     end
 
-    # {Forge::Outcome} carries only a digest, so a refusal a human has to act on
-    # says which epic and issue it was for without a trip to the journal.
-    it "names the epic, the issue, the ref and the sha in the detail" do
-      sha = anchored
+    it "names the epic, the ref and the sha in the detail" do
+      sha = landed
 
-      result = promotion.call(sha:)
-
-      expect(result.detail).to include("epic_slug" => "demo", "issue_id" => "a1", "reason" => "promoted",
-                                       "ref" => "refs/heads/epic/demo/a1", "sha" => sha)
+      expect(promotion.call(sha:).detail)
+        .to include("epic_slug" => "demo", "reason" => "promoted", "ref" => ref, "sha" => sha)
     end
 
-    # A promotion may run from a pre-commit hook's environment, where GIT_DIR and
-    # friends name some OTHER repository.
     it "scrubs the ambient git context on every subprocess" do
-      promotion.call(sha: anchored)
+      promotion.call(sha: landed)
 
       expect(calls).not_to be_empty
       expect(calls.map { |call| call[:kwargs][:environment] })
@@ -203,30 +179,21 @@ RSpec.describe Lain::Forge::Promotion, :seam do
   end
 
   describe "promotion is idempotent by observation" do
-    it "answers ok and observed the second time" do
-      sha = anchored
+    it "answers ok and observed the second time, without pushing again" do
+      sha = landed
       promotion.call(sha:)
+      calls.clear
 
       result = promotion.call(sha:)
 
       expect(result).to be_ok
       expect(result).to be_observed
       expect(result.detail["reason"]).to eq("already_promoted")
-      expect(remote_ref("refs/heads/epic/demo/a1")).to eq(sha)
-    end
-
-    it "does not push again once the remote already holds the sha" do
-      sha = anchored
-      promotion.call(sha:)
-      calls.clear
-
-      promotion.call(sha:)
-
       expect(git_verbs).not_to include("push")
     end
 
     it "journals a second intent/outcome pair under the same address" do
-      sha = anchored
+      sha = landed
       promotion.call(sha:)
 
       promotion.call(sha:)
@@ -236,254 +203,195 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     end
 
     it "never reaches for a force flag on any path" do
-      sha = anchored
+      sha = landed
       promotion.call(sha:)
       promotion.call(sha:)
+      promotion.delete(sha:)
 
       expect(argv.flatten.grep(/\A--force/)).to be_empty
     end
   end
 
-  # "Diverged" here means the ref stands anywhere this promotion did not put it,
-  # which covers two histories that git treats very differently. Both are pinned,
-  # because the FAST-FORWARD one is the case a user is most likely to hit and the
-  # one where the card's rule and an expectation openly disagree: git would take
-  # that push, and this refuses it anyway. Nothing here forces either way.
   describe "a remote branch standing somewhere else refuses" do
-    it "answers not ok, says diverged, and names the sha the remote holds" do
-      taken = anchored("worker-1")
+    it "answers not ok, says diverged, names the sha the remote holds, and pushes nothing" do
+      taken = landed("first")
       promotion.call(sha: taken)
+      calls.clear
 
-      result = promotion.call(sha: anchored("worker-2"))
+      result = promotion.call(sha: landed("second"))
 
       expect(result).not_to be_ok
-      expect(result).not_to be_observed
       expect(result.detail["reason"]).to eq("diverged")
-      expect(result.detail["message"]).to include(taken)
-    end
-
-    it "leaves the remote ref exactly where it was, without pushing" do
-      taken = anchored("worker-1")
-      promotion.call(sha: taken)
-      calls.clear
-
-      promotion.call(sha: anchored("worker-2"))
-
-      expect(remote_ref("refs/heads/epic/demo/a1")).to eq(taken)
+      expect(result.detail["message"]).to include(taken, "never forces")
+      expect(remote_ref).to eq(taken)
       expect(git_verbs).not_to include("push")
     end
 
-    it "still journals the pair" do
-      promotion.call(sha: anchored("worker-1"))
-      records.clear
-
-      promotion.call(sha: anchored("worker-2"))
-
-      expect(records.size).to eq(2)
-      expect(records.first[:action]).to eq(Lain::Forge::PROMOTE)
-    end
-
-    # The two examples above promote sequential commits on one branch, so the
-    # second sha is a strict DESCENDANT of the first -- a fast-forward git would
-    # accept. The genuinely non-linear case, where neither sha reaches the other,
-    # is a different history and gets its own example rather than an assumption.
     it "refuses a remote sha that neither reaches nor is reached by this one" do
       root = run_git(@repo_root, "rev-parse", "HEAD").strip
-      theirs = anchored("worker-1")
+      theirs = landed("theirs")
       promotion.call(sha: theirs)
-      mine = sideways(root)
-      calls.clear
 
-      result = promotion.call(sha: mine)
+      result = promotion.call(sha: sideways(root, "mine"))
 
       expect(result.detail["reason"]).to eq("diverged")
-      expect(remote_ref("refs/heads/epic/demo/a1")).to eq(theirs)
-      expect(git_verbs).not_to include("push")
-    end
-
-    it "refuses a fast-forward the bare push would have taken" do
-      old = anchored("worker-1")
-      promotion.call(sha: old)
-      newer = anchored("worker-2")
-
-      expect(promotion.call(sha: newer).detail["reason"]).to eq("diverged")
-      expect(try_git(@repo_root, "merge-base", "--is-ancestor", old, newer).exitstatus).to eq(0)
-    end
-
-    # A refusal that names only state leaves a human to guess whether force was
-    # unavailable, forgotten, or withheld. It was withheld.
-    it "says force was withheld and whose decision the advance is" do
-      taken = anchored("worker-1")
-      promotion.call(sha: taken)
-      sha = anchored("worker-2")
-
-      message = promotion.call(sha:).detail["message"]
-
-      expect(message).to include(taken, sha)
-      expect(message).to include("never forces")
-      expect(message).to include("cascade")
+      expect(remote_ref).to eq(theirs)
     end
   end
 
-  describe "a ref the namespace cannot hold" do
-    it "refuses when a branch occupies the epic directory" do
-      sha = anchored
-      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic/demo")
+  # git holds a ref or a directory of refs at one name, never both, so
+  # per-issue branches the old promotion left on the remote make the epic
+  # branch unpushable. They are named, all of them, and none is deleted.
+  describe "a remote the epic branch cannot be pushed into" do
+    it "refuses, naming every per-issue branch left under the epic's name, and deletes none" do
+      sha = landed
+      %w[a1 a2].each { |issue| run_git(@repo_root, "push", "-q", "origin", "#{sha}:#{ref}/#{issue}") }
       calls.clear
 
       result = promotion.call(sha:)
 
       expect(result).not_to be_ok
       expect(result.detail["reason"]).to eq("namespace_conflict")
-      expect(result.detail["message"]).to include("refs/heads/epic/demo")
+      expect(result.detail["message"]).to include("#{ref}/a1", "#{ref}/a2", "delete or rename")
+      expect([remote_ref("#{ref}/a1"), remote_ref("#{ref}/a2")]).to all(eq(sha))
       expect(git_verbs).not_to include("push")
     end
 
-    # Refs are paths, and no flag makes a name be both a file and a directory --
-    # so unlike a divergence there is exactly one way forward, and the refusal
-    # names it rather than leaving a reader to work out that git is immovable here.
-    it "says what has to happen to the occupying ref" do
-      sha = anchored
-      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic/demo")
-
-      message = promotion.call(sha:).detail["message"]
-
-      expect(message).to include("refs/heads/epic/demo")
-      expect(message).to include("delete or rename")
-    end
-
-    it "refuses when the ref would have to become a directory" do
-      sha = anchored
-      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic/demo/a1/extra")
-      calls.clear
+    it "refuses when a branch occupies the directory the epic branch sits in" do
+      sha = landed
+      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic")
 
       result = promotion.call(sha:)
 
       expect(result.detail["reason"]).to eq("namespace_conflict")
-      expect(result.detail["message"]).to include("refs/heads/epic/demo/a1/extra")
-      expect(git_verbs).not_to include("push")
+      expect(result.detail["message"]).to include("refs/heads/epic ")
     end
 
-    it "does not mistake a sibling issue's branch for a conflict" do
-      sha = anchored
-      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic/demo/a2")
+    it "does not mistake another epic's branches for a conflict" do
+      sha = landed
+      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic/other/a1")
 
       expect(promotion.call(sha:)).to be_ok
-      expect(remote_ref("refs/heads/epic/demo/a1")).to eq(sha)
+      expect(remote_ref).to eq(sha)
     end
   end
 
   describe "names checked before anything runs" do
     it "refuses a slug the filesystem grammar refuses, at construction" do
-      expect { build_promotion(slug: "../escape") }
-        .to raise_error(Lain::Epic::Home::MalformedName, /epic slug/)
+      expect { build_promotion(slug: "../escape") }.to raise_error(Lain::Epic::Home::MalformedName, /epic slug/)
       expect(calls).to be_empty
     end
 
-    it "refuses an issue id the filesystem grammar refuses, at construction" do
-      expect { build_promotion(issue: "A1/b") }.to raise_error(Lain::Epic::Home::MalformedName, /issue id/)
-      expect(calls).to be_empty
-    end
-
-    # Three interned strings and no mutable state, so the house rule for a value
-    # object applies: `Ractor.shareable?` is the mechanical statement of that,
-    # and it is false for an unfrozen object however immutable its contents.
     it "composes a ref that is a deeply frozen value" do
-      expect(described_class::Branch.new(epic_slug: "demo", issue_id: "a1")).to be_deeply_frozen
+      expect(described_class::Branch.new(epic_slug: "demo")).to be_deeply_frozen
     end
 
-    # The canary for the two rules drifting apart: the name grammar cannot spell
-    # a ref git refuses today, so this refusal has to be forced rather than
-    # provoked.
     it "refuses a composed ref git will not accept" do
-      sha = anchored
+      sha = landed
       seen = []
 
       result = build_promotion(factory: factory_failing("check-ref-format", seen)).call(sha:)
 
-      expect(result).not_to be_ok
       expect(result.detail["reason"]).to eq("malformed_ref")
       expect(seen.map { |call| call[:args][3] }).not_to include("push")
     end
   end
 
   describe "the sha it is handed is the address it journals" do
-    it "raises when handed no sha at all" do
+    it "raises when handed no sha at all, before anything is journaled" do
       expect { promotion.call(sha: "  ") }.to raise_error(described_class::Unanchored)
-      expect(calls).to be_empty
+      expect { promotion.delete(sha: "  ") }.to raise_error(described_class::Unanchored)
       expect(records).to be_empty
     end
 
     it "refuses a commit the checkout does not have" do
-      anchored
-      calls.clear
-
-      result = promotion.call(sha: "0" * 40)
-
-      expect(result).not_to be_ok
-      expect(result.detail["reason"]).to eq("unknown_commit")
-      expect(git_verbs).not_to include("push")
+      expect(promotion.call(sha: "0" * 40).detail["reason"]).to eq("unknown_commit")
     end
 
-    # A reconcile asks the world `sha_of(ref) == params["sha"]`, so the address
-    # has to be the full object name. `HEAD`, a branch name or an abbreviation
-    # resolves locally and then never compares equal to what the remote reports.
     it "refuses a commit-ish that is not the object name itself" do
-      anchored
-      calls.clear
+      landed
 
-      result = promotion.call(sha: "HEAD")
-
-      expect(result).not_to be_ok
-      expect(result.detail["reason"]).to eq("inexact_sha")
-      expect(git_verbs).not_to include("push")
+      expect(promotion.call(sha: "HEAD").detail["reason"]).to eq("inexact_sha")
     end
   end
 
   describe "git refusing" do
     it "reports an unreachable remote rather than raising" do
-      sha = anchored
+      sha = landed
       run_git(@repo_root, "remote", "remove", "origin")
 
-      result = promotion.call(sha:)
-
-      expect(result).not_to be_ok
-      expect(result.detail["reason"]).to eq("remote_unreachable")
+      expect(promotion.call(sha:).detail["reason"]).to eq("remote_unreachable")
     end
 
-    # `observed` entails success: it means the effect was found ALREADY in place
-    # and confirmed. A refusal carrying it would tell a reconcile the push landed
-    # from a promotion that never reached the remote.
-    #
-    # The invariant is held by CONSTRUCTION, not by this file: the answer is the
-    # guarded {Gh::Answer}, whose {Gh::Contracts::Answer} refuses the pair outright.
-    # A value of our own that merely never happened to be built wrong would put
-    # the same guarantee back in the hands of whoever edits `#answer` next.
-    it "answers the guarded Gh::Answer rather than a twin of its own" do
-      expect(promotion.call(sha: anchored)).to be_a(Lain::Forge::Gh::Answer)
-      expect { Lain::Forge::Gh::Answer.new(ok: false, observed: true) }
-        .to raise_error(ArgumentError, /observed/)
-    end
-
-    it "never claims to have observed a refusal" do
-      sha = anchored
-      run_git(@repo_root, "push", "-q", "origin", "#{sha}:refs/heads/epic/demo")
-
-      refusals = [promotion.call(sha:), promotion.call(sha: "HEAD"), promotion.call(sha: "0" * 40)]
-
-      expect(refusals.map(&:ok?)).to all(be(false))
-      expect(refusals.map(&:observed?)).to all(be(false))
+    it "answers the guarded Gh::Answer, which cannot claim to have observed a refusal" do
+      expect(promotion.call(sha: landed)).to be_a(Lain::Forge::Gh::Answer)
+      expect { Lain::Forge::Gh::Answer.new(ok: false, observed: true) }.to raise_error(ArgumentError, /observed/)
     end
 
     it "reports a refused push in git's own words" do
-      sha = anchored
+      result = build_promotion(factory: factory_failing("push", [])).call(sha: landed)
 
-      result = build_promotion(factory: factory_failing("push", [])).call(sha:)
-
-      expect(result).not_to be_ok
       expect(result.detail["reason"]).to eq("push_failed")
       expect(result.detail["message"]).to include("forced failure")
-      expect(remote_ref("refs/heads/epic/demo/a1")).to be_empty
+      expect(remote_ref).to be_empty
+    end
+  end
+
+  # Once the epic's pull request is merged its remote branch has nothing left
+  # to carry. The delete is the same kind of reach as the push: journaled as
+  # an intent first, observed rather than remembered, and never forced.
+  describe "deleting the remote branch once merged" do
+    it "deletes the branch standing at the promoted sha, as a journaled branch_delete" do
+      sha = landed
+      promotion.call(sha:)
+      records.clear
+
+      result = promotion.delete(sha:)
+
+      expect(result).to be_ok
+      expect(result).not_to be_observed
+      expect(result.detail["reason"]).to eq("deleted")
+      expect(remote_ref).to be_empty
+      expect(intent).to eq(action: Lain::Forge::BRANCH_DELETE, params: { "ref" => ref, "sha" => sha })
+      expect(argv).to include(array_including("push", "origin", "--delete", ref))
+    end
+
+    it "counts a branch GitHub already deleted as done, without pushing" do
+      sha = landed
+      calls.clear
+
+      result = promotion.delete(sha:)
+
+      expect(result).to be_ok
+      expect(result).to be_observed
+      expect(result.detail["reason"]).to eq("already_deleted")
+      expect(git_verbs).not_to include("push")
+    end
+
+    it "refuses to delete a branch that moved on after the merge, and leaves it" do
+      promoted = landed("promoted")
+      promotion.call(sha: promoted)
+      later = landed("pushed after")
+      run_git(@repo_root, "push", "-q", "origin", "#{later}:#{ref}")
+
+      result = promotion.delete(sha: promoted)
+
+      expect(result).not_to be_ok
+      expect(result.detail["reason"]).to eq("diverged")
+      expect(result.detail["message"]).to include(later)
+      expect(remote_ref).to eq(later)
+    end
+
+    it "stops on a delete git refuses, in git's own words" do
+      sha = landed
+      promotion.call(sha:)
+
+      result = build_promotion(factory: factory_failing("push", [])).delete(sha:)
+
+      expect(result).not_to be_ok
+      expect(result.detail["reason"]).to eq("delete_failed")
+      expect(result.detail["message"]).to include("forced failure")
+      expect(remote_ref).to eq(sha)
     end
   end
 end

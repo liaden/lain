@@ -264,6 +264,18 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(fold.unsettled).to be_empty
     end
 
+    # A remote branch delete is observable: a branch that is gone was
+    # deleted, whoever deleted it, and one still standing needs the delete.
+    it "reads a deleted branch as done and a standing one as needing a retry" do
+      delete = blind(action: "branch_delete", params: { "ref" => ref, "sha" => "cafe" })
+
+      gone = reconcile([delete], world: ForgeReconcileSpecSupport.world)
+      standing = reconcile([delete], world: ForgeReconcileSpecSupport.world(refs: { ref => "cafe" }))
+
+      expect(gone.unsettled.map(&:verdict)).to eq(["completed_externally"])
+      expect(standing.unsettled.map(&:verdict)).to eq(["needs_retry"])
+    end
+
     # `fetch` succeeds on a nil, and two `.to_s` calls then read two
     # ABSENCES of knowledge as a confirmation that the push landed.
     it "refuses a blank address as hard as a missing one" do

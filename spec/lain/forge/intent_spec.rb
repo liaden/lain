@@ -60,8 +60,8 @@ RSpec.describe Lain::Forge::Intent do
     # The obligation that omission creates, pinned in both directions. Every
     # action's params must address its effect uniquely repo-wide, because the
     # params ARE the whole address: real promote params carry
-    # refs/heads/epic/<slug>/<issue>, and a pr_merge carries a repo-unique
-    # number, so the epic and issue are already in there.
+    # refs/heads/epic/<slug>, and a pr_merge carries a repo-unique
+    # number, so the address already says whose work it is.
     it "distinguishes two issues whose params carry the namespaced ref" do
       other = intent(issue_id: "a2", params: { "ref" => "refs/heads/epic/demo/a2", "sha" => "cafe" })
 
@@ -99,7 +99,7 @@ RSpec.describe Lain::Forge::Intent do
 
   it "refuses an action outside the closed set" do
     expect { intent(action: "push") }.to raise_error(ArgumentError, /action/)
-    expect(Lain::Forge::ACTIONS).to eq(%w[promote pr_create pr_merge review_submit])
+    expect(Lain::Forge::ACTIONS).to eq(%w[promote pr_create pr_merge review_submit branch_delete])
   end
 
   it "refuses an unnamed epic or an unnamed issue" do

@@ -23,6 +23,16 @@ RSpec.describe Lain::Isolation::MergeStrategy do
               "-X", "diff-algorithm=histogram", "a" * 40])
   end
 
+  # The landing queue asks whether a worker integrates before it merges one,
+  # and a probe spelt differently from the merge would predict conflicts the
+  # merge does not have. NUL-separated names and no messages, so the answer
+  # parses as a tree and a path list.
+  it "spells a merge probe the same way, touching neither index nor working tree" do
+    expect(strategy.probe("a" * 40, "b" * 40))
+      .to eq(["-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false", "merge-tree", "--write-tree",
+              "-z", "--name-only", "--no-messages", "-X", "diff-algorithm=histogram", "a" * 40, "b" * 40])
+  end
+
   it "is built from the [isolation] table" do
     isolation = Lain::Config::Isolation.from({ "conflict_style" => "diff3", "diff_algorithm" => "patience" },
                                              path: "config.toml")

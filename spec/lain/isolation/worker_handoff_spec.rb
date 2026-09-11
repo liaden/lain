@@ -52,6 +52,8 @@ end
 # spec both take, and the reason this stays in the default suite: git is always
 # present, a model is not.
 RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
+  include HeldParentLock
+
   subject(:handoff) { described_class.new(handback:, repo_root: @repo_root, resolver:) }
 
   around do |example|
@@ -776,6 +778,25 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
 
   # Later work promotes and lands by full SHA, so the Report has to name the
   # commit that landed, not only the ref the work was anchored under.
+  # A chat handback and `lain epic land` run in different processes, so an
+  # in-process lock alone never kept them out of each other's merge.
+  describe "one handback into the parent at a time, across processes" do
+    it "waits while another process holds the parent checkout's lock, then merges" do
+      lease = clean_lease
+      handing = nil
+
+      while_held_elsewhere(@repo_root) do
+        handing = Thread.new { handoff.reclaim(lease, worker_id: "worker-1") }
+        expect(handing.join(0.5)).to be_nil
+        expect(parent_body("alpha.txt")).to eq("seed\n")
+      end
+
+      expect(handing.value.kind).to eq(:merged)
+    ensure
+      lease&.release
+    end
+  end
+
   describe "the report names what landed" do
     def head_of(dir) = run_git(dir, "rev-parse", "HEAD").strip
 

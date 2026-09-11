@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "monitor"
-
 module Lain
   module Isolation
     # A worker's completion point, as one object: hand its committed work back to
@@ -242,15 +240,6 @@ module Lain
         @handback = handback
         @repo_root = File.expand_path(repo_root)
         @resolver = resolver
-        # ONE HANDBACK INTO THE PARENT AT A TIME, held through the resolver.
-        # Siblings a fan-out dispatches return together, and two merges into
-        # one checkout interleave: one's continue concludes the other's merge,
-        # and its Report then names a commit that is not its worker's. A
-        # Monitor because it is owned per fiber on Ruby 4, so a waiting sibling
-        # yields to the scheduler, and it is reentrant, which the resolver's
-        # own lease -- handed back through this same handoff, from inside the
-        # same fiber -- needs.
-        @parent = Monitor.new
       end
 
       # The SETTLED completion: hand the worker's work back, resolve a conflict
@@ -281,7 +270,14 @@ module Lain
 
       private
 
-      def one_at_a_time(&block) = @parent.synchronize(&block)
+      # ONE HANDBACK INTO THE PARENT AT A TIME, held through the resolver.
+      # Siblings a fan-out dispatches return together, and two merges into one
+      # checkout interleave: one's continue concludes the other's merge, and its
+      # Report then names a commit that is not its worker's. The lock is the
+      # repository's {ParentLock}, so a landing queue in another process -- `lain
+      # epic land` beside a live chat -- waits for this handback, and it for
+      # that. Resolved on first use, since most handoffs never hand anything back.
+      def one_at_a_time(&block) = (@parent ||= ParentLock.for(repo_root: @repo_root)).hold(&block)
 
       # `anchored` and `restoration` are read in the `ensure`, and a local the
       # parser has SEEN assigned is nil rather than undefined even when the

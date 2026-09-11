@@ -194,6 +194,22 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(parked_plans.map(&:issue_id)).to eq(["a"])
     end
 
+    # An implementation's address names its issue, so an approval of a's commit
+    # opens no other issue's gate over that same commit.
+    it "does not read a's implementation approval as b's, over the same commit" do
+      command.submit("issue_plan", issue: "a")
+      command.submit("issue_plan", issue: "b")
+      command.submit("implementation", issue: "a", digest: changeset)
+
+      said = command.submit("implementation", issue: "b", digest: changeset)
+
+      expect(said).not_to start_with("already approved")
+      implementations = gate_decisions.select { |record| record["stage"] == "implementation" }
+      expect(implementations.map { |record| record.values_at("issue_id", "approved") })
+        .to eq([["a", true], ["b", true]])
+      expect(implementations.map { |record| record["artifact_digest"] }.uniq.size).to eq(2)
+    end
+
     it "still refuses a's own implementation while a's plan is parked" do
       deferring.submit("issue_plan", issue: "a")
 
