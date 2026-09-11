@@ -1660,6 +1660,8 @@ Cards landed:
 - **T5** `b164b66b`. Merge flags `--ff --no-squash --commit --no-verify-signatures` are pinned; `landed` confirms the parent contains the worker; a handback declines when the parent is off the working branch; `base:` is required on `Handback` and `WorkerHandoff.over`; `Worktree#base` is forwarded by the lease decorators. Suite on main after it: **17006 examples, 0 failures, 14 pending**.
 - **T3** `8f7fd7aa`. `Epic::InFlight` is the one rule that starts an issue, and both submit and the queue drain ask it. Approving an `issue_plan` from the wrong project refuses as `EpicQueue::OutsideProject`.
 - **T8** `971f90ba`. `Verdict#rule` is machine-readable; `TestGeneration.new(renderer:, role_spawn:, guard:)`; enforcement is opt-in. The pre-commit example that failed, `neovim_runtime_spec`'s "parked approval … end to end", is the documented load flake, and passed alone.
+- **T7** `9982c1d2`. One `WorkerHandoff` serves chat: SelfSync anchors first and checks each patch survives, handbacks run one at a time per parent, and the sync facts ride `Telemetry::Handback`. The pre-commit example that failed, `up_spec` "…one socket and one cwd", is the recorded load flake, and passed alone twice on T7's tree.
+- **T9** `d4d424a5`. Suite 17114 examples, 0 failures, on T9's tree. Leases take a git worktree lock recording the owning process; gc claims a lock by renaming it, and acts only if the bytes are unchanged; `worktree.useRelativePaths` resolves; a stray claim file keeps the tree.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1744,3 +1746,12 @@ Rulings made during execution:
   - Detection only picks the harness command. A detected preset would impose `spec/{unit,seam,…}` on a
     project that never declared them, and refuse its existing flat specs as stray.
   - **For T15:** the issue test step refuses, naming `[tests]`, when the project declares no layout.
+- **From T7's re-review, for later cards:**
+  - **T12 and T16:** the handback lock is an in-process Monitor per `WorkerHandoff`. It does **not**
+    serialize a `lain epic land` process against a live chat on the same parent checkout. The
+    landing queue needs a lock across processes (an `flock` under the repo's git dir) when the two
+    can run together.
+  - The lock is held through the resolver, so `Supervisor#reap`/`#stop` waits for a resolver's
+    model call.
+  - Self-sync re-matches by authorship only commits that touched a conflicted path. An in-place
+    gutting of a resolved commit is a documented limit.
