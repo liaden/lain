@@ -159,6 +159,7 @@ end
 
 # After the class body: the concrete arms and the driver reference Arm and
 # Arm::Run, so they load once the class exists.
+require_relative "arm/ladder"
 require_relative "arm/instrument"
 require_relative "arm/ledger_state"
 require_relative "arm/single_thread"

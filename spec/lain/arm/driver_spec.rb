@@ -1,5 +1,41 @@
 # frozen_string_literal: true
 
+require "bigdecimal"
+
+# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+module DriverSpecSupport
+  FakeGrade = Struct.new(:score)
+
+  # The narrowest ledger duck #value_of needs (`#usage(timeline)`,
+  # `#cost(timeline)`) -- ignores the timeline entirely and answers a FIXED
+  # value, so a {FixedCacheArm} can give a genuinely fixed cache-write figure
+  # with no Timeline/Store machinery at all.
+  class FixedLedger
+    def initialize(cache_creation_input_tokens:)
+      @usage = Lain::Usage.new(input_tokens: 100, output_tokens: 20, cache_creation_input_tokens:)
+    end
+
+    def usage(_timeline) = @usage
+    def cost(_timeline) = BigDecimal("0.01")
+  end
+
+  # A concrete Arm whose #run returns a Run carrying a FIXED cache-write
+  # figure, bypassing spawn_seam entirely -- the only way to give ONE arm in
+  # a Driver comparison a genuinely different cache-write value than a
+  # SIBLING arm, since the Driver threads one shared spawn_seam into every
+  # arm it compares (`#distributions_for`).
+  class FixedCacheArm < Lain::Arm
+    def initialize(name:, cache_creation_input_tokens:)
+      super(name:)
+      @ledger = FixedLedger.new(cache_creation_input_tokens:)
+    end
+
+    def run(_task, spawn_seam:, grader:, isolation: NoIsolation) # rubocop:disable Lint/UnusedMethodArgument
+      Lain::Arm::Run.new(arm: name, timeline: nil, grade: FakeGrade.new(1.0), elapsed: 0.1, ledger: @ledger)
+    end
+  end
+end
+
 # The Driver runs N arms over a task suite and folds each arm's runs into its
 # own per-metric distributions -- grader, tokens, wall-time, dollars -- laid side
 # by side under a header naming what produced them. It reuses Compare's
@@ -136,6 +172,102 @@ RSpec.describe Lain::Arm::Driver do
       expect(row_for(report, "cost (USD)", "list-price")).to include(format("%.6f", cheap))
       expect(row_for(report, "cost (USD)", "list-price-b")).to include(format("%.6f", cheap))
       expect(row_for(report, "cost (USD)", "ten-x")).to include(format("%.6f", cheap * 10))
+    end
+  end
+
+  # Arm::Driver::METRICS gains cache write tokens, the arm's own token-
+  # accounting answer to the same "what did this cost" question `total
+  # tokens` asks -- priced not in dollars but in the prefix a stage's
+  # compaction had to rewrite. Labeled to match Compare::METRICS'
+  # `cache_write_tokens` row (`compare.rb`'s own `"cache write tokens"`).
+  describe "#report — the cache write tokens column" do
+    def cache_seam_for(cache_creation_input_tokens:)
+      lambda do |journal:, timeline: nil, base_timeline: nil, workspace: Lain::Workspace.empty, **|
+        usage = Lain::Usage.new(input_tokens: 100, output_tokens: 20, cache_creation_input_tokens:)
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response("done", model: "claude-sonnet-4", usage:)]),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256),
+          timeline: base_timeline || timeline, workspace:, journal:
+        )
+      end
+    end
+
+    it "reports cache write tokens carrying the runs' own usage" do
+      report = described_class.new(arms, tasks:, spawn_seam: cache_seam_for(cache_creation_input_tokens: 40),
+                                         grader:).report
+
+      expect(report).to include("cache write tokens")
+      expect(row_for(report, "cache write tokens", "single-thread")).to match(/\s40\.0(\s|$)/)
+    end
+
+    # Scenario: an unmeasured cache-write is absent, not zero.
+    #
+    # `spawn_seam` (the suite default) scripts `Usage.new(input_tokens:,
+    # output_tokens:)` with no cache fields at all -- exactly "offline
+    # recordings carrying only input and output usage". {Lain::Usage}
+    # normalizes an absent cache field to 0, which is INDISTINGUISHABLE from a
+    # real zero at that layer, so reporting "0.0" here would claim a
+    # measurement nobody made. The column says so instead.
+    it "marks the column not measured, rather than reporting a false 0.0, when no run's usage ever carried one" do
+      report = described_class.new(arms, tasks:, spawn_seam:, grader:).report
+
+      section = section_for(report, "cache write tokens")
+      expect(section).not_to be_nil
+      expect(section).to include("not measured")
+      expect(section).not_to match(/\b0\.0\b/)
+    end
+
+    it "renders normally once even one run's usage carries a real cache write" do
+      mixed = lambda do |journal:, timeline: nil, base_timeline: nil, workspace: Lain::Workspace.empty, **|
+        @cache_calls ||= 0
+        @cache_calls += 1
+        usage = Lain::Usage.new(input_tokens: 100, output_tokens: 20,
+                                cache_creation_input_tokens: @cache_calls.odd? ? 0 : 12)
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response("done", model: "claude-sonnet-4", usage:)]),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256),
+          timeline: base_timeline || timeline, workspace:, journal:
+        )
+      end
+
+      report = described_class.new(arms, tasks:, spawn_seam: mixed, grader:).report
+
+      expect(section_for(report, "cache write tokens")).not_to include("not measured")
+    end
+
+    # Unmeasured is decided PER ARM inside #fold, and #section must not widen
+    # that to the whole column: a one-shot arm that genuinely never writes to
+    # cache must not hide an epic arm's real, measured 500-token distribution
+    # in the SAME report. This exercises the cross-arm case the `mixed` seam
+    # above never can -- there, every arm shares one seam and one call
+    # sequence, so every arm's OWN fold ends up mixed too.
+    describe "an unmeasured arm does not hide a sibling arm's measured numbers" do
+      it "renders the epic arm's real cache-write distribution while the one-shot arm's cell alone says not measured" do
+        one_shot = DriverSpecSupport::FixedCacheArm.new(name: "one-shot-never-caches", cache_creation_input_tokens: 0)
+        epic = DriverSpecSupport::FixedCacheArm.new(name: "epic-real-cache-writes", cache_creation_input_tokens: 500)
+
+        report = described_class.new([one_shot, epic], tasks:, spawn_seam:, grader:).report
+
+        section = section_for(report, "cache write tokens")
+        expect(section).not_to be_nil
+        expect(row_for(report, "cache write tokens", "epic-real-cache-writes")).to match(/\s500\.0(\s|$)/)
+        expect(row_for(report, "cache write tokens", "one-shot-never-caches")).to include("not measured")
+      end
+
+      # Every OTHER metric must still render normally for both arms -- the
+      # degradation is scoped to the one column that is actually unmeasured.
+      it "leaves every other metric's section untouched by the one-shot arm's unmeasured cache-write" do
+        one_shot = DriverSpecSupport::FixedCacheArm.new(name: "one-shot-never-caches", cache_creation_input_tokens: 0)
+        epic = DriverSpecSupport::FixedCacheArm.new(name: "epic-real-cache-writes", cache_creation_input_tokens: 500)
+
+        report = described_class.new([one_shot, epic], tasks:, spawn_seam:, grader:).report
+
+        expect(row_for(report, "grader score", "one-shot-never-caches")).to match(/\s1\.000(\s|$)/)
+        expect(row_for(report, "grader score", "epic-real-cache-writes")).to match(/\s1\.000(\s|$)/)
+        expect(section_for(report, "cost (USD)")).not_to include("not priced")
+      end
     end
   end
 

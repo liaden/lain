@@ -370,3 +370,4 @@ end
 require_relative "gate/policy"
 require_relative "gate/adjudicator"
 require_relative "gate/policies"
+require_relative "gate/recorded_policy"

@@ -26,11 +26,26 @@ module Lain
       # computed-total metric a `token-cost + $/sec x wall-clock` axis would
       # need, which neither shape can express and which that item would then
       # have to undo.
+      # `of:` for `cost (USD)` and every earlier row is a Symbol {Arm::Run}
+      # answers directly; `cache write tokens` is a Proc reading
+      # `run.ledger.usage(run.timeline)` directly rather than going through
+      # `run.compare_run.cache_write_tokens` (the reader {Compare::Run}
+      # already has). `#compare_run` builds that value EAGERLY, which means
+      # computing `ledger.cost(timeline)` up front -- so an unpriced model
+      # would raise {PriceBook::UnknownModel} on a column that never needed a
+      # price at all, and this metric would misreport as {Unpriced} rather
+      # than {Unmeasured}. Reading the Ledger directly skips that computation
+      # entirely. `optional: true` marks a metric {#fold} may answer as
+      # {Unmeasured} rather than a {Measured} distribution -- see that method.
       METRICS = {
         "grader score" => { of: :score, fmt: ->(value) { format("%.3f", value) } },
         "total tokens" => { of: :total_tokens, fmt: ->(value) { format("%.1f", value) } },
         "wall-time (s)" => { of: :elapsed, fmt: ->(value) { format("%.4f", value) } },
-        "cost (USD)" => { of: :cost, fmt: ->(value) { format("%.6f", value) } }
+        "cost (USD)" => { of: :cost, fmt: ->(value) { format("%.6f", value) } },
+        "cache write tokens" => {
+          of: ->(run) { run.ledger.usage(run.timeline).cache_creation_input_tokens },
+          fmt: ->(value) { format("%.1f", value) }, optional: true
+        }
       }.freeze
       private_constant :METRICS
 
@@ -43,12 +58,49 @@ module Lain
       UNRECORDED = "unrecorded"
       private_constant :UNRECORDED
 
-      # A metric the arm's own {PriceBook} could not answer, standing where a
-      # {Compare::Distribution} would. It carries the LEDGER's message rather
-      # than a number, so the section that renders it says both that there is no
-      # figure and what would produce one -- see {#fold}.
-      Unpriced = Data.define(:reason)
+      # The one arm-cell shape {#fold} answers with when a real
+      # {Compare::Distribution} was built. Wraps it (rather than handing the
+      # Distribution straight to {#table}) so every shape {#fold} can answer
+      # -- this, {Unpriced}, {Unmeasured} -- speaks the SAME `#row`/`#refuses?`
+      # protocol and {#section}/{#table} send one message instead of testing
+      # which of the three they were handed.
+      Measured = Data.define(:distribution) do
+        def refuses? = false
+
+        def row(name, fmt)
+          [name, distribution.n.to_s,
+           *[distribution.mean, distribution.median, distribution.min, distribution.max].map(&fmt)]
+        end
+      end
+      private_constant :Measured
+
+      # A metric the arm's own {PriceBook} could not answer. Unlike
+      # {Unmeasured}, this refuses the WHOLE section: an unpriceable model
+      # makes every arm's dollar figure equally unknowable (`Ledger#cost_of`
+      # raises before any arm's cost exists), so there is no single arm's row
+      # left to render.
+      Unpriced = Data.define(:reason) do
+        def refuses? = true
+      end
       private_constant :Unpriced
+
+      # ONE arm's cell for an OPTIONAL metric whose own values could not be
+      # told apart from "never measured" -- see {#fold}. {Usage} normalizes an
+      # absent field (cache fields, on a provider or a scripted response that
+      # never populates them) to 0, so 0 is what BOTH "measured, and it was
+      # zero" and "never measured at all" look like once it is a {Usage}. This
+      # is decided PER ARM, and does NOT refuse the section the way
+      # {Unpriced} does: a sibling arm's real, measured distribution under the
+      # SAME metric must still render, so hiding it behind this arm's honest
+      # zero would be the false claim, not the fix.
+      Unmeasured = Data.define(:n) do
+        def refuses? = false
+        def row(name, _fmt) = [name, n.to_s, *([NOT_MEASURED_CELL] * 4)]
+      end
+      private_constant :Unmeasured
+
+      NOT_MEASURED_CELL = "not measured"
+      private_constant :NOT_MEASURED_CELL
 
       # @param arms [Array<Arm>] the topologies under comparison
       # @param tasks [Array<String>] the suite; n >= 2 so each arm's fold is a
@@ -120,10 +172,18 @@ module Lain
       # PRICE is not the same as destroying the REPORT, so the cost SECTION
       # degrades to the Ledger's own message and every other section renders.
       def fold(runs, spec)
-        Compare::Distribution.new(runs.map { |run| run.public_send(spec.fetch(:of)) })
+        values = runs.map { |run| value_of(run, spec.fetch(:of)) }
+        return Unmeasured.new(n: values.size) if spec.fetch(:optional, false) && values.all?(&:zero?)
+
+        Measured.new(distribution: Compare::Distribution.new(values))
       rescue PriceBook::UnknownModel => e
         Unpriced.new(reason: e.message)
       end
+
+      # `of:` is a Symbol for every metric {Arm::Run} answers directly, and a
+      # Proc for one that needs a call {Run} does not expose on its own -- see
+      # METRICS' comment on `cache write tokens`.
+      def value_of(run, of) = of.respond_to?(:call) ? of.call(run) : run.public_send(of)
 
       def render(measured_arms)
         [header, *METRICS.keys.map { |label| section(label, measured_arms) }].join("\n\n")
@@ -164,30 +224,33 @@ module Lain
         Blankness.blank?(@isolation_name) ? attributed(@isolation.class.name) : @isolation_name
       end
 
-      # ONE REFUSED ARM REFUSES THE SECTION, not just its row. A table carrying
-      # figures for the arms that priced and a gap for the one that did not
-      # invites exactly the comparison the missing number cannot support, which
-      # is the reading a bench report exists to prevent.
+      # ONE {Unpriced} ARM REFUSES THE WHOLE SECTION -- every value here
+      # answers `#refuses?` itself, so this sends one message rather than
+      # testing which of {Measured}/{Unpriced}/{Unmeasured} it was handed. An
+      # {Unmeasured} arm never refuses the section: it renders its OWN row,
+      # per {#table}, because a sibling arm's real, measured distribution
+      # under the same metric must not be hidden behind this arm's honest
+      # zero -- exactly the comparison a table carrying a gap for the priced
+      # arms and a figure for the one that could not price would also invite,
+      # which is why {Unpriced} still refuses everything.
       def section(label, measured_arms)
         folds = measured_arms.map { |(name, dists)| [name, dists.fetch(label)] }
-        unpriced = folds.map(&:last).grep(Unpriced)
+        refusing = folds.map(&:last).select(&:refuses?)
 
-        unpriced.any? ? refused(label, unpriced) : table(label, folds)
+        refusing.any? ? refused(label, refusing) : table(label, folds)
       end
 
       def table(label, folds)
         fmt = METRICS.fetch(label).fetch(:fmt)
-        rows = folds.map do |(name, dist)|
-          [name, dist.n.to_s, *[dist.mean, dist.median, dist.min, dist.max].map(&fmt)]
-        end
+        rows = folds.map { |(name, cell)| cell.row(name, fmt) }
         "#{label}\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
       end
 
       # The Ledger's OWN message, verbatim, because it already names the fix and
       # a second wording here would be a second authority on how to make a run
       # priceable. No arm is named, per {#section}.
-      def refused(label, unpriced)
-        "#{label}\n  not priced — #{unpriced.map(&:reason).uniq.join("; ")}"
+      def refused(label, refusing)
+        "#{label}\n  not priced — #{refusing.map(&:reason).uniq.join("; ")}"
       end
     end
   end
