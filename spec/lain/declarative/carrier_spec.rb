@@ -240,4 +240,78 @@ RSpec.describe Lain::Declarative::Carrier do
       expect(settling.new(index: { +"k" => [+"v"] }).settled[:index]).to eq({ "k" => ["v"] })
     end
   end
+
+  # ActiveModel::Validations::Clusivity tests an Array VALUE by running #all?
+  # over its elements, so `[].all?` is vacuously true and ["a"] passes
+  # whenever "a" is itself a legal member -- an untyped attribute (no
+  # coercion, so a non-scalar reaches inclusion unchanged) silently admits
+  # exactly the shapes it was declared to refuse. Fixed at Carrier so every
+  # declaration gets it for free; exclusion is untouched; a typed attribute is
+  # untouched too, because its cast already turns a non-scalar into something
+  # else (or refuses it) before inclusion ever runs.
+  describe "inclusion refuses a non-scalar on an untyped attribute" do
+    let(:guarded) do
+      carrier do
+        attribute :choice
+        attribute :forbidden
+        validates :choice, inclusion: { in: %w[a b] }
+        validates :forbidden, exclusion: { in: %w[a b] }
+      end
+    end
+
+    it "refuses an empty Array, which vacuously satisfies Clusivity's #all?" do
+      expect(guarded.new(choice: [])).to be_invalid
+    end
+
+    it "refuses an Array whose every element happens to be a legal member" do
+      expect(guarded.new(choice: ["a"])).to be_invalid
+    end
+
+    it "refuses a Hash" do
+      expect(guarded.new(choice: { "a" => 1 })).to be_invalid
+    end
+
+    it "still validates a scalar's membership normally" do
+      expect(guarded.new(choice: "a")).to be_valid
+      expect(guarded.new(choice: "z")).to be_invalid
+    end
+
+    it "leaves exclusion's own scalar behavior untouched" do
+      expect(guarded.new(choice: "a", forbidden: "a")).to be_invalid
+      expect(guarded.new(choice: "a", forbidden: "z")).to be_valid
+    end
+
+    it "leaves a typed attribute's inclusion untouched, since casting already ran" do
+      typed = carrier do
+        attribute :choice, :string
+        validates :choice, inclusion: { in: %w[a b] }
+      end
+
+      # ActiveModel::Type::String#cast reduces an Array to its #to_s -- not
+      # this fix's concern, only proof the fix does not fire where a real
+      # type already governs what reaches inclusion.
+      expect(typed.new(choice: []).choice).to eq("[]")
+    end
+
+    # `validates :attr, inclusion: {...}` and `validates_inclusion_of :attr,
+    # in: [...]` reach ActiveModel's InclusionValidator through two DIFFERENT
+    # mechanisms -- the first through the dynamic `const_get` `validates`
+    # itself does (which the override above intercepts), the second because
+    # `ActiveModel::Validations::HelperMethods#validates_inclusion_of` names
+    # `InclusionValidator` LEXICALLY, inside its own module, so it always
+    # reaches `ActiveModel::Validations::InclusionValidator` no matter which
+    # class calls it. A Carrier subclass using the macro spelling was
+    # therefore not guarded at all.
+    it "guards validates_inclusion_of the same way, not only the `inclusion:` option" do
+      macro_guarded = carrier do
+        attribute :flavor
+        validates_inclusion_of :flavor, in: %w[a b c]
+      end
+
+      expect(macro_guarded.new(flavor: [])).to be_invalid
+      expect(macro_guarded.new(flavor: ["a"])).to be_invalid
+      expect(macro_guarded.new(flavor: { "a" => 1 })).to be_invalid
+      expect(macro_guarded.new(flavor: "a")).to be_valid
+    end
+  end
 end

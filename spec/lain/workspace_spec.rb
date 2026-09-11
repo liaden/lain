@@ -34,14 +34,19 @@ RSpec.describe Lain::Workspace do
   end
 
   describe "#with" do
+    # The steady state (Agent renders `@workspace.with(*@session.reminders)`
+    # every turn, and reminders is usually empty) must not allocate a fresh
+    # Workspace and normalize pass each render.
     it "returns self when nothing is added, sparing the steady-state allocation" do
       workspace = described_class.new(reminders: %w[a])
       expect(workspace.with).to be(workspace)
     end
 
-    it "returns a new frozen Workspace with the reminders appended in order" do
-      workspace = described_class.new(reminders: %w[a]).with("b", "c")
+    it "returns a new frozen Workspace with the reminders appended in order, leaving the receiver unchanged" do
+      base = described_class.new(reminders: %w[a])
+      workspace = base.with("b", "c")
 
+      expect(base.reminders).to eq(%w[a])
       expect(workspace.reminders).to eq(%w[a b c])
       expect(workspace).to be_deeply_frozen
     end

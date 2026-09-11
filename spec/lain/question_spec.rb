@@ -65,7 +65,12 @@ RSpec.describe Lain::Question do
     end
 
     it "refuses an id carrying a character the document grammar reserves, naming WHICH grammar" do
-      expect { described_class.new(id: "de`ploy", body: "Ship it?") }.to raise_error(ArgumentError, /code span/)
+      # The backtick grammar is Lain::MarkdownIdentifier::BACKTICK_GRAMMAR,
+      # shared with Epic::Issue and Plan::Step (see markdown_identifier_spec.rb) --
+      # not Question's own text, so this checks the shared phrase rather than
+      # retyping it.
+      expect { described_class.new(id: "de`ploy", body: "Ship it?") }
+        .to raise_error(ArgumentError) { |error| expect(error.message).to include(Lain::MarkdownIdentifier::BACKTICK_GRAMMAR) }
       expect { described_class.new(id: "de\nploy", body: "Ship it?") }.to raise_error(ArgumentError, /heading/)
     end
 

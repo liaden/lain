@@ -595,7 +595,7 @@ RSpec.describe Lain::Approval::Queue do
     # a ledger of its own would satisfy the parameter pin above. Comments may
     # cite the ruling, so only code lines are searched.
     it "names no ledger anywhere in the queue's code" do
-      code = File.read(File.expand_path("../../lib/lain/approval/queue.rb", __dir__))
+      code = File.read(File.expand_path("../../../lib/lain/approval/queue.rb", __dir__))
                  .lines.grep_v(/\A\s*#/).join
 
       expect(code).not_to match(/ledger/i)

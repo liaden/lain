@@ -48,16 +48,17 @@ module Lain
 
     # An id is rendered inline into the answer document, inside a code span and
     # on one line, so neither the delimiter nor a line break may appear in one.
-    # The same three characters {Epic::ID_RESERVED} reserves, duplicated
-    # deliberately: the shared markdown-identifier object both files should
-    # depend on does not exist yet, so this comment is where their agreement is
-    # recorded.
-    #
-    # The grammar table is `fetch`ed on purpose, as {Epic::Issue#reserved!}
-    # does: growing the pattern without saying which grammar the new character
-    # belongs to fails loudly instead of mislabelling it.
-    ID_RESERVED = /[`\r\n\u{200B}-\u{200D}\u{2060}\u{FEFF}]/
-    ID_GRAMMARS = { "`" => "the code span the document renders an id inside",
+    # {MarkdownIdentifier} owns that base set (shared with Epic::Issue and
+    # Plan::Step); this extends it with the zero-width characters that make an
+    # id invisible once rendered, a hazard only Question's own code-span
+    # grammar has.
+    ID_RESERVED = Regexp.union(MarkdownIdentifier::RESERVED, /[\u{200B}-\u{200D}\u{2060}\u{FEFF}]/)
+    # `fetch`ed on purpose, as {MarkdownIdentifier.check!} does: growing
+    # ID_RESERVED without saying which grammar the new character belongs to
+    # fails loudly instead of mislabelling it. The backtick phrase is
+    # {MarkdownIdentifier::BACKTICK_GRAMMAR} itself, so Epic::Issue and
+    # Plan::Step refuse a backtick with the same words.
+    ID_GRAMMARS = { "`" => MarkdownIdentifier::BACKTICK_GRAMMAR,
                     "\r" => "the one-line question heading",
                     "\n" => "the one-line question heading",
                     "​" => "an id a human can see",
@@ -307,11 +308,7 @@ module Lain
       end
 
       def reserved!(id, field)
-        offender = id[ID_RESERVED]
-        return if offender.nil?
-
-        raise ArgumentError, "#{field} #{id.inspect} contains #{offender.inspect}, a character reserved for " \
-                             "#{ID_GRAMMARS.fetch(offender)}"
+        MarkdownIdentifier.check!(id, field, grammars: ID_GRAMMARS, error: ArgumentError, reserved: ID_RESERVED)
       end
 
       def one_line(value, field, maximum)

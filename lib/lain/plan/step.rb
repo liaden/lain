@@ -14,7 +14,14 @@ module Lain
     # tail is the criteria-digest slot). A value that breaks these is refused at
     # construction, so the markdown round-trip is total -- same digest OR a loud
     # rejection naming the offending value, never a silent mismatch.
-    ID_RESERVED = /[`\r\n]/
+    #
+    # The id's reserved set and its backtick grammar phrase come from
+    # {MarkdownIdentifier}, shared with Epic::Issue and Question; a
+    # criteria_digest is not an identifier those two mint, so its own reserved
+    # set and grammar stay local.
+    ID_RESERVED = MarkdownIdentifier::RESERVED
+    ID_GRAMMARS = { "`" => MarkdownIdentifier::BACKTICK_GRAMMAR, "\r" => "the one-line step heading",
+                    "\n" => "the one-line step heading" }.freeze
     CRITERIA_RESERVED = /[}\r\n]/
     TITLE_BRACE_SUFFIX = /\s\{[^}]*\}\z/
     TITLE_RULES = [
@@ -62,13 +69,13 @@ module Lain
 
       def clean_id(id)
         id = id.to_s
-        reserved!(id, "step id", ID_RESERVED, "the `id` backtick delimiters")
+        MarkdownIdentifier.check!(id, "step id", grammars: ID_GRAMMARS, error: MalformedStep, reserved: ID_RESERVED)
         -id
       end
 
       def clean_criteria(criteria_digest)
         criteria_digest = criteria_digest&.to_s
-        reserved!(criteria_digest, "criteria_digest", CRITERIA_RESERVED, "the {criteria} braces") if criteria_digest
+        reserved_criteria!(criteria_digest) if criteria_digest
         criteria_digest.nil? ? nil : -criteria_digest
       end
 
@@ -80,10 +87,11 @@ module Lain
         -title
       end
 
-      def reserved!(value, field, pattern, grammar)
-        return unless value.match?(pattern)
+      def reserved_criteria!(criteria_digest)
+        return unless criteria_digest.match?(CRITERIA_RESERVED)
 
-        raise MalformedStep, "#{field} #{value.inspect} contains a character reserved for #{grammar}"
+        raise MalformedStep, "criteria_digest #{criteria_digest.inspect} contains a character reserved for " \
+                             "the {criteria} braces"
       end
 
       # Intern `value` if it is one of `allowed`, else fail loudly naming both.

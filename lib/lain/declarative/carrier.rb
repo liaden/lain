@@ -58,6 +58,64 @@ module Lain
               "it declares #{attribute_names.join(", ")}."
       end
 
+      # ActiveModel's own InclusionValidator, scoped to every Carrier subclass
+      # and reached by BOTH spellings ActiveModel offers for it:
+      # `validates :attr, inclusion: {...}` and `validates_inclusion_of :attr,
+      # in: [...]` -- see {.validates_inclusion_of} below for why the second
+      # spelling needs its own override to reach the same place.
+      #
+      # `Module#const_get`, which `validates` uses to resolve `inclusion:`,
+      # finds a constant nested here before it reaches
+      # `ActiveModel::Validations::InclusionValidator`, because Carrier sits
+      # closer in the ancestor chain than the module that defines the
+      # original (the "Validator classes may also exist within the class
+      # being validated" mechanism `validates`' own docs name). So every
+      # `inclusion:` a Carrier subclass declares runs through here with no
+      # per-site opt-in.
+      #
+      # WHY: `ActiveModel::Validations::Clusivity#include?` treats an Array
+      # VALUE as a MEMBERSHIP LIST and tests it with `#all?`, so `[].all?` is
+      # vacuously true and `["a"].all?` passes whenever "a" is itself a legal
+      # member -- an untyped attribute (an unmodified `ActiveModel::Type::Value`
+      # does no coercion, so a non-scalar reaches inclusion exactly as given)
+      # silently admits precisely the shapes `inclusion:`/`validates_inclusion_of`
+      # were declared to refuse. A typed attribute's cast has already turned a
+      # non-scalar into something else -- or refused it -- before inclusion
+      # ever sees it, so only the untyped case is guarded here.
+      class InclusionValidator < ActiveModel::Validations::InclusionValidator
+        def validate_each(record, attribute, value)
+          record.errors.add(attribute, :inclusion, **options.except(:in, :within).merge!(value:)) if
+            refuse?(record, attribute, value)
+        end
+
+        private
+
+        def refuse?(record, attribute, value)
+          return true if non_scalar_untyped?(record, attribute, value)
+
+          !include?(record, value)
+        end
+
+        def non_scalar_untyped?(record, attribute, value)
+          (value.is_a?(Array) || value.is_a?(Hash)) &&
+            record.class.attribute_types[attribute.to_s].instance_of?(ActiveModel::Type::Value)
+        end
+      end
+
+      # `ActiveModel::Validations::HelperMethods#validates_inclusion_of`
+      # names `InclusionValidator` LEXICALLY, inside the module it is defined
+      # in -- so it always resolves to `ActiveModel::Validations::InclusionValidator`
+      # and never to a subclass's own, however `validates`' dynamic
+      # `const_get` (the mechanism {InclusionValidator} above relies on)
+      # resolves for a class that calls it. Redefined here, at the SAME class
+      # both spellings share, so a bare `InclusionValidator` written in
+      # Carrier's own lexical scope resolves to the class right above instead
+      # -- the same `validates_with`/`_merge_attributes` shape ActiveModel's
+      # own helper uses, just naming a different validator.
+      def self.validates_inclusion_of(*attr_names)
+        validates_with InclusionValidator, _merge_attributes(attr_names)
+      end
+
       # The declared attributes with their defaults applied, their types cast,
       # symbol-keyed for `super(**settled)`, and deeply frozen.
       #

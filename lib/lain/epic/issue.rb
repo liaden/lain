@@ -19,15 +19,15 @@ module Lain
 
     # The characters an id reserves for the epic-markdown grammar (see
     # Document), where an issue is headed `### [<mark>] `<id>` <title>`. This is
-    # the SAME grammar Plan uses for its own ids, and the two constants are
-    # pinned equal by a spec: the shared markdown-identifier object both should
-    # depend on is not extracted yet, so the pin is what makes drift loud.
-    ID_RESERVED = /[`\r\n]/
+    # the SAME grammar Plan uses for its own ids -- {MarkdownIdentifier} is that
+    # shared object -- and the two constants are pinned equal by a spec so
+    # drift stays loud even though nothing forces them to be the SAME object.
+    ID_RESERVED = MarkdownIdentifier::RESERVED
     # Which reserved character was found, so the message names the grammar that
     # actually forbids it -- a line break is not a backtick-delimiter problem.
-    # `fetch`ed on purpose: growing ID_RESERVED without saying why here fails
-    # loudly instead of mislabelling the new character.
-    ID_GRAMMARS = { "`" => "the `id` backtick delimiters", "\r" => "the one-line issue heading",
+    # The backtick phrase is {MarkdownIdentifier::BACKTICK_GRAMMAR} itself, so
+    # Plan::Step and Question refuse a backtick with the same words.
+    ID_GRAMMARS = { "`" => MarkdownIdentifier::BACKTICK_GRAMMAR, "\r" => "the one-line issue heading",
                     "\n" => "the one-line issue heading" }.freeze
     # Message-and-predicate pairs, emptiest diagnosis first, so "  " is reported
     # as whitespace rather than as a trimming problem. An id is the graph's join
@@ -201,11 +201,7 @@ module Lain
       end
 
       def reserved!(id, field)
-        offender = id[ID_RESERVED]
-        return if offender.nil?
-
-        raise MalformedIssue, "#{field} #{id.inspect} contains #{offender.inspect}, a character reserved for " \
-                              "#{ID_GRAMMARS.fetch(offender)}"
+        MarkdownIdentifier.check!(id, field, grammars: ID_GRAMMARS, error: MalformedIssue, reserved: ID_RESERVED)
       end
     end
   end

@@ -2,38 +2,6 @@
 
 require "stringio"
 
-RSpec.describe Lain::Workspace do
-  it "is empty by default" do
-    expect(described_class.empty).to be_empty
-  end
-
-  it "is frozen" do
-    expect(described_class.new(reminders: ["a"])).to be_deeply_frozen
-  end
-
-  it "grows into a new value rather than mutating" do
-    base = described_class.empty
-    grown = base.with("todo: ship M1")
-    expect(base).to be_empty
-    expect(grown.reminders).to eq(["todo: ship M1"])
-  end
-
-  it "renders reminders as tagged text blocks carrying the structural workspace marker" do
-    blocks = described_class.new(reminders: ["remember"]).to_blocks
-    expect(blocks).to eq(
-      [{ "type" => "text", "text" => "<workspace>remember</workspace>", described_class::WORKSPACE_MARKER => true }]
-    )
-  end
-
-  # The steady state (Agent renders `@workspace.with(*@session.reminders)`
-  # every turn, and reminders is usually empty) must not allocate a fresh
-  # Workspace and normalize pass each render.
-  it "returns self, allocation-free, when nothing is added" do
-    workspace = described_class.new(reminders: ["a"])
-    expect(workspace.with).to equal(workspace)
-  end
-end
-
 # A pure ->(workspace) pipeline provider for the injection seam. Defined in a
 # module body so its `self` is this (Ractor-shareable) module, which is what
 # lets the lambda -- and thus a Context that stores it -- stay shareable. It
