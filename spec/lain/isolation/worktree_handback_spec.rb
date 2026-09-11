@@ -612,6 +612,8 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   end
 
   describe "the journal record" do
+    # The sync fields ride every handback record, at their "no sync ran"
+    # values when the handback was not told of one.
     it "records one handback outcome: the worker key, the outcome, the ref, the strategy and what landed" do
       lease = backend.acquire("worker-1")
       commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
@@ -622,7 +624,8 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       expect(journal.first.to_journal).to eq(
         "type" => "handback", "worker_key" => "worker-1",
         "outcome" => :merged, "ref" => outcome.ref,
-        "strategy" => "conflict_style=zdiff3 diff_algorithm=histogram", "fast_forward" => true, "sha" => commit
+        "strategy" => "conflict_style=zdiff3 diff_algorithm=histogram", "fast_forward" => true, "sha" => commit,
+        "sync" => nil, "attempts" => [], "dirty" => false, "path" => nil, "detail" => ""
       )
     ensure
       lease&.release
@@ -1370,6 +1373,90 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       expect(outcome.parent_state).to eq(:untouched)
       expect(outcome.detail).to eq("")
       expect(outcome).not_to be_merge_in_progress
+    end
+  end
+
+  # A continue concludes whichever merge the parent has in progress, and only
+  # the ref's own commit being in the parent afterwards makes it THIS worker's.
+  describe "#continue answers merged only for the ref it was asked about" do
+    it "fails, saying so, when the merge it concluded does not contain that ref's commit" do
+      first = backend.acquire("worker-1")
+      second = backend.acquire("worker-2")
+      commit_in(first.worker_env.cwd, "first\n", "first work")
+      commit_in(second.worker_env.cwd, "second\n", "second work")
+      commit_in(@repo_root, "parent\n", "parent work")
+      expect(handback.call(first, worker_id: "worker-1").kind).to eq(:conflicted)
+      File.write(File.join(@repo_root, "README"), "reconciled\n")
+      other = handback.anchor(second, worker_id: "worker-2").ref
+
+      outcome = handback.continue(other, worker_id: "worker-2")
+
+      expect(outcome.kind).to eq(:failed)
+      expect(outcome.detail).to include("does not contain")
+      expect(outcome.sha).to be_nil
+    ensure
+      first&.release
+      second&.release
+    end
+  end
+
+  # A user's `rerere.autoupdate` replays and stages an old resolution, so the
+  # merge exits nonzero with nothing left unmerged -- which reads as a failure
+  # rather than the conflict it is.
+  describe "a conflict the user's rerere remembers" do
+    it "is still reported as a conflict, with its path" do
+      run_git(@repo_root, "config", "rerere.enabled", "true")
+      run_git(@repo_root, "config", "rerere.autoupdate", "true")
+      lease = backend.acquire("worker-1")
+      worker = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      parent = commit_in(@repo_root, "parent\n", "parent work")
+      try_git(@repo_root, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-edit", worker)
+      File.write(File.join(@repo_root, "README"), "remembered resolution\n")
+      run_git(@repo_root, "add", "README")
+      run_git(@repo_root, "commit", "-q", "--no-edit")
+      run_git(@repo_root, "reset", "-q", "--hard", parent)
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:conflicted)
+      expect(outcome.paths).to eq(["README"])
+    ensure
+      try_git(@repo_root, "merge", "--abort")
+      lease&.release
+    end
+  end
+
+  describe "a dirty parent's refusal names what is in the way" do
+    it "names at most ten files, and counts the rest" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      files = (1..12).map { |number| format("dirty-%02d.txt", number) }
+      files.each { |file| File.write(File.join(@repo_root, file), "tracked\n") }
+      run_git(@repo_root, "add", *files)
+      run_git(@repo_root, "commit", "-q", "-m", "twelve tracked files")
+      files.each { |file| File.write(File.join(@repo_root, file), "edited\n") }
+
+      detail = handback.call(lease, worker_id: "worker-1").detail
+
+      expect(detail).to include("dirty-01.txt", "dirty-10.txt", "and 2 more")
+      expect(detail).not_to include("dirty-11.txt")
+    ensure
+      lease&.release
+    end
+
+    it "still declines, saying the files could not be listed, when git cannot list them" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      File.write(File.join(@repo_root, "README"), "uncommitted parent edit\n")
+      unlisted = described_class.new(repo_root: @repo_root, base: no_target, journal:,
+                                     shell_out_factory: factory_failing("diff"))
+
+      outcome = unlisted.call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:declined)
+      expect(outcome.detail).to include("uncommitted changes").and include("could not be listed")
+    ensure
+      lease&.release
     end
   end
 end

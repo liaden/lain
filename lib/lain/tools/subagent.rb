@@ -242,12 +242,20 @@ module Lain
       # registration. It also leaves the `@last_*` write sequence untouched: a
       # second ask yields at the yield point this method ALREADY had, so no new
       # suspension appears between here and the one place those ivars are set.
+      #
+      # The self-sync runs HERE too, after the answer and before the lease's
+      # reclaim, for the reason the bounding does: a conflicted rebase is put
+      # to the child that made the commits, and only this block still holds
+      # it live.
       def run_child(prompt, parent, on_stream_started: nil)
-        isolation.hold(@name, journal:) do |worker_env|
-          build_child(parent, worker_env).answered do |child|
+        held = isolation.hold(@name, journal:) do |worker_env, sync|
+          build_child(parent, worker_env).answered do |child, tools|
             @answer.bounded(child, child.ask(prompt, on_stream_started:), journal:)
+                   .tap { sync.call(Isolation::SelfSync.worker(child, tools:)) }
           end
         end
+        timeline, response = held.value
+        [timeline, held.delivered(response)]
       end
 
       def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
@@ -641,12 +649,41 @@ module Lain
       # concurrently: two fibers really are inside `#hold` at once, and `+= 1`
       # is a read and a write with a suspension point available between them.
       class Leases
+        # What one dispatch's lease came to: the block's own value, the
+        # {Isolation::SelfSync::Result} of the sync before its handback, and
+        # the {Isolation::WorkerHandoff::Report} of the handback itself.
+        Held = Data.define(:value, :report, :sync) do
+          # What the parent is given: the child's answer with every block of it
+          # untouched, then one block per thing a human acts on -- where the
+          # work went, and uncommitted work the handback did not carry. The
+          # result and the record of what the parent was given are then the
+          # same text.
+          def delivered(response)
+            notes = [report.summary, sync.note].reject(&:empty?)
+            return response if notes.empty?
+
+            blocks = notes.map { |note| { "type" => "text", "text" => "\n\n[#{note}]" } }
+            response.with(content: response.content + blocks)
+          end
+        end
+
         # @param backend [#acquire] the {Isolation} backend a dispatch leases
         #   from; the shared-process baseline by default, whose lease is
         #   {WorkerEnv.default} and whose release reclaims nothing -- which is
         #   what lets every spawn lease unconditionally
-        def initialize(backend: Isolation::Null.new)
+        # @param handoff [#reclaim, #surrender] how a lease is given back. A
+        #   worker's commits are never optional, and a bare release deletes a
+        #   checkout's unanchored commits, so the run's {Isolation::WorkerHandoff}
+        #   hands them back first. The default only releases, which is all a
+        #   backend that cuts no checkout needs.
+        # @param sync [#call, #editorless] the {Isolation::SelfSync} a worker
+        #   is rebased onto its working branch with before that handback; the
+        #   default syncs nothing
+        def initialize(backend: Isolation::Null.new, handoff: Isolation::WorkerHandoff::Null,
+                       sync: Isolation::SelfSync::Null)
           @backend = backend
+          @handoff = handoff
+          @sync = sync
           @monitor = Monitor.new
           @count = 0
         end
@@ -654,38 +691,59 @@ module Lain
         # One dispatch's whole lease lifetime: mint a worker, acquire, run the
         # block under the leased environment, give it back.
         #
-        # `ensure` and not `rescue StandardError`, because a cancelled dispatch
-        # raises `Async::Stop`, which is not a StandardError, and a child
-        # cancelled mid-ask has left its checkout as unreachable as one that
-        # returned. `&.` covers the acquire itself refusing, which provisioned
-        # nothing to reclaim.
+        # A block that RETURNED is reclaimed: its work is handed back, and a
+        # conflict may spawn a resolver. Every other exit is SURRENDERED from
+        # the `ensure` -- anchored, with nothing spawned while an exception
+        # climbs. `ensure` and not `rescue StandardError`, because a cancelled
+        # dispatch raises `Async::Stop`, which is not a StandardError, and a
+        # child cancelled mid-ask has left its checkout as unreachable as one
+        # that returned. The lease is how the two are told apart: a reclaim
+        # always releases it, and an acquire that refused left none.
         #
         # @param role [String] what this worker is for, so a checkout left
         #   behind names the spawn it belonged to
         # @param journal [#<<] where a failed reclaim is recorded
-        # @yieldparam worker_env [WorkerEnv] the leased cwd and env
-        # @return whatever the block returns
+        # @yieldparam worker_env [WorkerEnv] the leased cwd and env, with no
+        #   editor for git to open
+        # @yieldparam sync [#call] `sync.call(worker)` rebases the checkout
+        #   onto the working branch; the block calls it with the still-live
+        #   child, between its answer and the reclaim here
+        # @return [Held] the block's value and the handback's report
         def hold(role, journal:)
-          worker = Isolation::WorkerId.spawned(role:, ordinal: next_ordinal)
-          lease = @backend.acquire(worker.to_s)
-          yield(lease.worker_env)
+          worker = Isolation::WorkerId.spawned(role:, ordinal: next_ordinal).to_s
+          synced = Isolation::SelfSync::Result::NONE
+          lease = @backend.acquire(worker)
+          value = yield(@sync.editorless(lease.worker_env),
+                        ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) })
+          Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
         ensure
-          reclaim(lease, worker, journal)
+          surrender(lease, worker, journal, synced) unless lease.nil? || lease.released?
         end
 
         private
 
+        def reclaim(lease, worker, journal, synced)
+          tolerated(worker, journal) { @handoff.reclaim(lease, worker_id: worker, sync: synced) }
+        end
+
+        # A dispatch that raised after its sync ran still says what the sync
+        # did, on the record of the surrender.
+        def surrender(lease, worker, journal, synced)
+          tolerated(worker, journal) { @handoff.surrender(lease, worker_id: worker, sync: synced) }
+        end
+
         # A teardown that cannot reclaim must not eat a completed child's
         # answer. {Isolation::Worktree#remove} raises deliberately rather than
-        # leave a checkout standing, and `Tool#call` does not rescue -- so a
-        # raise on the way out of a finished dispatch hands the parent the
-        # teardown failure in place of work it has already paid for.
-        # {Supervisor#reap} carries the same tolerance at the same shape of
-        # seam: attempt it, then let the record say what happened.
-        def reclaim(lease, worker, journal)
-          lease&.release
+        # leave a checkout standing, and a handoff releases on its way out, so
+        # the raise arrives through it -- and `Tool#call` does not rescue, so it
+        # would hand the parent the teardown failure in place of work it has
+        # already paid for. {Supervisor#reap} carries the same tolerance at the
+        # same shape of seam: attempt it, then let the record say what happened.
+        def tolerated(worker, journal)
+          yield
         rescue StandardError => e
           journal << LeaseNotReclaimed.new(worker_key: worker, error: e.message)
+          Isolation::WorkerHandoff::Report.nothing
         end
 
         # Monitor-guarded: {Subagent#fan_out} dispatches siblings concurrently,
@@ -783,12 +841,16 @@ module Lain
         # Both are `ensure`, never `rescue StandardError`: a cancelled dispatch
         # raises `Async::Stop`, which is not a StandardError, and a child
         # cancelled mid-ask is as unreachable as one that returned.
-        Child = Data.define(:agent, :registration) do
+        #
+        # `tools` names what the child was granted, which is what decides
+        # whether it may be asked to rebase its own work: only a shell can run
+        # git.
+        Child = Data.define(:agent, :registration, :tools) do
           # A one-shot child's lifetime IS the dispatch, so the release lands
           # on every exit from it. `timeline` is read AFTER the block: the
           # caller wants the settled head, not the one the child started from.
           def answered
-            response = yield(agent)
+            response = yield(agent, tools)
             [agent.timeline, response]
           ensure
             registration.deregister
@@ -963,7 +1025,7 @@ module Lain
           asker = enrolled.asker
           allowed = granted(permitted(@policy.attenuate(union)), asker)
           child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, worker_env),
-                            registration: enrolled.registration)
+                            registration: enrolled.registration, tools: allowed.names)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
           # CANCELLED spawn releases too: `Async::Stop` is not a StandardError.

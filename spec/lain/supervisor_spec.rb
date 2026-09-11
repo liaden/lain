@@ -753,7 +753,7 @@ RSpec.describe Lain::Supervisor do
     # spec invented.
     let(:stranding_handoff) do
       handback = Class.new do
-        def call(_lease, worker_id:) = mid_merge(:conflicted, worker_id)
+        def call(_lease, worker_id:, **) = mid_merge(:conflicted, worker_id)
 
         def abandon(ref, worker_id: ref) = mid_merge(:failed, worker_id)
 

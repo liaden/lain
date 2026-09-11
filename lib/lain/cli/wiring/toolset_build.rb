@@ -225,6 +225,10 @@ module Lain
         #   {Lain::Usage.zero} -- an unwired build reporting zero tokens is
         #   indistinguishable from an honest fresh run, which is the exact defect
         #   that tool exists to remove.
+        # @param handback [Wiring::Handback] how a child's work comes home: the
+        #   run's ONE handoff, the same one {Wiring} hands the {Supervisor}.
+        #   Defaults to one that only releases, for the direct-construction
+        #   seams the specs drive.
         # @option options [Boolean] :auto_approve the ONE key this class reads
         #   for a collaborator, alongside the two `--exec` keys the `exec:`
         #   default reads. Last, after every `@param`, because yard-lint fixes
@@ -232,6 +236,7 @@ module Lain
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired, usage: nil,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
+                       handback: Handback.none,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
@@ -242,7 +247,7 @@ module Lain
           @askers = askers
           @usage = usage
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:,
-                             observer: chronicle.observer, isolation:)
+                             observer: chronicle.observer, isolation:, handback:)
         end
 
         # The run's toolset: the capability floor, plus the child seams and the
@@ -297,11 +302,15 @@ module Lain
         # lane's worker-id sequence -- one per seam, which is one per run, which
         # is what makes a nested spawn and a sibling fan-out draw from the same
         # count. The backend arrives already journalled, nearest the concrete,
-        # and nothing here wraps it again.
-        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:, isolation:)
+        # and nothing here wraps it again. The same Leases is where the run's
+        # handoff reaches a child, so every lease on the spawn lane ends in it.
+        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:, isolation:,
+                       handback:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           journal:, supervisor:, observer:, askers:,
-                                          isolation: Lain::Tools::Subagent::Leases.new(backend: isolation),
+                                          isolation: Lain::Tools::Subagent::Leases.new(backend: isolation,
+                                                                                       handoff: handback.handoff,
+                                                                                       sync: handback.sync),
                                           gate_policy: LivePolicy.new(board: switchboard),
                                           permits: PosturePermits.new(board: switchboard),
                                           sensitivity: LiveSensitivity.new(board: switchboard),

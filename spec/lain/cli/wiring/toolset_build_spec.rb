@@ -8,6 +8,44 @@ class ToolsetBuildChronicle < Lain::CLI::Chronicle::Null
   def observer = @observer ||= ->(event) { event }
 end
 
+# The handoff duck, recording which workers' leases ended in a reclaim. It
+# releases each, as every real handoff does on its way out.
+class ToolsetBuildHandoff
+  attr_reader :reclaimed
+
+  def initialize
+    @reclaimed = []
+  end
+
+  def reclaim(lease, worker_id:, **)
+    @reclaimed << worker_id
+    lease.release
+    Lain::Isolation::WorkerHandoff::Report.nothing
+  end
+
+  def surrender(lease, **)
+    lease.release
+    Lain::Isolation::WorkerHandoff::Report.nothing
+  end
+end
+
+# The self-sync duck, recording whether each child it was offered may be asked
+# to rebase.
+class ToolsetBuildSync
+  attr_reader :askable
+
+  def initialize
+    @askable = []
+  end
+
+  def call(_lease, worker:, worker_id:)
+    @askable << [worker_id, worker.askable?]
+    Lain::Isolation::SelfSync::Result::NONE
+  end
+
+  def editorless(worker_env) = worker_env
+end
+
 # The capability half of the chat assembly, extracted from {Lain::CLI::Wiring}
 # (a review fix) once that class hit its ClassLength budget with two more
 # cards queued against it. Driven here as the standalone object the extraction
@@ -704,6 +742,38 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       expect(build.auto_surface).to be_a(Lain::Approval::AutoSurface)
       expect(build.auto_surface.instance_variable_get(:@role_spawn)).to be(build.role_spawn)
+    end
+  end
+
+  # Where the run's handoff reaches the spawn lane: the ONE Leases this build
+  # wraps the run's isolation in, so a child spawned through any adopter of the
+  # seam -- the chat's researcher tool, a role spawn -- ends its lease there.
+  describe "the handback a child's lease ends in" do
+    let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done")]) }
+    let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
+    let(:handoff) { ToolsetBuildHandoff.new }
+
+    it "ends a role-spawned child's lease in the run's handoff" do
+      build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff:))
+      build.build(recorder, ask_human:)
+
+      build.role_spawn.call(:researcher, :fresh, "look")
+
+      expect(handoff.reclaimed).to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
+    end
+
+    # The researcher is read-only and the dev child holds `bash`: only a child
+    # that can run git is asked to rebase its own work.
+    it "syncs every child through the run's self-sync, which may ask only a child holding a shell" do
+      sync = ToolsetBuildSync.new
+      build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff:, sync:))
+      build.build(recorder, ask_human:)
+
+      build.role_spawn.call(:researcher, :fresh, "look")
+      build.role_spawn.call(:dev, :fresh, "work")
+
+      expect(sync.askable).to eq([[Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s, false],
+                                  [Lain::Isolation::WorkerId.spawned(role: "dev", ordinal: 2).to_s, true]])
     end
   end
 end

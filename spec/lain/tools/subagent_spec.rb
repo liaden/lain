@@ -90,6 +90,85 @@ class SubagentSpecCwdTool < Lain::Tool
   end
 end
 
+# The handoff duck a lease ends in, recorded: which of the two completions ran,
+# for which worker, and whether the lease was still live when it did -- the
+# handback has nothing to read from a checkout that is already gone. It
+# releases, as every real handoff does on its way out.
+class SubagentSpecHandoff
+  attr_reader :calls
+
+  def initialize(report:, calls: [])
+    @report = report
+    @calls = calls
+  end
+
+  def reclaim(lease, worker_id:, sync: nil) = completed(:reclaim, lease, worker_id, sync)
+  def surrender(lease, worker_id:, sync: nil) = completed(:surrender, lease, worker_id, sync)
+
+  # What each completion was told the sync did, in call order.
+  def synced = @synced ||= []
+
+  private
+
+  def completed(way, lease, worker_id, sync)
+    @calls << [way, worker_id, lease.released?]
+    synced << sync
+    lease.release
+    @report
+  end
+end
+
+# The self-sync duck, recorded into the same log as the handoff so the ORDER
+# of the two is the assertion. It asks a worker it may ask, which is what
+# proves the child is still live when the sync runs, and it tags the
+# environment it is asked to make editorless.
+class SubagentSpecSync
+  attr_reader :replies
+
+  def initialize(calls)
+    @calls = calls
+    @replies = []
+  end
+
+  def call(lease, worker:, worker_id:)
+    @calls << [:sync, worker_id, lease.released?, worker.askable?]
+    @replies << worker.ask("rebase, please").text if worker.askable?
+    result
+  end
+
+  # What this sync answers, so a spec can see it arrive at the handoff.
+  def result = @result ||= Lain::Isolation::SelfSync::Result.new(outcome: :current)
+
+  def editorless(worker_env) = worker_env.with(env: worker_env.env.merge("GIT_EDITOR" => "true"))
+end
+
+# A stand-in named for the one tool that lets a child run git: whether a
+# worker may be asked to rebase turns on the NAME it was granted, never on
+# what the tool does, so this one does nothing.
+class SubagentSpecShell < Lain::Tool
+  def name = "bash"
+  def description = "Stands in for a shell."
+  def input_schema = { type: :object, properties: {} }
+  def perform(_input, _invocation) = Lain::Tool::Result.ok("")
+end
+
+# Reports the GIT_EDITOR of the environment its Session was dispatched under.
+class SubagentSpecEditorTool < Lain::Tool
+  def initialize(seen)
+    super()
+    @seen = seen
+  end
+
+  def name = "editor"
+  def description = "Reports the git editor this session's commands would open."
+  def input_schema = { type: :object, properties: {} }
+
+  def perform(_input, invocation)
+    @seen << session_of(invocation).worker_env.env["GIT_EDITOR"]
+    Lain::Tool::Result.ok("reported")
+  end
+end
+
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
   let(:store) { Lain::Store.new }
@@ -1181,6 +1260,172 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(backend.worker_ids)
         .to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
+    end
+
+    # A worker's commits are never optional: a returning child's lease ends in
+    # the handoff's RECLAIM, which hands the work back while the checkout is
+    # still on disk, and never in a bare release that deletes it. A child that
+    # raised is SURRENDERED instead -- anchored, with no resolver spawned while
+    # an exception climbs.
+    describe "the handoff a child's lease ends in" do
+      let(:report) { Lain::Isolation::WorkerHandoff::Report.nothing }
+      let(:handoff) { SubagentSpecHandoff.new(report:) }
+      let(:handing) { Lain::Tools::Subagent::Leases.new(backend:, handoff:) }
+      let(:spawned_id) { Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal: 1).to_s }
+
+      it "reclaims a returning child's lease through the handoff while it is still live, naming the worker" do
+        tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                              policy: spawn_policy(only: %i[cwd]), isolation: handing)
+
+        expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+        expect(handoff.calls).to eq([[:reclaim, spawned_id, false]])
+        expect(backend.released).to eq(backend.leased)
+      end
+
+      it "surrenders, never reclaims, the lease of a spawn that raised" do
+        tool = described_class.new(provider: mock(text_response("unused")),
+                                   context_factory: -> { raise "this child gets no context" },
+                                   toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                                   parent:, isolation: handing, budget: Lain::Agent::Budget.new)
+
+        expect { tool.run("go") }.to raise_error("this child gets no context")
+        expect(handoff.calls).to eq([[:surrender, spawned_id, false]])
+        expect(backend.released).to eq(backend.leased)
+      end
+
+      context "when the handback landed something" do
+        let(:report) do
+          Lain::Isolation::WorkerHandoff::Report.new(kind: :merged, ref: "refs/lain/worker/subagent-1-abc",
+                                                     sha: "a" * 40, fast_forward: true)
+        end
+
+        # The one line a caller folds into the worker's result: the parent is
+        # told where its child's work went, on the result AND on the record of
+        # what it was given, so the two cannot disagree.
+        it "folds the report's summary into what the parent is given" do
+          tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                                policy: spawn_policy(only: %i[cwd]), isolation: handing)
+
+          result = tool.call({ "prompt" => "go" }, invocation)
+
+          expect(result.content).to start_with("child answer")
+          expect(result.content).to include(report.summary)
+          expect(tool.last_message.body["result"]).to eq(result.content)
+        end
+      end
+
+      it "gives the answer back byte-identical when the handback has nothing to report" do
+        tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                              policy: spawn_policy(only: %i[cwd]), isolation: handing)
+
+        expect(tool.call({ "prompt" => "go" }, invocation).content).to eq("child answer")
+      end
+    end
+
+    # Between the child's answer and its reclaim, the worker is offered a
+    # chance to rebase onto where the working branch now is -- while it is
+    # still live, since only a live child can be asked to resolve a conflict.
+    describe "the self-sync between a child's answer and its handback" do
+      let(:calls) { [] }
+      let(:handoff) { SubagentSpecHandoff.new(report: Lain::Isolation::WorkerHandoff::Report.nothing, calls:) }
+      let(:sync) { SubagentSpecSync.new(calls) }
+      let(:syncing) { Lain::Tools::Subagent::Leases.new(backend:, handoff:, sync:) }
+      let(:spawned_id) { Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal: 1).to_s }
+
+      it "syncs a returning child on its live lease, before the lease is reclaimed" do
+        tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                              policy: spawn_policy(only: %i[cwd]), isolation: syncing)
+
+        expect(tool.call({ "prompt" => "go" }, invocation).content).to eq("child answer")
+        expect(calls).to eq([[:sync, spawned_id, false, false], [:reclaim, spawned_id, false]])
+      end
+
+      it "offers a child holding a shell as a worker it may ask, and the child answers" do
+        tool = build_subagent(provider: mock(text_response("child answer"), text_response("rebased")),
+                              toolset: cwd_only(SubagentSpecShell.new), policy: spawn_policy(only: %i[cwd bash]),
+                              isolation: syncing)
+
+        expect(tool.call({ "prompt" => "go" }, invocation).content).to eq("child answer")
+        expect(calls.first).to eq([:sync, spawned_id, false, true])
+        expect(sync.replies).to eq(["rebased"])
+      end
+
+      it "syncs nothing for a spawn that raised" do
+        tool = described_class.new(provider: mock(text_response("unused")),
+                                   context_factory: -> { raise "this child gets no context" },
+                                   toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                                   parent:, isolation: syncing, budget: Lain::Agent::Budget.new)
+
+        expect { tool.run("go") }.to raise_error("this child gets no context")
+        expect(calls).to eq([[:surrender, spawned_id, false]])
+      end
+
+      it "runs the child in the environment the sync hands it" do
+        editors = []
+        tool = build_subagent(provider: mock(tool_response(["e1", "editor", {}]), text_response("done")),
+                              toolset: Lain::Toolset.new([SubagentSpecEditorTool.new(editors)]),
+                              policy: spawn_policy(only: %i[editor]), isolation: syncing)
+
+        tool.call({ "prompt" => "go" }, invocation)
+
+        expect(editors).to eq(["true"])
+      end
+
+      it "hands what the sync did to the handoff, so it rides the handback's record" do
+        tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                              policy: spawn_policy(only: %i[cwd]), isolation: syncing)
+
+        tool.call({ "prompt" => "go" }, invocation)
+
+        expect(handoff.synced).to eq([sync.result])
+      end
+
+      it "surrenders with the sync's facts when the dispatch raises after the sync ran" do
+        expect do
+          syncing.hold("subagent", journal: Lain::Channel::Null.instance) do |_worker_env, sync_child|
+            sync_child.call(Lain::Isolation::SelfSync::Unaskable)
+            raise "the dispatch failed after the sync"
+          end
+        end.to raise_error("the dispatch failed after the sync")
+
+        expect(calls.last.first).to eq(:surrender)
+        expect(handoff.synced).to eq([sync.result])
+      end
+    end
+
+    # What the parent is given: the child's own answer, untouched, and after it
+    # one block per thing a human has to act on.
+    describe "the lease a dispatch held" do
+      let(:thinking) { { "type" => "thinking", "thinking" => "weighing it" } }
+      let(:answer) do
+        Lain::Response.new(content: [thinking, { "type" => "text", "text" => "child answer" }], stop_reason: :end_turn)
+      end
+      let(:merged) { Lain::Isolation::WorkerHandoff::Report.new(kind: :merged, ref: "refs/lain/worker/w-1") }
+      let(:dirty) do
+        Lain::Isolation::SelfSync::Result.new(outcome: :dirty, dirty: true, path: "/state/worktrees/w-1")
+      end
+
+      def held(report: Lain::Isolation::WorkerHandoff::Report.nothing,
+               sync: Lain::Isolation::SelfSync::Result::NONE)
+        Lain::Tools::Subagent::Leases::Held.new(value: nil, report:, sync:)
+      end
+
+      it "appends each note as a block of its own, leaving every block the child answered with in place" do
+        delivered = held(report: merged, sync: dirty).delivered(answer)
+
+        expect(delivered.content.take(2)).to eq(answer.content)
+        expect(delivered.content.drop(2).map { |block| block["text"] })
+          .to eq(["\n\n[#{merged.summary}]", "\n\n[#{dirty.note}]"])
+      end
+
+      it "tells the parent uncommitted work was not handed back" do
+        expect(held(sync: dirty).delivered(answer).text)
+          .to include("the worker left uncommitted changes at /state/worktrees/w-1; they were not handed back")
+      end
+
+      it "hands the answer back as it was when there is nothing to say" do
+        expect(held.delivered(answer)).to be(answer)
+      end
     end
   end
 

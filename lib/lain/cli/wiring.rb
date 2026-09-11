@@ -6,6 +6,7 @@ require_relative "wiring/agent_build"
 require_relative "wiring/askers"
 require_relative "wiring/base_tools"
 require_relative "wiring/board_build"
+require_relative "wiring/handback"
 require_relative "wiring/run_state"
 require_relative "wiring/toolset_build"
 
@@ -183,9 +184,7 @@ module Lain
         # guard journalled into the Null would leave a bench with no evidence it
         # fired.
         @notifier = Lain::Notify.for(desktop: options[:desktop], journal: channel)
-        # The reactor above the Agent that un-refuses model-dispatched actors.
-        # The exe runs it under a chat-level reactor that outlives asks.
-        @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation)
+        @supervisor = supervise(notice)
         @ask_human = wire_askers(parent)
         toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, notice:)
         # Resolved BEFORE the record opens, and the statement order IS the
@@ -340,8 +339,31 @@ module Lain
                                           chronicle:, options:, root:, usage: -> { @agent&.usage }, askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
                                           switchboard: -> { @switchboard }, journal: channel, verdict: verdict(notice),
-                                          isolation: fleet_isolation, epic: epic_mount(notice))
+                                          isolation: fleet_isolation, handback: handback(notice),
+                                          epic: epic_mount(notice))
         @toolset_build.build(recorder, ask_human:)
+      end
+
+      # The reactor above the Agent that un-refuses model-dispatched actors,
+      # run by the exe under a chat-level reactor that outlives asks. It leases
+      # from the fleet's one backend and surrenders a crashed actor through the
+      # run's one handoff.
+      def supervise(notice)
+        Lain::Supervisor.new(journal: channel, isolation: fleet_isolation, handoff: handback(notice).handoff)
+      end
+
+      # How a worker's work comes home, built ONCE and handed to both lanes --
+      # the {Supervisor}'s crashed actors and {ToolsetBuild}'s one-shot children
+      # -- so the two cannot hand work back to different places. Memoized for
+      # {#verdict}'s reason: the notice fires on the first call. Every caller
+      # names the notice, so which one came first cannot decide where a broken
+      # table is told.
+      #
+      # The Supervisor is built before the toolset, so the resolver reads the
+      # run's {Skill::RoleSpawn} through a thunk at call time.
+      def handback(notice)
+        @handback ||= Handback.for(isolation: fleet_isolation, root:, journal: channel, role_spawn: -> { role_spawn },
+                                   notice:)
       end
 
       # Over the PROJECT's root, so a chat started in `services/ingest` mounts

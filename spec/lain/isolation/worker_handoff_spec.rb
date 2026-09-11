@@ -961,4 +961,60 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
       run_git(@repo_root, "merge", "--abort")
     end
   end
+
+  # Siblings a fan-out dispatches return at once, and each one's handback
+  # merges into the ONE parent checkout, with a resolver's model pause in the
+  # middle. One handback at a time is the only way each Report can be about
+  # its own worker.
+  describe "two siblings handed back at once" do
+    def contains?(commit) = try_git(@repo_root, "merge-base", "--is-ancestor", commit.to_s, "HEAD").exitstatus.zero?
+
+    def committed(lease, body)
+      File.write(File.join(lease.worker_env.cwd, "alpha.txt"), body)
+      commit_all(lease.worker_env.cwd, body)
+      run_git(lease.worker_env.cwd, "rev-parse", "HEAD").strip
+    end
+
+    it "land one after the other, each Report naming a commit that holds its own worker's work" do
+      first = backend.acquire("worker-1")
+      second = backend.acquire("worker-2")
+      workers = [committed(first, "from the first worker\n"), committed(second, "from the second worker\n")]
+      File.write(File.join(@repo_root, "alpha.txt"), "parent moved\n")
+      commit_all(@repo_root, "parent moved")
+      pausing = RecordingResolver.new do |paths|
+        sleep 0.2
+        paths.each { |path| File.write(path, "reconciled\n") }
+      end
+      siblings = described_class.new(handback:, repo_root: @repo_root, resolver: pausing)
+
+      reports = Sync do
+        [Async { siblings.reclaim(first, worker_id: "worker-1") },
+         Async { siblings.reclaim(second, worker_id: "worker-2") }].map(&:wait)
+      end
+
+      expect(reports.map(&:kind)).to eq(%i[resolved resolved])
+      reports.zip(workers).each do |report, worker|
+        expect(contains?(report.sha)).to be(true)
+        expect(contains?(worker)).to be(true)
+      end
+      expect(merging?).to be(false)
+      expect(run_git(@repo_root, "status", "--porcelain", "--untracked-files=no")).to eq("")
+    ensure
+      first&.release
+      second&.release
+    end
+  end
+
+  # The self-sync journals nothing of its own: what it did rides the record of
+  # the handback that followed it, so that one record says a rebase ran.
+  describe "the self-sync that ran before the handback" do
+    it "rides the handback's own record" do
+      attempts = [{ "by" => "lain", "conflicts" => 0, "outcome" => "landed" }]
+      result = Lain::Isolation::SelfSync::Result.new(outcome: :synced, attempts:)
+
+      handoff.reclaim(clean_lease, worker_id: "worker-1", sync: result)
+
+      expect(journal.grep(Lain::Telemetry::Handback).first).to have_attributes(sync: :synced, attempts:)
+    end
+  end
 end

@@ -45,7 +45,10 @@ module Lain
 
       private
 
-      def style = ["-c", "merge.conflictStyle=#{conflict_style}"]
+      # rerere rides the same `-c`: a user's `rerere.autoupdate` replays and
+      # stages an old resolution, so a real conflict comes back with nothing
+      # unmerged and reads as a failure, and a resolver never sees it.
+      def style = ["-c", "merge.conflictStyle=#{conflict_style}", "-c", "rerere.enabled=false"]
 
       def algorithm = ["-X", "diff-algorithm=#{diff_algorithm}"]
     end

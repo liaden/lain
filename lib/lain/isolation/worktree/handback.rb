@@ -69,6 +69,9 @@ module Lain
         IN_PROGRESS = "merge left in progress; resolve the conflicted paths, then #continue or #abandon"
         MID_MERGE = "parent is mid-merge from an earlier handback; #continue or #abandon that one first"
         DIRTY = "parent checkout has uncommitted changes"
+
+        # How many of the dirty files a refusal names before it only counts.
+        NAMED = 10
         ABANDONED = "merge abandoned; the work is still on the ref"
         ANCHOR_ONLY = "work anchored on the ref; no merge was attempted"
 
@@ -272,7 +275,20 @@ module Lain
             status = @parent.run("status", "--porcelain", TRACKED_ONLY)
             return Outcome.git_failed(key, "status", status, ref:) unless ok?(status)
 
-            declined(ref, key, DIRTY) unless status.stdout.strip.empty?
+            declined(ref, key, "#{DIRTY} #{in_the_way}") unless status.stdout.strip.empty?
+          end
+
+          # Named, because the person who has to commit or stash them needs to
+          # know which of their edits is in the way; capped, because a refusal
+          # is one line and a checkout mid-refactor can hold hundreds. `-z`
+          # and the re-tag for {Checkout#unmerged}'s reasons.
+          def in_the_way
+            listed = @parent.run("diff", "--name-only", "-z", "HEAD")
+            return "(the dirty files could not be listed: #{listed.stderr.strip})" unless ok?(listed)
+
+            paths = listed.stdout.split("\0").map { |path| path.force_encoding(Checkout::FILESYSTEM) }
+            named = "in #{paths.first(NAMED).join(", ")}"
+            paths.size > NAMED ? "#{named}, and #{paths.size - NAMED} more" : named
           end
 
           def attempt(ref, key)
@@ -359,12 +375,15 @@ module Lain
         # @param lease [#worker_env] the live lease whose `worker_env.cwd` is the
         #   worktree to hand back from
         # @param worker_id [Object] names the ref the work is anchored under
+        # @param synced [Hash] what the self-sync did just before, as the
+        #   record's own fields ({SelfSync::Result#to_record}), so the one
+        #   record this writes says whether a rebase ran
         # @return [Outcome] always -- nothing raises past here
-        def call(lease, worker_id:)
+        def call(lease, worker_id:, synced: {})
           named = Naming.new(worker_id)
-          journaled(preserve(checkout(lease), named.key, named.ref))
+          journaled(preserve(checkout(lease), named.key, named.ref), synced)
         rescue StandardError => e
-          journaled(broke(Naming.new(worker_id).key, nil, e))
+          journaled(broke(Naming.new(worker_id).key, nil, e), synced)
         end
 
         # Anchor `lease`'s committed work under {Naming::REF_NAMESPACE} and stop
@@ -503,7 +522,19 @@ module Lain
           committed = @parent.run("commit", "--no-edit")
           return failed(key, "commit", committed, ref:, parent_state: :merging) unless ok?(committed)
 
-          outcome(:merged, key, ref:, parent_state: :merged, sha: @parent.head.stdout.strip)
+          concluded(ref, key)
+        end
+
+        # The commit concludes whichever merge the parent had in progress, so
+        # only the ref's own commit being in the parent now makes it this
+        # ref's merge.
+        def concluded(ref, key)
+          commit = @parent.target(ref)
+          return outcome(:merged, key, ref:, parent_state: :merged, sha: @parent.head.stdout.strip) if
+            @parent.contains?(commit)
+
+          outcome(:failed, key, ref:, parent_state: :merged,
+                                detail: "the merge concluded in the parent does not contain #{ref} (#{commit})")
         end
 
         def discard(ref, key)
@@ -528,10 +559,10 @@ module Lain
         # record the telemetry guard refuses costs the LINE, not the outcome,
         # and not the worker's own result, which a raise from here would take
         # with it, since this runs inside a gathered fiber.
-        def journaled(outcome)
+        def journaled(outcome, synced = {})
           @journal << Telemetry::Handback.new(worker_key: outcome.worker_key, outcome: outcome.kind, ref: outcome.ref,
                                               strategy: @strategy.to_s, fast_forward: outcome.fast_forward,
-                                              sha: outcome.sha)
+                                              sha: outcome.sha, **synced)
           outcome
         rescue StandardError
           outcome

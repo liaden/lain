@@ -34,6 +34,34 @@ RSpec.describe Lain::Telemetry::Handback do
     expect(record).to be_deeply_frozen
   end
 
+  # The self-sync that ran before this handback rides the same record, so a
+  # reader of the handback alone sees that a rebase ran, and what came of it.
+  it "carries what the self-sync did: its outcome, each attempt, a dirty tree's path, and why" do
+    attempts = [{ "by" => "lain", "conflicts" => 1, "outcome" => "conflicted" }]
+    record = described_class.new(worker_key: "w-1", outcome: :merged, sync: :dirty, attempts:, dirty: true,
+                                 path: +"/state/worktrees/w-1", detail: +"I could not keep both sides")
+
+    expect(record.to_journal).to include("sync" => :dirty, "attempts" => attempts, "dirty" => true,
+                                         "path" => "/state/worktrees/w-1", "detail" => "I could not keep both sides")
+    expect(record).to be_deeply_frozen
+  end
+
+  it "records no sync by default" do
+    record = described_class.new(worker_key: "w-1", outcome: :declined)
+
+    expect([record.sync, record.attempts, record.dirty, record.path, record.detail]).to eq([nil, [], false, nil, ""])
+  end
+
+  it "refuses a sync outcome no self-sync can reach" do
+    expect { described_class.new(worker_key: "w-1", outcome: :merged, sync: :probably_synced) }
+      .to raise_error(ArgumentError, /sync/)
+  end
+
+  it "refuses a dirty that is not exactly true or false" do
+    expect { described_class.new(worker_key: "w-1", outcome: :merged, dirty: "yes") }
+      .to raise_error(ArgumentError, /dirty/)
+  end
+
   it "still refuses an outcome no handback can reach" do
     expect { described_class.new(worker_key: "w-1", outcome: :probably_fine) }
       .to raise_error(ArgumentError, /outcome/)

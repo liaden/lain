@@ -60,6 +60,40 @@ class WiringSpecWorker
   def dead? = @stopped
 end
 
+# An actor that CRASHED after committing in its leased checkout: dead from the
+# moment it launched, stopped only when the supervisor farewells it. The commit
+# is made inside the launch block, while the lease is live, because that is the
+# work a reap has to save.
+class WiringSpecCrashedWorker
+  attr_reader :commit
+
+  def initialize(worker_env)
+    dir = worker_env.cwd
+    File.write(File.join(dir, "crashed.txt"), "work a crash left behind\n")
+    git(dir, "add", "-A")
+    git(dir, "commit", "-q", "-m", "crashed work")
+    @commit = git(dir, "rev-parse", "HEAD")
+    @stopped = false
+  end
+
+  def stop
+    @stopped = true
+    self
+  end
+
+  def stopped? = @stopped
+
+  def dead? = true
+
+  private
+
+  def git(dir, *)
+    shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+    shell.run_command.error!
+    shell.stdout.strip
+  end
+end
+
 # Counts the calls to `#start` and is otherwise the chronicle it wraps. The
 # refusal group below needs an ORDERING claim -- that a config refusal lands
 # before the session record is opened -- and `#start` is the moment that record
@@ -1082,6 +1116,19 @@ RSpec.describe Lain::CLI::Wiring do
         expect(leases.map { |lease| [lease.kind, lease.backend] })
           .to eq([[:acquired, "Lain::Isolation::Null"], [:released, "Lain::Isolation::Null"]])
       end
+
+      # No checkout was cut, so there is nothing to hand back -- and a handback
+      # run over the chat's OWN tree would read the human's work as a worker's.
+      it "runs no handback when the fleet cuts no checkout to hand back from" do
+        in_throwaway_chat_dir do
+          wiring = wiring_with(nil)
+          recorder, session = wiring.run_state(nil)
+          wiring.wire_agent(channel:, recorder:, session:, backend:)
+          Sync { wiring.role_spawn.call(:dev, :fresh, "work") }
+        end
+
+        expect(channel.events.grep(Lain::Telemetry::Handback)).to be_empty
+      end
     end
 
     context "with the worktree isolation option" do
@@ -1195,6 +1242,107 @@ RSpec.describe Lain::CLI::Wiring do
         # tools can actually work, which `#resolve`'s string math cannot show.
         expect(worker.checkout).to eq({ exists: true, repo: true, seeded: true })
         expect(worker.session.worker_env.resolve("notes.md")).to eq(File.join(leased, "notes.md"))
+      end
+
+      # The chat path's handback: a one-shot child's lease ends in the run's
+      # WorkerHandoff, onto the branch the chat launched on, with the strategy
+      # the project's `[isolation]` table names -- and the Supervisor holds the
+      # same handoff, so a crashed actor's commits are anchored rather than
+      # kept by nothing.
+      describe "the handback a worker's work comes home through" do
+        def git_out(dir, *args)
+          shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
+                                       environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+          shell.run_command.error!
+          shell.stdout.strip
+        end
+
+        def on_feat(repo, config: nil)
+          git_out(repo, "switch", "-q", "-c", "feat")
+          return if config.nil?
+
+          FileUtils.mkdir_p(File.join(repo, ".lain"))
+          File.write(File.join(repo, ".lain", "config.toml"), config)
+        end
+
+        def spawn_dev(wiring, notice: ->(_line) {})
+          recorder, session = wiring.run_state(nil)
+          wiring.wire_agent(channel:, recorder:, session:, backend:, notice:)
+          Sync { wiring.role_spawn.call(:dev, :fresh, "work") }
+        end
+
+        def handbacks = channel.events.grep(Lain::Telemetry::Handback)
+
+        it "hands a one-shot child's lease back with the strategy the project's config names" do
+          in_throwaway_repo do |repo|
+            on_feat(repo, config: %([isolation]\nconflict_style = "diff3"\n))
+            spawn_dev(wiring_with("worktree"))
+          end
+
+          expect(handbacks.map(&:strategy)).to eq(["conflict_style=diff3 diff_algorithm=histogram"])
+        end
+
+        it "syncs each child with the rebase retries the project's config names" do
+          in_throwaway_repo do |repo|
+            on_feat(repo, config: %([isolation]\nrebase_retries = 0\n))
+            spawn_dev(wiring_with("worktree"))
+          end
+
+          expect(handbacks.map(&:sync)).to eq([:disabled])
+        end
+
+        # Memoized, so whichever caller came first would decide which notice a
+        # broken table is told through: every caller names it instead.
+        it "is built with the notice every caller hands it, never an order-dependent default" do
+          expect(described_class.instance_method(:handback).parameters).to eq([%i[req notice]])
+        end
+
+        it "tells the human a malformed [isolation] table was ignored, and hands back with lain's defaults" do
+          notices = []
+          in_throwaway_repo do |repo|
+            on_feat(repo, config: %([isolation]\nconflict_style = "wavy"\n))
+            spawn_dev(wiring_with("worktree"), notice: ->(line) { notices << line })
+          end
+
+          expect(notices).to include(a_string_matching(/\[isolation\].*lain's defaults.*conflict_style/m))
+          expect(handbacks.map(&:strategy)).to eq(["conflict_style=zdiff3 diff_algorithm=histogram"])
+        end
+
+        it "anchors a crashed actor's commits when the supervisor stops, instead of keeping nothing" do
+          anchored = nil
+          worker = in_throwaway_repo do |repo|
+            on_feat(repo)
+            wiring = wiring_with("worktree")
+            recorder, session = wiring.run_state(nil)
+            wiring.wire_agent(channel:, recorder:, session:, backend:)
+            crashed = Sync do |task|
+              wiring.supervisor.run(task)
+              wiring.supervisor.adopt(role: "dev") { |worker_env| WiringSpecCrashedWorker.new(worker_env) }
+            ensure
+              wiring.supervisor.stop
+            end
+            anchored = git_out(repo, "for-each-ref", "--format=%(objectname)", "refs/lain/worker/")
+            crashed
+          end
+
+          expect(anchored).to eq(worker.commit)
+        end
+
+        # The handoff is built before the toolset, and its resolver is the
+        # toolset's RoleSpawn -- read late, through a thunk, so the run still
+        # constructs exactly one.
+        it "builds one RoleSpawn for the run, which the handoff's resolver reads late" do
+          allow(Lain::Skill::RoleSpawn).to receive(:new).and_call_original
+
+          in_throwaway_repo do |repo|
+            on_feat(repo)
+            wiring = wiring_with("worktree")
+            recorder, session = wiring.run_state(nil)
+            wiring.wire_agent(channel:, recorder:, session:, backend:)
+          end
+
+          expect(Lain::Skill::RoleSpawn).to have_received(:new).once
+        end
       end
     end
 

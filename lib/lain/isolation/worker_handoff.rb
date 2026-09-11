@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "monitor"
+
 module Lain
   module Isolation
     # A worker's completion point, as one object: hand its committed work back to
@@ -240,6 +242,15 @@ module Lain
         @handback = handback
         @repo_root = File.expand_path(repo_root)
         @resolver = resolver
+        # ONE HANDBACK INTO THE PARENT AT A TIME, held through the resolver.
+        # Siblings a fan-out dispatches return together, and two merges into
+        # one checkout interleave: one's continue concludes the other's merge,
+        # and its Report then names a commit that is not its worker's. A
+        # Monitor because it is owned per fiber on Ruby 4, so a waiting sibling
+        # yields to the scheduler, and it is reentrant, which the resolver's
+        # own lease -- handed back through this same handoff, from inside the
+        # same fiber -- needs.
+        @parent = Monitor.new
       end
 
       # The SETTLED completion: hand the worker's work back, resolve a conflict
@@ -252,7 +263,11 @@ module Lain
       #   inside a gathered fiber where a raise would take the worker's own
       #   result with it. An `Exception` (a cancel, a Ctrl-C) DOES climb, after
       #   the parent is restored and the lease released.
-      def reclaim(lease, worker_id:) = complete(lease, worker_id:, resolver: @resolver)
+      # @param sync [SelfSync::Result] what the self-sync did just before, which
+      #   rides this handback's own record
+      def reclaim(lease, worker_id:, sync: SelfSync::Result::NONE)
+        one_at_a_time { complete(lease, worker_id:, resolver: @resolver, synced: sync.to_record) }
+      end
 
       # The UNWINDING completion: try to anchor the worker's commits to a ref
       # before the reclaim destroys them, restore the parent, release the lease
@@ -260,20 +275,24 @@ module Lain
       # keeps any exception class from skipping the attempt.
       #
       # @return [Report] with the same totality contract as {#reclaim}
-      def surrender(lease, worker_id:) = complete(lease, worker_id:, resolver: Resolver::Skipped)
+      def surrender(lease, worker_id:, sync: SelfSync::Result::NONE)
+        one_at_a_time { complete(lease, worker_id:, resolver: Resolver::Skipped, synced: sync.to_record) }
+      end
 
       private
+
+      def one_at_a_time(&block) = @parent.synchronize(&block)
 
       # `anchored` and `restoration` are read in the `ensure`, and a local the
       # parser has SEEN assigned is nil rather than undefined even when the
       # assignment never ran -- so the unwind below is reachable however the
       # body ended. `restoration.nil?` is precisely "no reported path got
       # there", which is the `Exception` case.
-      def complete(lease, worker_id:, resolver:)
+      def complete(lease, worker_id:, resolver:, synced:)
         return Report.nothing if lease.nil? || lease.released?
 
         restoration = nil
-        anchored = @handback.call(lease, worker_id:)
+        anchored = @handback.call(lease, worker_id:, synced:)
         told(resolve(anchored, worker_id:, resolver:), restoration = restore(anchored, worker_id:))
       rescue StandardError => e
         told(broke(anchor(lease, anchored, worker_id:), e), restoration = restore(anchored, worker_id:))
