@@ -1741,6 +1741,23 @@ XDG path relative, which put machine state back inside the user's repository)
    portability is cheap, but there is no test environment, so macOS work is unverified and is not a
    prerequisite either.
 
+45. **Planned (2026-09-11, panel-reviewed)** — `planning/specs/chunk-implement-epic.md`: the epic loop
+   closed, in one chunk. It folds together items 42 (undo reachability), 43 (the test-layout harness
+   feature) and 28's 2026-09-11 rulings (working-branch bases, worker self-rebase, worktree GC), plus
+   the remainder of `epic-orchestration.md` §3.12 (the driver, the status buffer, and the altitude arms
+   without the coverage grader). The outcome: `/implement-epic` works an epic's approved issues to one
+   PR. Each issue runs as an `issue_orchestrator` actor executing lain's own `execute-plan` skill, in a
+   worktree cut from `epic/<slug>`. It rebases itself before handing back, lands serially through one
+   queue, and the fleet and issue graph show live in `lain://status`.
+   - **Size:** 18 deliberately large cards in 8 waves.
+   - **Panel verdict: REQUEST-CHANGES, with every finding applied.**
+     - Traced from `exe/lain`, the issue actor was never cut from the epic branch; it is now a dedicated
+       epic Supervisor.
+     - Retiring an actor merged its work before the implementation gate; retirement now anchors, and
+       the queue is the only merge.
+     - Two wave-1 cards shared `signoff_queue.rb`.
+   - **Before executing:** commit the 2026-09-11 docs pass, which the plan's grounding cites.
+
 ## Map of the documents
 
 - **Architecture & why:** `~/.claude/plans/jiggly-greeting-avalanche.md` (approved).
