@@ -49,7 +49,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses:),
         toolset:, context:, session:,
-        snapshot_writer: writer
+        snapshot_slot: Lain::Agent::SnapshotSlot.new(root: dir, log: Lain::Workspace::SnapshotLog.new(observer:))
       ).tap { |agent| agent.ask("go") }
     end
 

@@ -90,7 +90,9 @@ class DemoSupervision
     observer = Lain::Supervisor::Restart::JournalBlobs.new(journal: @journal, store: @store, observer: scribe)
     agent = Lain::Agent.new(provider: @provider, toolset: @toolset, context: @context,
                             timeline: Lain::Timeline.empty(store: @store),
-                            snapshot_writer: Lain::Workspace::Snapshot.new(observer:, root: @dir))
+                            snapshot_slot: Lain::Agent::SnapshotSlot.new(
+                              root: @dir, log: Lain::Workspace::SnapshotLog.new(observer:)
+                            ))
     Lain::Tools::Subagent::Actor.new(agent:, parent: parent_timeline, lineage:)
   end
 

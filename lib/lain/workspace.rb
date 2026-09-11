@@ -86,4 +86,7 @@ end
 # Snapshot nests inside Workspace, so it loads after the class body -- this
 # file is the workspace subtree's index (see CLAUDE.md, Requires).
 require_relative "workspace/snapshot"
+require_relative "workspace/on_disk"
 require_relative "workspace/restore"
+require_relative "workspace/revert"
+require_relative "workspace/snapshot_log"

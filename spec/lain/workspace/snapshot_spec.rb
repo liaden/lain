@@ -185,6 +185,9 @@ RSpec.describe Lain::Workspace::Snapshot do
         end
 
         def note = "everything the scope could find"
+
+        # The write-set scope's rule: this map is a whole state.
+        def unchanged?(files:, last:, **) = files == last || (files.empty? && last.nil?)
       end
     end
 
@@ -250,6 +253,45 @@ RSpec.describe Lain::Workspace::Snapshot do
       described_class.new(observer:, root: dir, scope: :write_set)
 
       expect(scope).to have_received(:baseline).with(Pathname.new(File.expand_path(dir)))
+    end
+  end
+
+  # A turn is measured between the tree its prime staged and the tree its
+  # settle staged; the writer asks its scope for both, at its own root.
+  describe "the scope's turn trees" do
+    let(:scope) do
+      instance_spy(Lain::Workspace::Snapshot::Scope::WriteSet,
+                   note: "a note", pair: :the_pair, paths: [], unchanged?: false)
+    end
+
+    it "restages its scope's before-tree at every prime, the first at construction" do
+      described_class.new(root: dir, scope:).prime
+
+      expect(scope).to have_received(:baseline).with(Pathname.new(File.expand_path(dir))).twice
+    end
+
+    it "answers its scope's pair for its own root" do
+      expect(described_class.new(root: dir, scope:).pair).to eq(:the_pair)
+      expect(scope).to have_received(:pair).with(Pathname.new(File.expand_path(dir)))
+    end
+
+    it "asks its scope whether a turn changed anything, handing over what it last wrote" do
+      described_class.new(root: dir, scope:).write(timeline: committed_timeline, paths: [])
+
+      expect(scope).to have_received(:unchanged?).with(root: Pathname.new(File.expand_path(dir)), files: {}, last: nil)
+    end
+
+    # An undo moves disk behind the writer's back; told what disk holds now,
+    # the next write is measured from that, not from its stale memory.
+    it "measures the next write against what #resume says disk holds" do
+      path = write_file(dir, "a.txt", "one")
+      timeline = committed_timeline
+      writer.write(timeline:, paths: [path])
+      expect(writer.write(timeline:, paths: [path])).to be_nil
+
+      writer.resume(nil)
+
+      expect(writer.write(timeline:, paths: [path])).not_to be_nil
     end
   end
 
@@ -489,7 +531,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       agent = Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses:),
         toolset:, context:, session:,
-        snapshot_writer: writer
+        snapshot_slot: Lain::Agent::SnapshotSlot.new(root: dir, log: Lain::Workspace::SnapshotLog.new(observer:))
       )
       agent.ask("edit please")
       agent

@@ -104,7 +104,8 @@ RSpec.describe Lain::Supervisor::Restart do
   # production exe would wrap.
   def scribed_agent(provider, observer)
     Lain::Agent.new(provider:, toolset:, context:, timeline: Lain::Timeline.empty(store:),
-                    snapshot_writer: Lain::Workspace::Snapshot.new(observer:, root: dir))
+                    snapshot_slot: Lain::Agent::SnapshotSlot.new(root: dir,
+                                                                 log: Lain::Workspace::SnapshotLog.new(observer:)))
   end
 
   def scribed_actor(provider)

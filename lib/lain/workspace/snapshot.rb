@@ -108,14 +108,36 @@ module Lain
                                             "snapshot_scope" => @scope.note })
       end
 
+      # Restages what the next turn is measured from: called just before a
+      # turn's tools run, so the turn's delta holds the turn and nothing the
+      # human did before it.
+      #
+      # @return [self]
+      def prime
+        @scope.baseline(@root)
+        self
+      end
+
+      # The trees the last prime and the last write staged, or the scope's
+      # NoTrees.
+      def pair = @scope.pair(@root)
+
+      # What disk holds now, after something other than a write moved it (an
+      # undo): the next write is measured against this, not stale memory.
+      #
+      # @param files [Hash{String => String}, nil] a recorded file map, or nil
+      #   for no history
+      # @return [self]
+      def resume(files)
+        @last_files = files
+        self
+      end
+
       private
 
-      # Empty-after-non-empty is NOT equal to `@last_files` and therefore writes.
-      # The nil sentinel is what distinguishes "no history" from "last snapshot
-      # was (or became) empty".
-      def skip?(files)
-        files == @last_files || (files.empty? && @last_files.nil?)
-      end
+      # What counts as unchanged is the scope's question, because only the
+      # scope knows whether its map is a whole state or one turn's delta.
+      def skip?(files) = @scope.unchanged?(root: @root, files:, last: @last_files)
 
       # Sorted so the map cannot vary with write-set recording order; {Store#put}
       # is idempotent, so re-hashing an unchanged file re-stores nothing.

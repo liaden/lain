@@ -30,6 +30,7 @@ module Lain
       def self.for(event)
         return ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
         return ProviderRetry.new(event) if event.is_a?(Telemetry::ProviderRetry)
+        return SnapshotDegraded.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotDegraded)
 
         nil
       end
@@ -73,3 +74,4 @@ module Lain
 end
 
 require_relative "decorators/provider_retry"
+require_relative "decorators/snapshot_degraded"

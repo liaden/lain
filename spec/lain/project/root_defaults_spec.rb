@@ -96,6 +96,16 @@ module RootDefaultDiscipline
   # change and is ticketed separately. It is also why this guard scans optional
   # POSITIONALS: the first edition could not see it at all.
   ALLOWED = {
+    # Not a new place the Project misses: the Agent's own default snapshot
+    # writer was always rooted here, through `workspace/snapshot.rb`'s entry,
+    # and the slot that replaced it inherits that default for every Agent built
+    # without one. A live chat's own Agent never takes it:
+    # {Lain::CLI::Wiring::AgentBuild} hands its slot the resolved project root.
+    # A subagent spawned INSIDE a live chat does take it --
+    # `Tools::Subagent`'s `spawn_agent` builds a bare Agent -- so a child's
+    # snapshots are rooted at the working directory, exactly as they were
+    # under the writer default this replaced. So are a bench arm's and a spec's.
+    "lain/agent/snapshot_slot.rb" => %w[initialize:root],
     "lain/approval/remembered.rb" => %w[initialize:root],
     "lain/approval/risk.rb" => %w[initialize:root],
     "lain/cli/command/meta.rb" => %w[initialize:root],

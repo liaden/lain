@@ -241,6 +241,25 @@ module Lain
           "and say what it was for."
       end
 
+      # The {Agent::SnapshotSlot} the Agent's deliveries write through, or
+      # {Agent::SnapshotSlot::Unbound} until the agent build binds one.
+      attr_reader :snapshots
+
+      # The snapshot scope the posture in force declares, which is what the
+      # agent build fills the slot with before any flip.
+      def snapshot_scope = mode_switch.posture.snapshot_scope
+
+      # The slot the Agent's deliveries read, so every later flip can rebind
+      # it. Bound rather than built here: it needs the project root, which the
+      # board's own build never sees.
+      #
+      # @param slot [Agent::SnapshotSlot]
+      # @return [self]
+      def bind_snapshots(slot)
+        @snapshots = slot
+        self
+      end
+
       # This board's contribution to the {Command::Surface}: the two switches a
       # command WRITES, plus /approve's inline drain prompt over the SAME
       # conductor-routed reader the Repl's watch surface uses (see
@@ -253,9 +272,10 @@ module Lain
       #
       # `ledger` rides along because `/survey` projects a corpus through the
       # region model, and a command holding a ledger of its own would show
-      # `<redacted:N>` for regions this run has already released.
+      # `<redacted:N>` for regions this run has already released. `snapshots`
+      # does because `/undo` must read the log the Agent's deliveries feed.
       def surface_kwargs(conductor:, tty:)
-        { model_switch:, mode_switch:, ledger:, approval_prompt: prompt(conductor:, tty:) }
+        { model_switch:, mode_switch:, ledger:, snapshots:, approval_prompt: prompt(conductor:, tty:) }
       end
 
       private
@@ -272,6 +292,7 @@ module Lain
       # built while `@resolved` is still nil; nothing asks it anything until a
       # call is gated.
       def seed(initial, journal:)
+        @snapshots = ::Lain::Agent::SnapshotSlot::Unbound
         @toolset = LiveToolset.new(-> { @resolved })
         @ladder = build_ladder(journal:)
         resolution = resolve(initial)
@@ -324,14 +345,12 @@ module Lain
       # What a flip DOES. The gate policy goes through the ONE PolicySwitch
       # every surface writes, so a transcript reads as a single policy history
       # and the last flip wins whichever surface made it; the capability set is
-      # re-bound in the slot the Agent and the executor already hold.
-      #
-      # `snapshot_scope` is deliberately NOT bound here: {Workspace::Snapshot}
-      # primes its scope against a root at construction, and the Agent's
-      # `snapshot_writer:` has no live slot yet. That rung is owed.
+      # re-bound in the slot the Agent and the executor already hold, and so is
+      # the snapshot writer, which keeps its writer when the scope is unchanged.
       def apply(resolution, surface:)
         @policy_switch.switch(resolution.gate_policy, surface:)
         @resolved = resolution.toolset
+        @snapshots.rebind(resolution.snapshot_scope)
       end
 
       def prompt(conductor:, tty:)

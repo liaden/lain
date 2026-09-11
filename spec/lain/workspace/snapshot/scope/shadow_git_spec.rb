@@ -137,6 +137,25 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
     end
   end
 
+  # Git hands names back as bytes. Joined raw onto a UTF-8 root, a non-ASCII
+  # name raised Encoding::CompatibilityError out of the settle, leaving the
+  # turn's tool call unanswered.
+  describe "names outside ASCII" do
+    it "sees a non-ASCII file a shell created, as a path it can join" do
+      scope = shadow
+      bash("printf x > naïve.txt")
+
+      expect(changed(scope)).to contain_exactly(in_project("naïve.txt"))
+    end
+
+    it "sees a non-ASCII file a human made between turns" do
+      scope = shadow
+      File.binwrite(in_project("résumé.md"), "mine\n")
+
+      expect(changed(scope)).to contain_exactly(in_project("résumé.md"))
+    end
+  end
+
   describe "the write-set the structured tools recorded" do
     # The swap from WriteSet to ShadowGit must never capture LESS: a posture
     # that buys its safety from reversibility cannot lose a path by widening.
@@ -480,6 +499,64 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
 
         expect(scope.paths(write_set: [], root: other)).to contain_exactly(File.join(other, "elsewhere.txt"))
         expect(changed(scope)).to contain_exactly(in_project("here.txt"))
+      end
+    end
+  end
+
+  # Each turn is measured from the tree its OWN prime staged. What a human did
+  # between two turns lands in that tree, never in the turn's delta, so an undo
+  # cannot take it for the turn's work.
+  describe "a turn's tree pair" do
+    it "measures a turn from its own prime, so a human edit before it is not in it" do
+      File.binwrite(in_project("h.txt"), "original\n")
+      scope = shadow
+      File.binwrite(in_project("h.txt"), "HUMAN EDIT\n")
+      scope.baseline(project)
+      bash("echo y > y.txt")
+
+      expect(changed(scope)).to contain_exactly(in_project("y.txt"))
+      expect(scope.pair(project).keys).to eq(["y.txt"])
+    end
+
+    it "has moved when the turn changed the tree, and not when it did not" do
+      scope = shadow
+      changed(scope)
+      expect(scope.pair(project)).not_to be_moved
+
+      scope.baseline(project)
+      bash("echo y > y.txt")
+      changed(scope)
+      expect(scope.pair(project)).to be_moved
+    end
+
+    it "answers an unmoved pair for a root it never primed" do
+      expect(described_class.new(paths:).pair(project)).not_to be_moved
+    end
+
+    describe "#unchanged?" do
+      it "is unchanged when the trees did not move and no recorded file changed" do
+        scope = shadow
+        changed(scope)
+
+        expect(scope.unchanged?(root: project, files: { "a" => "d" }, last: { "a" => "d" })).to be(true)
+      end
+
+      # A deletion leaves the file map as it was; only the trees record it.
+      it "has changed when the trees moved, even though the file map repeats" do
+        File.binwrite(in_project("z.txt"), "precious\n")
+        scope = shadow
+        bash("rm z.txt")
+        changed(scope)
+
+        expect(scope.unchanged?(root: project, files: {}, last: {})).to be(false)
+      end
+
+      it "has changed when a recorded file the trees cannot see changed" do
+        scope = shadow
+        changed(scope)
+
+        expect(scope.unchanged?(root: project, files: { "app.log" => "new" }, last: { "app.log" => "old" }))
+          .to be(false)
       end
     end
   end

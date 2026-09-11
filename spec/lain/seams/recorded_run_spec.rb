@@ -275,8 +275,11 @@ module T14RecordedRun
   # `lain chat` builds. A hand-built Agent would cover the loop and skip all
   # four -- and the wiring is exactly where the defect lived.
   def ask(chronicle, state, project)
+    # A throwaway state home: a tool turn primes the default posture's shadow
+    # snapshot store, which lives there.
     wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
                                    status_feed: Lain::StatusFeed.new(path: File.join(state, "state.json")),
+                                   paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }),
                                    project: Lain::Project.new(root: project, cwd: project,
                                                               kind: :project, detected_by: :flag))
     recorder, session = wiring.run_state(nil)

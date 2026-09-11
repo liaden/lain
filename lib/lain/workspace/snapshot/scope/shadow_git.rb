@@ -1,21 +1,22 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "mixlib/shellout"
+require "securerandom"
 
 module Lain
   class Workspace
     class Snapshot
       module Scope
-        # Everything the project's working tree changed since the previous turn,
-        # detected by a git repository LAIN owns, unioned with the write-set the
+        # Everything the project's working tree changed during a turn, detected
+        # by a git repository LAIN owns, unioned with the write-set the
         # structured tools recorded. This closes the gap {WriteSet}'s note
         # declares: a free-form `bash` enumerates nothing, so the only way to
         # learn what it touched is to ask the filesystem -- and git honours the
         # project's own `.gitignore` while doing it.
         #
-        # Git is only the CHANGE DETECTOR. The bytes still land in lain's blake3
-        # {Store} through {Snapshot}, so nothing here is ever restored by git.
+        # This class decides what a snapshot captures; every git call is its
+        # {Repository}'s. Git is the CHANGE DETECTOR: the bytes a snapshot
+        # records still land in lain's blake3 {Store} through {Snapshot}.
         #
         # The store is a BARE repository under XDG state, keyed by
         # {Paths#project_hash}, driven with `GIT_DIR` pointed at it and
@@ -32,12 +33,12 @@ module Lain
         # would redirect a write back into the repository being hooked: the scrub
         # is what makes "GIT_DIR is the sole authority" true rather than intended.
         #
-        # A delta needs something to be a delta FROM, and the honest baseline is
-        # the project as the session found it -- not the last tree some previous
-        # session left behind, which would attribute every edit the user made in
-        # between to this session's first turn and offer to undo their work.
-        # {#baseline} is that priming; a scope nobody primes reports the
-        # write-set alone for its first turn.
+        # Each turn is measured from its OWN prime: {#baseline} stages the tree
+        # just before the turn's tools run, and the settle stages it again after.
+        # Anything the human did between turns lands in the first tree, never in
+        # the turn's delta -- measuring from the previous turn's end would hand
+        # their edits to the next turn, and an undo of it would revert them.
+        # {#pair} is those two trees, and their difference is exactly the turn.
         #
         # The union is what makes this scope a strict widening of {WriteSet}: a
         # posture buys its safety from reversibility, so swapping the scope must
@@ -71,12 +72,13 @@ module Lain
 
           NOTE = "shadow git + write-set: the UNION of two detectors with different blind spots. " \
                  "A lain-owned bare repo under XDG state reports what changed in the project work " \
-                 "tree since the previous turn, including out-of-band writes (e.g. bash), but it " \
+                 "tree during the turn, including out-of-band writes (e.g. bash), but it " \
                  "cannot see inside a path the project's .gitignore excludes, nor inside a " \
                  "submodule; the recorded write-set sees only what structured tools wrote. So a " \
                  "gitignored path is captured only if a structured tool wrote it, and a bash write " \
-                 "inside a submodule is not captured at all. The project's own repository is never " \
-                 "read or written."
+                 "inside a submodule is not captured at all. A write by another process during a " \
+                 "turn's tool window counts as that turn's change, and undoing the turn removes it. " \
+                 "The project's own repository is never read or written."
 
           # The git-context env that redirects where git finds its repository,
           # index and objects. Mapping each to `nil` DELETES it in the forked
@@ -97,29 +99,56 @@ module Lain
             "GIT_CONFIG_COUNT" => nil, "GIT_CONFIG_PARAMETERS" => nil
           }.freeze
 
+          def self.for(paths:, session:) = new(paths:, session:)
+
           # Inert: construction shells no git and touches no filesystem, so a
           # scope resolved from its short name is safe to build anywhere. The
           # work starts at {#baseline}.
           #
           # @param paths [Paths] resolves XDG state and the per-project key
+          # @param session [String] names this session's index in the shared
+          #   store; a slot hands every scope it builds the same one
           # @param shell_out_factory [#call] builds the subprocess runner,
           #   injected as a factory, as {Isolation::Worktree} does
-          def initialize(paths: Paths.new, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+          def initialize(paths: Paths.new, session: SecureRandom.hex(6),
+                         shell_out_factory: Mixlib::ShellOut.public_method(:new))
             @paths = paths
+            @session = session
             @shell_out_factory = shell_out_factory
+            @repositories = {}
             @trees = {}
+            @before = {}
           end
 
-          # Record `root` as it stands now, so the next {#paths} is a delta from
-          # here. Keyed by root, so priming twice is idempotent and two roots
-          # never share one baseline -- and the constructor takes no root at all,
-          # which keeps "primed against A, asked about B" unrepresentable.
+          # Stage `root` as it stands now: the tree the next turn is measured
+          # from. Keyed by root, so two roots never share one -- and the
+          # constructor takes no root at all, which keeps "primed against A,
+          # asked about B" unrepresentable.
           #
           # @param root [String, Pathname] the workspace root
+          # @return [String] the staged tree id
           # @raise [Failed] when any git invocation does not deliver an answer
           def baseline(root)
             expanded = expand(root)
-            @trees[expanded] = stage(expanded)
+            @before[expanded] = @trees[expanded] = repository(expanded).stage
+          end
+
+          # @param root [String, Pathname] the workspace root
+          # @return [TreePair, NoTrees] the tree the last prime staged and the
+          #   one the last settle staged; NoTrees for a root never primed
+          def pair(root)
+            expanded = expand(root)
+            return NoTrees unless @before.key?(expanded)
+
+            TreePair.new(repository: repository(expanded), before: @before[expanded], after: @trees.fetch(expanded))
+          end
+
+          # A shadow map records only what its turn touched, so an unequal map is
+          # no evidence of change: the trees are. A path a structured tool wrote
+          # that git never stages -- a .gitignore'd one -- is the one change only
+          # the map can see.
+          def unchanged?(root:, files:, last:)
+            !pair(root).moved? && files.all? { |key, digest| (last || {})[key] == digest }
           end
 
           # @param write_set [Enumerable<String>] the session's recorded writes
@@ -138,88 +167,28 @@ module Lain
 
           def expand(root) = File.expand_path(root.to_s)
 
-          # A root with no recorded tree compares against the tree just staged, so
+          def repository(root)
+            @repositories[root] ||= Repository.open(root:, paths: @paths, session: @session,
+                                                    shell_out_factory: @shell_out_factory)
+          end
+
+          # A root with no staged tree compares against the tree just staged, so
           # an unprimed start yields an empty delta by construction rather than
           # by a special case -- never every file in the project, as diffing the
           # empty tree would.
           def detect(root)
-            tree = stage(root)
+            tree = repository(root).stage
             previous = @trees.fetch(root, tree)
             @trees[root] = tree
-            diff(root, previous)
-          end
-
-          # `add --all` is what honours `.gitignore` and what notices deletions;
-          # `write-tree` freezes the staged state as the next turn's baseline.
-          #
-          # It records a SUBMODULE as a gitlink, so a bash write inside one is
-          # invisible here -- still open, and declared in {NOTE} rather than
-          # papered over. When a gitlink moves, the path reported is the
-          # submodule DIRECTORY, which {Snapshot#entry}'s `File.file?` guard
-          # drops: right outcome, but by luck rather than by contract.
-          def stage(root)
-            dir = store(root)
-            attempt("add") { git(dir, root, "add", "--all") }
-            attempt("write-tree") { git(dir, root, "write-tree") }.stdout.strip
-          end
-
-          # `--no-renames` states a dependency rather than changing today's
-          # behaviour: this plumbing ignores `diff.renames` and detects nothing
-          # without an explicit `-M`, so REMOVING the flag reddens no spec. What
-          # it guards against is `-M` arriving, by hand or by a changed default,
-          # because a detected rename reports only its DESTINATION and the path
-          # that vanished is exactly what a restore has to know about.
-          #
-          # `-z` because a filename may contain a newline, and git's quoted
-          # output would hand {Snapshot} a path that opens nothing.
-          def diff(root, previous)
-            shell = attempt("diff-index") do
-              git(store(root), root, "diff-index", "--cached", "--name-only", "--no-renames", "-z", previous)
-            end
-            shell.stdout.split("\0").reject(&:empty?).map { |name| File.join(root, name) }
-          end
-
-          def store(root)
-            File.join(@paths.state_home, "workspace", @paths.project_hash(root)).tap do |dir|
-              init(dir) unless File.directory?(dir)
-            end
-          end
-
-          # Under the plain scrub, with no GIT_DIR of its own: the directory
-          # argument is the only thing that may decide where the store lands.
-          def init(dir)
-            ensure_state_home(File.dirname(dir))
-            attempt("init") { run("init", "--bare", "--quiet", dir, environment: GIT_CONTEXT_SCRUB) }
-          end
-
-          # {Paths::Unwritable} rather than a raw `Errno`: that is the refusal
-          # {Paths} raises for every other XDG directory it creates, and the
-          # taxonomy is what a caller rescues. Built here rather than routed
-          # through `Paths#ensure_dir`, which is private.
-          def ensure_state_home(dir)
-            FileUtils.mkdir_p(dir)
-          rescue SystemCallError => e
-            raise Paths::Unwritable.new(dir, e)
-          end
-
-          def attempt(operation)
-            shell = yield
-            raise Failed.from_git(operation, shell) unless shell.exitstatus&.zero?
-
-            shell
-          rescue Errno::ENOENT, Mixlib::ShellOut::CommandTimeout => e
-            raise Failed.from_error(operation, e)
-          end
-
-          def git(dir, root, *)
-            run("-C", root, *, environment: GIT_CONTEXT_SCRUB.merge("GIT_DIR" => dir, "GIT_WORK_TREE" => root))
-          end
-
-          def run(*, environment:)
-            @shell_out_factory.call("git", *, environment:).tap(&:run_command)
+            repository(root).changed(previous).map { |name| File.join(root, name) }
           end
         end
       end
     end
   end
 end
+
+# ShadowGit's own subtree index: its children reopen the class, so they load
+# after it.
+require_relative "shadow_git/repository"
+require_relative "shadow_git/tree_pair"

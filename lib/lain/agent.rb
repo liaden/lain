@@ -13,6 +13,7 @@ require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
 require_relative "agent/pipeline_source"
 require_relative "agent/request_override"
+require_relative "agent/snapshot_slot"
 require_relative "agent/tool_delivery"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
@@ -132,9 +133,10 @@ module Lain
     #   prompt dividing by {ContextWindow::CONSERVATIVE_FALLBACK} while the state
     #   feed divided by the served window, and two surfaces disagreeing about one
     #   turn is worse than both being uniformly wrong.
-    # @param snapshot_writer [Workspace::Snapshot] captures which files a turn's
-    #   tools wrote, as a causal-only Store event; a read-only turn lands
-    #   nothing.
+    # @param snapshot_slot [SnapshotSlot] holds the writer that captures which
+    #   files a turn's tools wrote, as a causal-only Store event; a read-only
+    #   turn lands nothing. A slot rather than a writer, so a posture flip can
+    #   change the writer under a delivery built once.
     # @param instrumented [Hash{Symbol => Object}] the seven keywords a run
     #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
     #   accepted directly so every call site that predates `instrumentation:`
@@ -145,7 +147,7 @@ module Lain
                    accounting: Collaborators::OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
-                   snapshot_writer: Workspace::Snapshot.new, context_window: ContextWindow.default,
+                   snapshot_slot: SnapshotSlot.new, context_window: ContextWindow.default,
                    **instrumented)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
@@ -156,7 +158,7 @@ module Lain
       @context_window = context_window
       wire_callers(request_override:, instrumentation:, instrumented:,
                    model_caller:, tool_runner:, accounting:, provider:, handler:)
-      seed_run_state(session, snapshot_writer, budget)
+      seed_run_state(session, snapshot_slot, budget)
     end
 
     # Append a user turn and run until the loop settles.
@@ -308,11 +310,10 @@ module Lain
     # sits with the counter it bounds -- `#step` checks it and increments
     # `@iterations` on the next line. The zero is what an Agent that has never
     # run reports; #run_loop re-seeds it per run, the scope the ceiling bounds.
-    def seed_run_state(session, snapshot_writer, budget)
+    def seed_run_state(session, snapshot_slot, budget)
       @transition_listener = @instrumentation.transition_listener
       @session = session
-      @snapshot_writer = snapshot_writer
-      @deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshot_writer:)
+      @deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshots: snapshot_slot)
       @budget = budget
       @iterations = 0
       @dispatch_lock = Monitor.new

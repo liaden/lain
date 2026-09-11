@@ -111,12 +111,15 @@ module Lain
       #   being run FROM -- {ChatLaunch} resolves it once and passes it here, so
       #   the five collaborators below take one answer rather than each asking
       #   `Dir.pwd` its own version of the question
+      # @param paths [Paths] the state home the default posture's shadow
+      #   snapshot store lives under; a spec running tool turns hands in a
+      #   throwaway one
       # @param tty_factory [#call] #run's TTY seam; a spec hands in a StringIO-backed one
       # @param conductor_opener [#call] #run's Conductor seam
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
-      def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new,
+      def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
                      project: Project::Resolver.default_project,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open))
@@ -124,6 +127,7 @@ module Lain
         @chronicle = chronicle
         @status_feed = status_feed
         @run_clock = run_clock
+        @paths = paths
         @project = project
         @tty_factory = tty_factory
         @conductor_opener = conductor_opener
@@ -289,7 +293,7 @@ module Lain
       # #wire_agent the one branch that put it over AbcSize.
       def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil, notice: nil)
         AgentBuild.build(board: switchboard(backend, toolset, notice), chronicle:, channel:, session:, backend:,
-                         timeline: resumed&.timeline, views:)
+                         timeline: resumed&.timeline, views:, root:, paths: @paths)
       end
 
       # A resumed chat opens its NEW journal chained to the old one. Derived from

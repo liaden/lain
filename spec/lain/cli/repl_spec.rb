@@ -120,6 +120,10 @@ RSpec.describe Lain::CLI::Repl do
   end
   let(:backend) { offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider) }
 
+  # A tool turn primes the chat's snapshot slot, and the default posture keeps
+  # its shadow store under the state home -- so each chat gets a throwaway one.
+  def spec_state(dir) = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir })
+
   def run_chat(input, dir:, chronicle: Lain::CLI::Chronicle::Null.new, options: { grace: 5 })
     output = StringIO.new
     # `**` swallows the `prompt_renderer:` keyword -- this spec is about the chat
@@ -128,7 +132,7 @@ RSpec.describe Lain::CLI::Repl do
       Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new(input),
                               history_path: File.join(dir, "history"))
     end
-    wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:,
+    wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:, paths: spec_state(dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     wiring.run(backend:, resumed: nil, nvim: nil)
     wiring.conductor.close(reason: :exit)
@@ -163,7 +167,7 @@ RSpec.describe Lain::CLI::Repl do
       headless = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider)
       wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
                                      chronicle: Lain::CLI::Chronicle::Null.new,
-                                     tty_factory: waiting_terminal(output, dir:),
+                                     tty_factory: waiting_terminal(output, dir:), paths: spec_state(dir),
                                      status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
       Timeout.timeout(20) { wiring.run(backend: headless, resumed: nil, nvim: nil) }
       wiring.conductor.close(reason: :exit)
@@ -358,13 +362,17 @@ RSpec.describe Lain::CLI::Repl do
       FileUtils.rm_f(socket)
     end
 
+    def editor_wiring(tty_factory, dir)
+      Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
+                            paths: spec_state(dir), status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+    end
+
     def chat_with_editor(dir)
       tty_factory = lambda do |channel:, **|
         Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new("quit\n"),
                                 history_path: File.join(dir, "history"))
       end
-      wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+      wiring = editor_wiring(tty_factory, dir)
       wiring.run(backend:, resumed: nil,
                  nvim: { channel: Lain::Channel::DropOldest.new, socket_path: @socket })
       wiring.conductor.close(reason: :exit)

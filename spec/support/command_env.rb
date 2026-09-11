@@ -22,7 +22,8 @@ module CommandEnvHelper
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
       model_switch: instance_double(Lain::Context::ModelSwitch),
       mode_switch: instance_double(Lain::Mode::Switch),
-      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }
+      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn),
+      snapshots: instance_double(Lain::Agent::SnapshotSlot) }
   end
 end
 

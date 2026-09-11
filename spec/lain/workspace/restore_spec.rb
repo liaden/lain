@@ -384,4 +384,11 @@ RSpec.describe Lain::Workspace::Restore do
       end
     end
   end
+
+  # The read side is a Projection and nothing stands in for one: a Restore
+  # built without it is a wiring mistake to raise on, not a restore of nothing.
+  # Undoing one turn's own paths is {Lain::Workspace::Revert}'s job.
+  it "requires its projection" do
+    expect { described_class.new(store:, root: dir) }.to raise_error(ArgumentError, /projection/)
+  end
 end

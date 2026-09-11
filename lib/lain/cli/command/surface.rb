@@ -20,7 +20,7 @@ module Lain
       # one `.lain/` read rather than separate reads of the same tree.
       class Surface
         # `chronicle:`, `status_feed:`, `model_switch:`, `mode_switch:`,
-        # `role_spawn:`, `library:` and `ledger:` are required, not defaulted:
+        # `role_spawn:`, `library:`, `ledger:` and `snapshots:` are required, not defaulted:
         # each is always wired in the live path, so a defaulted Null would only
         # mask a mis-wire. The mode switch is the sharpest case -- it is the slot
         # that reaches the gate, since {CLI::Switchboard#apply} DERIVES the gate
@@ -29,7 +29,9 @@ module Lain
         # reads. A defaulted library would silently be a SECOND read of the same
         # tree, and a defaulted {Lain::Sensitivity::Ledger} lets a forgotten
         # injection become a SECOND ledger whose releases nobody ever sees, so
-        # `/survey` would mask regions this run has already released.
+        # `/survey` would mask regions this run has already released. A
+        # defaulted snapshot slot would answer "nothing to undo" for a session
+        # that has changed files.
         #
         # `cwd:` is the OTHER half of {Lain::Project}: root is the authority
         # boundary, cwd is where a relative path resolves, and a monorepo chat
@@ -39,7 +41,7 @@ module Lain
         # `lain up` gives both panes one `-c`. `root:` stays on its own
         # business: {Meta} reads the project's `.lain/` config from it.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
-                       model_switch:, mode_switch:, library:, ledger:, approvals: nil, root: Dir.pwd,
+                       model_switch:, mode_switch:, library:, ledger:, snapshots:, approvals: nil, root: Dir.pwd,
                        cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
@@ -51,7 +53,7 @@ module Lain
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                              model_switch:, mode_switch:)
+                              model_switch:, mode_switch:, snapshots:)
         end
 
         attr_reader :env, :goal_driver
@@ -82,13 +84,13 @@ module Lain
         # `approvals` falls back, to the genuine {Env::NoApprovals} Null when the
         # session wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                         model_switch:, mode_switch:)
+                         model_switch:, mode_switch:, snapshots:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new,
             approvals: approvals || Env::NoApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
-            model_switch:, mode_switch:, role_spawn: @role_spawn
+            model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:
           )
         end
 
@@ -108,15 +110,19 @@ module Lain
         # registry, a catalog, a prompt) and this does not; the split is what
         # keeps #registry's ABC honest as the set grows.
         #
-        # That split has now run out itself: this method measures 17.0 against
-        # Metrics/AbcSize's limit of 17, so the NEXT command added here trips the
-        # cop. The answer is another extraction (a named group, as
-        # #review_commands already is), never a loosened limit.
+        # This list sits near Metrics/AbcSize's limit of 17 on its own, so a new
+        # command joins a NAMED group (#history_commands, #review_commands) or
+        # founds one, one splat here, rather than growing this line.
         def builtins
-          [Quit.new, Rewind.new, Pin.new, Unpin.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new,
-           Inbox.new, Ruby.new, Mode.new, Goal.new(driver: @goal_driver), Meta.new(root: @root),
-           Introspect.new(outbox:), *review_commands]
+          [Quit.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
+           Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands]
         end
+
+        # The commands that move this session through its own history: its
+        # conversation (`/rewind`), the files its turns wrote (`/undo`), a
+        # sibling opened at its head (`/fork`), and the turns compaction must
+        # keep (`/pin`, `/unpin`, `/keep`).
+        def history_commands = [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new]
 
         # The commands of one review: `/review` and `/survey` each open a round
         # into {#outbox} -- the run's ONE, which is what lets each refuse over

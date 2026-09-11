@@ -20,6 +20,7 @@ RSpec.describe Lain::CLI::Command::Surface do
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
   let(:mode_switch) { instance_double(Lain::Mode::Switch) }
   let(:ledger) { Lain::Sensitivity::Ledger.new }
+  let(:snapshots) { instance_double(Lain::Agent::SnapshotSlot) }
   # `/introspect` reads the run's own token ledger and occupancy off this, so
   # the spy answers both -- absence for the occupancy, which is what a chat
   # with no turn honestly has.
@@ -33,7 +34,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, model_switch:, mode_switch:, ledger:)
+                        status_feed:, model_switch:, mode_switch:, ledger:, snapshots:)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -140,10 +141,36 @@ RSpec.describe Lain::CLI::Command::Surface do
       surface = build_surface(root)
 
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
-        "quit", "rewind", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
+        "quit", "rewind", "undo", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
         "ruby", "mode", "goal", "meta", "introspect", "review", "review-submit", "survey",
         "help", "approve", "model"
       )
+    end
+  end
+
+  # `/undo` reads the run's ONE snapshot slot -- the one the Agent's deliveries
+  # write through -- so a defaulted slot would answer "nothing to undo" for a
+  # session that has changed files.
+  it "refuses to construct without the run's snapshot slot, rather than defaulting one" do
+    with_project do |root|
+      slotless = lambda do
+        described_class.new(agent: instance_spy(Lain::Agent), role_spawn:, root:,
+                            replies: instance_spy(Lain::CLI::HumanReplies),
+                            supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
+                            library: Lain::Skill::Library.load(root:),
+                            status_feed:, model_switch:, mode_switch:, ledger:)
+      end
+
+      expect { slotless.call }.to raise_error(ArgumentError, /snapshots/)
+    end
+  end
+
+  it "hands the run's one snapshot slot through, and lists /undo in /help" do
+    with_project do |root|
+      surface = build_surface(root)
+
+      expect(surface.env.snapshots).to be(snapshots)
+      expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }.text).to include("/undo")
     end
   end
 

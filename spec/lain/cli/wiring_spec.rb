@@ -553,11 +553,24 @@ RSpec.describe Lain::CLI::Wiring do
   # `Channel::Null` and left no record while every other mount of this
   # middleware (consolidation.rb, improve.rb, run_recorder.rb) passes one.
   describe "the secret-write guard's journal wiring" do
+    # A tool turn primes the default posture's shadow snapshot store, which
+    # lives under the state home -- so this chat gets a throwaway one.
+    around do |example|
+      Dir.mktmpdir("lain-wiring-state") do |state|
+        @state = state
+        example.run
+      end
+    end
+
     def credential_tool_use
       { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
         "input" => { "id" => "creds", "description" => "oops", "body" => "sk-#{"a" * 20}" } }
     end
 
+    let(:wiring) do
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+    end
     let(:credential_provider) do
       Lain::Provider::Mock.new(responses: [
                                  Lain::Response.new(content: [credential_tool_use], stop_reason: :tool_use),
@@ -609,6 +622,18 @@ RSpec.describe Lain::CLI::Wiring do
   # distinct findings: a credential is a PATTERN hit, a contentless save is
   # the oracle's DECLINE, and they must stay distinguishable in the journal.
   describe "the secret-write guard's oracle wiring" do
+    # The same throwaway state home, for the same shadow snapshot store.
+    around do |example|
+      Dir.mktmpdir("lain-wiring-state") do |state|
+        @state = state
+        example.run
+      end
+    end
+
+    let(:wiring) do
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+    end
     let(:journal) { RecordingChannel.new }
     # See the note above on journal_path: pure string manipulation derives the
     # WAL path, and a Provider::Mock run never writes a frame.
@@ -739,7 +764,19 @@ RSpec.describe Lain::CLI::Wiring do
     # pure string manipulation, and a Provider::Mock run never writes a frame.
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "t1-spec-fake-session.ndjson") }
     let(:views) { { channel: view_channel, socket_path: "/tmp/lain-t1-spec.sock", journal: } }
-    let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
+    # A throwaway state home: the bash turn primes the posture's shadow
+    # snapshot store, which lives there.
+    let(:wiring) do
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-wiring-state") do |state|
+        @state = state
+        example.run
+      end
+    end
 
     # Bash is tier 3 and would otherwise park on the approval gate forever;
     # this block is about where the bytes go, not who let them run. The
@@ -856,6 +893,12 @@ RSpec.describe Lain::CLI::Wiring do
 
     let(:journal) { RecordingChannel.new }
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "a8-spec-fake-session.ndjson") }
+    # The read turn primes the posture's shadow snapshot store, which lives
+    # under the state home -- this example's own tmpdir, not the developer's.
+    let(:wiring) do
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir, "HOME" => @dir }))
+    end
 
     around do |example|
       Dir.mktmpdir do |dir|

@@ -507,6 +507,60 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # The snapshot slot is born in the agent build and bound here, because the
+  # board is the one object a `/mode` flip goes through.
+  describe "the snapshot slot" do
+    let(:slot) { instance_spy(Lain::Agent::SnapshotSlot) }
+
+    it "answers the starting posture's scope, so the slot is born with it" do
+      expect(switchboard.snapshot_scope).to eq(:shadow_git)
+    end
+
+    it "hands every flip's scope to the slot it was bound" do
+      board = switchboard
+      board.bind_snapshots(slot)
+
+      board.mode_switch.switch(mode(:plan), surface: "tty")
+      board.mode_switch.switch(mode(:auto), surface: "tty")
+
+      expect(slot).to have_received(:rebind).with(:write_set).ordered
+      expect(slot).to have_received(:rebind).with(:shadow_git).ordered
+      expect(board.snapshot_scope).to eq(:shadow_git)
+    end
+
+    it "flips harmlessly before any slot is bound" do
+      expect { switchboard.mode_switch.switch(mode(:plan), surface: "tty") }.not_to raise_error
+    end
+
+    it "hands the bound slot to the command surface" do
+      board = switchboard
+      board.bind_snapshots(slot)
+
+      kwargs = board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor),
+                                    tty: instance_double(Lain::Frontend::TTY))
+
+      expect(kwargs.fetch(:snapshots)).to be(slot)
+    end
+
+    it "writes the snapshot after a flip to plan under the write-set scope", :seam do
+      Dir.mktmpdir do |root|
+        board = switchboard
+        slot = Lain::Agent::SnapshotSlot.new(root:, scope: board.snapshot_scope,
+                                             paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => root,
+                                                                           "HOME" => root }))
+        board.bind_snapshots(slot)
+        board.mode_switch.switch(mode(:plan), surface: "tty")
+        written = File.join(root, "a.rb").tap { |path| File.write(path, "written\n") }
+
+        event = slot.write(timeline: Lain::Timeline.empty(store: Lain::Store.new)
+                                                   .commit(role: :user, content: [{ "type" => "text", "text" => "t" }]),
+                           paths: [written])
+
+        expect(event.body.fetch("snapshot_scope")).to eq(Lain::Workspace::Snapshot::Scope::WriteSet::NOTE)
+      end
+    end
+  end
+
   it "hands /approve a tty-signing drain prompt whose reads route through the conductor" do
     conductor = instance_double(Lain::CLI::Conductor)
     tty = instance_double(Lain::Frontend::TTY)

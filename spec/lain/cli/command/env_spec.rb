@@ -8,16 +8,23 @@ RSpec.describe Lain::CLI::Command::Env do
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
       model_switch: instance_double(Lain::Context::ModelSwitch),
       mode_switch: instance_double(Lain::Mode::Switch),
-      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }
+      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn),
+      snapshots: instance_double(Lain::Agent::SnapshotSlot) }
   end
 
-  it "is a frozen value over the twelve readers" do
+  it "is a frozen value over the thirteen readers" do
     env = described_class.new(**readers)
 
     expect(env).to be_frozen
     expect(env.to_h.keys)
       .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                model_switch mode_switch chronicle role_spawn])
+                model_switch mode_switch chronicle role_spawn snapshots])
+  end
+
+  # `/undo` reads the snapshot log and root through this one reader, so a
+  # missing slot must be as loud as any other missing collaborator.
+  it "refuses a nil snapshot slot by name" do
+    expect { described_class.new(**readers, snapshots: nil) }.to raise_error(ArgumentError, /snapshots/)
   end
 
   # The gate policy is DERIVED from a mode flip, not written by a command:

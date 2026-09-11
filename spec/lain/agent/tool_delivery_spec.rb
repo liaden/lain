@@ -10,12 +10,19 @@ module ToolDeliverySpecSupport
   class Snapshots
     attr_reader :written
 
-    def initialize(&hook)
+    def initialize(trail: [], &hook)
       @written = []
+      @trail = trail
       @hook = hook
     end
 
+    def prime
+      @trail << :prime
+      self
+    end
+
     def write(timeline:, paths:)
+      @trail << :write
       @written << [timeline, paths]
       @hook&.call
     end
@@ -53,8 +60,8 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # found the expensive way.)
   before { [response, timeline, session, snapshots, journal, raised] }
 
-  def delivery_over(handler, snapshot_writer: snapshots)
-    described_class.new(runner: Lain::Agent::ToolRunner.new(handler:), snapshot_writer:, journal:)
+  def delivery_over(handler, slot: snapshots)
+    described_class.new(runner: Lain::Agent::ToolRunner.new(handler:), snapshots: slot, journal:)
   end
 
   def echoing = Lain::Effect::Handler::Mock.new { |effect, _| Lain::Tool::Result.ok("ran #{effect.tool_use_id}") }
@@ -168,7 +175,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
 
     Sync do
       expect do
-        delivery_over(echoing, snapshot_writer: stopping_snapshots)
+        delivery_over(echoing, slot: stopping_snapshots)
           .perform(response, timeline:, session:) { |turn| committed = turn }
       end.to raise_error(Async::Stop)
     end
@@ -176,5 +183,60 @@ RSpec.describe Lain::Agent::ToolDelivery do
     expect(committed.to_a.map(&:role)).to eq(%w[user assistant user])
     expect(committed.head.content.map { |block| block["is_error"] }).to eq([false, false])
     expect(journal.grep(Lain::Telemetry::ToolCancelled)).to be_empty
+  end
+
+  # git missing from PATH once left the turn's tool calls unanswered: the
+  # prime raised before any tool ran. A failed shadow store now costs the turn
+  # its shadow record, never its answers.
+  it "answers every call when the shadow store cannot run git", :seam do
+    Dir.mktmpdir do |root|
+      Dir.mktmpdir do |state|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state })
+        no_git = ->(*, **) { raise Errno::ENOENT, "git" }
+        scope = Lain::Workspace::Snapshot::Scope::ShadowGit.new(paths:, shell_out_factory: no_git)
+        slot = Lain::Agent::SnapshotSlot.new(root:, scope:, paths:)
+
+        committed = perform(echoing, slot:)
+
+        expect(committed.head.content.map { |block| block["content"] }).to eq(["ran tu_1", "ran tu_2"])
+      end
+    end
+  end
+
+  describe "the snapshot slot it is handed" do
+    it "is primed before any tool runs, so a baseline predates the turn's first write" do
+      trail = []
+      recording = Lain::Effect::Handler::Mock.new do |effect, _|
+        trail << effect.tool_use_id
+        Lain::Tool::Result.ok("ran")
+      end
+
+      perform(recording, slot: ToolDeliverySpecSupport::Snapshots.new(trail:))
+
+      expect(trail).to eq([:prime, "tu_1", "tu_2", :write])
+    end
+
+    # Read at each settle rather than captured at construction: a posture flip
+    # between two turns has to reach the very next snapshot.
+    it "writes each settle through whichever writer the slot holds by then", :seam do
+      Dir.mktmpdir do |root|
+        Dir.mktmpdir do |state|
+          notes = []
+          log = Lain::Workspace::SnapshotLog.new(observer: ->(event) { notes << event.body.fetch("snapshot_scope") })
+          slot = Lain::Agent::SnapshotSlot.new(root:, scope: :write_set, log:,
+                                               paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state,
+                                                                             "HOME" => state }))
+          File.write(File.join(root, "a.rb"), "one")
+          session.record_write(File.join(root, "a.rb"))
+
+          perform(echoing, slot:)
+          slot.rebind(:shadow_git)
+          perform(echoing, slot:)
+
+          expect(notes).to eq([Lain::Workspace::Snapshot::Scope::WriteSet::NOTE,
+                               Lain::Workspace::Snapshot::Scope::ShadowGit::NOTE])
+        end
+      end
+    end
   end
 end

@@ -85,6 +85,14 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
   def tool_call(block) = Lain::Response.new(content: [block], stop_reason: :tool_use)
   def settled(text) = Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
 
+  # A throwaway state home: a tool turn primes the default posture's shadow
+  # snapshot store, which lives there.
+  def chat_wiring(tty_factory, dir)
+    Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),
+                          status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+  end
+
   # The whole chat, assembled by {CLI::Wiring} and driven by the lines the human
   # "typed" -- `you>` reads and `human>` reads come off the same StringIO, in
   # order, exactly as one keyboard serves both prompts.
@@ -94,8 +102,7 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
       @tty = CountingTTY.new(channel:, output:, input: StringIO.new(input),
                              history_path: File.join(dir, "history"))
     end
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                                   status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+    wiring = chat_wiring(tty_factory, dir)
     Timeout.timeout(seconds) { wiring.run(backend: backend_over(provider), resumed: nil, nvim: nil) }
     wiring.conductor.close(reason: :exit)
     output.string

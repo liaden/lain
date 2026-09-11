@@ -114,7 +114,15 @@ end
 # what an example needs to see is which object the Agent was built over, and
 # that the module never went looking for a board of its own.
 class AgentBuildSpecBoard
-  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals, :sensitivity
+  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals, :sensitivity, :snapshots
+
+  # The posture a real board starts in declares `:shadow_git`; the stand-in
+  # answers the write-set scope so building an Agent over it shells no git.
+  def snapshot_scope = :write_set
+
+  def bind_snapshots(slot)
+    @snapshots = slot
+  end
 
   # The run's ONE region ledger, the approval queue an unattended board leaves
   # nil, and the path policy -- all real, because the three tool-phase guards
@@ -168,7 +176,8 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
   let(:board) { AgentBuildSpecBoard.new(Lain::Toolset.new) }
 
   def build(**overrides)
-    described_class.build(board:, chronicle:, channel:, backend:, session: Lain::Session.new, **overrides)
+    described_class.build(board:, chronicle:, channel:, backend:, session: Lain::Session.new,
+                          root: "/home/tester/project", **overrides)
   end
 
   describe ".spooled_provider" do
@@ -358,6 +367,70 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
       agent = build
 
       expect(chronicle.timeline_handle.call).to be(agent.timeline)
+    end
+
+    # The slot is born here and handed to the board, which is what lets a
+    # `/mode` flip rebind it: the board is the one object that sees the flip.
+    it "hands the board a snapshot slot rooted at the project, under the board's posture" do
+      build
+
+      expect(board.snapshots).to be_a(Lain::Agent::SnapshotSlot)
+      expect(board.snapshots.root).to eq("/home/tester/project")
+      expect(board.snapshots.label).to eq("write_set")
+    end
+  end
+
+  # The default posture's scope, from the first turn, in a chat Wiring built
+  # from a project SUBDIRECTORY, with a real bash call writing a file no lain
+  # tool records. Bash is tier 3 and would park on the approval queue, so the
+  # board is flipped to auto first: a posture declaring the same shadow scope,
+  # so the slot is not rebound.
+  describe "a chat Wiring built in accept_edits, launched from a subdirectory", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-agent-build-project") do |project|
+        Dir.mktmpdir("lain-agent-build-state") do |state|
+          @project = File.realpath(project)
+          @state = state
+          FileUtils.mkdir_p(File.join(@project, "sub"))
+          example.run
+        end
+      end
+    end
+
+    let(:shell_write) { "printf unrecorded > #{File.join(@project, "made-by-bash.txt")}" }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["tu_1", "bash", { "command" => shell_write }]),
+                                 Lain::Response.new(content: [{ "type" => "text", "text" => "done" }],
+                                                    stop_reason: :end_turn)
+                               ])
+    end
+
+    def wired_chat
+      wiring = Lain::CLI::Wiring.new(
+        options: { grace: 5 }, chronicle:, status_feed: instance_double(Lain::StatusFeed),
+        project: Lain::Project.new(root: @project, cwd: File.join(@project, "sub"), kind: :project,
+                                   detected_by: :flag),
+        paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state })
+      )
+      recorder, session = wiring.run_state(nil)
+      [wiring, wiring.wire_agent(channel:, recorder:, session:, backend: AgentBuildSpecBackend.new(
+        { provider: "ollama", model: nil, max_tokens: 64 }, mock: provider
+      ))]
+    end
+
+    it "records a file no lain tool wrote in the next snapshot, rooted at the project root" do
+      wiring, agent = wired_chat
+      board = wiring.role_spawn.seam.gate_policy.board.call
+      board.mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+
+      agent.ask("make it")
+
+      entry = board.snapshots.log.to_a.last
+      body = agent.timeline.store.fetch(entry.snapshot).body
+      expect(entry.files.keys).to eq(["made-by-bash.txt"])
+      expect(body.fetch("root")).to eq(@project)
+      expect(body.fetch("snapshot_scope")).to eq(Lain::Workspace::Snapshot::Scope::ShadowGit::NOTE)
     end
   end
 

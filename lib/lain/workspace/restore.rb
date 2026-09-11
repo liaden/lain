@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "pathname"
 
 module Lain
@@ -33,7 +32,11 @@ module Lain
     # backward re-seeds from the log's LAST snapshot, mistakes the prior
     # instance's writes for out-of-band edits, and refuses Dirty -- loud and
     # recoverable with force:, but not the intended usage.
+    #
+    # Undoing ONE turn's own paths is a different job, and {Revert}'s.
     class Restore
+      include OnDisk
+
       class NoSnapshot < Error; end
       class Dirty < Error; end
       class EscapesRoot < Error; end
@@ -143,38 +146,6 @@ module Lain
         snapshot.nil? ? {} : snapshot.body.fetch("files")
       end
 
-      # A "../" key is refused wholly and before any write, force or not, rather
-      # than confined: a partial "confined" restore would leave disk in a state
-      # no snapshot ever recorded, which is a quieter lie than a named refusal.
-      # Lexical, matching Snapshot's lexical relativization.
-      def confine!(keys)
-        escaped = keys.reject { |key| within_root?(key) }
-        return if escaped.empty?
-
-        raise EscapesRoot,
-              "refusing to restore outside #{@root}: #{escaped.join(", ")}"
-      end
-
-      def within_root?(key)
-        path = File.expand_path(key, @root.to_s)
-        path == @root.to_s || path.start_with?("#{@root}#{File::SEPARATOR}")
-      end
-
-      # The lexical key check cannot see a symlink AT the path, and File.binwrite
-      # follows links -- a link planted at a managed path would carry recorded
-      # bytes wherever it points, including outside the root. So a symlink
-      # refuses exactly like an escaping key does, force notwithstanding, and
-      # even when it points inside the root: the snapshot recorded a regular file
-      # and writing through a link restores something else. lstat-only
-      # (File.symlink?), so nothing is dereferenced to decide.
-      def refuse_symlinks!(keys)
-        linked = keys.select { |key| File.symlink?(absolute(key)) }
-        return if linked.empty?
-
-        raise EscapesRoot,
-              "refusing to restore through symlinks (the record holds regular files): #{linked.join(", ")}"
-      end
-
       def refuse_dirty!(keys)
         dirty = keys.reject { |key| clean?(key) }
         return if dirty.empty?
@@ -194,16 +165,6 @@ module Lain
         actual.nil? || (!expected.nil? && actual == @store.fetch(expected).bytes)
       end
 
-      # nil for no regular file, including one deleted between check and read --
-      # the same collapse {Snapshot} makes, because here too the race resolves to
-      # the absence it raced.
-      def read(key)
-        path = absolute(key)
-        File.file?(path) ? File.binread(path) : nil
-      rescue Errno::ENOENT
-        nil
-      end
-
       # Each success is recorded in the ledger before the next operation runs;
       # the ensure keeps @in_force truthful whatever interrupts the loops. An IO
       # failure surfaces as {PartialApply} naming what landed, the raw Errno
@@ -211,8 +172,8 @@ module Lain
       def apply(target, doomed)
         ledger = Ledger.new(in_force)
         begin
-          doomed.each { |key| remove(key, ledger) }
-          target.each { |key, digest| place(key, digest, ledger) }
+          doomed.each { |key| take_away(key, ledger) }
+          target.each { |key, digest| put_back(key, digest, ledger) }
         rescue SystemCallError => e
           raise PartialApply.new(e, written: ledger.written, deleted: ledger.deleted)
         ensure
@@ -221,32 +182,14 @@ module Lain
         ledger.result
       end
 
-      def remove(key, ledger)
-        delete(key)
+      def take_away(key, ledger)
+        remove(key)
         ledger.deleted!(key)
       end
 
-      def place(key, digest, ledger)
-        write(key, @store.fetch(digest).bytes)
+      def put_back(key, digest, ledger)
+        place(key, @store.fetch(digest).bytes)
         ledger.written!(key, digest)
-      end
-
-      def write(key, bytes)
-        path = absolute(key)
-        FileUtils.mkdir_p(File.dirname(path))
-        File.binwrite(path, bytes)
-      end
-
-      # Already-absent is the goal, not an error: a file deleted out of band
-      # (or by a racing delete) needs nothing from us.
-      def delete(key)
-        File.delete(absolute(key))
-      rescue Errno::ENOENT
-        nil
-      end
-
-      def absolute(key)
-        File.expand_path(key, @root.to_s)
       end
     end
   end

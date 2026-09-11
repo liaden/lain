@@ -5,7 +5,7 @@ module Lain
     module Command
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
-                        :model_switch, :mode_switch, :chronicle, :role_spawn) do
+                        :model_switch, :mode_switch, :chronicle, :role_spawn, :snapshots) do
         def initialize(**readers)
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \
@@ -28,7 +28,9 @@ module Lain
       # and a construction-fixed collaborator READS. The gate's policy switch is
       # NOT a third: {CLI::Switchboard#apply} DERIVES it from a mode flip, so a
       # slot here would flatten a derived value next to its own cause and give
-      # one slot two writers.
+      # one slot two writers. `snapshots` is the {Agent::SnapshotSlot} the
+      # Agent's deliveries write through, so `/undo` reads the very log they
+      # feed.
       class Env
         # Reopened after the `Data.define` block: a constant written inside that
         # block would land on the enclosing module, not on Env.

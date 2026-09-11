@@ -38,15 +38,30 @@ module Lain
         # is ASSIGNED, not merely returned: the thunk is built before the Agent
         # it reads, so left as a bare return expression the local stays nil
         # forever and the first turn raises NoMethodError on it.
-        def build(board:, chronicle:, channel:, session:, backend:, timeline: nil, views: nil)
+        #
+        # `root:` is the PROJECT's root, where every snapshot is rooted, and
+        # `paths:` the state home a shadow snapshot scope keeps its store in.
+        def build(board:, chronicle:, channel:, session:, backend:, root:, paths: Lain::Paths.new, timeline: nil,
+                  views: nil)
           gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset,
                                                                    channel: LiveViews.tool_output(channel, views)))
 
           agent = nil
           Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: gate, session:,
                           timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
+                          snapshot_slot: snapshots(board, root:, paths:, journal: chronicle.record_journal, channel:),
                           **backing(backend, channel, -> { agent.timeline },
                                     chronicle:, board:)).tap { |built| agent = built }
+        end
+
+        # Born here, under the posture the board starts in, and handed to the
+        # board, because the board is the one object a `/mode` flip goes
+        # through ({Switchboard#apply} rebinds it). The board's own build is
+        # not where it can be born: that runs before any root reaches it.
+        def snapshots(board, root:, paths:, journal:, channel:)
+          Lain::Agent::SnapshotSlot.new(root:, scope: board.snapshot_scope, paths:, journal:, channel:).tap do |slot|
+            board.bind_snapshots(slot)
+          end
         end
 
         # The provider, and the compaction wiring hung off it -- the per-turn

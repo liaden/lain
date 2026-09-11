@@ -27,9 +27,12 @@ module Lain
     class ToolDelivery
       # `journal:` defaults to the Null channel for {Accounting}'s reason: no
       # caller writes `if journal`.
-      def initialize(runner:, snapshot_writer:, journal: Channel::Null.instance)
+      # `snapshots:` is a {SnapshotSlot}, read at every settle rather than
+      # captured here, so a posture flip between two turns reaches the next
+      # snapshot.
+      def initialize(runner:, snapshots:, journal: Channel::Null.instance)
         @runner = runner
-        @snapshot_writer = snapshot_writer
+        @snapshots = snapshots
         @journal = journal
       end
 
@@ -42,6 +45,9 @@ module Lain
       # commits and re-raises, and a return value would be discarded by the very
       # interrupt the commit exists to survive.
       #
+      # The slot is primed before the tools run: a shadow scope's before-tree
+      # has to predate the first write the turn's undo will put back.
+      #
       # @param response [Lain::Response] the assistant turn carrying the calls
       # @param timeline [Lain::Timeline] the timeline as of the assistant commit
       # @param session [Lain::Session] the tools' context, and the snapshot's paths
@@ -50,6 +56,7 @@ module Lain
       #   interrupt still ends the run it was asked to end
       def perform(response, timeline:, session:, &commit)
         answers = ToolRunner::Answers.for(response)
+        @snapshots.prime
         delivery = @runner.delivery(response, context: session, answers:)
       rescue Async::Stop => e
         cancel(answers, timeline, &commit)
@@ -67,7 +74,7 @@ module Lain
       def settle(delivery, timeline, session)
         committed = timeline.commit(role: :user, **delivery)
         yield committed
-        @snapshot_writer.write(timeline: committed, paths: session.writes)
+        @snapshots.write(timeline: committed, paths: session.writes)
       end
 
       # Shielded as ONE atom for {Agent#commit_and_account}'s reason and one
