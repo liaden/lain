@@ -107,8 +107,8 @@ RSpec.describe Lain::Epic::Mermaid do
     end
   end
 
-  # A review probe (`tmp/probes/review-T4/probe_mermaid_and_graph.rb`) found
-  # the old scheme collided: it disambiguated a sanitized BASE against other
+  # A probe found the old scheme collided: it disambiguated a sanitized BASE
+  # against other
   # ids that sanitized to the SAME base, but never checked a candidate against
   # ids that landed there directly. "a b" and "a.b" both sanitize to "a_b" and
   # correctly split into `n_a_b`/`n_a_b_2` -- but "a_b_2" sanitizes to exactly
