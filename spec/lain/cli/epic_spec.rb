@@ -124,6 +124,53 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
+  # `#progress` is the public seam a second renderer (the `--mermaid` flag
+  # here, a live status buffer later) reads instead of re-walking Home and
+  # Journals itself, so a diagram and the text report above can never
+  # disagree about which issue is ready.
+  describe "#progress" do
+    it "returns the same folded state the text report renders from" do
+      write_epic("alpha", chain)
+      session("one.ndjson", transition("a"))
+
+      progress = command.progress("alpha")
+
+      expect(progress).to be_a(Lain::Epic::Progress)
+      expect(progress.status("a")).to eq("done")
+      expect(progress.ready.map(&:id)).to eq(["b"])
+    end
+  end
+
+  describe "--mermaid" do
+    it "renders the mermaid diagram instead of the text report" do
+      write_epic("alpha", chain)
+      session("one.ndjson", transition("a"))
+
+      diagram = command.status("alpha", mermaid: true)
+
+      expect(diagram).to start_with("flowchart TD\n")
+      expect(diagram).to include("class n_a done")
+      expect(diagram).to include("n_a --> n_b")
+    end
+
+    it "renders byte-identically across two runs, from the same fold the text report reads" do
+      write_epic("alpha", chain)
+      session("one.ndjson", transition("a"))
+
+      first = command.status("alpha", mermaid: true)
+      second = command.status("alpha", mermaid: true)
+
+      expect(first).to eq(second)
+      expect(first).to eq(Lain::Epic::Mermaid.render(command.progress("alpha")))
+    end
+
+    it "resolves the sole epic exactly as the text report does, when no slug is named" do
+      write_epic("alpha", graph_of(issue("a")))
+
+      expect(command.status(mermaid: true)).to include("n_a")
+    end
+  end
+
   # The parenthetical after "ready: nothing" is the first thing a reader hits,
   # and the first draft asserted a cause it never computed ("every remaining
   # issue is blocked or already moving") -- false for an abandoned issue, and

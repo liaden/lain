@@ -147,16 +147,21 @@ module Lain
 
       # @param slug [String, nil] the epic to report on; omitted resolves to the
       #   sole epic in the home
+      # @param mermaid [Boolean] render {Epic::Mermaid} over the fold instead of
+      #   the text projection -- the diagram is drawn from the same {#progress}
+      #   this class exposes publicly, so a mermaid render and a text render
+      #   can never disagree about which issue is ready
       # @return [String] the rendered projection, or the guidance an empty home
       #   deserves
       # @raise [Ambiguous, UnknownEpic, UnreadableHome] and any {Lain::Error}
       #   from the home, the document, or the fold -- exe/lain renders all of
       #   them as a message with no backtrace
-      def status(slug = nil)
+      def status(slug = nil, mermaid: false)
         slugs = slugs_in(container)
         return unstarted(container) if slugs.empty?
 
-        report(chosen(slug, slugs, container, command: "epic status"))
+        resolved = chosen(slug, slugs, container, command: "epic status")
+        mermaid ? Lain::Epic::Mermaid.render(progress(resolved)) : report(resolved)
       end
 
       # WHICH epic a bare command means: the sole one in the home, or the named
@@ -175,16 +180,36 @@ module Lain
       # @raise [Ambiguous, UnknownEpic, UnreadableHome]
       def resolve_slug(slug = nil, command:) = chosen(slug, slugs_in(container), container, command:)
 
+      # The Journal's runtime truth folded over `epic.md`, for a slug already
+      # resolved (through {#resolve_slug} or {#status}'s own `chosen`).
+      #
+      # Public so a second renderer over the same fold -- {Epic::Mermaid} here,
+      # the `lain://status` buffer later -- asks this object rather than
+      # re-walking {Home} and {Journals} itself, which is what keeps a text
+      # report and a diagram of the SAME epic from ever disagreeing about which
+      # issue is ready. `slug` is required and unchecked against the container
+      # on purpose: every caller already resolved it, and re-validating here
+      # would just be a second copy of {#resolve_slug}'s own rule.
+      #
+      # @param slug [String] a real epic slug, already resolved
+      # @return [Epic::Progress]
+      # @raise [Lain::Error] from the home or the fold
+      def progress(slug)
+        Lain::Epic::Progress.fold(journals_for(slug).to_a, graph: home_for(slug).read_epic, epic_slug: slug)
+      end
+
       private
 
       # Memoized: three of the four callers above ask for it in one invocation,
       # and it is pure path arithmetic over values this object already holds.
       def container = @container ||= Lain::Epic::Home.container(config: @config, paths: @paths, root: @root)
 
+      def home_for(slug) = Lain::Epic::Home.resolve(config: @config, paths: @paths, slug:, root: @root)
+
       # ONE {Journals}, so the records folded and the directory reported are the
       # same walk rather than two that could disagree.
       def report(slug)
-        home = Lain::Epic::Home.resolve(config: @config, paths: @paths, slug:, root: @root)
+        home = home_for(slug)
         walked = journals_for(slug)
         progress = Lain::Epic::Progress.fold(walked.to_a, graph: home.read_epic, epic_slug: slug)
         Report.new(slug:, path: home.path, sessions: walked.dir, progress:,
