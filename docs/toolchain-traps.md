@@ -51,7 +51,18 @@ repo-wide: a concurrent reader in another worktree sees its own unstaged edits v
 `git status` disagree with what it just wrote, and untracked-file visibility change under it. Two
 agents hit this as a bare `NameError` on a constant they had just added. It is the "do not read the
 tree while a suite run is in flight" trap one layer deeper -- it reaches `git status`, not only file
-reads. `pgrep -f '[p]re-commit'` before believing a tree that looks wrong, and re-check once quiet.
+reads. Check for a live hook before believing a tree that looks wrong, and re-check once quiet --
+with the precise pattern:
+
+```bash
+pgrep -cf '[p]re-commit (hook-impl|run)'   # a real hook runs as `pre-commit hook-impl ...`
+```
+
+**The bare `pgrep -f '[p]re-commit'` false-matches.** The bracket trick hides only the pattern's own
+spelling; any process whose command text holds the plain word matches it. A sibling agent's
+background waiter whose echo said "waiting for pre-commit" read as a live hook to every other agent,
+and left several reading "busy" for the length of a run (2026-09-11). Match the hook's real argv, and
+never put the unbracketed word in a long-running command of your own.
 
 **`rake compile` needs `clang`** (bindgen wants `libclang`). Switching interpreters invalidates
 `rb-sys`'s build fingerprint and forces a rebuild, which is usually when its absence surfaces.
@@ -237,6 +248,22 @@ the cop.
   `Lain::Frontend::Neovim the review thread pane following the cursor
   does not re-place the diff on every further move once it is back`; and
   `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
+
+  Added 2026-09-11, from a run with two to five agents running rspec at once. Each of these went red
+  in a pre-commit or `pspec` run while another suite was live, and passed alone -- run the named
+  example by itself on a quiet box before believing any of them:
+  `Lain::CLI::Up against a real tmux server --nvim cockpit splits the chat window into an nvim pane
+  and a chat pane sharing one socket and one cwd`;
+  `Lain::Supervisor as an actor reactor the bounded drain over a mixed fleet an actor's own captured
+  Async::TimeoutError is not misread as the drain's bound`;
+  `role_prelude_wiring_spec`'s `sends no more than Anthropic's 4 cache_control blocks for a
+  long-lived role child`;
+  `lain.rb without the compiled extension keeps Ruby's own LoadError message rather than replacing
+  it`;
+  `the review annotation runtime a buffer that goes away drops the orphaned entry once it has
+  settled it, so a reused bufnr inherits nothing`;
+  and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
+  probing`.
 
   Added 2026-08-28, and it is the one shape this ledger did not yet carry: two examples in
   `neovim_runtime_spec`'s `answering a parked approval in the editor, end to end` group fail
