@@ -21,7 +21,19 @@ class BenchArmShells
 
   def call(*argv, **)
     @calls << argv
-    Fake.new(argv, 0, "", "")
+    Fake.new(argv, 0, "", stdout_for(argv))
+  end
+
+  private
+
+  # The worktree backend names the branch HEAD is on when it resolves, then
+  # reads that branch's tip as a full SHA per lease; every other git call is
+  # answered empty.
+  def stdout_for(argv)
+    return "refs/heads/main\n" if argv.include?("symbolic-ref")
+    return "#{"0" * 40}\n" if argv.include?("rev-parse")
+
+    ""
   end
 end
 
@@ -253,7 +265,8 @@ RSpec.describe Lain::Bench::CLI do
           FileUtils.mkdir_p(File.join(project, ".git"))
           journal = Lain::Channel.new
           cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "worktree", root: project, journal:,
-                               paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime }),
+                               paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime,
+                                                             "XDG_STATE_HOME" => runtime }),
                                shell_out_factory: BenchArmShells.new)
 
           leases = journal.drain.grep(Lain::Telemetry::IsolationLease).group_by(&:kind)

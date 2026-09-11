@@ -8,18 +8,19 @@ require "tomlrb"
 require_relative "config/epics"
 require_relative "config/gates"
 require_relative "config/answers"
+require_relative "config/isolation"
 
 module Lain
   # Reads `<root>/.lain/config.toml`. Absence is not an error -- {.load} on a
   # root with no file returns the same value {.empty} does, so a caller never
   # writes an `if File.exist?` guard of its own (Null Object).
   #
-  # `[epics]`, `[approval]`, `[sensitivity]` and `[shell]` are understood. Every
-  # OTHER top-level table is tolerated and ignored: other consumers are coming
-  # (chat-ux's prompt config may converge on this same file later), and a table
-  # this class doesn't yet read is not this class's typo to catch. Each table it
-  # DOES read is one small class's whole surface -- {Epics}, {Answers},
-  # {Sensitivity::Rules}, {Shell::Exclusions} -- so a typo or a wrong-shaped
+  # `[epics]`, `[approval]`, `[isolation]`, `[sensitivity]` and `[shell]` are
+  # understood. Every OTHER top-level table is tolerated and ignored: other
+  # consumers are coming (chat-ux's prompt config may converge on this same file
+  # later), and a table this class doesn't yet read is not this class's typo to
+  # catch. Each table it DOES read is one small class's whole surface -- {Epics},
+  # {Answers}, {Isolation}, {Sensitivity::Rules}, {Shell::Exclusions} -- so a typo or a wrong-shaped
   # value inside one is loud instead of silently defaulting or crashing three
   # call frames deep.
   #
@@ -78,12 +79,16 @@ module Lain
     # @raise [Answers::UnknownKeys] when it names a strength this class does not know
     # @raise [Answers::NotAList] when a strength is not a list of tables
     # @raise [Answers::MalformedEntry] when a remembered entry could never match a call
+    # @raise [Isolation::NotATable] when `[isolation]` is present but not a table
+    # @raise [Isolation::UnknownKeys] when it carries a key this class does not know
+    # @raise [Isolation::InvalidValue] when a key's value is outside its rule
     def self.load(root: Dir.pwd)
       path = path_for(root)
       return empty unless File.exist?(path)
 
       raw = read(path)
-      new(epics: Epics.from(raw["epics"], path:), approval: Answers.from(raw["approval"], path:))
+      new(epics: Epics.from(raw["epics"], path:), approval: Answers.from(raw["approval"], path:),
+          isolation: Isolation.from(raw["isolation"], path:))
     end
 
     # The `[sensitivity]` table, and NOTHING else in the file -- what a project
@@ -168,11 +173,12 @@ module Lain
       EMPTY
     end
 
-    attr_reader :epics, :approval
+    attr_reader :epics, :approval, :isolation
 
-    def initialize(epics:, approval: Answers.empty)
+    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty)
       @epics = epics
       @approval = Answers.coerce(approval)
+      @isolation = Isolation.coerce(isolation)
       freeze
     end
 
@@ -188,12 +194,13 @@ module Lain
     # mixes in `self.class` for the same reason -- two values a Hash should
     # treat as distinct keys must not collide.
     def ==(other)
-      other.instance_of?(self.class) && epics == other.epics && approval == other.approval
+      other.instance_of?(self.class) && epics == other.epics && approval == other.approval &&
+        isolation == other.isolation
     end
     alias eql? ==
 
     def hash
-      [self.class, epics, approval].hash
+      [self.class, epics, approval, isolation].hash
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

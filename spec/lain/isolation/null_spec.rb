@@ -21,6 +21,12 @@ RSpec.describe Lain::Isolation::Null do
     end
   end
 
+  # No checkout is cut, so there is no branch to hand back to: the Null base,
+  # never a nil a caller must guard.
+  it "names no working branch" do
+    expect(backend.base).to equal(Lain::Isolation::WorkingBranch::NONE)
+  end
+
   describe "the lease" do
     subject(:lease) { backend.acquire("worker-1") }
 

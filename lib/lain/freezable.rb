@@ -19,5 +19,25 @@ module Lain
       super
       freeze
     end
+
+    # The two field normalizations a deeply frozen `Data` value needs over and
+    # over: a String interned (or nil kept as the absence it signals), and a
+    # Boolean that is really one. Nested, so a class prepending {Freezable}
+    # gains neither as an instance method.
+    module Fields
+      module_function
+
+      def pinned(value) = value.nil? ? nil : -value.to_s
+
+      def pinned_each(values) = values.map { |value| pinned(value) }.freeze
+
+      # Strict, because a truthy "yes" coerced to `true` hides a caller that
+      # passed the wrong thing entirely.
+      def boolean!(value, name)
+        return value if [true, false].include?(value)
+
+        raise ArgumentError, "#{name} must be true or false, got #{value.inspect}"
+      end
+    end
   end
 end

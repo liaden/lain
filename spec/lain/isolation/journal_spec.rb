@@ -14,6 +14,8 @@ class FakeIsolationBackend
 
   attr_reader :acquired
 
+  def base = :the_working_branch
+
   def acquire(worker_id)
     @acquired << worker_id
     Lease.new(worker_env: Lain::WorkerEnv.new(cwd: "/fake/#{worker_id}", env: {}))
@@ -28,6 +30,12 @@ RSpec.describe Lain::Isolation::Journal do
 
   def parsed_records
     io.string.each_line.map { |line| Lain::Journal.parse(line) }
+  end
+
+  # A handback reads its target off the fleet's isolation, and this decorator
+  # sits between that caller and the backend that knows it.
+  it "answers the wrapped backend's working branch" do
+    expect(decorator.base).to eq(:the_working_branch)
   end
 
   describe "#acquire" do
@@ -89,10 +97,13 @@ RSpec.describe Lain::Isolation::Journal do
       expect(released.size).to eq(1)
     end
 
+    # path/base/branch are attribution a reaper reads back -- where the
+    # checkout is and what it was cut from -- never the env or its credentials.
     it "carries no worker_env/credential fields onto the record" do
       lease.release
 
-      expect(parsed_records.map(&:keys)).to all(match_array(%w[ts type kind worker_key backend service]))
+      expect(parsed_records.map(&:keys))
+        .to all(match_array(%w[ts type kind worker_key backend service path base branch]))
     end
   end
 end

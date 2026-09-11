@@ -20,7 +20,13 @@ module Lain
     # committed state into its successor and defeating isolation on exactly the
     # crash-restart path. Detached HEAD holds no branch: a crashed worker's
     # commits become unreachable when its worktree is reaped, so a re-acquire is
-    # always a clean checkout of the repo's current commit.
+    # always a clean checkout of the base's tip.
+    #
+    # CUT FROM A BASE, as a SHA. Each acquire reads its {WorkingBranch}'s tip and
+    # hands `worktree add` that full SHA, never a name: a name is what git's
+    # DWIM turns into a branch checkout. Read per acquire, so a lease taken after
+    # a commit lands starts from that commit. A backend built with no base
+    # refuses every lease, rather than cutting from whatever HEAD happens to be.
     #
     # UNCOMMITTED WORK IS SCRATCH. Release removes the worktree with `--force`,
     # discarding any uncommitted or untracked files in it. The ONE thing release
@@ -50,9 +56,13 @@ module Lain
       # deletes it in the child (`Mixlib::ShellOut` and `Process.spawn` agree on
       # that, which is what lets {Shell::Out} and an injected mixlib both run
       # these calls), leaving `-C @repo_root` the sole authority.
+      # GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT are how a hook's `-c`
+      # settings reach its children; without COUNT, the KEY_n/VALUE_n pairs
+      # are ignored, so scrubbing it is enough.
       GIT_CONTEXT_SCRUB = {
         "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
-        "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil
+        "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil,
+        "GIT_CONFIG_PARAMETERS" => nil, "GIT_CONFIG_COUNT" => nil
       }.freeze
 
       # A refused lease. Surfaced LOUDLY -- the backend never hands back a
@@ -72,6 +82,8 @@ module Lain
       # @param repo_root [String] the repository the worktrees branch from
       # @param root [String] the base directory per-worker worktrees live under
       #   (relocatable, injected -- the {Workspace::Snapshot} root idiom)
+      # @param base [#tip, #name] the {WorkingBranch} every lease is cut from;
+      #   {WorkingBranch::NONE} refuses every lease
       # @param paths [Paths] supplies the per-worker key via {Paths#project_hash}
       # @param shell_out_factory [#call] builds the subprocess runner, a factory
       #   so a spec substitutes it. {Shell::Out} rather than `Mixlib::ShellOut`
@@ -79,15 +91,20 @@ module Lain
       #   every `git` here would cost the parent an amount linear in its own
       #   RSS, for a runner whose result is three values. Same argv, same
       #   `environment:` semantics, same timeout, so an injected mixlib works.
-      def initialize(root:, repo_root: Dir.pwd, paths: Paths.new,
+      def initialize(root:, repo_root: Dir.pwd, base: WorkingBranch::NONE, paths: Paths.new,
                      shell_out_factory: Shell::Out.public_method(:new))
         @repo_root = File.expand_path(repo_root)
         @root = File.expand_path(root)
+        @base = base
         @paths = paths
         @shell_out_factory = shell_out_factory
         @monitor = Monitor.new
         @leased = Set.new
       end
+
+      # @return [#tip, #name] the working branch every lease is cut from, and so
+      #   the one a handback of that lease's work targets
+      attr_reader :base
 
       # The reap+add+register is serialized, so a concurrent acquire of the SAME
       # worker_id refuses rather than clobbering.
@@ -95,17 +112,12 @@ module Lain
       #   filesystem-safe, collision-resistant per-worker directory name
       # @return [Lease] cwd = the new worktree; release removes it
       # @raise [Refused] if `git worktree add` fails or the path is already leased
+      # @raise [WorkingBranch::Refused] if the base names no commit
       def acquire(worker_id)
         path = worktree_path(worker_id)
-        @monitor.synchronize do
-          raise Refused, "worktree path #{path} is already leased (worker #{worker_id})" if @leased.include?(path)
-
-          FileUtils.mkdir_p(@root)
-          reap(path)
-          add(path)
-          @leased << path
-        end
-        Lease.new(worker_env: worker_env_for(path, worker_id), on_release: -> { release_path(path) })
+        base = @monitor.synchronize { check_out(path, worker_id) }
+        Lease.new(worker_env: worker_env_for(path, worker_id), on_release: -> { release_path(path) },
+                  origin: Lease::Origin.new(path:, base:, branch: @base.name))
       end
 
       protected
@@ -119,8 +131,22 @@ module Lain
 
       def worktree_path(worker_id) = File.join(@root, @paths.project_hash(worker_id.to_s))
 
-      def add(path)
-        shell = git("worktree", "add", "--detach", path)
+      # The tip is read before anything touches disk, so a backend with no base
+      # refuses leaving nothing behind.
+      # @return [String] the SHA the checkout was cut from
+      def check_out(path, worker_id)
+        raise Refused, "worktree path #{path} is already leased (worker #{worker_id})" if @leased.include?(path)
+
+        base = @base.tip
+        FileUtils.mkdir_p(@root)
+        reap(path)
+        add(path, base)
+        @leased << path
+        base
+      end
+
+      def add(path, commit)
+        shell = git("worktree", "add", "--detach", path, commit)
         raise Refused.from_git("add", path, shell) unless shell.exitstatus.zero?
       end
 

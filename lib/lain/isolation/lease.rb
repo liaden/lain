@@ -19,17 +19,33 @@ module Lain
     # marks itself released BEFORE running the action, so an action that raises
     # still leaves the lease settled rather than re-runnable.
     class Lease
+      # Where a lease's checkout is, the commit it was cut from, and the branch
+      # that commit was read from -- what a reaper needs to judge a checkout
+      # after the process that leased it is gone. Every field is nil for a
+      # backend that cuts no checkout.
+      Origin = Data.define(:path, :base, :branch) do
+        def initialize(path: nil, base: nil, branch: nil)
+          super(path: Freezable::Fields.pinned(path), base: Freezable::Fields.pinned(base),
+                branch: Freezable::Fields.pinned(branch))
+        end
+      end
+
       # @param worker_env [WorkerEnv] the cwd/env this lease hands the worker
       # @param on_release [#call] reclaims the provisioned resource; defaults to
       #   a no-op (the {Null} case), so no caller guards on a missing action
-      def initialize(worker_env:, on_release: -> {})
+      # @param origin [Origin] where the leased checkout came from
+      def initialize(worker_env:, on_release: -> {}, origin: Origin.new)
         @worker_env = worker_env
         @on_release = on_release
+        @origin = origin
         @released = false
       end
 
       # @return [WorkerEnv] the leased cwd and env
       attr_reader :worker_env
+
+      # @return [Origin] where the leased checkout came from
+      attr_reader :origin
 
       # @return [Boolean] whether this lease has already been released
       def released? = @released

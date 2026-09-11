@@ -1145,8 +1145,14 @@ RSpec.describe Lain::Supervisor do
       end
 
       let(:handback_journal) { [] }
-      let(:backend) { Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees) }
-      let(:handoff) { Lain::Isolation::WorkerHandoff.over(repo_root: @repo_root, journal: handback_journal) }
+      let(:backend) do
+        Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees,
+                                      base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+      end
+      let(:handoff) do
+        Lain::Isolation::WorkerHandoff.over(repo_root: @repo_root, base: Lain::Isolation::WorkingBranch::NONE,
+                                            journal: handback_journal)
+      end
 
       # The spec's OWN git calls scrub the git-context env, so building and
       # inspecting the throwaway repo is hermetic under an ambient GIT_*-polluted

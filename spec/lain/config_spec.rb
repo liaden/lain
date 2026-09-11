@@ -18,6 +18,52 @@ RSpec.describe Lain::Config do
         expect(described_class.load(root:)).to eq(described_class.empty)
       end
     end
+
+    it "gives the worktree lifecycle its ruled defaults" do
+      Dir.mktmpdir do |root|
+        expect(described_class.load(root:).isolation.to_h)
+          .to eq(retain_days: 7, rebase_retries: 1, diff_algorithm: "histogram", conflict_style: "zdiff3")
+      end
+    end
+  end
+
+  describe "the [isolation] table" do
+    it "is read by .load" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[isolation]\nretain_days = 3\nrebase_retries = 0\n")
+
+        expect(described_class.load(root:).isolation.to_h)
+          .to include(retain_days: 3, rebase_retries: 0)
+      end
+    end
+
+    it "refuses a bad value, naming the key and the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[isolation]\nretain_days = -1\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Isolation::InvalidValue, /#{Regexp.escape(config_path(root))}.*retain_days/)
+      end
+    end
+
+    it "reads a hand-built table through the same rules, rather than accepting it silently" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+
+      expect(described_class.new(epics:, isolation: { "retain_days" => 3 }).isolation.retain_days).to eq(3)
+      expect { described_class.new(epics:, isolation: { "retian_days" => 3 }) }
+        .to raise_error(Lain::Config::Isolation::UnknownKeys, /retian_days/)
+      expect { described_class.new(epics:, isolation: 3) }
+        .to raise_error(Lain::Config::Isolation::NotATable)
+    end
+
+    it "refuses a misspelt key, naming the key and the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[isolation]\nretian_days = 7\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Isolation::UnknownKeys, /#{Regexp.escape(config_path(root))}.*retian_days/)
+      end
+    end
   end
 
   describe "malformed TOML" do
@@ -196,6 +242,16 @@ RSpec.describe Lain::Config do
     it "distinguishes two configs that remember different answers" do
       epics = Lain::Config::Epics.new(home: :xdg)
       a = described_class.new(epics:, approval: { "deny_tool" => [{ "tool" => "bash" }] })
+      b = described_class.new(epics:)
+
+      expect(a).not_to eq(b)
+      expect(a.hash).not_to eq(b.hash)
+    end
+
+    it "distinguishes two configs with different worktree lifecycles" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      isolation = Lain::Config::Isolation.from({ "retain_days" => 3 }, path: "config.toml")
+      a = described_class.new(epics:, isolation:)
       b = described_class.new(epics:)
 
       expect(a).not_to eq(b)

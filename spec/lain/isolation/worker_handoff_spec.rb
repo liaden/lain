@@ -66,8 +66,13 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
   end
 
   let(:journal) { [] }
-  let(:handback) { Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:) }
-  let(:backend) { Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root) }
+  # The opt-out from a working-branch target, spelled at every call site that takes it.
+  let(:no_target) { Lain::Isolation::WorkingBranch::NONE }
+  let(:handback) { Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, base: no_target, journal:) }
+  let(:backend) do
+    Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root,
+                                  base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+  end
   let(:resolver) { RecordingResolver.new }
 
   # The spec's OWN git calls scrub the git-context env, so building and
@@ -530,7 +535,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
     def exploding_call(error, message = "the index is unwritable")
       Class.new(SimpleDelegator) do
         define_method(:call) { |*, **| raise(error, message) }
-      end.new(Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:))
+      end.new(Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, base: no_target, journal:))
     end
 
     def over(broken) = described_class.new(handback: broken, repo_root: @repo_root, resolver:)
@@ -628,7 +633,8 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
 
         real.call(*args, **kwargs)
       end
-      Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:, shell_out_factory: factory)
+      Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, base: no_target, journal:,
+                                              shell_out_factory: factory)
     end
 
     # The summary is the ONE line an arm folds into a worker's result. A `:failed`
@@ -702,7 +708,8 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
         run_git(@repo_root, "update-ref", ref, other) if args.include?("update-ref")
         real.call(*args, **kwargs)
       end
-      losing = Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:, shell_out_factory: racing)
+      losing = Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, base: no_target, journal:,
+                                                       shell_out_factory: racing)
 
       report = described_class.new(handback: losing, repo_root: @repo_root, resolver:)
                               .reclaim(lease, worker_id: "worker-1")
@@ -729,7 +736,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
     def exploding(error, message)
       Class.new(SimpleDelegator) do
         define_method(:abandon) { |*, **| raise(error, message) }
-      end.new(Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:))
+      end.new(Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, base: no_target, journal:))
     end
 
     [[IOError, "the index is unwritable"], [Async::Cancel, "cancelled"], [Interrupt, "interrupted"]].each do
@@ -767,12 +774,115 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
     end
   end
 
+  # Later work promotes and lands by full SHA, so the Report has to name the
+  # commit that landed, not only the ref the work was anchored under.
+  describe "the report names what landed" do
+    def head_of(dir) = run_git(dir, "rev-parse", "HEAD").strip
+
+    it "carries the worker's full SHA and says the parent fast-forwarded" do
+      lease = clean_lease
+      worker = head_of(lease.worker_env.cwd)
+
+      report = handoff.reclaim(lease, worker_id: "worker-1")
+
+      expect([report.kind, report.sha, report.fast_forward]).to eq([:merged, worker, true])
+    ensure
+      lease&.release
+    end
+
+    it "carries the merge commit's SHA once a resolver settles a conflict" do
+      lease = conflicting_lease("alpha.txt")
+      resolving = described_class.new(handback:, repo_root: @repo_root, resolver: resolving_resolver)
+
+      report = resolving.reclaim(lease, worker_id: "worker-1")
+
+      expect([report.kind, report.sha, report.fast_forward]).to eq([:resolved, head_of(@repo_root), false])
+    ensure
+      lease&.release
+    end
+
+    it "names no commit when nothing landed" do
+      lease = clean_lease
+      File.write(File.join(@repo_root, "beta.txt"), "uncommitted parent edit\n")
+
+      report = handoff.reclaim(lease, worker_id: "worker-1")
+
+      expect([report.kind, report.sha, report.fast_forward]).to eq([:declined, nil, false])
+    ensure
+      lease&.release
+    end
+
+    it "defaults every other way of building a report to no commit and no fast-forward" do
+      reports = [described_class::Report.nothing, described_class::Report.new(kind: :conflicted),
+                 described_class::Null.reclaim(nil, worker_id: "w")]
+
+      expect(reports.map { |report| [report.sha, report.fast_forward] }).to all(eq([nil, false]))
+    end
+
+    it "refuses a fast_forward that is not exactly true or false" do
+      ["yes", nil, 1].each do |value|
+        expect { described_class::Report.new(kind: :merged, fast_forward: value) }
+          .to raise_error(ArgumentError, /fast_forward/)
+      end
+    end
+
+    it "is deeply frozen with a SHA on it" do
+      expect(described_class::Report.new(kind: :merged, sha: +("a" * 40), fast_forward: true)).to be_deeply_frozen
+    end
+  end
+
+  describe ".over takes the working branch" do
+    it "must be told its target: leaving base: out is an ArgumentError" do
+      expect { described_class.over(repo_root: @repo_root, journal:) }.to raise_error(ArgumentError, /base/)
+    end
+
+    it "declines a handback into a parent the human switched off the working branch" do
+      original = run_git(@repo_root, "branch", "--show-current").strip
+      run_git(@repo_root, "switch", "-q", "-c", "feat")
+      feat = Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root)
+      lease = clean_lease
+      run_git(@repo_root, "switch", "-q", original)
+
+      report = described_class.over(repo_root: @repo_root, journal:, base: feat).reclaim(lease, worker_id: "worker-1")
+
+      expect(report.kind).to eq(:declined)
+      expect(report.detail).to include("feat", original)
+      expect(parent_body("alpha.txt")).to eq("seed\n")
+    ensure
+      lease&.release
+    end
+  end
+
+  describe ".over takes the merge strategy" do
+    it "hands the configured strategy to the handback it builds" do
+      two_sided = Lain::Isolation::MergeStrategy.new(conflict_style: "merge", diff_algorithm: "myers")
+      lease = clean_lease
+
+      described_class.over(repo_root: @repo_root, base: no_target, journal:, strategy: two_sided)
+                     .reclaim(lease, worker_id: "worker-1")
+
+      expect(journal.map(&:strategy).uniq).to eq(["conflict_style=merge diff_algorithm=myers"])
+    ensure
+      lease&.release
+    end
+
+    it "defaults to lain's strategy" do
+      lease = clean_lease
+
+      described_class.over(repo_root: @repo_root, base: no_target, journal:).reclaim(lease, worker_id: "worker-1")
+
+      expect(journal.map(&:strategy).uniq).to eq([Lain::Isolation::MergeStrategy::DEFAULT.to_s])
+    ensure
+      lease&.release
+    end
+  end
+
   # The prompt's absolute paths and the merge itself must name ONE checkout: two
   # roots would tell the resolver to open files that are not the ones on disk.
   describe ".over builds both halves from a single root" do
     it "hands the resolver paths under the same checkout the merge landed in" do
       lease = conflicting_lease("alpha.txt")
-      built = described_class.over(repo_root: @repo_root, journal:, resolver: resolving_resolver)
+      built = described_class.over(repo_root: @repo_root, base: no_target, journal:, resolver: resolving_resolver)
 
       report = built.reclaim(lease, worker_id: "worker-1")
 

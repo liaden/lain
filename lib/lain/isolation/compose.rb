@@ -184,8 +184,14 @@ module Lain
         @env = env
       end
 
+      # Forwarded: a handback reads its target off the fleet's isolation, and
+      # this decorator stands in front of the backend that knows it.
+      # @return [#name, #tip, #current_in?] the inner backend's working branch
+      def base = @inner.base
+
       # The lease's WorkerEnv carries the inner cwd plus the service URLs, and
-      # its release tears the stack down then releases inner.
+      # its release tears the stack down then releases inner, whose origin it
+      # hands back unchanged.
       # @param worker_id [Object] keyed through {Paths#project_hash} into the `-p` name
       # @return [Lease]
       # @raise [Refused] on an occupied project name, a failed `up`, or an
@@ -239,7 +245,7 @@ module Lain
       def up_and_lease(stack, base, compose_services)
         stack.up
         published = compose_services.map { |service| service.discover(stack) }
-        Lease.new(worker_env: enrich(base.worker_env, published),
+        Lease.new(worker_env: enrich(base.worker_env, published), origin: base.origin,
                   on_release: -> { release(stack, base) })
       rescue StandardError
         reap(stack)

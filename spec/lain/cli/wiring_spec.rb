@@ -1109,8 +1109,10 @@ RSpec.describe Lain::CLI::Wiring do
           Dir.mktmpdir("lain-d2-runtime") do |runtime|
             repo = File.realpath(project)
             seed_repo(repo)
-            runtime_dir = File.realpath(runtime)
-            Dir.chdir(repo) { with_env("XDG_RUNTIME_DIR" => runtime_dir) { yield repo, runtime_dir } }
+            Dir.mktmpdir("lain-d2-state") do |state|
+              xdg = { "XDG_RUNTIME_DIR" => File.realpath(runtime), "XDG_STATE_HOME" => File.realpath(state) }
+              Dir.chdir(repo) { with_env(xdg) { yield repo, xdg["XDG_STATE_HOME"] } }
+            end
           end
         end
       end
@@ -1170,8 +1172,8 @@ RSpec.describe Lain::CLI::Wiring do
 
           expect(leases.map { |lease| [lease.kind, lease.backend] })
             .to eq([[:acquired, "Lain::Isolation::Worktree"], [:released, "Lain::Isolation::Worktree"]])
-          # Under the throwaway XDG_RUNTIME_DIR, which nothing but a leased
-          # checkout writes into, and NOT under the chat's own tree.
+          # Under the throwaway XDG_STATE_HOME -- its own dir, apart from the
+          # runtime dir -- and NOT under the chat's own tree.
           expect(child_resolved_path).to start_with(runtime_dir)
           expect(child_resolved_path).to include("/worktrees/")
           expect(child_resolved_path).not_to start_with(chat_cwd)

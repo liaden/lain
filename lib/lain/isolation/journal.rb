@@ -28,13 +28,19 @@ module Lain
         @journal = journal
       end
 
+      # Forwarded, because a handback reads its target off the fleet's
+      # isolation and this decorator stands between that caller and the
+      # backend that knows it.
+      # @return [#name, #tip, #current_in?] the wrapped backend's working branch
+      def base = @backend.base
+
       # @param worker_id [Object] the worker leasing an environment
       # @return [Lease] wraps the backend's own lease so its release is
       #   journaled too
       def acquire(worker_id)
         lease = @backend.acquire(worker_id)
-        emit(:acquired, worker_id)
-        Lease.new(worker_env: lease.worker_env, on_release: -> { release(lease, worker_id) })
+        emit(:acquired, worker_id, lease.origin)
+        Lease.new(worker_env: lease.worker_env, origin: lease.origin, on_release: -> { release(lease, worker_id) })
       end
 
       private
@@ -43,12 +49,13 @@ module Lain
       # {Worktree::Refused}) never journals a release that did not happen.
       def release(lease, worker_id)
         released = lease.release
-        emit(:released, worker_id) if released
+        emit(:released, worker_id, lease.origin) if released
         released
       end
 
-      def emit(kind, worker_id)
-        @journal << Telemetry::IsolationLease.new(kind:, worker_key: worker_id.to_s, backend: @backend.class.name)
+      def emit(kind, worker_id, origin)
+        @journal << Telemetry::IsolationLease.new(kind:, worker_key: worker_id.to_s, backend: @backend.class.name,
+                                                  **origin.to_h)
       end
     end
   end

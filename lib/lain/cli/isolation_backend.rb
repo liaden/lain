@@ -123,6 +123,7 @@ module Lain
       #   whatever the project declares
       # @raise [Unknown] on a name outside {BACKENDS}
       # @raise [NotARepository] for `worktree` outside a git repository
+      # @raise [Isolation::WorkingBranch::Refused] for `worktree` on a detached HEAD
       def backend = with_compose(with_databases(journalled(concrete)))
 
       private
@@ -144,16 +145,25 @@ module Lain
 
       def worktree
         repo = repo_root
-        Isolation::Worktree.new(root: worktree_root(repo), repo_root: repo, paths: @paths,
-                                shell_out_factory: @shell_out_factory)
+        Isolation::Worktree.new(root: worktree_root(repo), repo_root: repo, base: working_branch(repo),
+                                paths: @paths, shell_out_factory: @shell_out_factory)
+      end
+
+      # Named HERE, which for chat is launch: the branch the parent stands on
+      # now is the one every child is cut from and handed back to, whatever
+      # the checkout is switched to later. A detached HEAD is refused at this
+      # moment for the reason {NotARepository} is.
+      def working_branch(repo)
+        Isolation::WorkingBranch.checked_out(repo_root: repo, shell_out_factory: @shell_out_factory)
       end
 
       # Keyed on the REPOSITORY, never on the cwd: two runs started in
       # different subdirectories of one project lease out of one root (so the
       # reap of a leftover checkout finds it), while two projects never
-      # collide. Under {Paths#runtime_dir} rather than a state dir because a
-      # leased checkout is ephemeral scratch that release always reclaims.
-      def worktree_root(repo) = File.join(@paths.runtime_dir, "worktrees", @paths.project_hash(repo))
+      # collide. Under {Paths#state_home}, not the tmpfs runtime dir, because a
+      # checkout is retained for `[isolation] retain_days` and a reboot must not
+      # cut that short.
+      def worktree_root(repo) = File.join(@paths.state_home, "worktrees", @paths.project_hash(repo))
 
       # The repository `git worktree add` branches from, found by ascending
       # from the project. `.git` is a FILE inside a linked worktree and a

@@ -34,7 +34,7 @@ end
 # prove the DECORATED inner lease is reclaimed (or not stranded) independently
 # of the service provisioning around it.
 class RecordingInner
-  Lease = Struct.new(:worker_env, :releases) do
+  Lease = Struct.new(:worker_env, :releases, :origin) do
     # Returns the running count (not a boolean) -- a command that records itself,
     # so the spec reads `releases`, and it dodges Naming/PredicateMethod.
     def release = self.releases += 1
@@ -46,8 +46,11 @@ class RecordingInner
 
   attr_reader :leases
 
+  def base = :the_working_branch
+
   def acquire(_worker_id)
-    Lease.new(Lain::WorkerEnv.default, 0).tap { |lease| @leases << lease }
+    origin = Lain::Isolation::Lease::Origin.new(path: "/state/worktrees/w", base: "a" * 40, branch: "feat")
+    Lease.new(Lain::WorkerEnv.default, 0, origin).tap { |lease| @leases << lease }
   end
 end
 
@@ -65,6 +68,25 @@ RSpec.describe Lain::Isolation::DbIndex do
   def build(services)
     described_class.new(services:, inner: Lain::Isolation::Null.new,
                         paths: stub_paths, shell_out_factory: shell)
+  end
+
+  # A decorator rebuilds the lease to add its service vars, and whatever it
+  # does not carry across is lost to every caller above it.
+  describe "what it forwards from the backend it wraps" do
+    it "hands back the inner lease's origin" do
+      inner = RecordingInner.new
+
+      lease = described_class.new(services: [], inner:, paths: stub_paths, shell_out_factory: shell).acquire("w1")
+
+      expect(lease.origin).to eq(inner.leases.first.origin)
+    end
+
+    it "answers the inner backend's working branch" do
+      decorated = described_class.new(services: [], inner: RecordingInner.new, paths: stub_paths,
+                                      shell_out_factory: shell)
+
+      expect(decorated.base).to eq(:the_working_branch)
+    end
   end
 
   describe "no declared services" do

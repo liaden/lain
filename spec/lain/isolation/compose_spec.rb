@@ -51,8 +51,11 @@ class RecordingComposeInner
 
   attr_reader :leases
 
+  def base = :the_working_branch
+
   def acquire(_worker_id)
-    Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default).tap { |lease| @leases << lease }
+    origin = Lain::Isolation::Lease::Origin.new(path: "/state/worktrees/w", base: "a" * 40, branch: "feat")
+    Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, origin:).tap { |lease| @leases << lease }
   end
 end
 
@@ -200,6 +203,18 @@ RSpec.describe Lain::Isolation::Compose do
 
       expect(shell.calls).to include(%w[docker compose -p lain_hashw1 -f /proj/compose.yml down -v])
       expect(inner.leases.map(&:released?)).to eq([true])
+    end
+
+    it "hands back the inner lease's origin" do
+      inner = RecordingComposeInner.new
+
+      lease = build([db], shell: happy_shell, inner:).acquire("w1")
+
+      expect(lease.origin).to eq(inner.leases.first.origin)
+    end
+
+    it "answers the inner backend's working branch" do
+      expect(build([db], shell: happy_shell, inner: RecordingComposeInner.new).base).to eq(:the_working_branch)
     end
 
     it "scrubs COMPOSE_PROJECT_NAME/COMPOSE_FILE so ambient config never redirects our -p/-f" do

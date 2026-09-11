@@ -32,12 +32,18 @@ module Lain
     # credential, only attribution, and it gives a backend nowhere to put the
     # raw bytes.
     #
+    # `path`, `base` and `branch` are where a worktree lease's checkout is, the
+    # full SHA it was cut from, and the working branch that SHA was read from:
+    # what a reaper needs to judge a checkout once the process that leased it
+    # is gone. nil for a backend that cuts no checkout. A PATH, unlike
+    # {Handback}'s ref, because it names lain's own state dir, never the repo.
+    #
     # Emitted by {Isolation::Journal}, never by a backend itself, which stays
     # journal-ignorant.
-    IsolationLease = Data.define(:kind, :worker_key, :backend, :service) do
+    IsolationLease = Data.define(:kind, :worker_key, :backend, :service, :path, :base, :branch) do
       include Journalable
 
-      def initialize(kind:, worker_key:, backend:, service: nil)
+      def initialize(kind:, worker_key:, backend:, service: nil, path: nil, base: nil, branch: nil)
         kind = kind.to_sym
         Carriers::IsolationLease.check!(kind:, worker_key:)
 
@@ -45,7 +51,9 @@ module Lain
           kind:,
           worker_key: worker_key.to_s.dup.freeze,
           backend: backend.to_s.dup.freeze,
-          service: service&.to_s&.freeze
+          service: service&.to_s&.freeze,
+          path: Freezable::Fields.pinned(path), base: Freezable::Fields.pinned(base),
+          branch: Freezable::Fields.pinned(branch)
         )
       end
     end

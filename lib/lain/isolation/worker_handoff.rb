@@ -79,7 +79,7 @@ module Lain
       STRANDED = "the parent checkout is STILL MID-MERGE and could not be unwound -- " \
                  "run `git merge --abort` there before any further handback"
 
-      Report = Data.define(:kind, :ref, :paths, :detail)
+      Report = Data.define(:kind, :ref, :paths, :detail, :sha, :fast_forward)
 
       # What a worker's completion did, and -- the part its caller folds into the
       # worker's own result -- what a human has to do next.
@@ -92,6 +92,12 @@ module Lain
       # `paths` is always an Array and `detail` always a String, so no caller
       # writes a nil guard; `ref` is nil only when nothing was ever anchored.
       #
+      # `sha` is the full SHA that landed in the parent -- on `:merged` and
+      # `:resolved` only, nil otherwise -- because landing and promotion address a
+      # commit, not a ref. `fast_forward` says the parent simply moved to the
+      # worker's commit; a fast-forward is still `:merged`, so no `case` on
+      # `kind` has to learn a new value.
+      #
       # Reopened rather than declared in a `Data.define ... do` block: a
       # constant there is lexically scoped to the enclosing module, not the Data
       # class.
@@ -103,15 +109,14 @@ module Lain
         # A {Worktree::Handback::Outcome} that needed no resolver, carried
         # through unchanged -- the kinds line up one for one.
         def self.from(outcome)
-          new(kind: outcome.kind, ref: outcome.ref, paths: outcome.paths, detail: outcome.detail)
+          new(kind: outcome.kind, ref: outcome.ref, paths: outcome.paths, detail: outcome.detail,
+              sha: outcome.sha, fast_forward: outcome.fast_forward)
         end
 
-        def initialize(kind:, ref: nil, paths: [], detail: "")
-          kind = kind.to_sym
-          raise ArgumentError, "kind must be one of #{KINDS.inspect}, got #{kind.inspect}" unless KINDS.include?(kind)
-
-          super(kind:, ref: ref&.dup&.freeze,
-                paths: paths.map { |path| -path.to_s }.freeze, detail: -detail.to_s)
+        def initialize(kind:, ref: nil, paths: [], detail: "", sha: nil, fast_forward: false)
+          super(kind: known(kind), ref: Freezable::Fields.pinned(ref), paths: Freezable::Fields.pinned_each(paths),
+                detail: -detail.to_s, sha: Freezable::Fields.pinned(sha),
+                fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"))
         end
 
         # The one line a caller folds into the worker's result. It names the
@@ -130,6 +135,13 @@ module Lain
         end
 
         private
+
+        def known(kind)
+          kind = kind.to_sym
+          raise ArgumentError, "kind must be one of #{KINDS.inspect}, got #{kind.inspect}" unless KINDS.include?(kind)
+
+          kind
+        end
 
         # A nil ref is a legitimate answer -- a lost CAS, an already-released
         # lease, a raise before the write -- and rendering it as literal empty
@@ -208,8 +220,14 @@ module Lain
       # @param repo_root [String] the parent checkout work comes back to
       # @param journal [#<<] where {Telemetry::Handback} records land
       # @param resolver [#call] the spawn seam -- see {#initialize}
-      def self.over(repo_root:, journal: Channel::Null.instance, resolver: Resolver::Null)
-        new(handback: Worktree::Handback.new(repo_root:, journal:), repo_root:, resolver:)
+      # @param strategy [MergeStrategy] how the handback spells its merge
+      # @param base [WorkingBranch] the only branch the handback merges into;
+      #   read it off the fleet's isolation (`isolation.base`). REQUIRED, as
+      #   {Worktree::Handback#initialize}'s is: {WorkingBranch::NONE} is the
+      #   explicit opt-out, never a default.
+      def self.over(repo_root:, base:, journal: Channel::Null.instance, resolver: Resolver::Null,
+                    strategy: MergeStrategy::DEFAULT)
+        new(handback: Worktree::Handback.new(repo_root:, journal:, strategy:, base:), repo_root:, resolver:)
       end
 
       # @param handback [#call, #anchor, #continue, #abandon] {Worktree::Handback}
@@ -355,7 +373,8 @@ module Lain
       def conclude(outcome, worker_id:, reply:)
         continued = @handback.continue(outcome.ref, worker_id:)
         if continued.kind == :merged
-          return Report.new(kind: :resolved, ref: outcome.ref, paths: outcome.paths, detail: reply.text)
+          return Report.new(kind: :resolved, ref: outcome.ref, paths: outcome.paths, detail: reply.text,
+                            sha: continued.sha)
         end
 
         stand_down(outcome, detail: "#{continued.detail}; the resolver said: #{reply.text}")

@@ -8,7 +8,9 @@ require "mixlib/shellout"
 # the lain repo it runs in. git is always present, so this stays in the default
 # suite.
 RSpec.describe Lain::Isolation::Worktree, :seam do
-  subject(:backend) { described_class.new(repo_root: @repo_root, root: @root) }
+  subject(:backend) { described_class.new(repo_root: @repo_root, root: @root, base:) }
+
+  let(:base) { Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root) }
 
   around do |example|
     Dir.mktmpdir("lain-repo") do |repo|
@@ -68,7 +70,7 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
 
     it "refuses LOUDLY when git worktree add fails, never handing back a lease" do
       Dir.mktmpdir("not-a-repo") do |bogus|
-        backend = described_class.new(repo_root: File.realpath(bogus), root: @root)
+        backend = described_class.new(repo_root: File.realpath(bogus), root: @root, base:)
         expect { backend.acquire("worker-1") }.to raise_error(described_class::Refused)
       end
     end
@@ -80,11 +82,87 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
 
       # A crash kills the process, taking the in-memory lease-set with it; the
       # restart is a FRESH backend that finds the on-disk leftover and reaps it.
-      restarted = described_class.new(repo_root: @repo_root, root: @root)
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
       lease = restarted.acquire("worker-1")
 
       expect(File.directory?(path)).to be(true)
       expect(lease.worker_env.cwd).to eq(path)
+    ensure
+      lease&.release
+    end
+  end
+
+  describe "a lease cut from the working branch" do
+    def commit_on(dir, message)
+      File.write(File.join(dir, "README"), "#{message}\n")
+      run_git(dir, "commit", "-q", "-am", message)
+      head_commit(dir)
+    end
+
+    it "checks out the base's tip, not whatever HEAD is on" do
+      run_git(@repo_root, "switch", "-q", "-c", "feat")
+      feat_tip = commit_on(@repo_root, "feat work")
+      feat = Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root)
+      run_git(@repo_root, "switch", "-q", "-")
+
+      lease = described_class.new(repo_root: @repo_root, root: @root, base: feat).acquire("worker-1")
+
+      expect(head_commit(lease.worker_env.cwd)).to eq(feat_tip)
+      expect(head_commit(@repo_root)).not_to eq(feat_tip)
+    ensure
+      lease&.release
+    end
+
+    # The tip is read per acquire, so a second worker leased after a commit
+    # lands starts from that commit.
+    it "cuts a later lease from a tip that moved in between" do
+      first = backend.acquire("worker-1")
+      old_tip = head_commit(@repo_root)
+      new_tip = commit_on(@repo_root, "landed after the first lease")
+
+      second = backend.acquire("worker-2")
+
+      expect([head_commit(first.worker_env.cwd), head_commit(second.worker_env.cwd)]).to eq([old_tip, new_tip])
+    ensure
+      first&.release
+      second&.release
+    end
+
+    # git's DWIM turns a NAME given to `worktree add` into a branch checkout,
+    # which is the leaked-branch bleed the detached checkout exists to stop.
+    it "hands worktree add the tip's full SHA, never the branch name" do
+      calls = []
+      real = Lain::Shell::Out.public_method(:new)
+      recording = lambda do |*argv, **kwargs|
+        calls << argv
+        real.call(*argv, **kwargs)
+      end
+
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: recording)
+                             .acquire("worker-1")
+
+      expect(calls.find { |argv| argv.include?("add") }.last).to eq(base.tip).and match(/\A\h{40}\z/)
+    ensure
+      lease&.release
+    end
+
+    it "refuses a lease from a backend built with no base, leaving nothing on disk" do
+      unbased = described_class.new(repo_root: @repo_root, root: @root)
+
+      expect { unbased.acquire("worker-1") }
+        .to raise_error(Lain::Isolation::WorkingBranch::Refused, /no working branch/)
+      expect(Dir.children(@root)).to be_empty
+      expect(registered_worktrees.lines.grep(/^worktree /).size).to eq(1)
+    end
+
+    it "answers the base it cuts from, so a caller holding the backend can name the working branch" do
+      expect(backend.base).to equal(base)
+    end
+
+    it "names its checkout's path, the commit it was cut from, and the branch" do
+      lease = backend.acquire("worker-1")
+
+      expect(lease.origin.to_h).to eq(path: worktree_path("worker-1"), base: base.tip, branch: base.name)
     ensure
       lease&.release
     end
@@ -100,7 +178,7 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(branches(@repo_root)).to eq(before)
     end
 
-    it "re-acquires at the repo's current commit, not a crashed worker's committed tip" do
+    it "re-acquires at the base's tip, not a crashed worker's committed tip" do
       crashed = backend.acquire("worker-1")
       path = crashed.worker_env.cwd
       File.write(File.join(path, "leaked_work.txt"), "worker committed this\n")
@@ -109,12 +187,12 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       # Simulate a crash: the process (and its lease-set) dies, leaving the
       # worktree -- and, on the buggy bare-add path, its auto-created branch tip
       # -- behind. The restart is a fresh backend re-acquiring the same id.
-      restarted = described_class.new(repo_root: @repo_root, root: @root)
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
 
       lease = restarted.acquire("worker-1")
       fresh = lease.worker_env.cwd
 
-      expect(head_commit(fresh)).to eq(head_commit(@repo_root))
+      expect(head_commit(fresh)).to eq(base.tip)
       expect(File.exist?(File.join(fresh, "leaked_work.txt"))).to be(false)
     ensure
       lease&.release

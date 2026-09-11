@@ -26,13 +26,13 @@ module Lain
       # WHY THAT NAMESPACE, EXACTLY. Not because git cannot check such a ref out
       # -- `git worktree add --detach <path> refs/lain/worker/x` exits 0, and
       # believing otherwise is how the protection gets dropped. The guarantee is
-      # narrower and mechanical: {Worktree#add} passes NO commit-ish, an add
-      # without one checks out HEAD, and the DWIM that invents a checkout from a
-      # NAME consults `refs/heads/` and remote branches alone. Outside
+      # narrower and mechanical: {Worktree#add} passes only a full SHA read from
+      # its working branch, never a NAME, and the DWIM that invents a checkout
+      # from a name consults `refs/heads/` and remote branches alone. Outside
       # `refs/heads/` these refs are unreachable by any add the backend makes
       # and invisible to `git branch`. The corollary is the thing to guard: a
-      # future commit-ish argument to {Worktree#add} would reintroduce the
-      # bleed -- refuse that, not this namespace.
+      # NAME reaching {Worktree#add} would reintroduce the bleed -- refuse
+      # that, not this namespace.
       #
       # THE REF WITHOUT THE MERGE. {#anchor} is that first half alone, for a
       # caller already unwinding: it writes the ref, merges nothing, and touches
@@ -51,6 +51,14 @@ module Lain
       # git itself only refuses a merge that would clobber an untracked file,
       # and a real project checkout nearly always carries scratch files, so
       # counting them as dirty would decline every handback that ever mattered.
+      #
+      # THE WORKING BRANCH IS THE ONLY TARGET. Given a {WorkingBranch}, a merge
+      # declines unless the parent's HEAD is on it: a human who switched away
+      # keeps the other branch untouched, and the work waits on its ref.
+      #
+      # "MERGED" IS MEASURED. After git reports success the parent is asked
+      # whether it now contains the worker's commit, so a setting that makes a
+      # merge exit 0 without landing anything is `:failed`, never `:merged`.
       class Handback
         # `git status` reports untracked files unless told not to -- see the
         # class doc for why a stray scratch file is not a dirty parent.
@@ -152,7 +160,7 @@ module Lain
           def fingerprint = Canonical.digest(@name).split(":").last[0, 12]
         end
 
-        Outcome = Data.define(:kind, :worker_key, :ref, :paths, :parent_state, :detail)
+        Outcome = Data.define(:kind, :worker_key, :ref, :paths, :parent_state, :detail, :sha, :fast_forward)
 
         # What a handback did, and -- the field its caller's next move depends on
         # -- what state that left the parent checkout in.
@@ -178,6 +186,12 @@ module Lain
         # version at all, and an aborted merge would hand it a clean checkout
         # with nothing to resolve.
         #
+        # `sha` is the full SHA that landed in the parent on `:merged` -- the
+        # worker's own commit on a fast-forward, the merge commit otherwise --
+        # and nil everywhere else. `fast_forward` is MEASURED, the parent's new
+        # HEAD against the worker's commit, because a user's `merge.ff = false`
+        # turns what looks like a fast-forward into a merge commit.
+        #
         # Reopened rather than declared in a `Data.define ... do` block: a
         # constant there is lexically scoped to the enclosing module, not to the
         # Data class.
@@ -186,13 +200,13 @@ module Lain
           # and a kind nobody handles fails at construction, not in a reader.
           KINDS = %i[nothing_to_do merged conflicted declined failed].freeze
 
-          def initialize(kind:, worker_key:, ref: nil, paths: [], parent_state: :untouched, detail: "")
-            kind = kind.to_sym
-            raise ArgumentError, "kind must be one of #{KINDS.inspect}, got #{kind.inspect}" unless KINDS.include?(kind)
-
-            super(kind:, worker_key: -worker_key.to_s, ref: ref&.dup&.freeze,
-                  paths: paths.map { |path| -path.to_s }.freeze,
-                  parent_state: parent_state.to_sym, detail: -detail.to_s)
+          def initialize(kind:, worker_key:, ref: nil, paths: [], parent_state: :untouched, detail: "", sha: nil,
+                         fast_forward: false)
+            super(kind: known(kind), worker_key: -worker_key.to_s, ref: Freezable::Fields.pinned(ref),
+                  paths: Freezable::Fields.pinned_each(paths),
+                  parent_state: parent_state.to_sym, detail: -detail.to_s,
+                  sha: Freezable::Fields.pinned(sha),
+                  fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"))
           end
 
           # @return [Boolean] whether the parent checkout is sitting mid-merge,
@@ -208,99 +222,110 @@ module Lain
           # @return [Boolean] whether this outcome came from an anchor-only
           #   write, on which no merge was ever attempted
           def anchor_only? = detail == ANCHOR_ONLY
-        end
 
-        # One git working tree, questioned. The parent and the leased worktree
-        # are the same kind of thing here, so they are one object: one
-        # invocation shape, scrubbed exactly as {Worktree#git} scrubs it, always
-        # answering with the shell instead of raising -- this whole operation
-        # lives inside a promise that nothing escapes it.
-        class Checkout
-          # All three marker shapes, in order, is what tells a real unresolved
-          # hunk from a line of prose (or a diff fixture) that merely starts
-          # like one. A false positive costs one round trip and
-          # {Handback#abandon} is always available; a false negative commits
-          # `<<<<<<<` into the parent's history under a `:merged` outcome, which
-          # is the one thing an LLM resolver cannot check for itself.
-          CONFLICTED = /^<<<<<<< .*^=======$.*^>>>>>>> /m
-
-          # Paths come off a subprocess's stdout as bytes; the filesystem's own
-          # encoding is what they have to be tagged with to compare equal to the
-          # same path read any other way.
-          FILESYSTEM = Encoding.find("filesystem")
-
-          def initialize(dir, shell_out_factory:)
-            @dir = dir
-            @shell_out_factory = shell_out_factory
+          # The message shape {Worktree::Refused.from_git} raises with, built as
+          # a value instead: nothing propagates to a handback's caller, so the
+          # same diagnostic rides back on the Outcome.
+          def self.git_failed(key, operation, shell, ref: nil, parent_state: :untouched)
+            new(kind: :failed, worker_key: key, ref:, parent_state:,
+                detail: "git #{operation} failed (exit #{shell.exitstatus}): #{shell.stderr.strip}")
           end
-
-          def run(*)
-            shell = @shell_out_factory.call("git", "-C", @dir, *, environment: GIT_CONTEXT_SCRUB)
-            shell.run_command
-            shell
-          end
-
-          def head = run("rev-parse", "HEAD")
-
-          # MERGE_HEAD is git's own record that a merge is under way. Asked of
-          # git rather than stat'ed on disk, because a LINKED worktree keeps it
-          # somewhere `.git/MERGE_HEAD` is not.
-          def merging? = ok?(run("rev-parse", "--verify", "--quiet", "MERGE_HEAD"))
-
-          def contains?(commit) = ok?(run("merge-base", "--is-ancestor", commit, "HEAD"))
-
-          # What `ref` points at, or "" when it points at nothing. "No ref yet"
-          # and "a ref on some other commit" both mean the same write is still
-          # owed, and no commit is ever "", so no caller writes a nil guard.
-          def target(ref)
-            shell = run("rev-parse", "--verify", "--quiet", ref)
-            ok?(shell) ? shell.stdout.strip : ""
-          end
-
-          # Git's own compare-and-swap: `update-ref <ref> <new> <old>` refuses
-          # unless the ref still holds `<old>`, where "" means it must not exist
-          # at all. Passing back the value just read makes read-then-write
-          # atomic, so the loser of a race fails loudly instead of overwriting a
-          # ref that is sometimes the ONLY thing keeping commits reachable.
-          #
-          # `--create-reflog` is not decoration: git's default
-          # `core.logAllRefUpdates` logs only refs/heads, refs/remotes,
-          # refs/notes and HEAD, so for this namespace a bare `-m` is accepted
-          # and silently dropped (measured, git 2.43).
-          def anchor(ref, commit, held)
-            run("update-ref", "--create-reflog", "-m", ANCHORED, ref, commit, held)
-          end
-
-          # `-z`, because the default output runs every path through
-          # `core.quotePath`: a conflict on `föö.txt` is reported as
-          # `"f\303\266\303\266.txt"`, which no resolver can open and no
-          # `git add --` pathspec matches. NUL termination fixes the other half
-          # of the same bug for free -- a filename containing a newline, which
-          # splitting on "\n" shatters into two paths that do not exist.
-          #
-          # The bytes then need re-TAGGING, not converting: a binary
-          # "f\xC3\xB6\xC3\xB6.txt" is not `==` to the UTF-8 "föö.txt" the same
-          # path reads as anywhere else.
-          def unmerged
-            paths = run("diff", "--name-only", "--diff-filter=U", "-z").stdout.split("\0")
-            paths.map { |path| path.force_encoding(FILESYSTEM) }
-          end
-
-          # Which of `paths` are still not actually resolved. Only the paths it
-          # is asked about are scanned: a marker-shaped line anywhere else in
-          # the checkout is none of this operation's business.
-          def unresolved(paths) = paths.select { |path| read(path).match?(CONFLICTED) }
 
           private
 
-          # Binary, because a conflicted file may hold anything and a regex
-          # against invalid bytes raises. "" when there is nothing readable
-          # there (a delete/modify conflict leaves no file to scan).
-          def read(path)
-            File.binread(File.join(@dir, path))
-          rescue SystemCallError
-            ""
+          def known(kind)
+            kind = kind.to_sym
+            raise ArgumentError, "kind must be one of #{KINDS.inspect}, got #{kind.inspect}" unless KINDS.include?(kind)
+
+            kind
           end
+        end
+
+        # The merge attempt itself: whether the parent may take one, how it is
+        # spelled, and what actually landed. Its own object because refusing,
+        # spelling and confirming a merge is a different job from anchoring a
+        # ref or concluding a conflict.
+        class Merge
+          # @param parent [Checkout] the checkout the work comes back to
+          # @param strategy [MergeStrategy] how the merge is spelled
+          # @param base [WorkingBranch] the only branch the merge may land on
+          def initialize(parent:, strategy:, base:)
+            @parent = parent
+            @strategy = strategy
+            @base = base
+          end
+
+          # Each check answers the Outcome that stops the merge, or nil to let
+          # the next one run.
+          # @return [Outcome]
+          def call(ref, key) = unplaced(ref, key) || unclean(ref, key) || attempt(ref, key)
+
+          private
+
+          def unplaced(ref, key)
+            return declined(ref, key, MID_MERGE) if @parent.merging?
+
+            declined(ref, key, off_branch) unless @base.current_in?(@parent)
+          end
+
+          def unclean(ref, key)
+            status = @parent.run("status", "--porcelain", TRACKED_ONLY)
+            return Outcome.git_failed(key, "status", status, ref:) unless ok?(status)
+
+            declined(ref, key, DIRTY) unless status.stdout.strip.empty?
+          end
+
+          def attempt(ref, key)
+            shell = @parent.run(*@strategy.merge(ref))
+            ok?(shell) ? landed(ref, key) : conflict(ref, key, shell)
+          end
+
+          def off_branch
+            head = @parent.symbolic_head
+            standing = head.empty? ? "a detached HEAD" : head.delete_prefix("refs/heads/")
+            "parent checkout is on #{standing}, not the working branch #{@base.name}; the work waits on its ref"
+          end
+
+          # git's exit status is not taken as the answer: the parent is asked
+          # whether it now holds the worker's commit.
+          def landed(ref, key)
+            commit = @parent.target(ref)
+            return unlanded(ref, key, commit) unless @parent.contains?(commit)
+
+            sha = @parent.head.stdout.strip
+            outcome(:merged, key, ref:, parent_state: :merged, sha:, fast_forward: sha == commit)
+          end
+
+          def unlanded(ref, key, commit)
+            detail = "git merge #{ref} exited 0, but the parent checkout does not contain #{commit}; " \
+                     "something outside lain's command line changed what the merge did"
+            outcome(:failed, key, ref:, detail:, parent_state: @parent.merging? ? :merging : :untouched)
+          end
+
+          # A failed merge WITH unmerged paths is a conflict, and it is left in
+          # progress for {Handback#continue} (see {Outcome}). A failed merge with
+          # none is something else entirely -- an untracked file the merge would
+          # clobber, an unwritable index, a missing committer identity -- so the
+          # parent is restored rather than left half-merged with nobody told.
+          def conflict(ref, key, shell)
+            paths = @parent.unmerged
+            return abort_merge(ref, key, shell) if paths.empty?
+
+            outcome(:conflicted, key, ref:, paths:, parent_state: :merging, detail: IN_PROGRESS)
+          end
+
+          # The parent is ASKED whether the unwind took, never assumed: `--abort`
+          # exits nonzero both when there was no merge to abort (the common case
+          # here, where the merge never started) and when the abort itself
+          # failed, and only the second leaves a state the caller must hear of.
+          def abort_merge(ref, key, shell)
+            @parent.run("merge", "--abort")
+            Outcome.git_failed(key, "merge #{ref}", shell, ref:, parent_state: @parent.merging? ? :merging : :untouched)
+          end
+
+          def declined(ref, key, detail) = outcome(:declined, key, ref:, detail:)
+
+          def outcome(kind, key, **) = Outcome.new(kind:, worker_key: key, **)
 
           def ok?(shell) = shell.exitstatus.zero?
         end
@@ -308,14 +333,22 @@ module Lain
         # @param repo_root [String] the parent checkout the work comes back to --
         #   the same repository {Worktree} branches its worktrees from
         # @param journal [#<<] where the {Telemetry::Handback} record lands
+        # @param strategy [MergeStrategy] how the merge is spelled on git's
+        #   command line, so ambient config cannot change the markers
+        # @param base [WorkingBranch] the only branch a merge lands on. REQUIRED,
+        #   with no default: a caller that forgot it would silently merge into
+        #   whatever the parent has checked out. {WorkingBranch::NONE} is the
+        #   opt-out, and it is spelled at the call site that takes it.
         # @param shell_out_factory [#call] builds the subprocess runner, a
         #   factory exactly as {Worktree} takes one, defaulting to {Shell::Out}
         #   for the reason {Worktree#initialize} gives: mixlib forks, and this
         #   object spawns git a dozen times per handback
-        def initialize(repo_root: Dir.pwd, journal: Channel::Null.instance,
+        def initialize(base:, repo_root: Dir.pwd, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT,
                        shell_out_factory: Shell::Out.public_method(:new))
           @parent = Checkout.new(File.expand_path(repo_root), shell_out_factory:)
           @journal = journal
+          @strategy = strategy
+          @merge = Merge.new(parent: @parent, strategy:, base:)
           @shell_out_factory = shell_out_factory
         end
 
@@ -430,7 +463,7 @@ module Lain
           held = @parent.target(ref)
           return outcome(:nothing_to_do, key, ref:, detail: ANCHOR_ONLY) if held == commit
 
-          write = @parent.anchor(ref, commit, held)
+          write = @parent.update_ref(ref, commit, held, reason: ANCHORED)
           ok?(write) ? outcome(:declined, key, ref:, detail: ANCHOR_ONLY) : failed(key, "update-ref #{ref}", write)
         end
 
@@ -446,41 +479,9 @@ module Lain
         # write, so this is the level that can say where the work is.
         def preserve(worktree, key, ref)
           pinned = pin(worktree, key, ref)
-          pinned.ref.nil? ? pinned : merge(ref, key)
+          pinned.ref.nil? ? pinned : @merge.call(ref, key)
         rescue StandardError => e
           broke(key, pinned&.ref, e)
-        end
-
-        def merge(ref, key)
-          return outcome(:declined, key, ref:, detail: MID_MERGE) if @parent.merging?
-
-          status = @parent.run("status", "--porcelain", TRACKED_ONLY)
-          return failed(key, "status", status, ref:) unless ok?(status)
-          return outcome(:declined, key, ref:, detail: DIRTY) unless status.stdout.strip.empty?
-
-          shell = @parent.run("merge", "--no-edit", ref)
-          ok?(shell) ? outcome(:merged, key, ref:, parent_state: :merged) : conflict(ref, key, shell)
-        end
-
-        # A failed merge WITH unmerged paths is a conflict, and it is left in
-        # progress for {#continue} (see {Outcome}). A failed merge with none is
-        # something else entirely -- an untracked file the merge would clobber,
-        # an unwritable index, a missing committer identity -- so the parent is
-        # restored rather than left in a half-merged state nobody was told about.
-        def conflict(ref, key, shell)
-          paths = @parent.unmerged
-          return abort_merge(ref, key, shell) if paths.empty?
-
-          outcome(:conflicted, key, ref:, paths:, parent_state: :merging, detail: IN_PROGRESS)
-        end
-
-        # The parent is ASKED whether the unwind took, never assumed: `--abort`
-        # exits nonzero both when there was no merge to abort (the common case
-        # here, where the merge never started) and when the abort itself failed,
-        # and only the second leaves a state the caller has to hear about.
-        def abort_merge(ref, key, shell)
-          @parent.run("merge", "--abort")
-          failed(key, "merge #{ref}", shell, ref:, parent_state: @parent.merging? ? :merging : :untouched)
         end
 
         def conclude(ref, key)
@@ -502,7 +503,7 @@ module Lain
           committed = @parent.run("commit", "--no-edit")
           return failed(key, "commit", committed, ref:, parent_state: :merging) unless ok?(committed)
 
-          outcome(:merged, key, ref:, parent_state: :merged)
+          outcome(:merged, key, ref:, parent_state: :merged, sha: @parent.head.stdout.strip)
         end
 
         def discard(ref, key)
@@ -516,12 +517,8 @@ module Lain
 
         def outcome(kind, key, **) = Outcome.new(kind:, worker_key: key, **)
 
-        # The message shape {Worktree::Refused.from_git} raises with, built as a
-        # value instead: the contract here is that nothing propagates to the
-        # caller, so the same diagnostic rides back on the Outcome.
         def failed(key, operation, shell, ref: nil, parent_state: :untouched)
-          detail = "git #{operation} failed (exit #{shell.exitstatus}): #{shell.stderr.strip}"
-          outcome(:failed, key, ref:, detail:, parent_state:)
+          Outcome.git_failed(key, operation, shell, ref:, parent_state:)
         end
 
         def broke(key, ref, error) = outcome(:failed, key, ref:, detail: "#{error.class}: #{error.message}")
@@ -532,7 +529,9 @@ module Lain
         # and not the worker's own result, which a raise from here would take
         # with it, since this runs inside a gathered fiber.
         def journaled(outcome)
-          @journal << Telemetry::Handback.new(worker_key: outcome.worker_key, outcome: outcome.kind, ref: outcome.ref)
+          @journal << Telemetry::Handback.new(worker_key: outcome.worker_key, outcome: outcome.kind, ref: outcome.ref,
+                                              strategy: @strategy.to_s, fast_forward: outcome.fast_forward,
+                                              sha: outcome.sha)
           outcome
         rescue StandardError
           outcome

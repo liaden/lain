@@ -84,15 +84,21 @@ module Lain
         @shell_out_factory = shell_out_factory
       end
 
+      # Forwarded: a handback reads its target off the fleet's isolation, and
+      # this decorator stands in front of the backend that knows it.
+      # @return [#name, #tip, #current_in?] the inner backend's working branch
+      def base = @inner.base
+
       # The lease's WorkerEnv carries the inner cwd plus the service URLs, and
-      # its release reclaims the services then the inner lease.
+      # its release reclaims the services then the inner lease, whose origin
+      # it hands back unchanged.
       # @param worker_id [Object] keyed through {Paths#project_hash} into the DB-name hash
       # @return [Lease]
       # @raise [Refused] on a createdb collision
       def acquire(worker_id)
         base = @inner.acquire(worker_id)
         provisioned = provision_all(@paths.project_hash(worker_id.to_s))
-        Lease.new(worker_env: enrich(base.worker_env, provisioned),
+        Lease.new(worker_env: enrich(base.worker_env, provisioned), origin: base.origin,
                   on_release: -> { release(provisioned, base) })
       rescue StandardError
         # provision_all rolls back the SERVICES it provisioned; the inner lease

@@ -30,17 +30,26 @@ module Lain
     # repository, and it deliberately carries no {Isolation::WorkerEnv} -- an
     # env is a live resource handle full of credentials, not attribution.
     #
+    # `strategy` names the {Isolation::MergeStrategy} the handback merges with,
+    # `fast_forward` whether the parent simply moved to the worker's commit, and
+    # `sha` the full SHA that landed -- nil when nothing did, since a record
+    # naming a commit on an anchor-only or refused handback would be a lie.
+    # These are what a landing queue and a promotion read back.
+    #
     # Emitted by {Isolation::Worktree::Handback} itself rather than by a
     # decorator: handback is a one-shot operation whose whole product IS the
     # outcome, so there is no forwarding duck to wrap.
-    Handback = Data.define(:worker_key, :outcome, :ref) do
+    Handback = Data.define(:worker_key, :outcome, :ref, :strategy, :fast_forward, :sha) do
       include Journalable
 
-      def initialize(worker_key:, outcome:, ref: nil)
+      def initialize(worker_key:, outcome:, ref: nil, strategy: nil, fast_forward: false, sha: nil)
         outcome = outcome.to_sym
         Carriers::Handback.check!(worker_key:, outcome:)
 
-        super(worker_key: worker_key.to_s.dup.freeze, outcome:, ref: ref&.dup&.freeze)
+        super(worker_key: worker_key.to_s.dup.freeze, outcome:, ref: Freezable::Fields.pinned(ref),
+              strategy: Freezable::Fields.pinned(strategy),
+              fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"),
+              sha: Freezable::Fields.pinned(sha))
       end
     end
   end

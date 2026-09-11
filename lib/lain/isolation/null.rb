@@ -12,6 +12,10 @@ module Lain
       # @param _worker_id [Object] ignored -- every worker shares one env
       # @return [Lease] a lease over the shared process env; release is a no-op
       def acquire(_worker_id = nil) = Lease.new(worker_env: WorkerEnv.default)
+
+      # No checkout is cut, so there is no branch to hand work back to.
+      # @return [WorkingBranch::NONE]
+      def base = WorkingBranch::NONE
     end
   end
 end

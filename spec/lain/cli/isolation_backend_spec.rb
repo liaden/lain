@@ -42,18 +42,22 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
   around do |example|
     Dir.mktmpdir("lain-isolation-project") do |project|
       Dir.mktmpdir("lain-isolation-runtime") do |runtime|
-        @project = File.realpath(project)
-        @runtime = File.realpath(runtime)
-        example.run
+        Dir.mktmpdir("lain-isolation-state") do |state|
+          @project = File.realpath(project)
+          @runtime = File.realpath(runtime)
+          @state = File.realpath(state)
+          example.run
+        end
       end
     end
   end
 
   let(:shells) { IsolationBackendShells.new }
 
-  # XDG_RUNTIME_DIR points at a throwaway dir, so a leased worktree lands under
-  # the tmpdir instead of the machine's real runtime dir.
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @runtime }) }
+  # Both XDG bases point at throwaway dirs, so a leased worktree lands under a
+  # tmpdir instead of the machine's real state dir, and the runtime dir can be
+  # shown to stay empty.
+  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @runtime, "XDG_STATE_HOME" => @state }) }
 
   def resolve(name = nil, root: @project, **)
     described_class.resolve(name, root:, paths:, shell_out_factory: shells, **)
@@ -91,7 +95,18 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
                          environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.stdout
   end
 
-  def worktree_root = File.join(@runtime, "lain", "worktrees", paths.project_hash(@project))
+  def worktree_root = File.join(@state, "lain", "worktrees", paths.project_hash(@project))
+
+  def head_of(dir)
+    Mixlib::ShellOut.new("git", "-C", dir, "rev-parse", "HEAD",
+                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.stdout.strip
+  end
+
+  def commit_on_project(message)
+    File.write(File.join(@project, "README"), "#{message}\n")
+    run_git(@project, "commit", "-q", "-am", message)
+    head_of(@project)
+  end
 
   describe "the default" do
     it "is the shared-process backend when no isolation option is given" do
@@ -132,6 +147,68 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
 
     it "refuses by name outside a git repository rather than handing back a backend that fails at acquire" do
       expect { resolve("worktree") }.to raise_error(Lain::Error, /git repository/)
+    end
+
+    # A retained checkout has to survive a reboot, which tmpfs does not.
+    it "keeps its checkouts under the state dir, and nothing under the runtime dir" do
+      init_repo(@project)
+
+      lease = resolve("worktree").acquire("worker-1")
+
+      expect(lease.worker_env.cwd).to start_with(worktree_root)
+      expect(Dir.glob(File.join(@runtime, "**", "*"))).to be_empty
+    ensure
+      lease&.release
+    end
+  end
+
+  describe "the chat's working branch" do
+    it "cuts each child from the launch branch's tip as it stands at that lease, and journals it" do
+      init_repo(@project)
+      run_git(@project, "switch", "-q", "-c", "feat")
+      journal = []
+      backend = resolve("worktree", journal:)
+
+      first = backend.acquire("child-1")
+      old_tip = head_of(@project)
+      new_tip = commit_on_project("landed on feat")
+      second = backend.acquire("child-2")
+
+      expect([head_of(first.worker_env.cwd), head_of(second.worker_env.cwd)]).to eq([old_tip, new_tip])
+      acquired = journal.select { |record| record.kind == :acquired }
+      expect(acquired.map { |record| [record.branch, record.base] }).to eq([["feat", old_tip], ["feat", new_tip]])
+      expect(acquired.map(&:path)).to all(start_with(worktree_root))
+    ensure
+      first&.release
+      second&.release
+    end
+
+    # The path a handback takes to its target: the fleet's isolation is already
+    # in hand, so the working branch is read off it, through every decorator.
+    it "names the working branch through every decorator the project stacks on it" do
+      init_repo(@project)
+      run_git(@project, "switch", "-q", "-c", "feat")
+      write_compose_file
+      declare_services(%(postgres\ncompose service: "db", container_port: 5432, env_var: "COMPOSE_DB_URL"\n))
+
+      backend = resolve("worktree", journal: [])
+
+      expect(backend).to be_a(Lain::Isolation::Compose)
+      expect(backend.base.name).to eq("feat")
+    end
+
+    it "names no working branch for the shared-process backend" do
+      expect(resolve("none", journal: []).base).to equal(Lain::Isolation::WorkingBranch::NONE)
+    end
+
+    # Refused at resolve, which for chat is launch: a detached HEAD names no
+    # branch a worker's work could ever land on.
+    it "refuses a detached HEAD at resolve, naming git switch as the fix" do
+      init_repo(@project)
+      run_git(@project, "switch", "-q", "--detach", "HEAD")
+
+      expect { resolve("worktree") }
+        .to raise_error(Lain::Isolation::WorkingBranch::Refused, /git switch <branch>/)
     end
   end
 

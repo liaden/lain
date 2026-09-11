@@ -35,7 +35,7 @@ require "mixlib/shellout"
 # repo per example cost five git subprocesses for a byte-identical directory,
 # and copying it instead took this file from 1517 git spawns to 1162.
 RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
-  subject(:handback) { described_class.new(repo_root: @repo_root, journal:) }
+  subject(:handback) { described_class.new(repo_root: @repo_root, base: no_target, journal:) }
 
   around do |example|
     Dir.mktmpdir("lain-repo") do |repo|
@@ -49,7 +49,12 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   end
 
   let(:journal) { [] }
-  let(:backend) { Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root) }
+  # The opt-out from a working-branch target, spelled at every call site that takes it.
+  let(:no_target) { Lain::Isolation::WorkingBranch::NONE }
+  let(:backend) do
+    Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root,
+                                  base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+  end
 
   # Copied, not rebuilt: five git subprocesses per example for a directory that
   # is identical every time (see {SeedRepo}).
@@ -177,6 +182,229 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       expect(outcome.kind).to eq(:merged)
       expect(outcome.parent_state).to eq(:merged)
       expect(reachable_from_head?(commit)).to be(true)
+    ensure
+      lease&.release
+    end
+  end
+
+  describe "lain's merge strategy" do
+    it "says a worker ahead of the parent fast-forwarded it, carrying the landed commit's full SHA" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect(outcome.fast_forward).to be(true)
+      expect(outcome.sha).to eq(commit).and match(/\A\h{40}\z/)
+      expect(head_commit(@repo_root)).to eq(commit)
+      expect(journal.last.to_h).to include(strategy: "conflict_style=zdiff3 diff_algorithm=histogram",
+                                           fast_forward: true, sha: commit)
+    ensure
+      lease&.release
+    end
+
+    # Measured, never assumed: a parent that moved on without overlap takes a
+    # real merge commit, and that commit is what landed.
+    it "says a real merge did not fast-forward, carrying the merge commit's SHA" do
+      lease = backend.acquire("worker-1")
+      worker = commit_in(lease.worker_env.cwd, "worker\n", "worker work", file: "WORKER")
+      commit_in(@repo_root, "parent\n", "parent work", file: "PARENT")
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:merged)
+      expect(outcome.fast_forward).to be(false)
+      expect(outcome.sha).to eq(head_commit(@repo_root))
+      expect(outcome.sha).not_to eq(worker)
+      expect(reachable_from_head?(worker)).to be(true)
+    ensure
+      lease&.release
+    end
+
+    # The repository's own config asks for the two-sided style, and lain's
+    # `-c` override is what puts the merge base back in the markers.
+    it "leaves conflict markers carrying the merge base, whatever the ambient conflict style" do
+      run_git(@repo_root, "config", "merge.conflictStyle", "merge")
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker's line\n", "worker work")
+      commit_in(@repo_root, "parent's line\n", "parent work")
+
+      expect(handback.call(lease, worker_id: "worker-1").kind).to eq(:conflicted)
+      expect(File.read(File.join(@repo_root, "README"))).to match(/^\|\|\|\|\|\|\| .*\nseed$/)
+    ensure
+      lease&.release
+    end
+
+    it "merges with the strategy it was given, not a fixed one" do
+      two_sided = Lain::Isolation::MergeStrategy.new(conflict_style: "merge", diff_algorithm: "myers")
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:, strategy: two_sided)
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker's line\n", "worker work")
+      commit_in(@repo_root, "parent's line\n", "parent work")
+
+      handback.call(lease, worker_id: "worker-1")
+
+      expect(File.read(File.join(@repo_root, "README"))).not_to include("|||||||")
+      expect(journal.last.strategy).to eq("conflict_style=merge diff_algorithm=myers")
+    ensure
+      lease&.release
+    end
+
+    it "carries the merge commit's SHA once #continue concludes a conflict" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker's line\n", "worker work")
+      commit_in(@repo_root, "parent's line\n", "parent work")
+      conflicted = handback.call(lease, worker_id: "worker-1")
+      File.write(File.join(@repo_root, "README"), "reconciled\n")
+
+      outcome = handback.continue(conflicted.ref, worker_id: "worker-1")
+
+      expect([outcome.kind, outcome.fast_forward, outcome.sha]).to eq([:merged, false, head_commit(@repo_root)])
+    ensure
+      lease&.release
+    end
+
+    it "carries no SHA when nothing landed" do
+      lease = backend.acquire("worker-1")
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect([outcome.sha, outcome.fast_forward]).to eq([nil, false])
+    ensure
+      lease&.release
+    end
+  end
+
+  # A user's own git config reaches every merge lain runs in their checkout, so
+  # each setting that changes what a merge DOES is overridden on the command
+  # line, and whatever still slips through is caught by asking the parent,
+  # afterwards, whether the worker's commit is really in it.
+  describe "ambient config cannot steer the merge" do
+    def current_branch = run_git(@repo_root, "branch", "--show-current").strip
+
+    def worker_ahead(lease) = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+    def worker_diverged(lease)
+      worker = commit_in(lease.worker_env.cwd, "worker\n", "worker work", file: "WORKER")
+      commit_in(@repo_root, "parent\n", "parent work", file: "PARENT")
+      worker
+    end
+
+    [["branch.<b>.mergeOptions", "--squash", :ahead],
+     ["branch.<b>.mergeOptions", "--no-commit", :diverged],
+     ["merge.ff", "only", :diverged],
+     ["merge.ff", "false", :ahead],
+     ["merge.verifySignatures", "true", :ahead]].each do |key, value, shape|
+      it "lands the worker's commit, honestly reported, under #{key} = #{value}" do
+        run_git(@repo_root, "config", key.sub("<b>", current_branch), value)
+        lease = backend.acquire("worker-1")
+        worker = shape == :ahead ? worker_ahead(lease) : worker_diverged(lease)
+
+        outcome = handback.call(lease, worker_id: "worker-1")
+
+        expect(outcome.kind).to eq(:merged)
+        expect(reachable_from_head?(worker)).to be(true)
+        expect([outcome.sha, outcome.fast_forward]).to eq([head_commit(@repo_root), shape == :ahead])
+        expect(run_git(@repo_root, "status", "--porcelain", "--untracked-files=no")).to be_empty
+        expect(merging?).to be(false)
+      ensure
+        lease&.release
+      end
+    end
+
+    # The belt under the braces: a merge that exits 0 without landing -- a hook,
+    # a setting nobody has thought of yet -- must not read as `:merged`.
+    it "answers failed, naming why, when git reports success but the worker's commit is not in the parent" do
+      real = Mixlib::ShellOut.public_method(:new)
+      done = Struct.new(:stdout, :stderr, :exitstatus) { def run_command = self }
+      pretending = lambda do |*args, **kwargs|
+        args.include?("merge") ? done.new("", "", 0) : real.call(*args, **kwargs)
+      end
+      lease = backend.acquire("worker-1")
+      worker_ahead(lease)
+      parent_head = head_commit(@repo_root)
+
+      outcome = described_class.new(repo_root: @repo_root, base: no_target, journal:, shell_out_factory: pretending)
+                               .call(lease, worker_id: "worker-1")
+
+      expect([outcome.kind, outcome.sha]).to eq([:failed, nil])
+      expect(outcome.detail).to include("does not contain")
+      expect(head_commit(@repo_root)).to eq(parent_head)
+    ensure
+      lease&.release
+    end
+  end
+
+  # The chat's parent checkout is a human's. A worker cut from `feat` merges
+  # into `feat` or nowhere: if the human has switched away, the work waits on
+  # its ref rather than landing on whatever branch happens to be checked out.
+  describe "the working branch is the only target" do
+    it "must be told its target: leaving base: out is an ArgumentError, never a merge anywhere" do
+      expect { described_class.new(repo_root: @repo_root, journal:) }.to raise_error(ArgumentError, /base/)
+    end
+
+    def current_branch = run_git(@repo_root, "branch", "--show-current").strip
+
+    def on_feat
+      original = current_branch
+      run_git(@repo_root, "switch", "-q", "-c", "feat")
+      [original, Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root)]
+    end
+
+    it "declines, naming both branches, once the human has switched the parent away" do
+      original, feat = on_feat
+      lease = backend.acquire("worker-1")
+      worker = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      run_git(@repo_root, "switch", "-q", original)
+      before = [head_commit(@repo_root), run_git(@repo_root, "rev-parse", "feat").strip]
+
+      outcome = described_class.new(repo_root: @repo_root, journal:, base: feat).call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:declined)
+      expect(outcome.detail).to include("feat", original)
+      expect([head_commit(@repo_root), run_git(@repo_root, "rev-parse", "feat").strip]).to eq(before)
+      expect(ref_target(outcome.ref).stdout.strip).to eq(worker)
+    ensure
+      lease&.release
+    end
+
+    it "declines a detached parent, saying it is detached" do
+      _, feat = on_feat
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      run_git(@repo_root, "switch", "-q", "--detach", "HEAD")
+
+      outcome = described_class.new(repo_root: @repo_root, journal:, base: feat).call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:declined)
+      expect(outcome.detail).to include("detached", "feat")
+    ensure
+      lease&.release
+    end
+
+    it "merges into the working branch while the parent stands on it" do
+      _, feat = on_feat
+      lease = backend.acquire("worker-1")
+      worker = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      outcome = described_class.new(repo_root: @repo_root, journal:, base: feat).call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:merged)
+      expect(run_git(@repo_root, "rev-parse", "feat").strip).to eq(worker)
+    ensure
+      lease&.release
+    end
+
+    # NONE names no branch, so it enforces none: the behaviour of every caller
+    # that has no working branch to give.
+    it "merges into whatever the parent has checked out when built with no working branch" do
+      original, = on_feat
+      lease = backend.acquire("worker-1")
+      worker = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      run_git(@repo_root, "switch", "-q", original)
+
+      expect(handback.call(lease, worker_id: "worker-1").kind).to eq(:merged)
+      expect(reachable_from_head?(worker)).to be(true)
     ensure
       lease&.release
     end
@@ -317,7 +545,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
 
     it "reports a raise from the git invocation itself as an outcome" do
       exploding = ->(*, **) { raise Errno::ENOENT, "git" }
-      handback = described_class.new(repo_root: @repo_root, journal:, shell_out_factory: exploding)
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:, shell_out_factory: exploding)
       lease = backend.acquire("worker-1")
 
       outcome = nil
@@ -338,7 +566,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       lease = backend.acquire("worker-1")
       commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
       commit_in(@repo_root, "parent's line\n", "parent work")
-      handback = described_class.new(repo_root: @repo_root, journal:,
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:,
                                      shell_out_factory: factory_raising("merge"))
 
       outcome = nil
@@ -356,7 +584,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     it "still answers with a nil ref when the raise lands BEFORE the write" do
       lease = backend.acquire("worker-1")
       commit_in(lease.worker_env.cwd, "worker\n", "worker work")
-      handback = described_class.new(repo_root: @repo_root, journal:,
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:,
                                      shell_out_factory: factory_raising("update-ref"))
 
       outcome = handback.call(lease, worker_id: "worker-1")
@@ -384,16 +612,17 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   end
 
   describe "the journal record" do
-    it "records one handback outcome, carrying the worker key, the outcome, and the ref" do
+    it "records one handback outcome: the worker key, the outcome, the ref, the strategy and what landed" do
       lease = backend.acquire("worker-1")
-      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
 
       outcome = handback.call(lease, worker_id: "worker-1")
 
       expect(journal.size).to eq(1)
       expect(journal.first.to_journal).to eq(
         "type" => "handback", "worker_key" => "worker-1",
-        "outcome" => :merged, "ref" => outcome.ref
+        "outcome" => :merged, "ref" => outcome.ref,
+        "strategy" => "conflict_style=zdiff3 diff_algorithm=histogram", "fast_forward" => true, "sha" => commit
       )
     ensure
       lease&.release
@@ -430,7 +659,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     it "answers with an outcome when the journal sink itself raises" do
       sink = Object.new
       def sink.<<(_record) = raise(IOError, "journal is closed")
-      handback = described_class.new(repo_root: @repo_root, journal: sink)
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal: sink)
       lease = backend.acquire("worker-1")
       commit_in(lease.worker_env.cwd, "worker\n", "worker work")
 
@@ -497,7 +726,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
 
     it "reports a git failure as an outcome, saying the merge is still in progress" do
       lease, conflicted = conflict_and_resolve
-      handback = described_class.new(repo_root: @repo_root, journal:,
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:,
                                      shell_out_factory: factory_failing("commit"))
 
       outcome = nil
@@ -671,7 +900,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
 
     it "reports a failed abort as an outcome that still says :merging" do
       lease, conflicted = conflict
-      handback = described_class.new(repo_root: @repo_root, journal:,
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:,
                                      shell_out_factory: factory_failing("--abort"))
 
       outcome = nil
@@ -830,7 +1059,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
 
     it "reports a raise from the git invocation itself as an outcome" do
       exploding = ->(*, **) { raise Errno::ENOENT, "git" }
-      handback = described_class.new(repo_root: @repo_root, journal:, shell_out_factory: exploding)
+      handback = described_class.new(repo_root: @repo_root, base: no_target, journal:, shell_out_factory: exploding)
       lease = backend.acquire("worker-1")
 
       outcome = nil
@@ -864,7 +1093,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       it "journals a :failed anchor when git raises #{error}, rather than going silent" do
         lease = backend.acquire("worker-1")
         commit_in(lease.worker_env.cwd, "worker\n", "worker work")
-        handback = described_class.new(repo_root: @repo_root, journal:,
+        handback = described_class.new(repo_root: @repo_root, base: no_target, journal:,
                                        shell_out_factory: factory_raising("rev-parse", error))
 
         outcome = nil
@@ -918,7 +1147,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
         real.call(*args, **kwargs)
       end
 
-      outcome = described_class.new(repo_root: @repo_root, journal:, shell_out_factory: racing)
+      outcome = described_class.new(repo_root: @repo_root, base: no_target, journal:, shell_out_factory: racing)
                                .anchor(lease, worker_id: "worker-1")
 
       expect(outcome.kind).to eq(:failed)
@@ -1109,6 +1338,13 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     it "refuses a kind no caller can act on" do
       expect { described_class.new(kind: :probably_fine, worker_key: "w") }
         .to raise_error(ArgumentError, /kind must be one of/)
+    end
+
+    it "refuses a fast_forward that is not exactly true or false" do
+      ["yes", nil, 1].each do |value|
+        expect { described_class.new(kind: :merged, worker_key: "w", fast_forward: value) }
+          .to raise_error(ArgumentError, /fast_forward/)
+      end
     end
 
     # `:declined` now covers two things a caller acts on differently: a parent
