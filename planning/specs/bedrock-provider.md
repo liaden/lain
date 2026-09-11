@@ -1,6 +1,8 @@
 # Bedrock provider — Anthropic models via AWS Bedrock (Mantle)
 
-status: in-progress
+status: shipped, **untested going forward** (2026-09-11). The work account this arm existed for
+is gone, so no further live rounds are planned; the code stays because it passed the rounds it
+had. Treat `--provider bedrock` as unverified, and do not make it a prerequisite for other work.
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson

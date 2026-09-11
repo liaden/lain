@@ -1,14 +1,16 @@
 # How lain merges its own workers' work
 
-status: planned, not started
+status: planned, not started -- rulings added 2026-09-11 (branch base, worker self-sync,
+        worktree garbage collection); none of them is implemented
 written: 2026-08-02
 grounding: verified against git 2.43.0 in throwaway repos on 2026-08-02; every claim
-           below marked VERIFIED was executed, not recalled
+           below marked VERIFIED was executed, not recalled. Code citations re-read
+           against the tree on 2026-09-11.
 
 ## The problem, stated once
 
 A lain fleet spawns N workers into isolated worktrees. Their work has to come back. Today
-`Isolation::Worktree::Handback` runs one merge per worker (`handback.rb:486`,
+`Isolation::Worktree::Handback` runs one merge per worker (`handback.rb:461`,
 `@parent.run("merge", "--no-edit", ref)`) and `Isolation::WorkerHandoff` spawns a
 `merge_resolver` role when that merge conflicts. Both are per worker, one at a time.
 
@@ -26,6 +28,76 @@ optional.** If the work was worth planning it is worth merging, so the default i
 whatever it takes -- deterministic first, tokens when deterministic will not do it. `Retain`
 is for the crash cases (OOM, a segfault like the 4.0.5 cvar bug, kernel panic, power loss),
 where the honest answer is to anchor the work and leave it recoverable, not to discard it.
+
+## What the code does today (re-read 2026-09-11)
+
+- **A worker branches from whatever the parent checkout has checked out, at acquire time.**
+  `Worktree#add` runs `git -C <repo_root> worktree add --detach <path>` with no commit-ish
+  (`worktree.rb:122-123`, `:158`), so the checkout is the parent's `HEAD` at that instant. It is
+  not hardwired to `main` -- but nothing names a working branch either: a fleet launched from
+  `main` branches every worker from `main`, and a worker acquired early never sees a sibling
+  that landed after it.
+- **Handback merges into the parent checkout's current branch**, ref first: the worker's `HEAD`
+  is anchored to `refs/lain/worker/<slug>-<fingerprint>` by compare-and-swap `update-ref`
+  (`handback.rb:90`, `:270`), then `git merge --no-edit <ref>` runs in the parent
+  (`handback.rb:461`) with no strategy flags. A conflict leaves the parent mid-merge on purpose.
+- **`WorkerHandoff#reclaim`** is that handback plus a `merge_resolver` spawn on conflict;
+  **`#surrender`** anchors and spawns nothing, for the unwinding path
+  (`worker_handoff.rb:237`, `:245`).
+- **Chat wires neither.** `Supervisor` defaults to `handoff: Retain` (`supervisor.rb:45`), whose
+  `surrender` answers `Report.nothing` and keeps the crashed worker's worktree until `#stop`
+  (`supervisor.rb:337-348`). No chat hands work back yet (epic wiring chunk, T20 deferred).
+- **Nothing is ever garbage-collected past a lease.** Release force-removes the worktree
+  (`worktree.rb:139`) and a stale one is reaped before the next acquire of the same worker id
+  (`worktree.rb:152`), but no code deletes a `refs/lain/worker/*` anchor, a promotion branch
+  under `refs/heads/epic/<slug>/<issue>` (`forge/promotion.rb:93`), or a retained worktree.
+  They accumulate forever.
+- **There is no `[isolation]` config table.** `.lain/config.toml` knows `approval`, `epics`,
+  `sensitivity`, `shell` and `interactive` (`config.rb`). And there is no scheduler anywhere in
+  lain: `lain up` and `Lain::Notify` poll only while a session is live, and `crates/lain-core` is
+  an exec RPC daemon, not a timer.
+
+## Where a worker branches from
+
+**Ruling (Joel, 2026-09-11): every worker branches from the HEAD of the working feature branch
+-- the integration branch the plan or epic is building -- and never from `main`.** Branching
+each worker off `main` makes every worker re-derive the same integration against a base its
+siblings have already moved past, so conflicts accumulate with the number of waves. That is not
+hypothetical: it is exactly what a `/execute-plan` orchestrator did when its worktrees kept
+branching from `main`.
+
+The code is one step away and it is not a safe default as it stands, because "whatever the
+parent has checked out" is only right if the parent happens to be standing on the working
+branch. **Required change:** `Worktree#acquire` takes the base explicitly --
+`worktree add --detach <path> <base>`, where `<base>` is the working branch's current tip, read
+at acquire time and journaled on the lease -- and refuses rather than falling back to the
+parent's `HEAD` when no base is named. A later wave acquires from the tip *after* the earlier
+wave landed, which is what makes the next section's fast-forward reachable at all.
+
+## A worker brings itself current before it hands back
+
+**Ruling (Joel, 2026-09-11): the worker, not the orchestrator, is the first resolver of its own
+conflicts.** Before handback, a worker rebases onto the working branch's *current* tip (or
+merges it in, where rewriting its history would lose something worth keeping) and settles
+whatever conflicts that raises -- with its own context of what it changed and why, which is
+precisely the context a resolver spawned afterwards lacks. Done well, its handback is a
+fast-forward and costs the orchestrator nothing.
+
+The strategy rulings below apply to the worker's rebase exactly as to the parent's merge: lain
+passes `--conflict=zdiff3` and the diff-algorithm choice on the command line, and journals them.
+
+**Costs, stated honestly.**
+
+- The target moves. A worker that rebased onto tip T hands back while a sibling lands T+1, so
+  "it was current when it finished" is not "it fast-forwards now". Landing is **serial**, so
+  this is detected rather than raced: each handback re-probes against the tip it is landing
+  onto, a worker that no longer fast-forwards is either sent back to rebase once more or falls
+  into the batch below, and nothing merges against a tip it was not probed against.
+- A worker's self-resolution is still unverified. It ran its own card's specs, not the
+  combined tree's suite, so the single suite gate below stays the real verification.
+- It spends the worker's tokens, not the orchestrator's. That is the point -- the worker's
+  context already holds the change -- but it is a cost the bench should see, so the rebase and
+  its conflict count are journaled on the handback.
 
 ## What git can actually do
 
@@ -59,15 +131,24 @@ repo, so a resolution made once is replayed for every later wave and every re-me
 
 ## The shape to build
 
-Not octopus. **Partition deterministically, batch the resolver, verify once.**
+Not octopus. **Workers settle their own conflicts first; then partition deterministically,
+batch the resolver over what is left, verify once.**
 
-1. Probe each worker ref with `merge-tree --write-tree`. Clean ones cost nothing.
-2. Merge the clean subset sequentially onto an integration ref, journaling each handback
-   `Outcome` as it lands, so per-worker attribution survives in the record even though the
-   suite runs once.
-3. Collect the conflicted subset and spawn **one** `merge_resolver` over the aggregate. The
-   resolver must be given the intended ORDER, not just the hunks: merging A then B means B
-   integrated against A, and a resolution that satisfies each pair need not satisfy the whole.
+0. Each worker branched from the working branch's tip and rebased onto its current tip before
+   handing back (the two sections above). Most workers arrive as fast-forwards; this step is
+   what keeps the rest of the list short.
+1. Probe each worker ref, **in landing order**, with `merge-tree --write-tree` against the tip
+   it would land on. A fast-forward or a clean merge costs nothing.
+2. Land the clean subset sequentially onto the integration ref, re-probing each against the tip
+   the previous one produced, and journaling each handback `Outcome` as it lands, so per-worker
+   attribution survives in the record even though the suite runs once. A worker whose clean
+   probe goes stale mid-sequence drops to step 3, or goes back to its worker for one more
+   rebase if it is still alive.
+3. Collect the conflicted subset -- only what the workers could not or did not settle -- and
+   spawn **one** `merge_resolver` over the aggregate. The resolver must be given the intended
+   ORDER, not just the hunks: merging A then B means B integrated against A, and a resolution
+   that satisfies each pair need not satisfy the whole. The orchestrator is the fallback here,
+   never the default.
 4. Run the suite once against the combined tree. That run is the gate.
 
 `Isolation::WorkerHandoff::Report` already has the vocabulary for this
@@ -87,7 +168,8 @@ about how **the lain loop** behaves when it is the one merging. Those are differ
 that happen to share a checkout. lain's behaviour has to be legible from lain's own code and
 reproducible on a machine whose git config nobody has touched.
 
-So `handback.rb:486` grows explicit, injected options rather than inheriting them:
+So `handback.rb:461` (and the worker's own rebase) grows explicit, injected options rather
+than inheriting them:
 
 - `-X patience` or `-X histogram` (or `--diff-algorithm=`), selectable, because list-shaped
   files -- manifests, registries, tool rosters -- are exactly where Myers misaligns hunks and
@@ -158,8 +240,55 @@ What it costs, and why it is a card rather than a patch:
 - The driver sees one file and no test suite. It cannot know whether its resolution builds.
   The suite gate above stays the real verification.
 
+## Worktree garbage collection
+
+**Ruling (Joel, 2026-09-11): a sane default, configurable, and cleanup happens as soon as the
+work is safely somewhere else.** Three triggers:
+
+1. **Folded into the working branch.** A worker's checkout is reclaimed the moment its work is
+   an ancestor of the working branch -- the branch-off-a-branch case. Release already
+   force-removes the worktree; what is new is that its `refs/lain/worker/*` anchor goes with it
+   once `git merge-base --is-ancestor <anchor> <working-branch>` holds, since the anchor has
+   nothing left to keep reachable.
+2. **The working branch merged into `main`/`master`.** Once
+   `git merge-base --is-ancestor <working-branch> <main>` holds, everything that existed to
+   carry that branch's work is reaped: its remaining worker anchors, its
+   `refs/heads/epic/<slug>/<issue>` promotion refs, any worktree still leased to it, and the
+   working branch itself if lain created it.
+3. **Retained work expires.** A retained or crashed worker's lease -- the `Retain` cases, where
+   no handback ran -- is kept for **7 days by default**, then reaped. Configurable as
+   `[isolation] retain_days = 7` in `.lain/config.toml`, a new table beside `approval` and
+   `epics`; an integer day count rather than a duration string keeps it inside the TOML types
+   `config.rb` already reads.
+
+**GC respects the anchor-first rule, and must.** Uncommitted work in a worktree is scratch by
+ruling (`worktree.rb:25`), so reaping a worktree loses nothing that was not already disposable
+-- but *committed* work that is on no anchor would be lost with it. So a reap anchors before it
+removes, exactly as `Handback` does, and deletes an anchor only when the ancestry test proves
+the commits are reachable from the working branch or `main`. An expired retained lease is
+reaped as a worktree; its anchor is deleted only if its commits are reachable, and otherwise
+kept and reported rather than silently dropped -- "a worker's commits are never optional" still
+holds after seven days.
+
+**Triggers 2 and 3 run as a daily background task, not only lazily.** lain has no scheduler
+today (see above), so the unit is an idempotent command -- `lain worktrees gc`, safe to run any
+number of times -- and the cadence is a separate concern. Two candidate triggers, either of
+which satisfies the ruling:
+
+- a detached run kicked off by any `lain` launch when a last-run stamp under `state_home` is
+  more than 24 hours old, which needs no daemon; or
+- a systemd user timer (and a launchd agent, for macOS) that lain installs on request and that
+  calls the same command, which covers a machine where lain is not launched every day.
+
+Every reap is journaled -- what, why (which ancestry test or which expiry), and what was kept --
+so a missing worktree is always explained by a record.
+
 ## Open questions
 
+- Which daily trigger ships first: the stamp-gated launch run, or an installed timer?
+- Does a worker that fails to fast-forward after its rebase go back to the same worker (if
+  still live) for one more rebase, or straight to the batch resolver? The first spends that
+  worker's context well; the second bounds the latency of a wave.
 - Does the batch resolver get the whole conflict set in one prompt, or one prompt per file with
   a shared preamble naming the others? The first is cheaper and sees the whole; the second is
   smaller per call and matches the merge-driver shape.

@@ -1,6 +1,9 @@
 # Chunk — interaction modes, approval triage, and workspace undo
 
-status: draft (awaiting Joel's review)
+status: done (2026-08-02) -- 22 of 23 cards landed. The "draft" line was never updated after
+execution; corrected 2026-09-11. T14 (`/undo`) was not delivered, T7 landed unwired, and release
+gates 1 and 3 are open -- all carried by `chunk-undo-reachability.md`. Gate 2 was closed by later
+chunks. The execution log below is the record.
 commit-mode: orchestrator-commits
 language: ruby
 panel: Torvalds, Evans, Metz, Schneeman, Patterson (one review agent embodies all)

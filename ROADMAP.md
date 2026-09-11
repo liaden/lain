@@ -47,7 +47,7 @@ milestone exists to make an axis swappable and measured.
 | **Tool design (ACI)** | terse vs. verbose vs. guardrailed feedback; tier 1/2/3; **tolerant/repair · prereq-enforced · phase-narrowed** | correct-call rate; recovery-from-error; **compounding accuracy over N steps** |
 | **Tool disclosure** | upfront-JSON vs. deferred/searchable vs. code-API | tokens; correct-call rate |
 | **Prompt slots** | base template vs. user-filled holes (persona · domain framing · output contract) | correct-call rate; grader; cache-hit |
-| **Provider / model** | Anthropic vs. OpenAI-compatible vs. **local ollama** (`--provider ollama`) vs. **cloud ollama** (`--provider ollama-cloud`) vs. Bedrock (work key — `planning/specs/bedrock-provider.md`). The two ollama arms are the cleanest cut on this axis: same native `/api/chat`, same encoder and decoder, so only hosted-ness and model class vary. **The cloud arm is a provider-axis arm and NOT a determinism-comparable one** — measured 2026-08-24, `temperature 0` + fixed seed + warm runs returned **three distinct completions from three runs** (`references/ollama/cloud.md`), so any cloud comparison is over samples, not points, and needs `n > 1` and a variance treatment. The local arm's temperature-0 reproducibility — itself high-probability rather than guaranteed — does not transfer. | grader score; cost; latency |
+| **Provider / model** | Anthropic vs. OpenAI-compatible vs. **local ollama** (`--provider ollama`) vs. **cloud ollama** (`--provider ollama-cloud`) vs. Bedrock (`planning/specs/bedrock-provider.md` — shipped, **untested going forward**). The two ollama arms are the cleanest cut on this axis: same native `/api/chat`, same encoder and decoder, so only hosted-ness and model class vary. **The cloud arm is a provider-axis arm and NOT a determinism-comparable one** — measured 2026-08-24, `temperature 0` + fixed seed + warm runs returned **three distinct completions from three runs** (`references/ollama/cloud.md`), so any cloud comparison is over samples, not points, and needs `n > 1` and a variance treatment. The local arm's temperature-0 reproducibility — itself high-probability rather than guaranteed — does not transfer. | grader score; cost; latency |
 | **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** · **control-flow-as-code (coded FSM vs prompt-ReAct)** | grader; tokens (~15× risk); cache-write; context-loss events; **loop-depth / no-progress**; **merge fraction** `[exp]` |
 | **Decorrelation** (within a fan-out) `[exp]` | identical prompts · seeded prompt variation · role-differentiated · model-heterogeneous | **distinct approaches; inter-child diff distance; unique files touched** — diversity, *not* mean score (agents are low-variance: 18/30 chose one branch name, `planning/hn-agent-landscape-2026-08.md` T1-2) |
 | **Verification** `[exp]` | no verifier · test suite · suite + profiler · metamorphic/property oracle · **harness-generated oracle** (recorded reference state) | grader score; turns-to-green; wall-clock share spent verifying |
@@ -886,7 +886,7 @@ XDG path relative, which put machine state back inside the user's repository)
    buffer ergonomics). Record: the plan spec above and
    `planning/dominator-meet-research-2026-07.md`.
 
-11. **Planned (2026-07-21, panel-reviewed)** — two independent chunks authored via
+11. **✅ Landed — planned 2026-07-21, panel-reviewed** — two independent chunks authored via
    `/create-plan`, executable in either order:
    `planning/specs/chunk-parallel-tools-core-skeleton.md`
    (M6: parallel tool execution widened past `Subagent` with barrier semantics + the
@@ -898,7 +898,7 @@ XDG path relative, which put machine state back inside the user's repository)
    shape × density sweep; plus the owed `cache_profile` and `NonStringSlot` fixes as
    prerequisite cards).
 
-12. **Planned (2026-07-23, panel-reviewed)** — `planning/specs/chunk-ui-ux-tmux-nvim.md`:
+12. **✅ Landed — planned 2026-07-23, panel-reviewed** — `planning/specs/chunk-ui-ux-tmux-nvim.md`:
    the UI/UX chunk — in-repo tmux + Neovim plugins, the `you>` command registry
    (/help /status /sessions /inbox /approve /model /rewind /fork /btw /quit /goal
    /ruby /meta), session forking with ephemeral journal-and-reap, the M4-2 provider
@@ -906,7 +906,7 @@ XDG path relative, which put machine state back inside the user's repository)
    read-only per-subagent tmux windows (`lain watch`), `lain up` flag passthrough +
    `--nvim` cockpit, ARCHITECTURE.md, and the README/xmonad cleanup.
 
-13. **Planned (2026-07-25, panel-reviewed)** — `planning/specs/chunk-live-wiring.md`: the
+13. **✅ Landed — planned 2026-07-25, panel-reviewed** — `planning/specs/chunk-live-wiring.md`: the
    live-wiring chunk, closing the gap between five chunks of landed bench machinery and a chat
    session that uses almost none of it. Per-turn `Context` construction on the Agent
    (`PipelineSource`) with `Compaction::Scheduler`/`Need`/`Cold` **on by default**, backed by a
@@ -919,7 +919,7 @@ XDG path relative, which put machine state back inside the user's repository)
    planning with citations: `Plan::Runner` live wiring (a second execution mode, not wiring) and
    the tool-disclosure arms. **✅ Landed 2026-07-25** (`fddc8e3..56a7815`, 15 commits).
 
-14. **Planned (2026-07-25, panel-reviewed)** —
+14. **✅ Landed — planned 2026-07-25, panel-reviewed** —
    `planning/specs/chunk-compaction-tiers-pins-isolation.md`: compaction tiers, pinned history,
    and isolation invocation. The summarizer becomes a *tier* (selectable provider/model, spend
    journaled through `Telemetry::OracleAnswer`, and a **custom deterministic tier** of user
@@ -947,7 +947,7 @@ XDG path relative, which put machine state back inside the user's repository)
    code reads is declared by no command, and the README, `docs/commands.md`, and
    `docs/providers/ollama.md` describe three summarizer tiers, pins, and isolation's real reach.
 
-15. **Planned (2026-07-27, panel-reviewed)** —
+15. **✅ Landed — planned 2026-07-27, panel-reviewed** —
    `planning/specs/chunk-algebra-vocabulary.md`: the algebra vocabulary. Lain already maintains a
    monoid (`Context::Combinator#>>`), a commutative monoid (`Usage#+`), and a meet-semilattice on
    two
@@ -969,7 +969,7 @@ XDG path relative, which put machine state back inside the user's repository)
    (each
    needs a generator under the sweep's contract).
 
-16. **Planned (2026-07-27, panel-reviewed)** —
+16. **✅ Landed — planned 2026-07-27, panel-reviewed** —
    `planning/specs/chunk-derived-context-timeline.md` (**requires chunk 15**): the derived context
    timeline. Compaction
    stops being a render-time projection and becomes a **second lineage** — a derived `Timeline` in
@@ -990,7 +990,7 @@ XDG path relative, which put machine state back inside the user's repository)
    hierarchical/recursive derivation, the plan-step strategy, exchange-level reordering, and
    retiring `Context::Compact`.
 
-17. **Planned (2026-07-28, panel-reviewed)** —
+17. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-chat-ux-and-ui-fixes.md`, grounded by
    `planning/chat-ux-research-2026-07.md`: the chat-window UX chunk, plus the four defects a live
    `lain up --nvim` run against the ollama arm surfaced. The defects: `lain://journal` can never
@@ -1012,7 +1012,7 @@ XDG path relative, which put machine state back inside the user's repository)
    nvim collapses their editor to the smallest client), and a ticking TTY status line (revisits the
    2026-07-11 tmux-primary ruling; the seam is left, the behaviour is not built).
 
-18. **Planned (2026-07-28, panel-reviewed)** —
+18. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-vsock-exec-transport.md`, grounded by
    `references/firecracker-microvm-isolation.md` and two executed spikes: the **vsock-native exec
    transport**. `lain-core` learns to listen on `AF_VSOCK`, and `Core::Client` learns to take an
@@ -1053,7 +1053,7 @@ XDG path relative, which put machine state back inside the user's repository)
    error; and T6's first draft had six of seven examples that would have passed identically over a
    Unix socket.
 
-19. **Planned (2026-07-28, panel-reviewed)** —
+19. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split
    out of chunk 18 during panel review — zero shared files, zero dependency edges, and unlike the
    transport work it spends real API money and carries a human-gated manual pass.
@@ -1085,7 +1085,7 @@ XDG path relative, which put machine state back inside the user's repository)
    an explicit `--journal PATH` through `Journal.open`, which is what makes the manual pass's
    "confirm the lease telemetry" step meaningful at all.
 
-20. **Planned (2026-07-29, panel-reviewed)** —
+20. **✅ Landed — planned 2026-07-29, panel-reviewed** —
    `planning/specs/chunk-review-correctness-cost.md`: **chunk A of the simplification-review
    fixes** (`planning/reviews/2026-07-29-simplification-review.md`). The shipped defects (split-
    chunk streaming crash, `gsub` backreference interpolation reachable from model input, PlanSweep
@@ -1101,7 +1101,7 @@ XDG path relative, which put machine state back inside the user's repository)
    dag/canonical/event bindings stay **unwired** — wiring is the follow-up chunk this plan's T39
    files.
 
-21. **Planned (2026-07-29, panel-reviewed)** —
+21. **✅ Landed — planned 2026-07-29, panel-reviewed** —
    `planning/specs/chunk-review-missing-objects.md`: **chunk B, runs after chunk A lands** (its
    grounding line numbers assume A's diffs). The missing value objects behind the long parameter
    lists (`Agent` accepting its already-extracted collaborators instead of six pass-through
@@ -1142,6 +1142,12 @@ XDG path relative, which put machine state back inside the user's repository)
    behind it, no single-implementation seam in the repo can be defended as "committed
    direction", which is why the record comes first
    (`planning/reviews/2026-07-29-simplification-review.md` §1.2).
+   **Update 2026-09-11: the "unwired" and "awaiting review" above are historical.** The 2026-07-30
+   critique ran, and item 26 wired the gate — built by `lain epic submit` and `lain epic land`, and
+   rebuilt from the journal. `planning/epic-orchestration.md` was refreshed on 2026-09-11 with the
+   rulings (the decomposition-altitude sweep stays the goal; `Gherkin::Approval` converges into
+   `Approval::Gate`; `adjudicated` is wired into `lain epic submit` rather than refused there;
+   Linear is out) and the remaining work, sized.
 
 23. **Next chunk — the Rust `Timeline`/`Store` parity gap, and the wiring decision.** Grounding:
    `planning/rust-parity-gap.md` (method-by-method Ruby↔`Lain::Ext`, written against the code,
@@ -1185,7 +1191,7 @@ XDG path relative, which put machine state back inside the user's repository)
    regrow — `planning/specs/chunk-derived-context-timeline.md:171`'s F7 catalogue tracked nine of
    these and the count roughly doubled since.
 
-25. **Planned (2026-07-29, panel-reviewed)** —
+25. **In progress — planned 2026-07-29, panel-reviewed** —
    `planning/specs/chunk-tool-algebra-lenses-partition.md`: the tool-use algebra chunk, from
    `planning/tool-use-algebra.md`. Four streams: the law suites the tool layer relies on but
    never proves (the exchange law behind `parallel_safe?`, posture equivalence over allowed
@@ -1199,7 +1205,7 @@ XDG path relative, which put machine state back inside the user's repository)
    `Registry#seal`). **Sequenced strictly after chunk 21's review-fixes chunk B lands** — its
    T21/T23/T32 touch the same files; re-verify all anchors against post-B main.
 
-26. **Planned (2026-07-30, panel-reviewed)** —
+26. **✅ Landed, 26 of 27 (T20 deferred by ruling) — planned 2026-07-30, panel-reviewed** —
    `planning/specs/chunk-epic-wiring-intake-landing.md`: wire the landed epic domain and
    close the loop item 22 left open. Three streams, 25 cards: gate wiring (Submission
    artifacts answering the gate duck, per-stage policy from `[epics.gates]`, transition
@@ -1319,6 +1325,17 @@ XDG path relative, which put machine state back inside the user's repository)
    already names when it refuses to spawn while unwinding, so it needs a deadline and a loud
    deterministic fallback; and a driver sees one file and no suite, so the suite gate stays the
    real verification.
+   **Rulings 2026-09-11** (`planning/merge-conflict-handling.md` updated). Workers branch from the
+   **working feature branch's tip, never `main`** — today `Isolation::Worktree` runs
+   `worktree add --detach` with no commit, so a worker branches from whatever the parent checkout
+   has checked out, which is `main` whenever a fleet starts there, and conflicts accumulate. A
+   worker **brings itself current** — rebases onto the tip and settles its own conflicts with its
+   own context — before handback, so integration is a fast-forward where possible and the batched
+   resolver is the fallback, not the default. **Worktree GC**: a worker's anchor ref is reaped once
+   its work is an ancestor of the working branch; everything belonging to a working branch is
+   reaped once that branch is merged into `main`; retained leases expire after **7 days** by
+   default (configurable); and the sweep runs **daily in the background** as an idempotent
+   `lain worktrees gc`. None of this is built yet.
 
 29. **Landed 2026-08-09** (24 commits, `d0b3cc4`..this one; planned 2026-08-07, panel-reviewed) —
    **the project root, and the secret boundary.**
@@ -1357,7 +1374,7 @@ XDG path relative, which put machine state back inside the user's repository)
    side is unblocked; `Remembered::Persister` and `Approval::Risk` stay dead, as scoped. The typed
    egress tool and Landlock confinement in `crates/lain-core` remain **deferred**.
 
-30. **Planned (2026-08-07, panel-reviewed) — `/survey`: reviewing a corpus, in two chunks.**
+30. **✅ Landed (survey B12 part two open) — planned 2026-08-07, panel-reviewed — `/survey`: reviewing a corpus, in two chunks.**
    `planning/specs/chunk-partition-strategy.md` (4 cards, 3 waves) then
    `planning/specs/chunk-survey-corpus.md` (14 cards, 6 waves), strictly in that order. A review
    of a **folder as it stands** — a LaTeX resume, a `docs/` folder read for prose quality, a
@@ -1405,7 +1422,7 @@ XDG path relative, which put machine state back inside the user's repository)
    an "unmatched-effort rule" in `chunk-bench-science.md` (which contains no such rule) was
    corrected in three places.
 
-32. **Planned (2026-08-18, panel-reviewed)** —
+32. **✅ Landed — planned 2026-08-18, panel-reviewed** —
    `planning/specs/chunk-cost-axis-and-compaction-arm.md`: the cost axis, and the compaction
    strategies it makes measurable. **Every cost number this bench has produced for an Opus model is
    3× too high** (`PriceBook::DEFAULTS` prices opus at 15/75; current list is 5/25), and **fourteen
@@ -1434,7 +1451,7 @@ XDG path relative, which put machine state back inside the user's repository)
    term is deferred on **design order**: item 21 already owns collapsing the four metric registries
    (two incompatible shapes), and a computed total is the case those shapes cannot express.
 
-33. **Planned (2026-08-18, panel-reviewed)** —
+33. **✅ Landed — planned 2026-08-18, panel-reviewed** —
    `planning/specs/chunk-qa-round5-causal-fold-and-surfaces.md`: discharge QA round 5 at the level of
    its causes. Three of its eight findings share one shape — **an edge, a surface or a unit the
    design treats as first-class and the implementation treats as second-class.** The session rebuild
@@ -1462,7 +1479,7 @@ XDG path relative, which put machine state back inside the user's repository)
    `lain://timeline` "the DAG" while it renders a linear first-parent chain).
 
 
-34. **Planned (2026-08-21, panel-reviewed)** —
+34. **✅ Landed — planned 2026-08-21, panel-reviewed** —
    `planning/specs/chunk-qa-round8-cancellation-and-environment.md`: discharge QA round 8. **Six of
    its findings share one shape — the system knows a fact and never says it.** A cancelled tool call
    leaves a `tool_use` with no result, which permanently refuses every later compaction and makes the
@@ -1496,7 +1513,7 @@ XDG path relative, which put machine state back inside the user's repository)
    repair therefore lands **at load** (`Resume`), which is trigger-agnostic and covers SIGKILL and
    OOM that no in-process handler sees.
 
-35. **Planned (2026-08-23, panel-reviewed)** —
+35. **✅ Landed — planned 2026-08-23, panel-reviewed** —
    `planning/specs/chunk-qa-round9-where-the-record-lives.md`: discharge QA round 9. **Most of its
    findings are one shape — a fact written somewhere it does not belong, or under a name that is not
    its own.** Machine state that changes every turn is written into the user's source tree with no
@@ -1526,7 +1543,7 @@ XDG path relative, which put machine state back inside the user's repository)
    would add `realpath` and a sha256 binary to the one renderer designed to degrade with nothing
    installed — as the only real risk, and settled at plan level by telling the renderer its path.
 
-36. **Planned (2026-08-23, panel-reviewed)** —
+36. **✅ Landed — planned 2026-08-23, panel-reviewed** —
    `planning/specs/chunk-qa-round10-one-gate-one-record.md`: discharge QA round 10, **delete
    `--yolo`**, and absorb the unlanded remainder of item 35. **The headline is that lain's
    protected-path argv check already exists and has never run.** `Escalation::Triage#literal`
@@ -1576,7 +1593,7 @@ XDG path relative, which put machine state back inside the user's repository)
    streaming path, leaving one acceptance criterion with zero real coverage while 296 of 297 examples
    stayed green.
 
-38. **Planned (2026-08-26, panel-reviewed)** —
+38. **✅ Landed — planned 2026-08-26, panel-reviewed** —
    `planning/specs/chunk-shell-term-approval.md`: **the pipeline algebra proper**, which
    `chunk-modes-approval-undo.md` deferred as "a separate feature chunk" and nobody wrote. **The
    headline is that lain's term arm has never bought what it exists to buy.** A command
@@ -1613,7 +1630,7 @@ XDG path relative, which put machine state back inside the user's repository)
 
 ---
 
-39. **Planned (2026-08-27, panel-reviewed)** —
+39. **In progress (T14 unlanded; manual passes owed) — planned 2026-08-27, panel-reviewed** —
     `planning/specs/chunk-qa-round14-escalation-and-isolation.md`: the QA round-14 discharge. Two
     session-killers and three smaller defects, plus the subagent isolation the `--isolation` flag has
     always promised and never delivered. **F79**: a spawn that parks a human question leaves a
@@ -1626,6 +1643,103 @@ XDG path relative, which put machine state back inside the user's repository)
     isolation strategy was cut to its own chunk on a panel finding that the toolset cannot answer
     "may this child write" — `Tool` deliberately carries no such axis. 12 cards, 4 waves.
 
+
+---
+
+40. **✅ Landed, manual pass owed — planned 2026-08-28, panel-reviewed** —
+    `planning/specs/chunk-qa-round15-what-nothing-retires.md`: the QA round-15 discharge. Two of the
+    round's three defects are one shape — a digest enters a standing set and nothing ever takes it
+    out — and the third is that shape one remove further, a fact computed and told to nobody.
+    **F81**: every answered *subagent* question leaves a permanently stale `lain://inbox` row and an
+    `inbox_count` that never returns to 0. The filed mechanism ("the relay writes two records") is
+    **wrong** and the plan corrects it: only the outermost relay hop is addressed to the human, so
+    exactly one row is listed; the residue is on the retire side, where `ToolRunner` commits the
+    answering turn citing that hop while `Scribe#child_turn` deliberately keeps a spawned chain's
+    turns off the tee — a collision between two designs that are each correct alone, in which the
+    only turn that *can* retire the question is the one that rule excludes. **F82**: one oversized
+    tool result pins occupancy at ~100% with an empty compactable head, so `approaching_window`
+    fires every turn with no action possible and nothing says so; the fix records it and says it
+    down the diagnostics sink `CompactionMount` already reserves. **F83**: `fleet` counts finished
+    subagents forever, taken by the human's ruling as the **W3 lifecycle design** rather than a
+    ported predicate — a one-shot completion and an actor farewell speak different vocabularies, and
+    naming it once is what lets two readers agree. The panel returned **three blockers, all
+    verified**: the lifecycle object was placed under `lib/lain/tools/`, which `status_feed.rb:163-167`
+    forbids the feed from reaching into and which `lain.rb`'s load order inverts — it would not have
+    raised, it would simply have shipped; `StatusFeed` measures **115 lines against a 125 cap** with
+    two cards queued to grow it, so the missing object (`StatusFeed::Fleet`, on `StatusFeed::Inbox`'s
+    exemplar) became a card of its own; and the plan rejected routing the existing
+    `Telemetry::ChildTurn` by quoting a reason this chunk itself declares to be the defect, when the
+    real reason is bandwidth — those records are 47% of a journal with one trivial spawn and 88% with
+    eight. Also carries the bench's own repairs: two driver scripts that resolve a pane by
+    `grep -w ruby | head -1`, an RPC helper whose reads concatenate, a scenario contradiction on how
+    many windows a survey's review tab has, a truncated-stream recipe that contradicts a shipped spec
+    (and is why round 15's F78 re-check read zero records), and **two overlapping shell scenarios the
+    merge left behind**, each declaring the same coverage gap as newly discovered. 18 cards, 3 waves.
+
+---
+
+41. **✅ Landed 2026-08-30, manual passes owed — planned 2026-08-28, panel-reviewed** —
+    `planning/specs/chunk-qa-round16-identity-and-what-a-tool-may-return.md`: the QA round-16
+    discharge, and the chunk's spine is **identity**. Two spawns of one arm from one head are
+    byte-identical `:spawn` events, so they share a digest — and a digest *is* an actor's address.
+    Round 15's fleet retirement turned that from an undercount into something worse: one farewell
+    retires the shared entry while the surviving twin is still running, so the HUD reads `fleet 0`
+    with a live child. Taken now rather than deferred a third time, on the human's ruling that
+    **sibling-to-sibling agent communication is where this is heading** and an address that cannot
+    distinguish two live children stops being a display bug the moment one agent addresses another
+    by it. **F84** — `lain chat --windows` has never once opened a surviving window — was root-caused
+    by measurement rather than inference: the round's own findings blamed an Async spawner, and the
+    real cause is exit status **127**, because `FleetWindows` is the only tmux window-opener in the
+    tree composing a bare `lain watch` with no `cwd:` and no `Up.pane_command` environment, while
+    `tmux new-window` exits 0 as soon as the server accepts, so nothing could tell "accepted" from
+    "survived". **F85** — the bench driver cannot see a `lain chat` that is not its pane's foreground
+    process, so its ambiguity refusal gives false confidence; grounding also turned up a second bug
+    the round-15 chunk's own escape hatch introduced. The other half is **what a tool may hand
+    back**: `subagent`, `run_skill` and `ask_human` return arbitrary content with no ceiling, which
+    is F82's mechanism, and the human ruled against refusal for all three — a human gets their
+    message back with the option to send anyway, a subagent is asked to summarize its own overflow
+    from a context that already holds it. The panel returned **three blockers, all verified**: a
+    friction signal for over-verbose skills could not have worked, because `RunSkill` has no durable
+    journal and the `journal:` tools receive is an in-memory render bus — proved by `shell_arm`
+    appearing in zero real session journals — so it is cut with the wiring it would need named; the
+    `worker_id` identity design collided with another wave-1 card and needed four files no card
+    listed, so the ordinal design is decided in the plan instead; and the determinism AC could not
+    reject the very design its own grounding rejected, because a nonce written into a body replays
+    byte-identically — the real constraint is cross-run reproducibility, not replay. 12 cards,
+    3 waves.
+
+42. **✅ Landed 2026-08-02, recorded late (2026-09-11)** — `planning/specs/chunk-modes-approval-undo.md`:
+   interaction modes, approval triage, and workspace undo. 22 of 23 cards landed on 2026-08-02, but
+   the plan's status line still read "draft", so the chunk never got an entry here — item 38 names
+   it only as the chunk that deferred the pipeline algebra. Landed: `Mode::Posture` / `LayerSet` /
+   `Mode`, `/mode` with a journalled switch, the HUD, gated children, the shell parse → verdict →
+   term path, the rule chain, remembered approvals (read side), the escalation ladder, and posture
+   as a `Compare` axis. **What did not:** `/undo` (T14) — nothing on the chat path can read a
+   snapshot back — which strands the working `ShadowGit` scope (T13); the prompt's mode indicator
+   (T7) landed unwired; and two release gates are open — a posture flip leaves the session record
+   declaring the old toolset, so `Grader::ToolSteering` grades against tools the agent was never
+   shown, and `auto`'s reversibility argument has nothing behind it. The third gate (a
+   pass-through ladder) was closed by items 36 and 38. The remainder is **proposed as
+   `planning/specs/chunk-undo-reachability.md`** (requirements draft; about five cards and a
+   one-line wiring fix), pending one decision: whether the owed scribe wiring yields an in-process
+   readable snapshot log or only a durable record.
+
+43. **Proposed (re-scoped 2026-09-11)** — `planning/specs/spec-naming-guard.md`: a **harness
+   feature**, not a rule for this repo. When lain does TDD in someone else's project it should know
+   that project's test layout — level roots (unit / seam / integration), each mirroring the source
+   tree — and hold new tests to it mechanically, so a slow file cannot be split into siblings to
+   game a parallel packer and a seam cannot hide in the fast loop by forgetting a tag. The layout is
+   declared per project and mapped per language as data, and tests generated from Gherkin must land
+   where the guard accepts them. Open: where lain enforces it (a tool-phase write refusal shaped
+   like `RefuseSecretWrites`, a gate, or at land), detection versus declaration, and mixed-level
+   files. lain's own `spec/` stays governed by `CLAUDE.md`; the five drifted specs found in this
+   repo are a separate, optional fix in `planning/notes/lain-spec-mirror-drift.md`.
+
+44. **Scope change (2026-09-11).** Linear is out of scope and is dropped from the epic plan. The
+   Bedrock arm stays in the tree but is **untested going forward** — no further live rounds, and it
+   is a prerequisite for nothing (`planning/specs/bedrock-provider.md`). macOS is kept in mind where
+   portability is cheap, but there is no test environment, so macOS work is unverified and is not a
+   prerequisite either.
 
 ## Map of the documents
 

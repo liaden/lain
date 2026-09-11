@@ -1,224 +1,179 @@
-# Spec layout roots + naming guard
+# Test layout roots + mirror guard — for the project lain is working on
 
-**Status:** planned 2026-08-04, not implemented. Two decisions deferred.
+**Status:** re-scoped 2026-09-11. This is a **harness feature**, not a rule about lain's own
+`spec/` tree. It is not implemented; this doc is a requirements draft for `/create-plan`.
 
-Two changes that compose: split `spec/` into per-level roots (`unit/`, `seam/`, `integration/`),
-each mirroring `lib/`; then guard the mirror mechanically at pre-commit.
+The first draft (2026-08-04) was written against lain's own specs, and our local development
+rules stay in `CLAUDE.md`, which this does not change. The facts from that draft that are only
+about our repo moved to [`../notes/lain-spec-mirror-drift.md`](../notes/lain-spec-mirror-drift.md).
+
+When lain does TDD in someone else's project, it should know that project's test layout and hold
+its own writes to it. That means level roots (unit / seam / integration, each mirroring the source
+tree) and a mechanical guard that keeps the mirror.
 
 ## Why
 
-Three motivations. The second is what prompted this; the third is what the roots buy on their own.
+Each of these reasons holds for any project, not just ours.
 
-**Navigability.** The mirror is what makes `rspec spec/unit/lain/review/source/local_branch_spec.rb`
-the obvious answer to "run the tests for the file I am editing". It degrades silently — nothing
-fails when a spec drifts from its subject, so the drift is found only by the next person who guesses
-the path and gets nothing.
+**Navigability.** The mirror makes "run the tests for the file I am editing" answerable by a path,
+for the human and for an agent choosing what to run after an edit. It degrades silently: nothing
+fails when a test drifts from its subject. An agent writing tests at speed is the fastest drifter
+there is.
 
-**Resisting a specific failure mode.** `parallel_tests` packs whole FILES into worker groups, so the
-longest single file is a hard floor on wall time (measured 2026-08-04: 18.69 s of a ~19 s wall).
-Splitting a slow spec into arbitrary siblings is then a tempting way to make the suite *look* faster
-while the work stays the same and the convention degrades.
+**It resists one specific failure mode.** File-packing parallel runners (`parallel_tests`,
+`pytest-xdist --dist loadfile`) make the longest single file a floor on wall time. Splitting a slow
+test file into arbitrary siblings makes a suite *look* faster while the work stays the same. An
+agent told to speed the suite up will find that move. Tying tests 1:1 to source means **you cannot
+split `foo_spec.rb` into `foo_extra_spec.rb` unless `foo_extra.rb` exists**. "Split the file" then
+becomes "extract a collaborator", which is a design act with its own review.
 
-The rule's force is the 1:1 tie to `lib/`: **you cannot split `foo_spec.rb` into
-`foo_extra_spec.rb` unless `lib/.../foo_extra.rb` exists.** Splitting specs requires splitting the
-implementation, which is a design act with its own review rather than a packing trick. That turns
-"split the file" into "extract a collaborator", which is what `CLAUDE.md` already asks for when an
-object is missing.
+**Level membership becomes structural.** When a tag marks level, a seam test that forgets its tag
+is invisible. It runs in the fast inner loop, and nothing notices. With roots, level is a property
+of location, and a misplaced file can be detected.
 
-**Level membership becomes structural.** Today a spec is a seam because its `RSpec.describe` line
-carries `:seam`. A seam that forgets the tag is *invisible* — it runs in the default inner loop,
-silently costing seconds, and nothing detects it. Under roots, level is a property of location: a
-seam in the wrong place is misplaced, not mislabelled.
+## The layout, as project data
 
-## The roots
+The layout is **data a project declares**, not code lain ships per language. For an RSpec project:
 
 ```
-spec/unit/lain/**          fast, doubled collaborators; the default inner loop
-spec/seam/lain/**          real components, real local resources (git, nvim, the extension)
-spec/seam/crosscutting/**  seams belonging to no single subject (today's spec/lain/seams/)
-spec/integration/lain/**   live API, costs money, opt-in
-spec/guards/**             whole-tree invariants: output discipline, docs naming, algebra laws
-spec/spikes/**             throwaway
-spec/fixtures/**           unchanged
+spec/unit/**         fast, collaborators doubled; the default inner loop
+spec/seam/**         real components, real local resources
+spec/integration/**  external services; opt-in
+spec/support/**, spec/fixtures/**   exempt
 ```
 
-Each of `unit/`, `seam/`, `integration/` mirrors `lib/` beneath its root. That is the whole point —
-it is why the split costs nothing in navigability:
+Each level root mirrors the source root beneath it. For each language the mapping needs:
 
-| Want | Command |
-|---|---|
-| Inner loop | `rspec spec/unit` |
-| The file I am editing | `rspec spec/unit/lain/review/source/local_branch_spec.rb` |
-| Everything about one subject | `rspec spec/*/lain/review/source/local_branch_spec.rb` |
-| The slow ones, deliberately | `rspec spec/seam` |
+- **a source root and suffix:** `lib/` + `.rb`, `src/` + `.py`, `src/` + `.rs`
+- **a test-file rule:** `_spec.rb`, `_test.rb` (minitest, under `test/`), `test_*.py` (pytest),
+  `tests/*.rs`
+- **the level roots and the exempt paths**
 
-`--tag '~seam'` stops being needed for the inner loop. Keep the tags anyway: they are what
-`spec_helper` uses to exclude `:api_integration` and `:core` by default, and belt-and-braces costs
-nothing. But **location becomes the source of truth** and the tag becomes a derived assertion — which
-is itself checkable (see rule 4).
+**Rust does not fit the file-mirror shape.** Unit tests are inline `#[cfg(test)]` modules and
+`tests/` is integration by definition. The mapping must be able to say "unit level is inline; no
+file to mirror".
 
-This supersedes the `CLAUDE.md` line "a seam with an obvious subject stays at its mirror path and
-carries the tag". It still sits at its mirror path; the path now starts at `spec/seam/`.
+## The rule (the Ruby case, as the worked example)
 
-## Measured baseline (2026-08-04, 487 spec files)
+For each test file under a mirrored level root:
 
-| Category | Count | |
-|---|---|---|
-| Tagged `:seam` / `:api_integration` / `:core` / `:live` | 19 | move to their roots |
-| **Exact mirror + constant describe** | **364** | the convention, working |
-| **Flat suffixed siblings** | **58** | what the guard is for |
-| String describe | 44 | mixed: whole-tree guards, and drift |
-| Constant with no `.rb` at the mirror path | 30 | mostly legitimate, see exemptions |
+1. The top-level `describe` argument is a **constant**, not a string.
+2. That constant is **defined in the file at the mirror path**:
+   `spec/unit/app/models/order_spec.rb` → `app/models/order.rb`.
+3. That source file **exists**.
+4. Any level tag present agrees with the root.
 
-The 58 are shapes like `neovim_request_spec.rb`, `anthropic_parity_spec.rb`,
-`gate_regression_spec.rb` — each describing a constant whose mirror path is a *different* file that
-also exists.
+Rule 2 says "defined in the mirrored file", not "named by the mirrored path". The spec mirrors the
+**file**. A constant-equals-path rule false-flags every file that defines more than one constant.
 
-Some are plain drift, worth fixing on their own merits regardless of this plan:
+**Derive constant → path, never path → constant.** Without a configured acronym table,
+`"CLI".underscore.camelize` yields `Cli`, so a path → constant check false-flags every acronym
+namespace. `"App::CLI::Backend".underscore` → `app/cli/backend` is exact and needs no table. Other
+languages need the same direction check (a Python module path is already the name, which is why
+the rule belongs in the mapping, not in the guard).
 
-- `spec/lain/context_spec.rb` describes `Lain::Workspace`
-- `spec/lain/approval_spec.rb` describes `Lain::Approval::Queue`
-- `spec/lain/friction_spec.rb` describes `Lain::Friction::Report`
-- `spec/lain/oracle_spec.rb` describes `Lain::Oracle::Definition`
-- `spec/lain/plan_spec.rb` describes `Lain::Plan::Document`
+**Exemptions are paths, never file contents:** support, fixtures, whole-tree checks that describe
+an invariant rather than a class, and throwaway spikes. With roots, no exemption needs to parse a
+file.
 
-## The rule
+## Questions the harness framing raises
 
-For each spec under `spec/{unit,seam,integration}/lain/**`:
+1. **Where the layout is declared.** `.lain/config.toml` is read by `Config.load`
+   (`lib/lain/config.rb:81`). It understands `[epics]`, `[approval]`, `[sensitivity]` and `[shell]`,
+   and tolerates any other top-level table (`config.rb:16-20`). A `[tests]` table reading into one
+   small class is the house shape (`Sensitivity::Rules`, `Shell::Exclusions`). Whether it is read by
+   `.load` or by a separate reader depends on how loud a typo must be; `config.rb:26-29` records
+   that choice for the other two.
+2. **Detection versus declaration.** `Grader::TestHarness::Adapter.detect`
+   (`grader/test_harness/adapter.rb:63`) probes for rspec, jest and pytest, and only rspec actually
+   runs (`:48`). Defaults per framework could come from detection, with the table as the override.
+   The same question is open in `grader-from-gherkin.md:77`.
+3. **Where lain enforces it.** Candidates:
+   - A tool-phase middleware that refuses or redirects a `write_file`/`edit_file` creating a test
+     file at a path the rule rejects, the way `RefuseSecretWrites` refuses before the write
+     (`middleware/refuse_secret_writes.rb:8-13`). A refusal should name the path the file should
+     occupy, so the model can fix itself.
+   - A check at a gate or at land, over the whole diff.
+   - Both: the middleware for new files, and the gate for the backlog.
+4. **Generated tests must land at the right path.** `Gherkin::TestGeneration` names the framework
+   in the prompt and leaves detection to the caller (`gherkin/test_generation.rb:14-16`). The
+   `gherkin-tests` skill prompt says nothing about where a test file goes. Generated tests should be
+   placed by the same rule the guard checks, and the prompt should say the path rather than hope.
+5. **Level feeds the test run.** `Grader::TestHarness` runs one command
+   (`test_harness.rb:89`, `adapter.rb:91-92`). Grading a unit-level acceptance criterion should run
+   the unit root, not everything. That needs a root argument to reach the adapter's command.
+6. **Mixed-level files.** A file holding both unit and seam examples is common, and in lain's own
+   repo it is 32 files. Choose one: split it into two files (breaks "one test file per source
+   file"), let a file carry a level per example (the tag again, which roots were meant to replace),
+   or say that a file's level is its slowest example.
+7. **The backlog.** A target project will already have drift. Choose one:
+   1. **Staged files only:** holds new work to the rule and leaves old drift alone.
+   2. **Whole tree plus an allowlist:** makes the debt visible, and the list shrinks as it is paid.
+   3. **Whole tree, fix first:** cleanest, largest blast radius, and a big unrequested diff in
+      someone else's repo.
 
-1. The top-level `RSpec.describe` argument is a **constant**, not a string.
-2. That constant is **defined in the file at the mirror path** — `spec/unit/lain/a/b_spec.rb` →
-   `lib/lain/a/b.rb`.
-3. That lib file **exists**.
-4. Any level tag present agrees with the root (`:seam` only under `spec/seam/`, and so on).
+   For a harness working in someone else's repo, option 1 is the likely default and option 2 an
+   opt-in.
 
-Rule 2 is deliberately "defined in the mirrored file", not "named by the mirrored path".
-`spec/unit/lain/epic/records_spec.rb` describing `Lain::Epic::IssueTransition` is correct — the
-constant lives in `records.rb`, and the spec mirrors the **file**. A constant-equals-path rule would
-flag that and ~30 like it.
-
-Rule 4 is what the roots make possible, and it closes the invisible-seam hole in both directions.
-
-### Direction matters
-
-Derive **constant → path**, never path → constant. No acronyms are configured for
-`ActiveSupport::Inflector` here, so `"CLI".underscore.camelize` yields `Cli`, and a path→constant
-check produces false positives across every `Lain::CLI::*`, `Lain::Provider::HTTP::*` and
-`Frontend::TTY` spec. `"Lain::CLI::Backend".underscore` → `lain/cli/backend` is exact and needs no
-acronym table.
-
-## Exemptions
-
-| Exemption | Why |
-|---|---|
-| `spec/guards/**` | Invariants over the tree, not over a class. A string describe is the honest description. |
-| `spec/seam/crosscutting/**` | Seams belonging to no single subject; no constant to mirror. |
-| `spec/{unit,seam}/lain/rust/**` | `Lain::Ext::*` is defined in the compiled extension. No `.rb` for rule 3 to find. |
-| `spec/spikes/**` | Throwaway by construction. |
-
-Note these are all **path** exemptions now. With roots, no exemption needs to parse a file.
-
-## Deferred decision 1: the 58
-
-Three options; the middle has a direct precedent here.
-
-1. **Staged files only.** Exactly the `yard-lint` hook's answer to the same problem — its comment
-   records 58 pre-existing cases and uses `--staged` to "hold new work to the standard from today
-   and let the backlog be cleared on its own terms". Catches nothing in untouched files.
-2. **Whole tree + allowlist.** Every spec checked, the 58 in a visible file that shrinks. Costs a
-   curated todo list; makes the debt legible.
-3. **Whole tree, fix all 58 first.** Cleanest end state, largest blast radius.
-
-Option 3 is more attractive than it was: the root migration already moves every spec file, so
-fixing the 58 rides along in a change that is touching them anyway. Doing it separately means
-touching them twice.
-
-## Deferred decision 2: migration mechanics
-
-487 files move. Mechanical, but it touches things that name `spec/`:
-
-- `.rspec`, `spec/spec_helper.rb` (`--require spec_helper` resolution)
-- `Rakefile` — `parallel_rspec spec` becomes per-root, and the runtime log path
-- `tmp/parallel_runtime_rspec.log` — invalidated; first run after the move re-levels
-- `.pre-commit-config.yaml`, CI paths
-- `CLAUDE.md` Testing section, and the `spec/lain/seams/` reference
-
-Use `git mv` so blame survives. Land the move as one commit touching nothing else, so the diff is
-reviewable as a pure rename — then the guard, then the 58.
-
-An open sub-question: whether `parallel_rspec` should pack the roots **separately**. Seams are 2.5%
-of examples but a large share of wall time; packing them in their own group would stop a seam from
-landing in the same worker as the longest unit file. Worth measuring after the move, not assumed.
-
-## Implementation shape
-
-`bin/lint-spec-naming`, following `bin/lint-commit-msg`: plain Ruby, no gem load beyond
-`active_support/core_ext/string/inflections`, no network. A `local` pre-commit hook with
-`types: [ruby]`.
-
-A script rather than a spec under `spec/guards/`, despite that being the house pattern for
-mechanical guards — those check invariants with no legacy backlog, so they run whole-tree
-unconditionally. This one needs staged-vs-whole-tree as a flag, which is a script concern. If
-deferred decision 1 lands on option 3, that reason evaporates and it should be
-`spec/guards/spec_layout_spec.rb` instead, for consistency with `docs_naming_spec.rb`.
-
-### Acceptance criteria
+## Acceptance criteria (against a fixture project)
 
 ```gherkin
-Scenario: a unit spec at the mirror path passes
-  Given lib/lain/foo/bar.rb defines Lain::Foo::Bar
-  And spec/unit/lain/foo/bar_spec.rb describes Lain::Foo::Bar
+Scenario: a unit test at the mirror path passes
+  Given a fixture project declaring the rspec layout with source root "app"
+  And app/models/order.rb defines Order
+  And spec/unit/models/order_spec.rb describes Order
   When the guard runs
-  Then it exits 0
+  Then it passes
 
-Scenario: a split sibling is rejected
-  Given spec/unit/lain/foo/bar_spec.rb already exists
-  And spec/unit/lain/foo/bar_extra_spec.rb describes Lain::Foo::Bar
-  And lib/lain/foo/bar_extra.rb does not exist
-  When the guard runs
-  Then it exits non-zero, naming the file and the path it should occupy
+Scenario: a split sibling is refused, naming the right path
+  Given spec/unit/models/order_spec.rb already exists
+  And the agent writes spec/unit/models/order_extra_spec.rb describing Order
+  And app/models/order_extra.rb does not exist
+  When the write reaches the tool phase
+  Then it is refused
+  And the refusal names spec/unit/models/order_spec.rb
 
 Scenario: a constant defined in a differently-named file is accepted
-  Given lib/lain/epic/records.rb defines Lain::Epic::IssueTransition
-  And spec/unit/lain/epic/records_spec.rb describes Lain::Epic::IssueTransition
+  Given app/models/records.rb defines OrderTransition
+  And spec/unit/models/records_spec.rb describes OrderTransition
   When the guard runs
-  Then it exits 0
+  Then it passes
 
 Scenario: acronym namespaces are not false positives
-  Given spec/unit/lain/cli/backend_spec.rb describes Lain::CLI::Backend
+  Given app/cli/backend.rb defines CLI::Backend
+  And spec/unit/cli/backend_spec.rb describes CLI::Backend
   When the guard runs
-  Then it exits 0
+  Then it passes
 
-Scenario: a seam under the unit root is rejected
-  Given spec/unit/lain/review/source/local_branch_spec.rb carries :seam
+Scenario: a seam under the unit root is refused
+  Given spec/unit/models/order_spec.rb carries :seam
   When the guard runs
-  Then it exits non-zero, naming spec/seam/ as the correct root
+  Then it fails, naming spec/seam/ as the correct root
 
-Scenario: a seam at its mirror path under the seam root passes
-  Given lib/lain/review/source/local_branch.rb defines Lain::Review::Source::LocalBranch
-  And spec/seam/lain/review/source/local_branch_spec.rb describes it, :seam
-  When the guard runs
-  Then it exits 0
+Scenario: a generated test lands where the guard accepts it
+  Given approved criteria for Order at the unit level
+  When tests are generated for them
+  Then the generated file is at spec/unit/models/order_spec.rb
 
-Scenario: a whole-tree guard keeps its string describe
-  Given spec/guards/output_discipline_spec.rb describes "the output discipline"
-  When the guard runs
-  Then it is not checked
+Scenario: a project with no declared layout is not guarded
+  Given a fixture project with no [tests] table and no detectable framework
+  When the agent writes any test file
+  Then the guard does not refuse it
+  And the session journal records that no layout was in force
 ```
 
 ## What this does not catch
 
-A session can still split a seam into siblings **if it also splits `lib/`** — the rule requires a
-real implementation file, not that the split be wise. That is the intended boundary: the guard makes
-the cheap move impossible and leaves the expensive-but-legitimate one available, where normal review
-applies.
+A session can still split a test into siblings **if it also splits the source**. The rule requires
+a real source file, not that the split be wise. That is the intended boundary: the cheap move is
+impossible, and the expensive but legitimate one stays available where review applies.
 
-It also does not catch a spec that mirrors correctly but tests the wrong thing. Nothing mechanical
+It also does not catch a test that mirrors correctly but tests the wrong thing. Nothing mechanical
 will.
 
 ## Related
 
-- `spec/docs_naming_spec.rb` — same idea one level up: enforce on the artifact, not in a paragraph.
-- `.pre-commit-config.yaml` `yard-lint` hook — the `--staged` precedent and its reasoning.
-- Suite timing measurements 2026-08-04 — the file-packing floor this protects against gaming, and
-  the n=10 worker finding.
+- `planning/specs/grader-from-gherkin.md`: generation and running in the user's framework.
+- `lib/lain/grader/test_harness/adapter.rb`: framework detection and the one command it runs.
+- `lib/lain/middleware/refuse_secret_writes.rb`: a tool-phase write refusal, the enforcement shape.
+- `lib/lain/config.rb`: where a `[tests]` table would be read.
