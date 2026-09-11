@@ -105,6 +105,94 @@ RSpec.describe Lain::Grader::TestHarness do
     end
   end
 
+  # A level root narrows the run: grading a unit-level criterion runs the unit
+  # root, not the whole suite. The fixture's test files are written into a
+  # copy because a committed *_spec.rb would be collected by lain's own suite.
+  describe "a level root narrows the test run", :seam do
+    let(:layout_mini) { File.expand_path("../../fixtures/projects/layout_mini", __dir__) }
+    let(:rspec) { Lain::Grader::TestHarness::Adapter::Rspec.new }
+
+    def with_levels
+      Dir.mktmpdir do |root|
+        FileUtils.cp_r(File.join(layout_mini, "."), root)
+        write_spec(root, "spec/unit/models/order_spec.rb", "unit order", "totals", "refunds")
+        write_spec(root, "spec/seam/models/order_spec.rb", "seam order", "persists")
+        yield root
+      end
+    end
+
+    def write_spec(root, relative, group, *examples)
+      path = File.join(root, relative)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "RSpec.describe #{group.inspect} do\n" \
+                       "#{examples.map { |example| "  it(#{example.inspect}) { expect(1).to eq(1) }\n" }.join}end\n")
+    end
+
+    it "counts only spec/unit examples when run with paths [\"spec/unit\"]" do
+      with_levels do |root|
+        harness = described_class.new(root, adapter: rspec)
+        run = harness.run(worker_env_for(root, worker_env_class), paths: ["spec/unit"])
+
+        expect(run.passed).to contain_exactly("unit order totals", "unit order refunds")
+      end
+    end
+
+    it "grades the same narrowed run, and the whole suite with no paths" do
+      with_levels do |root|
+        harness = described_class.new(root, adapter: rspec)
+        env = worker_env_for(root, worker_env_class)
+
+        expect([harness.grade(env, paths: ["spec/seam"]).why, harness.grade(env).why])
+          .to eq(["all 1 examples passed", "all 3 examples passed"])
+      end
+    end
+
+    it "hands the paths to the adapter's command after its own arguments" do
+      command = Lain::Grader::TestHarness::Adapter::Command.new(out_argv: ->(out) { ["runner", out] },
+                                                                passed: /x/, failed: /y/)
+
+      expect([rspec.command(out_path: "/r", paths: ["spec/unit"]), command.command(out_path: "/r", paths: ["t"])])
+        .to eq([%w[rspec --format json --out /r spec/unit], %w[runner /r t]])
+    end
+  end
+
+  # A level root that does not exist yet -- a project with unit tests and no
+  # seam root -- would otherwise reach rspec as a file to load, and grade its
+  # LoadError as a failing suite.
+  describe "a path that is not there" do
+    it "raises MissingPaths naming it, before anything is spawned" do
+      spawned = []
+      factory = ->(*argv, **) { spawned << argv }
+
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, "spec/unit"))
+        harness = described_class.new(root, adapter: Lain::Grader::TestHarness::Adapter::Rspec.new,
+                                            shell_out_factory: factory)
+
+        expect { harness.run(worker_env_for(root, worker_env_class), paths: ["spec/unit", "spec/seam"]) }
+          .to raise_error(described_class::MissingPaths, %r{spec/seam(?!.*spec/unit)})
+        expect(spawned).to be_empty
+      end
+    end
+  end
+
+  # The framework's NAME, for a caller building a test layout: it detects
+  # without building an adapter, so a framework lain cannot run yet still
+  # names its layout's preset.
+  describe "Adapter.framework" do
+    it "names the single framework a root matches, and nil for none or several" do
+      Dir.mktmpdir do |dir|
+        none = Lain::Grader::TestHarness::Adapter.framework(dir)
+        File.write(File.join(dir, "pytest.ini"), "")
+        single = Lain::Grader::TestHarness::Adapter.framework(dir)
+        File.write(File.join(dir, "Gemfile"), "")
+        Dir.mkdir(File.join(dir, "spec"))
+
+        expect([none, single, Lain::Grader::TestHarness::Adapter.framework(dir)]).to eq([nil, "pytest", nil])
+      end
+    end
+  end
+
   describe "a hung child is bounded by an injectable timeout" do
     it "raises a named Timeout (not the raw mixlib class) naming the command and the limit" do
       sleeper = Lain::Grader::TestHarness::Adapter::Command.new(

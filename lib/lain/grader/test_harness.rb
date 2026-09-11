@@ -70,29 +70,56 @@ module Lain
         freeze
       end
 
+      # A path asked to run is not there. Refused before anything spawns:
+      # rspec would take it for a file to load, and a LoadError graded as a
+      # failing suite reads as broken work rather than a missing directory.
+      class MissingPaths < Lain::Error; end
+
+      # What one run reported: the example names in each state, and the
+      # child's stderr for a runner that writes its crash there instead.
+      Run = Data.define(:passed, :failed, :errors, :stderr) do
+        def total = passed.size + failed.size + errors.size
+        def clean? = failed.empty? && errors.empty?
+      end
+
       # @param worker_env [#cwd,#env] where and under what env the suite runs
+      # @param paths [Array<String>] see {#run}
       # @return [Grade] score = passing fraction; passes iff nothing failed/errored
-      def grade(worker_env)
-        outcome = run(worker_env)
-        to_grade(outcome.fetch(:result), outcome.fetch(:stderr))
+      def grade(worker_env, paths: [])
+        to_grade(run(worker_env, paths:))
+      end
+
+      # The result file lives in a fresh tempdir, not the project, so running
+      # leaves the subject's tree untouched.
+      #
+      # @param worker_env [#cwd,#env] where and under what env the suite runs
+      # @param paths [Array<String>] what to run, relative to the worker's cwd
+      #   -- a level root, so a unit-level criterion runs the unit tests; empty
+      #   runs the whole suite
+      # @return [Run]
+      # @raise [MissingPaths] naming each path absent from the worker's cwd
+      def run(worker_env, paths: [])
+        present!(worker_env.cwd, paths)
+        Dir.mktmpdir("lain-test-harness") do |dir|
+          out_path = File.join(dir, "result")
+          argv = @adapter.command(out_path:, paths:)
+          options = { cwd: worker_env.cwd, environment: Exec.child_env(worker_env.env), timeout: @timeout }
+          shell = @shell_out_factory.call(*argv, **options)
+          capture(shell, argv)
+          outcome(out_path, shell)
+        end
       end
 
       private
 
-      # The result file lives in a fresh tempdir, not the project, so grading
-      # leaves the subject's tree untouched. The child's stderr rides back too,
-      # so a runner that writes its crash THERE rather than to the result file
-      # still surfaces in `#why`.
-      def run(worker_env)
-        Dir.mktmpdir("lain-test-harness") do |dir|
-          out_path = File.join(dir, "result")
-          argv = @adapter.command(out_path:)
-          options = { cwd: worker_env.cwd, environment: Exec.child_env(worker_env.env), timeout: @timeout }
-          shell = @shell_out_factory.call(*argv, **options)
-          capture(shell, argv)
-          document = File.exist?(out_path) ? File.read(out_path) : ""
-          { result: @adapter.parse(document, shell.exitstatus), stderr: shell.stderr }
-        end
+      def present!(cwd, paths)
+        absent = paths.reject { |path| File.exist?(File.expand_path(path, cwd)) }
+        raise MissingPaths, "#{absent.join(", ")} not found under #{cwd}; nothing was run" unless absent.empty?
+      end
+
+      def outcome(out_path, shell)
+        document = File.exist?(out_path) ? File.read(out_path) : ""
+        Run.new(**@adapter.parse(document, shell.exitstatus), stderr: shell.stderr)
       end
 
       def capture(shell, argv)
@@ -101,23 +128,18 @@ module Lain
         raise Timeout, "test command `#{argv.join(" ")}` exceeded the #{@timeout}s timeout: #{e.message}"
       end
 
-      def to_grade(result, stderr)
-        passed = result.fetch(:passed)
-        failed = result.fetch(:failed)
-        errors = result.fetch(:errors)
-        total = passed.size + failed.size + errors.size
-        raise EmptyRun, "the suite in #{@root} reported no examples -- nothing to grade" if total.zero?
+      def to_grade(run)
+        raise EmptyRun, "the suite in #{@root} reported no examples -- nothing to grade" if run.total.zero?
 
-        Grade.new(score: passed.size.fdiv(total), pass: failed.empty? && errors.empty?,
-                  why: why(passed, failed, errors, total, stderr))
+        Grade.new(score: run.passed.size.fdiv(run.total), pass: run.clean?, why: why(run))
       end
 
-      def why(passed, failed, errors, total, stderr)
-        return "all #{total} examples passed" if failed.empty? && errors.empty?
+      def why(run)
+        return "all #{run.total} examples passed" if run.clean?
 
-        problems = failed.map { |name| "failed: #{name}" }
-        problems += ["errored: #{error_detail(errors, stderr)}"] unless errors.empty?
-        "#{passed.size}/#{total} examples passed; #{problems.join("; ")}"
+        problems = run.failed.map { |name| "failed: #{name}" }
+        problems += ["errored: #{error_detail(run.errors, run.stderr)}"] unless run.errors.empty?
+        "#{run.passed.size}/#{run.total} examples passed; #{problems.join("; ")}"
       end
 
       # The real diagnostic, from wherever the runner put it (the parsed error

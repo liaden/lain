@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "digest"
+
 module Lain
   module Gherkin
     # The glue between an APPROVED {Criteria} (the approval gate lives
@@ -12,9 +14,13 @@ module Lain
     # human-judged, not testable. This class only carries the split forward,
     # verbatim, rather than leaving it to be improvised downstream.
     #
-    # No framework detection lives here on purpose: `framework:` is the
-    # caller's job ({Grader::TestHarness} owns detection); this class only
-    # NAMES it in the prompt.
+    # Tests go where the project's {TestLayout} says: the prompt names the one
+    # target path the layout mirrors from the subject at the level asked for.
+    # Afterwards the call compares the target with what was there before the
+    # spawn and asks the layout guard about it, so a result says both whether
+    # the child did the work and whether the work sits where the guard will
+    # accept it. The layout also names the framework, so no detection lives
+    # here.
     class TestGeneration
       # Raised by {#call} when EVERY scenario in the Criteria is rubric-flagged
       # (`mechanical: false`): spawning a child with an empty scenario section
@@ -33,41 +39,79 @@ module Lain
       # `result` is already a frozen {Tool::Result}, `criteria_digest` is
       # `Canonical.digest`'s frozen String, and `rubric_scenarios` holds
       # already-frozen {Scenario}s behind a frozen Array.
-      Record = Data.define(:result, :criteria_digest, :rubric_scenarios) do
-        def initialize(result:, criteria_digest:, rubric_scenarios:)
-          super(result:, criteria_digest: -criteria_digest.to_s, rubric_scenarios: rubric_scenarios.freeze)
+      #
+      # `before` and `after` are the target's digests either side of the
+      # spawn, nil where it did not exist; `verdict` is the guard's reading of
+      # the target afterwards. A misplaced or missing test is a report, not a
+      # raise: the caller decides whether it is fatal.
+      Record = Data.define(:result, :criteria_digest, :rubric_scenarios, :target, :before, :after, :verdict) do
+        def initialize(result:, criteria_digest:, rubric_scenarios:, target:, before:, after:, verdict:)
+          super(result:, criteria_digest: -criteria_digest.to_s, rubric_scenarios: rubric_scenarios.freeze,
+                target: target.dup.freeze, before: before&.dup&.freeze, after: after&.dup&.freeze, verdict:)
         end
+
+        def missing? = after.nil?
+        def created? = before.nil? && !after.nil?
+        def changed? = !before.nil? && !after.nil? && before != after
+
+        # The child wrote the target, and the guard accepts what it wrote or
+        # refuses it only as `:no_source`: tests are generated before their
+        # implementation, so a correctly placed test for a class that does not
+        # exist yet is the outcome asked for. A target left as it was reads
+        # false even when a sibling was written.
+        def generated? = (created? || changed?) && (!verdict.refused? || verdict.rule == :no_source)
       end
 
-      def initialize(renderer:, role_spawn:)
+      # @param renderer [Skill::Renderer] renders the `gherkin-tests` scaffold
+      # @param role_spawn [#call] dispatches the test_engineer child, as
+      #   {Skill::RoleSpawn} does
+      # @param guard [TestLayout::Guard] over the checkout the child writes
+      #   into; its layout places the target and its verdict judges it
+      def initialize(renderer:, role_spawn:, guard:)
         @renderer = renderer
         @role_spawn = role_spawn
+        @guard = guard
       end
 
       # @param criteria [Criteria] an approved Criteria
-      # @param framework [String] the subject's test framework, named verbatim
-      #   in the prompt (no detection here)
+      # @param subject [String] the source file the tests are for, relative to the root
+      # @param level [String] a level the layout declares
       # @return [Record]
-      def call(criteria, framework:)
+      # @raise [TestLayout::Unplaceable] before anything is spawned, when the
+      #   layout has nowhere to put the subject's tests
+      def call(criteria, subject:, level:)
         mechanical, rubric_scenarios = criteria.partition(&:mechanical)
         if mechanical.empty?
           raise NothingMechanical, "criteria #{criteria.digest} has no mechanical scenarios to generate " \
                                    "tests for -- every scenario is rubric-flagged"
         end
 
-        result = @role_spawn.call(:test_engineer, :fresh, prompt(mechanical, framework))
-        Record.new(result:, criteria_digest: criteria.digest, rubric_scenarios:)
+        target = @guard.layout.mapping.test_path(subject, level:)
+        before = digest(target)
+        result = @role_spawn.call(:test_engineer, :fresh, prompt(mechanical, subject, level, target))
+        Record.new(result:, criteria_digest: criteria.digest, rubric_scenarios:, target:, before:,
+                   after: digest(target), verdict: @guard.check_file(target))
       end
 
       private
 
-      def prompt(mechanical_scenarios, framework)
+      def digest(target)
+        path = File.join(@guard.root, target)
+        File.file?(path) ? Digest::SHA256.file(path).hexdigest : nil
+      end
+
+      def prompt(mechanical_scenarios, subject, level, target)
         <<~PROMPT
           #{@renderer.render(SKILL)}
 
           ## Framework
 
-          #{framework}
+          #{@guard.layout.preset.name}
+
+          ## Target
+
+          Write every test below into `#{target}`: the file this project's test layout mirrors from
+          `#{subject}` at the #{level} level. Not a sibling file, and not another directory.
 
           ## Scenarios
 

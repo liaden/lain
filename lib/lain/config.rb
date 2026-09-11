@@ -15,8 +15,8 @@ module Lain
   # root with no file returns the same value {.empty} does, so a caller never
   # writes an `if File.exist?` guard of its own (Null Object).
   #
-  # `[epics]`, `[approval]`, `[isolation]`, `[sensitivity]` and `[shell]` are
-  # understood. Every OTHER top-level table is tolerated and ignored: other
+  # `[epics]`, `[approval]`, `[isolation]`, `[sensitivity]`, `[shell]` and
+  # `[tests]` are understood. Every OTHER top-level table is tolerated and ignored: other
   # consumers are coming (chat-ux's prompt config may converge on this same file
   # later), and a table this class doesn't yet read is not this class's typo to
   # catch. Each table it DOES read is one small class's whole surface -- {Epics},
@@ -24,8 +24,8 @@ module Lain
   # value inside one is loud instead of silently defaulting or crashing three
   # call frames deep.
   #
-  # `[sensitivity]` and `[shell]` are read by {.sensitivity} and
-  # {.shell_exclusions}, NOT by {.load}, which is a decision rather than an
+  # `[sensitivity]`, `[shell]` and `[tests]` are read by {.sensitivity},
+  # {.shell_exclusions} and {.test_layout}, NOT by {.load}, which is a decision rather than an
   # oversight: those two readers and {.load} have opposite postures about a
   # typo, and reading them together forces one on both. {.sensitivity} carries
   # the argument.
@@ -152,6 +152,35 @@ module Lain
       return Shell::Exclusions.empty unless File.exist?(path)
 
       Shell::Exclusions.from(read(path)["shell"], path:)
+    end
+
+    # The `[tests]` table: where this project keeps its tests, which the
+    # layout guard holds a test file's path to.
+    #
+    # Read on its own for the reason `[sensitivity]` is: this table restricts
+    # where a test may be written, so a misspelt key must refuse rather than
+    # leave the project quietly unguarded.
+    #
+    # With no table the layout falls back to the preset of a framework the
+    # caller passes, which serves a caller choosing how to run the tests.
+    # Detection is the caller's, because the test harness that knows how loads
+    # long after this file does.
+    #
+    # @param root [String] a project root; `.lain/config.toml` is resolved under it
+    # @param framework [String, nil] a detected test framework. A caller that
+    #   enforces the layout never passes one, so enforcement is opt-in: a
+    #   detected preset imposes level roots the project never declared, and
+    #   would refuse its existing flat specs as strays.
+    # @return [TestLayout] {TestLayout::None} when neither says what the layout is
+    # @raise [Malformed] when the file exists but cannot be read as TOML
+    # @raise [TestLayout::NotATable] when `tests` is not a table
+    # @raise [TestLayout::UnknownKeys] when it names a key the layout does not read
+    # @raise [TestLayout::MissingPreset] when it names no preset
+    # @raise [TestLayout::InvalidValue] when a key's value is outside its rule
+    def self.test_layout(root:, framework: nil)
+      path = path_for(root)
+      table = File.exist?(path) ? read(path)["tests"] : nil
+      TestLayout.from(table, path:, framework:)
     end
 
     def self.path_for(root) = File.join(root, ".lain", "config.toml")

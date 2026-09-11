@@ -454,4 +454,71 @@ RSpec.describe Lain::Config do
       end
     end
   end
+
+  # `[tests]` is the third table read on its own: it restricts where a test
+  # file may be written, so a misspelt key must not leave the project quietly
+  # unguarded.
+  describe ".test_layout" do
+    it "takes its root from the caller rather than the working directory" do
+      expect { described_class.test_layout }.to raise_error(ArgumentError, /root/)
+    end
+
+    it "is TestLayout::None for a root with no config file and no detected framework" do
+      Dir.mktmpdir do |root|
+        expect(described_class.test_layout(root:)).to be(Lain::TestLayout::None)
+      end
+    end
+
+    it "falls back to a detected framework's preset when the file carries no tests table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nhome = \"repo\"\n")
+
+        expect(described_class.test_layout(root:, framework: "rspec").preset.name).to eq("rspec")
+      end
+    end
+
+    it "reads the table's preset and source roots" do
+      Dir.mktmpdir do |root|
+        write_config(root, %([tests]\npreset = "rspec"\nsource_roots = ["app"]\n))
+
+        expect(described_class.test_layout(root:).mapping.test_path("app/models/order.rb", level: "unit"))
+          .to eq("spec/unit/models/order_spec.rb")
+      end
+    end
+
+    it "refuses a misspelt key, naming the key and the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, %([tests]\nprest = "rspec"\n))
+
+        expect { described_class.test_layout(root:) }
+          .to raise_error(Lain::TestLayout::UnknownKeys, /#{Regexp.escape(config_path(root))}.*prest/)
+      end
+    end
+
+    it "reads its table even when another table is malformed" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(epics = "not a table"\n\n[tests]\npreset = "pytest"\n))
+
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::NotATable)
+        expect(described_class.test_layout(root:).preset.name).to eq("pytest")
+      end
+    end
+
+    it "refuses its own bad table even when every other table is fine" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(tests = "rspec"\n\n[epics]\nhome = "repo"\n))
+
+        expect { described_class.load(root:) }.not_to raise_error
+        expect { described_class.test_layout(root:) }.to raise_error(Lain::TestLayout::NotATable)
+      end
+    end
+
+    it "still reports an unparseable file as Malformed" do
+      Dir.mktmpdir do |root|
+        write_config(root, "this is not [valid toml")
+
+        expect { described_class.test_layout(root:) }.to raise_error(Lain::Config::Malformed)
+      end
+    end
+  end
 end

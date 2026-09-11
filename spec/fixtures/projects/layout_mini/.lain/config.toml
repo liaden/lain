@@ -1,0 +1,7 @@
+# A project declaring the rspec layout over app/. It commits no test files:
+# a *_spec.rb anywhere under spec/ would be collected and run by lain's own
+# suite, so each spec writes the test files it needs into a copy, or hands
+# their content to the guard as a write would.
+[tests]
+preset = "rspec"
+source_roots = ["app"]

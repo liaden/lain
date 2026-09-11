@@ -18,6 +18,7 @@ require_relative "lain/dsl_catalog"
 # is forced.
 require_relative "lain/declarative"
 require_relative "lain/config"
+require_relative "lain/test_layout"
 require_relative "lain/cache_profile"
 require_relative "lain/proxy_bytes"
 require_relative "lain/canonical"

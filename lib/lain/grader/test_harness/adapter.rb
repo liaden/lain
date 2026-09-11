@@ -7,8 +7,11 @@ module Lain
     class TestHarness
       # How a test framework is DRIVEN and READ, as a duck two methods wide:
       #
-      #   command(out_path:) -> argv     # writes the machine-readable result to a FILE
-      #   parse(document, exit_status)   # -> {passed:, failed:, errors:} name lists
+      #   command(out_path:, paths:) -> argv  # writes the machine-readable result to a FILE
+      #   parse(document, exit_status)        # -> {passed:, failed:, errors:} name lists
+      #
+      # `paths` narrow the run to those roots or files and follow the adapter's
+      # own arguments; empty runs the whole suite.
       #
       # Writing to a FILE is the load-bearing choice: a child project's own
       # stdout warnings and deprecations then never interleave with the result
@@ -65,6 +68,15 @@ module Lain
           choose(root, matched)
         end
 
+        # The framework's name without building its adapter, for a caller
+        # choosing a test layout's preset: a layout needs only the name, so a
+        # framework whose adapter is not written yet still has one.
+        # @return [String, nil] nil when nothing matched or several did
+        def self.framework(root)
+          matched = PROBES.select { |probe| probe.match.call(root) }
+          matched.first.framework if matched.one?
+        end
+
         def self.choose(root, matched)
           raise Undetectable, "no test framework detected in #{root} -- probed for #{probed}" if matched.empty?
 
@@ -88,8 +100,8 @@ module Lain
         # RSpec via its JSON formatter written to a file. A failing example is
         # named by its `full_description` so `#why` reads.
         class Rspec
-          def command(out_path:)
-            ["rspec", "--format", "json", "--out", out_path]
+          def command(out_path:, paths: [])
+            ["rspec", "--format", "json", "--out", out_path, *paths]
           end
 
           def parse(document, exit_status)
@@ -137,7 +149,7 @@ module Lain
             @errors = errors
           end
 
-          def command(out_path:) = @out_argv.call(out_path)
+          def command(out_path:, paths: []) = @out_argv.call(out_path) + paths
 
           def parse(document, _exit_status)
             { passed: scan(document, @passed),

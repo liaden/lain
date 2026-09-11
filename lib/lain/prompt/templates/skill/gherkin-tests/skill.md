@@ -13,5 +13,10 @@ load error. Only once you have shown the red run does anything get made green. D
 scenario's `Then`/`And` clauses to make a test pass; if a clause cannot be expressed
 mechanically, say so rather than approximating it.
 
+**Write to the target, and only there.** The Target section below names the one file this
+project's test layout says holds these tests. Put every test in that file — add to it if it
+already exists. Do not split them into a sibling file or another directory: the layout guard
+refuses a test file with no source file of its own, and a test it refuses does not count.
+
 Do not implement the behavior under test yourself unless asked — the deliverable here is the
 failing test that proves the criteria, not the code that satisfies it.
