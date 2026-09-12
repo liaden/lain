@@ -4,8 +4,7 @@ Lain is an agent harness built as a **study bench**. The agent is the vehicle; t
 the deliverable. Optimize for making context strategies, tool designs, and orchestration
 tactics swappable, observable, and comparable — not for making the agent good.
 
-The approved design plan lives at `~/.claude/plans/jiggly-greeting-avalanche.md`. Read it
-before making architectural decisions; it records *why*.
+The committed plan is `ROADMAP.md`'s `## Status` and `## Milestones` — read it before deciding architecture.
 
 This file is the **rules**. The evidence behind them lives next door, and each rule below
 links to its own:
@@ -27,20 +26,20 @@ non-interactive callers (agents, scripts) prefix with `direnv exec .` or export 
 eval "$(mise env -s bash ruby@4.0.6)"
 export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib   # OpenSSL; see toolchain-traps
 export TMPDIR="$HOME/tmp/lain"                          # same filesystem as the repo, required
+export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; a worktree gets none
 ```
 
 ```bash
-bundle exec rake pspec         # THE suite command: 21-27s. Bare `rspec` is the same examples
-                               # SERIALLY at ~3m17s -- 8x slower, no extra signal.
+bundle exec rake pspec         # THE suite command: 61s at 12 workers, 17,947 examples, 2026-09-12.
+                               # Bare `rspec` is the same examples SERIALLY, ~3m17s, no extra signal.
 bundle exec rspec path/to/one_spec.rb   # one file or one example: use this, not a bare `rspec`
 bundle exec rubocop -a         # safe autocorrect only; never -A
 bundle exec rake compile       # builds the Rust extension into lib/lain/lain.so (needs clang)
 cargo test && cargo clippy --all-targets -- -D warnings
 pre-commit run --all-files     # what the git hook runs
-bundle exec rake spec:flakes   # 16 whole-suite runs in random orders; a hunt, not a gate
 ```
 
-Opt-in tiers, both excluded by default:
+Eight tiers are excluded by default; gated in `spec/support/tags.rb` and its two `ollama_*_tag.rb` siblings:
 
 ```bash
 LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec   # :api_integration -- costs money
@@ -58,7 +57,7 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
   too — the hook autostashes repo-wide, so another worktree's `git status` lies while it runs.
 - **`LAIN_SPEC_WORKERS=12`** is the measured optimum *on this box*; `physical - 1` is the worst
   count tried. The wall is a MAX over files, not a sum, so **never shard a spec to game the
-  packer** — one spec file per code file at the mirrored path. See
+  packer** — one spec file per public entry point, at its mirrored path. See
   [`docs/spec-suite-performance.md`](docs/spec-suite-performance.md) before optimising anything
   here; profile first, and a cost inside the SUBJECT is an application finding, not a spec one.
 - **Check the example COUNT, not just the failure count.** `parallel_tests` reports only the
@@ -69,10 +68,12 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
 `rubocop -a` applies only `Safe: true` cops. **`-A` is dangerous here** — an unsafe cop once
 proposed a "correction" that would have discarded every turn with no test failure.
 
-**Never loosen a `Metrics/*` limit to make code pass.** Extract a collaborator with a real,
-separate responsibility (see `Agent::Budget`, `Agent::ToolRunner`) — a tripped cop is usually
-telling you an object is missing. Config that encodes a *reasoned policy* is fine
-(`Metrics/ParameterLists: CountKeywordArgs: false`, `Naming/BlockForwarding: explicit`).
+**A tripped `Metrics/*` limit is a smoke alarm, not a specification.** The test is SRP, and only
+one of its three answers is config: one responsibility badly expressed → extract a private method;
+two responsibilities → extract the collaborator (`Agent::Budget`, `Agent::ToolRunner`); one whose
+length IS its shape → raise the limit in its own commit and say why there, the rarest of the three.
+Numbers and reasons live in `.rubocop.yml`, which is where a raise goes — never an inline `rubocop:disable`.
+The headroom is for merging back the classes the old ceiling split, not for new ones to grow into.
 
 ## Code style
 
@@ -108,14 +109,13 @@ telling you an object is missing. Config that encodes a *reasoned policy* is fin
 The rule above says a comment explains WHY. These say how much of it there may be, and what
 one is allowed to cite. `bin/comment-census` measures all three and is the worklist.
 
-- **Density is set by an exemplar, not by a ratio.** `lib/lain/timeline.rb` is the measured
-  shape: **0.82 prose:code, longest comment block 24 lines**. Write toward that file rather
-  than toward a number — the mandate is *whatever comments remain are genuinely useful*, and
-  a ratio met by deleting a reason is a failure wearing a pass's clothes. For scale, the
-  census reads `lib/` today at 68,713 prose lines against 44,873 code lines (1.53:1), with
-  520 of 709 files (73%) carrying more comment than code.
+- **Density is set by an exemplar, not by a ratio.** `lib/lain/timeline.rb` is the measured shape:
+  **0.82 prose:code, longest comment block 24 lines**. Write toward that file rather than toward a
+  number — the mandate is *whatever comments remain are genuinely useful*, and a ratio met by
+  deleting a reason is a failure wearing a pass's clothes. For scale, the census read `lib/` on
+  2026-09-12 at 61,518 prose against 51,296 code (1.20:1), 471 of 773 files carrying more comment than code.
 
-- **YARD tags are exempt from all of it.** ~3,900 lines across `lib/` and `spec/`, and they
+- **YARD tags are exempt from all of it.** ~4,900 lines across `lib/` and `spec/`, and they
   carry the shape a reader skims by: `@param`, `@return`, `@!attribute` and their kin are
   never what a density argument is about. The census counts them as their own figure for
   exactly this reason.
