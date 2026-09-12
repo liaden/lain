@@ -58,9 +58,6 @@ module ToolRegistry
     "file_symbols" => -> { Lain::Tools::FileSymbols.new },
     "subagent" => -> { build_subagent },
     "bash" => -> { Lain::Tools::Bash.new },
-    # Construction-only: every property asked of this instance is a declaration,
-    # never #perform, and a nil client fails loudly if that ever changes.
-    "core_exec" => -> { Lain::Tools::CoreExec.new(client: nil) },
     "edit_file" => -> { Lain::Tools::EditFile.new },
     "write_file" => -> { Lain::Tools::WriteFile.new },
     "todo_write" => -> { Lain::Tools::TodoWrite.new },
@@ -70,15 +67,15 @@ module ToolRegistry
     },
     "run_skill" => -> { build_run_skill },
     "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
-    # Construction-only, the "core_exec" precedent above: every property this
-    # spec asks of the instance is a declaration, never #perform, and nil
-    # collaborators fail loudly if that ever stops being true.
+    # Construction-only: every property this spec asks of the instance is a
+    # declaration, never #perform, and nil collaborators fail loudly if that
+    # ever stops being true.
     "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },
-    # Construction-only, the "core_exec" precedent above -- and here the nil is
-    # the POINT: a thunk over `Usage.zero` would be a fabricated zero, which is
+    # Construction-only, the same idiom -- and here the nil is the POINT: a
+    # thunk over `Usage.zero` would be a fabricated zero, which is
     # the exact defect this tool exists to remove. Every property this table's
     # readers ask of the instance is a declaration, never #perform.
     "session_usage" => -> { Lain::Tools::SessionUsage.new(usage: nil) }

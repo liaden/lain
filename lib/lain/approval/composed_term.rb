@@ -102,9 +102,10 @@ module Lain
     # changes no decision.
     class ComposedTerm < Rule
       # Named rather than sniffed, on {Escalation::Triage::COMMAND_TOOLS}'
-      # precedent. `core_exec` is deliberately absent: it holds no
-      # {Shell::Verdict}, so it has no term to offer, and it hands its backend
-      # the model's String either way -- approving one would approve an `sh -c`.
+      # precedent -- a different rule from that list, not a copy of it. A
+      # command tool holding no {Shell::Verdict} has no term to offer and hands
+      # its backend the model's String either way, so approving one would
+      # approve an `sh -c`; only a tool that really parses belongs here.
       TOOL = "bash"
 
       APPROVED = "every stage is a bare allowlisted reader over ordinary words: %<programs>s"

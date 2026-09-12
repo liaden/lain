@@ -52,10 +52,10 @@ module Lain
       super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h), checkout: checkout&.dup&.freeze)
     end
 
-    # The ONE cwd-resolution rule both exec arms share (Tools::Bash in process,
-    # Tools::CoreExec across the boundary), extracted so the two transports
-    # cannot drift: a relative model-supplied path lands under this cwd, an
-    # absolute one is honored as given, and absent a path this cwd is it.
+    # The ONE cwd-resolution rule every exec arm shares (Exec::Local in
+    # process, Exec::Core across the daemon boundary), extracted so the
+    # transports cannot drift: a relative model-supplied path lands under this
+    # cwd, an absolute one is honored as given, and absent a path this cwd is it.
     def resolve(path)
       path ? File.expand_path(path, cwd) : cwd
     end

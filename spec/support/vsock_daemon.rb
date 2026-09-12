@@ -5,11 +5,12 @@ require "socket"
 require "tmpdir"
 
 # Spawns lain-core on an AF_VSOCK port for one example's duration, waits for
-# it to report readiness, and reclaims it -- so the vsock Transport spec and
-# the exec differential over vsock share one spawn/wait/teardown dance instead
-# of each hand-rolling it. Mirrors Lain::Core::Child's shape (spawn, bounded
-# readiness retry, TERM-then-reap), but scoped to one example rather than one
-# project, and over AF_VSOCK rather than a Unix path.
+# it to report readiness, and reclaims it -- so no example driving the daemon
+# over vsock hand-rolls its own spawn/wait/teardown dance. One spec reaches it
+# today; the dance is the same one every further vsock example needs, which is
+# why it is here rather than inlined. Mirrors Lain::Core::Child's shape (spawn,
+# bounded readiness retry, TERM-then-reap), but scoped to one example rather
+# than one project, and over AF_VSOCK rather than a Unix path.
 #
 # The daemon side has not landed the argv scheme or the port-reporting
 # mechanism this depends on -- it was escalated, with the full account of what

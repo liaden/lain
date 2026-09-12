@@ -289,13 +289,6 @@ module ToolBoundsRegistry
               "line; a source nested past the depth cap is refused outright, naming that cap"
     ),
     ToolExemption.new(
-      tool: "Lain::Tools::CoreExec", grounds: ToolExemption::DELEGATED,
-      delegates_to: "Lain::Tools::Bash::OUTPUT_BOUND",
-      reason: "the out-of-process arm of the same command shape as bash, and it renders through " \
-              "bash's own output renderer so the two transports cannot end up with different " \
-              "ceilings -- which is the whole point of the differential they are pinned by"
-    ),
-    ToolExemption.new(
       tool: "Lain::Bench::DisclosureSweep::FixtureTool", grounds: ToolExemption::FIXED_RESULT,
       reason: "a bench fixture carrying a name and a description read from a committed YAML file; " \
               "it is never routed through Tool#call and returns no result at all"
@@ -408,12 +401,14 @@ RSpec.describe "tool bounds discipline" do
 
   # A delegated row is the one kind whose reason is checkable, so it is checked:
   # the constant it names has to be a real ceiling, or the row is a claim rather
-  # than a fact.
+  # than a fact. No shipped row carries this ground at present, so this asserts
+  # over an empty list and says so -- the rule itself is pinned against
+  # hand-built rows in the unit block below, which is where it stays checkable
+  # while nothing uses it.
   it "resolves the ceiling every delegated row points at" do
     delegated = ToolBoundsRegistry.with_grounds(ToolExemption::DELEGATED)
     unresolved = delegated.reject { |row| ToolBoundsDiscipline.bound?(Object.const_get(row.delegates_to)) }
 
-    expect(delegated).not_to be_empty
     expect(unresolved.map(&:tool)).to be_empty, lambda {
       listing = unresolved.map { |row| "  #{row.tool} -> #{row.delegates_to}" }.join("\n")
       "A delegated row claims another tool's ceiling covers this one, and the constant it names is " \
@@ -468,6 +463,22 @@ RSpec.describe "tool bounds discipline" do
         ToolExemption.new(tool: "Lain::Tools::Nope", grounds: ToolExemption::FIXED_RESULT,
                           reason: "a" * 60, delegates_to: "X")
       end.to raise_error(ArgumentError, /does not delegate/)
+    end
+
+    # What a delegated row CLAIMS, asked of the claim rather than of the roster:
+    # the constant it names has to be a ceiling, or the row is prose. No shipped
+    # tool carries this ground today, so the registry example above runs over an
+    # empty list and this is the only place the rule still has teeth. Both
+    # directions are asserted, because a resolver that answered true for
+    # everything would satisfy the first half alone.
+    it "delegates to a real ceiling, and a constant that is merely present is not one" do
+      ceiling = ToolExemption.new(tool: "Lain::Tools::Nope", grounds: ToolExemption::DELEGATED,
+                                  delegates_to: "Lain::Tools::Bash::OUTPUT_BOUND", reason: "a" * 60)
+      prose = ToolExemption.new(tool: "Lain::Tools::Nope", grounds: ToolExemption::DELEGATED,
+                                delegates_to: "Lain::Tools::Bash::NARROWER", reason: "a" * 60)
+
+      expect(ToolBoundsDiscipline.bound?(Object.const_get(ceiling.delegates_to))).to be(true)
+      expect(ToolBoundsDiscipline.bound?(Object.const_get(prose.delegates_to))).to be(false)
     end
   end
 

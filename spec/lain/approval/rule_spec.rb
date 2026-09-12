@@ -155,29 +155,6 @@ RSpec.describe Lain::Approval::Rule do
     end
   end
 
-  # The SECOND tool the ladder gates as a command tool. It shares
-  # Tools::Bash::Input by identity and does run a command, but holds no
-  # Shell::Verdict, so it has no term to offer and must not read as one.
-  # Construction-only, so a nil client is the established idiom (see
-  # spec/support/tool_registry.rb).
-  describe "a command tool that offers no parse" do
-    let(:core_exec) { Lain::Tools::CoreExec.new(client: nil) }
-
-    it "is gated as a command tool the ladder consults" do
-      expect(Lain::Approval::Escalation::Triage::COMMAND_TOOLS).to include(core_exec.name)
-      expect(core_exec).to be_requires_approval
-    end
-
-    it "carries no term, on the same command bash would parse into one" do
-      expect(call_for(core_exec, { "command" => "cat README.md | head -20" })).not_to be_term
-    end
-
-    it "answers the same absence a non-command tool does, by identity" do
-      expect(call_for(core_exec, { "command" => "ls -la" }).term)
-        .to be(Lain::Shell::Verdict::NO_TERM)
-    end
-  end
-
   # Scenario: a non-command tool is unaffected
   describe "a tool whose input is not a command" do
     it "carries an empty term" do

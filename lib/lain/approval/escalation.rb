@@ -396,7 +396,7 @@ module Lain
 
         # Named rather than sniffed: a tool that grows a `command` field should
         # have to be added here deliberately.
-        COMMAND_TOOLS = %w[bash core_exec].freeze
+        COMMAND_TOOLS = %w[bash].freeze
         FIELD = "command"
         # `Tools::Bash` runs every command under it, so it is where a relative
         # word in the argv lands.

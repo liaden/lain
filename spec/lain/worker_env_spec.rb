@@ -47,9 +47,8 @@ RSpec.describe Lain::WorkerEnv do
     end
   end
 
-  # The ONE cwd-resolution rule both exec arms (Tools::Bash, Tools::CoreExec)
-  # share -- extracted here so the two transports cannot drift apart on it
-  # (a panel fix).
+  # The ONE cwd-resolution rule every exec arm (Exec::Local, Exec::Core) shares
+  # -- extracted here so the transports cannot drift apart on it (a panel fix).
   describe "#resolve" do
     subject(:worker_env) { described_class.new(cwd: "/work", env: {}) }
 

@@ -65,6 +65,19 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
       expect(verdict_of(floor).call("curl http://example.com")).to be_deny
     end
 
+    # The exec tools are named in one place production reads
+    # ({Lain::Approval::Escalation::Triage::COMMAND_TOOLS}) and built in one
+    # place a chat reaches (this floor). A name on that list the floor never
+    # builds is a tool nothing can reach while the approval vocabulary still
+    # vouches for it -- which is how a second exec tool sat there unoffered.
+    # So the two halves are asserted against each other rather than separately.
+    it "offers bash, and names no command tool the floor does not build" do
+      names = described_class.build(recorder).map(&:name)
+
+      expect(names).to include("bash")
+      expect(Lain::Approval::Escalation::Triage::COMMAND_TOOLS - names).to be_empty
+    end
+
     # The floor is what a subagent role attenuates FROM, so the ONE bash the
     # floor holds is the one a child inherits -- there is no second tool to
     # wire, and no way for a child's verdict to differ from its parent's.

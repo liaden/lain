@@ -13,8 +13,8 @@ module Lain
       # asking about falls through to the Gate, where a human still has a move.
       #
       # It refuses READS and WRITES alike, because {Lain::Sensitivity::Policy}'s
-      # table names `write_file`, `edit_file`, `bash` and `core_exec` beside the
-      # readers. Writing to `~/.ssh/id_ed25519` is not a lesser act than reading
+      # table names `write_file`, `edit_file` and `bash` beside the readers.
+      # Writing to `~/.ssh/id_ed25519` is not a lesser act than reading
       # it, and narrowing this handler to read-shaped fields would open a hole
       # rather than close one.
       #

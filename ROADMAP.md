@@ -1052,6 +1052,14 @@ XDG path relative, which put machine state back inside the user's repository)
    prefix of a 10-digit port parses cleanly, so a torn read yields a *wrong port* rather than an
    error; and T6's first draft had six of seven examples that would have passed identically over a
    Unix socket.
+   **Note, 2026-09-12:** the differential named above was true as landed and cannot be re-run as
+   written. `Tools::CoreExec` was deleted as unreachable — nothing in `lib/` or `exe/` ever
+   constructed it — and the daemon arm of the differential went with it, along with the `:vsock`
+   block that was its only end-to-end host. The bash arm survives, and so does everything the
+   vsock work actually proved: `spec/lain/core/transport/vsock_spec.rb` still drives real `exec`
+   RPCs against a real daemon over AF_VSOCK, and `spec/lain/core/grep_parity_spec.rb` still pins a
+   parity claim over the Unix socket. What no example covers any more is `Exec::Core` — the Ruby
+   backend — or a `Tool::Result` rendering over vsock. The removed code is in `git log`.
 
 19. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split

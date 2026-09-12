@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 module Lain
-  # How a command becomes a process -- {Tools::Bash} in process through
-  # `Mixlib::ShellOut`, {Tools::CoreExec} out of process through the lain-core
-  # daemon. Naming the seam is what gives {FRAMEWORK_ENV} one home: lain runs
+  # How a command becomes a process -- {Local} in process through
+  # `Mixlib::ShellOut`, {Core} out of process through the lain-core daemon.
+  # Naming the seam is what gives {FRAMEWORK_ENV} one home: lain runs
   # under `bundle exec`, so every child inherits BUNDLE_GEMFILE, BUNDLER_SETUP,
   # RUBYOPT and the rest, naming LAIN's OWN toolchain, and a model asking for
   # `bundle exec rspec` in some other project ran lain's bundle in lain's tree.
@@ -69,7 +69,7 @@ module Lain
     # The backend never learned whether the command finished: its OWN deadline
     # passed with no answer from whatever it delegates to. A {Timeout}, so a
     # caller needing only "no result, and the clock is why" treats it as one; a
-    # subclass, because {Tools::CoreExec} can say which happened.
+    # subclass, because a caller that cares can say which happened.
     class Unenforced < Timeout; end
 
     # The backend has no shape for what it was handed -- {Core} given a TERM,

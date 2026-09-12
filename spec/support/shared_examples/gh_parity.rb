@@ -7,8 +7,7 @@
 # one another, because their caller holds one of them and must not care which.
 # Deliberate identity is what a shared group states MECHANICALLY: three copies of
 # these cases could only stay identical by convention, and a fix applied to one
-# would be a fix missing from the other two (the reasoning
-# `exec_boundary_parity.rb` records).
+# would be a fix missing from the other two.
 #
 # The host block supplies ONE thing, `let(:executor)`, arranged against the
 # fixture below -- the same scenario every host answers:

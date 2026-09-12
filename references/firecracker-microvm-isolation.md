@@ -6,6 +6,22 @@ docs, the Lima docs/issues, the Clawk README, and a read of Lain's own `Isolatio
 Lain-mapping section is inference from this repo's code and should be read as a proposal, not a
 finding.
 
+> **Annotation, 2026-09-12 — one object this document reasons from no longer exists.**
+> `Tools::CoreExec` was deleted as unreachable: nothing in `lib/` or `exe/` ever constructed it.
+> Every claim below that quotes its class doc or names it as an arm (§ the one-line answer, and
+> the passages at the `exec`-params mapping, the comparison-arm framing, the buffering-vs-live-
+> bytes contrast, and the internal-sources list) was accurate when written; read it against
+> `git log -- lib/lain/tools/core_exec.rb`, which is where the code now lives.
+>
+> **The one place this changes a decision is step 3's success criterion**, *"the `Bash` /
+> `CoreExec` differential passes with the daemon inside a VM"*. That differential's daemon arm is
+> gone, so the criterion cannot be met as written and needs restating before step 3 is planned.
+> What survives to grade a guest against: `spec/lain/core/grep_parity_spec.rb`, which pins an
+> in-process-vs-daemon parity claim for `grep` and is backend-agnostic in the same way; and
+> `spec/lain/core/transport/vsock_spec.rb`, which drives real `exec` RPCs against a real daemon
+> over AF_VSOCK. The feasibility question this document asks is unchanged — only the spec that
+> would answer it is.
+
 ---
 
 ## The one-line answer

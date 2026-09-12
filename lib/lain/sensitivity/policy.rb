@@ -78,8 +78,7 @@ module Lain
         "ast_search" => "path",
         "code_outline" => "path",
         "file_symbols" => "path",
-        "bash" => "cwd",
-        "core_exec" => "cwd"
+        "bash" => "cwd"
       }.freeze
 
       # Gates nothing, so a chat that wired no classifier behaves byte-for-byte

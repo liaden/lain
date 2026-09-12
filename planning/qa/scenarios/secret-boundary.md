@@ -504,9 +504,12 @@ each is a place where one small change upstream makes it one.
 - **The rung judges the raw `effect.input["cwd"]` while `Tools::Bash` judges the coerced one.** Two
   objects reading one model-controlled field two ways is a disagreement waiting for an input that
   distinguishes them. Nothing found such an input, which is what keeps it a near-miss.
-- **`COMMAND_TOOLS` is `%w[bash core_exec]`**, so the daemon arm is covered and was confirmed to deny
-  too. If a round drives the same `P` through `core_exec` and gets an approval prompt where `bash`
-  gets a deny, **that is a finding** — the two tools declare the same input and must answer alike.
+- **`COMMAND_TOOLS` is `%w[bash]`**, a one-element list. It was two: the out-of-process arm shared
+  `Bash::Input` and was confirmed to deny alike, and a round used to drive the same `P` through both
+  as a cross-check. That tool is gone, so the cross-check is gone with it and the rung's coverage now
+  rests on one tool. If a second command tool ever ships, driving the same `P` through both and
+  getting an approval prompt where `bash` gets a deny is **a finding** — tools declaring the same
+  input must answer alike.
 
 ## 6 — `--secret-oracle`: a local model at the gate
 

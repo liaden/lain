@@ -758,10 +758,10 @@ section's posture refusal as a rung refusal. Confirm the posture report before c
   that table and says the thing that matters about it — *a determined adversary reaches the key by
   adding two quote characters*. **Do not file those one at a time**; they are one known-open with a
   long tail.
-- **`Tools::CoreExec` and the lain-core daemon.** Nothing in `lib/` constructs it — the only
-  construction in the tree is a spec support file, and `BaseTools.build` does not include it. Its
-  term refusal (`core.rb:75-79`) is therefore unreachable from any chat, and so is the tool. A
-  section here would be a check that asserts nothing.
+- **`Exec::Core` and the lain-core daemon.** No shipped tool constructs the backend and
+  `BaseTools.build` offers only `bash`, so its term refusal (`core.rb:75-79`) is unreachable from
+  any chat. A section here would be a check that asserts nothing. The tool that once reached this
+  backend was deleted as unreachable, which removed the last thing a driver could have used.
 - **Piped terms through docker or the daemon.** Out of scope in the chunk by decision, with the
   reason recorded: a container takes one argv and `docker run` has no multi-stage pipe primitive.
 - **`Approval::Risk`'s composition hole**, which it names on itself: `ShellString` looks at a

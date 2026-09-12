@@ -188,12 +188,12 @@ RSpec.describe Lain::Effect::Handler::Gate do
 
     # `.env` in every path-ish field the tool declares, so a Null that gated
     # anything would land in this partition rather than passing unnoticed.
-    it "gates exactly bash and core_exec when every shipped tool is offered" do
+    it "gates exactly bash when every shipped tool is offered" do
       gated = ToolRegistry.names.select do |name|
         bare.handles?(tool_call(name, { "path" => ".env", "cwd" => ".env" }))
       end
 
-      expect(gated).to match_array(%w[bash core_exec])
+      expect(gated).to match_array(%w[bash])
     end
   end
 

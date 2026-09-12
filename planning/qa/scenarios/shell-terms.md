@@ -624,10 +624,9 @@ bought. Do not report a local number as the paid one.
   (resolve-and-record, resolve-and-constrain, verify-identity, control `PATH`) are named in
   the chunk plan and built by nothing yet. **A shim on `PATH` running instead of the real
   `cat` is documented scope today, not a finding.**
-- **`Exec::Core` and the lain-core daemon.** `Tools::CoreExec` is constructed nowhere in
-  `lib/`, and `--exec` refuses `core` by name, so no chat path reaches
-  `Exec::Core#takes_term?` (`exec/core.rb:42`, permanently `false`). Spec-covered; not
-  drivable from a cockpit.
+- **`Exec::Core` and the lain-core daemon.** `--exec` refuses `core` by name and no shipped
+  tool constructs the backend, so no chat path reaches `Exec::Core#takes_term?`
+  (`exec/core.rb:42`, permanently `false`). Spec-covered; not drivable from a cockpit.
 - **A subagent's ungated handler.** `Tools::Subagent::UNGATED` is the other posture that
   reaches the tool with no ladder, and driving it belongs with
   [`subagents-and-backends.md`](subagents-and-backends.md), which owns actor mode and the

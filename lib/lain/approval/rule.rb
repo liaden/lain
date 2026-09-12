@@ -131,10 +131,9 @@ module Lain
         # branches on nil to find out whether a term exists.
         #
         # TWO kinds of tool land here and the name must not hide the second.
-        # {Tools::ReadFile} and its kin run no command at all. {Tools::CoreExec}
-        # DOES run one -- it is the second name in
-        # {Escalation::Triage::COMMAND_TOOLS} and shares {Tools::Bash::Input} by
-        # identity -- but it holds no {Shell::Verdict} and hands its backend the
+        # {Tools::ReadFile} and its kin run no command at all. A command tool
+        # holding no {Shell::Verdict} DOES run one -- it can even share
+        # {Tools::Bash::Input} by identity -- but it hands its backend the
         # model's String either way, so it has no term to offer either. ONE Null
         # for both, because what a rule may do with them is identical: no term
         # arrived, and a rule keyed on one must not fire. A second object would

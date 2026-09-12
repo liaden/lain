@@ -49,9 +49,7 @@ module ParallelSafetySpecSupport
   # Every OTHER tool the toolset actually ships (exe/lain's `base_tools` plus
   # the subagent/ask_human/run_skill layered on top, and tool_search, which
   # {Toolset::Disclosure::Deferred} constructs separately): a model-controlled
-  # command string (bash, and core_exec -- the approval-gated tier-3
-  # comparison arm over the lain-core boundary, constructed explicitly rather
-  # than shipped in base_tools), a Session write-set mutation (edit_file,
+  # command string (bash), a Session write-set mutation (edit_file,
   # write_file, todo_write, memory_write), `improvement_write` (NOT a
   # Session write-set mutation -- it never touches Session at all -- but a
   # durable, ORDERED cross-process append via {Improvement::Sink}: concurrent
@@ -61,7 +59,7 @@ module ParallelSafetySpecSupport
   # capability this card's audit never examined (run_skill, ask_human, the
   # web tools, tool_search) -- none opted in without a deliberate audit of
   # its own.
-  FALSE_TOOLS = %w[bash core_exec edit_file write_file todo_write memory_write improvement_write
+  FALSE_TOOLS = %w[bash edit_file write_file todo_write memory_write improvement_write
                    run_skill ask_human request_review web_fetch web_search tool_search].freeze
 
   # The builder table moved to spec/support/tool_registry.rb once a second

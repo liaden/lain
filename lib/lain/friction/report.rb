@@ -23,13 +23,12 @@ module Lain
     #   #=> "1 friction signal(s):\n..."
     class Report
       # Tools whose command string the MODEL controls -- {Tool#requires_approval?}
-      # is true today for exactly {Tools::Bash} and {Tools::CoreExec}. The
-      # Journal carries no tier metadata of its own (a session header's
-      # `"tools"` entries are name/description/input_schema/strict only), so
-      # this is a NAME heuristic over the two shipped tier-3 tools, not a live
-      # lookup against the toolset that actually ran. Having the header record
-      # the tier is a follow-up.
-      TIER_3_TOOL_NAMES = %w[bash core_exec].freeze
+      # is true today for exactly {Tools::Bash}. The Journal carries no tier
+      # metadata of its own (a session header's `"tools"` entries are
+      # name/description/input_schema/strict only), so this is a NAME heuristic
+      # over the shipped tier-3 tools, not a live lookup against the toolset
+      # that actually ran. Having the header record the tier is a follow-up.
+      TIER_3_TOOL_NAMES = %w[bash].freeze
 
       # More than this many prefix rewrites in one session is "high" -- a
       # stated, arbitrary threshold, the same shape {Grader::ToolSteering::DEFAULT_THRESHOLD}

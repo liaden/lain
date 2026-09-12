@@ -73,14 +73,11 @@ module Lain
 
       # The wire shape: a required command String, plus optional cwd and timeout.
       #
-      # `command`'s description is where the two-arm rule is written, because
-      # this class is SHARED BY IDENTITY with {CoreExec} -- guidance put here
-      # lands on both tools and cannot drift, where the two `#description`
-      # strings are separate objects and can. It states a capability rather
-      # than a rule: the research behind it measured adherence to a stated
-      # syntax constraint topping out near two thirds and failing SILENTLY
-      # into ordinary shell, so anything phrased as a mandate would be false
-      # for a third of calls.
+      # `command`'s description is where the two-arm rule is written. It states
+      # a capability rather than a rule: the research behind it measured
+      # adherence to a stated syntax constraint topping out near two thirds and
+      # failing SILENTLY into ordinary shell, so anything phrased as a mandate
+      # would be false for a third of calls.
       #
       # THE GENERALISATION IS ITSELF A CLAIM, and it needs measuring exactly
       # like the list of constructs does. An earlier wording named `less` under
@@ -168,9 +165,9 @@ module Lain
 
       def name = "bash"
 
-      # The shape guidance lives on {Input}'s `command` field, which {CoreExec}
-      # shares; what is left here is the one claim this string used to get
-      # wrong, that a shell always runs the command.
+      # The shape guidance lives on {Input}'s `command` field; what is left here
+      # is the one claim this string used to get wrong, that a shell always runs
+      # the command.
       #
       # It carries the backend caveat too, rather than leaning on the field to
       # supply it. {#arm_for} asks `takes_term?` before it offers, so an allow
@@ -273,8 +270,8 @@ module Lain
       # model wrote, under the same gate.
       def on_arm(arm, command, decision) = arm == :term ? decision.term : command
 
-      # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
-      # {CoreExec}.
+      # Cwd resolution lives on {WorkerEnv#resolve} -- one rule, so no exec
+      # backend can resolve a relative path differently.
       def runtime(input, invocation)
         worker_env = session_of(invocation).worker_env
         { cwd: worker_env.resolve(input.cwd), env: worker_env.env, timeout: seconds(input),

@@ -43,8 +43,8 @@ module Lain
 
       # Live sinks are accepted and dropped: the RPC protocol carries no
       # streaming, so this arm buffers everything until the reply. That is an
-      # inherent asymmetry with {Local} rather than an omission -- see
-      # {Tools::CoreExec}'s class doc, which states it as an accepted one.
+      # inherent asymmetry with {Local} rather than an omission, and an accepted
+      # one: a caller wanting live bytes reaches for {Local}.
       #
       # @param command [String] the shell command; a TERM has no wire shape here
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
@@ -73,8 +73,8 @@ module Lain
 
       # The wire has ONE command shape. A term packed here would go out as
       # `["sh", "-c", [["printf", "hi"]]]`, which the daemon rejects at decode --
-      # arriving back as a spawn-shaped Refused that {Tools::CoreExec} then
-      # reports as a bad cwd. Refusing it at the door says what actually went
+      # arriving back as a spawn-shaped Refused a caller then misreports as a
+      # bad cwd. Refusing it at the door says what actually went
       # wrong; there is deliberately no join back to a string, for the reason
       # {Shell::Pipeline} gives for having no path from a term to one.
       def accepts!(command)

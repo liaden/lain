@@ -16,8 +16,8 @@ require "stringio"
 require "tmpdir"
 require "fileutils"
 
-# Fixture-only constants kept out of the RSpec block (Lint/ConstantDefinitionInBlock;
-# spec/lain/tools/core_exec_spec.rb:7 does the same for the same reason).
+# Fixture-only constants kept out of the RSpec block, for
+# Lint/ConstantDefinitionInBlock.
 
 # VMADDR_CID_LOCAL -- the loopback CID, dialed from the host. Convention and
 # legibility, NOT necessity: an earlier draft of this comment claimed CID_HOST(2)

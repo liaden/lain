@@ -270,9 +270,14 @@ Lima issues are verifiable; the Lain-mapping section is Claude's inference from 
   may reorder the whole plan.
 
 **Useful for:** the ROADMAP §M5 "microVM / container / bwrap as a *compared* knob" entry; the
-`Core::Client` transport-seam refactor (worth doing standalone); a third arm for the existing
-`Bash`/`CoreExec` differential spec; and the per-effect egress cost accounting the DN42 story
-motivates.
+`Core::Client` transport-seam refactor (worth doing standalone); a third arm for a daemon-parity
+spec; and the per-effect egress cost accounting the DN42 story motivates.
+
+**Annotated 2026-09-12:** `Tools::CoreExec` was deleted as unreachable, so the `Bash`/`CoreExec`
+differential this entry and the document's step-3 success criterion both lean on no longer exists
+— see the annotation at the head of the document for what survives to grade a guest against, and
+`git log -- lib/lain/tools/core_exec.rb` for the removed code. The reasoning about the transport
+seam is unaffected: it turns on `Child#start` and `Client.start`, neither of which changed.
 
 ---
 

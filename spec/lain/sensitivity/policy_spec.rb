@@ -18,7 +18,7 @@ module SensitivityPolicySpecSupport
   DECLARED = { "read_file" => "path", "glob" => "path", "grep" => "path", "list_files" => "path",
                "edit_file" => "path", "write_file" => "path",
                "ast_search" => "path", "code_outline" => "path", "file_symbols" => "path",
-               "bash" => "cwd", "core_exec" => "cwd" }.freeze
+               "bash" => "cwd" }.freeze
 
   # The field spellings a path can arrive under, asked of the tool's own
   # {Lain::Tool::Input} declaration rather than of the table under test.

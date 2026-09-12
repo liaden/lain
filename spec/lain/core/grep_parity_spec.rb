@@ -10,13 +10,13 @@ require "tmpdir"
 # not -- but that every axis where they CAN agree does, and every axis where
 # they cannot is pinned here as a witness rather than discovered by a user.
 #
-# Modelled on spec/support/shared_examples/exec_boundary_parity.rb, but written
-# out rather than extracted into a shared group: grep rides ONE transport
-# (:core), so a shared group would have exactly one host and would state
-# nothing mechanically. The discipline that carries over is the one that
-# matters -- #expect_identical has no teeth of its own (see the measurement
-# note on CoreExecSpecSupport::Differential), so every parity case below ALSO
-# asserts its bytes literally, and those literals are what pin the wire.
+# Written out rather than extracted into a shared group: grep rides ONE
+# transport (:core), so a shared group would have exactly one host and would
+# state nothing mechanically. The discipline that matters is kept anyway -- a
+# differential helper that only compares the two arms has no teeth of its own,
+# since two arms agreeing proves nothing if neither ran the wire, so every
+# parity case below ALSO asserts its bytes literally, and those literals are
+# what pin the wire.
 #
 # The witnesses in the second block are the card's escalations, standing in
 # code. Each one goes RED the moment the corresponding product decision lands,
@@ -26,9 +26,9 @@ require "tmpdir"
 # and that is not a paradox: a parity example asserts the two arms AGREE, which
 # a core arm secretly running the in-process walk satisfies perfectly. Measured
 # -- ignoring the injected client entirely (`@search = RubySearch.new`) reddens
-# 5 of these 15 examples, and all 5 are witnesses. So the divergences are this
-# block's #expect_attached_to (see core_exec_spec's :vsock note): delete them
-# for being "not parity" and the file passes green having proved nothing.
+# 5 of these 15 examples, and all 5 are witnesses. So the divergences are the
+# only proof this block reached the daemon at all: delete them for being "not
+# parity" and the file passes green having proved nothing.
 #
 # The same limit applies to the ignore-rules parity example above, and it is
 # worth naming because it looks like it is pinned here and is not: dropping
@@ -81,7 +81,7 @@ RSpec.describe Lain::Tools::Grep, :core do
   end
 
   # One search through both paths; the pair of results, the in-process one
-  # first. A fresh daemon per case, matching core_exec_spec's :core block.
+  # first. A fresh daemon per case, so no case inherits another's state.
   def differential(pattern, path = tmpdir, **extra)
     input = { pattern:, path:, **extra }
     call = invocation

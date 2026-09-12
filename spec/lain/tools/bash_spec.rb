@@ -529,9 +529,9 @@ RSpec.describe Lain::Tools::Bash do
   # the answer and are not -- so an oversized one is REFUSED, and the refusal
   # keeps the one fact truncation would have kept: the exit status.
   #
-  # The bound lives in .render_output because that is the single rendering BOTH
-  # exec arms go through (Bash's two, and CoreExec's daemon reply), so it
-  # cannot be applied to one arm and missed on another.
+  # The bound lives in .render_output because that is the single rendering every
+  # exec arm goes through, in process and over the daemon alike, so it cannot be
+  # applied to one arm and missed on another.
   describe "refusing output too large to hand back" do
     let(:ceiling) { Lain::Tools::Bash::OUTPUT_BOUND.limit }
     let(:oversized_file) do
@@ -610,9 +610,8 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     # The daemon arm reaches the same ceiling because it reaches the same
-    # method: {Tools::CoreExec} renders the wire's fields through this one
-    # entry point, so there is no second place for the bound to be missing
-    # from.
+    # method: the wire's fields render through this one entry point, so there is
+    # no second place for the bound to be missing from.
     it "refuses through the shared rendering the daemon arm also calls" do
       rendered = described_class.render_output(exit_status: 3, stdout: "x" * (ceiling + 1), stderr: "")
 

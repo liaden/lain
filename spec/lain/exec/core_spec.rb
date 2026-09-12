@@ -4,8 +4,8 @@ require "async"
 
 # The out-of-process arm of the exec seam. Everything here is asserted at the
 # WIRE, with a recording client duck rather than the real daemon, because what
-# this backend owns is the request it builds -- Tools::CoreExec's :core block
-# owns what the daemon does with one.
+# this backend owns is the request it builds; what the daemon does with one is
+# pinned against the real thing in spec/lain/core/.
 RSpec.describe Lain::Exec::Core do
   # Records the params it was handed and replies with a clean exec outcome.
   let(:recorder) do
@@ -123,9 +123,9 @@ RSpec.describe Lain::Exec::Core do
 
   # The seam's contract admits a String or a term; this backend admits only the
   # first. Packing a term would put ["sh", "-c", [["printf", "hi"]]] on the wire,
-  # which the daemon rejects at decode -- surfacing as a spawn refusal that
-  # Tools::CoreExec reports as a bad cwd. Threading these backends into
-  # Tools::Bash, which DOES hold terms, stops this being unreachable there.
+  # which the daemon rejects at decode -- surfacing as a spawn refusal a caller
+  # then misreports as a bad cwd. Threading these backends into Tools::Bash,
+  # which DOES hold terms, stops this being unreachable there.
   describe "a shape it has no wire for" do
     # A caller holding a term can ask before it offers one, which is what stops
     # Tools::Bash handing this backend a shape it has no wire for. The row is

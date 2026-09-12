@@ -9,7 +9,7 @@ module ToolSurfaceSpecSupport
   # read-versus-write (see Lain::Tool#requires_approval? and the plan's "Tool
   # tiers"), which is why this list is short and every addition to it is an
   # argument rather than a category.
-  GATED = %w[bash core_exec].freeze
+  GATED = %w[bash].freeze
 
   # Everything else, derived rather than written down: a new tool is ungated by
   # DEFAULT here and must be argued into GATED, which is the safe direction to

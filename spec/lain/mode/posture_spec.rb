@@ -38,7 +38,7 @@ RSpec.describe Lain::Mode::Posture do
   describe "plan's capability set" do
     let(:permits) { described_class.for(:plan).permits }
 
-    %i[edit_file write_file memory_write bash core_exec].each do |tool|
+    %i[edit_file write_file memory_write bash].each do |tool|
       it "does not permit #{tool}" do
         expect(permits).not_to include(tool)
       end
@@ -66,7 +66,7 @@ RSpec.describe Lain::Mode::Posture do
 
     %i[manual accept_edits auto].each do |name|
       it "#{name} permits every tool the session holds" do
-        expect(described_class.for(name).permits).to include(:bash, :edit_file, :core_exec)
+        expect(described_class.for(name).permits).to include(:bash, :edit_file, :write_file)
       end
 
       it "#{name} hands the toolset back untouched rather than rebuilding it" do
@@ -126,7 +126,7 @@ RSpec.describe Lain::Mode::Posture do
 
     it "drops every shipped tool that can change something" do
       expect(plan.attenuate(shipped).names)
-        .not_to include("bash", "core_exec", "edit_file", "write_file", "memory_write",
+        .not_to include("bash", "edit_file", "write_file", "memory_write",
                         "improvement_write", "todo_write", "run_skill", "subagent",
                         "request_review", "tool_search")
     end

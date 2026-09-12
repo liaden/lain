@@ -23,7 +23,7 @@ RSpec.describe "Lain::Telemetry secret boundary records" do
     end
 
     # The record covers WRITERS too -- {Sensitivity::Policy::PATH_FIELDS} names
-    # write_file, edit_file, bash and core_exec beside the readers -- so a
+    # write_file, edit_file and bash beside the readers -- so a
     # Journal reader tallies by verb on this field rather than counting a
     # refused write as a refused read.
     it "names the tool, so a refused write is not tallied as a refused read" do
