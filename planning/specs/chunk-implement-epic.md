@@ -1669,6 +1669,7 @@ Cards landed:
 - **T14** `229db3ce`. Suite 17676 examples, 0 failures, on T14's tree. `StatusView` and `CLI::Wiring::EpicSeat`; PROTOCOL 15, with `plugin/nvim/doc/lain.txt` updated to match; a fleet error is drawn, not raised. Pre-commit yard-lint failed twice, on `EpicSeat`'s `@option` tag and on two ```mermaid mentions in prose; both fixed.
 - **T13** `ae6a5441`. Suite 17579 examples, 0 failures, on T13's tree. `ToolsetBuild#epic_subagent(isolation:, handoff:, lane:)`, `Supervisor#retire` (anchor-only, `Retirement::Anchor` compare-and-swap), `AlreadyRetired`/`AlreadyReleased`/`OutsideLease`, and the `issue_orchestrator` role. Pre-commit caught two yard issues, `WorkerHandoff#reclaim`'s tag order and a duplicate `Leases::Lane` docstring, both fixed, plus the vsock load flake.
 - **T15** `591bf1dc`. Suite 17777 examples, 0 failures, on T15's tree. `IssueActor`, `IssueTests`, `PlanSubject`, `Leases::InPlace`, `WorkingBranch.owned`, and the `reviewer_code` role.
+- **T16** `dd3b2a58`. Suite 17833 examples, 0 failures, on T16's tree. `EpicDriver::Factory`/`Run`, `/implement-epic`, `AskHuman#withdraw`, the driver's own landing checkout. **Small debt:** `Run#refused_before_merging?` lists refusal classes by hand, so a new one added later would wrongly advise `--resume`.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1916,3 +1917,28 @@ Rulings made during execution:
     docs.
 - **Orchestrator close-out:** `spec/lain/epic/mermaid_spec.rb:110` carries a `T4` ticket citation this
   chunk introduced in `67fe1314`. Clear it before the chunk closes.
+- **T16 review rulings.** The panel reproduced four blockers over real git: one refusal discarded the
+  whole run; the landing required the HUMAN's checkout to stand on `epic/<slug>`, so the ordinary
+  case always failed; a `pending` issue stranded the run; and a timed-out gate left its question
+  outstanding, killing the next issue's gate.
+  - The driver lands in its own lain-owned worktree on `epic/<slug>`. The human's checkout is never
+    switched.
+  - Startable means `in_flight`. Approving the plan is the one writer of that transition; a pending
+    issue is reported, never started.
+  - A gate that times out or is denied withdraws its question, and at most one gate is outstanding.
+  - The attempt is derived from the anchors already in the repository, so a retry launches instead of
+    being refused.
+  - Every per-issue refusal stops that issue, never the run.
+  - **For T18:** `/implement-epic` interrupts on the conductor's `closed?` and sits outside the goal
+    driver's cap.
+- **T16 re-review.** All four blockers verified fixed. Two more went back: an interrupt during a gate
+  wait left the question outstanding (the same defect through the new path), and every landing failure
+  told the human to `--resume`, including refusals where nothing had merged.
+  - **The lock deviation is right for a different reason than was recorded.** Nesting `ParentLock`
+    does not deadlock, because `#hold` is re-entrant and only the outermost takes the flock. It is
+    unnecessary because `ParentLock.for` resolves `--git-common-dir`, so the human's checkout and
+    lain's landing worktree share one lock file and one object. **T18 documents that mechanism, not
+    the other one.**
+  - **Follow-up, a later chunk:** `Wiring` sits at 124/125 and `AskHuman` at 125/125, and
+    `Tools::Holding` is a module coupled to its host's ivar, extracted to buy one line. The next card
+    to touch either class has no headroom.
