@@ -231,6 +231,21 @@ the cop.
   calling shell still saw exit status **0**. So the exit code is not a gate. **Score a suite run on
   the printed `N examples, M failures` line and nothing else** -- together with the example-COUNT
   rule in CLAUDE.md that is two independent ways a red suite reads green.
+- **A forked or out-of-band RSpec runner that never renames `$PROGRAM_NAME` loads zero spec files
+  and reports a confident green.** `Configuration#files_or_directories_to_run=` appends the `spec`
+  default path only when `$PROGRAM_NAME` basenames to `rspec` -- a `Kernel#fork` of a preloaded
+  process, or anything else that drives RSpec's API instead of going through the `rspec`
+  executable, keeps whatever argv-zero its parent had. Without the rename the run collects and
+  executes nothing and still exits 0: a third way (alongside the two above) that a red suite reads
+  green, from a runner that never got as far as loading a single example. The fix goes deeper than
+  the file list, though: `CLI::Up::PreFlight` expands a relative executable to an absolute path,
+  while `up_spec`'s spy compares the raw `$PROGRAM_NAME` -- so renaming the process to a bare
+  `rspec` (needed for the file-loading trick above) broke that comparison and produced 10 examples
+  failing in every run, from the rename itself rather than from the suite. A runner built this way
+  also wants its own `TMPDIR`/XDG tree per run, for the shared-mutable-state reason given above
+  (`:21-29`). Surfaced by `bin/spec-flakes`, a forked whole-suite runner retired 2026-09-12 for an
+  unrelated collision (below) -- the script is gone but the mechanism binds any future one built the
+  same way.
 - **This box's shell is zsh, and `cmd 2>&1 1>/dev/null | sed` does NOT swap descriptors there.**
   zsh's MULTIOS **tees** instead, so a probe written to isolate stderr silently reports stdout's
   content as if it were stderr. Measured 2026-08-23 while checking that a renderer prints its
@@ -322,16 +337,20 @@ the cop.
   One observation, so the mechanism is not established -- recorded by name now precisely so the
   second sighting is recognised as a second rather than mistaken for a regression.
 
-  **`rake spec:flakes` currently exits 1 on EVERY invocation, and it is the harness, not the
-  suite.** `bin/spec-flakes` rewrites `$HOME` and `XDG_*` inside each forked run, which collides
-  with the spec group that asserts on `$HOME`: five examples in `Lain::Paths a $HOME that is not
-  absolute` (`refuses a HOME of '.'`, `refuses a relative HOME`, `refuses an empty HOME`, `guards
-  config_home and cache_home by the same rule`, `accepts a HOME of '/'`) plus `Lain::Frontend::Neovim
-  the thread pane's write refusal delivers a nothing-typed write refusal on the review rail` fail in
-  **all nine** runs, deterministically. `rake pspec`, which does not rewrite `$HOME`, is green at the
-  same commit across three runs. So a red `spec:flakes` is not evidence of anything until those six
-  are subtracted, and the tool cannot serve as a gate until its own isolation stops fighting the
-  specs that assert on the variable it rewrites. Measured 2026-08-24 during the ollama-cloud chunk.
+  **RETIRED 2026-09-12 — `rake spec:flakes` exited 1 on EVERY invocation, and it was the harness,
+  not the suite.** `bin/spec-flakes` rewrote `$HOME` and `XDG_*` inside each forked run, which
+  collided with the spec group that asserts on `$HOME`: five examples in `Lain::Paths a $HOME that
+  is not absolute` (`refuses a HOME of '.'`, `refuses a relative HOME`, `refuses an empty HOME`,
+  `guards config_home and cache_home by the same rule`, `accepts a HOME of '/'`) plus
+  `Lain::Frontend::Neovim the thread pane's write refusal delivers a nothing-typed write refusal on
+  the review rail` failed in **all nine** runs, deterministically. `rake pspec`, which does not
+  rewrite `$HOME`, was green at the same commit across three runs. So a red `spec:flakes` was never
+  evidence of anything until those six were subtracted, and the tool could never serve as a gate
+  while its own isolation fought the specs that assert on the variable it rewrote. Measured
+  2026-08-24 during the ollama-cloud chunk; the task and `bin/spec-flakes` were removed rather than
+  fixed, because the defect was in the harness's own isolation, not in the six specs it collided
+  with — fixing those specs would have hidden the harness's `$HOME`/`XDG_*` rewrite rather than
+  correcting it.
 
   **RETIRED BY EVIDENCE 2026-08-24 — the teardown shape is fixed at the fixture.** `git commit` and
   `git merge` spawn a DETACHED `git maintenance run --auto --quiet --detach` (seen under
@@ -572,8 +591,8 @@ first red one — checked, not assumed — so "CI changed under us" was ruled ou
   The fix is `with_hostile_home`, which clears `XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME`
   alongside setting `HOME`. **Any example asserting the `$HOME` fallback must clear the variable
   that shadows it**, or it is vacuous on half the machines that run it. This is the same collision
-  `bin/spec-flakes` hits from the other direction (see the `spec:flakes` note above): there the
-  harness *sets* `$HOME` and `XDG_*` and five of these examples go red in all nine runs.
+  `bin/spec-flakes` hit from the other direction (see the retired `spec:flakes` note above): there
+  the harness *set* `$HOME` and `XDG_*` and five of these examples went red in all nine runs.
 
 - **tmux 3.4 misreports `#{pane_current_path}`, inserting a backslash before every `$`.** A pane
   sitting in `a$b` formats as `a\$b`, while `readlink /proc/<pane_pid>/cwd` — where that pane's
