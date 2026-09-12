@@ -172,71 +172,50 @@ RSpec.describe Lain::CLI::Wiring do
     wiring.wire_agent(channel:, recorder:, session:, backend:)
   end
 
-  # The 2026-08-05 defect, at the site it fired from: this call built
-  # `Lain::Notify.for` unconditionally, so every spec, probe and experiment that
-  # reached #wire_agent got the REAL dunstify adapter -- nine notifications
-  # landed on a working human's desktop, `appname: lain`, from agents' trees.
-  # A fake `dunstify` goes on PATH for the duration so BOTH directions are
-  # decided by the subject rather than by whether this box has a notification
-  # daemon installed; it is only ever resolved, never executed, because nothing
-  # here asks the notifier to notify.
-  describe "the desktop notifier" do
+  # The 2026-08-05 defect, at the site it fired from -- and the surface it fired
+  # from is now deleted. This call built a real dunstify adapter unconditionally,
+  # so every spec, probe and experiment that reached #wire_agent notified the
+  # human running the machine: nine notifications landed on a working human's
+  # desktop, `appname: lain`, from agents' trees. The gate written for it was
+  # consent BEFORE capability; removing the surface answers the same question by
+  # construction.
+  #
+  # The `dunstify` put on PATH here RECORDS rather than merely exits, and that
+  # is the point of it: a fake that only exits would be scenery, passing whether
+  # or not anything tried to notify. This one writes its argv to a witness file,
+  # so the first example fails if any line reached by a wired chat shells out to
+  # the human's notification daemon -- capability restored to PATH, and nothing
+  # taking it.
+  describe "the desktop surface a chat no longer has" do
+    let(:witness) { File.join(@dunstify_dir, "fired") }
+
     around do |example|
       Dir.mktmpdir do |dir|
-        File.write(File.join(dir, "dunstify"), "#!/bin/sh\nexit 1\n")
-        File.chmod(0o755, File.join(dir, "dunstify"))
-        with_env("PATH" => "#{dir}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}", "LAIN_DESKTOP" => nil) do
+        @dunstify_dir = dir
+        fake = File.join(dir, "dunstify")
+        File.write(fake, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> #{File.join(dir, "fired")}\nexit 0\n")
+        File.chmod(0o755, fake)
+        with_env("PATH" => "#{dir}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}") do
           example.run
         end
       end
     end
 
-    def notifier_for(**desktop)
-      wiring = described_class.new(options: { grace: 5, **desktop }, chronicle:, status_feed:)
+    it "assembles a chat that answers, and nothing in it reaches the notification daemon" do
+      wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
       recorder, session = wiring.run_state(nil)
-      wiring.wire_agent(channel:, recorder:, session:, backend:)
-      wiring.notifier
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(agent.ask("ping").text).to eq("settled")
+      expect(wiring).not_to respond_to(:notifier)
+      expect(File).not_to exist(witness)
     end
 
-    it "stays Null for a caller that never asked for the desktop" do
-      expect(notifier_for).to be_a(Lain::Notify::Null)
-    end
-
-    it "stays Null when the flag is explicitly off, dunstify or not" do
-      expect(notifier_for(desktop: false)).to be_a(Lain::Notify::Null)
-    end
-
-    # The other half of the gate, and the one that says the human lost nothing:
-    # `lain chat` passes --desktop's default (true, pinned in
-    # spec/lain/cli_spec.rb), so a human at a terminal on a box with dunstify
-    # gets the real adapter exactly as before.
-    it "is the real adapter when the run consents and dunstify resolves" do
-      expect(notifier_for(desktop: true)).to be_a(Lain::Notify)
-    end
-
-    # The notifier's sweep is guarded so a raise cannot silently retire the
-    # fiber -- and that fiber now raises the notification for EVERY approval, so
-    # its silent death deletes desktop notification outright. A
-    # guard journalling into the Null channel is a guard nobody can prove fired,
-    # which on a bench is most of its value; the whole finding it came out of is
-    # that a surface dying quietly is invisible. So this asserts the record
-    # arrives on the RUN's channel, end to end, rather than that a keyword was
-    # passed: the fault is provoked in the real adapter Wiring built.
-    it "hands that adapter the run's channel, so a fault in its sweep is witnessed" do
-      notifier = notifier_for(desktop: true)
-      flaky = Object.new
-      flaky.define_singleton_method(:select) { |&_block| raise "the parked list went away" }
-
-      Sync do |task|
-        watcher = task.async { notifier.watch(flaky) }
-        task.async { Async::Task.current.sleep(0.15) }.wait
-      ensure
-        watcher&.stop
-      end
-
-      expect(channel.drain).to include(hash_including("type" => Lain::Approval::QueueSurface::FAULT_TYPE,
-                                                      "surface" => Lain::Notify::SURFACE,
-                                                      "error" => "RuntimeError: the parked list went away"))
+    # The structural half, and the one that makes the example above an
+    # invariant rather than an observation: there is no adapter left to build,
+    # so no consent and no capability can reintroduce one.
+    it "offers no desktop notification surface at all, so consent has nothing left to turn on" do
+      expect(Lain).not_to be_const_defined(:Notify)
     end
   end
 
@@ -1469,6 +1448,36 @@ RSpec.describe Lain::CLI::Wiring do
       wiring = run_wiring
 
       expect(opened).to eq([wiring.conductor])
+    end
+
+    # What replaced the desktop notifier as `request_review`'s way of telling a
+    # human a file is waiting on them -- and with no editor wired in production
+    # ({CLI::EpicMount#request_review} says why), the only way. Asserted through
+    # the object rather than through a keyword: the seam is a thunk read at CALL
+    # time, so the question is what it reaches once a frontend exists.
+    describe "the run's one line to the human" do
+      it "says nothing before a frontend exists, which is the window the toolset is built in" do
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+
+        expect { wiring.told.call("a file is waiting") }.not_to raise_error
+      end
+
+      it "reaches the terminal once #run has built one" do
+        rendered = StringIO.new
+        Dir.mktmpdir do |dir|
+          factory = lambda do |channel:, **|
+            Lain::Frontend::TTY.new(channel:, output: rendered, input: StringIO.new("quit\n"),
+                                    history_path: File.join(dir, "history"))
+          end
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                       tty_factory: factory, conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+          wiring.told.call("epic.md is open for review")
+        end
+
+        expect(rendered.string).to include("epic.md is open for review")
+      end
     end
 
     # The ONE production line the fix rests on. {Lain::StatusFeed} is built

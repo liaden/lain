@@ -929,7 +929,7 @@ class LainCLI < Thor
     def self.declare(thor)
       thor.method_option :auto_approve, type: :boolean, default: false,
                                         desc: "Wire an extra approval surface: an auto_approver role judges " \
-                                              "pendings the human hasn't yet -- opt-in, races the human/dunst " \
+                                              "pendings the human hasn't yet -- opt-in, races the human's own " \
                                               "surfaces, and abstains on anything holding sensitive regions"
       thor.method_option :secret_oracle, type: :boolean, default: false,
                                          desc: "Wire an extra approval surface: a LOCAL model (ollama, never a " \
@@ -1040,16 +1040,6 @@ class LainCLI < Thor
                                   "session is never isolated"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
-  # CONSENT for the desktop, and this flag is the whole of why a human still
-  # gets notified. {Lain::Notify.for} builds nothing real for a caller that did
-  # not ask -- dunstify on PATH is capability, never permission, and a spec, a
-  # probe and a subagent all share the human's PATH (2026-08-05: nine real
-  # notifications from agents' trees). ON by default because typing `lain chat`
-  # at a terminal IS the human asking; `--no-desktop` silences one run, and
-  # LAIN_DESKTOP=0 silences a whole shell for an agent driving the real CLI.
-  method_option :desktop, type: :boolean, default: true,
-                          desc: "Fire dunstify notifications for approvals and questions; --no-desktop " \
-                                "opts out (LAIN_DESKTOP=0/1 overrides either way)"
   # The chat-side half of `lain up PATH`: name the project instead of letting
   # the shell's directory decide it. `--root` is rung 1 of the detection ladder
   # (Lain::Project::Resolver's `:flag`, exempt from the refusal set, so

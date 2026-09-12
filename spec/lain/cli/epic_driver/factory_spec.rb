@@ -155,7 +155,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def mount
     Lain::CLI::EpicMount.for(chronicle: Lain::CLI::Chronicle::Null.new, options: { epic: "demo" },
-                             root: repo, paths:, config:)
+                             told: ->(_text) {}, root: repo, paths:, config:)
   end
 
   def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil)

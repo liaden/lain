@@ -21,8 +21,11 @@ RSpec.describe Lain::CLI::Wiring::EpicSeat do
 
   def root = File.join(@tmp, "project")
 
+  let(:told) { [] }
+
   def seat(options = {})
-    described_class.new(chronicle: Lain::CLI::Chronicle::Null.new, options:, notify: nil, root:, replies: -> {})
+    described_class.new(chronicle: Lain::CLI::Chronicle::Null.new, options:, told: told.method(:<<), root:,
+                        replies: -> {})
   end
 
   def write_demo

@@ -69,8 +69,9 @@ module ToolRegistry
     "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
     # Construction-only: every property this spec asks of the instance is a
     # declaration, never #perform, and nil collaborators fail loudly if that
-    # ever stops being true.
-    "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil) },
+    # ever stops being true. `told:` is required and undefaulted in production,
+    # so it is passed here rather than left to a default that does not exist.
+    "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil, told: SILENT) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },
@@ -80,6 +81,11 @@ module ToolRegistry
     # readers ask of the instance is a declaration, never #perform.
     "session_usage" => -> { Lain::Tools::SessionUsage.new(usage: nil) }
   }.freeze
+
+  # `told:` is REQUIRED on the tool and undefaulted on purpose -- with no editor
+  # wired in production it is the only thing that names a waiting file -- so
+  # this table has to name one even though nothing here calls #perform.
+  SILENT = ->(_text) {}
 
   def self.build(name)
     BUILDERS.fetch(name) { raise "unknown tool #{name.inspect} -- add it to ToolRegistry::BUILDERS" }.call

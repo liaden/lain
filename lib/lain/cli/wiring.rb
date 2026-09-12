@@ -48,7 +48,7 @@ module Lain
       # agent, not about the seam: a child passes its own role.
       MAIN_AGENT = "lain"
 
-      attr_reader :ask_human, :askers, :notifier, :supervisor, :conductor, :command_surface, :project
+      attr_reader :ask_human, :askers, :supervisor, :conductor, :command_surface, :project
 
       # {ToolsetBuild}'s discoveries, not this object's state.
       delegate :role_spawn, :auto_surface, to: :toolset_build
@@ -64,6 +64,19 @@ module Lain
       # the Switchboard, so those three cannot come to disagree about whether a
       # human is there -- the way `--yolo` once did when it was read twice.
       def attended? = !options[:non_interactive]
+
+      # The run's ONE line to the human at the terminal, late for {#replies}'
+      # reason and read the same way: the frontend is built in #run, strictly
+      # AFTER the toolset, so what is handed downward is this thunk and the slot
+      # behind it is read at CALL time.
+      #
+      # It is the seam `request_review` hands a waiting file over on, and it is
+      # now the ONLY one -- production wires no editor ({EpicMount#request_review}
+      # says why), so a review nobody is told about parks on an unbounded await
+      # with nothing anywhere naming the file. Public for the reason the notifier
+      # reader it replaces was public: a spec asking what a wired chat can say to
+      # a human asks the object rather than reaching past it.
+      def told = ->(text) { @human_line.call(text) }
 
       # "Did it finish what it was asked", as a process exit status. Complete
       # before a Repl exists: a run that refused during assembly reports through
@@ -132,6 +145,9 @@ module Lain
         @project = project
         @tty_factory = tty_factory
         @conductor_opener = conductor_opener
+        # Nobody is looking at anything until #run builds a frontend, and that
+        # is the honest value for the window -- not a stand-in for one.
+        @human_line = Lain::Frontend::PromptComposer::SILENT
       end
 
       # Assemble the run's collaborators over the now-open chronicle and hand off
@@ -142,6 +158,7 @@ module Lain
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         resumed&.notices&.each(&notice)
         tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
+        @human_line = tty.method(:render_warning)
         @conductor = open_conductor(tty)
         @conductor.guard do
           build_repl(tty:, agent:, backend:).run(**editor_seams(nvim, agent, session), first_prompt: @options[:prompt])
@@ -177,17 +194,6 @@ module Lain
         # every caller has to keep where the slot is a fact this object holds.
         @channel = channel
         parent = -> { @agent.timeline }
-        # Desktop notification is CONSENT and is never inferred: `Notify.for`
-        # once read dunstify-on-PATH as permission, so every spec and probe
-        # reaching this line notified the human running the machine (nine of
-        # them, 2026-08-05). Pinned by spec/desktop_discipline_spec.rb.
-        #
-        # Journalling to the run's own Channel is what makes the fault guard
-        # WITNESSED rather than merely present: a surface fiber that dies inside
-        # its sweep silently stops notifying for the rest of the session, so a
-        # guard journalled into the Null would leave a bench with no evidence it
-        # fired.
-        @notifier = Lain::Notify.for(desktop: options[:desktop], journal: channel)
         @supervisor = supervise(notice)
         @ask_human = wire_askers(parent)
         toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, notice:)
@@ -313,7 +319,7 @@ module Lain
       # routable for exactly as long as the run. A CHILD's must be kept and
       # deregistered on the lease that reaps it -- see {Askers::Enrolled}.
       def wire_askers(parent)
-        @askers = Askers.new(notifier: @notifier, observer: chronicle.observer, attended: attended?)
+        @askers = Askers.new(observer: chronicle.observer, attended: attended?)
         @askers.enrol(parent, agent: MAIN_AGENT).asker
       end
 
@@ -380,7 +386,7 @@ module Lain
 
       # Which epic this chat is seated in, memoized so the toolset's tools and
       # the editor's lain://status read ONE mount ({EpicSeat} says why one).
-      def epic_seat = @epic_seat ||= EpicSeat.new(chronicle:, options:, notify: @notifier, root:, replies:)
+      def epic_seat = @epic_seat ||= EpicSeat.new(chronicle:, options:, told:, root:, replies:)
 
       # One send rather than two at its call site, which is what keeps
       # #build_toolset inside Metrics/AbcSize.
@@ -462,7 +468,7 @@ module Lain
       # the lines above just settled.
       def repl_over(tty:, agent:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
-                 notifier:, supervisor:, middleware: @command_surface.middleware, attended: attended?,
+                 supervisor:, middleware: @command_surface.middleware, attended: attended?,
                  commands: @command_surface.commands, auto_surface:, secret_surface:, goal_driver:)
       end
 

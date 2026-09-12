@@ -4,7 +4,7 @@ module Lain
   module CLI
     class Wiring
       # Who may ask the human, and where an arrival goes. One object because
-      # the three are one fact: an asker that announces to a queue nobody
+      # the two are one fact: an asker that announces to a queue nobody
       # registered can be answered by nobody, and a registration without the
       # announcement is an agent parked in silence.
       class Askers
@@ -15,25 +15,15 @@ module Lain
         # never needs, and a child's lease does.
         Enrolled = Data.define(:asker, :registration)
 
-        # What a desktop notification may spend on WHO is asking: dunstify
-        # renders `"#{agent} asks"` as the title, and an asker's identity in the
-        # record is a 71-character correlation digest, not a title. The same 19
-        # the TTY drain and {Frontend::Neovim::InboxView} clamp their sender
-        # column to, so the three surfaces name an asker the same way.
-        NAME_WIDTH = 19
-
         attr_reader :questions, :directory
 
-        # The seam wired to nothing: its arrivals reach a queue nobody drains
-        # and a desktop that is not there. For the direct-construction seams
-        # the specs drive ({ToolsetBuild::NoSwitchboard}'s precedent), and NOT a
-        # sanctioned production state -- a child enrolled here parks a human
-        # question nobody can see. The exe always passes the run's own.
-        def self.unwired
-          new(notifier: Lain::Notify::Null.new, observer: Lain::Event::ChainWriter::Null.new)
-        end
+        # The seam wired to nothing: its arrivals reach a queue nobody drains.
+        # For the direct-construction seams the specs drive
+        # ({ToolsetBuild::NoSwitchboard}'s precedent), and NOT a sanctioned
+        # production state -- a child enrolled here parks a human question
+        # nobody can see. The exe always passes the run's own.
+        def self.unwired = new(observer: Lain::Event::ChainWriter::Null.new)
 
-        # @param notifier [Lain::Notify] the desktop half of an arrival
         # @param observer [#call] the chronicle's -- Q and A are exactly the
         #   events a Timeline walk can never find, so a missing observer is
         #   silent record loss; required for that reason, not defaulted.
@@ -44,8 +34,7 @@ module Lain
         #   refuses -- see {Lain::Tools::AskHuman::Unattended} -- and this is
         #   the one place that decides, because it is the one place that builds
         #   an asker.
-        def initialize(notifier:, observer:, attended: true)
-          @notifier = notifier
+        def initialize(observer:, attended: true)
           @observer = observer
           @attended = attended
           @questions = Async::Queue.new
@@ -71,8 +60,8 @@ module Lain
         #   ride on it
         # @param agent [String, nil] what a human is told is asking, when this
         #   asker has a name worth reading (the main chat's, a child's role).
-        #   Per-asker, never per-seam. Absent, the correlation stands in,
-        #   clamped -- see {#desktop_name}. It is handed to the ASKER as well as
+        #   Per-asker, never per-seam. Absent, the correlation stands in. It is
+        #   handed to the ASKER as well as
         #   to the announcement, so it rides the Q event
         #   ({Tools::AskHuman::ASKED_BY}) and the surfaces that never see an
         #   arrival name the asker the same way this one does.
@@ -95,7 +84,7 @@ module Lain
           Lain::Tools::AskHuman::Notifying.new(parent:, observer: @observer, agent:, notify:)
         end
 
-        # ONE arrival, three surfaces. What rides the queue is the inbox item
+        # ONE arrival, and what rides the queue is the inbox item
         # itself, not the question's bytes -- the digest an answer must cite,
         # and the asker that asked it -- and both are read HERE, at the instant
         # the Q event was written, because that is the only instant they are
@@ -111,15 +100,6 @@ module Lain
           item = HumanReplies::InboxItem.asked(question, asker.last_question, agent:)
           registration.asked(item.digest)
           @questions.enqueue(item)
-          @notifier.question(agent: desktop_name(agent, item), text: question)
-        end
-
-        # Who the desktop is told is asking: this asker's own name when it has
-        # one, else the correlation that identifies it everywhere else. Both
-        # arms clamp in ONE place, so the bound holds for a name nobody thought
-        # to keep short as much as for a digest.
-        def desktop_name(agent, item)
-          (Blankness.blank?(agent) ? item.from.to_s : agent.to_s)[0, NAME_WIDTH]
         end
       end
     end

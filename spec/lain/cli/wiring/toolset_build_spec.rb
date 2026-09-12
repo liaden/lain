@@ -602,13 +602,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # `provider:`'s exact reason: a second one built down there would be a
     # second answer to "who is holding this question".
     describe "the ask-the-human seam a child inherits" do
-      let(:notified) { [] }
-      let(:notifier) { instance_double(Lain::Notify) }
       let(:askers) do
-        Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new)
+        Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
       end
-
-      before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
 
       it "hands the spawn seam the run's own askers, never a second one" do
         build = build_with(options, askers:)
@@ -620,7 +616,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       # Defaulted for `switchboard:`'s exact reason and with the same warning:
       # the direct-construction seam the specs drive, where a child's question
-      # would reach no queue and no desktop. The exe always passes the run's.
+      # would reach no queue at all. The exe always passes the run's.
       it "falls back to the seam wired to nothing when a build is handed none" do
         toolset_build.build(recorder, ask_human:)
 
@@ -630,11 +626,12 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # The one child path that ships today, driven end to end: the chat's own
       # `subagent` really asking a question, over the run's real Askers. Its
       # TOOL is named "subagent" because that is what the model calls; what it
-      # IS is a researcher, and that is what the arrival note and the desktop
-      # must say. Naming the tool would have changed the rendered schema bytes,
+      # IS is a researcher, and that is what the arrival must say. Naming the
+      # tool would have changed the rendered schema bytes,
       # so the two names are separate keywords -- and this is what says they
       # are wired to the right ends.
       context "when the chat's own subagent asks the human" do
+        let(:arrivals) { [] }
         let(:store) { Lain::Store.new }
         let(:parent) { -> { Lain::Timeline.empty(store:) } }
         let(:provider) do
@@ -650,7 +647,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           pumped_until(task, timeout:, reason: "a question reaching the human's queue") do
             !askers.questions.empty?
           end
-          askers.questions.dequeue
+          askers.questions.dequeue.tap { |item| arrivals << item }
         end
 
         # The `ensure` is what lets this example FAIL rather than wedge: an
@@ -674,7 +671,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
           spawned_asking(build.build(recorder, ask_human:).fetch("subagent"))
 
-          expect(notified).to eq([["researcher", "which db?"]])
+          expect(arrivals.map { |item| [item.from, item.question.to_s] }).to eq([["researcher", "which db?"]])
         end
       end
     end

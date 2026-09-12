@@ -19,14 +19,12 @@ module Lain
       # command surface or its reply drain, with no error anywhere.
       #
       # `commands:` is consulted BEFORE the middleware phase, so a registered
-      # `/word` never costs a model turn; `notifier:` is a desktop surface over
-      # the SAME approval queue the TTY prompt watches (first answer wins), Null
-      # when there is no dunstify. False for the attended keyword
+      # `/word` never costs a model turn. False for the attended keyword
       # (`--non-interactive`) makes the seeded question the WHOLE conversation:
       # nothing reads a second line, so the run ends where an attended one would
       # go back to the prompt.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
-                     notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
+                     supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true)
         @agent = agent
@@ -38,7 +36,7 @@ module Lain
         @commands = commands
         @goal_driver = goal_driver
         @attended = attended
-        name_lifetimes(replies:, supervisor:, approvals:, notifier:, auto_surface:, secret_surface:, tty:, conductor:)
+        name_lifetimes(replies:, supervisor:, approvals:, auto_surface:, secret_surface:, tty:, conductor:)
       end
 
       # What this conversation was worth as a process exit status, for the one

@@ -12,10 +12,12 @@
 # spec is right and the suite was wrong: a green suite must not depend on the
 # machine's exports. Observed on a macOS checkout whose `.envrc` pinned a provider.
 #
-# This is {Lain::Notify}'s `LAIN_DESKTOP` lesson generalized -- "agent shells
-# inherit the human's environment, so an env var in a profile is inherited by
-# every spec run" -- with the same conclusion: the entry point is what differs.
-# There, a CLI flag is the consent; here, `with_env` is. An example that wants one
+# This is the desktop-notification lesson generalized -- "agent shells inherit
+# the human's environment, so an env var in a profile is inherited by every spec
+# run", learned when nine real notifications landed on a working human's screen
+# from agents' trees (2026-08-05) -- with the same conclusion: the entry point is
+# what differs. There, a CLI flag was the consent; here, `with_env` is. An
+# example that wants one
 # of these set says so IN AS MANY WORDS (`spec/lain/cli/env_defaults_spec.rb` is
 # entirely `with_env` blocks), and gets it against a known-clean baseline rather
 # than against whatever the developer happened to export.
@@ -33,10 +35,7 @@
 # evaluates every `default:` in the class body right then -- before any hook for
 # any example has run. spec_helper's support glob is what still precedes that.
 module EndpointEnv
-  # Every variable `EnvDefaults` is consulted for in `exe/lain`, plus
-  # `LAIN_DESKTOP`, which forces {Lain::Notify.for}'s consent in EITHER direction
-  # and so could both fire notifications the suite must not fire and mask the
-  # examples that pin the gate.
+  # Every variable `EnvDefaults` is consulted for in `exe/lain`.
   #
   # Credentials are deliberately NOT in this list. `ANTHROPIC_API_KEY` is what
   # `:api_integration` runs ON, and `spec/support/tags.rb` reads the key to
@@ -47,7 +46,6 @@ module EndpointEnv
     LAIN_PROVIDER LAIN_MODEL LAIN_API_BASE LAIN_MAX_TOKENS LAIN_TEMPERATURE LAIN_SEED
     LAIN_NUM_BATCH LAIN_NUM_CTX
     LAIN_SUMMARIZER_PROVIDER LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_MAX_TOKENS
-    LAIN_DESKTOP
   ].freeze
 
   LEAKS.each { |name| ENV.delete(name) }

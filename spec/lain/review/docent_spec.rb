@@ -1052,11 +1052,7 @@ RSpec.describe Lain::Review::Docent do
     # reachable by the very child the role muted, and resolving into the
     # parent's own {Tools::AskHuman::Outstanding}.
     describe "under the handler_union posture, where the child sees the union" do
-      let(:notified) { [] }
-      let(:notifier) { instance_double(Lain::Notify) }
-      let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new) }
-
-      before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
+      let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new) }
 
       # BaseTools plus the PARENT's own enrolled asker -- the shape a real
       # session's union has when a docent is spawned out of the human's chat.
@@ -1087,7 +1083,7 @@ RSpec.describe Lain::Review::Docent do
         result = Timeout.timeout(10) { spawn_docent(provider, poisoned_union, posture: :handler_union, askers:) }
 
         expect(result).to be_ok
-        expect(notified).to be_empty
+        expect(askers.questions).to be_empty
       end
     end
 

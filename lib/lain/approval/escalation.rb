@@ -554,7 +554,7 @@ module Lain
         # THE GENERATING RULE: a surface belongs here when no person is behind
         # it. Every surface that decides a {Queue::Pending} today is accounted
         # for; the human ones are `Frontend::ApprovalPolicy::SURFACE` and
-        # `Notify::SURFACE`.
+        # `Frontend::Neovim::ApprovalView::SURFACE`.
         #
         # An unknown name therefore counts as HUMAN. The two failure modes are
         # structurally symmetric, so what decides it is WHICH WAY the error

@@ -21,42 +21,15 @@ module Lain
         # this list from exe/lain and fails on drift -- a new env-backed flag
         # that never reached a pane would otherwise be invisible -- and that
         # check is an EXACT match, so a name no `EnvDefaults` call declares
-        # cannot live here. {CONSENT_ENV} is the one such name.
+        # cannot live here. A name that needs a different rule needs a list of
+        # its own; the desktop consent was one, and went with the surface that
+        # read it.
         PANE_ENV = %w[
           LAIN_API_BASE LAIN_MAX_TOKENS LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX
           LAIN_PROVIDER LAIN_SEED
           LAIN_SUMMARIZER_MAX_TOKENS LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER
           LAIN_TEMPERATURE
         ].freeze
-
-        # Whether this shell may interrupt the human at the desk -- a different
-        # question from {PANE_ENV}'s, with a different reader and a different
-        # rule, which is why it is a second list. {EnvDefaults} turns PANE_ENV
-        # into Thor `default:` values an explicit flag always beats;
-        # {Notify.consented?} reads LAIN_DESKTOP itself, where `1` and `0` FORCE
-        # past `--desktop` and `--no-desktop` alike. Folding it into the first
-        # list would demote a force to an unset-flag default and change what an
-        # existing export means, silently.
-        #
-        # The split is also held by a spec rather than by taste: `up_spec`
-        # asserts {PANE_ENV} matches exe/lain EXACTLY, so merging the two would
-        # turn that check into a list of exceptions. (The suite's own
-        # `EndpointEnv::LEAKS` answers the same question the other way, one
-        # list, because nothing pins it against exe/lain.)
-        #
-        # Carried at all because a pane is where the answer gets lost: a shell
-        # that exported LAIN_DESKTOP=0 hands `lain up` nothing, since the pane
-        # inherits the tmux SERVER's environment, and the pane's own `--desktop`
-        # then defaults ON and fires dunstify at a screen that said no.
-        #
-        # Exported VERBATIM, never filtered against {Notify::OVERRIDE}: the
-        # pane's {Notify.for} must reach the verdict the launching shell's
-        # would, and a copy of that grammar here would be a second place to keep
-        # in step whose drift changes a pane's consent silently. It follows that
-        # a shell exporting `=1` forces notifications ON in every pane it
-        # launches -- the same sentence read forwards, worth writing down
-        # because a force reaches past the run whoever typed it had in mind.
-        CONSENT_ENV = %w[LAIN_DESKTOP].freeze
 
         # Names lain sets on ITSELF that a pane would be poisoned by.
         # {ChatLaunch::PREFLIGHT_ENV} turns a `lain chat` into a construction
@@ -173,11 +146,10 @@ module Lain
         # here would be legible to every process on the box. A key belongs in
         # the environment the tmux server is started from.
         #
-        # Concatenated in a fixed order rather than merged and re-sorted, so the
-        # preamble stays byte-stable and a reader of a live `tmux list-panes`
-        # line can still see which list a name came from.
+        # Walked in the list's own order rather than the environment's, so the
+        # preamble stays byte-stable across runs.
         def self.lain_exports(env = ENV)
-          (PANE_ENV + CONSENT_ENV).filter_map do |name|
+          PANE_ENV.filter_map do |name|
             value = env[name]
             "export #{name}=#{Shellwords.escape(value)}; " unless value.to_s.strip.empty?
           end.join

@@ -27,6 +27,9 @@ RSpec.describe Lain::CLI::EpicMount do
   # --no-journal, a real journal here, exactly as {Switchboard.for} reads it.
   let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+  # The run's one line to the human, recorded. Required at every hop down to
+  # the tool, so a mount cannot open a review nobody could be told about.
+  let(:told) { [] }
 
   # Fully injected, so neither this machine's real epics nor its real session
   # journals can reach an example: repo-mode home under the tmpdir, and an XDG
@@ -43,7 +46,7 @@ RSpec.describe Lain::CLI::EpicMount do
   def config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo))
 
   def mount_for(options: {}, **overrides)
-    described_class.for(chronicle:, options:, root: @dir, paths:, config:, **overrides)
+    described_class.for(chronicle:, options:, root: @dir, paths:, config:, told: told.method(:<<), **overrides)
   end
 
   def notices_from(options: {})
@@ -168,7 +171,9 @@ RSpec.describe Lain::CLI::EpicMount do
         said = []
         FileUtils.mkdir_p(File.join(@dir, ".lain"))
         File.write(File.join(@dir, ".lain", "config.toml"), bytes)
-        mount = Dir.chdir(@dir) { described_class.for(chronicle:, options: {}, notice: ->(m) { said << m }) }
+        mount = Dir.chdir(@dir) do
+          described_class.for(chronicle:, options: {}, told: told.method(:<<), notice: ->(m) { said << m })
+        end
         [mount, said]
       end
 
@@ -300,12 +305,15 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(tool.send(:bindings)).to eq(:the_live_replies)
     end
 
-    # `notify:` is the one collaborator the tool does NOT coalesce -- it calls
-    # @notify.question directly -- so a mount that defaulted it to nil would
-    # wedge every hand-over with a NoMethodError.
-    it "never hands the tool a nil notifier" do
-      expect { mount_for.tools.first.send(:instance_variable_get, :@notify).question(agent: "lain", text: "x") }
-        .not_to raise_error
+    # The successor to "never hands the tool a nil notifier", and a stronger
+    # claim than that one was: with no `editor:` passed here on purpose, this
+    # seam is the ONLY thing that names a waiting file to the human, so what is
+    # pinned is that the mount's own line reaches the tool rather than merely
+    # that something non-nil did.
+    it "hands the tool the line to the human it was mounted with" do
+      mount_for.tools.first.send(:instance_variable_get, :@told).call("epic.md is open for review")
+
+      expect(told).to eq(["epic.md is open for review"])
     end
 
     # `changesets:` is nil BY DEFAULT and deliberately -- a verdict has no

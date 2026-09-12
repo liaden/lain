@@ -80,7 +80,16 @@ terminal; the point is a bound, not a hurry."
 
 ### 2.2 `Lain::Notify` is the working template for an out-of-band surface
 
-`lib/lain/notify.rb` (about 800 lines) is a dunstify surface, and it already solved the
+> **DELETED 2026-09-12.** `lib/lain/notify.rb` no longer exists: a reachability audit found the
+> desktop surface unreached by anything but its own wiring, and simplify-03 removed it along with
+> `--desktop`, `LAIN_DESKTOP` and `PaneCommand::CONSENT_ENV`. **This section is kept as a design
+> record, not as a pointer to live code** — every line and file reference below is to
+> `main` before that commit, and `git log -- lib/lain/notify.rb` is where the template now lives.
+> Nothing else about this research changes: the four problems listed here are still the four a
+> remote surface has to solve, and the queue-side facts in §2.1 are unaffected. A phone surface
+> built from this section must now port the solutions rather than subclass or copy a live file.
+
+`lib/lain/notify.rb` (about 800 lines) was a dunstify surface, and it already solved the
 problems a remote surface would otherwise rediscover:
 
 - It **dispatches** a notification per parked pending and drains finished ones on a later pass,
@@ -239,8 +248,9 @@ Small, and independent of everything else here.
 
 `lib/lain/mode/layer.rb:86` declares `notify: new(name: :notify, lighter: "NOTIFY",
 alters_outcome: false)`. A grep of `lib/` and `exe/` for `:notify` returns that declaration and
-nothing else. `Lain::Notify` is wired by `Notify.for(command:, desktop:)` (`notify.rb:184`)
-reading `LAIN_DESKTOP`, not by the layer.
+nothing else. `Lain::Notify` was wired by `Notify.for(command:, desktop:)` (`notify.rb:184`)
+reading `LAIN_DESKTOP`, not by the layer — and with that surface deleted (2026-09-12) the
+declaration names nothing at all, which strengthens the "drop it" half of the ruling below.
 
 So the declaration is currently inert. It is also wrong: dunstify's Approve button is the third
 **deciding** surface (`notify.rb:565` and the warning above it). Anyone who later wires

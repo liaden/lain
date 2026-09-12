@@ -92,7 +92,7 @@ module Lain
       # @param config [Config] read here rather than at {.for}, so a typo in
       #   `[epics]` raises inside that method's rescue rather than past it
       # @param bindings [#call, nil] a thunk reading the live {HumanReplies}
-      # @param notify [#call, nil] told when a stage settles
+      # @param told [#call] the run's one line to the human, forwarded to the tool
       # @param changesets [#source, nil] builds the review source
       # @param surface [#present, #call, nil] where a changeset is drawn, or a
       #   thunk reading one
@@ -102,10 +102,10 @@ module Lain
       # @option options [String] :epic the slug {Epic#resolve_slug} refuses by
       #   name when it is ambiguous or unknown
       # @return [EpicMount]
-      def self.mount(chronicle:, options:, root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
-                     bindings: nil, notify: nil, changesets: nil, surface: nil, view: nil, policy: nil)
+      def self.mount(chronicle:, options:, told:, root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
+                     bindings: nil, changesets: nil, surface: nil, view: nil, policy: nil)
         new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic], command: "chat --epic"),
-            journal: chronicle.record_journal, root:, paths:, config:, bindings:, notify:,
+            journal: chronicle.record_journal, root:, paths:, config:, bindings:, told:,
             changesets:, surface:, view:, policy:)
       end
 
@@ -143,8 +143,11 @@ module Lain
       # @param bindings [#call, nil] a thunk reading the live {HumanReplies},
       #   which the tool reads at CALL time because it does not exist yet when
       #   the toolset is built
-      # @param notify [#question, nil] the desktop notifier a pending review's
-      #   question is raised through; defaults to {Notify::Null}
+      # @param told [#call] the run's one line to the human. Required and not
+      #   defaulted, all the way down: this mount deliberately passes no
+      #   `editor:` (see {#request_review}), so it is the only thing that names
+      #   a file to the human, and a mount that silently defaulted it would open
+      #   reviews nobody could learn about.
       # @param changesets [#source, nil] builds the {Lain::Review::Source} an
       #   `implementation` review reads its diff from; nil leaves the tool's
       #   {Lain::Tools::RequestReview::NoChangesets}, which refuses the stage
@@ -154,7 +157,7 @@ module Lain
       #   row number resolves through, or a thunk reading one
       # @param policy [Lain::Review::Verdict::Policy, nil] whether a verdict may
       #   stand; nil leaves {Lain::Review::Verdict::Policy.default}
-      def initialize(slug:, journal:, root:, paths:, config:, bindings: nil, notify: nil,
+      def initialize(slug:, journal:, root:, paths:, config:, told:, bindings: nil,
                      changesets: nil, surface: nil, view: nil, policy: nil)
         @slug = slug
         @journal = journal
@@ -162,7 +165,7 @@ module Lain
         @paths = paths
         @config = config
         @bindings = bindings
-        @notify = notify || Lain::Notify::Null.new
+        @told = told
         # One ivar because they are one decision: the seams the changeset half
         # of the tool takes, which arrive together and forward together.
         @review_seams = { changesets:, surface:, view:, policy: }.freeze
@@ -191,9 +194,14 @@ module Lain
       # omission: the object answering `open_review` is {Frontend::Neovim}, which
       # {Repl#run} builds as a local and publishes only as its `command_inbox`,
       # so no wiring can reach it. {Tools::RequestReview::NoEditor} is therefore
-      # the honest collaborator -- the notification names the path and the human
-      # opens it themselves, while the editor's `done` gesture still settles the
-      # review because that rail IS the bound command inbox.
+      # the honest collaborator -- `told:` names the path and the human opens it
+      # themselves, while the editor's `done` gesture still settles the review
+      # because that rail IS the bound command inbox.
+      #
+      # Which makes `told:` load-bearing HERE and nowhere more: it is not one of
+      # several ways the human finds out, it is the only one this construction
+      # leaves, and the call parks on an unbounded await behind it. That is why
+      # it is required rather than defaulted at every hop down to the tool.
       #
       # The changeset seams are supplied by nobody here either, but by {Wiring}
       # rather than by default -- while nothing injected them, every
@@ -202,7 +210,7 @@ module Lain
       # because a spec passes its own. A caller that passes none still gets a
       # tool that refuses the stage in one sentence naming the wiring.
       def request_review
-        Lain::Tools::RequestReview.new(home:, review:, notes:, bindings: @bindings, notify: @notify,
+        Lain::Tools::RequestReview.new(home:, review:, notes:, bindings: @bindings, told: @told,
                                        **@review_seams)
       end
 

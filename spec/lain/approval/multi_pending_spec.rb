@@ -12,27 +12,29 @@ require "stringio"
 # `settle` never removing the settled pending at all. Every surface that renders
 # the queue between one answer and the next reads exactly that list.
 #
-# The first two examples are NOT the point, and a reader deciding what this file
-# is for should know it. `spec/lain/notify_spec.rb` ALREADY measures both of
-# them at arity three on a real queue -- `:1078` asserts `count == 3` with all
-# three `decided? == false`, and `:1113` denies `tu_0` and asserts the other two
-# stay undecided -- both landed in 21176738, the same commit as the
-# `ParkedApprovals` fixture reused here, with `:1096` correlating three
-# notifications back to three distinct pendings. Examples 1 and 2 below catch no
-# defect those three do not; they are kept because they are microseconds each
-# and they state the queue's own claim in the queue's own directory, where
-# somebody changing `queue.rb` will look. Deleting them would cost no coverage.
+# ALL THREE examples are the point now, and that is a CHANGE a reader should
+# know about. They used to be justified the other way round: `notify_spec.rb`
+# measured the first two at arity three on a real queue -- three pendings
+# parked and all undecided, then one denied with the other two still undecided
+# -- so examples 1 and 2 here caught no defect that file did not, and were kept
+# only for being microseconds each and for stating the queue's claim in the
+# queue's own directory. That file is gone with the desktop surface, and the
+# argument inverts: these are now the ONLY arity-three measurements of either
+# claim anywhere in the suite. Deleting them would cost real coverage.
 #
 # SCOPE BOUNDARY, deliberately not closed here: these examples observe `@parked`
 # only. A queue that admits three pendings to `@parked` but never
-# `@arrivals.enqueue`s them passes every example in this file AND all three in
-# notify_spec -- three pendings park, are addressable, decide independently --
+# `@arrivals.enqueue`s them passes every example in this file -- three pendings
+# park, are addressable, decide independently --
 # while {Frontend::ApprovalPolicy#watch}, the one sanctioned consumer, is handed
 # nothing and no human is ever asked. `approval_spec.rb` covers arrival at arity
 # one and `queue_concurrency_spec.rb` at two; nothing covers it at three. Off
 # limits here by instruction (arrival lives in `#dequeue`'s
 # one-arrival-one-waiter FIFO, and draining it here would consume what a surface
-# is owed); raised as its own follow-up.
+# is owed); raised as its own follow-up. The gap is no wider than it was: the
+# deleted examples cited above covered the same `@parked`-only ground, so
+# nothing observed arrival at arity three then either -- there is simply one
+# file to fix now rather than two to reconcile.
 #
 # The reactor dance is spec/support/parked_approvals.rb, not a fresh one:
 # `ParkedApprovals.park` already generalises queue_concurrency_spec's
@@ -43,10 +45,11 @@ require "stringio"
 #
 # Proven RED with two probes, both applied to the real queue and reverted: the
 # read-yield-write lost update in `admit` (which reds all three examples on the
-# park timeout, and reds notify_spec too), and a SHARED promise across `Pending`
-# instances (example 1 green, 2 and 3 red -- and notify_spec:1113 reds on it as
-# well, which is why that probe does not distinguish this file from what already
-# existed). What distinguishes this file is the third example alone.
+# park timeout), and a SHARED promise across `Pending` instances (example 1
+# green, 2 and 3 red). Both probes predate the deletion of the desktop surface,
+# whose spec they also redded -- recorded because the second one used to be the
+# reason only the third example here was said to be distinguishing, and with
+# that file gone all three are.
 RSpec.describe "Approval::Queue with three pendings parked at once" do
   let(:journal_io) { StringIO.new }
 

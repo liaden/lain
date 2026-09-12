@@ -11,12 +11,13 @@ require "pathname"
 # second consumer does not observe the pending, it TAKES it. Exactly one surface
 # may therefore drain it, and it has to be the one that can ask a person:
 # {Lain::Frontend::ApprovalPolicy}. Every other surface observes the parked set
-# through `Queue#each` ({Lain::Approval::QueueSurface}, {Lain::Notify},
+# through `Queue#each` ({Lain::Approval::QueueSurface},
 # {Lain::Frontend::Neovim::ApprovalView}).
 #
 # The rule was already written down -- `queue_surface.rb`'s class comment says
-# it in as many words -- and `Lain::Notify` broke it anyway, because a comment in
-# one file is not reachable from the file that has to obey it. From the second
+# it in as many words -- and the desktop-notification surface (since deleted)
+# broke it anyway, because a comment in one file is not reachable from the file
+# that has to obey it. From the second
 # gated call of a turn onward the notifier took the pending and held it for the
 # whole of dunstify's blocking wait, so the chat pane rendered nothing and read
 # nothing; on `--no-nvim` that is a session with NO approval surface (found in
@@ -140,7 +141,7 @@ RSpec.describe "approval consumer discipline" do
         "-- on --no-nvim that is a session with no approval surface at all (T15). Found:\n" \
         "#{listing}\n" \
         "If it drains an approval queue, it must not exist: observe the parked set through " \
-        "Queue#each, as Approval::QueueSurface, Notify and Neovim::ApprovalView do. If it drains " \
+        "Queue#each, as Approval::QueueSurface and Neovim::ApprovalView do. If it drains " \
         "some OTHER queue, add it to ApprovalConsumerDiscipline::ALLOWLIST with its reason."
     }
   end

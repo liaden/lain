@@ -31,20 +31,21 @@ class RecordingReviewEditor
   end
 end
 
-# {Lain::Notify}'s duck, recorded. Deliberately not the real adapter: that one
-# shells out to dunstify.
-class RecordingNotifier
+# The run's one line to the human, recorded. In production this is the
+# terminal's own ({CLI::Wiring#told}); here it is a list, because what every
+# example below asks is WHAT the human was told, never how it was painted.
+class RecordingHumanLine
   def initialize(raises: nil, log: [])
     @raises = raises
     @log = log
-    @sent = []
+    @said = []
   end
 
-  attr_reader :sent
+  attr_reader :said
 
-  def question(agent:, text:)
-    @log << :notify
-    @sent << [agent, text]
+  def call(text)
+    @log << :told
+    @said << text
     raise @raises if @raises
 
     nil
@@ -54,9 +55,10 @@ end
 # A turn killed while the hand-over is still in flight. `Async::Stop` descends
 # from Exception, NOT StandardError, so this reaches a path an ordinary rescue
 # cannot see -- and it lands in the window where nobody has been told, which is
-# the window the baton must not survive.
-class SelfCancellingNotifier
-  def question(**) = Async::Task.current.stop
+# the window the baton must not survive. The editor is the LAST collaborator
+# that hand-over touches, so cancelling inside it is that window.
+class SelfCancellingReviewEditor
+  def open_review(*, **) = Async::Task.current.stop
 end
 
 # The human's `done` landing between the bind and a later failure. That window
@@ -219,8 +221,8 @@ RSpec.describe Lain::Tools::RequestReview do
   # reader for the annotation records without Review learning a new duck.
   let(:review) { Lain::Epic::Review.new(journal: notes, epic_slug: "alpha") }
   let(:editor) { RecordingReviewEditor.new }
-  let(:notifier) { RecordingNotifier.new }
   let(:bindings) { RecordingBindings.new }
+  let(:told) { RecordingHumanLine.new }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   # The real journaled home wired to the real Review, because "ownership
   # returned" is a claim about THIS pair: the write refuses while the baton is
@@ -239,7 +241,7 @@ RSpec.describe Lain::Tools::RequestReview do
   end
 
   def tool(**overrides)
-    described_class.new(home:, review:, notes:, editor:, bindings:, notify: notifier, **overrides)
+    described_class.new(home:, review:, notes:, editor:, bindings:, told:, **overrides)
   end
 
   def issue(id:, **overrides) = Lain::Epic::Issue.new(id:, title: "the #{id} issue", **overrides)
@@ -286,9 +288,9 @@ RSpec.describe Lain::Tools::RequestReview do
 
   # Runs one tool call to completion against a human who edits the file and
   # settles the review.
-  def review_round_trip(input, disk:, annotations: [], path: epic_path, timeout: 5)
+  def review_round_trip(input, disk:, annotations: [], path: epic_path, timeout: 5, subject: tool)
     parked(timeout:) do |task|
-      run = call_in(task, input)
+      run = call_in(task, input, subject)
       generation = review.generation_for(path)
       File.write(path, disk)
       review.settle(generation, disk:, annotations:)
@@ -396,10 +398,19 @@ RSpec.describe Lain::Tools::RequestReview do
       expect(bindings.bound).to eq([[review, "alpha", 1, epic_path]])
     end
 
-    it "tells the human a file is waiting on them" do
-      review_round_trip({ "stage" => "epic_plan" }, disk: edited)
+    # THE production configuration, and the reason this seam is required rather
+    # than defaulted: {CLI::EpicMount#request_review} deliberately passes no
+    # `editor:`, so the collaborator every real process gets is {NoEditor},
+    # whose `open_review` is `= nil`. With nothing else naming the file, a
+    # review opens, parks on `token.await` -- unbounded on purpose -- and the
+    # human is never told it exists. So this drives the tool WITHOUT an editor,
+    # which is not an edge case here but the shipped one.
+    it "names the waiting file to the human, with the editor production actually wires" do
+      headless = described_class.new(home:, review:, notes:, bindings:, told:)
 
-      expect(notifier.sent.flatten.join(" ")).to include(epic_path)
+      review_round_trip({ "stage" => "epic_plan" }, disk: edited, subject: headless)
+
+      expect(told.said.join(" ")).to include(epic_path).and include("generation 1").and include("alpha")
     end
 
     it "returns ownership: a subsequent write_epic on the path succeeds" do
@@ -497,8 +508,7 @@ RSpec.describe Lain::Tools::RequestReview do
       beta_review = Lain::Epic::Review.new(journal: notes, epic_slug: "beta")
       beta_home = Lain::Epic::Home::Journaled.new(beta_bare, journal:, reviews: beta_review)
       beta_home.research.write("beta's research note\n")
-      beta_tool = described_class.new(home: beta_home, review: beta_review, notes:, editor:, bindings:,
-                                      notify: notifier)
+      beta_tool = described_class.new(home: beta_home, review: beta_review, notes:, editor:, bindings:, told:)
 
       parked do |task|
         alpha_run = call_in(task, { "stage" => "research" })
@@ -572,22 +582,23 @@ RSpec.describe Lain::Tools::RequestReview do
 
     # The three collaborators the tool touches between taking the baton and the
     # human knowing about it, each failing the way it actually fails in the
-    # field: a dead nvim RPC socket, an unwired reply rail, a missing dunstify.
+    # field: a dead nvim RPC socket, an unwired reply rail, and a terminal that
+    # cannot be written to.
     {
       "the editor cannot open the file" => lambda { |spec, boom|
         spec.described_class.new(home: spec.home, review: spec.review, notes: spec.notes,
                                  editor: RecordingReviewEditor.new(raises: boom),
-                                 bindings: spec.bindings, notify: spec.notifier)
+                                 bindings: spec.bindings, told: spec.told)
       },
       "the reply rail cannot bind the review" => lambda { |spec, boom|
         spec.described_class.new(home: spec.home, review: spec.review, notes: spec.notes,
                                  editor: spec.editor, bindings: RecordingBindings.new(raises: boom),
-                                 notify: spec.notifier)
+                                 told: spec.told)
       },
-      "the notifier is unavailable" => lambda { |spec, boom|
+      "the human's own line cannot be written to" => lambda { |spec, boom|
         spec.described_class.new(home: spec.home, review: spec.review, notes: spec.notes,
                                  editor: spec.editor, bindings: spec.bindings,
-                                 notify: RecordingNotifier.new(raises: boom))
+                                 told: RecordingHumanLine.new(raises: boom))
       }
     }.each do |situation, build|
       context "when #{situation}" do
@@ -628,8 +639,8 @@ RSpec.describe Lain::Tools::RequestReview do
     # ensure -- and without it, a turn killed at exactly the wrong instant
     # wedges the epic with no editor buffer and no binding to escape through.
     it "releases the baton when the turn is cancelled mid hand-over" do
-      cancelling = described_class.new(home:, review:, notes:, editor:, bindings:,
-                                       notify: SelfCancellingNotifier.new)
+      cancelling = described_class.new(home:, review:, notes:, bindings:, told:,
+                                       editor: SelfCancellingReviewEditor.new)
 
       parked do |task|
         call_in(task, { "stage" => "epic_plan" }, cancelling)
@@ -667,12 +678,12 @@ RSpec.describe Lain::Tools::RequestReview do
     # out of `abandon` is a real bug and must still propagate.
     it "lets the real failure propagate when a done settles the review first" do
       disk = markdown(three_issue_graph)
-      racing = described_class.new(home:, review:, notes:, editor:,
-                                   bindings: SettlingBindings.new(disk:),
-                                   notify: RecordingNotifier.new(raises: RuntimeError.new("dunstify is missing")))
+      racing = described_class.new(home:, review:, notes:, told:,
+                                   editor: RecordingReviewEditor.new(raises: RuntimeError.new("no nvim socket")),
+                                   bindings: SettlingBindings.new(disk:))
 
       expect { racing.call({ "stage" => "epic_plan" }, invocation) }
-        .to raise_error(RuntimeError, "dunstify is missing")
+        .to raise_error(RuntimeError, "no nvim socket")
     end
 
     # The other side of that rescue, and why it may not be widened. A dead
@@ -684,8 +695,8 @@ RSpec.describe Lain::Tools::RequestReview do
       dead_review = Lain::Epic::Review.new(journal: dead_notes, epic_slug: "alpha")
       dead_home = Lain::Epic::Home::Journaled.new(bare_home, journal:, reviews: dead_review)
       dead_home.write_epic(three_issue_graph)
-      failing = described_class.new(home: dead_home, review: dead_review, notes: dead_notes, editor:, bindings:,
-                                    notify: RecordingNotifier.new(raises: RuntimeError.new("dunstify is missing")))
+      failing = described_class.new(home: dead_home, review: dead_review, notes: dead_notes, bindings:, told:,
+                                    editor: RecordingReviewEditor.new(raises: RuntimeError.new("no nvim socket")))
 
       expect { failing.call({ "stage" => "epic_plan" }, invocation) }
         .to raise_error(IOError, "the journal is gone")
@@ -693,7 +704,7 @@ RSpec.describe Lain::Tools::RequestReview do
     end
 
     # The other half of the line, and it must NOT be released. Past the
-    # notification the human genuinely holds the file; letting lain regenerate
+    # hand-over the human genuinely holds the file; letting lain regenerate
     # underneath somebody mid-edit is the exact harm the baton exists to
     # prevent, and with an editor attached they can still send `done`.
     it "leaves the baton HELD when the wait itself is cancelled" do
@@ -743,7 +754,7 @@ RSpec.describe Lain::Tools::RequestReview do
       end
     end
 
-    # The counterpart of the old "opens nothing and notifies nobody": every
+    # The counterpart of the old "opens nothing and tells nobody": every
     # collaborator the changeset half reaches is recorded, so a branch that
     # quietly took the DOCUMENT path (which reaches `editor`/`bind_review` and
     # never the surface) would fail here rather than pass by resembling it.
@@ -751,7 +762,7 @@ RSpec.describe Lain::Tools::RequestReview do
       settled_implementation
 
       expect(bindings.bound_changeset.size).to eq(1)
-      expect(notifier.sent.flatten.join(" ")).to include("waiting for a verdict")
+      expect(told.said.join(" ")).to include("waiting for a verdict")
       expect(editor.opened).to be_empty
       expect(bindings.bound).to be_empty
     end
@@ -1402,7 +1413,7 @@ RSpec.describe Lain::Tools::RequestReview do
       ordered = described_class.new(home:, review:, notes:,
                                     editor: RecordingReviewEditor.new(log:),
                                     bindings: RecordingBindings.new(log:),
-                                    notify: RecordingNotifier.new(log:))
+                                    told: RecordingHumanLine.new(log:))
 
       parked do |task|
         run = call_in(task, { "stage" => "epic_plan" }, ordered)
@@ -1412,25 +1423,19 @@ RSpec.describe Lain::Tools::RequestReview do
         run.wait
       end
 
-      expect(log).to eq(%i[bind editor notify])
+      expect(log).to eq(%i[bind editor told])
     end
 
     # nil when the open landed, else the editor's own words for having no window
     # to put the file in. Discarding it would leave a human whose editor refused
-    # with a notification that claims a file was opened.
-    it "carries the editor's refusal notice into the notification" do
-      refusing = described_class.new(home:, review:, notes:, bindings:, notify: notifier,
+    # with a line that claims a file was opened.
+    it "carries the editor's refusal notice into what the human is told" do
+      refusing = described_class.new(home:, review:, notes:, bindings:, told:,
                                      editor: RecordingReviewEditor.new(notice: "no window took it"))
 
-      parked do |task|
-        run = call_in(task, { "stage" => "epic_plan" }, refusing)
-        disk = markdown(graph_of(issue(id: "a1")))
-        File.write(epic_path, disk)
-        review.settle(review.generation_for(epic_path), disk:)
-        run.wait
-      end
+      review_round_trip({ "stage" => "epic_plan" }, disk: markdown(graph_of(issue(id: "a1"))), subject: refusing)
 
-      expect(notifier.sent.flatten.join(" ")).to include("no window took it").and include(epic_path)
+      expect(told.said.join(" ")).to include("no window took it").and include(epic_path)
     end
 
     it "reports a path somebody already holds instead of raising past the model" do
@@ -1474,7 +1479,7 @@ RSpec.describe Lain::Tools::RequestReview do
     # is attached -- so the coalesce has to live here, not as an `if` there.
     it "takes a nil editor and a not-yet-wired binding thunk without a guard at the wiring site" do
       parked do |task|
-        unwired = described_class.new(home:, review:, notes:, editor: nil, bindings: -> {}, notify: notifier)
+        unwired = described_class.new(home:, review:, notes:, editor: nil, bindings: -> {}, told:)
         run = call_in(task, { "stage" => "epic_plan" }, unwired)
         disk = markdown(graph_of(issue(id: "a1")))
         File.write(epic_path, disk)
@@ -1486,7 +1491,7 @@ RSpec.describe Lain::Tools::RequestReview do
 
     it "opens and settles a review with no editor and no binding attached" do
       parked do |task|
-        headless = described_class.new(home:, review:, notes:, notify: notifier)
+        headless = described_class.new(home:, review:, notes:, told:)
         run = call_in(task, { "stage" => "epic_plan" }, headless)
         disk = markdown(graph_of(issue(id: "a1")))
         File.write(epic_path, disk)

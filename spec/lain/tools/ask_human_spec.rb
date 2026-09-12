@@ -887,13 +887,12 @@ RSpec.describe Lain::Tools::AskHuman do
         .to raise_error(Lain::Tool::InvalidInput, /"db"/)
     end
 
-    # The arrival seam. AskHuman::Notifying hands the notifier ITS OWN #ask
-    # argument verbatim, and that value reaches Wiring#announce, which both
-    # enqueues it for the TTY arrival line ("? #{question}") and drops it into
-    # a dunstify ARGV element. Both were String-shaped before sets existed: a
-    # Question::Set there renders as a Data inspect and puts a non-String in an
-    # argv. Widening the queue is a later card's, which owns both ends -- until
-    # then this seam stays a String, and it stays one BY CONSTRUCTION.
+    # The arrival seam. AskHuman::Notifying hands its thunk ITS OWN #ask
+    # argument verbatim, and that value reaches Wiring#announce, which enqueues
+    # it for the TTY arrival line ("? #{question}") and for the nvim inbox row.
+    # It was String-shaped before sets existed: a Question::Set there renders as
+    # a Data inspect. Widening the queue is a later card's, which owns both ends
+    # -- until then this seam stays a String, and it stays one BY CONSTRUCTION.
     it "announces a String at the notify seam when the model asks a set" do
       announced = []
       notifying = Lain::Tools::AskHuman::Notifying.new(notify: announced.method(:push), parent:)
@@ -917,9 +916,8 @@ RSpec.describe Lain::Tools::AskHuman do
     end
 
     # Before question sets, `perform` announced the model's raw `question`
-    # String and all four human surfaces showed it whole: the TTY arrival line
-    # (tty.rb:519), the /inbox drain's line_for (tty.rb:545), nvim's InboxView
-    # (inbox_view.rb:104) and the dunstify argv (notify.rb:144). A question cut
+    # String and every human surface showed it whole: the TTY arrival line, the
+    # /inbox drain's line_for, and nvim's InboxView. A question cut
     # to its first line is one a human cannot answer -- and the description now
     # invites tables and fenced diffs. So the clamp belongs to the inbox LINE,
     # never to the announcement.
@@ -933,7 +931,7 @@ RSpec.describe Lain::Tools::AskHuman do
         run.wait
       end
 
-      # What the arrival line, the /inbox drain and dunstify all show:
+      # What the arrival line and the /inbox drain both show:
       expect(seen.first).to be_a(String)
       expect(seen.first).to eq(long_body)
       # What nvim's inbox row shows, where the line shape is pinned:

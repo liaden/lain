@@ -322,13 +322,13 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/input.rb"
     - "spec/support/algebra_generators.rb"
 
-# The six deliberate threads, and they now have two legitimate owners.
+# The five deliberate threads, and they now have two legitimate owners.
 #
-# Five are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
-# TTY reader, the notifier, and prompt_breaker's watchdog -- each a supervised reader
+# Four are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
+# TTY reader, and prompt_breaker's watchdog -- each a supervised reader
 # owned by the one layer allowed to own the terminal.
 #
-# The sixth is the provider transport's stall clock, and it is the first thread in lib/
+# The fifth is the provider transport's stall clock, and it is the first thread in lib/
 # outside frontend/ and cli/. It is there because a stalled stream is observable only by
 # ABSENCE: no chunk arrives, so no callback fires, and the request thread that would
 # notice is the very thing blocked in the socket read. A timer thread is the only
@@ -344,7 +344,6 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/neovim.rb"
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"
-    - "lib/lain/notify.rb"
     - "lib/lain/provider/http/streaming/faraday_handlers.rb"
     - "spec/**/*"
 

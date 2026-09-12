@@ -3,7 +3,7 @@
 module Lain
   module CLI
     class Repl
-      # Two, or up to five under --auto-approve, --nvim and --secret-oracle,
+      # One, or up to four under --auto-approve, --nvim and --secret-oracle,
       # watch the SAME parked-approval queue, and FIRST ANSWER WINS (Pending's
       # own doctrine).
       #
@@ -20,9 +20,8 @@ module Lain
         # capabilities: a defaulted keyword turns "the caller forgot to wire it"
         # into a surface that is silently inert. Forgetting one is an
         # ArgumentError.
-        def initialize(approvals:, notifier:, auto_surface:, secret_surface:, tty:, conductor:)
+        def initialize(approvals:, auto_surface:, secret_surface:, tty:, conductor:)
           @approvals = approvals
-          @notifier = notifier
           @auto_surface = auto_surface
           @secret_surface = secret_surface
           @tty = tty
@@ -77,7 +76,6 @@ module Lain
         # session's shutdown path.
         def watch(task, terminal: true)
           @approvals && [*(task.async { approval_surface.watch(@approvals) } if terminal),
-                         task.async { @notifier.watch(@approvals) },
                          *(@auto_surface && task.async { @auto_surface.watch(@approvals) }),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
                          *(@editor && task.async { @editor.watch(@approvals) })]

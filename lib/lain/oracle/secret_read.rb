@@ -42,9 +42,9 @@ module Lain
     #
     # The PATH is disclosed, and that is a real edge: a credential spelled into a
     # FILENAME reaches the judge and the journal in the clear. It is inherent to
-    # naming the file at all -- the human prompt, the editor row and the desktop
-    # notification all print it -- so it is a property of the whole boundary, not
-    # of this arm. Read "never a region's bytes" as exactly that and no wider.
+    # naming the file at all -- the human prompt and the editor row both print
+    # it -- so it is a property of the whole boundary, not of this arm. Read
+    # "never a region's bytes" as exactly that and no wider.
     #
     # == Confidence is evidence, not control flow
     #

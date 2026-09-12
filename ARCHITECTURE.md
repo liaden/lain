@@ -1271,10 +1271,9 @@ Subsystems without a section above, each self-documented in its own index file:
 | Skills and roles | `lib/lain/skill/`, `lib/lain/role/` | config values, not behavior. A role is an attenuation plus a prompt slot; `Role::Catalog` is the one place its tool set can change |
 | Prompt slots | `lib/lain/prompt/` | the `.lain/slots/` fills and the shipped ERB templates `Slots.load` renders the system prompt from |
 | Plans and Gherkin | `lib/lain/plan/`, `lib/lain/gherkin/` | a content-addressed IR for acceptance criteria a grader can attest against |
-| Approval | `lib/lain/approval/` | the queue tier-3 calls park in, with 3 racing surfaces (TTY, dunst, `auto_approver`) |
+| Approval | `lib/lain/approval/` | the queue tier-3 calls park in, with racing surfaces (TTY, the editor's list, `auto_approver`) |
 | Structural search | `lib/lain/structural/` | the Ruby side of `ext/lain`'s AST/tree-sitter search |
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
-| Desktop notify | `lib/lain/notify.rb` | the `dunstify` approval surface, why its `-A` blocking behavior forced a backstop timeout, and why PATH is capability while `--desktop` is consent |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |
 | Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Carriers` namespace, and `Telemetry.fixed_point`; one file per record group holds 41 of the kinds that answer the duck, 30 of those with a construction contract — 28 named `Telemetry::Carriers` entries plus 2 anonymous `declare` blocks. **This subtree is not the whole vocabulary** — see below |
 

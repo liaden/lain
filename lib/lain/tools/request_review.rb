@@ -82,8 +82,6 @@ module Lain
       ABANDONED = "the hand-over failed before the human was told the file was theirs: " \
                   "%<error>s (%<kind>s). Nothing went out and nothing came back."
 
-      AGENT = "lain"
-
       # The stage vocabulary is {Epic::STAGES} entire -- one list, so the wire
       # contract cannot drift from the pipeline.
       #
@@ -108,7 +106,11 @@ module Lain
       input_model Input
 
       # A headless run still opens and settles a review; the human just finds
-      # the file themselves, since the notification names the path either way.
+      # the file themselves, since `told:` names the path either way. That
+      # bargain is the WHOLE of why this null may be silent, and it is a live
+      # dependency rather than a remark: production passes no `editor:` at all
+      # (see {CLI::EpicMount#request_review}), so this IS the shipped
+      # collaborator and `told:` is the only thing that ever names the file.
       # Nothing asks whether an editor is attached.
       module NoEditor
         def self.open_review(_path, _generation, **) = nil
@@ -123,7 +125,7 @@ module Lain
       # == The two halves answer DIFFERENTLY, and that difference is the object
       #
       # `bind_review` absorbs, which is what {NoEditor}'s bargain already buys:
-      # the notification names the path, the human edits the real file, and the
+      # `told:` names the path, the human edits the real file, and the
       # review is keyed by `(epic_slug, generation)` -- so a `done` gesture
       # routed by a later bind still settles it.
       #
@@ -149,8 +151,8 @@ module Lain
 
       # Nothing is wired to produce a changeset, so `implementation` has nothing
       # to review. LOUD, unlike {NoEditor}: a human without an editor can still
-      # open a file the notification names, and there is no equivalent way to
-      # read a diff that was never built.
+      # open a file `told:` names, and there is no equivalent way to read a diff
+      # that was never built.
       module NoChangesets
         # `source` and not `call`: {#live} treats anything answering `call` as a
         # thunk to be read with no arguments, so a callable seam here would be
@@ -170,7 +172,13 @@ module Lain
       # @param notes [Notes] the journal tee this review's annotations land in
       # @param editor [#open_review] the surface that shows the human the file
       # @param bindings [#bind_review] where the editor's `done` is routed
-      # @param notify [#question] the desktop notifier
+      # @param told [#call] the run's one line to the human -- the ONLY thing
+      #   that names the file in the configuration production actually builds,
+      #   since {CLI::EpicMount#request_review} passes no editor. REQUIRED and
+      #   undefaulted on purpose: a Null here would make a review nobody is told
+      #   about look exactly like one they were, and the call then parks on an
+      #   unbounded await. The wiring passes the terminal's own line
+      #   ({CLI::Wiring#told}); a spec passes its own recorder.
       # @param changesets [#source] builds the {Review::Source} an
       #   `implementation` review reads its diff from
       # @param surface [#present, #annotate, #mark, #thread, #verdict, #refuse, #call]
@@ -189,8 +197,8 @@ module Lain
       #   gate, which cannot mark a hunk and so can never satisfy
       #   {Review::Verdict::Policy::EveryHunk} -- reaches the session only
       #   through this tool.
-      def initialize(home:, review:, notes: NoNotes, editor: NoEditor,
-                     bindings: NoBindings, notify: Notify::Null.new,
+      def initialize(home:, review:, told:, notes: NoNotes, editor: NoEditor,
+                     bindings: NoBindings,
                      changesets: NoChangesets, surface: nil, view: nil, policy: nil)
         super()
         @home = home
@@ -198,7 +206,7 @@ module Lain
         @notes = notes
         @editor = editor
         @bindings = bindings
-        @notify = notify
+        @told = told
         @seams = Implementation::Seams.new(changesets:, surface:, view:, policy:)
       end
 
@@ -227,7 +235,7 @@ module Lain
       # Built per call and never held, so the thunked collaborators are read at
       # the moment they are used -- the whole reason they are thunks.
       def implementation
-        Implementation.new(review:, notes: @notes, bindings:, notify: @notify, seams: @seams)
+        Implementation.new(review:, notes: @notes, bindings:, told: @told, seams: @seams)
       end
 
       # `fetch` and not `[]`: a member added to {Epic::STAGES} with no artifact
@@ -269,8 +277,8 @@ module Lain
 
       # The editor's answer is a NOTICE, not an outcome -- nil when the open
       # landed, else its own words for having no window to put the file in. It
-      # rides the notification rather than being discarded, so a human whose
-      # editor refused still learns where the file is.
+      # rides what the human is told rather than being discarded, so a human
+      # whose editor refused still learns where the file is.
       def open_on(artifact, written)
         tell(review.open(path: artifact.path, written:))
       end
@@ -299,11 +307,13 @@ module Lain
       def tell(token)
         bindings.bind_review(review, token:)
         notice = editor.open_review(token.path, token.generation, epic_slug: token.epic_slug)
-        @notify.question(agent: AGENT, text: waiting(token, notice))
-        told = true
+        @told.call(waiting(token, notice))
+        # Named for the hand-over rather than for the seam beside it: `@told` is
+        # the collaborator, this is whether the human has it.
+        handed_over = true
         token
       ensure
-        give_back(token) unless told
+        give_back(token) unless handed_over
       end
 
       # Both halves close the window the same way; see {Baton.give_back}.
@@ -397,7 +407,7 @@ module Lain
       # The `implementation` stage's half of this tool: build a changeset, open
       # a {Review::Session} over it, hand it to a human, park on the baton, and
       # report the verdict. Its own object because it shares NOTHING with the
-      # document half but the baton and the notifier.
+      # document half but the baton and the line to the human.
       class Implementation
         # The collaborators the changeset half needs and the document half has
         # no use for, with their nulls resolved ONCE -- which is why every
@@ -451,11 +461,11 @@ module Lain
           def live(seam) = thunk?(seam) ? seam.call : seam
         end
 
-        def initialize(review:, notes:, bindings:, notify:, seams:)
+        def initialize(review:, notes:, bindings:, told:, seams:)
           @review = review
           @notes = notes
           @bindings = bindings
-          @notify = notify
+          @told = told
           @seams = seams
         end
 
@@ -499,16 +509,23 @@ module Lain
         # and all: bind BEFORE anything is drawn, and give the baton back if the
         # hand-over raises before the human has been told.
         #
-        # `present` answers a refusal SENTENCE or nothing, so it rides the
-        # notification the way `open_review`'s notice does.
+        # `present` answers a refusal SENTENCE or nothing, so it rides what the
+        # human is told the way `open_review`'s notice does.
         def tell(token, session, written)
           @bindings.bind_changeset_review(handover(session, token, written))
           notice = session.present(scope: SCOPE)
-          @notify.question(agent: AGENT, text: waiting(token, session, notice))
-          told = true
+          @told.call(waiting(token, session, notice))
+          handed_over = true
           token
         ensure
-          Baton.give_back(@review, token) unless told
+          Baton.give_back(@review, token) unless handed_over
+        end
+
+        def waiting(token, session, notice)
+          changeset = session.changeset
+          [format(CHANGESET_WAITING, base: changeset.base_ref, head: changeset.head_ref,
+                                     generation: token.generation, slug: token.epic_slug,
+                                     files: changeset.files.size), notice].compact.join(" ")
         end
 
         # The open review as BOTH rails see it: one object, so a note and a
@@ -559,13 +576,6 @@ module Lain
           Tool::Result.ok(ChangesetReport.new(session:, token:).to_s)
         ensure
           Baton.give_back(@review, token) unless settled
-        end
-
-        def waiting(token, session, notice)
-          changeset = session.changeset
-          [format(CHANGESET_WAITING, base: changeset.base_ref, head: changeset.head_ref,
-                                     generation: token.generation, slug: token.epic_slug,
-                                     files: changeset.files.size), notice].compact.join(" ")
         end
       end
 

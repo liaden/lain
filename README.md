@@ -56,7 +56,6 @@ Everything below is optional, and lain runs without any of it.
 | **Neovim** | No editor integration. | `lain up --nvim`, live `lain://` buffers, the editable `lain://request` buffer that round-trips a hand-edited prompt back to the provider. |
 | **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
 | **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
-| **`dunstify`** | Approvals wait at the `you>` prompt. | Desktop notification approvals, racing the terminal surface. Opt-in: on for `lain chat`, off everywhere else, because your specs and subagents share your `PATH` (`--no-desktop`, `LAIN_DESKTOP=0/1`). |
 | **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process exec daemon, for the bench's exec-comparison arm. |
 
 Without an API key the offline paths still run: dry replay, the sweeps, `lain friction`,
@@ -141,7 +140,7 @@ flowchart TB
   SR -->|"end_turn · stop_sequence"| DONE([done])
   SR -->|"max_tokens · refusal"| FAIL([failed])
   SR -->|tool_use| GATE{"tier-3?"}
-  GATE -->|yes| APR["Approval::Queue<br/>you&gt; · dunst · auto_approver"] --> EXEC
+  GATE -->|yes| APR["Approval::Queue<br/>you&gt; · nvim · auto_approver"] --> EXEC
   GATE -->|no| EXEC["ToolRunner → tool middleware → Effect::Handler<br/>parallel_safe? tools gather, everything else is a barrier"]
   EXEC -->|"ONE user turn, all tool_results"| TL
   EXEC --> SUM["Oracle::Eager<br/>local summary on its own fiber, off the critical path"]

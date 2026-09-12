@@ -13,10 +13,11 @@ module Lain
       # rule and not a detail: the arrival queue hands each pending to exactly
       # ONE `dequeue` caller, and that caller is {Frontend::ApprovalPolicy} --
       # the surface that can ask a person. A second one here would STEAL
-      # pendings the terminal then never asks about. Not hypothetical:
-      # {Lain::Notify} drained it too until it was made an observer, and from
-      # the second gated call of a turn onward the terminal got nothing, which
-      # on `--no-nvim` is a session with no approval surface at all. {#sweep}
+      # pendings the terminal then never asks about. Not hypothetical: the
+      # desktop-notification surface (since deleted) drained it too until it was
+      # made an observer, and from the second gated call of a turn onward the
+      # terminal got nothing, which on `--no-nvim` is a session with no approval
+      # surface at all. {#sweep}
       # walks the PARKED set instead, and {Pending#decide}'s first-answer-wins
       # makes the loser's answer a quiet no-op by construction.
       #
@@ -231,8 +232,7 @@ module Lain
           @shown = nil
         end
 
-        # One fiber beside the TTY prompt and the notifier, spawned per ask and
-        # stopped with it.
+        # One fiber beside the TTY prompt, spawned per ask and stopped with it.
         #
         # THE ENSURE IS THE POINT, not tidiness. The surfaces are stopped the
         # moment an ask settles, which can land between a pending being decided
@@ -288,7 +288,7 @@ module Lain
         # whole of the race.
         #
         # THERE IS NO `decided?` PRE-CHECK, and its absence is deliberate: a
-        # check-then-act would be a window in which the terminal, the notifier
+        # check-then-act would be a window in which the terminal, an oracle
         # or the clock answers between the test and the decision, and this
         # surface would report a verdict that never landed. `decide` answers
         # whether THIS answer won, atomically.

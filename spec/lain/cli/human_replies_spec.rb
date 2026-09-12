@@ -193,13 +193,12 @@ RSpec.describe Lain::CLI::HumanReplies do
   let(:store) { Lain::Store.new }
   let(:parent) { chain("hi") }
   let(:conductor) { instance_double(Lain::CLI::Conductor) }
-  let(:notifier) { instance_double(Lain::Notify, question: nil) }
   # The REAL producer of what this class consumes. Both halves of the seam or
   # neither: this file exists because a defect once lived exactly between two
   # sides that each had green specs (see the editor rail below), and "the
   # arrival carries its own digest" is a claim about the pair.
   let(:askers) do
-    Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new)
+    Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
   end
   let(:questions) { askers.questions }
   # The run's routing table, exactly as Wiring hands it over: this class holds
@@ -2277,19 +2276,15 @@ RSpec.describe Lain::CLI::HumanReplies do
 end
 
 # The producer half of the same seam, and the narrowest place the arrival was
-# widened: one object owning the run's directory, the queue the reply surfaces
-# park on, and the desktop notifier the same arrival fans out to.
+# widened: one object owning the run's directory and the queue the reply
+# surfaces park on.
 RSpec.describe Lain::CLI::Wiring::Askers do
   let(:store) { Lain::Store.new }
   let(:parent) do
     Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
-  let(:notifier) { instance_double(Lain::Notify) }
-  let(:notified) { [] }
-  let(:askers) { described_class.new(notifier:, observer: Lain::Event::ChainWriter::Null.new) }
+  let(:askers) { described_class.new(observer: Lain::Event::ChainWriter::Null.new) }
   let(:set) { Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")]) }
-
-  before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
 
   def chain(text)
     Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
@@ -2308,27 +2303,31 @@ RSpec.describe Lain::CLI::Wiring::Askers do
     end
   end
 
-  it "names the asking agent to the desktop rather than a hardcoded one" do
+  # Per asker, never per seam: two askers enrolled on ONE Askers must reach the
+  # surfaces under their own names. This rode the desktop title until that
+  # surface was deleted; the arrival itself carried it all along, and the
+  # arrival is what the TTY drain and the nvim inbox render from.
+  it "names each asking agent on its own arrival, rather than a hardcoded one" do
     Sync do
       askers.enrol(parent, agent: "lain").asker.ask("which db?")
       askers.enrol(chain("child"), agent: "researcher").asker.ask("deploy now?")
 
-      expect(notified).to eq([["lain", "which db?"], ["researcher", "deploy now?"]])
+      arrivals = [askers.questions.dequeue, askers.questions.dequeue]
+
+      expect(arrivals.map(&:from)).to eq(%w[lain researcher])
     end
   end
 
-  # A correlation is 71 characters of hex and dunstify renders it as the
-  # TITLE. The fallback names the asker the same way the TTY drain and the
-  # nvim inbox name it -- clamped -- and the bound is what is pinned, because
-  # the failure is a title no human can read, not a wrong string.
-  it "falls back to the asker's own correlation, clamped, and never titles a notification with 71 characters" do
+  # Absent a name, the correlation that identifies the asker everywhere else
+  # stands in -- unclamped here, because the two surfaces that render a sender
+  # column clamp it themselves ({Frontend::TTY::Inbox::NAME_WIDTH},
+  # {Frontend::Neovim::InboxView::SENDER}).
+  it "falls back to the asker's own correlation when no agent was named" do
     Sync do
       asker = askers.enrol(parent).asker
       asker.ask("which db?")
-      askers.enrol(chain("child"), agent: "a role name nobody kept short").asker.ask("deploy now?")
 
-      expect(notified.map { |agent, _text| agent.length }).to all(be <= described_class::NAME_WIDTH)
-      expect(asker.last_question.from).to start_with(notified.first.first)
+      expect(askers.questions.dequeue.from).to eq(asker.last_question.from)
     end
   end
 

@@ -11,23 +11,25 @@ module Lain
       class EpicSeat
         # @param chronicle [Chronicle] the run's record, which the mount journals into
         # @param options [Hash] the parsed CLI options; `:epic` names the slug
-        # @param notify [#question, nil] the desktop notifier a review question is raised through
+        # @param told [#call] the run's one line to the human, forwarded to the
+        #   mount and from there to `request_review` -- which, with no editor
+        #   wired, has nothing else with which to name a file
         # @param root [String] the PROJECT's root, so a chat started in
         #   `services/ingest` mounts the epic its project declares rather than
         #   whichever the working directory happened to name
         # @param replies [#call] a thunk reading the live {HumanReplies}, which
         #   is built after the toolset
         # @option options [String, nil] :epic the epic slug to mount; none mounts no epic
-        def initialize(chronicle:, options:, notify:, root:, replies:)
+        def initialize(chronicle:, options:, told:, root:, replies:)
           @chronicle = chronicle
           @options = options
-          @notify = notify
+          @told = told
           @root = root
           @replies = replies
         end
 
         # The splat of {ReviewSeams} is what turns the changeset half of
-        # `request_review` on. Passing only the notify and bindings keywords left
+        # `request_review` on. Passing only the bindings keyword left
         # `changesets:` and `surface:` nil, so the implementation stage refused in
         # every real process -- invisible to any spec, because a threaded but
         # never injected seam looks identical to an absent one.
@@ -36,7 +38,7 @@ module Lain
         #   FIRST call only, which is the toolset build's
         # @return [EpicMount, EpicMount::NoEpic]
         def mount(notice = nil)
-          @mount ||= EpicMount.for(chronicle: @chronicle, options: @options, notice:, notify: @notify, root: @root,
+          @mount ||= EpicMount.for(chronicle: @chronicle, options: @options, notice:, told: @told, root: @root,
                                    bindings: @replies, **ReviewSeams.for(@replies, root: @root))
         end
 

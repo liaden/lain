@@ -17,9 +17,8 @@ require "tmpdir"
 # So every example here drives the REAL assembly with no double between the
 # parts under test -- {CLI::Wiring::Askers}, the {Tools::AskHuman::Notifying}
 # it enrols, the real {CLI::HumanReplies} and its real fibers, and a real
-# {Frontend::TTY} writing into a StringIO. The conductor and the desktop
-# notifier are doubled because they are a terminal and another process; nothing
-# between the tool and the screen is.
+# {Frontend::TTY} writing into a StringIO. Only the conductor is doubled,
+# because it is a terminal; nothing between the tool and the screen is.
 RSpec.describe "a human's reply handed back", :seam do
   around do |example|
     Dir.mktmpdir do |dir|
@@ -38,10 +37,8 @@ RSpec.describe "a human's reply handed back", :seam do
     Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:conductor) { instance_double(Lain::CLI::Conductor) }
-  let(:desktop) { [] }
-  let(:notifier) { instance_double(Lain::Notify) }
   let(:askers) do
-    Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new)
+    Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
   end
   let(:ask_human) { askers.enrol(parent, agent: "chat").asker }
   let(:replies) do
@@ -50,8 +47,6 @@ RSpec.describe "a human's reply handed back", :seam do
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:ceiling) { Lain::Tools::AskHuman::Ceiling::BOUND.limit }
   let(:oversized) { "OVERSIZED-BODY " * ((ceiling / 15) + 1) }
-
-  before { allow(notifier).to receive(:question) { |**kw| desktop << kw } }
 
   # Real fibers, so the exchange finishes when it finishes. Bounded, so a
   # regression that parks forever fails the example rather than hanging the
@@ -88,7 +83,9 @@ RSpec.describe "a human's reply handed back", :seam do
   end
 
   # The acceptance criterion, read off the screen: told it is too long, told
-  # how long, told the ceiling, told what to type.
+  # how long, told the ceiling, told what to type. It is also where the SECOND
+  # arrival is now observed -- the over-ceiling note exists only because the
+  # handback announced again, which is the swallowed arrival this file is about.
   it "tells the human at the terminal the size, the ceiling and what to type" do
     result = exchange(oversized, "send")
 
@@ -111,15 +108,6 @@ RSpec.describe "a human's reply handed back", :seam do
 
     expect(output.string.bytesize).to be < oversized.bytesize
     expect(output.string).not_to include("OVERSIZED-BODY")
-  end
-
-  it "raises one desktop notification per arrival, the second carrying the whole reply" do
-    exchange(oversized, "send")
-
-    expect(desktop.size).to eq(2)
-    expect(desktop.first[:text]).to include("which file?")
-    expect(desktop.last[:text]).to include("over the ceiling of #{ceiling}")
-    expect(desktop.last[:text].bytesize).to be > oversized.bytesize
   end
 
   # Where "shown their own text again" is served. The one-line note above the

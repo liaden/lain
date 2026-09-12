@@ -1988,19 +1988,15 @@ RSpec.describe Lain::Tools::Subagent do
   # Driven through the REAL arrival seam rather than through a directory alone.
   # A plain {AskHuman} writes Q to the Store and announces to nobody, and
   # {Event::Projection#pending} reads the Store -- so every other claim in this
-  # block passes for a child whose questions never reach the TTY or the
-  # desktop. The queue and the notifier are what say they do.
+  # block passes for a child whose questions never reach the TTY. The queue,
+  # and the sender the arrival carries, are what say they do.
   describe "asking the human from inside a child" do
-    let(:notified) { [] }
-    let(:notifier) { instance_double(Lain::Notify) }
-    let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new) }
+    let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new) }
 
     # The chat the human is having, holding its own asker on the SAME seam --
     # so "parent and child are pending at once" is a claim about two real
     # askers and one queue, not about one asker asked twice.
     let(:parent_asker) { askers.enrol(parent, agent: "lain").asker }
-
-    before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
 
     def asking_seam(provider)
       Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, askers:,
@@ -2102,7 +2098,7 @@ RSpec.describe Lain::Tools::Subagent do
       let(:observer) { ->(event) { scribe.call(event) } }
       # The chronicle's own wiring: ONE scribe observes the whole funnel, the
       # askers' Q/A included.
-      let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer:) }
+      let(:askers) { Lain::CLI::Wiring::Askers.new(observer:) }
 
       def recorded_tool(provider: mock(asks, text_response("done")), toolset: union,
                         policy: spawn_policy(only: []), max_depth: 1)
@@ -2319,7 +2315,7 @@ RSpec.describe Lain::Tools::Subagent do
     # THE acceptance criterion of this card: announcement lives in
     # {AskHuman::Notifying}, so a child wired to a bare asker satisfies every
     # other example here while its questions reach nobody.
-    it "lands a child's question on the arrival queue a parent's goes to, and tells the desktop" do
+    it "lands a child's question on the arrival queue a parent's goes to, under the child's own name" do
       tool = asking_subagent(mock(asks, text_response("done")), name: "researcher")
 
       result, item = answered(tool)
@@ -2327,7 +2323,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result).to be_ok
       expect(result.content).to eq("done")
       expect(item.question.to_s).to eq("which db?")
-      expect(notified).to eq([["researcher", "which db?"]])
+      expect(item.from).to eq("researcher")
     end
 
     # Who the human is TOLD is asking, at both surfaces that render a sender.
@@ -2377,7 +2373,7 @@ RSpec.describe Lain::Tools::Subagent do
       # `HumanReplies#render_arrival`) and the `/inbox` drain (`#line_for`).
       # Clamped here to the width the three surfaces share.
       def tty_senders(items)
-        items.map { |item| item.from.to_s[0, Lain::CLI::Wiring::Askers::NAME_WIDTH] }
+        items.map { |item| item.from.to_s[0, Lain::Frontend::TTY::Inbox::NAME_WIDTH] }
       end
 
       # Surface 2 -- the nvim inbox buffer. It does NOT consume the arrival:
@@ -2646,7 +2642,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result).to be_ok
       expect(item.question.to_s).to eq("which db?")
-      expect(notified).to eq([["researcher", "which db?"]])
+      expect(item.from).to eq("researcher")
     end
 
     # Retention runs from `register` to `deregister` and NOTHING else releases
@@ -2706,17 +2702,17 @@ RSpec.describe Lain::Tools::Subagent do
     it "announces under the spawn's own name, which need not be the model-facing tool name" do
       tool = asking_subagent(mock(asks, text_response("done")), name: "subagent", announces_as: "researcher")
 
-      answered(tool)
+      _result, item = answered(tool)
 
-      expect(notified).to eq([["researcher", "which db?"]])
+      expect(item.from).to eq("researcher")
     end
 
     it "falls back to the tool's own name when a spawn has no separate one" do
       tool = asking_subagent(mock(asks, text_response("done")), name: "subagent")
 
-      answered(tool)
+      _result, item = answered(tool)
 
-      expect(notified).to eq([["subagent", "which db?"]])
+      expect(item.from).to eq("subagent")
     end
 
     # ---- The `ensure` on Actor#stop, pinned --------------------------------

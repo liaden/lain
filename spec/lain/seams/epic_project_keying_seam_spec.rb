@@ -174,6 +174,6 @@ RSpec.describe "the epic tier's project keying", :seam do
   # example above is about is that the journal directory does NOT follow it.
   def mount_for(root)
     Lain::CLI::EpicMount.new(slug: "alpha", journal: Lain::Journal.new(io: StringIO.new), root:,
-                             paths: Lain::Paths.new, config: Lain::Config.load(root:))
+                             told: ->(_text) {}, paths: Lain::Paths.new, config: Lain::Config.load(root:))
   end
 end

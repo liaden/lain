@@ -300,8 +300,11 @@ module Lain
         @warmth.prefix(@pastel)
       end
 
-      # Presentation for a collaborator's degraded-path warning ({History}'s
-      # and {Completion}'s `notify:` seam) -- the palette stays in TTY proper.
+      # The frontend's ONE-LINE note seam, and the palette stays in TTY proper.
+      # Two callers, one shape: a collaborator's degraded-path warning
+      # ({History}'s and {Completion}'s `notify:`), and the run's line to the
+      # human ({CLI::Wiring#told}), which is how `request_review` says a file is
+      # waiting on them now that no desktop surface does.
       def render_warning(message) = render_line(:warning, message)
 
       # One themed line, printed and flushed -- a forgotten flush is invisible
@@ -506,10 +509,10 @@ module Lain
         # went.
         POINTER = "/inbox here, or the inbox buffer in nvim"
 
-        # {CLI::Wiring::Askers::NAME_WIDTH} clamps the same names for the desktop
-        # notification. Stated here rather than reached for across the layer,
-        # because a frontend that has to load the CLI to draw a line is a
-        # dependency in the wrong direction.
+        # {Neovim::InboxView::SENDER} clamps the same names for the editor's
+        # own inbox column. Stated here rather than reached for across the
+        # layer, because a frontend that has to load another to draw a line is
+        # a dependency in the wrong direction.
         NAME_WIDTH = 19
 
         # What a human can do HERE, said once above the prompt. The document

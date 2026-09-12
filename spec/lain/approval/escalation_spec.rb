@@ -518,7 +518,7 @@ RSpec.describe Lain::Approval::Escalation do
     # refused; the Journal record says `tty_fault` precisely so nothing does.
     def human_surfaces
       [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Frontend::ApprovalPolicy::FAULT_SURFACE,
-       Lain::Notify::SURFACE, Lain::Frontend::Neovim::ApprovalView::SURFACE]
+       Lain::Frontend::Neovim::ApprovalView::SURFACE]
     end
 
     def unaccounted(names) = names - described_class::Surfaces::AUTOMATIC - human_surfaces

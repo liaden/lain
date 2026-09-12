@@ -262,22 +262,15 @@ RSpec.describe LainCLI do
     end
   end
 
-  # A real notifier is opt-in ({Lain::Notify.for} refuses to build one for a
-  # caller that did not ask), and THIS flag is the opt-in a human's normal
-  # `lain chat` supplies. Read off Thor's own declaration rather than by
-  # spawning a chat: the default IS the whole of what keeps the human notified,
-  # and `spec/lain/cli/wiring_spec.rb` pins that a run carrying it gets the real
-  # adapter. The pair is what says the desktop gate silenced agents and specs
-  # without silencing the human.
-  describe "chat's --desktop flag" do
-    let(:desktop) { described_class.commands.fetch("chat").options.fetch(:desktop) }
-
-    it "defaults ON, so a human typing `lain chat` still gets desktop notifications" do
-      expect(desktop.default).to be(true)
-    end
-
-    it "is a boolean, so `--no-desktop` silences one run without an env var" do
-      expect(desktop.type).to eq(:boolean)
+  # The flag went with the desktop notifier it was the consent for; it declared
+  # nothing else. Asserted rather than quietly removed because its DEFAULT was
+  # the load-bearing half for a year -- ON, so a human typing `lain chat` was
+  # notified while a spec or a subagent that never typed it was not (2026-08-05:
+  # nine real notifications onto a working human's screen, from agents' trees).
+  # Nothing offers that trade now, so the word should not be offered either.
+  describe "chat's flags" do
+    it "offers no desktop option, the surface it consented to having been deleted" do
+      expect(described_class.commands.fetch("chat").options).not_to have_key(:desktop)
     end
   end
 

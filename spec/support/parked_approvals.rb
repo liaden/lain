@@ -17,11 +17,10 @@
 # suite) cannot, because there is no #dequeue to fail to drain.
 module ParkedApprovals
   # One gated tool call, distinguishable by its tool_use_id -- the only thing
-  # that tells two pendings, two notifications, or two decisions apart once
-  # several are parked together. The input carries the same id as the
-  # "command", the way spec/lain/notify_spec.rb's own `gated_call` fixture
-  # does, so a recording dunstify double can correlate a notification back to
-  # the pending that raised it by matching this string inside the argv.
+  # that tells two pendings or two decisions apart once several are parked
+  # together. The input carries the same id as the "command" so a surface's
+  # recorder can correlate what it rendered back to the pending that raised it
+  # by matching this one string, rather than by position in a list.
   def self.effect(id)
     Lain::Effect::ToolCall.new(tool_use_id: id, name: "bash", input: { "command" => id })
   end

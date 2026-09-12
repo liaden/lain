@@ -179,23 +179,25 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   # and was answerable; every one after it rendered nothing and was never read,
   # so a plain `lain chat` -- which has no second surface -- wedged for good.
   #
-  # The measured mechanism is a CO-CONSUMER, not the terminal. `Approval::Queue`
+  # The measured mechanism was a CO-CONSUMER, not the terminal. `Approval::Queue`
   # hands each arrival to exactly one `#dequeue` caller ({Async::Queue} delegates
-  # to a `Thread::Queue`), and a real chat wires TWO of them beside each other:
-  # this surface and {Lain::Notify}. Both park; the first arrival goes to
-  # whichever parked first (this one, spawned first by
-  # {CLI::Repl::ApprovalSurfaces#watch}), and from then on the notifier is ahead
+  # to a `Thread::Queue`), and a real chat then wired TWO of them beside each
+  # other: this surface and the desktop-notification surface. Both parked; the
+  # first arrival went to whichever parked first (this one, spawned first by
+  # {CLI::Repl::ApprovalSurfaces#watch}), and from then on the notifier was ahead
   # of it in the waiter FIFO forever -- because this surface leaves the queue to
-  # ask a human while the notifier re-parks at once. So arrival two, and every
-  # arrival after it, is taken by a surface that cannot answer at the terminal
-  # and holds it for the whole of dunstify's blocking wait.
+  # ask a human while a notifier re-parks at once. So arrival two, and every
+  # arrival after it, went to a surface that could not answer at the terminal.
   #
-  # The examples drive TWO gated calls through the real pair, because one call
-  # cannot see this at all -- which is exactly why a green suite shipped it. The
-  # streamed {Telemetry::ToolOutput} between them is the QA repro's own shape
-  # (what made the second call LATE); it is rendered here so the reproduction is
-  # the measured one rather than a tidier cousin.
-  describe "a second gated call in one turn, beside the surfaces a real chat wires", :seam do
+  # That second consumer is gone twice over: the desktop surface was deleted,
+  # and `spec/approval_consumer_discipline_spec.rb` refuses a new `#dequeue` in
+  # `lib/` structurally. What stays here is the behaviour the defect took away
+  # -- TWO gated calls in one turn, because one cannot see this at all, which is
+  # exactly why a green suite shipped it. The streamed {Telemetry::ToolOutput}
+  # between them is the QA repro's own shape (what made the second call LATE);
+  # it is rendered here so the reproduction is the measured one rather than a
+  # tidier cousin.
+  describe "a second gated call in one turn", :seam do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
     # Short, and it is the counterfactual: a pending no surface can answer is
@@ -203,29 +205,6 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 1.0) }
     let(:channel) { Lain::Channel.new }
     let(:pane) { StringIO.new }
-    # dunstify BLOCKS its own process until a human clicks, dismisses, or its
-    # `-t` window (the queue's own, 300s) expires -- so a pending this surface
-    # takes is a pending it HOLDS. The latch reproduces the hold exactly; the
-    # ensure closes it, and a closed Thread::Queue pops nil at once.
-    let(:dunst) { Thread::Queue.new }
-
-    def holding_shell_out_class
-      Class.new do
-        def initialize(*, latch:, **)
-          super()
-          @latch = latch
-        end
-
-        def run_command = tap { @latch.pop }
-        def stdout = ""
-      end
-    end
-
-    def notifier
-      klass = holding_shell_out_class
-      latch = dunst
-      Lain::Notify.new(shell_out_factory: ->(*, **) { klass.new(latch:) })
-    end
 
     def gated(id, command)
       Lain::Effect::ToolCall.new(tool_use_id: id, name: "bash", input: { "command" => command })
@@ -250,7 +229,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     def verdicts_from(policy)
       Sync do |task|
-        watching = [task.async { policy.watch(queue) }, task.async { notifier.watch(queue) }]
+        watching = [task.async { policy.watch(queue) }]
         [settled(task, "call_1", "echo HELLO"), streamed("call_1"), settled(task, "call_2", "ls ./spec")]
           .values_at(0, 2)
       ensure
@@ -274,8 +253,6 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     around do |example|
       Dir.mktmpdir { |dir| (@dir = dir) && example.run }
-    ensure
-      dunst.close
     end
 
     it "prompts the human for the second gated call too, naming the tool and what it would run" do

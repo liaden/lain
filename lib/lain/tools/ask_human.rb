@@ -467,11 +467,11 @@ module Lain
       # ONLY way a set reaches {#ask}.
       #
       # A String subclass, which is a shape to justify rather than assume. The
-      # arrival seam hands the notifier ITS OWN argument verbatim, and that
-      # value reaches the TTY's arrival line AND a dunstify **argv** element. A
-      # Data value renders there as an inspect and puts a non-String in an
-      # argv, so what `#ask` is handed stays a String and {#set} is how this
-      # tool gets the whole set off it. Structural rather than conventional:
+      # arrival seam hands the announcement ITS OWN argument verbatim, and that
+      # value reaches the TTY's arrival line and the nvim inbox row. A Data
+      # value renders at either as an inspect, so what `#ask` is handed stays a
+      # String and {#set} is how this tool gets the whole set off it.
+      # Structural rather than conventional:
       # because a bare {Question::Set} is refused, no caller can put a
       # non-String on that seam.
       #
@@ -546,16 +546,14 @@ module Lain
 
       # What a human is shown when their OWN reply overran, on the seam an
       # arrival rides. A String subclass for {Announcement}'s reason: the value
-      # this seam carries is handed to the notifier verbatim, reaching a
-      # dunstify argv and a TTY line, so a Data value would render there as an
-      # inspect.
+      # this seam carries is handed on verbatim, reaching a TTY line and an
+      # inbox row, so a Data value would render there as an inspect.
       #
       # THREE renderings, derived once, because the surfaces cannot be allowed
       # to drift:
       #
       # * the BYTES are the whole thing -- the measurement, then every byte of
-      #   the reply -- which is what the desktop notification carries and what
-      #   a caller wanting the payload reads;
+      #   the reply -- which is what a caller wanting the payload reads;
       # * {#summary} is the one line every one-line surface shows. Unclamped
       #   and needing no clamp, unlike {Announcement#summary}: it is
       #   {Tool::Bounds::Overrun#message}, composed from a constant subject,
@@ -650,8 +648,8 @@ module Lain
       # `agent` is who a HUMAN is told is asking, and it is NOT `name` -- that
       # one is the TOOL's name, the bytes the model sees in the tools block.
       # This is per-asker, rides the Q event under {ASKED_BY}, and is the same
-      # value the TTY and desktop were already announced, so every surface reads
-      # one name. Absent, the envelope's correlation stands in.
+      # value the arrival already carries, so every surface reads one name.
+      # Absent, the envelope's correlation stands in.
       #
       # `notify` is where an arrival goes -- the run's own question queue, or
       # {NoArrival}. It is declared HERE rather than only on {Notifying}
@@ -907,8 +905,8 @@ module Lain
       # be this asker's own identity and is now, once relayed, the LAST
       # relayer's -- ASKED_BY still carries the true asker's name, but a
       # caller that falls back to the bare event when ASKED_BY is blank
-      # ({HumanReplies::InboxItem.asked}, {CLI::Wiring::Askers#desktop_name})
-      # would present the relayer rather than who actually asked. Unreachable
+      # ({HumanReplies::InboxItem.asked}) would present the relayer rather than
+      # who actually asked. Unreachable
       # today, since both production enrolment sites always pass a name --
       # flagged rather than guarded, because closing it means deciding what
       # THOSE callers should show instead, which is their call to make.
