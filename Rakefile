@@ -102,4 +102,4 @@ RbSys::ExtensionTask.new("lain", GEMSPEC) do |ext|
   ext.lib_dir = "lib/lain"
 end
 
-task default: %i[compile spec rubocop]
+task default: %i[compile pspec rubocop]
