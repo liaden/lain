@@ -307,15 +307,14 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       expect(strategy).not_to be_deeply_frozen
     end
 
-    # The predicate is `DerivationAudit#refuted?`'s own
-    # (`derivation_audit.rb:346-351`), transcribed rather than referenced
-    # because that method is private. It is an EXACT-subject scan, so the
-    # parent's refutation does not reach this class and an unrestated subclass
-    # audits as `:unclaimed` -- which costs the audit the `:incomplete_replay`
-    # diagnosis, the one that names an oracle-backed strategy drifting after a
-    # resume. This is the half of the pair that can drift for oracle reasons,
-    # so it is the worst place to lose it.
-    it "restates the purity refutation on its own exact class, as the audit reads it" do
+    # An EXACT-subject scan of {Lain::Algebra.registry.refutations}: the
+    # registry keys a refutation on the exact class the same way it keys a
+    # claim, so the parent's refutation does not reach this class. Left
+    # unrestated, this class would read as unclassified on `#blocks` rather
+    # than impure, understating exactly what is true of it -- it is the half
+    # of the pair that answers from outside the source, so it is the worst
+    # place to lose the claim.
+    it "restates the purity refutation on its own exact class" do
       refuted = Lain::Algebra.registry.refutations.any? do |entry|
         entry.subject == described_class && entry.operation == :blocks && entry.structure == :pure
       end

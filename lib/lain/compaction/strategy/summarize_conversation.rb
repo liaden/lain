@@ -56,12 +56,11 @@ module Lain
       # survives inheritance: elementwise is structural, classified by `is_a?`,
       # so the absence IS the negative; purity is registry-keyed on the EXACT
       # class, so a subclass drops a refutation exactly as it drops a claim.
-      # Left unsaid, {DerivationAudit#purity} answers `:unclaimed` here where it
-      # answers `:impure` for the parent, collapsing `:incomplete_replay` and
-      # `:window_or_replay` into `:unclaimed_purity` -- and
-      # `:incomplete_replay` reads "the strategy is refuted pure, so it answers
-      # from outside the source", which is precisely the diagnosis for an
-      # oracle-backed strategy that drifts after a resume.
+      # Left unsaid, this class would read as unclassified on `#blocks` rather
+      # than impure -- indistinguishable from a strategy nobody has ever asked
+      # about -- which understates exactly what is true of it: like its
+      # parent, it answers from outside the source, because it is
+      # oracle-backed.
       #
       # Restating costs a generator in spec/support/algebra_generators.rb,
       # because `spec/algebra_laws_spec.rb` builds its claim list from

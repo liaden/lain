@@ -10,18 +10,17 @@ require_relative "compaction/summary_snapshot"
 require_relative "compaction/tool_messages"
 require_relative "compaction/strategy"
 require_relative "compaction/derivation"
-require_relative "compaction/derivation_audit"
 require_relative "compaction/source"
 
 module Lain
   # Whether a compaction is warranted, where it cuts, what collapses the span,
-  # and how the collapse is recorded. Eleven members, in the order a turn meets
+  # and how the collapse is recorded. Ten members, in the order a turn meets
   # them: {Need} detects (the signal bank), {Cold} tracks cache warmth,
   # {Scheduler} decides when to spend one, {Head} and {Boundary} locate the cut,
   # {SummarySnapshot} freezes the eager tier for the turn, {Strategy} collapses
-  # a span, {Derivation} writes the collapse into the Store, {DerivationAudit}
-  # reads it back, {Source} is the live per-turn seam the Agent asks, and
-  # {Prepared} belongs to the older design below.
+  # a span, {Derivation} writes the collapse into the Store, {Source} is the
+  # live per-turn seam the Agent asks, and {Prepared} belongs to the older
+  # design below.
   #
   # TWO COMPACTION DESIGNS SHIP AND ONLY ONE IS ON THE CHAT PATH. The shipped one
   # is the DERIVED chain: {Source} builds a {Source::Derived}, which materializes

@@ -23,10 +23,11 @@ RSpec.describe Lain::Telemetry do
   # auto-frozen Data value exists, so the value never carries ActiveModel's
   # @errors / @context_for_validation ivars and stays Ractor-shareable.
   #
-  # The carriers are NAMED (a {Telemetry::Carriers} constant apiece) rather than
-  # anonymous declarations, and this is what pins that: Compaction's
-  # DerivationAudit builds one by name and asks it `valid?` to report on a
-  # record it did not write.
+  # The carriers are NAMED (a {Telemetry::Carriers} constant apiece) rather
+  # than anonymous declarations, which is what lets a reader resolve one by
+  # the record's own type string rather than by matching structure.
+  # Compaction's now-deleted re-derivation audit relied on exactly that:
+  # building a carrier by name to validate a record it did not write.
   describe "validate-then-freeze construction" do
     it "exposes a reachable ActiveModel carrier per converted event" do
       expect(Lain::Telemetry::Carriers::Dropped.new(count: 0)).to be_invalid

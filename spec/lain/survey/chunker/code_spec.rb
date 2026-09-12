@@ -358,20 +358,22 @@ RSpec.describe Lain::Survey::Chunker::Code do
   # threshold so the AC and the trigger cannot disagree: more units than
   # lines/5 makes marking useless.
   #
-  # These twelve are files the sweep found ABOVE OR ON the cap with granularity
-  # at its identity -- a sample of the offenders, not the twelve worst, and not
+  # These eleven are files the sweep found ABOVE OR ON the cap with granularity
+  # at its identity -- a sample of the offenders, not the eleven worst, and not
   # a hand-picked file that passes. (`cli/command/model.rb`,
   # `provider/http/chunk.rb` and `isolation/null.rb` all scored above two of
   # them.) A sweep of all 620 `lib/**/*.rb` put 49 above the cap and 23 exactly
-  # on it; `finding.rb` was the worst, 108 lines and 32 units, fourteen of them
-  # one line. Pinning offenders by name is what stops a future reader concluding
-  # from one comfortable file that the whole tree is comfortable.
+  # on it; `compaction/derivation_audit/finding.rb` was the worst at the time
+  # of that sweep, 108 lines and 32 units, fourteen of them one line -- since
+  # deleted along with the rest of `DerivationAudit`, which is why it no
+  # longer names an entry below. Pinning offenders by name is what stops a
+  # future reader concluding from one comfortable file that the whole tree is
+  # comfortable.
   #
   # The cap is `max(1, lines/5)`: under plain integer division a four-line file
   # has a cap of zero, and one unit is the least any chunking can emit.
   describe "granularity, over files the sweep found at or over the cap" do
     worst_cases = %w[
-      lib/lain/compaction/derivation_audit/finding.rb
       lib/lain/version.rb
       lib/lain/error.rb
       lib/lain/structural.rb
@@ -394,7 +396,7 @@ RSpec.describe Lain::Survey::Chunker::Code do
           expect(units.size).to be <= [Lain::Survey::Unit.lines_of(source).size / 5, 1].max
         end
 
-        # The example carrying the general claim, so it runs over all twelve:
+        # The example carrying the general claim, so it runs over all eleven:
         # the cap holds because every unit clears the minimum, not by
         # arithmetic luck. A file shorter than the minimum is the documented
         # exception -- it has one unit, the least any chunking can emit.

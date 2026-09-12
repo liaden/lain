@@ -123,8 +123,8 @@ source turns alike).
 
 A replacement event's `causal_parents` is exactly the fiber of the collapse: the set of source turns
 that map to it. Nothing else needs storing. There is no side table of "what became what", because the
-derived chain *is* the mapping, read backwards along its causal edges — which is what lets
-`Compaction::DerivationAudit` re-derive an edge and compare, and what would be lost if the strategy
+derived chain *is* the mapping, read backwards along its causal edges — which is what makes
+re-deriving an edge and comparing it possible at all, and what would be lost if the strategy
 seam were a bare endomorphism on message arrays.
 
 This works because `Timeline#to_a` follows `render_parent` only, so a fan-in on `causal_parents`

@@ -608,10 +608,10 @@ module AlgebraGenerators
     # {Lain::Compaction::Strategy::ElideToolObservations} restates its parent's
     # PURITY claim and not its elementwise one: elementwise is structural and
     # survives inheritance (`is_a?` is the classification), while purity is
-    # registry-keyed on the EXACT class, which {Lain::Compaction::DerivationAudit}
-    # both documents and depends on. So this entry carries the purity knobs
-    # ALONE -- no `each:` and no `spans:`, which are the elementwise battery's
-    # and would sit here unread.
+    # registry-keyed on the EXACT class, so a subclass drops the claim exactly
+    # as it drops any other unless it restates it. So this entry carries the
+    # purity knobs ALONE -- no `each:` and no `spans:`, which are the
+    # elementwise battery's and would sit here unread.
     #
     # The population is the parent's, and drawn fresh on every call for the
     # reason spec/support/shared_examples/pure.rb documents: three laws over one
@@ -627,10 +627,10 @@ module AlgebraGenerators
     # {ElideToolObservations} restates the parent's claim: the registry is keyed
     # on the EXACT subject and scans it sign-agnostically, so a refutation is
     # dropped by a subclass exactly as a claim is, while elementwise is
-    # classified structurally by `is_a?` and needs no restatement. Losing it cost
-    # {Lain::Compaction::DerivationAudit} the `:incomplete_replay` and
-    # `:window_or_replay` diagnoses on the one strategy in the pair that can
-    # drift for oracle reasons.
+    # classified structurally by `is_a?` and needs no restatement. Losing it
+    # would leave this strategy -- the one half of the pair that can drift for
+    # oracle reasons -- indistinguishable from unclassified rather than
+    # correctly marked impure.
     #
     # `refutes:` is a LAW NAME, not prose -- algebra_laws_spec asserts
     # `outcomes[refutes] == :fails`, so it matches the Pure battery byte for byte.

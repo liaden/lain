@@ -15,7 +15,7 @@ module Lain
     # name every source digest it subsumes in `causal_parents` and the derived
     # chain still renders the replacement rather than the turns it replaced.
     # `causal_parents` is the FIBRE of the collapse -- a replacement's preimage
-    # -- which is what lets {DerivationAudit} check a re-derivation with no
+    # -- which is what makes checking a re-derivation possible with no
     # separate pre/post mapping stored anywhere. {Ledger#unique_turns} walks
     # render ancestry, so the fan-in double-counts nothing. A causal parent is
     # never filtered or dropped ({Arm::Synthesis}'s discipline), so a digest

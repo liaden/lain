@@ -1209,7 +1209,7 @@ vocabulary (no relation to Ruby's `Fiber`). A retained event's preimage is the s
 can read off the event itself, so its causal set is stored empty: nothing collapsed here.
 Replacements' preimages plus retained turns cover the source span exactly once, and nothing
 else is stored: no side table of "what became what", because the derived chain *is* the mapping
-read backwards, which is what lets `Compaction::DerivationAudit` re-derive an edge and compare.
+read backwards, which is what makes re-deriving an edge and comparing it possible at all.
 A causal parent the `Store` has not seen raises, so a preimage is never silently incomplete.
 This is also why a strategy is deliberately **not** an
 [endomorphism](docs/GLOSSARY.md#endomorphism) on message arrays: a bare
@@ -1232,11 +1232,11 @@ The fifth structure is `pure` (`Algebra::Pure`): a claim that an operation reach
 state. `Strategy::Identity` and `Elide` carry it; `Summarizing#blocks` is refuted because it
 holds an oracle (a live model call, per the compaction section above: equal inputs need not
 answer equal outputs), which is precisely why re-deriving its edges needs the journalled answer
-rather than the edge alone. The registry is also a production dependency here:
-`Compaction::DerivationAudit` reads it at runtime to classify a drifted edge (declared pure
-means a derivation bug, refuted pure means an incomplete replay, unclaimed means it refuses to
-attribute until someone declares or refutes). The refutation documents the dependency where a
-spec, and now the audit, can enforce it.
+rather than the edge alone. The refutation is a spec-enforced claim rather than a runtime one:
+`spec/algebra_laws_spec.rb` asserts every declaration and refutation owns a generator, and
+nothing in `lib/` currently reads the registry back to classify a drifted edge -- the
+re-derivation audit that once did was unreachable from any production path and has been
+deleted.
 
 ### What this buys, and how to add a claim
 

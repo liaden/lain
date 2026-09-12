@@ -161,7 +161,7 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
   # both claims: #blocks is inherited byte-for-byte, but only ONE of the two
   # structures declared over it (`elide.rb:97-98`) survives that inheritance.
   # Elementwise is structural -- `is_a?` is the classification -- while purity
-  # is registry-keyed on the EXACT class, which DerivationAudit#purity both
+  # is registry-keyed on the EXACT class, which a re-derivation audit both
   # states and depends on. So elementwise is inherited and purity is restated,
   # and these examples are what stops either being SILENT.
   describe "the attestation it inherits, and the one claim it restates" do
@@ -186,15 +186,6 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
       declared = Lain::Algebra.registry.declarations.select { |entry| entry.subject == described_class }
 
       expect(declared.map { |entry| [entry.operation, entry.structure] }).to contain_exactly(%i[blocks pure])
-    end
-
-    # The consequence the restatement buys, read through the object that
-    # depends on it: an undeclared subclass audits :unclaimed_purity, so a
-    # drift against the control arm could not be attributed.
-    it "audits as pure, so a drift against it is diagnosable" do
-      audit = Lain::Compaction::DerivationAudit.new(entries: [], store: Lain::Store.new, keep_last: 3)
-
-      expect(audit.send(:purity, described_class)).to be(:pure)
     end
 
     it "attests every claimed message by role, content address and byte count" do

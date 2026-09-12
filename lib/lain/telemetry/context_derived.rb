@@ -84,13 +84,14 @@ module Lain
     # the trailing window fixes where {Compaction::Boundary} cuts and therefore
     # which turns a strategy is ever offered, and it is not recoverable from
     # `spans`, whose endpoints say nothing about how many messages were retained
-    # after a range. Without it {Compaction::DerivationAudit} has to be TOLD the
-    # parameter, and a wrong one reads as drift -- a confident, wrong "the chain
-    # disagrees" from the one object whose job is telling real drift from noise.
+    # after a range. A reader re-deriving from this record has no other way to
+    # learn it -- guessing wrong reads as drift, a confident, wrong "the chain
+    # disagrees" from noise.
     #
-    # Emitted by {Compaction::Derivation} and READ BACK by
-    # {Compaction::DerivationAudit}, which matters because a write-only trace is
-    # this subsystem's default failure mode.
+    # Emitted by {Compaction::Derivation}. Nothing re-derives against it today
+    # -- this subsystem's own drift-checking reader was unreachable and has
+    # been deleted -- which makes the record write-only in practice, exactly
+    # the default failure mode a field nobody consumes drifts into silently.
     ContextDerived = Data.define(:source_head, :derived_head, :strategy, :spans, :cut, :moved, :keep_last) do
       include Journalable
 
@@ -107,10 +108,11 @@ module Lain
       private
 
       # An anonymous class renders as `#<Class:0x00007f...>`, and that address
-      # is fresh in every process. {Compaction::DerivationAudit} replays these
-      # records by strategy NAME, so an address would read as drift on the next
-      # run. Anonymous strategies are unauditable by name anyway, so they
-      # collapse to one honest token rather than to a lie that looks specific.
+      # is fresh in every process. A reader resolving these records back to a
+      # strategy by NAME would see a different address every run and call
+      # that drift. Anonymous strategies are unauditable by name anyway, so
+      # they collapse to one honest token rather than to a lie that looks
+      # specific.
       def named(strategy)
         name = strategy.to_s
 
