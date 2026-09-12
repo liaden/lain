@@ -72,7 +72,7 @@ module Lain
 
     # The Anthropic wire's `usage` object, decoded in ONE place. Three callers
     # spelled these four string keys out by hand -- {Provider::Anthropic},
-    # {Provider::Bedrock}, and {SessionRecord::Salvage}, which decodes bytes
+    # and {SessionRecord::Salvage}, which decodes bytes
     # replayed from the response WAL. A key that drifted in the third would
     # under-report spend on exactly the turn nobody was watching, since a
     # salvaged turn is by definition one a crash interrupted. It sits in this

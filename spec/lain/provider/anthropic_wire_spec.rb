@@ -28,27 +28,22 @@ RSpec.describe Lain::Provider::AnthropicWire do
     Lain::Provider::Anthropic::StreamAssembler::Assembled.new(id:, model:, stop_reason:, content:, usage:)
   end
 
-  describe "both hosted backends include it" do
+  describe "the hosted backend includes it" do
     it "is in Provider::Anthropic's ancestry" do
       expect(Lain::Provider::Anthropic.ancestors).to include(described_class)
     end
 
-    it "is in Provider::Bedrock's ancestry" do
-      expect(Lain::Provider::Bedrock.ancestors).to include(described_class)
-    end
-
-    # Both classes read the constants unqualified from their own bodies, and
-    # both specs' `described_class::RATE_LIMIT_RESET_HEADER` must keep
-    # resolving -- constant lookup walks ancestors, so the move is invisible.
-    it "keeps the reset header resolvable through each includer" do
+    # The class reads the constants unqualified from its own body, and that
+    # spec's `described_class::RATE_LIMIT_RESET_HEADER` must keep resolving --
+    # constant lookup walks ancestors, so the move is invisible.
+    it "keeps the reset header resolvable through its includer" do
       expect(Lain::Provider::Anthropic::RATE_LIMIT_RESET_HEADER).to eq(described_class::RATE_LIMIT_RESET_HEADER)
-      expect(Lain::Provider::Bedrock::RATE_LIMIT_RESET_HEADER).to eq(described_class::RATE_LIMIT_RESET_HEADER)
     end
 
-    # The card's escalation trigger, pinned as a spec: the two copies of this
-    # open question ("which rate-limit header governs backoff") agreed on
-    # `anthropic-ratelimit-tokens-reset`, and the collapse must not quietly
-    # pick a side. One constant now, so they cannot drift apart again.
+    # Pinned rather than left to the class body: the two hand-written copies of
+    # this open question ("which rate-limit header governs backoff") agreed on
+    # `anthropic-ratelimit-tokens-reset`, and the collapse into one constant
+    # must not quietly pick a different side.
     it "governs backoff by the tokens reset, the header both copies already named" do
       expect(described_class::RATE_LIMIT_RESET_HEADER).to eq("anthropic-ratelimit-tokens-reset")
     end

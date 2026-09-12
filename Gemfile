@@ -43,17 +43,13 @@ group :development do
 end
 
 group :test do
-  # The correctness ORACLES, and nothing else: `Provider::AnthropicRaw` and
-  # `Provider::BedrockRaw` carry both hosted paths over the vendored Faraday
-  # transport, and are byte-diffed against the official SDK's `#encode` by the
-  # parity specs. The oracle classes live in spec/support/provider_oracles/, so
-  # a `gem install lain` never fetches or loads either of these.
-  #
-  # aws-sdk-core rides along because the SDK's BedrockMantleClient requires it
-  # eagerly, BEFORE branching on auth mode -- even bearer-token auth, which
-  # never touches SigV4, cannot construct a client without it.
+  # The correctness ORACLE, and nothing else. `--provider anthropic` builds
+  # `Provider::Anthropic`, the raw arm over the vendored Faraday transport, and
+  # the parity specs byte-diff its `#encode` against the official SDK's through
+  # `Provider::AnthropicReference`. That oracle class lives in
+  # spec/support/provider_oracles/, so a `gem install lain` never fetches or
+  # loads this gem.
   gem "anthropic", "~> 1.55"
-  gem "aws-sdk-core", "~> 3"
   # `rake pspec` / pre-commit: one worker per core over a suite that is
   # parallel-safe by construction (tmpdirs, per-pid sockets, injected env).
   # Roughly halves the wall clock every commit hook pays.

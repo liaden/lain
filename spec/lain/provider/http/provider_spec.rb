@@ -5,7 +5,7 @@
 # config options; this branch vendors Anthropic only, so the table keeps its
 # *shape* (a Hash keyed by slug, one row per provider) with a single row.
 # Adding openai/gemini/bedrock later is one new row in `api_base_cases` and
-# one new `when` in `config_for`, not a rewrite. The generic `.register` /
+# one more line in `config_for`, not a rewrite. The generic `.register` /
 # `.configured?` / "provider configuration schema" examples are unchanged
 # apart from namespace, since they exercise the base `Provider`/
 # `Configuration` seam directly and never touch a specific provider.
@@ -17,12 +17,6 @@ RSpec.describe Lain::Provider::HTTP::Provider do
         key: :anthropic_api_base,
         custom: "https://anthropic-proxy.example.com",
         default: "https://api.anthropic.com"
-      },
-      bedrock: {
-        provider: Lain::Provider::HTTP::Providers::Bedrock,
-        key: :bedrock_api_base,
-        custom: "https://gateway.internal/anthropic",
-        default: nil # derived from bedrock_region; no constant endpoint
       }
     }
   end
@@ -30,10 +24,6 @@ RSpec.describe Lain::Provider::HTTP::Provider do
   def config_for(slug)
     Lain::Provider::HTTP::Configuration.new.tap do |config|
       config.anthropic_api_key = "anthropic-key" if slug == :anthropic
-      if slug == :bedrock
-        config.bedrock_api_key = "bedrock-key"
-        config.bedrock_region = "us-east-1"
-      end
     end
   end
 

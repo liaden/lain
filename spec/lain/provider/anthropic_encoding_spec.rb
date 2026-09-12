@@ -45,8 +45,8 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
   end
 
   # The tools' `strict` field is capability-gated: Anthropic-shaped backends
-  # that claim :strict_tools emit it, and Bedrock's Mantle -- whose validator
-  # rejects it as an extra input -- gets it masked by the same shared encoder.
+  # that claim :strict_tools emit it, and one that does not -- a validator
+  # rejecting it as an extra input -- gets it masked by the same shared encoder.
   describe "the strict mask" do
     def request_with_tool
       tool = { name: "t", description: "d", strict: true,

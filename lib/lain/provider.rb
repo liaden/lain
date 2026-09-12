@@ -131,17 +131,16 @@ require_relative "provider/stream_started_signal"
 require_relative "provider/error_wrapping"
 require_relative "provider/anthropic_encoding"
 require_relative "provider/anthropic_wire"
-# The official-SDK arms (Provider::AnthropicReference, Provider::BedrockReference)
-# are NOT here. They are `#encode` differential ORACLES that no run constructs --
-# every hosted path goes through a raw arm over the vendored Faraday transport --
-# so they live in spec/support/provider_oracles/, and the `anthropic` gem is a
-# test dependency rather than a runtime one.
+# The official-SDK arm (Provider::AnthropicReference) is NOT here. It is an
+# `#encode` differential ORACLE that no run constructs -- every hosted path goes
+# through a raw arm over the vendored Faraday transport -- so it lives in
+# spec/support/provider_oracles/, and the `anthropic` gem is a test dependency
+# rather than a runtime one.
 require_relative "provider/http"
 require_relative "provider/spool/null"
 require_relative "provider/spool/rotating_frame"
 require_relative "provider/response_wal"
 require_relative "provider/anthropic"
-require_relative "provider/bedrock"
 require_relative "provider/ollama"
 require_relative "provider/mock"
 require_relative "provider/unreachable"

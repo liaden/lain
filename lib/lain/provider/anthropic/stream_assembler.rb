@@ -98,7 +98,7 @@ module Lain
         # Within that scope the marker is why the rule lives in the assembler here
         # and on a retry hook in {Ollama::RetryTap}: NDJSON carries no equivalent
         # of it. Reading the boundary off the wire also means it reaches
-        # {Provider::Bedrock}, which builds this same assembler over a transport
+        # {Provider::Anthropic}, which builds this assembler over a transport
         # that threads no retry context at all.
         def on_message_start(data)
           message = data["message"] || {}

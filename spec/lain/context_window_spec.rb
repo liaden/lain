@@ -122,7 +122,7 @@ RSpec.describe Lain::ContextWindow do
   # {Lain::Provider#context_window_tokens} answers nil for every provider but
   # ollama, so a hosted run is measured against whatever the shipped table
   # says -- filing every table hit under "not measured" would switch
-  # compaction off for every Anthropic and Bedrock arm in silence.
+  # compaction off for every Anthropic arm in silence.
   #
   # "Hosted therefore published" holds only as far as the table does, which is
   # why the authority table below is enumerated by model id rather than
@@ -207,7 +207,7 @@ RSpec.describe Lain::ContextWindow do
     end
 
     # The regression the panel caught, pinned by model id rather than argued
-    # about: every id an Anthropic or a Bedrock arm actually runs under has to
+    # about: every id an Anthropic arm actually runs under has to
     # come back authoritative, or `:approaching_window` stops firing for it.
     #
     # THE TRIPWIRE, and it only works if it is complete. Reviewed against the

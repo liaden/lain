@@ -16,8 +16,6 @@ RSpec.describe Lain::CacheProfile do
     {
       "AnthropicReference" => -> { Lain::Provider::AnthropicReference.new(client: Object.new) },
       "Anthropic" => -> { Lain::Provider::Anthropic.new(transport: Object.new) },
-      "BedrockReference" => -> { Lain::Provider::BedrockReference.new(client: Object.new) },
-      "Bedrock" => -> { Lain::Provider::Bedrock.new(transport: Object.new) },
       "Ollama" => -> { Lain::Provider::Ollama.new(transport: Object.new) },
       "Mock" => -> { Lain::Provider::Mock.new }
     }.each do |name, build|
@@ -28,17 +26,15 @@ RSpec.describe Lain::CacheProfile do
   end
 
   describe "the Anthropic-wire profile" do
-    # The shipped arms (Anthropic, Bedrock) and the SDK references they are
-    # diffed against all share Anthropic's numbers verbatim -- same wire, same
-    # cache economics -- so this asserts they are the IDENTICAL object, not
-    # merely equal values that could drift apart later.
+    # The shipped arm and the SDK reference it is diffed against share
+    # Anthropic's numbers verbatim -- same wire, same cache economics -- so this
+    # asserts they are the IDENTICAL object, not merely equal values that could
+    # drift apart later.
     it "is the same object across every Anthropic-shaped backend" do
       reference = Lain::Provider::AnthropicReference.new(client: Object.new).cache_profile
       anthropic = Lain::Provider::Anthropic.new(transport: Object.new).cache_profile
-      bedrock_reference = Lain::Provider::BedrockReference.new(client: Object.new).cache_profile
-      bedrock = Lain::Provider::Bedrock.new(transport: Object.new).cache_profile
 
-      expect([anthropic, bedrock_reference, bedrock]).to all(equal(reference))
+      expect(anthropic).to equal(reference)
     end
 
     it "reports Opus's real numbers: 5-minute sliding TTL and a 4096-token floor" do

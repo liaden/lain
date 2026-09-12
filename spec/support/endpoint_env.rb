@@ -10,7 +10,7 @@
 # `spec/lain/cli_spec.rb`'s "--provider defaults to anthropic" fails, because it
 # reads Thor's declared default and the ambient env is what Thor declared. The
 # spec is right and the suite was wrong: a green suite must not depend on the
-# machine's exports. Observed on a macOS checkout whose `.envrc` pinned bedrock.
+# machine's exports. Observed on a macOS checkout whose `.envrc` pinned a provider.
 #
 # This is {Lain::Notify}'s `LAIN_DESKTOP` lesson generalized -- "agent shells
 # inherit the human's environment, so an env var in a profile is inherited by
@@ -38,12 +38,11 @@ module EndpointEnv
   # and so could both fire notifications the suite must not fire and mask the
   # examples that pin the gate.
   #
-  # Credentials are deliberately NOT in this list. `ANTHROPIC_API_KEY` and
-  # `AWS_BEARER_TOKEN_BEDROCK` are what `:api_integration` runs ON, and
-  # `spec/support/tags.rb` reads the key to decide whether those specs are enabled
-  # at all -- scrubbing them here would silently disable the opt-in tier rather
-  # than isolate anything. Every offline spec that wants one already injects it by
-  # name through `with_env`.
+  # Credentials are deliberately NOT in this list. `ANTHROPIC_API_KEY` is what
+  # `:api_integration` runs ON, and `spec/support/tags.rb` reads the key to
+  # decide whether those specs are enabled at all -- scrubbing it here would
+  # silently disable the opt-in tier rather than isolate anything. Every offline
+  # spec that wants one already injects it by name through `with_env`.
   LEAKS = %w[
     LAIN_PROVIDER LAIN_MODEL LAIN_API_BASE LAIN_MAX_TOKENS LAIN_TEMPERATURE LAIN_SEED
     LAIN_NUM_BATCH LAIN_NUM_CTX

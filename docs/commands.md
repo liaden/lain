@@ -29,7 +29,7 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--provider` | `anthropic` | `anthropic`, `ollama`, or `bedrock`. |
+| `--provider` | `anthropic` | `anthropic`, `ollama`, or `ollama-cloud`. |
 | `--model` | the provider's own | Model id. Free-form string, not validated against a list. |
 | `--api-base` | Ollama's localhost | Overrides the Ollama base URL — for whichever of the chat and the summarizer is on Ollama (see [Compaction](#compaction-flags)). |
 | `--max-tokens` | `4096` | Per model turn. |
@@ -62,7 +62,7 @@ tiers work.
 | `--compact-cap` | `1048576` | History bytes that force a compaction even while the prompt cache is warm. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
 | `--compact-strategy` | **none** | `summarizing`, `elide`, `summarize-conversation`, `elide-tools`, or a `+`-joined composition of them. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for any of them. |
-| `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `bedrock`. The summarizer is a **tier**, chosen independently of `--provider`. |
+| `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `ollama-cloud`. The summarizer is a **tier**, chosen independently of `--provider`. |
 | `--summarizer-model` | the summarizer provider's own | Never inherits the chat's `--model`. |
 | `--summarizer-max-tokens` | `1024` | Ceiling per summary. A truncated summary *replaces* the result it compressed, so this is sized for a paragraph, not a turn. |
 

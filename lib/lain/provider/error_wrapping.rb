@@ -66,10 +66,11 @@ module Lain
         #   timeout, a torn body's ParsingError) never reaches that middleware
         #   at all, so exhausted retries re-raise the last transport failure as
         #   a bare Faraday class. Nothing above a Provider or an Embedder
-        #   rescues one, so uncontained it escapes the entire stack: on Bedrock
-        #   that is `--provider bedrock` printing a backtrace when a VPN drops,
-        #   on Ollama it is "ollama is not running" -- the ordinary case for the
-        #   default summarizer arm -- taking out the turn from the render path.
+        #   rescues one, so uncontained it escapes the entire stack: on
+        #   Anthropic that is `--provider anthropic` printing a backtrace when a
+        #   VPN drops, on Ollama it is "ollama is not running" -- the ordinary
+        #   case for the default summarizer arm -- taking out the turn from the
+        #   render path.
         #
         # Written here rather than per backend because two of the four copies
         # had gone MISSING, and they went missing precisely because an absent
@@ -125,7 +126,7 @@ module Lain
       # The pair, plus the two readers {Wrapping} reaches them through. Named
       # and separate because it is the whole of {.under}'s work, and because
       # `const_set` is what gives each anonymous `Class.new` its real name -- so
-      # `Lain::Provider::Bedrock::APIError.name` and every backtrace read
+      # `Lain::Provider::Anthropic::APIError.name` and every backtrace read
       # exactly as they did when the classes were hand-written.
       def self.declare_family(includer, base)
         api_error = includer.const_set(:APIError, Class.new(base))

@@ -22,7 +22,7 @@ module Lain
       # orchestration hook the stagger scheduler awaits, NOT request data, so it
       # rides the method arg and never enters the middleware env. Nil is INERT:
       # the provider is called with no second argument at all, so a `#complete`
-      # taking only a request (Bedrock, Ollama, the default fan-out path) is
+      # taking only a request (Ollama, the default fan-out path) is
       # untouched.
       #
       # @param request [Lain::Request]

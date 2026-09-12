@@ -44,8 +44,8 @@ RSpec.describe Lain::Usage do
   end
 
   # The Anthropic wire's usage object had three hand-written decoders --
-  # Provider::Anthropic, Provider::Bedrock and SessionRecord::Salvage each
-  # spelled the same four string keys out. Salvage's copy is the one that
+  # Provider::Anthropic and SessionRecord::Salvage among them, each spelling
+  # the same four string keys out. Salvage's copy is the one that
   # matters: it decodes bytes replayed from the WAL, so a key that drifted there
   # would under-report spend on exactly the turn nobody was watching.
   describe ".from_anthropic_wire" do

@@ -19,7 +19,7 @@ require_relative "streaming/faraday_handlers"
 # forward or it breaks code outside this directory:
 #
 # * {#post_stream} -- posts a streaming request, assigns the handler, and runs
-#   the flush. `Anthropic::Transport#stream` and `Bedrock::Transport#stream`
+#   the flush. `Anthropic::Transport#stream`
 #   (both outside the vendored slice) post through it precisely so the flush
 #   cannot be forgotten; dropping it silently restores the swallow.
 # * {#accumulating_handler} -- the handler `stream_response` used to build
@@ -89,7 +89,7 @@ module Lain
 
         # Every SSE streaming POST goes through here, so no caller can install a
         # handler and forget the flush -- `Anthropic::Transport` and
-        # `Bedrock::Transport` install their own and post their own request, and
+        # installs its own and posts its own request, and
         # both silently dropped truncated terminal events until they came
         # through this method. `Ollama::Transport` posts its own and is the one
         # deliberate exception: `application/x-ndjson` has no SSE parser and so

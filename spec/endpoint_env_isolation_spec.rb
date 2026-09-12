@@ -12,8 +12,9 @@
 # a class in `lib/`.
 RSpec.describe "endpoint env isolation" do
   # The observable consequence, and the example that actually failed on a macOS
-  # checkout whose `.envrc` pinned `LAIN_PROVIDER=bedrock`: Thor's declared
-  # default for `--provider` must be the built-in one. `cli_spec.rb` asserts the
+  # checkout whose `.envrc` pinned `LAIN_PROVIDER` to something other than the
+  # built-in default: Thor's declared default for `--provider` must be the
+  # built-in one. `cli_spec.rb` asserts the
   # same value from the other side (it reads the option); this one says WHY that
   # is allowed to work.
   it "leaves no endpoint variable set, so Thor's declared defaults are the built-in ones" do
@@ -33,7 +34,7 @@ RSpec.describe "endpoint env isolation" do
   # the credentials to decide whether `:api_integration` runs at all, so deleting
   # them would silently disable that tier instead of isolating anything.
   it "leaves credentials alone, since the opt-in tiers run on them" do
-    expect(EndpointEnv::LEAKS).not_to include("ANTHROPIC_API_KEY", "AWS_BEARER_TOKEN_BEDROCK")
+    expect(EndpointEnv::LEAKS).not_to include("ANTHROPIC_API_KEY")
   end
 
   # The deletion is process-wide, so `with_env` is how an example asks for one --

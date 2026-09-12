@@ -137,7 +137,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     expect(rendered).to include("unreported")
     expect(rendered).to include("which provider is answering")
     expect(rendered).to include("how large this run's context window is")
-    expect(rendered).not_to match(/anthropic|ollama|bedrock/i)
+    expect(rendered).not_to match(/anthropic|ollama/i)
     expect(rendered).not_to match(/window \d|\bpublished\b|\bprobed\b/i)
   end
 

@@ -48,7 +48,7 @@ module Lain
 
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
-      PROVIDERS = %w[anthropic ollama ollama-cloud bedrock].freeze
+      PROVIDERS = %w[anthropic ollama ollama-cloud].freeze
 
       # Which of those the SUMMARIZER tier defaults to. Local, because an eager
       # summary fires once per large tool result and paying frontier-model
@@ -142,16 +142,16 @@ module Lain
         num_ctx_request.requested
       end
 
-      # Anthropic and Bedrock are env-configured and read their own credentials,
-      # so no flag threads through here; the two ollama arms are {OllamaTier}'s
-      # whole subject, since "which server, whose key, which default model"
-      # differs between them. An unknown name fails loudly as {UnknownProvider},
-      # naming the valid set.
+      # Anthropic is env-configured and reads its own credentials, so no flag
+      # threads through here; the two ollama arms are {OllamaTier}'s whole
+      # subject, since "which server, whose key, which default model" differs
+      # between them. An unknown name fails loudly as {UnknownProvider}, naming
+      # the valid set.
       #
-      # Both hosted names mean a RAW (vendored-transport) provider here, for
-      # uniform retry telemetry over one Faraday stack. The official-SDK classes
-      # are the `#encode` differential ORACLES and live in spec/support, so no
-      # run constructs one and the `anthropic` gem is not a runtime dependency.
+      # The hosted name means a RAW (vendored-transport) provider here, for
+      # uniform retry telemetry over one Faraday stack. The official-SDK class
+      # is the `#encode` differential ORACLE and lives in spec/support, so no
+      # run constructs it and the `anthropic` gem is not a runtime dependency.
       #
       # @param name [String] WHICH provider to build, already validated against
       #   PROVIDERS -- the chat's by default. {#summarizer_provider} passes its
@@ -164,8 +164,7 @@ module Lain
       # @param spool [#open_frame] the chronicle's response spool -- a real
       #   {Provider::ResponseWal} only when journaling is on
       #   ({CLI::Chronicle::Null} answers {Provider::Spool::Null}, never nil, so
-      #   this is never an `if spool` guard). BEDROCK never sees the keyword,
-      #   because its constructor does not accept one.
+      #   this is never an `if spool` guard).
       # @param channel [Lain::Channel] where a raw provider's retry and
       #   stream_started events land -- chat's live TTY Channel, so a stream
       #   start reaches the frontend and {Frontend::Decorators::ProviderRetry}
@@ -174,13 +173,10 @@ module Lain
       #   nowhere.
       # @param queue [Boolean] the caller's willingness to WAIT for
       #   {Provider::Admission} to free a slot; not a property of the endpoint.
-      #   Not forwarded to the bedrock arm, which does not take it: bedrock
-      #   resolves a hosted endpoint, so its gate is {Provider::Admission::Null}
-      #   and there is never a slot to wait for.
+      #   Every arm takes it now, so it is forwarded unconditionally.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true)
         case name
         when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal: run_journal, spool:)
-        when "bedrock" then Provider::Bedrock.new(channel:)
         else anthropic_provider(spool, channel, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end
       end
@@ -201,11 +197,10 @@ module Lain
       # What FORCED the rule is local: one GPU holds one resident model, so an
       # unpinned summarizer on the chat's own provider evicts the chat model at
       # every compaction and the next turn reloads it -- **84.0s against 7.5s**,
-      # measured. The rule fires for anthropic-on-anthropic and
-      # bedrock-on-bedrock too, where nothing is resident and the reason is
-      # plainer: one provider is one model namespace, and inheriting is at worst
-      # neutral, since each hosted provider's own default is already its top
-      # tier.
+      # measured. The rule fires for anthropic-on-anthropic too, where nothing is
+      # resident and the reason is plainer: one provider is one model namespace,
+      # and inheriting is at worst neutral, since the hosted provider's own
+      # default is already its top tier.
       #
       # Across providers neither argument survives -- no shared residency, no
       # shared namespace, and a model id that does not parse on the other side
@@ -462,7 +457,7 @@ module Lain
       def default_model(name)
         return OllamaTier.default_model(name) if OllamaTier::NAMES.include?(name)
 
-        name == "bedrock" ? Provider::Bedrock::DEFAULT_MODEL : Provider::Anthropic::DEFAULT_MODEL
+        Provider::Anthropic::DEFAULT_MODEL
       end
 
       # `--max-tokens`, through the same {Ceiling} the summarizer tier's flag goes

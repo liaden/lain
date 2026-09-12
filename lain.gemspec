@@ -55,13 +55,13 @@ Gem::Specification.new do |spec|
   # `anthropic` (the official SDK) and `aws-sdk-core` are deliberately NOT runtime
   # dependencies -- see the `:test` group in the Gemfile.
   #
-  # Both hosted provider names now resolve to a RAW arm over the vendored Faraday
-  # transport: `--provider anthropic` builds Provider::AnthropicRaw and
-  # `--provider bedrock` builds Provider::BedrockRaw (see CLI::Backend#provider).
-  # The SDK classes survive only as the `#encode` differential ORACLES those two
-  # are byte-diffed against, so they live in spec/support/provider_oracles/ and
-  # nothing a user installs ever loads them. Retiring the oracles entirely would
-  # cost us the dry-diff, so they stay -- as a test dependency.
+  # The hosted provider name resolves to a RAW arm over the vendored Faraday
+  # transport: `--provider anthropic` builds Provider::Anthropic (see
+  # CLI::Backend#provider). The SDK class survives only as the `#encode`
+  # differential ORACLE that arm is byte-diffed against, so it lives in
+  # spec/support/provider_oracles/ and nothing a user installs ever loads it.
+  # Retiring the oracle entirely would cost us the dry-diff, so it stays -- as a
+  # test dependency.
   #
   # The transport. Lain forks RubyLLM's HTTP layer (see lib/lain/provider/http/),
   # so Faraday is ours directly. The adapter is pinned rather than inferred, because

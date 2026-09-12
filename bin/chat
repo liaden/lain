@@ -3,7 +3,7 @@
 # socket, `lain chat --nvim` (right) attached to it. Arguments pass through
 # to chat, e.g.:
 #
-#   bin/chat --provider bedrock
+#   bin/chat --provider ollama
 #
 # The socket path is minted here and handed to both sides, so the two can
 # never disagree on it; it is per-invocation, so a stale socket from a dead
@@ -20,8 +20,7 @@ session="lain-$$"
 # cannot see chruby's user-installed gems), or none of the provider
 # credentials.
 exports="export PATH=$(printf %q "$PATH")"
-for var in GEM_HOME GEM_PATH RUBYOPT \
-           AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_DEFAULT_REGION ANTHROPIC_API_KEY; do
+for var in GEM_HOME GEM_PATH RUBYOPT ANTHROPIC_API_KEY; do
   if [[ -v $var ]]; then exports+="; export $var=$(printf %q "${!var}")"; fi
 done
 

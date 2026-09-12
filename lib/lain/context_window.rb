@@ -9,7 +9,7 @@ module Lain
   #
   # Unlike {PriceBook}'s shared default (which raises on an unknown model -- a
   # silently-free price is a lie on a cost bench), {.default} here carries a
-  # conservative fallback. `Backend::PROVIDERS` includes `ollama` and `bedrock`,
+  # conservative fallback. `Backend::PROVIDERS` includes the two ollama arms,
   # whose model ids will never appear in an Anthropic-shaped table, and this
   # book backs compaction's `Need::ApproachingWindow`, which is on by default,
   # so a raise would turn a supported provider into a startup crash. The
@@ -48,7 +48,7 @@ module Lain
     # `claude-fable-5` and `claude-mythos-5` were the only shipping first-party
     # models falling to the fallback -- 1M-token models measured against an
     # 8,192 guess. "mythos" covers `claude-mythos-preview` by the same substring
-    # rule, and both cover their `anthropic.`-prefixed Bedrock forms.
+    # rule.
     #
     # This table is a SNAPSHOT of a moving catalogue and has gone stale twice.
     # The durable fix is the Models API's per-model `max_input_tokens`, read
@@ -179,7 +179,7 @@ module Lain
     # directions rather than trusting to inspection.
     DEFAULTS = ANTHROPIC_WINDOWS.merge(CLOUD_WINDOWS).freeze
 
-    # Ollama's `DEFAULT_MODEL` (`qwen3:4b`) and arbitrary Bedrock ids never match
+    # Ollama's `DEFAULT_MODEL` (`qwen3:4b`) and arbitrary pulled ids never match
     # a token above. 8,192 sits below Haiku's 200,000 -- the smallest real entry
     # -- so guessing wrong makes compaction fire EARLY; an over-estimated
     # fallback would instead mean it never fires for the provider it exists to
@@ -213,9 +213,9 @@ module Lain
     # THREE values, and the split is NOT "measured" against "not measured".
     # {Provider#context_window_tokens} answers nil for every provider but ollama,
     # so a hosted run is measured against whatever {DEFAULTS} says -- a
-    # two-valued reading would file every Anthropic and Bedrock arm under
-    # "unmeasured" and switch its `:approaching_window` compaction off in
-    # silence, taking {Compaction::Scheduler}'s forced compaction with it.
+    # two-valued reading would file every Anthropic arm under "unmeasured" and
+    # switch its `:approaching_window` compaction off in silence, taking
+    # {Compaction::Scheduler}'s forced compaction with it.
     #
     # "Hosted therefore PUBLISHED" holds only as far as the table does. A
     # first-party id the table does not carry is {GUESSED} like any other, and

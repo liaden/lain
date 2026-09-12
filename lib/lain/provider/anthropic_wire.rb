@@ -5,10 +5,12 @@ require "time"
 
 module Lain
   class Provider
-    # {AnthropicEncoding}'s counterpart on the wire side, shared by the two
-    # backends that speak the Anthropic Messages API over the vendored Faraday
-    # transport: {Provider::Anthropic} (api.anthropic.com) and
-    # {Provider::Bedrock} (Mantle, which speaks the plain Messages API).
+    # {AnthropicEncoding}'s counterpart on the wire side, for the backend that
+    # speaks the Anthropic Messages API over the vendored Faraday transport:
+    # {Provider::Anthropic} (api.anthropic.com). It stays a module rather than
+    # collapsing into that class because the split it draws is the one below --
+    # neutral kwargs against actual bytes -- and the oracle reads the kwargs
+    # half.
     #
     # The split between the two modules is the split between the neutral kwargs
     # and the actual bytes. `AnthropicEncoding#encode` produces the SDK's
@@ -16,11 +18,9 @@ module Lain
     # official-SDK oracle, which is why the wire rewrite does NOT live there --
     # the oracles include that module and must keep seeing kwargs.
     #
-    # It deliberately does NOT own `#complete` or `#dispatch`. Those diverge for
-    # real reasons -- Anthropic threads a WAL frame and its own
-    # `on_stream_started` through its round trip, Bedrock neither -- and a
-    # shared `#complete` would have to reconcile which error arms each backend
-    # rescues. Those arms are the loud part; they stay written out, per backend,
+    # It deliberately does NOT own `#complete` or `#dispatch`. A shared
+    # `#complete` would have to reconcile which error arms each backend rescues,
+    # and those arms are the loud part: they stay written out, per backend,
     # where a missing one is visible.
     module AnthropicWire
       # Which reset header feeds faraday-retry's backoff. Both endpoints return

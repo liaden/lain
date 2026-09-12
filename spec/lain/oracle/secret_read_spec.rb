@@ -67,9 +67,8 @@ RSpec.describe Lain::Oracle::SecretRead do
     # `--summarizer-provider anthropic` moves THAT tier, and nothing moves this
     # one.
     it "constructs no remote provider at all, whatever a run's knobs say" do
-      expect(Lain::CLI::Backend::PROVIDERS).to include("anthropic", "bedrock")
+      expect(Lain::CLI::Backend::PROVIDERS).to include("anthropic")
       expect(Lain::Provider::Anthropic).not_to receive(:new)
-      expect(Lain::Provider::Bedrock).not_to receive(:new)
 
       expect(provider_built).to be_a(Lain::Provider::Ollama)
     end

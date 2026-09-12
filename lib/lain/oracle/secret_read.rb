@@ -18,7 +18,7 @@ module Lain
     # replace it -- not `--provider`, not `--summarizer-provider`, not
     # `--api-base`, not {Oracle::Router}. `CLI::Backend#summarizer_provider` looks
     # like the reusable precedent and is precisely the wrong one: it resolves a
-    # USER-SETTABLE knob over `anthropic, ollama, bedrock`, so a copy of it would
+    # USER-SETTABLE knob over `anthropic, ollama, ollama-cloud`, so a copy of it would
     # let `--summarizer-provider anthropic` ship the candidate secret's PATH to a
     # remote model. No api_base is passed either: `Backend#provider` hands
     # `--api-base` straight to the ollama arm, which would redirect the "local"

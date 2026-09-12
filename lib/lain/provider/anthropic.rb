@@ -121,7 +121,7 @@ module Lain
         # defaults, not Anthropic's. This transport sits where the SDK client
         # (600s, 2 retries) used to, so the effective envelope must match those
         # rather than silently trade timeout/retry budget for a WAL. Set HERE
-        # and not on Configuration's default, so Ollama and Bedrock are
+        # and not on Configuration's default, so Ollama is
         # untouched.
         config.request_timeout = 600
         config.max_retries = 2

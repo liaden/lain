@@ -357,21 +357,21 @@ RSpec.describe "lain chat's flag surface" do
     end
 
     it "points the summarizer at a paid provider independently of --provider" do
-      # Bedrock is env-configured and reads its region at construction (offline,
-      # no request), so a placeholder is enough to build the object -- the same
-      # stub spec/lain/cli_spec.rb's provider examples use.
-      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "bedrock"))
-      with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
+      # Anthropic is env-configured and validates its key at construction
+      # (offline, no request), so a placeholder is enough to build the object --
+      # the same stub spec/lain/cli_spec.rb's provider examples use.
+      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "anthropic"))
+      with_env("ANTHROPIC_API_KEY" => "sk-test") do
         expect(backend.provider).to be_a(Lain::Provider::Ollama)
-        expect(backend.summarizer_provider).to be_a(Lain::Provider::Bedrock)
+        expect(backend.summarizer_provider).to be_a(Lain::Provider::Anthropic)
       end
     end
 
     it "declares no default model, so the model resolves to the summarizer provider's own" do
       expect(parse[:summarizer_model]).to be_nil
       expect(Lain::CLI::Backend.new(parse).summarizer_model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
-      expect(Lain::CLI::Backend.new(parse("--summarizer-provider", "bedrock")).summarizer_model)
-        .to eq(Lain::Provider::Bedrock::DEFAULT_MODEL)
+      expect(Lain::CLI::Backend.new(parse("--summarizer-provider", "anthropic")).summarizer_model)
+        .to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
     # One GPU holds one resident model. An unpinned summarizer falls to the

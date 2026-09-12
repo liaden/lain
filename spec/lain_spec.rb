@@ -5,6 +5,30 @@ RSpec.describe Lain do
     expect(Lain::VERSION).to match(/\A\d+\.\d+\.\d+/)
   end
 
+  # The gemspec's prose is the first thing a reader of this repo meets, and
+  # nothing compiles it -- a class renamed or deleted leaves a description
+  # naming a class that never existed here, which is how `Provider::BedrockRaw`
+  # and `Provider::AnthropicRaw` survived in it. A name is judged Lain's own by
+  # its head segment resolving under {Lain}, so third-party names in the same
+  # prose (Gem::Specification, Reline::LineEditor) are left alone.
+  describe "the gemspec's prose" do
+    def named_constants
+      File.read(File.expand_path("../lain.gemspec", __dir__))
+          .scan(/\b(?:Lain::)?([A-Z][A-Za-z0-9]*(?:::[A-Z][A-Za-z0-9]*)+)/).flatten.uniq
+          .select { |name| described_class.const_defined?(name.split("::").first, false) }
+    end
+
+    it "names only classes that exist" do
+      undefined = named_constants.reject { |name| described_class.const_defined?(name) }
+
+      expect(undefined).to be_empty, "lain.gemspec names #{undefined.join(", ")}, defined nowhere under Lain"
+    end
+
+    it "names some, so the walk above is not vacuous" do
+      expect(named_constants).not_to be_empty
+    end
+  end
+
   # Proves the magnus FFI boundary is wired and `rake compile` produced a loadable
   # extension. Until the Timeline lands in Rust, this is the only thing crossing it.
   describe ".hello" do

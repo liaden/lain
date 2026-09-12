@@ -57,7 +57,6 @@ Everything below is optional, and lain runs without any of it.
 | **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
 | **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
 | **`dunstify`** | Approvals wait at the `you>` prompt. | Desktop notification approvals, racing the terminal surface. Opt-in: on for `lain chat`, off everywhere else, because your specs and subagents share your `PATH` (`--no-desktop`, `LAIN_DESKTOP=0/1`). |
-| **AWS Bedrock creds** | Anthropic and Ollama. | `--provider bedrock`. Reads `AWS_BEARER_TOKEN_BEDROCK` and `AWS_REGION`. |
 | **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process exec daemon, for the bench's exec-comparison arm. |
 
 Without an API key the offline paths still run: dry replay, the sweeps, `lain friction`,
@@ -507,7 +506,6 @@ and a journal.
 | Compaction leaves elision lines instead of summaries | The local summarizer had nothing to answer it. `ollama serve` and `ollama pull qwen3:4b`. The fire fails inside its task boundary, so nothing raises. |
 | HUD prints raw JSON, or `lain: no state yet` | `jq` is not on `PATH` (raw JSON), or no session has published a state file for this project yet — `lain up` prints the path it is watching. Both are degraded states by design, never errors. |
 | lain refuses to start, `$HOME is "" ... not an absolute path` | `$HOME` is **empty or relative** — a systemd unit with `Environment=HOME=`, an `env -i` cron job, or a container that sets it to something odd. (Genuinely *unset* is fine: lain asks the passwd database.) Every XDG fallback is built on `$HOME`, so a relative one would write lain's state into whatever directory you happen to be in. Export an absolute `HOME`. Setting `XDG_STATE_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` fixes the *paths* but not the refusal: the secret-path classifier anchors on `$HOME` directly, and a relative anchor mis-classifies in silence, which is worse than stopping. |
-| Bedrock says a model does not exist | Almost always a region or endpoint mismatch, not a bad id. Bare `anthropic.`-prefixed Mantle ids are correct as written. Check `AWS_REGION` first. |
 | `--windows` opens no subagent viewers | It needs `$TMUX` and a session journal. It is incompatible with `--no-journal`. |
 | HUD freezes, `lain watch` stops updating, tools stop overlapping | Something is blocking the reactor. See [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor). |
 | Ollama output differs run to run at `--temperature 0` | On the **local** arm this is a defect worth chasing — and on this repo's own reference box it currently REPRODUCES, measured 2026-08-24 at HEAD and at the pre-chunk commit alike, so it is open rather than hypothetical: greedy decoding is necessary, not sufficient, and first-run-after-load divergence and GPU float non-associativity both perturb it; see [docs/providers/ollama.md](docs/providers/ollama.md#determinism-the-honest-version). On **`--provider ollama-cloud` it is expected** — measured 2026-08-24, three warm same-seed runs gave three distinct completions ([references/ollama/cloud.md](references/ollama/cloud.md)). Nothing is wrong; the arm is not reproducible. |
@@ -526,7 +524,7 @@ with it. [`docs/GLOSSARY.md`](docs/GLOSSARY.md) defines the math and CS vocabula
 | `Canonical` | Deterministic bytes, [BLAKE3](docs/GLOSSARY.md#blake3) over a sorted-key serialization. | Event hashing and prompt-cache stability are the same problem. One function, two invariants. |
 | `Event` / `Store` / `Timeline` | A lossless [content-addressed](docs/GLOSSARY.md#content-addressable-storage) [Merkle DAG](docs/GLOSSARY.md#merkle-tree) of the conversation. | `fork` is O(1), `diverge_at` localizes a cache break, and usage aggregates over unique reachable digests instead of double-counting a shared prefix. |
 | `Request` / `Response` / `Usage` | Provider-neutral value objects. `Usage` is a property-tested commutative [monoid](docs/GLOSSARY.md#monoid). | The [anti-corruption layer](docs/GLOSSARY.md#anti-corruption-layer) that makes dry replay and cross-provider comparison honest. |
-| `Provider` / `Capability` | One HTTP round trip, no loop. `AnthropicRaw` (default), `Anthropic` (SDK oracle), `Bedrock`, `Ollama`, `Mock`. | Lain owns the loop, because the loop is the object of study. `Capability::Policy` resolves a combinator/provider mismatch loudly. |
+| `Provider` / `Capability` | One HTTP round trip, no loop. `Anthropic` (default), `AnthropicReference` (SDK oracle), `Ollama`, `Mock`. | Lain owns the loop, because the loop is the object of study. `Capability::Policy` resolves a combinator/provider mismatch loudly. |
 | `Context` / `Workspace` | A composable pipeline of message transformations. `#render` is pure. | Purity and cache-hit are the same constraint. `Workspace` is sent, never stored. |
 | `Tool` / `Toolset` / `Tool::Input` | 23 tool classes, 20 of them in the live chat toolset. `Tool::Input` (ActiveModel) declares the JSON Schema and the local validation once. | Capabilities, not permissions: a subagent holds what it was handed, and the schema cannot drift from the validation. |
 | `Effect` / `Effect::Handler` / `Gate` / `Middleware` | The Rack idiom over a property-tested monoid. | Deterministic replay is a recorded handler rather than a live one. `Gate` is where tier-3 approval lives. |
@@ -578,7 +576,6 @@ There is nothing to fall back to, so lain says so and stops rather than guessing
 | Var | Read by | Meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `Provider::AnthropicRaw`, `Provider::Anthropic` | Required for the Claude path. Refused before construction if unset. |
-| `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION` | `Provider::Bedrock` | Read by the Bedrock client, not by a lain flag. |
 | `OLLAMA_API_KEY` | `Provider::Ollama` on its cloud deployment | Required for `--provider ollama-cloud`. Create one at [ollama.com/settings/keys](https://ollama.com/settings/keys). Refused before construction if unset, and the refusal names the variable without quoting its value. Four guards (`#inspect`, `#pretty_print`, and both `#instance_variables`) keep the key out of a rendered deployment or configuration; they do **not** cover a header Hash once it has left the object, which is documented where that Hash is built. |
 | `LAIN_OLLAMA_CLOUD_CONCURRENCY` | the cloud deployment's admission gate | How many cloud requests may be in flight. Defaults to **1**, the only width safe on every plan; a typo raises rather than degrading. |
 | `LAIN_STREAM_DEBUG` | the SSE accumulator | Dumps raw stream frames while debugging a provider. |
@@ -756,15 +753,13 @@ byte-diffed and reasoned about for caching), and completes a request into a prov
 response. `Lain::Request` and `Lain::Response` are the value objects each provider translates to and
 from.
 
-Four live backends ship on that seam, plus `Provider::Mock` for specs. They are reachable as the
-four `--provider` values below — the two ollama rows are one backend under two deployments, and
-`anthropic` covers two implementations of one wire (see below). Each doc covers setup, that
+Three live backends ship on that seam, plus `Provider::Mock` for specs. They are reachable as the
+three `--provider` values below — the two ollama rows are one backend under two deployments. Each doc covers setup, that
 provider's capability mask, and the wire quirks that cost real debugging.
 
 | Provider | `--provider` | Default model | Doc |
 |---|---|---|---|
 | Anthropic | `anthropic` | `claude-opus-4-8` | [docs/providers/anthropic.md](docs/providers/anthropic.md) |
-| AWS Bedrock | `bedrock` | `anthropic.claude-opus-4-8` | [docs/providers/bedrock.md](docs/providers/bedrock.md) |
 | Ollama (local) | `ollama` | `qwen3:4b` | [docs/providers/ollama.md](docs/providers/ollama.md) |
 | Ollama Cloud | `ollama-cloud` | `gpt-oss:20b-cloud` | [references/ollama/cloud.md](references/ollama/cloud.md) |
 

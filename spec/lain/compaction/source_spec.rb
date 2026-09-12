@@ -518,7 +518,7 @@ RSpec.describe Lain::Compaction::Source do
       expect(decisions.first["signals"]).to eq(%w[approaching_window])
     end
 
-    # An ollama/bedrock id no Anthropic-shaped table carries. 7_500 is under 0.9
+    # An ollama id no Anthropic-shaped table carries. 7_500 is under 0.9
     # of every real entry and over 0.9 of the 8_192 conservative fallback, so
     # the fallback is what is being measured against -- and it still degrades
     # rather than raising.
@@ -566,7 +566,7 @@ RSpec.describe Lain::Compaction::Source do
   # Provenance is THREE-valued, and only the guess is denied. A shipped-table
   # hit is a real published number, and it is what a hosted run is measured
   # against -- suppressing THAT would switch compaction off for every
-  # Anthropic and Bedrock arm.
+  # Anthropic arm.
   describe "only an authoritative window may authorise a rewrite" do
     # 7_500 is over 0.9 of 8_192 and under 0.9 of any real entry, so the ratio
     # is crossed on every book below and provenance is the only variable.

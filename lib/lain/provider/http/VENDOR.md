@@ -129,14 +129,13 @@ against a WebMock-delivered event stream, including the error-event path
 `Streaming::ErrorHandling` and Anthropic's own `parse_streaming_error`).
 
 `Provider#complete(&block)` is **not** the path Lain runs, though:
-`Anthropic::Transport#stream` and `Bedrock::Transport#stream` (outside this
-directory) post their own requests and install their own `on_data` handler.
-They reach the vendored engine through `Streaming#post_stream`, which assigns
+`Anthropic::Transport#stream` (outside this directory) posts its own request
+and installs its own `on_data` handler. It reaches the vendored engine through `Streaming#post_stream`, which assigns
 the handler and then runs `flush_stream` — a blank line fed to the parser once
 the body is read, because the SSE spec discards an event that never got its
 terminating blank line, and a discarded `event: error` is an overload recorded
 as a successful empty turn. Both methods are Lain's, not upstream's: a
-re-vendor that drops them reintroduces that swallow in the two transports with
+re-vendor that drops them reintroduces that swallow in that transport with
 nothing failing in this directory. `streaming.rb`'s header lists all three
 Lain-side additions.
 

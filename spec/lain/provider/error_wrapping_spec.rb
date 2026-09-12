@@ -1,14 +1,13 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Provider::ErrorWrapping do
-  # The four backends over the vendored transport, each with the base its own
+  # Every backend over the vendored transport, each with the base its own
   # error family must root at. The Embedder is the reason `.under` takes a
   # parameter at all: `rescue Embedder::Error` has to keep catching every
   # embedding failure, so its pair cannot descend from Lain::Error directly.
   # A class method, not a constant: a constant here would leak onto Object.
   def self.families
     { Lain::Provider::Anthropic => Lain::Error,
-      Lain::Provider::Bedrock => Lain::Error,
       Lain::Provider::Ollama => Lain::Error,
       Lain::Embedder::Ollama => Lain::Embedder::Error }
   end
@@ -43,7 +42,7 @@ RSpec.describe Lain::Provider::ErrorWrapping do
 
     # The whole reason this is a factory rather than a module with two constants
     # in it: `rescue Provider::ErrorWrapping::APIError` must not exist, because
-    # it would catch all four backends at once.
+    # it would catch every backend at once.
     it "does not define the pair on the shared module itself" do
       expect(described_class.const_defined?(:APIError, false)).to be(false)
       expect(described_class.const_defined?(:APIStatusError, false)).to be(false)
@@ -91,7 +90,7 @@ RSpec.describe Lain::Provider::ErrorWrapping do
     end
   end
 
-  describe "the four backends that include it" do
+  describe "the backends that include it" do
     families.each do |backend, base|
       it "gives #{backend} a nested APIError rooted at #{base}" do
         expect(backend.const_get(:APIError).superclass).to eq(base)
@@ -101,7 +100,7 @@ RSpec.describe Lain::Provider::ErrorWrapping do
 
     # Nested identity is the contract every existing spec rescues by. If the
     # collapse had hoisted one shared pair, `rescue Provider::Ollama::APIError`
-    # would start catching a Bedrock failure -- and a bench arm's error
+    # would start catching an Anthropic failure -- and a bench arm's error
     # attribution would silently stop meaning anything.
     it "shares no APIError between any two of them" do
       backends = self.class.families.keys
@@ -122,12 +121,12 @@ RSpec.describe Lain::Provider::ErrorWrapping do
     end
   end
 
-  # THE DRIFT GUARD. Two of these four arms went missing for months, and they
-  # went missing because each backend wrote its own rescue block: the absence of
-  # a copy is invisible, while the presence of a wrong one is not. So this walks
-  # all four and drives ONE round trip per shape through a transport that raises,
+  # THE DRIFT GUARD. Two arms went missing for months, and they went missing
+  # because each backend wrote its own rescue block: the absence of a copy is
+  # invisible, while the presence of a wrong one is not. So this walks every
+  # backend and drives ONE round trip per shape through a transport that raises,
   # asserting the wrapped type -- no webmock, no network, no per-backend spec to
-  # forget. A fifth backend is caught the moment it is added to this table, and
+  # forget. A new backend is caught the moment it is added to this table, and
   # `#complete`/`#embed` losing the shared wrapper reddens here immediately.
   describe "arm coverage across every backend (drift guard)" do
     # One driver per backend, because the round trip is named differently
@@ -137,15 +136,13 @@ RSpec.describe Lain::Provider::ErrorWrapping do
                                   messages: [{ role: "user", content: "hi" }])
       { Lain::Provider::Anthropic =>
           ->(t) { Lain::Provider::Anthropic.new(transport: t, api_key: "k").complete(request) },
-        Lain::Provider::Bedrock =>
-          ->(t) { Lain::Provider::Bedrock.new(transport: t, api_key: "k", region: "us-east-1").complete(request) },
         Lain::Provider::Ollama =>
           ->(t) { Lain::Provider::Ollama.new(transport: t).complete(request) },
         Lain::Embedder::Ollama =>
           ->(t) { Lain::Embedder::Ollama.new(transport: t).embed(%w[a]) } }
     end
 
-    # Answers every round trip any of the four might ask for, by raising. The
+    # Answers every round trip any of them might ask for, by raising. The
     # `**` matters: Anthropic's #sync_post is called with a `frame:` kwarg.
     def raising_transport(error)
       Class.new do
@@ -156,9 +153,9 @@ RSpec.describe Lain::Provider::ErrorWrapping do
     end
 
     round_trips.each do |backend, round_trip|
-      # The arm that was missing on Bedrock and Embedder::Ollama: a
-      # connection-level failure never reaches the vendored ErrorMiddleware, so
-      # exhausted retries re-raise a bare Faraday class.
+      # The arm that was missing on two backends: a connection-level failure
+      # never reaches the vendored ErrorMiddleware, so exhausted retries
+      # re-raise a bare Faraday class.
       it "#{backend} contains a Faraday::Error in its own APIError" do
         expect { round_trip.call(raising_transport(Faraday::ConnectionFailed.new("dropped"))) }
           .to raise_error(backend.const_get(:APIError)) do |wrapped|

@@ -340,7 +340,7 @@ module Lain
       # @param context_window [#resolve] the window book {#decide} asks about
       #   the LIVE model each turn. The default degrades to a conservative
       #   fallback for a model no Anthropic-shaped table carries (`ollama`,
-      #   `bedrock`); a blank model still raises there, which is a wiring bug
+      #   `ollama`); a blank model still raises there, which is a wiring bug
       #   rather than a provider. A live chat is handed
       #   {CLI::Backend#context_window} instead -- the SAME instance
       #   {Agent#occupancy} and the {StatusFeed} divide by, so this record's
@@ -470,7 +470,7 @@ module Lain
       # ONLY the guess. A shipped-table hit is a real published number
       # ({Provider#context_window_tokens} is nil for every provider but
       # ollama), so suppressing that too would switch compaction off for every
-      # Anthropic and Bedrock arm in silence, taking {Scheduler#forced?} with
+      # Anthropic arm in silence, taking {Scheduler#forced?} with
       # it. And it is withdrawn HERE rather than inside {Need}, because giving
       # detector state a second field for who vouched for the window would make
       # every `#fired?` a place provenance could be read. What is withdrawn is

@@ -47,9 +47,9 @@ RSpec.describe Lain::Provider::HTTP::Configuration do
       end
     end
 
-    it "redacts a real provider secret (the bearer token) through both paths" do
+    it "redacts a real provider secret (the API key) through both paths" do
       config = described_class.new
-      config.bedrock_api_key = secret
+      config.anthropic_api_key = secret
 
       expect(config.inspect).not_to include(secret)
       expect(pretty(config)).not_to include(secret)

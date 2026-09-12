@@ -152,7 +152,7 @@ module Lain
 
       # `strict` reaches the wire only when the including backend claims
       # :strict_tools -- asked via the includer's own #supports?, so the
-      # feature masks stay the single authority. Bedrock's Mantle validator
+      # feature masks stay the single authority. A strict-tools-refusing validator
       # rejects the field as an unknown input ("tools.0.custom.strict: Extra
       # inputs are not permitted", a live 400), and masking it here keeps one
       # shared encoder instead of forking a second one the dry differential

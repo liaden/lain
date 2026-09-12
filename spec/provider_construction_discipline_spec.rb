@@ -44,8 +44,8 @@ require "pathname"
 #
 # `journal:` on {Lain::Provider::Ollama} and {Lain::Provider::Anthropic} is where
 # a {Lain::Telemetry::ProviderWait} lands -- endpoint contention, reached through
-# {Lain::Provider::Admitted#admitted}, which those two include and Bedrock does
-# not. The {Lain::Provider::Journaled} decorator is where a
+# {Lain::Provider::Admitted#admitted}, which both include. The
+# {Lain::Provider::Journaled} decorator is where a
 # {Lain::Telemetry::RequestSent} lands -- the round trip itself.
 #
 # The journal rule below accepts EITHER, and it is worth being exact about how
@@ -98,7 +98,7 @@ require "pathname"
 # parser in the way, and it follows `spec_discipline_spec.rb`, which carries
 # five cooperating modules for the same reason.
 module ProviderConstruction
-  ENDPOINT_PROVIDERS = %w[Anthropic Ollama Bedrock].freeze
+  ENDPOINT_PROVIDERS = %w[Anthropic Ollama].freeze
 
   # The decorator that records a round trip. Constructing THIS is the fix, never
   # the defect -- so it needs no approval, only its own rule below.
@@ -379,10 +379,7 @@ module ProviderConstructionDiscipline
   APPROVED = {
     "lain/cli/backend.rb" => {
       "Provider::Anthropic" =>
-        "the run's hosted arm. #anthropic_provider is its only builder and hands it the run's journal.",
-      "Provider::Bedrock" =>
-        "the run's Mantle arm. It resolves a hosted endpoint, so it has no admission gate and " \
-        "nothing to wait for; see UNJOURNALED, which records that as a property rather than a gap."
+        "the run's hosted arm. #anthropic_provider is its only builder and hands it the run's journal."
     }.freeze,
     "lain/cli/backend/ollama_tier.rb" => {
       "Provider::Ollama" =>
@@ -402,24 +399,20 @@ module ProviderConstructionDiscipline
 
   # Approved constructions that reach no journal, and why that is tolerable
   # today. An entry here is a stated hole, which is the difference between a
-  # gap somebody decided to live with and a gap nobody noticed.
-  UNJOURNALED = {
-    "lain/cli/backend.rb" => {
-      "Provider::Bedrock" =>
-        "there is no wait to record. The journal: keyword its two siblings take feeds " \
-        "Admitted#admitted -> #wait_journal -> Telemetry::ProviderWait, and only Ollama and " \
-        "Anthropic `include Admitted`; a hosted Mantle endpoint has no admission gate, so a " \
-        "journal: on Bedrock would be dead weight rather than a fix. Keep this row for the day " \
-        "it gains a gate."
-    }.freeze
-  }.freeze
+  # gap somebody decided to live with and a gap nobody noticed. Empty because
+  # every endpoint-reaching construction in `lib/` now names a journal, which
+  # is the state this rule is for -- an empty list is the rule biting, not the
+  # rule switched off. The cost of the emptiness is that `#excused?`'s true
+  # branch has no live case, so the first entry added here is also the first
+  # exercise of it.
+  UNJOURNALED = {}.freeze
 
   # Singleton methods on an endpoint-reaching provider that build no provider,
   # and why each is not a construction. Shape:
   #
   #   "Provider::Ollama" => { "probe" => "asks /api/tags what exists; builds nothing" }
   #
-  # Empty because neither the three classes nor the base they inherit from
+  # Empty because neither the two classes nor the base they inherit from
   # defines a singleton method at all today. The emptiness is a pin rather than
   # a gap -- see the tree-level example that reads this, which is what stops a
   # factory landing under a name {ProviderConstruction::FACTORY_SELECTORS} has
@@ -643,7 +636,6 @@ RSpec.describe "provider construction discipline" do
 
       expect(live).to include(
         %w[lain/cli/backend.rb Provider::Anthropic],
-        %w[lain/cli/backend.rb Provider::Bedrock],
         %w[lain/cli/backend/ollama_tier.rb Provider::Ollama],
         %w[lain/oracle/secret_read.rb Provider::Ollama]
       )
@@ -870,8 +862,7 @@ RSpec.describe "provider construction discipline" do
       found = ProviderConstructionDiscipline.stale_entry_violations([])
 
       expect(found.map(&:to_s)).to include(
-        "lain/cli/backend.rb -> APPROVED names Provider::Anthropic, which is constructed nowhere",
-        "lain/cli/backend.rb -> UNJOURNALED names Provider::Bedrock, which is constructed nowhere"
+        "lain/cli/backend.rb -> APPROVED names Provider::Anthropic, which is constructed nowhere"
       )
     end
   end

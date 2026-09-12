@@ -42,14 +42,26 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider).to be_a(Lain::Provider::Anthropic)
     end
 
-    # The RAW arm, like --provider anthropic above: both hosted names resolve to
-    # the vendored Faraday transport, and the official-SDK classes are oracles
-    # in spec/support/provider_oracles/ that no run constructs.
-    it "constructs a Provider::Bedrock for --provider bedrock" do
-      provider = with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
-        backend_for(provider: "bedrock").provider
-      end
-      expect(provider).to be_a(Lain::Provider::Bedrock)
+    # Bedrock reused ANTHROPIC, so removing it is the moment that profile could
+    # silently lose its last hosted reader: the surviving arm has to still report
+    # the real numbers a compaction scheduler prices a cache read with.
+    it "reports the Anthropic cache profile for --provider anthropic" do
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend_for(provider: "anthropic").provider }
+
+      expect(provider.cache_profile).to equal(Lain::CacheProfile::ANTHROPIC)
+    end
+
+    # Bedrock is gone, and a name that was once valid is the one an operator is
+    # likeliest to still have in a script or an `.envrc`: the refusal has to say
+    # what to type instead, not merely that the name is unknown.
+    it "refuses --provider bedrock, naming the providers that are supported" do
+      expect { backend_for(provider: "bedrock").provider }
+        .to raise_error(Lain::CLI::UnknownProvider,
+                        /unknown provider "bedrock", expected one of.*anthropic.*ollama.*ollama-cloud/m)
+    end
+
+    it "does not offer bedrock among the providers --provider selects between" do
+      expect(Lain::CLI::Backend::PROVIDERS).not_to include("bedrock")
     end
 
     # The whole point of the extraction: an unknown name is a Lain error,
@@ -194,7 +206,7 @@ RSpec.describe Lain::CLI::Backend do
     # is a regression on the path this card promised not to touch. Every row is
     # here so that changing the rule cannot quietly change one of them --
     # DEFAULT_SUMMARIZER_PROVIDER is "ollama", so most operators are in the
-    # anthropic or bedrock row without ever typing `--summarizer-provider`.
+    # anthropic row without ever typing `--summarizer-provider`.
     describe "which arm --api-base reaches" do
       internal = "http://my-ollama.internal:11434"
       # The cloud row needs its own, because an http base on a cloud CHAT arm is
@@ -206,11 +218,10 @@ RSpec.describe Lain::CLI::Backend do
       [
         # The base is the chat's own, and the summarizer shares the arm.
         ["ollama", internal, internal, "one ollama arm, and it is the chat's"],
-        # NO --summarizer-provider is typed in any of these three: the default
+        # NO --summarizer-provider is typed in either of these two: the default
         # is "ollama", so the summarizer is the only ollama-shaped arm there is
         # and the flag is plainly for it. This is the row the first rule broke.
         ["anthropic", internal, internal, "the only ollama arm there is"],
-        ["bedrock", internal, internal, "the only ollama arm there is"],
         [nil, internal, internal, "a hand-built Backend naming no chat provider"],
         # --provider names an ollama arm, so the base is THAT arm's. Nothing is
         # lost: the chat provider receives it, as the example below this pins.
@@ -359,16 +370,6 @@ RSpec.describe Lain::CLI::Backend do
 
       expect(provider).to be_a(Lain::Provider::Ollama)
       expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool)).to be(spool)
-    end
-
-    it "never hands bedrock the spool keyword -- its constructor doesn't accept it" do
-      spool = Lain::Provider::ResponseWal.new("/tmp/lain-backend-spec-session.wal")
-
-      expect do
-        with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
-          backend_for(provider: "bedrock").provider(spool:)
-        end
-      end.not_to raise_error
     end
   end
 
@@ -871,9 +872,9 @@ RSpec.describe Lain::CLI::Backend do
         .to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
     end
 
-    it "defaults to Bedrock's model when --provider bedrock and no --model" do
-      expect(backend_for(provider: "bedrock", model: nil, max_tokens: 1024).context.model)
-        .to eq(Lain::Provider::BedrockReference::DEFAULT_MODEL)
+    it "defaults to Anthropic's model when --provider anthropic and no --model" do
+      expect(backend_for(provider: "anthropic", model: nil, max_tokens: 1024).context.model)
+        .to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
     it "honors an explicit --model over the provider default" do
@@ -1215,9 +1216,9 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
-    # `--provider ollama` and `--provider bedrock` name models no
-    # Anthropic-shaped window table can carry, so ContextWindow.default falls
-    # back rather than raising -- an unsupported provider must still START.
+    # `--provider ollama` names models no Anthropic-shaped window table can
+    # carry, so ContextWindow.default falls back rather than raising -- an
+    # unsupported provider must still START.
     # 7_500 used tokens is under 0.9 of every real entry and over 0.9 of the
     # 8_192 fallback, so this turn DOES cross the trigger ratio -- and the
     # trigger is withheld anyway, because a fallback is a guess and a guess may

@@ -292,12 +292,11 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
   # tier is never handed one it would drop. The first version of the rule --
   # "the tier whose name is the chat's" -- is the one this table exists to stop
   # coming back: it reads as obviously right and silently moved every LOCAL
-  # summarizer beside an anthropic or bedrock chat off the host --api-base named.
+  # summarizer beside an anthropic chat off the host --api-base named.
   describe ".claims_base?" do
     [
       ["ollama", "ollama", true, "one ollama arm, and it is the chat's"],
       ["ollama", "anthropic", true, "the only ollama arm there is"],
-      ["ollama", "bedrock", true, "the only ollama arm there is"],
       ["ollama", nil, true, "no chat provider named at all"],
       ["ollama", "", true, "an empty chat provider is not ollama-shaped either"],
       ["ollama-cloud", "ollama-cloud", true, "the cloud arm IS the chat's"],

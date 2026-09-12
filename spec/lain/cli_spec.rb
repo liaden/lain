@@ -104,15 +104,12 @@ RSpec.describe LainCLI do
         .to raise_error(Lain::CLI::UnknownProvider, /unknown provider "gemini", expected one of.*anthropic.*ollama/m)
     end
 
-    it "constructs a Provider::Bedrock for --provider bedrock" do
-      # Bedrock is env-configured, same as Anthropic above: Bedrock reads
-      # AWS_BEARER_TOKEN_BEDROCK / AWS_REGION at construction (offline, no
-      # request); stub them so the object can be built without the developer's
-      # shell leaking in or the run failing for a missing region.
-      provider = with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
-        backend(provider: "bedrock").provider
-      end
-      expect(provider).to be_a(Lain::Provider::Bedrock)
+    # Through the exe's own Backend, because that is where an operator's stale
+    # `--provider bedrock` actually lands: the name is refused, and the refusal
+    # names what to type instead.
+    it "refuses --provider bedrock, naming the valid set" do
+      expect { backend(provider: "bedrock").provider }
+        .to raise_error(Lain::CLI::UnknownProvider, /unknown provider "bedrock", expected one of.*anthropic.*ollama/m)
     end
   end
 
@@ -137,9 +134,9 @@ RSpec.describe LainCLI do
       expect(model).to eq("qwen3:8b")
     end
 
-    it "defaults to Bedrock's model when --provider bedrock and no --model" do
-      model = backend(provider: "bedrock", model: nil, max_tokens: 4096).context.model
-      expect(model).to eq("anthropic.claude-opus-4-8")
+    it "defaults to Anthropic's model when --provider anthropic and no --model" do
+      model = backend(provider: "anthropic", model: nil, max_tokens: 4096).context.model
+      expect(model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
     it "the chat command's --provider flag defaults to anthropic" do
@@ -148,9 +145,14 @@ RSpec.describe LainCLI do
   end
 
   describe "--help text" do
-    it "lists bedrock alongside anthropic and ollama in the --provider description" do
+    # The JOINED list, not each name: `include("ollama")` is satisfied by
+    # "ollama-cloud" and says nothing about an EXTRA name, which is the half
+    # that matters when a provider is removed.
+    it "lists exactly the providers Backend accepts in the --provider description" do
       description = described_class.commands.fetch("chat").options.fetch(:provider).description
-      expect(description).to include("anthropic").and include("ollama").and include("bedrock")
+
+      expect(description).to include(Lain::CLI::Backend::PROVIDERS.join(", "))
+      expect(description).not_to match(/bedrock/i)
     end
 
     it "still scopes the --api-base description to ollama" do
@@ -781,9 +783,9 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
   # anything comparing parsed options against defaults afterward -- the version
   # that cannot tell `--provider ollama` from silence.
   it "lets an explicit flag beat the environment" do
-    options = options_under({ "LAIN_PROVIDER" => "ollama" }, ["--provider", "bedrock"])
+    options = options_under({ "LAIN_PROVIDER" => "ollama" }, ["--provider", "ollama-cloud"])
 
-    expect(options["provider"]).to eq("bedrock")
+    expect(options["provider"]).to eq("ollama-cloud")
   end
 
   it "falls back to the built-in default when the environment says nothing" do

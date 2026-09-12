@@ -57,7 +57,7 @@ module Lain
   #   THIS FRACTION CAN EXCEED 1.0, and the guard against it is NOT the
   #   `UnknownModel` rescue below. {ContextWindow.default} carries
   #   {ContextWindow::CONSERVATIVE_FALLBACK} (8,192), so an unmatched model
-  #   divides by 8,192 rather than raising -- every Ollama id and most Bedrock
+  #   divides by 8,192 rather than raising -- every Ollama id and every
   #   ids are unmatched, and a real 32k local window then reads 4.0. The number
   #   published is honest about what the book was asked; it is the RENDERER that
   #   clamps, because "244%" is nonsense on a status bar where "100%" is not. A

@@ -139,8 +139,9 @@ RSpec.describe Lain::Provider::Ollama::Transport do
       expect(described_class.new(config_with).headers).to eq({})
     end
 
-    # The Bedrock idiom (`Provider::HTTP::Providers::Bedrock:28-33`): the header
-    # is built from Configuration, which is the one thing `Connection` can see.
+    # The vendored idiom, which `Provider::HTTP::Providers::Anthropic#headers`
+    # also follows: the header is built from Configuration, which is the one
+    # thing `Connection` can see.
     it "builds a bearer header from the configured key" do
       expect(described_class.new(config_with(ollama_api_key: key)).headers)
         .to eq("Authorization" => "Bearer #{key}")

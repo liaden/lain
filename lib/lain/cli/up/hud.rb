@@ -38,7 +38,7 @@ module Lain
         #
         # The percentage is CLAMPED because {Lain::ContextWindow.default}
         # answers an unmatched model with a conservative 8,192 -- which is
-        # every Ollama id and most Bedrock ids -- so a real 32k local window
+        # every Ollama id -- so a real 32k local window
         # publishes 4.0 and an unclamped filter renders `ctx:400%`. The
         # published number stays honest for a bench reading it; the bar is
         # where nonsense gets trimmed, because a pegged 100% reads as "full",

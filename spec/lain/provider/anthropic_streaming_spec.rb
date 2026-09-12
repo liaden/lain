@@ -63,14 +63,6 @@ RSpec.describe Lain::Provider::Anthropic, "streaming across a retry", :seam do
     end
   end
 
-  def bedrock_config_for(upstream)
-    zero_retry_config.tap do |config|
-      config.bedrock_api_base = upstream.url
-      config.bedrock_api_key = "test-token"
-      config.bedrock_region = "us-east-1"
-    end
-  end
-
   def types_of(response) = response.content.map { |block| block["type"] }
 
   describe "a block the retry does not reopen" do
@@ -125,26 +117,6 @@ RSpec.describe Lain::Provider::Anthropic, "streaming across a retry", :seam do
       expect(served).to eq(1)
       expect(types_of(response)).to eq(%w[text tool_use])
       expect(response.tool_uses.first["input"]).to eq({ "text" => "hi" })
-    end
-  end
-
-  # One class, two providers: {Provider::Bedrock} builds the same
-  # {Anthropic::StreamAssembler} over its own transport. That transport threads
-  # no request context at all -- no WAL frame, no retry object -- so a fix driven
-  # off the retry hook would not reach this arm. This is the criterion that says
-  # whether it did.
-  describe Lain::Provider::Bedrock do
-    it "discards the same orphaned block over the Mantle transport" do
-      response = nil
-      served = nil
-      StreamingUpstream.sse(severed_prefix(rich, frames: 6), whole(lean)) do |upstream|
-        response = described_class.new(config: bedrock_config_for(upstream)).complete(request)
-        served = upstream.requests.size
-      end
-
-      expect(served).to eq(2)
-      expect(types_of(response)).to eq(%w[text])
-      expect(response.tool_uses).to be_empty
     end
   end
 end

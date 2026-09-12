@@ -22,7 +22,7 @@ module Lain
       #
       # {ContextWindow::CLOUD_WINDOWS} covers shipped Ollama Cloud tags
       # authoritatively with no server asked. LOCAL ollama ids and arbitrary
-      # bedrock ids still fall to the guess, which is what keeps this class
+      # pulled ollama ids still fall to the guess, which is what keeps this class
       # necessary: `ollama.com` has no resident runner to probe, a local one
       # does, and only {Served} can state what it is actually serving.
       class WindowBook

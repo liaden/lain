@@ -15,12 +15,11 @@ module Lain
     # == Why this lives in spec/support and not lib
     #
     # It is a differential ORACLE, not a path: `#encode` here is the definition
-    # {Anthropic} and {Bedrock} are proven byte-identical against, and
-    # nothing in lib/ or exe/ ever constructs it -- {CLI::Backend} wires the raw
-    # arms for both hosted provider names. Shipping it in lib/ made `anthropic`
-    # (and, transitively, `aws-sdk-core`) a RUNTIME dependency of a gem that
-    # never calls either, and cost every process 23.2MB on top of the Faraday
-    # stack the real path already pays for. Reopening `Lain::Provider` from here
+    # {Anthropic} is proven byte-identical against, and nothing in lib/ or exe/
+    # ever constructs it -- {CLI::Backend} wires the raw arm for the hosted
+    # provider name. Shipping it in lib/ made `anthropic` a RUNTIME dependency of
+    # a gem that never calls it, and cost every process 23.2MB on top of the
+    # Faraday stack the real path already pays for. Reopening `Lain::Provider` from here
     # keeps the constant name the parity specs already use.
     #
     # It is still a real {Lain::Provider} and still drives the seven-gate
@@ -107,8 +106,8 @@ module Lain
 
       def capabilities = CAPABILITIES
 
-      # The oracle's cache economics -- every other Anthropic-shaped backend
-      # (Anthropic, Bedrock, Bedrock) answers with this exact object,
+      # The oracle's cache economics -- the Anthropic-shaped backend
+      # ({Provider::Anthropic}) answers with this exact object,
       # promoted off what used to be a per-provider `CACHE_PROFILE` Hash
       # constant here into {Lain::CacheProfile}, the neutral home.
       def cache_profile = CacheProfile::ANTHROPIC

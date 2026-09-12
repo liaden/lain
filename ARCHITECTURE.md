@@ -40,7 +40,6 @@ flowchart LR
   TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>tracing → NDJSON · Canonical<br/>persistent DAG · BM25 · AST search"]
   TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process exec daemon<br/>bench exec-comparison arm"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
-  TTY -->|HTTPS| BR["AWS Bedrock"]
   TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
   TTY -->|HTTPS · Bearer| OCL["ollama.com (--provider ollama-cloud)<br/>same native wire, someone else's server"]
   TTY -->|own fd, append-only| J[("$XDG_STATE_HOME/lain/sessions/&lt;hash&gt;/*.ndjson")]
@@ -625,10 +624,11 @@ is a value object rather than a bag of symbols precisely so `Capability::Guard` 
 compare 2 runs whose sets differ. There is no `:simulate` policy; client-side approximation of a
 missing server capability was considered and is not built.
 
-`Provider::Anthropic` is the official-SDK path kept as the correctness oracle.
-`Provider::AnthropicRaw` and `anthropic_encoding.rb` are the forked-transport path being
-byte-diffed against it. `Provider::Bedrock` with `bedrock_raw.rb`, and `Provider::Ollama`, are
-the other 2 live backends. `Provider::Mock` is the deterministic test double.
+`Provider::AnthropicReference` is the official-SDK path kept as the correctness oracle, and it
+lives in `spec/support/provider_oracles/` rather than `lib/`. `Provider::Anthropic` and
+`anthropic_encoding.rb` are the forked-transport path being byte-diffed against it, and the one
+`--provider anthropic` actually builds. `Provider::Ollama` is the other live backend.
+`Provider::Mock` is the deterministic test double.
 
 **The round trip is deployment-neutral, and `Provider::Ollama` is where that stops being an
 abstract claim.** It serves 2 arms — `--provider ollama` against a local `ollama serve`, and

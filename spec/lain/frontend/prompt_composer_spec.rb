@@ -521,7 +521,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     # CONSERVATIVE_FALLBACK divides by 8192 for every model no book carries --
-    # every Ollama id, most Bedrock ones -- so a reading past 1.0 is ordinary,
+    # every Ollama id -- so a reading past 1.0 is ordinary,
     # not a bug, and "134%" in a prompt is noise.
     it "clamps an occupancy past 1.0, which an unmatched model's fallback produces" do
       allow(agent).to receive(:occupancy).and_return(3.7)

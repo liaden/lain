@@ -797,7 +797,7 @@ RSpec.describe Lain::StatusFeed do
 
     # The rescue above is NOT what guards an unknown model: ContextWindow.default
     # answers one with its 8,192-token conservative fallback rather than raising,
-    # which is every Ollama id and most Bedrock ids. So a ratio above 1.0 is a
+    # which is every Ollama id. So a ratio above 1.0 is a
     # NORMAL published value, and the renderer is what clamps it (see up_spec).
     it "publishes a ratio above 1.0 for a model measured against the conservative fallback" do
       feed = described_class.new(path:)
