@@ -5,7 +5,10 @@ require "tmpdir"
 
 # The chunk's constraint, mechanised: parts of the review surface that do not
 # work out must be EASY TO DELETE, and a plan that says so and a suite that
-# proves it are different things.
+# proves it are different things. It has since outgrown that one chunk --
+# a unit a later audit found unreachable and deliberately left standing is the
+# same claim wanting the same proof -- so each row names the plan that decided
+# it.
 #
 # == Why a reference sweep alone is not the proof
 #
@@ -16,7 +19,32 @@ require "tmpdir"
 # constant NAME finds, because the name is exactly what is gone. So each row
 # here is also booted with its files removed; the negative control below
 # proves the NameError shape specifically, over a synthetic pair rather than a
-# real row, because no shipped capability has that shape anymore.
+# real row, because a real row is deletable by definition and the control has
+# to outlive the one it borrows.
+#
+# == What the map promises, and what it does not
+#
+# It promises each row is TRUE OF THE TREE: the paths exist, the markers are
+# still where the row says they are, the capability's constants are defined
+# inside the row rather than beside it, no file outside the row names them in
+# code, and the tree boots with the row removed.
+#
+# It does not promise the map is COMPLETE, in either of the two senses that
+# could be meant. A row's `edits` list is checked for staleness and never for
+# completeness -- a site nobody wrote down stays green while leaving whoever
+# deleted the capability with a file still talking to it. And the SET OF ROWS
+# is hand-written: a unit that fell out of reach last month is simply not here,
+# and nothing in this file can notice that it is missing.
+#
+# Both gaps have the same fix and it is not a spec. Deriving the row set means
+# a whole-tree parse resolving constants to QUALIFIED paths -- anything
+# matching leaf names reports live files as dead, which is how `Oracle::Router`
+# gets confused with `Frontend::Neovim::Router` -- and a check that expensive
+# is one that gets `--tag '~seam'`-ed out within a week, which is the argument
+# the section above already makes against the cheaper delete-and-run.
+# `bin/comment-census` is the established shape for a worklist a human runs on
+# demand. Until something like it exists for reachability, a row gets here the
+# way every row here got here: somebody audited the tree and wrote one.
 #
 # == And why the boot is not the whole proof either
 #
@@ -53,9 +81,11 @@ require "tmpdir"
 # exactly, so a new consumer is a red example rather than a silent extra site.
 # `edits` are files that must change but do NOT name a constant -- a require
 # path, a role symbol, a manual stanza -- so nothing but a literal marker can
-# find them. `forces` is the nesting the plan records as data. `untestable`
-# names, in words, why a row is exempt from the examples that need files.
-Capability = Data.define(:key, :constants, :files, :consumers, :edits, :forces, :untestable) do
+# find them. `forces` is the nesting the plan records as data. `plan` is the
+# planning document that decided this row was deletable, so a reader can find
+# the reasoning rather than the verdict alone. `untestable` names, in words,
+# why a row is exempt from the examples that need files.
+Capability = Data.define(:key, :constants, :files, :consumers, :edits, :forces, :plan, :untestable) do
   def own = files
   def edited = edits.keys
   def paths = files + consumers + edits.keys
@@ -63,6 +93,13 @@ Capability = Data.define(:key, :constants, :files, :consumers, :edits, :forces, 
 end
 
 module DeletionMap
+  # The two plans whose rows this map carries. The review surface's rows are
+  # the ones its own `## Deletion map` table is pinned against below; the
+  # verified-deletions plan ships no such table, which is why `plan` is a
+  # field rather than an assumption.
+  REVIEW_SURFACE = "planning/specs/chunk-review-surface.md"
+  VERIFIED_DELETIONS = "planning/specs/simplify-03-verified-deletions.md"
+
   # Every message BOTH review commands reach the outbox through, named once
   # because the two rows below would otherwise drift apart one marker at a time
   # -- which is the failure this whole map is written against. `/survey` adds
@@ -89,7 +126,7 @@ module DeletionMap
                                                         "set_review open_changeset set_thread"],
         "plugin/nvim/doc/lain.txt" => ["*:LainThread*", "*lain://thread*"]
       },
-      forces: %w[docent], untestable: nil
+      forces: %w[docent], plan: REVIEW_SURFACE, untestable: nil
     ),
     Capability.new(
       key: "docent", constants: %w[Docent],
@@ -111,7 +148,7 @@ module DeletionMap
         # a catalog entry without its roll-call name is another.
         "lib/lain/role/catalog.rb" => ["Role.new(name: :diff_docent"],
         "spec/lain/role_spec.rb" => [":merge_resolver, :diff_docent"]
-      }, forces: [], untestable: nil
+      }, forces: [], plan: REVIEW_SURFACE, untestable: nil
     ),
     Capability.new(
       key: "submit",
@@ -154,7 +191,7 @@ module DeletionMap
         "spec/lain/forge/intent_spec.rb" => ["promote pr_create pr_merge review_submit"],
         "spec/lain/forge/reconcile_spec.rb" => ['blind(action: "review_submit"']
       },
-      forces: [], untestable: nil
+      forces: [], plan: REVIEW_SURFACE, untestable: nil
     ),
     Capability.new(
       key: "github_pr",
@@ -172,11 +209,107 @@ module DeletionMap
         "spec/lain/cli/review_spec.rb" => ["reads a bare number as a pull request",
                                            "refuses --base against a pull request"]
       },
-      forces: %w[submit], untestable: nil
+      forces: %w[submit], plan: REVIEW_SURFACE, untestable: nil
+    ),
+    # The rows below are not the review surface's. They are units the
+    # verified-deletions plan found unreachable and deliberately did not
+    # remove, because whether they get WIRED instead is another plan's
+    # question -- which is exactly the state a map of removable capabilities
+    # is for: the cost of removing each one, machine-checked, standing ready
+    # for whichever way that decision goes.
+    Capability.new(
+      key: "disclosure",
+      # `Deferred` is spelled qualified and `Upfront` is not, and the leaf name
+      # is the whole reason: `Approval::Gate::Policy::Deferred` is a live class
+      # ending in the same segment, so a bare `Deferred` here would report four
+      # files of the approval gate as unlisted consumers of a toolset strategy
+      # they have never heard of.
+      constants: %w[Disclosure Upfront Disclosure::Deferred],
+      files: ["lib/lain/toolset/disclosure.rb", "lib/lain/toolset/disclosure/upfront.rb",
+              "lib/lain/toolset/disclosure/deferred.rb", "spec/lain/toolset/disclosure_spec.rb",
+              "spec/lain/toolset/disclosure/deferred_spec.rb"],
+      # Nothing renders a Toolset through an arm: no `lib/` file outside the
+      # bench sweep names either subclass, so the strategy seam has never been
+      # on a live request path.
+      consumers: [],
+      edits: { "lib/lain/toolset.rb" => ['require_relative "toolset/disclosure"'] },
+      # The map's only LOAD-TIME force, now that `diagnostics` -> `prefill` has
+      # been executed: `disclosure_sweep.rb` reads both arms into `ARMS` while
+      # its class body runs, so removing this row alone is a NameError at boot
+      # rather than a missing feature. This row's boot example is that
+      # coupling's only assertion -- it is green only because this line is
+      # right, and reddens with a NameError naming `Disclosure` the moment it
+      # is not. The search tool is the deferred arm's other half by design and
+      # has no use without it -- that second force is a product decision, the
+      # way every other `forces:` here is.
+      forces: %w[disclosure_sweep tool_search],
+      plan: VERIFIED_DELETIONS, untestable: nil
+    ),
+    Capability.new(
+      key: "tool_search", constants: %w[ToolSearch],
+      files: ["lib/lain/tools/tool_search.rb", "spec/lain/tools/tool_search_spec.rb"],
+      # Both are whole-toolset properties, and neither is reached by wiring:
+      # the registry builds the tool so the cross-tool examples can ask it
+      # questions, and the bounds sweep exempts it by fully-qualified name.
+      consumers: ["spec/support/tool_registry.rb", "spec/tool_bounds_discipline_spec.rb"],
+      edits: {
+        "lib/lain/tools.rb" => ['require_relative "tools/tool_search"'],
+        # Two roll calls that spell the tool's model-facing NAME and never its
+        # constant, so the sweep is blind to both: a posture's drop list and
+        # the parallel-safety table's opted-out set.
+        "spec/lain/mode/posture_spec.rb" => ['"request_review", "tool_search"'],
+        "spec/lain/tools/parallel_safety_spec.rb" => ["web_fetch web_search tool_search"]
+      },
+      forces: [], plan: VERIFIED_DELETIONS, untestable: nil
+    ),
+    Capability.new(
+      key: "disclosure_sweep", constants: %w[DisclosureSweep],
+      # The committed task fixtures are the sweep's and no other reader's, so
+      # they are files rather than an edit.
+      files: ["lib/lain/bench/disclosure_sweep.rb", "spec/lain/bench/disclosure_sweep_spec.rb",
+              "spec/fixtures/bench/disclosure/tasks.yml", "spec/fixtures/bench/disclosure/malformed.yml",
+              "spec/fixtures/bench/disclosure/malformed_tool.yml",
+              "spec/fixtures/bench/disclosure/missing_recorded_arm.yml"],
+      consumers: ["spec/tool_bounds_discipline_spec.rb"],
+      edits: { "lib/lain/bench.rb" => ['require_relative "bench/disclosure_sweep"'] },
+      forces: [], plan: VERIFIED_DELETIONS, untestable: nil
+    ),
+    Capability.new(
+      key: "adaptive_router",
+      # ONE row for two files because they are one unit: the router's only
+      # reference anywhere is the arm's `definition:` keyword default. And
+      # `Oracle::Router` is spelled qualified for the reason the disclosure row
+      # gives, doubled -- `Frontend::Neovim::Router` is a live class with that
+      # leaf name.
+      #
+      # The cost, stated so nobody trusts a check that is not there:
+      # `oracle/router.rb` is held on this list by a HUMAN and by nothing else.
+      # The DEFINED-here example cannot see it (no `module Oracle::Router` line
+      # exists to match), and the require-site example iterates `own`, so a path
+      # dropped from this list is never looked at -- delete it and the file
+      # stays green while the row stops deleting the router.
+      constants: %w[AdaptiveRouter Oracle::Router],
+      files: ["lib/lain/arm/adaptive_router.rb", "lib/lain/oracle/router.rb",
+              "spec/lain/arm/adaptive_router_spec.rb", "spec/lain/oracle/router_spec.rb"],
+      # A spec that names the router to assert the secret-read oracle never
+      # consults it -- a negative expectation is still a reference, and it
+      # stops compiling when the constant goes.
+      consumers: ["spec/lain/oracle/secret_read_spec.rb"],
+      edits: {
+        "lib/lain/arm.rb" => ['require_relative "arm/adaptive_router"'],
+        "lib/lain/oracle.rb" => ['require_relative "oracle/router"'],
+        # The architecture document counts this arm in a claim that goes FALSE
+        # the moment the file does, which is worth a marker; the roadmap's
+        # entry for the same unit is a worklist item the deletion answers
+        # rather than a claim it breaks, and pinning a marker into a document
+        # that churns weekly buys noise rather than safety.
+        "ARCHITECTURE.md" => ["arm/{single_thread,orchestrator_worker,dual_ledger,adaptive_router}.rb"]
+      },
+      forces: [], plan: VERIFIED_DELETIONS, untestable: nil
     ),
     Capability.new(
       key: "epic_gate",
-      constants: [], files: [], consumers: [], edits: {}, forces: [],
+      constants: [], files: [], consumers: [], edits: {}, forces: [], plan: REVIEW_SURFACE,
       # The one row that is a REVERT rather than a removal: it owns no file, and
       # "make RequestReview refuse `implementation` again" is a behaviour change
       # across that tool's implementation leg and EpicMount's wiring. Named here
@@ -195,7 +328,7 @@ module DeletionMap
   # survived until this pair existed -- is a red example rather than a green run
   # with fewer of them.
   TESTABLE = CAPABILITIES.select(&:testable?).freeze
-  KEYS = %w[thread docent submit github_pr].freeze
+  KEYS = %w[thread docent submit github_pr disclosure tool_search disclosure_sweep adaptive_router].freeze
 
   module_function
 
@@ -374,14 +507,25 @@ RSpec.describe "the deletion map", :seam do
     DeletionMap::TESTABLE
   end
 
-  it "covers the five rows the chunk's plan declares deletable" do
+  it "covers every row the two plans declare deletable" do
     expect(map.map(&:key)).to eq(DeletionMap::KEYS + ["epic_gate"])
     expect(testable.size).to eq(DeletionMap::KEYS.size)
   end
 
+  # `plan` is a bare String, so the two named here are a closed set rather than
+  # a convention: a THIRD value on a new row would fall outside every table
+  # block below with nothing to notice it. Adding a plan to this map is a
+  # deliberate act that changes this line.
+  it "carries rows from exactly the two plans that decided them" do
+    expect(map.map(&:plan).uniq).to contain_exactly(DeletionMap::REVIEW_SURFACE, DeletionMap::VERIFIED_DELETIONS)
+  end
+
   # Would have caught: the two lua modules named without their numeric prefixes.
+  # The plan a row cites is checked with the rest: a row whose reasoning has
+  # been renamed out from under it hands the next reader a verdict and no way
+  # to find out why.
   it "names no path the tree has not got" do
-    missing = map.flat_map { |cap| cap.paths.reject { |path| DeletionMap::ROOT.join(path).file? } }
+    missing = map.flat_map { |cap| (cap.paths + [cap.plan]).reject { |path| DeletionMap::ROOT.join(path).file? } }
 
     expect(missing).to be_empty,
                        "the map names files that do not exist: #{missing.inspect}. A row whose paths have " \
@@ -466,19 +610,30 @@ RSpec.describe "the deletion map", :seam do
   # drop, and it is the copy that was wrong both times. Pinned to this map from
   # the side that matters: a file somebody has to delete which the section does
   # not mention is a cost the reader is not told about.
+  #
+  # Only the review surface's OWN rows, and that is the honest scope rather
+  # than an oversight: it is the one plan that ships a file-level table to be
+  # pinned against. The rows carrying another plan are pinned by this spec
+  # alone, with `plan` naming where their reasoning lives -- so a second table
+  # somewhere else would earn a second block like this one, and until then a
+  # reader should not read this example as covering the whole map.
   describe "the chunk plan's own table" do
+    let(:rows) { map.select { |cap| cap.plan == DeletionMap::REVIEW_SURFACE } }
+
     let(:section) do
-      plan = DeletionMap::ROOT.join("planning/specs/chunk-review-surface.md").read
+      plan = DeletionMap::ROOT.join(DeletionMap::REVIEW_SURFACE).read
       plan[/^## Deletion map$.*?(?=^## )/m]
     end
 
     it "is where it says it is" do
-      expect(section).not_to be_nil, "no `## Deletion map` section in planning/specs/chunk-review-surface.md"
+      expect(section).not_to be_nil, "no `## Deletion map` section in #{DeletionMap::REVIEW_SURFACE}"
       expect(section.scan(/^\| /).size).to be >= 7
     end
 
-    it "names every file the map deletes" do
-      unmentioned = map.flat_map(&:own).reject { |path| section.include?(File.basename(path)) }
+    it "names every file the rows it owns delete" do
+      expect(rows.map(&:key)).to eq(%w[thread docent submit github_pr epic_gate])
+
+      unmentioned = rows.flat_map(&:own).reject { |path| section.include?(File.basename(path)) }
 
       expect(unmentioned).to be_empty,
                              "the plan's deletion map does not mention: #{unmentioned.inspect}. That is the " \
@@ -511,16 +666,18 @@ RSpec.describe "the deletion map", :seam do
     end
 
     # The control, and it is what says the example above is measuring
-    # anything -- but not against a real row. `diagnostics` -> `prefill` was
-    # the map's only class-body coupling, and this plan executed it; the two
-    # `forces:` rows still standing (`thread` -> `docent`, `github_pr` ->
-    # `submit`) were checked directly against `BootWithout` with only the
-    # forcing capability's own files removed, and both boot CLEAN -- their
-    # `forces:` records a product decision (a pane's messages have to become
-    # something; a source and its write path are owned together), not a
-    # load-time read. A control this durable cannot borrow a real row, or it
-    # breaks every time the row it borrowed is executed, which is exactly
-    # what happened here. So it gets its own subject, INSTALLED rather than
+    # anything -- but not against a real row. Not every `forces:` is this
+    # shape: `thread` -> `docent` and `github_pr` -> `submit` were checked
+    # directly against `BootWithout` with only the forcing capability's own
+    # files removed, and both boot CLEAN -- their `forces:` records a product
+    # decision (a pane's messages have to become something; a source and its
+    # write path are owned together), not a load-time read. `disclosure` ->
+    # `disclosure_sweep` IS this shape, and is the only row that is: the sweep
+    # reads both arms into `ARMS` while its class body runs. That is still not
+    # a subject for the control, because a row is deletable by definition --
+    # `diagnostics` -> `prefill` was the class-body coupling this control used
+    # to borrow, and the day it was executed the control broke. So it gets its
+    # own subject, INSTALLED rather than
     # shipped: `spec/fixtures/deletability_control/` holds `Forcer` and
     # `Dependent`, and `Dependent` reads `Forcer::VALUE` while ITS OWN class
     # body runs -- but neither is ever part of `lib/`, because a pair that
