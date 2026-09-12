@@ -8,27 +8,30 @@
 # instance's `#complete` round trip, so it is `extend`ed in rather than
 # disabled away. Behavior (including leak site 5: registering a provider
 # also registers its configuration options) is unchanged.
+#
+# `providers`/`resolve` were dropped (nothing at runtime resolves a provider
+# by slug -- `cli/backend.rb` uses a literal `case`), leaving only
+# `#register`. `registered_providers` stays private: it is `#register`'s own
+# backing store, not a lookup API.
 
 module Lain
   class Provider
     module HTTP
       class Provider
-        # `Provider.extend`s this, so `providers`/`register`/`resolve` land as
-        # class methods without inflating `Provider`'s own line count.
+        # `Provider.extend`s this, so `register` lands as a class method
+        # without inflating `Provider`'s own line count.
         module Registry
-          def providers
-            @providers ||= {}
-          end
-
           # Registering a provider also registers its configuration options
           # (leak site 5, kept -- see provider.rb's header).
           def register(name, provider_class)
-            providers[name.to_sym] = provider_class
+            registered_providers[name.to_sym] = provider_class
             Configuration.register_provider_options(provider_class.configuration_options)
           end
 
-          def resolve(name)
-            providers[name.to_sym]
+          private
+
+          def registered_providers
+            @registered_providers ||= {}
           end
         end
       end

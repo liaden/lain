@@ -44,7 +44,7 @@ RSpec.describe Lain::Provider::HTTP::Provider do
         end
       end
 
-      original_providers = described_class.providers.dup
+      original_providers = described_class.send(:registered_providers).dup
 
       begin
         described_class.register(provider_key, provider_class)
@@ -55,7 +55,7 @@ RSpec.describe Lain::Provider::HTTP::Provider do
           expect(config).to respond_to("#{key}=")
         end
       ensure
-        described_class.providers.replace(original_providers)
+        described_class.send(:registered_providers).replace(original_providers)
         deregister_options(option_keys)
       end
     end
@@ -87,7 +87,14 @@ RSpec.describe Lain::Provider::HTTP::Provider do
 
   describe "provider configuration schema" do
     it "keeps requirements as a subset of declared configuration options" do
-      described_class.providers.each_value do |provider_class|
+      # `registered_providers` is private (there is no public reader left --
+      # nothing at runtime resolves a provider by slug); reached via `send` so
+      # this claim covers every provider that actually registers, not just the
+      # ones this file happens to list in api_base_cases. Iterating the table
+      # instead would make this pass only because the "covers every registered
+      # provider" example below separately pins that table to the registry --
+      # a coupling that would let this one narrow in silence if that pin ever weakened.
+      described_class.send(:registered_providers).each_value do |provider_class|
         missing = provider_class.configuration_requirements - provider_class.configuration_options
         expect(missing).to be_empty, "#{provider_class.name} is missing options for requirements: #{missing.inspect}"
       end
@@ -101,7 +108,11 @@ RSpec.describe Lain::Provider::HTTP::Provider do
 
   context "with API base configuration" do
     it "covers every registered provider" do
-      expect(api_base_cases.keys).to match_array(described_class.providers.keys)
+      # `registered_providers` is private (there is no public reader left --
+      # nothing at runtime resolves a provider by slug), so this reaches past
+      # the boundary deliberately to keep the real cross-provider invariant:
+      # the table above must not silently fall behind what actually registers.
+      expect(api_base_cases.keys).to match_array(described_class.send(:registered_providers).keys)
     end
 
     it "registers an API base option for every provider" do
