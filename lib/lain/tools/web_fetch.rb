@@ -384,12 +384,12 @@ module Lain
       # moment the total would exceed the cap. So the cap bounds the actual read,
       # not just a post-hoc truncation of an already-buffered body.
       class ByteCap
-        class Reached < StandardError
+        class Reached < Lain::Error
         end
 
         # Aborts the read the same way {Reached} does, but because the body is
         # not text at all. Its message is how the refusal names the body.
-        class Refused < StandardError
+        class Refused < Lain::Error
         end
 
         attr_reader :status, :headers

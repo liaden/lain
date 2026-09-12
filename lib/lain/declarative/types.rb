@@ -55,7 +55,7 @@ module Lain
       # turn it into `Thor::Error` rather than a raw backtrace, exactly as `project.rb:18` and
       # `provider/unreachable.rb:25` already do for their own user-facing failures. `ArgumentError`
       # is not in that rescue's reach, so a `CoercionError < ArgumentError` would have bypassed it.
-      class CoercionError < ::Lain::Error; end
+      class CoercionError < Lain::Error; end
 
       # `Integer(value, 10)` for strings, matching the two existing call sites this file
       # generalizes (`lib/lain/core/transport/vsock.rb`'s `#decimal`,

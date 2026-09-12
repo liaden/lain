@@ -71,7 +71,7 @@ module Lain
       # The command outlived its deadline and its process groups were killed.
       # Carries the pre-kill capture, as `Mixlib::ShellOut::CommandTimeout` does,
       # so neither arm discards what the command said before it died.
-      class Timeout < StandardError; end
+      class Timeout < Lain::Error; end
 
       # A reason not to run, and the status a shell would report it under.
       Refusal = Data.define(:status, :message)

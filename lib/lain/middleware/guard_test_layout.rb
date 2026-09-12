@@ -125,7 +125,7 @@ module Lain
       # place of whatever broke. A tool the guard admitted fails as itself,
       # raise included, never relabelled a layout failure -- and it cannot
       # raise this, which is what keeps the rescue in {#call} that narrow.
-      class Unjudged < StandardError; end
+      class Unjudged < Lain::Error; end
       private_constant :Unjudged
 
       # The class only, for {RedactSecretReads#guarded}'s reason: a message can

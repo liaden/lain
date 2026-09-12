@@ -34,7 +34,7 @@ module Lain
       # A worker name its caller chose that git would refuse in a ref. Refused
       # rather than escaped, so the name an operator reads is the name on the
       # ref.
-      class Refused < ::Lain::Error; end
+      class Refused < Lain::Error; end
 
       # Closed and loud: a lane outside this set raises at construction, so a
       # third lane is a deliberate edit here rather than a silently unspellable

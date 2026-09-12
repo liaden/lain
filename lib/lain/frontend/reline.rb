@@ -78,7 +78,7 @@ module Lain
       # Raised rather than shadowing. A key silently stolen from the line
       # editor -- or from another lain action -- is a defect the human finds
       # only when a key they have muscle memory for stops doing what it did.
-      class KeyTaken < StandardError; end
+      class KeyTaken < Lain::Error; end
 
       class << self
         def registry = @registry ||= Registry.new
