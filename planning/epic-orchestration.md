@@ -1,11 +1,19 @@
 # Epic orchestration — research
 
-> Status: **reviewed; domain and wiring landed; the driver, the views and the bench remain.**
+> Status: **reviewed; domain, wiring, the driver and the views have landed. One bench command
+> remains.**
 > Refreshed 2026-09-11 against `main`. The review ran (`/critique`, recorded in
-> `.critique-epic-orchestration.md` at the repo root) and two chunks were planned and landed from
-> it: `chunk-epic-domain.md` (all 13 cards, 07-28/29) and `chunk-epic-wiring-intake-landing.md`
-> (26 of 27 cards by 08-02; T20, chat-path handback, deferred by ruling). What is left, sized, is
-> §3.12; the 2026-09-11 rulings are in §3.11.
+> `.critique-epic-orchestration.md` at the repo root) and three chunks were planned and landed
+> from it: `chunk-epic-domain.md` (all 13 cards, 07-28/29), `chunk-epic-wiring-intake-landing.md`
+> (26 of 27 cards by 08-02; T20, chat-path handback, deferred by ruling) and
+> `specs/chunk-implement-epic.md` (all 18 cards, 09-11), which closed §3.12: `/implement-epic`
+> drives an epic's approved issues to one PR, and the fleet and issue graph are live in the
+> `lain://status` buffer. The 2026-09-11 rulings are in §3.11.
+>
+> **What §3.2's altitude work left open:** the four decomposition-altitude arms, the lease grader
+> and the report builder all landed as library objects, but the `lain bench altitude` command that
+> would run them is **deferred** — assembling the driver headlessly needed a construction path
+> that chunk did not budget, and an arm wired differently from production measures something else.
 >
 > Original date 2026-07-28. Inputs: five parallel research passes (spec-driven-development
 > landscape, stacked-PR mechanics, lain substrate map, macOS portability audit, Linear API) plus

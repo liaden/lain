@@ -104,4 +104,83 @@ RSpec.describe "the living docs" do
       expect(doc).to include("`--compact-strategy`").and include("no Thor default")
     end
   end
+
+  # The same rule as the compaction strategies above, one level further in. A
+  # config key a reader accepts and the docs never name is a knob nobody can
+  # find, and a default restated in prose is the one that drifts from the
+  # constant it copies -- so both the keys and their defaults are read off the
+  # readers rather than transcribed here.
+  describe "the config tables docs/commands.md documents" do
+    let(:doc) { DocsNaming::ROOT.join("docs/commands.md").read }
+
+    it "names every [isolation] key beside the default the reader falls back to" do
+      Lain::Config::Isolation::DEFAULTS.each do |key, default|
+        expect(doc).to include("`#{key}`"), "docs/commands.md never names the [isolation] key #{key}"
+        expect(doc).to include("`#{default}`"),
+                       "docs/commands.md names #{key} without its default, #{default}"
+      end
+    end
+
+    # `TestLayout` keeps only `PRESET` and `KEYS` private, so the key list is
+    # read off the Data members -- which are exactly that key set -- while
+    # `PRESETS` is public and is read straight off the constant. Both halves are
+    # derived rather than transcribed, which is what makes this a guard: a
+    # preset or a key added to the code goes red here until the doc offers it.
+    it "names every [tests] key and every preset the table accepts" do
+      Lain::TestLayout.members.each do |key|
+        expect(doc).to include("`#{key}`"), "docs/commands.md never names the [tests] key #{key}"
+      end
+
+      Lain::TestLayout::PRESETS.each_key do |preset|
+        expect(doc).to include("`#{preset}`"), "docs/commands.md never names the #{preset} preset"
+      end
+    end
+
+    # The fact a table of keys cannot carry, and the one a reader most needs:
+    # `TestLayout::None` refuses nothing, so a project that declares no [tests]
+    # table is held to no layout at all. A doc that listed the keys without
+    # saying this would read as though the guard were on by default.
+    it "says layout enforcement is opt-in, so no [tests] table refuses nothing" do
+      expect(doc).to include("`[tests]`").and match(/opt-in/i)
+    end
+  end
+
+  describe "the commands docs/commands.md documents" do
+    let(:doc) { DocsNaming::ROOT.join("docs/commands.md").read }
+
+    # Derived from the command objects the registry actually holds, so a rename
+    # goes red here rather than leaving a section nobody can reach by typing it.
+    it "gives each session command this chunk registered its own section" do
+      [Lain::CLI::Command::Undo.new, Lain::CLI::Command::ImplementEpic.new].each do |command|
+        expect(doc).to include("### /#{command.name}"),
+                       "docs/commands.md has no section for /#{command.name}"
+      end
+    end
+
+    # The shell verbs are declared in `exe/lain`, which is a script rather than
+    # a loadable constant, so these are literal -- the compensating guard is
+    # that each one is spelled exactly as `lain <verb> help` prints it.
+    it "documents the shell commands this chunk added, with the flags they read" do
+      ["lain worktrees gc", "lain epic add", "lain epic split", "lain epic merge",
+       "lain epic land", "lain epic finish", "--mermaid", "--into", "--as",
+       "--discovered-from", "--width"].each do |named|
+        expect(doc).to include("`#{named}`").or(include(named)),
+                       "docs/commands.md never names #{named}"
+      end
+    end
+
+    # `/undo skip` is the remedy a refused undo offers by name, so a doc that
+    # described `/undo` without it would leave the reader stuck at the refusal.
+    it "names the skip form the refusal points at" do
+      expect(doc).to include("/undo skip")
+    end
+
+    # `lain epic land ISSUE SHA` was REMOVED: the commit is found from the
+    # anchor the implementation gate already approved, never named on the
+    # command line, so a sha nobody approved is unrepresentable rather than
+    # merely refused. A doc still offering it teaches a command that refuses.
+    it "does not offer the retired SHA argument to lain epic land" do
+      expect(doc).not_to match(/lain epic land \S+ SHA/)
+    end
+  end
 end

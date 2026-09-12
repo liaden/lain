@@ -43,7 +43,8 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--prompt` | unset | Seed the first question, then read the terminal as usual. |
 | `--nvim SOCKET` | off | Attach a Neovim frontend to an `nvim --listen` socket. |
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
-| `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in chat today** — see [Isolation](#isolation-flag). |
+| `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in plain chat** — see [Isolation](#isolation-flag). |
+| `--epic SLUG` | the sole epic in the home | Mount an epic: its documents become reviewable, [`/implement-epic`](#implement-epic) has something to work, and `lain://status` draws its graph. A home holding several epics with no slug here starts anyway, with a notice. |
 | `--grace` | `60` | Seconds a first Ctrl-C or SIGTERM grants a run before it is stopped. |
 | `--root PATH` | detected | Treat `PATH` as this run's project root instead of walking up from the working directory. An explicit root is intent, so it skips the walk's refusal set. |
 | `--cwd PATH` | **the root** | Run as if the working directory were `PATH`. Must lie under the root — and defaults to it, so `--root PATH` alone means "open that project" rather than "that root, from wherever the shell happens to be". |
@@ -126,8 +127,13 @@ with whatever `.lain/services.rb` declares, and hands it to the `Supervisor` the
 from. Two things are true and worth knowing before you reach for it:
 
 - **Only actor-mode subagents lease.** One-shot spawns and `@role/skill` lines never touch the
-  supervisor, and no chat path constructs an actor-mode subagent yet — so in `lain chat` the flag
-  resolves a real backend that nothing currently leases from. It is a wired seam, not a feature.
+  supervisor, and plain `lain chat` constructs no actor-mode subagent — so on its own the flag
+  resolves a real backend that nothing leases from. Actor-mode children are what
+  [`/implement-epic`](#implement-epic) runs, and the epic driver builds its own worktree isolation
+  over the epic's working branch rather than leasing through this flag.
+- **A chat's workers do hand their commits back.** A worker brings itself current first, and the
+  merge into the parent checkout is serialized across processes, so a `lain epic land` cannot
+  interleave with a live chat's merge. `[isolation]` tunes both halves.
 - **One concurrent isolated run per project.** The worktree root is keyed on the repository and
   worker ids restart at 1 per process, so a second `--isolation worktree` run in the same repo
   reaps the first's live checkouts. That is a deliberate trade — it is what lets a *crashed* run's
@@ -223,6 +229,64 @@ The accumulated cross-project dogfood queue, written by the `improvement_write` 
 
 `--project` filters to one project (a 12-hex-char hash, or a path resolved the same way).
 `--kind` filters to `knob`, `bug`, `missing-feature`, or `doc`.
+
+### lain epic
+
+The epic tier: the artifact home, the issue graph, and the sign-off queue. Every verb takes an
+optional `SLUG`, and with one epic in the home it is optional — with several, an ambiguous command
+refuses and names them rather than guessing.
+
+```bash
+lain epic status                                   # where one epic stands
+lain epic status --mermaid                         # the issue graph as mermaid source
+lain epic submit issue_plan --issue export-stream
+lain epic queue                                    # what is parked for sign-off
+lain epic approve DIGEST --reason 'read it'
+lain epic land export-stream                       # land one approved issue, locally
+lain epic finish                                   # every issue done -> one pull request
+```
+
+| Command | What it does |
+|---|---|
+| `lain epic status [SLUG]` | Ready issues and remaining waves, folded from the Journal. `--mermaid` renders the graph as mermaid flowchart source instead of the text report. Read-only and deterministic. |
+| `lain epic submit STAGE [SLUG]` | Submit an artifact to a stage's gate. `--issue` names the issue for the per-issue stages, `--digest` the changeset for `implementation`; `--provider`/`--model` wire the adjudicating spike. |
+| `lain epic queue [SLUG]` | The parked sign-offs, folded from the journals rather than read from a file. |
+| `lain epic approve DIGEST` / `lain epic deny DIGEST` | Append a terminal decision, draining the partition. Both take `--reason`. |
+| `lain epic add ID TITLE [SLUG]` | Add an issue discovered mid-flight. `--discovered-from` names the live issue it grew out of. |
+| `lain epic split ID [SLUG]` | Replace one issue with several. `--into` is required and takes comma-separated ids. |
+| `lain epic merge LEFT RIGHT [SLUG]` | Replace two issues with one. `--as` is required and names the id it takes; `--title` overrides the combined title. |
+| `lain epic land ISSUE_ID [SLUG]` | Land one approved issue onto the epic's working branch, pushing nothing. `--resume` finishes a landing that merged and then stopped. |
+| `lain epic finish [SLUG]` | Take an epic whose every issue is done to `main` as one pull request, then delete its remote branch. |
+
+The three graph verbs are journaled as a `graph_revision`, so a restructuring is part of the record
+rather than an unexplained change to a file.
+
+**`lain epic land` names an issue, never a commit.** It takes no SHA: the commit it lands is the one
+anchored when the implementation gate approved it, found rather than named. A commit nobody approved
+therefore has no way to be landed by typing it — unrepresentable rather than merely refused.
+
+### lain worktrees gc
+
+Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No
+flags.
+
+```bash
+lain worktrees gc
+```
+
+A checkout is kept unless its work is provably somewhere else. A lease whose owning process is still
+alive is live and kept; a checkout that is **dirty** is kept, re-locked as retained; and a lock whose
+reason cannot be read means keep. Before anything is removed, the committed `HEAD` — plus a snapshot
+of any dirty state — is anchored under `refs/lain/worker/*`, so a reaped tree still cannot cost a
+commit. An `epic/<slug>` branch is deleted only once its tip has moved from its marker, is an
+ancestor of `main`, and is checked out nowhere. How long a released checkout is kept is
+[`[isolation] retain_days`](#isolation).
+
+Runs take a per-repository lock, so a second concurrent `gc` does nothing and says so.
+
+**It also runs itself, once a day.** A `lain` launch spawns a detached `lain worktrees gc` when the
+stamp under `$XDG_STATE_HOME/lain/gc/` is older than 24 hours, logging beside it. The stamp is
+renewed only after a spawn succeeds, and two simultaneous launches start one run between them.
 
 ### lain review
 
@@ -360,6 +424,34 @@ List recorded sessions, newest first. `/sessions --all` includes ephemeral `.btw
 recorded turn. The Timeline is content-addressed, so nothing is destroyed and the old head stays
 reachable.
 
+### /undo
+
+`/undo` puts back the files the last file-changing turn wrote. `/undo skip` drops that turn without
+restoring anything, so the next `/undo` reaches the turn before it. Run it again to walk further
+back.
+
+**It reverts that one turn's own paths, and nothing else.** A snapshot is a delta rather than a
+picture of the whole tree, so undo restores each path the turn added, changed or deleted, and never
+touches a path the turn did not name. The conversation is untouched — [`/rewind`](#rewind) is what
+moves that.
+
+What it will not do, always refusing by name and before anything moves:
+
+| It refuses when | Because |
+|---|---|
+| a turn is still in flight, or a supervised worker is still running | a parked tool call could write after the files were put back |
+| a path changed since that turn | your later edit is not undo's to discard |
+| a path was first written in that turn under the write-set scope | nothing recorded what it held before |
+| a path is a symlink, is `.gitignore`'d, sits outside the project root, or is inside a nested repository | undo neither follows nor restores those |
+
+A refusal changes nothing at all and names every path it choked on, so the remedies are to put those
+back by hand and `/undo` again, or to `/undo skip` that turn entirely.
+
+**Scope decides how much was recorded.** Under the shadow-git scope a turn's change is the whole
+tree diff, so a file a `bash` command wrote is restored like any other. Under the write-set scope
+only lain's own tools are recorded, and the reply says so: *"Only files lain's own tools wrote were
+restored: that turn ran under the write-set scope, which records nothing a shell did."*
+
 ### /pin
 
 `/pin` marks a turn so compaction may not elide it. Bare `/pin` takes the last assistant turn;
@@ -489,6 +581,33 @@ open.
 `/goal <objective>` drives the agent toward a standing goal until it signals done. `/goal off`
 clears it.
 
+### /implement-epic
+
+`/implement-epic` works the mounted epic's approved issues to its working branch. Each issue runs as
+its own actor in a worktree cut from `epic/<slug>`, rebases itself, and lands serially through one
+queue; the issue graph and the live fleet are drawn in [`lain://status`](../README.md#the-cockpit).
+
+```
+/implement-epic [--width N]
+```
+
+`--width` is the only flag, and it takes a whole number above zero: how many issues may be in flight
+at once. It defaults to 2. Anything else is refused by name.
+
+The epic comes from `lain chat --epic SLUG`, not from an argument here. Two properties worth knowing
+before an unattended run:
+
+- **It stops between issues when the session is closing.** The loop asks the conductor whether it is
+  closed before each issue and while waiting on a gate, so a Ctrl-C stops the run at the next
+  boundary instead of mid-merge. Work already in flight is reported as unsettled rather than
+  abandoned silently.
+- **It is not bounded by a model-turn ceiling.** `/implement-epic` never enters an agent `ask`, so
+  neither [`/goal`](#goal)'s 5-iteration cap nor an agent's own 25-iteration tool-loop ceiling
+  applies to it. Its bound is issues, and by default there is no issue budget at all — it runs until
+  the epic is done, it is interrupted, or an issue stops it.
+
+A refusal stops **that issue**, never the whole run.
+
 ### /ruby
 
 Inspect live state. Bare opens a console, an expression prints its `inspect`, a path reads a file.
@@ -506,3 +625,65 @@ never launched: there is no run verb for it, and `/meta run` cannot reach one.
 ### /quit
 
 End the session. Same as a bare `quit`.
+
+---
+
+## Configuration tables
+
+Two tables in `.lain/config.toml` govern what the commands above do. Both are read by their own
+**strict** reader: an unknown key is refused by name, in one pass, listing the keys that do exist —
+a restricting table has to refuse a typo loudly rather than silently leave the restriction off.
+
+### [isolation]
+
+How a worker's checkout is kept, brought current, and merged. Every key has a default, so the
+table is optional and an absent one behaves exactly like the defaults below.
+
+| Key | Default | What it does |
+|---|---|---|
+| `retain_days` | `7` | Days a released worktree is kept before [`lain worktrees gc`](#lain-worktrees-gc) may reap it. A whole number of days, at least 1. |
+| `rebase_retries` | `1` | How many times a worker retries its self-rebase before handing back. At least 0 — and `0` is how a project turns worker self-sync off entirely. |
+| `diff_algorithm` | `histogram` | `histogram`, `patience`, `minimal`, or `myers`. Reaches git as `-X diff-algorithm=<value>`. |
+| `conflict_style` | `zdiff3` | `zdiff3`, `diff3`, or `merge`. Reaches git as `-c merge.conflictStyle=<value>`. |
+
+Both merge knobs ride **lain's own command line**, never your `git config`: a worker's merge should
+not depend on the machine it ran on, and it must not rewrite a setting the human chose for their own
+checkout. `rerere.enabled=false` is pinned on the same line for the same reason.
+
+```toml
+[isolation]
+retain_days = 14
+rebase_retries = 3
+```
+
+A bad value is refused naming the key and what would have been legal —
+`[isolation] retain_days = 0 is not a whole number of days, at least 1`.
+
+### [tests]
+
+A target project's test layout: where its source lives, where each level of test goes, and what is
+exempt. This is what holds lain's own writes — and its subagents' — to the layout a project already
+keeps.
+
+**Enforcement is opt-in.** A project with **no `[tests]` table is refused nothing**: the layout
+resolves to `TestLayout::None`, no write is ever refused for its path, and the session journals a
+single `test_layout_absent` record to say the guard ran with nothing to enforce. Nothing is
+auto-detected on your behalf, deliberately — a detected preset would impose level roots on a project
+that never chose them and start refusing its existing flat specs as strays.
+
+| Key | Default | What it does |
+|---|---|---|
+| `preset` | none — **required** once the table exists | `rspec`, `minitest`, `pytest`, or `cargo`. Sets every key below, and names the test-file shape (`_spec.rb`, `_test.rb`, a `test_` prefix, `.rs`). |
+| `source_roots` | the preset's — `lib` under `rspec` | The roots a test mirrors. Non-empty, relative, and non-overlapping. |
+| `level_roots` | the preset's — `spec/unit`, `spec/seam`, `spec/integration` under `rspec` | Level name to its root. A level name is lowercase; roots may not nest. `cargo` maps `unit` to `inline`, which only a preset that does not mirror may use. |
+| `exempt` | the preset's, which is always empty | Globs no refusal applies to. A preset exempts nothing by design — an exemption is a project's own decision to state. |
+
+```toml
+[tests]
+preset = "rspec"
+source_roots = ["lib", "app"]
+exempt = ["spec/fixtures/**"]
+```
+
+Omitted keys inherit the preset's, so the table above changes the source roots and the exemptions
+and keeps `rspec`'s level roots. A `[tests]` table naming no `preset` is refused, listing the four.

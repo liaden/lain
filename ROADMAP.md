@@ -1757,6 +1757,44 @@ XDG path relative, which put machine state back inside the user's repository)
        the queue is the only merge.
      - Two wave-1 cards shared `signoff_queue.rb`.
    - **Before executing:** commit the 2026-09-11 docs pass, which the plan's grounding cites.
+   - **✅ Landed 2026-09-11.** All 18 cards. The follow-ups it left are item 46.
+
+46. **Follow-ups from the epic-loop chunk (2026-09-11).** Each one is a ruling made during
+   execution, recorded here so a later chunk can pick it up rather than rediscover it. None blocks
+   anything that shipped.
+   - **`lain bench altitude` is the one deferred command.** The arms, the lease grader and
+     `Bench::CLI#altitude_report` landed as library objects, spec'd and ready; nothing runs them
+     from a command line. The design is smaller than first feared: `EpicDriver::Seams` is a public
+     `Data` with a public `#driver`, and `ToolsetBuild` and `EpicMount.for` already assemble
+     headlessly in three specs, so the work is a `Conductor::Null`, `grading:` threaded through
+     `Seams#driver`, and a bench-side builder that differs per epic entry only by its gate policy.
+     **`Wiring` is not touched and needs no new public seam.** The manual altitude integration
+     check is deferred with it.
+   - **Record a file's pre-image before its first write under `write_set`.** Until then, undoing
+     that first write refuses by name — the one case `/undo` cannot restore.
+   - **`/undo` plans with one `git cat-file` per changed blob:** 45 s on a 2,005-path turn, with
+     the REPL blocked throughout. Use `cat-file --batch`, or compare blob ids computed in Ruby.
+   - **The shadow store grows without bound and every session's first prime is cold** (3.86 s on
+     60k files), because each session carries its own index file. It needs its own `gc`, and
+     pruning of dead session index files.
+   - **`StatusView` takes 141 ms to refresh over 60k records.** Skip the re-fold when the session
+     files have not changed.
+   - **Coordinating `/undo` across two chats on one project.** Chat A can write between chat B's
+     prime and settle, so B's `/undo` may delete A's file. Documented limit today; the undo reply
+     lists every deletion.
+   - **`Wiring` sits at 124/125 and `AskHuman` at 125/125**, and `Tools::Holding` is a module
+     coupled to its host's ivar, extracted to buy one line. The next card to touch either class
+     has no headroom.
+   - **`Run#refused_before_merging?` lists refusal classes by hand**, so a refusal class added
+     later would wrongly advise `--resume`.
+   - **An unjournaled merge has no adoption path.** A merge whose handback record never reached
+     the journal refuses both `land` and `--resume`, with no command to adopt it — it needs a way
+     out, e.g. `lain epic land --adopt`.
+   - **An issue whose work spans several source files** has nowhere to say so: a plan declares one
+     `Subject:` line, and generated tests mirror that single file.
+   - **Unreachable anchors under `refs/lain/worker/*` are kept indefinitely**, the reaper's own
+     included. Expiring them waits for a later ruling: a lost worker commit costs more than the
+     refs do.
 
 ## Map of the documents
 

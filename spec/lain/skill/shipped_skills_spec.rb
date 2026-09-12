@@ -240,6 +240,93 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    # The stage each skill hands its artifact to. Written here as the skill's
+    # own claim, checked against {Epic::STAGES} below, so a renamed stage goes
+    # red rather than leaving four scaffolds naming a door that closed.
+    def ends_at
+      { "research-epic" => "research", "plan-epic" => "epic_plan",
+        "create-epic-issues" => "issue_plan", "iterate-epic" => "epic_plan" }
+    end
+
+    # The verbs `lain epic` really registers, read out of exe/lain's own
+    # subcommand block rather than listed here. exe/lain is a script and not a
+    # loadable constant, so this is the only way to hold a scaffold to the
+    # command surface a user actually has.
+    def registered_epic_verbs
+      source = File.read(File.expand_path("../../../exe/lain", __dir__))
+      start = source.index(/^  class Epic < Thor$/)
+      raise "exe/lain no longer declares `class Epic < Thor`; this derivation needs rewriting" if start.nil?
+
+      # Past the declaration line itself before looking for the next class, or
+      # the lookahead matches at offset zero and the body comes back empty --
+      # which reads as "nothing is registered" rather than as a broken scan.
+      rest = source[start..].sub(/\A.*\n/, "")
+      body = rest[/\A.*?(?=^  class )/m] || rest
+      verbs = body.scan(/^\s{4}desc "([a-z-]+)/).flatten.uniq
+      raise "exe/lain's Epic subcommand block parsed to no verbs; this derivation needs rewriting" if verbs.empty?
+
+      verbs
+    end
+
+    it "ends each epic skill at the submit stage it owns" do
+      with_empty_project do |renderer|
+        ends_at.each do |name, stage|
+          expect(Lain::Epic::STAGES.map(&:to_s)).to include(stage)
+          expect(renderer.render(name)).to include("lain epic submit #{stage}"),
+                                           "#{name} never names the submit stage it ends at"
+        end
+      end
+    end
+
+    it "names only verbs lain epic actually registers" do
+      with_empty_project do |renderer|
+        named = epic_names.flat_map { |name| renderer.render(name).scan(/lain epic ([a-z-]+)/).flatten }.uniq
+
+        expect(named).not_to be_empty
+        expect(named - registered_epic_verbs).to be_empty,
+                                                 "these skills name `lain epic` verbs nothing registers: " \
+                                                 "#{(named - registered_epic_verbs).join(", ")}"
+      end
+    end
+
+    # Restructuring is an edge rewrite, and the three operations do it. A
+    # scaffold telling an author to re-emit `epic.md` by hand is teaching the
+    # one move that produces a dangling edge.
+    it "has iterate-epic reach for the graph verbs rather than re-emitting epic.md by hand" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("iterate-epic")
+
+        %w[split merge add].each do |verb|
+          expect(scaffold).to include("lain epic #{verb}"), "iterate-epic never names `lain epic #{verb}`"
+        end
+      end
+    end
+
+    it "hands the reader on to the driver and the command that finishes an epic" do
+      with_empty_project do |renderer|
+        expect(renderer.render("create-epic-issues")).to include("/implement-epic")
+        expect(epic_names.map { |name| renderer.render(name) }.join).to include("lain epic finish")
+      end
+    end
+
+    # The generated failing tests are placed by mirroring ONE source file, and
+    # an Epic::Issue names none -- the plan does, on a `Subject:` line. A
+    # scaffold that never teaches it leaves the red step refusing by name.
+    it "teaches the plan's Subject: line, which the red step refuses without" do
+      with_empty_project do |renderer|
+        %w[plan-epic create-epic-issues].each do |name|
+          expect(renderer.render(name)).to include("Subject:"),
+                                           "#{name} never teaches the plan's Subject: line"
+        end
+      end
+    end
+
+    it "says an issue's criteria are approved together with its plan" do
+      with_empty_project do |renderer|
+        expect(renderer.render("create-epic-issues")).to match(/approved (with|together with) .{0,40}plan/i)
+      end
+    end
+
     it "names only stages, statuses, and marks the domain actually carries" do
       with_empty_project do |renderer|
         scaffold = renderer.render("plan-epic")

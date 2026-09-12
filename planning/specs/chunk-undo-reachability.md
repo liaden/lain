@@ -1,7 +1,22 @@
 # Chunk — undo reachability (what the modes chunk left)
 
-status: proposed 2026-09-11 -- requirements draft, not yet grounded or carded. Run `/create-plan`
-over it; every `file:line` below comes from the 2026-09-11 audit and must be re-grounded first.
+status: landed 2026-09-11. Carded into `chunk-implement-epic.md` and executed there, so what
+follows is the record of what was owed rather than a draft to plan from. Every `file:line` below
+is from the 2026-09-11 audit and has since moved.
+
+`/undo` is registered and reverts exactly the undone turn's own paths. The redesign that got it
+there is the one departure worth reading: a snapshot is a **delta**, not a whole workspace, so
+undo walks the `git diff-tree` rows between that turn's before-tree and after-tree and restores
+path by path. It refuses by name rather than guess when a path has no earlier record, and offers
+`/undo skip` to take the rest. The whole-workspace restore, and so `restart.rb`, is unchanged.
+
+The five smaller items owed alongside it also landed: the in-process snapshot log, the snapshot
+scope rebinding on a `/mode` flip, a resolved toolset digest on `Telemetry::ModeSwitch`, the
+`SignoffQueue::Decision` guard (fixed for roughly 58 untyped validators, not the ~30 estimated
+below), and the prompt's mode indicator, which now reaches `RunState` from the switchboard.
+
+**Deferred, and the one case `/undo` still refuses:** recording a file's pre-image before its
+first write under the `write_set` scope.
 
 ## Intent
 

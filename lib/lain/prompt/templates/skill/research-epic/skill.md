@@ -65,7 +65,7 @@ Structure it so `plan-epic` can decompose from it alone:
 
 ## Phase 4 — Request the research gate
 
-Submit `research.md` to the gate at the `research` stage. What happens next is the session's
+Submit `research.md` with `lain epic submit research`. What happens next is the session's
 gate policy, not your choice:
 
 - `interactive` — a human answers.

@@ -79,17 +79,6 @@ module Lain
         # collaborator to hide. `board:` reaches {ToolGuard} for the read
         # guard's ledger and queue -- the BOARD's, so this agent releases into
         # the run's one region ledger rather than a second nobody reads.
-        #
-        # THE GUARD DOES NOT REACH SUBAGENTS. {Tools::Subagent} builds its
-        # child through a bare `Agent.new` with no `instrumentation:`, so a
-        # child's tool middleware is EMPTY: neither this guard nor
-        # {Middleware::RefuseSecretWrites} runs for a subagent's tools. Read
-        # that as path-kept, content-lost rather than ungated -- `child_handler`
-        # composes its own gate, so a child's `read_file(".env")` still reaches
-        # the escalation ladder, but an ordinary-classified file's sensitive
-        # regions reach a subagent unmasked and flow back into the parent's
-        # Timeline. Closing it is a wiring change in `subagent.rb`, not a line
-        # here.
         def backing(backend, channel, timeline, chronicle:, board:)
           provider = spooled_provider(backend, chronicle:, channel:)
           journal_degradation(backend.context, provider, journal: chronicle.record_journal)

@@ -1,7 +1,13 @@
 # How lain merges its own workers' work
 
-status: planned, not started -- rulings added 2026-09-11 (branch base, worker self-sync,
-        worktree garbage collection); none of them is implemented
+status: landed 2026-09-11, through `specs/chunk-implement-epic.md`. All three of the 2026-09-11
+        rulings are implemented: a worker branches from a working branch rather than the parent's
+        HEAD, it rebases itself and verifies every patch survived before it hands back, and
+        worktrees, leases and anchors are reaped by `lain worktrees gc`. Read the sections below
+        as the reasoning behind the code, not as a proposal.
+        **One spelling here is wrong:** git has no `--conflict=zdiff3` flag. Lain passes
+        `-c merge.conflictStyle=zdiff3` and `-X diff-algorithm=histogram`, which keeps the
+        argument of the "on lain's command line, not in git config" section intact.
 written: 2026-08-02
 grounding: verified against git 2.43.0 in throwaway repos on 2026-08-02; every claim
            below marked VERIFIED was executed, not recalled. Code citations re-read

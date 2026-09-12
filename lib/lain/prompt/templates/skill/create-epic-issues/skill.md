@@ -97,7 +97,28 @@ not hold, and every id in a link line resolves.
 
 ## Phase 4 — Request the issue_plan gate
 
-Submit the issue write-ups at the `issue_plan` stage. Under `interactive` a human answers;
+Submit each issue's write-up with `lain epic submit issue_plan --issue ID`. The stage gates one
+issue's work, so it names the issue; submitting it bare is refused, and the refusal ends with the
+command that would have worked.
+
+**An issue's acceptance criteria are approved together with its plan, in this one gate.** They are
+not signed off separately and there is no later criteria gate: the `issue_plan` digest covers the
+plan's whole content, so editing the criteria — or the `Subject:` line below — reopens this gate
+rather than slipping past an approval that was given for different words.
+
+That plan, `plans/<id>.md`, carries the line the implementation step cannot start without:
+
+````text
+Subject: lib/exporter/stream.rb
+Level: unit
+````
+
+`Subject:` names the one source file this issue's generated failing tests mirror, relative to the
+project root; `Level:` is optional and picks the level root. A missing, duplicated or out-of-root
+subject is **refused by name** — the red step places a test by mirroring a source file, and an
+issue on its own names none.
+
+Under `interactive` a human answers;
 under `hands_off` it approves itself audibly; under `deferred` it refuses now and parks the
 question for a human to sign off later — the refusal is journaled as a real denial, no spike
 runs and **no model is asked** on the way.
@@ -113,3 +134,15 @@ spike is there to make the morning review cheaper, not to sign off for you.
 `research` or `epic_plan` sign-offs are still parked. Drain them with `lain epic queue` and
 `lain epic approve DIGEST` / `lain epic deny DIGEST`. `lain epic status [SLUG]` prints where
 the epic currently stands.
+
+## Where the epic goes after you
+
+Writing the issues up is the last authoring step. What follows is not yours to drive, and knowing
+the shape of it is what keeps an issue file honest about what an implementer will be handed:
+
+- **`/implement-epic`** works the approved issues to the epic's own branch, one actor per issue in
+  its own worktree, landing them serially. It reads exactly what you wrote here.
+- **`lain epic finish`** takes an epic whose every issue is done to `main` as one pull request.
+
+So an issue that only makes sense next to this conversation will reach an actor that does not have
+it. That is the property Phase 3 is checking for.

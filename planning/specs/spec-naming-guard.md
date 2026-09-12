@@ -1,7 +1,14 @@
 # Test layout roots + mirror guard — for the project lain is working on
 
-**Status:** re-scoped 2026-09-11. This is a **harness feature**, not a rule about lain's own
-`spec/` tree. It is not implemented; this doc is a requirements draft for `/create-plan`.
+**Status:** landed 2026-09-11, through `chunk-implement-epic.md`. This is a **harness feature**,
+not a rule about lain's own `spec/` tree, and lain's own specs stay governed by `CLAUDE.md`.
+
+Two things about what shipped differ from the draft below, and the code wins. **Enforcement is
+opt-in:** a target project with no `[tests]` table gets `TestLayout::None`, which refuses nothing
+and journals that it was absent — a detected preset would impose level roots on a project that
+never declared them and refuse its existing flat specs as stray. And the mirror is computed
+**relative to a declared source root**, with the path a refusal names read out of a Prism index of
+where the constant is defined, which retires the acronym problem the ACs below work around.
 
 The first draft (2026-08-04) was written against lain's own specs, and our local development
 rules stay in `CLAUDE.md`, which this does not change. The facts from that draft that are only

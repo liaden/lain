@@ -89,6 +89,8 @@ Typed at `you>`. Each dispatches lib-side, ahead of the skill middleware, with z
 * [/sessions](docs/commands.md#sessions): recorded sessions, newest first.
 * [/model](docs/commands.md#model): show the model in force, or switch the next turn's model.
 * [/rewind](docs/commands.md#rewind): move back N turns, or to a recorded digest.
+* [/undo](docs/commands.md#undo): put back the files the last file-changing turn wrote; `/undo skip` drops that turn instead.
+* [/implement-epic](docs/commands.md#implement-epic): work the mounted epic's approved issues to its working branch.
 * [/fork](docs/commands.md#fork): branch this session at its head into a new tmux window.
 * [/btw](docs/commands.md#btw): ask an ephemeral side-question in a popup, journalled then reaped.
 * [/keep](docs/commands.md#keep): promote the ephemeral `--btw` session into a durable one.
@@ -111,6 +113,8 @@ Offline and deterministic unless noted.
 * [lain consolidate](docs/commands.md#lain-consolidate): distill completed subagent lineages into memory.
 * [lain improve](docs/commands.md#lain-improve): record what would make lain itself better.
 * [lain improvements](docs/commands.md#lain-improvements): the accumulated cross-project dogfood queue.
+* [lain epic](docs/commands.md#lain-epic): the epic tier — artifact home, issue graph, sign-off queue, and landing.
+* [lain worktrees gc](docs/commands.md#lain-worktrees-gc): reap worker checkouts and anchors whose work is safe elsewhere.
 * [lain bench variance](docs/commands.md#lain-bench-variance): determinism and divergence across recorded runs.
 * [lain bench sweep](docs/commands.md#lain-bench-sweep): 5-arm retrieval eval, [recall@k](docs/GLOSSARY.md#bm25-recallk) over the gold corpus.
 * [lain bench plan-sweep](docs/commands.md#lain-bench-plan-sweep): shape x density sweep over a fixture plan.
@@ -393,7 +397,7 @@ resolved path when it starts. With `jq`
 on `PATH` you get that form; without it, the raw JSON. It is never blank and never an error.
 
 **The editor pane** needs nothing installed. `lain chat --nvim` injects its whole runtime into a
-bare `nvim --listen` at attach time, so the gem and the editor cannot drift out of sync. Six
+bare `nvim --listen` at attach time, so the gem and the editor cannot drift out of sync. Seven
 buffers exist:
 
 | Buffer | What it shows | Editable |
@@ -404,6 +408,7 @@ buffers exist:
 | `lain://request` | the exact prompt about to be sent | **yes** |
 | `lain://workspace` | the workspace projection, on demand | no |
 | `lain://diff` | pending edits, in nvim's own diff filetype | no |
+| `lain://status` | the mounted epic's issue graph, as a list and as mermaid, over the live fleet | no |
 
 `:LainStart` lays them out: journal down the left, timeline over inbox over request on the right.
 
@@ -701,12 +706,20 @@ transcript never lands in its own context. That resolver holds `read_file`/`edit
 which is what makes an unattended spawn safe. Handback never raises past its caller and never
 removes a worktree.
 
-Two honest limits, both recorded as tickets rather than papered over. Bench arms get handback at
-worker completion, because all four release per worker mid-run inside a live reactor; a
-`Supervisor`-adopted chat actor holds its lease until `Supervisor#stop`, so **`lain chat --isolation
-worktree` isolates workers but never hands their commits back** — and no chat path constructs an
-actor-mode subagent yet, so today it isolates nothing there either. And the worktree root is keyed
-on the repository, so one concurrent isolated run per project is a precondition, not a bug.
+**A worker brings itself current before it hands back.** It anchors its own `HEAD` first, rebases
+onto the working branch it was cut from, and verifies with `git cherry` that every patch survived —
+so a sibling that landed first cannot silently swallow this worker's commits. Handbacks are
+serialized per parent checkout by a lock taken on the repository's common git dir, which is one file
+shared by every worktree of the repo: the human's checkout and lain's own landing worktree take the
+same lock, so `lain epic land` cannot interleave with a live chat's merge. The retry count and the
+merge strategy are `[isolation]` in `.lain/config.toml`.
+
+Nothing is destroyed while it might still hold work. A dirty checkout is kept rather than released,
+and `lain worktrees gc` anchors a committed `HEAD` — plus a snapshot of any dirty state — under
+`refs/lain/worker/*` before it removes anything.
+
+One limit stands: the worktree root is keyed on the repository, so one concurrent isolated run per
+project is a precondition, not a bug.
 
 ### Orchestration topologies are values
 

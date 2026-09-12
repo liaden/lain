@@ -36,6 +36,17 @@ holds:
 - **Add** an issue discovered mid-flight. Nothing is removed; the caller may name the
   provenance, and if it does not, the issue's own declared provenance stands.
 
+Each one is a command, and the command is how you should reach for it:
+
+```bash
+lain epic split ID [SLUG] --into=other-id,another-id
+lain epic merge LEFT RIGHT [SLUG] --as=merged-id --title="What the merged issue is called"
+lain epic add ID TITLE [SLUG] --discovered-from=parent-id
+```
+
+Each is journaled as a `graph_revision`, so the restructuring is part of the record rather than an
+unexplained change to a file.
+
 Never edit the graph by rewriting `epic.md` by hand when one of the three applies. The
 operations do the edge rewrite; a hand edit is where a dangling edge comes from, and the error
 it eventually raises blames the author rather than the edit.
@@ -115,8 +126,8 @@ when you are mid-review.
 
 ## Phase 4 — Re-request the epic_plan gate
 
-A restructured epic is a new artifact with a new digest, so it needs a fresh sign-off at the
-`epic_plan` stage. An earlier approval was of a different graph.
+A restructured epic is a new artifact with a new digest, so it needs a fresh sign-off:
+`lain epic submit epic_plan`. An earlier approval was of a different graph.
 
 If the gate reports the stage is blocked, this epic still has parked sign-offs at an earlier
 stage; drain them with `lain epic queue` and `lain epic approve DIGEST` / `lain epic deny
