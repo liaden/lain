@@ -30,11 +30,11 @@ RSpec.describe Lain::CLI::Command::Surface do
   # library and hands it over, so a surface that read its own would be a second
   # read of the same tree -- the drift this class's one-snapshot promise exists
   # to deny.
-  def build_surface(root, approvals: nil)
+  def build_surface(root, approvals: nil, **epic)
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, model_switch:, mode_switch:, ledger:, snapshots:)
+                        status_feed:, model_switch:, mode_switch:, ledger:, snapshots:, **epic)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -143,8 +143,39 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
         "quit", "rewind", "undo", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
         "ruby", "mode", "goal", "meta", "introspect", "review", "review-submit", "survey",
-        "help", "approve", "model"
+        "implement-epic", "help", "approve", "model"
       )
+    end
+  end
+
+  # The epic driver is the one reader a chat outside an epic still holds: the
+  # refusing Null, so `/implement-epic` is typeable everywhere and refuses by
+  # name where there is nothing to drive, rather than being absent in some
+  # chats and present in others.
+  describe "the epic driver" do
+    it "defaults to the refusing Null, so a chat in no epic still registers the command" do
+      with_project do |root|
+        surface = build_surface(root)
+
+        expect(surface.env.epic_driver).to be(Lain::CLI::EpicDriver::Factory::Unmounted)
+        expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }.text)
+          .to include("/implement-epic")
+      end
+    end
+
+    # Built from the mount the SEAT resolved and handed in, never from a second
+    # {EpicMount.for}: two mounts over one journal would be two
+    # {Epic::Review}s, and the second one stops guarding in silence.
+    it "builds a driver for the epic the seat mounted, from that one mount" do
+      with_project do |root|
+        seams = Lain::CLI::EpicDriver::Seams.new(
+          mount: instance_double(Lain::CLI::EpicMount, slug: "alpha"), paths: Lain::Paths.new,
+          journal: Lain::Channel::Null.instance, conductor: instance_double(Lain::CLI::Conductor),
+          toolset_build: instance_double(Lain::CLI::Wiring::ToolsetBuild), asker: nil
+        )
+
+        expect(build_surface(root, epic: seams).env.epic_driver).to be_mounted.and(have_attributes(slug: "alpha"))
+      end
     end
   end
 

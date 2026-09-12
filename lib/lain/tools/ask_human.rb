@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+# The asker's own body includes {Holding}, so that module has to exist before
+# this class body runs -- the one place in this subtree where load order
+# dictates a require at the top rather than at the foot.
+require_relative "ask_human/holding"
+
 module Lain
   module Tools
     # Puts a question to the human and returns their answer -- the human as a
@@ -749,8 +754,10 @@ module Lain
         recorded
       end
 
-      # What a frontend polls to decide it must prompt the human.
-      def pending? = @outstanding.pending?
+      # What a frontend polls to decide it must prompt the human, and how a
+      # caller that stopped waiting lets its set go. Both are {Holding}'s, which
+      # is where the reasons are.
+      include Holding
 
       # The digests of every question whose answer has passed the sync gate
       # since the last hand-over, then cleared. The Agent's tool_result commit

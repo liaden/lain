@@ -256,7 +256,8 @@ module Lain
       def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil,
                issue_id: nil, criteria_digest: nil)
         digest = artifact.digest
-        answer, latency = await(asker.ask(artifact.gate_question))
+        asked = asker.ask(artifact.gate_question)
+        answer, latency = await(asked)
 
         # Journal FIRST, register second, never the other way round: a journal
         # that raises -- a full disk, or a contract refusing a nil digest --
@@ -267,6 +268,8 @@ module Lain
                        issue_id:, criteria_digest:)
         @approved << digest if answer.approved?
         answer.approved?
+      ensure
+        withdrawn(asker, asked)
       end
 
       def approved?(digest) = @approved.include?(digest)
@@ -349,6 +352,30 @@ module Lain
       # its caller handed down. A later path adds a VALUE here, never a column.
       def record(answer, **decided)
         @journal.record(GateDecision.new(approved: answer.approved?, answered_by: answer.surface, **decided))
+      end
+
+      # A WAIT THAT ENDED STOPS BEING OUTSTANDING, HOWEVER IT ENDED. The window
+      # closing is lain's decision rather than the human's, so the asker is
+      # still holding the set -- and an asker admits ONE outstanding set, so the
+      # next gate on it would be refused for the rest of the run while a stale
+      # inbox line offered a question that now decides nothing.
+      #
+      # It runs from an ENSURE, which is the whole of why it is correct: the
+      # wait ends three ways, and only one of them returns here. A timeout
+      # denies, an answer arrives -- and a caller polling its own interrupt
+      # STOPS this fiber from outside, unwinding it at the await, so a
+      # withdrawal written after the answer would never run on the one path
+      # that most needs it. An approved set is already resolved, so withdrawing
+      # it is a no-op and needs no branch.
+      #
+      # OPTIONAL and TOTAL. An asker that answers synchronously (the CLI's own
+      # prompt) has nothing to withdraw and need not offer the message; a
+      # withdrawal that fails must not overturn a verdict already journaled;
+      # and `asked` is nil when the ask itself raised, which abandons nothing.
+      def withdrawn(asker, asked)
+        asker.withdraw(asked) if asker.respond_to?(:withdraw)
+      rescue StandardError
+        nil
       end
 
       # An expired window denies through the same {Answer} the surfaces build,

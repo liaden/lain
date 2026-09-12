@@ -384,7 +384,7 @@ module Lain
 
       # One send rather than two at its call site, which is what keeps
       # #build_toolset inside Metrics/AbcSize.
-      def epic_mount(notice) = epic_seat.mount(notice)
+      def epic_mount(notice = nil) = epic_seat.mount(notice)
 
       # The run's ONE live {HumanReplies}, late: it is built in #build_repl,
       # strictly AFTER the toolset, so every seam that needs it takes this same
@@ -483,6 +483,8 @@ module Lain
       def assemble_surface(agent:, library:, tty:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              chronicle: @chronicle, status_feed: @status_feed, root: project.root, cwd: project.cwd,
+                             epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: channel,
+                                                         toolset_build:, asker: @ask_human, conductor: @conductor),
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 

@@ -9,16 +9,24 @@ RSpec.describe Lain::CLI::Command::Env do
       model_switch: instance_double(Lain::Context::ModelSwitch),
       mode_switch: instance_double(Lain::Mode::Switch),
       chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn),
-      snapshots: instance_double(Lain::Agent::SnapshotSlot) }
+      snapshots: instance_double(Lain::Agent::SnapshotSlot),
+      epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted }
   end
 
-  it "is a frozen value over the thirteen readers" do
+  it "is a frozen value over the fourteen readers" do
     env = described_class.new(**readers)
 
     expect(env).to be_frozen
     expect(env.to_h.keys)
       .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                model_switch mode_switch chronicle role_spawn snapshots])
+                model_switch mode_switch chronicle role_spawn snapshots epic_driver])
+  end
+
+  # `/implement-epic` reads the epic it drives through this one reader, and a
+  # chat in no epic holds the refusing Null rather than nil -- so the command
+  # never writes `if env.epic_driver` and never drives a chat that has no epic.
+  it "refuses a nil epic driver by name, so a chat outside an epic holds the Null instead" do
+    expect { described_class.new(**readers, epic_driver: nil) }.to raise_error(ArgumentError, /epic_driver/)
   end
 
   # `/undo` reads the snapshot log and root through this one reader, so a

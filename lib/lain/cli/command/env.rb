@@ -5,7 +5,8 @@ module Lain
     module Command
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
-                        :model_switch, :mode_switch, :chronicle, :role_spawn, :snapshots) do
+                        :model_switch, :mode_switch, :chronicle, :role_spawn, :snapshots,
+                        :epic_driver) do
         def initialize(**readers)
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \

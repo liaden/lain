@@ -12,3 +12,5 @@ end
 require_relative "epic_driver/plan_subject"
 require_relative "epic_driver/issue_tests"
 require_relative "epic_driver/issue_actor"
+require_relative "epic_driver/run"
+require_relative "epic_driver/factory"

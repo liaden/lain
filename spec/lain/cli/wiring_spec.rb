@@ -1891,6 +1891,27 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
+      # `/implement-epic` drives the SAME mount the tool and the editor read.
+      # The seat resolves it once, and the driver is built from that one mount:
+      # a second EpicMount.for would hand this chat a second Epic::Review over
+      # one journal, which stops guarding silently.
+      it "builds the command surface's epic driver from the seat's one mount" do
+        in_project("alpha") do |dir|
+          driver = run_in(dir).command_env.epic_driver
+
+          expect(driver).to be_mounted
+          expect(driver.slug).to eq("alpha")
+        end
+      end
+
+      # No epic resolved costs the chat its driver exactly as it costs it the
+      # tool -- and what it gets instead is the refusing Null, never nil.
+      it "hands it the refusing Null when no epic resolves, so the command still answers" do
+        in_project("alpha", "beta") do |dir|
+          expect(run_in(dir).command_env.epic_driver).not_to be_mounted
+        end
+      end
+
       # THE REASON THIS GROUP NEEDED MORE THAN IT HAD. This wiring
       # mounted the epic with `notify:` and `bindings:` only, so `changesets:`
       # and `surface:` stayed nil, `Implementation#hold` answered

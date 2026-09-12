@@ -23,7 +23,8 @@ module CommandEnvHelper
       model_switch: instance_double(Lain::Context::ModelSwitch),
       mode_switch: instance_double(Lain::Mode::Switch),
       chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn),
-      snapshots: instance_double(Lain::Agent::SnapshotSlot) }
+      snapshots: instance_double(Lain::Agent::SnapshotSlot),
+      epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted }
   end
 end
 

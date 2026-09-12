@@ -1216,6 +1216,60 @@ RSpec.describe Lain::Tools::AskHuman do
   # the retire on the way in are the ones an ordinary answer already gets, and
   # only this class -- the object that writes the record and builds the
   # tool_result -- asks what it is.
+  # An asker admits ONE outstanding set, so a caller that gave up waiting has to
+  # say so -- otherwise the set it abandoned refuses every later ask for the
+  # life of the asker, and the inbox goes on offering a question whose answer
+  # nobody is waiting for. {Approval::Gate} is the caller that needs it: its
+  # window closing is lain's decision, not the human's.
+  describe "#withdraw -- a set whose asker stopped waiting" do
+    it "frees the asker to ask again" do
+      Sync do
+        pending_set = tool.ask("which file?")
+        expect(tool.pending?).to be(true)
+
+        tool.withdraw(pending_set)
+
+        expect(tool.pending?).to be(false)
+        expect { tool.ask("which file, really?") }.not_to raise_error
+      end
+    end
+
+    # The Q stays in the record: a withdrawn question was genuinely asked, and
+    # the append-only store never loses that it was.
+    it "leaves the question it withdrew in the record" do
+      Sync do
+        asked = tool.ask("which file?")
+        tool.withdraw(asked)
+
+        expect(tool.last_question.digest).to eq(asked.digest)
+      end
+    end
+
+    it "does nothing to a set that was already answered" do
+      Sync do
+        asked = tool.ask("which file?")
+        answered(tool, "lib/lain.rb")
+
+        expect { tool.withdraw(asked) }.not_to raise_error
+        expect(tool.pending?).to be(false)
+      end
+    end
+
+    # Withdrawing one set must never release a DIFFERENT one that is genuinely
+    # outstanding -- the same rule `#reply` keeps by naming the set it answers.
+    it "leaves a later set outstanding when handed a stale one" do
+      Sync do
+        stale = tool.ask("which file?")
+        tool.withdraw(stale)
+        tool.ask("which file, really?")
+
+        tool.withdraw(stale)
+
+        expect(tool.pending?).to be(true)
+      end
+    end
+  end
+
   describe "a set nobody will ever answer" do
     def unanswerable(tool) = tool.reply(described_class::Unanswered.new, tool.last_question.digest)
 

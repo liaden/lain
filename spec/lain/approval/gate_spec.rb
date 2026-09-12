@@ -105,6 +105,70 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
+  # A GATE THAT DOES NOT OPEN WITHDRAWS ITS QUESTION. The window closing is
+  # lain's decision, not the human's: without a withdrawal the asker is left
+  # holding a set nobody will ever answer, so the NEXT gate on that asker is
+  # refused as outstanding and a stale inbox line offers a question that now
+  # decides nothing. That is what makes an unattended pause fatal to a run
+  # rather than merely slow.
+  describe "a gate that denies withdraws the question it asked" do
+    def recording_asker(withdrawn)
+      Object.new.tap do |asker|
+        asker.define_singleton_method(:ask) { |_question| Lain::Promise.new }
+        asker.define_singleton_method(:withdraw) { |promise| withdrawn << promise }
+      end
+    end
+
+    it "withdraws the set when the window closes" do
+      withdrawn = []
+
+      call(gate(timeout: 0.02), asker: recording_asker(withdrawn))
+
+      expect(withdrawn.size).to eq(1)
+    end
+
+    # The real asker, and the real consequence: a second gate must be askable.
+    it "leaves a real asker free to ask the next issue's gate, with nothing pending" do
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+      subject_gate = gate(timeout: 0.02)
+
+      Sync do
+        subject_gate.call(artifact(digest: "blake3:first"), asker:, stage: "implementation", epic_slug: "demo")
+        subject_gate.call(artifact(digest: "blake3:second"), asker:, stage: "implementation", epic_slug: "demo")
+      end
+
+      expect(asker.pending?).to be(false)
+      expect(decisions.size).to eq(2)
+      expect(decisions.map { |record| record["answered_by"] }).to eq(%w[timeout timeout])
+    end
+
+    # An asker with no withdrawal is still a legal asker: the CLI's own prompt
+    # answers synchronously and has nothing to withdraw.
+    it "asks nothing of an asker that does not offer a withdrawal" do
+      expect { call(gate(timeout: 0.02), asker: silent_asker) }.not_to raise_error
+    end
+
+    # A CANCELLED WAIT IS STILL A WAIT THAT ENDED. Stopping the fiber unwinds it
+    # at the await, so a withdrawal placed after the answer never runs -- and the
+    # set stays outstanding, refusing every later gate on that asker. Whoever
+    # gave up waiting is not always the timeout: a caller polling its own
+    # interrupt stops this fiber from outside.
+    it "withdraws the set when its wait is cancelled rather than answered" do
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+
+      Sync do |task|
+        asking = task.async do
+          gate(timeout: 30).call(plan, asker:, stage: "implementation", epic_slug: "demo")
+        end
+        sleep 0.1
+        asking.stop
+      end
+
+      expect(asker.pending?).to be(false)
+      expect { Sync { asker.ask("the next gate?") } }.not_to raise_error
+    end
+  end
+
   describe "approval is monotonic" do
     it "keeps approved? true through approve -> deny while both decisions are journaled" do
       subject_gate = gate(timeout: 0.02)

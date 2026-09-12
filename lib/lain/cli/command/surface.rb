@@ -42,7 +42,7 @@ module Lain
         # business: {Meta} reads the project's `.lain/` config from it.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, snapshots:, approvals: nil, root: Dir.pwd,
-                       cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null)
+                       cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null, epic: nil)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
           @root = root
@@ -53,7 +53,7 @@ module Lain
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                              model_switch:, mode_switch:, snapshots:)
+                              model_switch:, mode_switch:, snapshots:, epic_driver: epic_driver(epic, chronicle))
         end
 
         attr_reader :env, :goal_driver
@@ -79,18 +79,34 @@ module Lain
 
         private
 
+        # What `/implement-epic` drives, resolved HERE rather than in {Wiring}
+        # for the reason {ForkPoint} and {TmuxSurface} are built here:
+        # assembling the collaborators a typed line reaches is this object's
+        # whole job, and Wiring has no room left to hold another one.
+        #
+        # The mount inside the seams is the SEAT's -- never a second
+        # {EpicMount.for}, which would put a second {Epic::Review} over one
+        # journal and leave the regeneration guard guarding nothing. A chat in
+        # no epic, and every spec that lends no seams, gets the refusing Null,
+        # so the command is registered and answers everywhere.
+        def epic_driver(epic, chronicle)
+          return EpicDriver::Factory::Unmounted if epic.nil?
+
+          epic.driver(root: @root, library: @library, chronicle:)
+        end
+
         # The one Env assembly -- extracted so initialize stays the plain seeding
         # it reads as (the Metrics trip said so: extract, do not loosen). Only
         # `approvals` falls back, to the genuine {Env::NoApprovals} Null when the
         # session wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                         model_switch:, mode_switch:, snapshots:)
+                         model_switch:, mode_switch:, snapshots:, epic_driver:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new,
             approvals: approvals || Env::NoApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
-            model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:
+            model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:
           )
         end
 
@@ -115,8 +131,14 @@ module Lain
         # founds one, one splat here, rather than growing this line.
         def builtins
           [Quit.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
-           Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands]
+           Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands,
+           *epic_commands]
         end
+
+        # The commands of the epic this chat is seated in. Its own group rather
+        # than another entry above, for the reason #builtins gives: that list
+        # sits at Metrics/AbcSize's limit, so a new command founds a group.
+        def epic_commands = [ImplementEpic.new]
 
         # The commands that move this session through its own history: its
         # conversation (`/rewind`), the files its turns wrote (`/undo`), a
