@@ -62,9 +62,9 @@ local review_notes = {
   -- `Review::SIDES` -- so a fourth kind added on one side and not the other
   -- fails there rather than being refused, silently, at the far end of a wire.
   --
-  -- ONE highlight group for all three rather than a severity map:
-  -- `49_diagnostics.lua` projects these into nvim's diagnostic layer and owns
-  -- that map, and a second copy here would be free to disagree with it.
+  -- ONE highlight group for all three rather than a severity map: this
+  -- module only marks a note's kind inline, and owns no severity vocabulary
+  -- a second copy here could disagree with.
   MARKERS = { note = "● note", question = "● question", blocker = "● blocker" },
 
   -- buf -> the notes placed in it, each holding the extmark id that tracks its

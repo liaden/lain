@@ -12,10 +12,11 @@ require "tmpdir"
 # A sweep shows nothing points at a capability. It does not show the tree still
 # LOADS without it, and the two failures are not the same shape: a dangling
 # `require_relative` is a LoadError at boot, and a constant read in a class body
-# (`Prefill`'s rank map derives from `Projection::Diagnostics`') is a NameError
-# at boot -- neither of which any amount of grepping for a constant NAME finds,
-# because the name is exactly what is gone. So each row here is also booted with
-# its files removed.
+# is a NameError at boot -- neither of which any amount of grepping for a
+# constant NAME finds, because the name is exactly what is gone. So each row
+# here is also booted with its files removed; the negative control below
+# proves the NameError shape specifically, over a synthetic pair rather than a
+# real row, because no shipped capability has that shape anymore.
 #
 # == And why the boot is not the whole proof either
 #
@@ -72,30 +73,6 @@ module DeletionMap
   # file, because a dangling `require_relative` is a LoadError rather than a
   # missing feature and only a literal finds it.
   CAPABILITIES = [
-    Capability.new(
-      key: "diagnostics",
-      constants: %w[Diagnostics],
-      files: ["lib/lain/frontend/neovim/runtime/49_diagnostics.lua", "lib/lain/review/projection/diagnostics.rb",
-              "spec/lain/review/projection/diagnostics_spec.rb"],
-      consumers: [],
-      edits: {
-        "lib/lain/review.rb" => ['require_relative "review/projection/diagnostics"'],
-        # Found by DELETING, not by any sweep: the protocol history names the
-        # three `__lain.` entry points this lua module publishes, and
-        # `neovim_runtime_spec.rb`'s lockstep example asserts every name the
-        # history gives against the live runtime. It is a COMMENT, so a scan
-        # that strips comments -- the sweep below does -- cannot see it.
-        "lib/lain/frontend/neovim.rb" => ["__lain.set_review_diagnostics"]
-      },
-      forces: %w[prefill], untestable: nil
-    ),
-    Capability.new(
-      key: "prefill", constants: %w[Prefill],
-      files: ["lib/lain/review/prefill.rb", "lib/lain/review/prefill/finding.rb",
-              "lib/lain/review/prefill/sidecar.rb", "spec/lain/review/prefill_spec.rb"],
-      consumers: [],
-      edits: { "lib/lain/review.rb" => ['require_relative "review/prefill"'] }, forces: [], untestable: nil
-    ),
     Capability.new(
       key: "thread",
       constants: %w[ThreadView],
@@ -218,7 +195,7 @@ module DeletionMap
   # survived until this pair existed -- is a red example rather than a green run
   # with fewer of them.
   TESTABLE = CAPABILITIES.select(&:testable?).freeze
-  KEYS = %w[diagnostics prefill thread docent submit github_pr].freeze
+  KEYS = %w[thread docent submit github_pr].freeze
 
   module_function
 
@@ -290,8 +267,11 @@ module TreeSweep
 end
 
 # A capability removed from a throwaway copy of `lib/`, so the tree can be
-# booted without it. Hardlinked, so nothing here can write through to the tree
-# under test: an edited file is unlinked and rewritten, never opened in place.
+# booted without it. Hardlinked, so every write here is unlink-then-rewrite,
+# never open-in-place: `cp -al` makes the copy share an inode with the real
+# tree for every file it did not just create, and an in-place open or an
+# overwriting copy onto an existing path would edit the real file through
+# that shared inode rather than the copy alone.
 class BootWithout
   Boot = Data.define(:ok, :output)
 
@@ -309,6 +289,49 @@ class BootWithout
 
   def remove = FileUtils.remove_entry(@dir)
 
+  # Writes a fixture INTO this copy, never the real `lib/` the copy was
+  # hardlinked from -- the same guarantee `apply` already gives every
+  # capability's `edits`. Exists for one caller: the negative control below,
+  # which needs a load-time coupling no shipped capability has anymore
+  # (`diagnostics` -> `prefill` was the only one, and this plan executed it).
+  # A capability BORROWED for that purpose breaks the day it is executed too
+  # -- which is exactly what happened here -- so the control constructs its
+  # own pair instead, sourced from `spec/fixtures/deletability_control/`
+  # rather than shipped in `lib/`, where it would be permanently-dead
+  # production code the next reachability audit would flag for deletion.
+  #
+  # `source` is copied WHOLE, so the fixture's full shape is on disk in the
+  # copy; `requires` controls which of it the copy's own `lain.rb` actually
+  # loads -- omitting one is how the control simulates that half having been
+  # deleted, without needing a second call back into `apply`.
+  #
+  # Lands at `lib/<basename(source)>/` -- a name that collides with anything
+  # already under `lib/` (today, only `lain/` and `lain.rb` exist to collide
+  # with) is refused rather than silently overwritten: `FileUtils.cp` onto an
+  # EXISTING path opens it for writing rather than creating a new inode, and
+  # every such path here is hardlinked to the real tree, so overwriting one
+  # is the exact corruption this class exists to make impossible.
+  #
+  # @param source [String] a directory of `.rb` fixture sources
+  # @param requires [Array<String>] basenames (no extension) to require, in order
+  # @raise [RuntimeError] if the destination path already exists in the copy
+  def install(source, requires:)
+    name = File.basename(source)
+    dest = File.join(@dir, "lib", name)
+    FileUtils.mkdir_p(dest)
+    Dir.children(source).each do |file|
+      target = File.join(dest, file)
+      if File.exist?(target)
+        raise "#{target} already exists in the copy -- install refuses to overwrite a path this copy " \
+              "shares an inode with the real tree on; pick a fixture directory whose basename does not " \
+              "collide with anything under lib/"
+      end
+
+      FileUtils.cp(File.join(source, file), target)
+    end
+    append_requires(File.join(@dir, "lib", "lain.rb"), requires.map { |req| %(require_relative "#{name}/#{req}") })
+  end
+
   private
 
   def apply(cap)
@@ -325,6 +348,18 @@ class BootWithout
     File.delete(full)
     File.write(full, kept.join)
   end
+
+  # `cp -al` HARDLINKS every file into the copy, so an in-place append (`File.open(path,
+  # "a")`) writes through to the REAL file `BootWithout` was built to leave alone --
+  # `install`'s first version did exactly that and corrupted the real `lib/lain.rb` for
+  # every OTHER example that ran after it, in the same process and the next. `drop_lines`
+  # above already gets this right by unlinking first; this is the same shape for an
+  # append instead of a line removal.
+  def append_requires(path, lines)
+    content = File.read(path)
+    File.delete(path)
+    File.write(path, content + lines.map { |line| "#{line}\n" }.join)
+  end
 end
 
 RSpec.describe "the deletion map", :seam do
@@ -339,7 +374,7 @@ RSpec.describe "the deletion map", :seam do
     DeletionMap::TESTABLE
   end
 
-  it "covers the seven rows the chunk's plan declares deletable" do
+  it "covers the five rows the chunk's plan declares deletable" do
     expect(map.map(&:key)).to eq(DeletionMap::KEYS + ["epic_gate"])
     expect(testable.size).to eq(DeletionMap::KEYS.size)
   end
@@ -475,17 +510,40 @@ RSpec.describe "the deletion map", :seam do
       end
     end
 
-    # The control, and it is what says the example above is measuring anything.
-    # `Prefill`'s rank map derives from `Projection::Diagnostics`' while its
-    # class body runs, so the nesting the map records is not documentation --
-    # deleting the parent alone is a NameError at boot, with nothing to grep
-    # for, because the name is exactly what is gone.
+    # The control, and it is what says the example above is measuring
+    # anything -- but not against a real row. `diagnostics` -> `prefill` was
+    # the map's only class-body coupling, and this plan executed it; the two
+    # `forces:` rows still standing (`thread` -> `docent`, `github_pr` ->
+    # `submit`) were checked directly against `BootWithout` with only the
+    # forcing capability's own files removed, and both boot CLEAN -- their
+    # `forces:` records a product decision (a pane's messages have to become
+    # something; a source and its write path are owned together), not a
+    # load-time read. A control this durable cannot borrow a real row, or it
+    # breaks every time the row it borrowed is executed, which is exactly
+    # what happened here. So it gets its own subject, INSTALLED rather than
+    # shipped: `spec/fixtures/deletability_control/` holds `Forcer` and
+    # `Dependent`, and `Dependent` reads `Forcer::VALUE` while ITS OWN class
+    # body runs -- but neither is ever part of `lib/`, because a pair that
+    # exists only to be deleted in a test is exactly the permanently-dead
+    # production code this whole plan removes. `BootWithout#install` copies
+    # both into the boot copy and requires only `dependent` -- omitting
+    # `forcer`'s require is how this simulates its row having been executed,
+    # without needing a second capability applied after the fact.
     it "does NOT load when a forced dependent is left behind" do
-      tree = BootWithout.new([DeletionMap.fetch("diagnostics")])
+      fixture = DeletionMap::ROOT.join("spec/fixtures/deletability_control").to_s
+      tree = BootWithout.new([])
+      tree.install(fixture, requires: ["dependent"])
       booted = tree.boot
 
-      expect(booted.ok).to be(false), "deleting diagnostics without prefill was expected to break the boot"
-      expect(booted.output).to include("Diagnostics")
+      # Two different failure shapes share this one boolean, so the message
+      # naming Forcer is what tells them apart: a broken INSTALL (a missing
+      # fixture file, a typo'd require) raises here, in this process, before
+      # `boot` ever runs, rather than producing this `false`. Only a
+      # NameError raised BY THE COPY, naming exactly the constant `Dependent`
+      # reads and `dependent.rb` never got a chance to define, is the right
+      # reason.
+      expect(booted.ok).to be(false), "installing Dependent without Forcer was expected to break the boot"
+      expect(booted.output).to include("Forcer")
     ensure
       tree&.remove
     end

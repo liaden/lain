@@ -55,9 +55,7 @@ module Lain
       # "9": the changeset review surface. Render entry points
       #   __lain.set_review, __lain.open_changeset and __lain.set_thread;
       #   __lain.review_layout / __lain.review_place and the tabpage slots those
-      #   place through; __lain.review_notes_held; and the
-      #   __lain.set_review_diagnostics / __lain.refresh_review_diagnostics /
-      #   __lain.review_diagnostics_tracked projection. Commands
+      #   place through; __lain.review_notes_held. Commands
       #   :LainReviewOpen, :LainNote, :LainNoteDone and :LainThread. A config
       #   hooking protocol 3 must re-read one thing: b:lain_view no longer names
       #   a VIEW, since the diff pair's old side carries

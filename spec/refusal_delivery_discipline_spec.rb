@@ -40,7 +40,7 @@ require "strscan"
 # and closing parenthesis. Three things follow, and all three are the point:
 #
 #   - An `_G.__lain.*` RPC ENTRY POINT IS NOT IN THE SET. `set_thread`,
-#     `open_changeset`, `set_review_diagnostics` and their neighbours are
+#     `open_changeset`, `set_approval` and their neighbours are
 #     called by `nvim_exec_lua` from the Ruby side, where a raise legitimately
 #     becomes the RPC request's error and is the only way to answer one. They
 #     are top-level `function _G.__lain.name(...)` statements, never nested

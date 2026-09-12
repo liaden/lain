@@ -35,18 +35,8 @@ require_relative "review/handover"
 # `Source::HEAD_SIDE_ONLY` while its CLASS body runs.
 require_relative "review/opened_banner"
 
-# The tail is four independently deletable units, each one file plus its one
-# require line -- which is why the diagnostics pair below is nested rather than
-# routed through a `projection.rb` index: an index whose only member is
-# deletable is a second file to delete with it.
-
-# Last of the aggregate's readers, because `Projection::Diagnostics` cites
-# `ANNOTATION_KINDS` while its class body runs.
-require_relative "review/projection/diagnostics"
-
-# AFTER `projection/diagnostics`, whose rank map this one's derives from while
-# its class body runs -- so deleting that one forces deleting this too.
-require_relative "review/prefill"
+# The tail is two independently deletable units, each one file plus its one
+# require line.
 
 # The whole of the GitHub write path. After the aggregate it reads; nothing else
 # requires it and nothing reads it.
