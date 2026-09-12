@@ -268,9 +268,62 @@ above still exists at the path given. Drift and corrections:
   test-only-collaborator question of T9's shape, not a deletion. `review.rb:30`'s require stays.
 - **`spec/lain/epic/intake/delta_spec.rb` does not exist.** T2's AC 3 named it; the live epic
   intake delta coverage is in `spec/lain/epic/intake_spec.rb`.
+- **T6 lands two of its three removals. `Tool::SchemaValidator` stays.** The Grounding's
+  "24 of 25 tools declare an `input_model`, and the 25th is nullary" undercounted: there are 26,
+  and `lib/lain/bench/variance_fixtures.rb:34-41`'s `DosingLookup` is a live `lib/` tool with no
+  `input_model` and a *required* raw-schema field, driven through a real `Agent#ask`. Its comment
+  at `:29-33` says the raw schema is deliberate — byte-stability must not couple to
+  `Tool::Input`'s JSON-Schema generator — so converting it would break the committed-fixture byte
+  identity it exists to protect. "Zero spec references" was also a constant-name grep:
+  `tool_spec.rb`'s `describe "input validation"` is six examples that *are* the validator's spec,
+  reached through `#call`. Card AC 2 does not land. `Tool#dig` and the whole postcondition half
+  did land.
+- **The `Composable`/`Composed`/`Identity` trio and `monoid on: :>>` are KEPT** — panel ruling,
+  no follow-up card. They are spec-only in the sense T5 reported, but that was judged not to be the
+  test: `Composable` is what makes "a stack is itself a middleware" true rather than coincidental,
+  `Identity` is the Null Object the style rule mandates over an `if middleware` guard and nine spec
+  files seed with it, and deleting it takes the property test that makes the monoid law *checked*.
+  CLAUDE.md's "a property-tested monoid" and ARCHITECTURE.md would both become false — trading one
+  stale citation for two.
+- **T1 owns the two executed rows in `deletability_spec.rb`, not T13.** A map row certifying a
+  capability as removable is a claim about files that must still exist, so it has to change in the
+  same commit as the deletion or the tree is red. T1 removes the `diagnostics` and `prefill` rows
+  and re-points the negative control at another row with a non-empty `forces:`; T13 keeps all
+  additive work.
+- **T4 grew from five name-string sites to eighteen**, twelve of them YARD `{Tools::CoreExec}`
+  links in the exec seam's own files. And `core_exec_spec.rb` held the only `:vsock` block driving
+  a real attached daemon end to end, so no spec exercises the vsock transport after that card.
+- **T10 does NOT delete `spec/output_discipline_spec.rb`. Panel ruling, matching the
+  implementer's own recommendation.** The card's premise — that the Journal's own fd already
+  provides the guard's stated justification — is true but incomplete. The fd closes the
+  record-corruption path (verified by mutation: pointing `journal.rb:53` at `$stderr`, or splitting
+  the write outside the Monitor, both redden the new specs). It does not close the **cockpit**
+  path: `frontend/tty.rb` takes the alternate screen and drives Reline, so a `warn` from `lib/`
+  lands on fd 2 in that surface, unguarded and invisible to CI. The clinching evidence is that
+  `provider/http/logging/sink_logger.rb` exists *because* the guard forced someone to shim a gem
+  defaulting to `$stdout` — the rule doing work no scan can score. Cost is 0.997s against a
+  MAX-over-files wall, and the empty `ALLOWLIST` means 718 files at 100% compliance: a guard
+  working, not a dormant one. "Narrow it to the Journal's own writers" is not a real option —
+  `journal.rb` contains no terminal write, so a scan scoped to it asserts nothing.
+  **The card shrinks to a correction:** rewrite the spec's header to name the cockpit rather than
+  the NDJSON record, keep the three new journal/sink specs that pin the fd guarantee, fix
+  `CLAUDE.md:146` and `docs/GLOSSARY.md:554` (both state the false model), and correct
+  `spec/lain/tools/subagent/stagger_spec.rb:136-140`, which asserts stray stderr would interleave
+  into the NDJSON — it cannot. The deletion would have orphaned 33 citation lines across 29 files,
+  none of which go red.
 - **T7's lost store-growth assertion is coverage of the deleted object**, not of compaction:
   general store-growth-on-success and no-growth-on-refusal both survive in
   `spec/lain/compaction/derivation_spec.rb`. Nothing needs to move.
+
+**Landed on `main`, in order:** `7e95b507` T2, `b19ddf6f` T7, `7550c0f4` T11, `7ee4d091` T6,
+`5755fc3a` T10, `eef0a314` T5. Each was panel-reviewed, took a fix round, and went in green
+through the hook's full suite.
+
+**A known flake tripped a landing once and is not a regression:** `neovim_runtime_spec`'s
+`carries the wrapped command unwrapped, with the rendered lines unchanged`, documented in
+`docs/toolchain-traps.md` (added 2026-08-28) as failing in isolation while passing under the whole
+suite, with the note that a `pspec` will trip it occasionally too. It passed on the retry with no
+change to the tree.
 
 ## Waves
 
