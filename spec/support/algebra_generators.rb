@@ -19,12 +19,23 @@ module AlgebraGenerators
     @registered ||= {
       [Lain::Context::Combinator, :>>] => Combinators.composition,
       [Lain::Usage, :+] => Usages.addition,
-      [Lain::Timeline, :meet] => Timelines.render_meet,
-      [Lain::Timeline, :dominator_meet] => Timelines.dominator_meet,
-      [Lain::Timeline, :causal_meets] => Timelines.causal_meets,
+      [Lain::Timeline, :meet] => Timelines.render_meet(Lain::Timeline.empty),
+      [Lain::Timeline, :dominator_meet] => Timelines.dominator_meet(Lain::Timeline.empty),
+      [Lain::Timeline, :causal_meets] => Timelines.causal_meets(Lain::Timeline.empty),
       [Lain::Context::DedupeToolCalls, :call] => Spans.dedupe,
       [Lain::Context::PurgeFailedInputs, :call] => Spans.purge
-    }.merge(strategy_claims).merge(middleware_claims).merge(toolset_claims).merge(partition_claims).freeze
+    }.merge(strategy_claims, middleware_claims, toolset_claims, partition_claims, ext_timeline_claims).freeze
+  end
+
+  # The same three claims against the Rust-backed Timeline, which answers the
+  # same duck -- so the generators take the empty Timeline to grow from and one
+  # population builder and one witness serve both ports. Only the dominator
+  # knobs differ, and that difference is a shape of the FFI surface rather than
+  # of the structure; {Timelines.ext_dominator_meet} says how.
+  def self.ext_timeline_claims
+    { [Lain::Ext::Timeline, :meet] => Timelines.render_meet(Lain::Ext::Timeline.empty),
+      [Lain::Ext::Timeline, :dominator_meet] => Timelines.ext_dominator_meet(Lain::Ext::Timeline.empty),
+      [Lain::Ext::Timeline, :causal_meets] => Timelines.causal_meets(Lain::Ext::Timeline.empty) }
   end
 
   # {Lain::IntervalPartition}'s refinement meet, kept apart from `registered`
@@ -171,8 +182,8 @@ module AlgebraGenerators
     # spec/lain/timeline_spec.rb grows for this same group: `#meet` walks the
     # render edge only, and the fan-ins sit as leaves ON that tree, so what
     # this pins is that causal edges leave the render meet unperturbed.
-    def render_meet
-      forest = MeetSemilatticePopulations.grow([say(Lain::Timeline.empty, "root")], 30, "n")
+    def render_meet(empty)
+      forest = MeetSemilatticePopulations.grow([say(empty, "root")], 30, "n")
       10.times { |i| forest << MeetSemilatticePopulations.fan_in(forest.sample(3), "f#{i}") }
       { population: -> { forest } }
     end
@@ -182,13 +193,24 @@ module AlgebraGenerators
     # rebuilds the entire union-graph dominator tree every invocation. The
     # order predicate is dominance, which the group's default render-ancestry
     # predicate is strictly weaker than.
-    def dominator_meet
-      empty = Lain::Timeline.empty
+    def dominator_meet(empty)
       forest = MeetSemilatticePopulations.union_graph(empty)
       dominators = Lain::Timeline::Dominators.new(empty.store)
       { population: -> { forest },
         meet: ->(a, b) { a.dominator_meet(b, dominators:) },
         ancestor_of: ->(m, a) { dominators.dominates?(m.head_digest, a.head_digest) } }
+    end
+
+    # The dominator meet across the FFI boundary, held to the same laws over the
+    # same population. Two knobs move, and both are shapes of that surface
+    # rather than of the structure: every call across the boundary is one-shot,
+    # so there is no Dominators to thread, and the order predicate is asked of
+    # the timelines rather than of their digests.
+    def ext_dominator_meet(empty)
+      forest = MeetSemilatticePopulations.union_graph(empty)
+      { population: -> { forest },
+        meet: ->(a, b) { a.dominator_meet(b) },
+        ancestor_of: ->(m, a) { m.dominates?(a) } }
     end
 
     # The refutation's witness, and the single-valued READING that makes it a
@@ -211,8 +233,7 @@ module AlgebraGenerators
     # WOULD be the meet, and a meet is associative. `exhibits` then states the
     # registry's recorded reason head-on -- the answer's cardinality exceeds
     # one, so there is no greatest among them to derive.
-    def causal_meets
-      empty = Lain::Timeline.empty
+    def causal_meets(empty)
       x, y, mid = criss_cross(empty)
       { population: -> { [x, y, mid] },
         meet: ->(a, b) { a.checkout(a.causal_meets(b).first) },
