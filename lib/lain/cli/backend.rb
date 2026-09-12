@@ -135,7 +135,11 @@ module Lain
         # compaction. It also evaluates {#api_base} on the way in, so that flag
         # stays validated for EVERY provider.
         [@options[:provider], summarizer_name].each { |name| ollama_tier(name) }
-        num_ctx
+        # `--num-ctx`'s SHAPE only: the trained-maximum half needs a probe, and
+        # a constructor that probes is one {ChatLaunch#preflight} cannot run.
+        # Still AFTER {#api_base}, unchanged: a base URL the probe will talk to
+        # has to be a usable one before a window is judged against it.
+        num_ctx_request.requested
       end
 
       # Anthropic and Bedrock are env-configured and read their own credentials,
@@ -267,11 +271,13 @@ module Lain
       # `LAIN_NUM_CTX=0` in an `.envrc` was that crash for every session in the
       # directory.
       #
-      # Refused at CONSTRUCTION, with both summarizer flags and for their
-      # reason. MEMOIZED because {NumCtx}'s second refusal costs a round trip
-      # and {WindowBook} reads this on every re-resolution. It runs AFTER
-      # {#api_base}: a base URL it is about to talk to has to be usable first.
-      def num_ctx = @num_ctx ||= NumCtx.new(backend: self, value: @options[:num_ctx]).tokens
+      # The trained-maximum ceiling too, which only a running server publishes
+      # -- so {ChatLaunch#call} forces this, construction does not, and
+      # `Backend.new` opens no socket. {WindowBook} then reads it every turn.
+      #
+      # MEMOIZED, and so is the probe inside {NumCtx}: this memo holds an
+      # ACCEPTED window, that one the figure a REFUSED one is measured against.
+      def num_ctx = @num_ctx ||= num_ctx_request.tokens
 
       # `--api-base`, through {Endpoint}, and OPTIONAL the way `--num-ctx` is:
       # unset means "ollama's own default". {Endpoint} owns what an unusable one
@@ -385,6 +391,8 @@ module Lain
       def spawn_policy(role_name) = Role::Catalog.fetch(role_name).spawn_policy
 
       private
+
+      def num_ctx_request = @num_ctx_request ||= NumCtx.new(backend: self, value: @options[:num_ctx])
 
       # Refuses BEFORE construction: {Provider::Anthropic} validates the key
       # eagerly too, but as {Provider::HTTP::ConfigurationError}, which is not a

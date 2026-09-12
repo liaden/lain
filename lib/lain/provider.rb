@@ -84,8 +84,8 @@ module Lain
     # throws it away.
     #
     # Unlike the served window this is a property of the model FILE, knowable
-    # before any runner loads, which is what lets the refusal happen at
-    # construction rather than on the first turn. nil is a real answer here too:
+    # as soon as a server can be asked, which is what lets the refusal happen
+    # at launch rather than on the first turn. nil is a real answer here too:
     # a provider publishing no trained maximum must not block a launch.
     #
     # @param _model [String]

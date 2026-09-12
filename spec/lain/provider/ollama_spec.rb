@@ -1135,8 +1135,8 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     # THE SECOND PROBE, and the one with the worse failure. `/api/show` is
-    # reached EAGERLY at launch -- `CLI::Backend#initialize` -> `num_ctx` ->
-    # here -- whenever `--num-ctx` is set, so an ungated cloud arm fires a live
+    # reached at launch -- `CLI::ChatLaunch#call` -> `Backend#num_ctx` -> here
+    # -- whenever `--num-ctx` is set, so an ungated cloud arm fires a live
     # request before the chronicle is even open, to an endpoint nothing has yet
     # verified answers it. `model_metadata?` is a separate predicate from
     # `runner_status?` because these are two endpoints with two meanings, and

@@ -91,6 +91,11 @@ module Lain
         return preflight(&notice) if self.class.preflight?
 
         refuse_contradictory_flags!
+        # Ahead of everything that writes or spawns -- a salvaged resume, the
+        # reap, the record -- so a refused run leaves none of them behind. Not
+        # at construction: the probe behind it would make #preflight ask a
+        # server, which is the one thing that method promises it never does.
+        backend.num_ctx
         resumed = resumed_run(backend)
         resolve_project!
         schedule_gc
@@ -122,7 +127,12 @@ module Lain
       # here would stop the cockpit opening for a model server that is merely
       # down -- which is why the span policy resolves through
       # {Backend::SpanSummarizer.resolve} and not {Backend#pipeline_source} and
-      # its live round trip. `--resume`/`--fork` are absent for a third reason:
+      # its live round trip.
+      #
+      # That rule costs this list one refusal: a `--num-ctx` above the trained
+      # maximum can only be caught by asking, so {#call} refuses it and `lain
+      # up` learns of it from the pane rather than from here.
+      # `--resume`/`--fork` are absent for a third reason:
       # resolving one reads the record and may repair it, and two processes
       # would put that repair in the history twice.
       #

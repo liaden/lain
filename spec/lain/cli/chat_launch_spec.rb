@@ -782,15 +782,66 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
       expect { described_class.new(offline(api_base: "http://127.0.0.1:1")).preflight }.not_to raise_error
     end
 
-    # The `--num-ctx` probe is construction's ONE round trip -- bounded, and
-    # degrading to "no ceiling knowable" -- so an endpoint nothing is listening
-    # on still launches. This is the AC that separates construction failure
-    # from reachability failure.
+    # Bounded, and degrading to "no ceiling knowable" -- so an endpoint nothing
+    # is listening on still launches. This is the case that separates a flag
+    # that cannot be resolved from a server that cannot be reached.
     it "does not refuse an --api-base nothing answers on" do
       stub_request(:post, %r{/api/show}).to_timeout
 
       expect { described_class.new(offline(api_base: "http://10.255.255.1:11434", num_ctx: 8192)).preflight }
         .not_to raise_error
+    end
+
+    # `--num-ctx` was the one flag whose resolution asked a server: the trained
+    # maximum it is checked against is a fact only a running one has. That
+    # question belongs to {#call} now, so the rule above holds for every flag
+    # rather than for all but one.
+    it "asks no server anything with --num-ctx set either" do
+      WebMock.reset!
+      show = stub_request(:post, %r{/api/show}).to_timeout
+
+      expect { described_class.new(offline(api_base: "http://127.0.0.1:1", num_ctx: 8192)).preflight }
+        .not_to raise_error
+
+      expect(show).not_to have_been_requested
+    end
+
+    # Where that refusal went, and the ordering it keeps: only a running server
+    # publishes the number an unservable `--num-ctx` is checked against, so the
+    # LAUNCH asks and the pre-flight does not -- and it asks on the resume
+    # rule's reasoning, before the record exists, so a refusal orphans nothing.
+    def trained_at(context_length)
+      stub_request(:post, %r{/api/show})
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("model_info" => { "general.architecture" => "qwen3moe",
+                                                         "qwen3moe.context_length" => context_length }))
+    end
+
+    it "refuses an unservable --num-ctx before any journal is opened, naming the trained maximum" do
+      trained_at(262_144)
+      chronicle_factory = spy("chronicle_factory")
+      instance = described_class.new(offline(num_ctx: 999_999, journal: true), chronicle_factory:)
+
+      expect { instance.call { |_notice| nil } }
+        .to raise_error(Lain::CLI::Backend::UnservableWindow,
+                        /--num-ctx 999999 is above the model's trained maximum of 262144/)
+      expect(chronicle_factory).not_to have_received(:call)
+    end
+
+    # The same ordering against the other two things a launch leaves behind: a
+    # resume may SALVAGE, committing a Timeline and writing the session file for
+    # a torn recording, and the reap spawns a detached process. A refusal after
+    # either is residue a closed journal is not.
+    it "salvages no resume and schedules no reap when --num-ctx is refused" do
+      trained_at(262_144)
+      resume_factory = spy("resume_factory")
+      gc = spy("gc_schedule")
+      gc_schedule_factory = ->(**) { gc }
+      instance = described_class.new(offline(num_ctx: 999_999, resume: ""), resume_factory:, gc_schedule_factory:)
+
+      expect { instance.call { |_notice| nil } }.to raise_error(Lain::CLI::Backend::UnservableWindow)
+      expect(resume_factory).not_to have_received(:call)
+      expect(gc).not_to have_received(:call)
     end
   end
 end

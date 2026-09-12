@@ -187,7 +187,7 @@ RSpec.describe Lain::Provider::Ollama::Deployment::Cloud do
     expect(deployment.runner_status?).to be(false)
   end
 
-  # `CLI::Backend#initialize` calls `num_ctx` eagerly, and `NumCtx#tokens`
+  # `CLI::ChatLaunch#call` forces `Backend#num_ctx`, and `NumCtx#tokens`
   # reaches `trained_context_tokens` -> a POST to `/api/show`. Whether that
   # endpoint answers on ollama.com at all is one of the three facts this plan
   # refuses to assume, so `--num-ctx N` must not fire a live request to find

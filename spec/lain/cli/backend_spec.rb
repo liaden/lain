@@ -636,26 +636,66 @@ RSpec.describe Lain::CLI::Backend do
                                            }))
         end
 
-        it "refuses at CONSTRUCTION, naming the flag, the value and the maximum" do
-          trained(262_144)
+        it "is a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
+          expect(Lain::CLI::Backend::UnservableWindow).to be < Lain::Error
+        end
 
-          expect { ollama_backend(num_ctx: 999_999) }
+        # Construction is the one path every command takes, `lain up`'s
+        # pre-flight among them, and the trained maximum is a fact only a
+        # running server has -- so this question cannot be asked here at all.
+        it "opens no socket at construction" do
+          show = trained(262_144)
+
+          ollama_backend(num_ctx: 32_768)
+
+          expect(show).not_to have_been_requested
+        end
+
+        it "refuses at the first window resolution, naming the flag, the value and the maximum" do
+          trained(262_144)
+          backend = ollama_backend(num_ctx: 999_999)
+
+          expect { backend.context_window }
             .to raise_error(Lain::CLI::Backend::UnservableWindow,
                             "--num-ctx 999999 is above the model's trained maximum of 262144; " \
                             "no runner can serve a window larger than the weights were trained for")
         end
 
-        it "is a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
-          expect(Lain::CLI::Backend::UnservableWindow).to be < Lain::Error
+        # A refusal deferred to a reader is a refusal a reader can make TWICE:
+        # the window book re-resolves at the top of every turn. The refusal
+        # repeats, the round trip must not.
+        it "asks the server once however many times the window is re-resolved" do
+          show = trained(262_144)
+          backend = ollama_backend(num_ctx: 999_999)
+
+          2.times do
+            expect { backend.context_window }.to raise_error(Lain::CLI::Backend::UnservableWindow)
+          end
+
+          expect(show).to have_been_requested.once
         end
 
-        # Construction is what every command goes through, so a refused launch
-        # never reaches a chat -- and it must not have opened one on the way to
-        # deciding.
+        # The path every real run takes, and the one nothing covered: a REFUSED
+        # window re-probing is loud, an ACCEPTED one re-probing is not.
+        # {Middleware::ResolveWindow}'s re-resolution is the driver here, as it
+        # is in a turn.
+        it "asks the server once on the accept path too" do
+          show = trained(262_144)
+          window = ollama_backend(num_ctx: 32_768).context_window
+
+          2.times { window.reresolve }
+
+          expect(show).to have_been_requested.once
+        end
+
+        # The window book is resolved before the first turn is rendered, so a
+        # refused launch still never reaches a chat -- and it must not have
+        # opened one on the way to deciding.
         it "starts no chat" do
           trained(262_144)
+          backend = ollama_backend(num_ctx: 999_999)
 
-          expect { ollama_backend(num_ctx: 999_999) }.to raise_error(Lain::CLI::Backend::UnservableWindow)
+          expect { backend.context_window }.to raise_error(Lain::CLI::Backend::UnservableWindow)
           expect(a_request(:post, "http://localhost:11434/api/chat")).not_to have_been_made
         end
 
@@ -665,13 +705,13 @@ RSpec.describe Lain::CLI::Backend do
         it "accepts a value at the trained maximum" do
           trained(262_144)
 
-          expect { ollama_backend(num_ctx: 262_144) }.not_to raise_error
+          expect { ollama_backend(num_ctx: 262_144).context_window }.not_to raise_error
         end
 
         it "accepts a value below it" do
           trained(262_144)
 
-          expect { ollama_backend(num_ctx: 32_768) }.not_to raise_error
+          expect { ollama_backend(num_ctx: 32_768).context_window }.not_to raise_error
         end
 
         # Degrade, do not refuse. Only ollama publishes a trained maximum;
@@ -681,7 +721,8 @@ RSpec.describe Lain::CLI::Backend do
         it "does not block a launch on a provider that publishes no trained maximum" do
           expect do
             with_env("ANTHROPIC_API_KEY" => "sk-test") do
-              backend_for(provider: "anthropic", model: "claude-opus-4-5", max_tokens: 64, num_ctx: 999_999)
+              backend_for(provider: "anthropic", model: "claude-opus-4-5", max_tokens: 64,
+                          num_ctx: 999_999).context_window
             end
           end.not_to raise_error
         end
@@ -691,7 +732,7 @@ RSpec.describe Lain::CLI::Backend do
         it "does not block a launch when the server cannot answer" do
           stub_request(:post, "http://localhost:11434/api/show").to_raise(Faraday::ConnectionFailed)
 
-          expect { ollama_backend(num_ctx: 999_999) }.not_to raise_error
+          expect { ollama_backend(num_ctx: 999_999).context_window }.not_to raise_error
         end
 
         # A flag nobody set has nothing to check, and checking it anyway would
@@ -705,13 +746,12 @@ RSpec.describe Lain::CLI::Backend do
         end
 
         # The construction ORDER, which the ceiling's fix round made
-        # user-visible and which nothing pinned: `--api-base` is validated before
-        # `--num-ctx`, because the ceiling lookup is the first thing in
-        # construction that talks to a server and a base URL it is about to probe
-        # has to be a usable one first. Asserted through a run that gets BOTH
-        # flags wrong, since that is the only case in which the order is
-        # observable -- swap
-        # the two lines in `#initialize` and this reads InvalidCeiling instead.
+        # user-visible and which nothing pinned: `--api-base` is validated
+        # before `--num-ctx`, because a base URL a probe will talk to has to be
+        # a usable one before a window is judged against it. Asserted through a
+        # run that gets BOTH flags wrong, since that is the only case in which
+        # the order is observable -- swap the two lines in `#initialize` and
+        # this reads InvalidCeiling instead.
         it "refuses a bad --api-base before it asks that base for a ceiling" do
           expect { ollama_backend(api_base: "localhost:11434", num_ctx: 0) }
             .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /--api-base "localhost:11434"/)

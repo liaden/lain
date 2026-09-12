@@ -4,9 +4,9 @@ module Lain
   module CLI
     class Backend
       # A `--num-ctx` larger than any runner could ever serve. Refused at
-      # construction because the flag is well-formed, so nothing downstream
-      # refuses it and the number is silently adopted as the run's whole
-      # denominator instead. Measured: `--num-ctx 999999` on a model trained to
+      # launch because the flag is well-formed, so nothing downstream refuses
+      # it and the number is silently adopted as the run's whole denominator
+      # instead. Measured: `--num-ctx 999999` on a model trained to
       # 262,144 journaled `window=999999 provenance="probed"` while ollama
       # served 262,144.
       class UnservableWindow < Error; end
@@ -15,7 +15,7 @@ module Lain
       # own name. Its own object because looking a ceiling up off a live server
       # is not something a flag bag should do.
       #
-      # The two passes are ordered, and the order is load-bearing:
+      # Two ordered passes, the order load-bearing, each forced by its own caller:
       #
       # 1. **Non-positive is refused by {Ceiling}**, keeping the positivity rule
       #    for every token knob in one place. First, because `--num-ctx 0` is a
@@ -51,6 +51,11 @@ module Lain
           @value = value
         end
 
+        # @return [Integer, nil] the requested window; nil when the flag is
+        #   unset, which is a real answer and not a refusal
+        # @raise [InvalidCeiling] on a non-positive value
+        def requested = @requested ||= @value && Ceiling.new(flag: FLAG, value: @value).tokens
+
         # @return [Integer, nil] the requested window, unchanged -- this
         #   validates a request against a ceiling, it does not clamp one
         # @raise [InvalidCeiling] on a non-positive value
@@ -58,17 +63,22 @@ module Lain
         #   request is above it. Equal PASSES: the trained figure is what the
         #   weights allow, and it is the number an operator reads off
         #   `/api/show` and types in.
-        def tokens
-          @value && refuse_above_trained(Ceiling.new(flag: FLAG, value: @value).tokens)
-        end
+        def tokens = requested && refuse_above_trained(requested)
 
         private
 
-        def refuse_above_trained(requested)
+        def refuse_above_trained(request)
           maximum = trained_maximum
-          raise UnservableWindow, message(requested, maximum) if maximum && requested > maximum
+          raise UnservableWindow, message(request, maximum) if maximum && request > maximum
 
-          requested
+          request
+        end
+
+        # MEMOIZED so a refusal repeated per turn is not a round trip repeated
+        # per turn. `defined?`, not `||=`: nil is a real answer here.
+        def trained_maximum
+          @trained_maximum = probed_maximum unless defined?(@trained_maximum)
+          @trained_maximum
         end
 
         # A THROWAWAY provider, like {WindowBook#book}'s and for its reason: a
@@ -76,7 +86,7 @@ module Lain
         # without a client. `Ollama::Transport#model_details` rides the same
         # one-attempt, 2-second probe budget `/api/ps` does, so a refusal cannot
         # buy a hang.
-        def trained_maximum
+        def probed_maximum
           @backend.provider.trained_context_tokens(@backend.model)
         rescue UnknownProvider, MissingAPIKey, URI::Error
           nil

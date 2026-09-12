@@ -49,9 +49,10 @@
 # exactly like "no runner resident".
 #
 # A SECOND endpoint was added on the same launch path, for the same reason and
-# with the same default. `CLI::Backend` asks `/api/show` for the model's TRAINED
-# maximum at construction, to refuse a `--num-ctx` no runner could ever serve --
-# but only when the flag is actually set, so most examples never reach it. The
+# with the same default. `CLI::Backend#num_ctx` asks `/api/show` for the model's
+# TRAINED maximum, to refuse a `--num-ctx` no runner could ever serve -- but only
+# when the flag is actually set, and only when a reader forces it, so most
+# examples never reach it. The
 # default answers a body with no `model_info`, which means "no ceiling
 # discoverable": a provider that cannot state one must not block a launch, so
 # again nothing an example measures moves.
