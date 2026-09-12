@@ -28,7 +28,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
       kind: :spawn,
       body: { "prefix" => "fresh", "posture" => "schema", "only" => [],
               "spawned_from" => "blake3:head", "adoption" => ordinal,
-              "lifecycle" => Lain::Telemetry::SpawnLifecycle::LAUNCHED }
+              "lifecycle" => Lain::StatusFeed::SpawnLifecycle::LAUNCHED }
     )
     Lain::Event.new(kind: :spawn, from: "parent", to: nil,
                     payload_digest: payload.digest, body: payload.body)
@@ -44,7 +44,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
   # :spawn and that head as its causal parents.
   def completion(spawn, id: "done")
     message_event(id, body: { "result" => "the answer", "final" => "blake3:final",
-                              "lifecycle" => Lain::Telemetry::SpawnLifecycle::STOPPED },
+                              "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
                       causal_parents: [spawn.digest, "blake3:final"])
   end
 
@@ -53,14 +53,14 @@ RSpec.describe Lain::StatusFeed::Fleet do
   # digest, since Actor#launch takes `@spawn.digest` as `@address`.
   def farewell(spawn)
     message_event("farewell", body: { "text" => "actor stopped",
-                                      "lifecycle" => Lain::Telemetry::SpawnLifecycle::STOPPED },
+                                      "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
                               causal_parents: [spawn.digest, "blake3:head"])
   end
 
   # The reply an actor writes on EVERY turn it answers, not only its last.
   def settled(spawn)
     message_event("settled", body: { "text" => "here you go",
-                                     "lifecycle" => Lain::Telemetry::SpawnLifecycle::SETTLED },
+                                     "lifecycle" => Lain::StatusFeed::SpawnLifecycle::SETTLED },
                              causal_parents: [spawn.digest, "blake3:head"])
   end
 

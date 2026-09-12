@@ -606,7 +606,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(rename_argvs.size).to eq(1)
     end
 
-    it "defines no terminal predicate of its own -- FleetWindows asks Telemetry::SpawnLifecycle instead" do
+    it "defines no terminal predicate of its own -- FleetWindows asks StatusFeed::SpawnLifecycle instead" do
       path, = described_class.instance_method(:observe_close).source_location
       expect(File.read(path)).not_to include("def terminal?")
     end

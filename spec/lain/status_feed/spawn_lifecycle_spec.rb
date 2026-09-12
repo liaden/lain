@@ -5,7 +5,7 @@
 # inline because a one-shot completion and an actor farewell speak different
 # vocabularies. This object names the question once so a second reader
 # (`StatusFeed`) can ask the same thing instead of growing its own copy.
-RSpec.describe Lain::Telemetry::SpawnLifecycle do
+RSpec.describe Lain::StatusFeed::SpawnLifecycle do
   # A record whose `#payload` is the flat body Hash -- the shape both
   # FleetWindows and StatusFeed actually hand this object, and the one
   # `Telemetry::Message#payload` answers.

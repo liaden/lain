@@ -142,7 +142,7 @@ module Lain
       # as NOT pinned rather than as a stale pin nothing can retract.
       #
       # The direction is read as a STRICT boolean, matching what
-      # {Telemetry::Guards::SessionPin} enforces on the way out. Folding by
+      # {Telemetry::Carriers::SessionPin} enforces on the way out. Folding by
       # truthiness instead would trust more than the writer ever promised:
       # `"pinned": "false"` would rebuild as PINNED and `null` as an unpin, and
       # a salvaged or hand-edited journal is exactly the input this record type

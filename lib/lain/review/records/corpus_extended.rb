@@ -28,7 +28,7 @@ module Lain
         # directions: {Session::Replay} reads `paths` straight off a JSON line
         # and rebuilds through this constructor, so a null inside the list
         # replays into a path a resume would then walk. Hand-rolled for
-        # {Telemetry::Guards::Switches}' reason: neither declarative validator
+        # {Telemetry::Carriers::ModeSwitch}'s reason: neither declarative validator
         # can say "no blank member" about a list.
         #
         # It reports the LIST rather than the offending member, because the

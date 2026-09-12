@@ -356,7 +356,7 @@ RSpec.describe Lain::Tools::Subagent do
       final = tool.last_child.head_digest
       message = tool.last_message
       expect(message.kind).to eq(:message)
-      expect(message.body.fetch("lifecycle")).to eq(Lain::Telemetry::SpawnLifecycle::STOPPED)
+      expect(message.body.fetch("lifecycle")).to eq(Lain::StatusFeed::SpawnLifecycle::STOPPED)
       expect(message.causal_parents).to include(tool.last_spawn.digest)
       expect(message.causal_parents).to include(final)
     end

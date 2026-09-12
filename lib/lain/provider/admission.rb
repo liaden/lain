@@ -477,7 +477,7 @@ module Lain
         # It never polls, so there is no interval to name. Zero rather than a
         # borrowed default: it completes the duck an observer reads without
         # claiming a granularity this arm does not have. Nothing journals it,
-        # and {Telemetry::Guards::ProviderWait} would rightly refuse a zero
+        # and {Telemetry::Carriers::ProviderWait} would rightly refuse a zero
         # resolution if one ever reached a record.
         # @return [Float]
         def poll_interval = NO_WAIT

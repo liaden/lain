@@ -87,7 +87,7 @@ module Lain
         def message(parent, spawn, child, response)
           final = child.head_digest
           body = { "result" => response.text, "final" => final,
-                   "lifecycle" => Telemetry::SpawnLifecycle::STOPPED }
+                   "lifecycle" => StatusFeed::SpawnLifecycle::STOPPED }
           put(parent, kind: :message, from: correlation_of(child), to: correlation_of(parent),
                       causal_parents: [spawn.digest, final].compact, body:)
         end

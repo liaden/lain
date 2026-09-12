@@ -40,7 +40,7 @@ module Lain
       delegate :posture, :layers, :describe, to: :@current
 
       # The record is BUILT before the slot moves, and that order is the whole
-      # contract: {Telemetry::Guards::ModeSwitch} refuses a flip it cannot
+      # contract: {Telemetry::Carriers::ModeSwitch} refuses a flip it cannot
       # attribute, and assigning first would leave the harness in a mode the
       # Journal never recorded. It is also what makes a non-Mode argument die on
       # `.posture` while the old mode is still in force. Answering `@current`

@@ -47,7 +47,7 @@ module Lain
         # for two separate reasons that happen to share a rule.
         #
         # BLANK, because the downstream guard does not fire where it looks like
-        # it does: {Telemetry::Guards::ApprovalPending} validates presence, but
+        # it does: {Telemetry::Carriers::ApprovalPending} validates presence, but
         # its raise lands inside {Approval::Queue#record_evidence}, which
         # rescues and degrades. Measured, a blank name DELETES the
         # approval_pending record -- "something is waiting", the one state a

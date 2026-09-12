@@ -45,10 +45,10 @@ module Lain
       end
 
       # The other half of the same word: a `:message` that ends a spawn's
-      # lifecycle takes it back out. {Telemetry::SpawnLifecycle} answers
-      # whether this record is that message -- an actor's farewell and a
-      # one-shot's completion say so differently, and asking is what keeps one
-      # reading of a journal record rather than a copy of it per reader.
+      # lifecycle takes it back out. {SpawnLifecycle} answers whether this
+      # record is that message -- an actor's farewell and a one-shot's
+      # completion say so differently, and asking is what keeps one reading of
+      # a journal record rather than a copy of it per reader.
       #
       # WHICH member ended is the `causal_parents` join those records already
       # carry: an actor's farewell cites the address it took from its own
@@ -64,7 +64,7 @@ module Lain
       #   {Telemetry::Message} the actor path promotes it into
       # @return [void]
       def completed(record)
-        return unless Telemetry::SpawnLifecycle.new(record).terminal?
+        return unless SpawnLifecycle.new(record).terminal?
 
         Array(record.causal_parents).each { |cited| @members.delete(cited) }
         nil

@@ -321,7 +321,7 @@ module Lain
       # replays. It is pure Ruby with no IO, so it runs inside the same
       # yield-free window rather than widening it.
       #
-      # DUPLICATES {Telemetry::Guards::SessionRead} deliberately: this guards
+      # DUPLICATES {Telemetry::Carriers::SessionRead} deliberately: this guards
       # the in-memory read-set, which a bare Session mutates with no journal in
       # sight, and that one guards the record on its way to disk. Deleting
       # either reopens exactly one of those two boundaries.

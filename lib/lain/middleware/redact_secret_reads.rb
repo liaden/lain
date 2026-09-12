@@ -181,7 +181,7 @@ module Lain
         # This record describes ONE read, so the snapshot it acted on is what it
         # must report. The ledger answers "what does the run believe now", and
         # writing that here puts a false entry inside the very count
-        # {Telemetry::Guards::ReadRedacted}'s `released <= regions` validator
+        # {Telemetry::Carriers::ReadRedacted}'s `released <= regions` validator
         # exists to keep honest.
         def released = found - unreleased.length
       end

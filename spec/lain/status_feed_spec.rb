@@ -36,7 +36,7 @@ RSpec.describe Lain::StatusFeed do
   def spawn_completion(spawn)
     Lain::Event.new(kind: :message, payload_digest: "blake3:msg-completion",
                     body: { "result" => "the answer", "final" => "blake3:final",
-                            "lifecycle" => Lain::Telemetry::SpawnLifecycle::STOPPED },
+                            "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
                     causal_parents: [spawn.digest, "blake3:final"], from: "child", to: "parent")
   end
 
@@ -245,7 +245,7 @@ RSpec.describe Lain::StatusFeed do
       launch = spawn_event("a")
       feed << launch
 
-      feed << actor_reply(launch, lifecycle: Lain::Telemetry::SpawnLifecycle::SETTLED)
+      feed << actor_reply(launch, lifecycle: Lain::StatusFeed::SpawnLifecycle::SETTLED)
 
       expect(published["fleet"]).to eq([launch.digest])
     end
@@ -255,7 +255,7 @@ RSpec.describe Lain::StatusFeed do
       launch = spawn_event("a")
       feed << launch
 
-      feed << actor_reply(launch, lifecycle: Lain::Telemetry::SpawnLifecycle::STOPPED)
+      feed << actor_reply(launch, lifecycle: Lain::StatusFeed::SpawnLifecycle::STOPPED)
 
       expect(published["fleet"]).to eq([])
     end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Telemetry
+  class StatusFeed
     # The closed vocabulary a spawn's own lineage speaks about itself, and the
     # one question both live-fleet readers ask of it: has this spawn finished,
     # so a tmux window or a published roster can drop it?

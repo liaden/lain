@@ -514,11 +514,12 @@ module Lain
   end
 end
 
-# This file is `status_feed/`'s index. All five children reopen the class above,
-# so they load AFTER the class body -- `effect/handler.rb`'s ordering, for the
+# This file is `status_feed/`'s index. Every child reopens the class above, so
+# they load AFTER the class body -- `effect/handler.rb`'s ordering, for the
 # same reason (CLAUDE.md, Requires).
 require_relative "status_feed/publication"
 require_relative "status_feed/mode_state"
 require_relative "status_feed/journaled_usage"
 require_relative "status_feed/inbox"
+require_relative "status_feed/spawn_lifecycle"
 require_relative "status_feed/fleet"

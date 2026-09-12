@@ -38,7 +38,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
     it "marks the completion terminal in the closed vocabulary, beside the result and the child's head" do
       message = lineage.message(parent, lineage.spawn(parent), child, response)
 
-      expect(message.body.fetch("lifecycle")).to eq(Lain::Telemetry::SpawnLifecycle::STOPPED)
+      expect(message.body.fetch("lifecycle")).to eq(Lain::StatusFeed::SpawnLifecycle::STOPPED)
       expect(message.body.fetch("result")).to eq("child answer")
       expect(message.body.fetch("final")).to eq(child.head_digest)
     end
@@ -64,7 +64,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
 
     it "writes the mark an actor asks for, so only the actor path pays the byte change" do
       expect(lineage.spawn(parent, lifecycle: "launched").body)
-        .to include("lifecycle" => Lain::Telemetry::SpawnLifecycle::LAUNCHED)
+        .to include("lifecycle" => Lain::StatusFeed::SpawnLifecycle::LAUNCHED)
     end
 
     # The same asymmetry the lifecycle mark is written under: a one-shot is
@@ -170,7 +170,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       note = lineage.note(parent, from: "a", to: "b", text: "narrow to RCTs", causal_parents: [])
 
       expect(note.body).to eq("text" => "narrow to RCTs")
-      expect(Lain::Telemetry::SpawnLifecycle.new(note)).not_to be_terminal
+      expect(Lain::StatusFeed::SpawnLifecycle.new(note)).not_to be_terminal
     end
 
     it "writes the mark when one is given" do

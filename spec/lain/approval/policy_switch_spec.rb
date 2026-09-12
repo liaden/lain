@@ -104,7 +104,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
       expect(case wrapped("researcher") when Lain::Session then :matched else :did_not end).to be(:did_not)
     end
 
-    # A blank requester cannot be left to {Telemetry::Guards::ApprovalPending}:
+    # A blank requester cannot be left to {Telemetry::Carriers::ApprovalPending}:
     # its raise lands inside {Approval::Queue#record_evidence}, which RESCUES
     # and degrades. Measured end-to-end, a blank one therefore deletes the
     # approval_pending record -- "something is WAITING", the one state a human

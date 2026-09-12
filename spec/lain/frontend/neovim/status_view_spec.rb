@@ -52,7 +52,7 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
 
   def completion(spawn)
     Lain::Event.new(kind: :message, payload_digest: "blake3:msg-done", from: "child", to: "parent",
-                    body: { "result" => "ok", "lifecycle" => Lain::Telemetry::SpawnLifecycle::STOPPED },
+                    body: { "result" => "ok", "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
                     causal_parents: [spawn.digest, "blake3:final"])
   end
 
