@@ -277,10 +277,10 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   end
 
   # The bound was measured by calling Process.clock_gettime directly,
-  # bypassing the `clock:` injection every sibling seam takes
-  # ({Middleware::Timeout}, {CLI::Shutdown}, {CLI::Conductor}). These examples
-  # are only possible once it is injected -- a 300s bound that expires
-  # instantly is a statement that the real clock is not being read.
+  # bypassing the `clock:` injection every sibling seam takes -- the same
+  # injected-clock idiom {CLI::Shutdown} and {CLI::Conductor} use. These
+  # examples are only possible once it is injected -- a 300s bound that
+  # expires instantly is a statement that the real clock is not being read.
   describe "the timing seam" do
     it "bounds the wait against the injected clock, never the real one" do
       clock, readings = scripted_clock(0.0, 1_000.0)

@@ -355,12 +355,12 @@ Faraday middleware can wrap the second and not the first, so it cannot be where 
 instrumentation lives. The model phase is the one layer at which both transports look identical
 to the bench, which is why retries, cost accounting, and cache instrumentation live there.
 
-**`Middleware::Timeout` cannot interrupt**, and its doc comment says so at length. Interrupting
-arbitrary Ruby needs a watchdog thread, which the no-threads posture rules out. It publishes a
-monotonic `env[:deadline]` a cooperative downstream may honor and measures elapsed time at the
-boundary, raising `Exceeded` after the fact. Anything you write into a middleware runs inside the
-tool's own fiber, so a non-yielding middleware stalls the reactor and nothing can stop it: see
-[`docs/concurrency.md`](docs/concurrency.md).
+**No middleware here can interrupt what runs inside it.** Interrupting arbitrary Ruby needs a
+watchdog thread, which the no-threads posture rules out, so a middleware wanting to bound how long
+a downstream takes can only publish a value into `env` (a monotonic deadline, say) for a
+cooperative downstream to honor, and check afterward whether it was. Anything you write into a
+middleware runs inside the tool's own fiber, so a non-yielding middleware stalls the reactor and
+nothing can stop it: see [`docs/concurrency.md`](docs/concurrency.md).
 
 `Agent::ToolRunner` (`lib/lain/agent/tool_runner.rb`) is where `Effect::Handler#middleware_app`
 (the adapter that lets a `Handler` terminate a `Middleware::Stack`) gets driven from the loop.

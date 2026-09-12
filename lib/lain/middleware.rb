@@ -99,8 +99,8 @@ module Lain
 
       # Insert `middleware` just before `target`. `target` is matched by class
       # (the first member that `is_a?` it) or, if given an instance, by identity
-      # -- the Sidekiq convention, so "put approval before timeout" reads as
-      # `insert_before(Timeout, approval)`.
+      # -- the Sidekiq convention, so "put approval before refuse_secret_writes"
+      # reads as `insert_before(RefuseSecretWrites, approval)`.
       def insert_before(target, middleware)
         @middlewares.insert(index_of!(target), middleware)
         self
@@ -155,104 +155,6 @@ module Lain
 
       def match?(member, target)
         target.is_a?(Module) ? member.is_a?(target) : member.equal?(target)
-      end
-    end
-
-    # Records that an env passed through, before and after the downstream ran.
-    #
-    # It writes to an INJECTED sink -- never to stdout/stderr. That is the whole
-    # point: output discipline forbids terminal writes outside the frontend, and a
-    # log line interleaved into the NDJSON journal would corrupt the experiment
-    # record. Pass a {Lain::Sink} (anything answering `#puts`); to log onto a
-    # {Lain::Channel}, wrap it in a {Lain::Sink::IOAdapter} so each line becomes
-    # an attributed event rather than loose bytes.
-    class Logging < Base
-      # A compact, side-effect-free view of an env. Defaults to its sorted keys,
-      # so logging a huge tool payload does not dump the payload.
-      # Duck on `to_h`, not `is_a?(Hash)`: since the Stack boundary wraps the env
-      # into an {Env}, a middleware in a real stack is handed the whole value, not
-      # a bare Hash -- but a hand-rolled non-hash env (a bare Symbol in a probe)
-      # still degrades to its class name rather than raising.
-      DEFAULT_FORMATTER = lambda do |env|
-        env.respond_to?(:to_h) ? env.to_h.keys.map(&:to_s).sort.join(",") : env.class.name
-      end
-
-      # @param sink [#puts] where log lines go (a {Lain::Sink}, not the terminal)
-      # @param label [String] prefix identifying which stack is logging
-      # @param formatter [#call] env -> String, kept cheap and pure
-      def initialize(sink:, label: "middleware", formatter: DEFAULT_FORMATTER)
-        @sink = sink
-        @label = label.to_s
-        @formatter = formatter
-        super()
-        freeze
-      end
-
-      def call(env, &app)
-        @sink.puts("#{@label} > #{@formatter.call(env)}")
-        result = downstream(env, &app)
-        @sink.puts("#{@label} < #{@formatter.call(result)}")
-        result
-      end
-    end
-
-    # Bounds how long the downstream is allowed to take.
-    #
-    # It does NOT preempt. Preemption needs a watchdog thread or fiber, and that
-    # concurrency model is deliberately deferred -- writing one here would bake
-    # in a decision the bench is meant to make later. So Timeout publishes a
-    # monotonic `env[:deadline]` a cooperative downstream can honor, and
-    # measures elapsed time at the boundary, raising {Exceeded} if the work
-    # overran: what it can bound, without pretending to bound what it cannot.
-    class Timeout < Base
-      include Declarative
-
-      class Exceeded < Error; end
-
-      # The env key under which the absolute monotonic deadline is published.
-      DEADLINE_KEY = :deadline
-
-      # Hand-written rather than `numericality:`, which is type-PERMISSIVE:
-      # it parses `"5"` as five, and a String budget would then be compared
-      # against a monotonic Float at the boundary. The rule here has always
-      # been "a Numeric, and positive", and that is the rule that stays.
-      declare do
-        attribute :seconds
-        validate :positive_numeric
-
-        private
-
-        def positive_numeric
-          return if seconds.is_a?(Numeric) && seconds.positive?
-
-          errors.add(:seconds, "must be a positive Numeric, got #{seconds.inspect}")
-        end
-      end
-
-      # @param seconds [Numeric] the budget (> 0)
-      # @param clock [#call] monotonic time source, injectable for tests
-      def initialize(seconds:, clock: RunClock::MONOTONIC)
-        self.class.check!(seconds:)
-
-        @seconds = seconds
-        @clock = clock
-        super()
-        freeze
-      end
-
-      def call(env, &app)
-        started = @clock.call
-        deadline = started + @seconds
-        # Duck on `merge` rather than `is_a?(Hash)`: the Stack boundary hands us an
-        # {Env}, which merges just like a Hash; a non-hash env passes through.
-        downstream_env = env.respond_to?(:merge) ? env.merge(DEADLINE_KEY => deadline) : env
-
-        result = downstream(downstream_env, &app)
-
-        elapsed = @clock.call - started
-        raise Exceeded, "downstream exceeded #{@seconds}s budget (took #{elapsed.round(3)}s)" if elapsed > @seconds
-
-        result
       end
     end
   end

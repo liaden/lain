@@ -104,69 +104,6 @@ RSpec.describe Lain::Middleware do
     end
   end
 
-  describe described_class::Logging do
-    # Log lines must go to an injected sink, NEVER to the terminal. We route them
-    # through a Sink::IOAdapter over a Channel and read them back as attributed
-    # events, proving the output-discipline path.
-    it "writes before/after lines to the injected sink, not stdout" do
-      channel = Lain::Channel.new
-      sink = Lain::Sink::IOAdapter.new(channel, tool_use_id: "log_1", stream: :stdout)
-      logging = described_class.new(sink:, label: "tool")
-
-      logging.call({ effect: :x }) { |env| env }
-
-      lines = channel.drain.map(&:bytes).join
-      expect(lines).to include("tool > ")
-      expect(lines).to include("tool < ")
-    end
-
-    it "passes the env through unchanged (it observes, it does not transform)" do
-      sink = Lain::Sink::Null.new
-      logging = described_class.new(sink:, label: "x")
-      expect(logging.call({ n: 1 }) { |env| env.merge(seen: true) }).to eq({ n: 1, seen: true })
-    end
-  end
-
-  describe described_class::Timeout do
-    it "publishes a monotonic deadline into the env for cooperative cancellation" do
-      clock = -> { 100.0 }
-      timeout = described_class.new(seconds: 5, clock:)
-      seen = nil
-      timeout.call({}) do |env|
-        seen = env[described_class::DEADLINE_KEY]
-        env
-      end
-      expect(seen).to eq(105.0)
-    end
-
-    it "raises Exceeded when the downstream overruns the budget" do
-      now = 0.0
-      clock = -> { now }
-      timeout = described_class.new(seconds: 1, clock:)
-      expect do
-        timeout.call({}) do |env|
-          now = 2.5
-          env
-        end
-      end
-        .to raise_error(described_class::Exceeded, /exceeded 1s budget \(took 2.5s\)/)
-    end
-
-    it "does not raise when the downstream stays within budget" do
-      now = 0.0
-      clock = -> { now }
-      timeout = described_class.new(seconds: 1, clock:)
-      expect(timeout.call({}) do |env|
-        now = 0.5
-        env.merge(done: true)
-      end).to include(done: true)
-    end
-
-    it "rejects a non-positive budget" do
-      expect { described_class.new(seconds: 0) }.to raise_error(ArgumentError, /positive Numeric/)
-    end
-  end
-
   # A bare `yield` inside a middleware raises LocalJumpError the moment anyone
   # calls it outside a stack, and no RuboCop cop can catch that statically. So
   # every middleware routes through Base#downstream, which is the identity when
@@ -182,17 +119,6 @@ RSpec.describe Lain::Middleware do
       expect(described_class::Identity.call(env)).to eq(env)
     end
 
-    it "passes env through for Logging, and still logs" do
-      sink = Lain::Sink::IOAdapter.new(Lain::Channel.new, tool_use_id: "tu_1", stream: :stdout)
-      expect(described_class::Logging.new(sink:).call(env)).to eq(env)
-    end
-
-    it "passes env through for Timeout, adding its deadline" do
-      result = described_class::Timeout.new(seconds: 1).call(env)
-      expect(result[:a]).to eq(1)
-      expect(result[described_class::Timeout::DEADLINE_KEY]).to be_a(Float)
-    end
-
     it "passes env through for a Composed pair" do
       composed = described_class::Identity >> described_class::Identity
       expect(composed.call(env)).to eq(env)
@@ -201,6 +127,69 @@ RSpec.describe Lain::Middleware do
     it "passes env through for an empty Stack" do
       # Stack wraps at its boundary, so its return is an Env; to_h recovers the hash.
       expect(described_class::Stack.new.call(env).to_h).to eq(env)
+    end
+  end
+
+  # Logging and Timeout were constructed only here, never by production
+  # wiring -- deleting them removes nothing a real stack ever held.
+  describe "the spec-only middlewares" do
+    it "are gone: nothing production could have built into a stack remains" do
+      expect(described_class.constants).not_to include(:Logging, :Timeout)
+    end
+  end
+
+  # Timeout did not preempt -- it published a monotonic env[:deadline] and
+  # took its clock as an injected collaborator, which is what let a spec move
+  # time without sleeping. That seam outlives the class: these five sites cited
+  # Middleware::Timeout as the idiom's worked example, and deleting the class
+  # must correct what they name rather than orphan the citation.
+  #
+  # The check is scoped to the CITING COMMENT BLOCK, not the whole file: four
+  # of these five files mention an unrelated injected clock elsewhere (tty.rb's
+  # countdown ticker, shutdown.rb's grace-window comment, and their specs' own
+  # asides about it), so a whole-file regexp would still pass with the citing
+  # sentence gutted -- a check met without its reason present, which is
+  # exactly the failure this rewrite exists to guard against.
+  describe "the injected-clock idiom the deleted Timeout demonstrated" do
+    root = File.expand_path("../..", __dir__)
+
+    # `anchor` is text found only inside the rewritten sentence, used to find
+    # the comment block that sentence lives in -- not the sentence's own
+    # "injected clock" wording, so the search does not just refind what it is
+    # about to assert on.
+    citations = {
+      "lib/lain/frontend/tty.rb" => "monotonic time source for {#render_countdown}",
+      "lib/lain/frontend/neovim/compose.rb" => "monotonic seconds bounding {#settle}'s wait",
+      "lib/lain/cli/shutdown.rb" => "monotonic time source, injectable for tests",
+      "spec/lain/frontend/neovim/compose_spec.rb" => "every sibling seam takes",
+      "spec/lain/cli/shutdown_spec.rb" => "A clock stub returning the given values in order"
+    }
+
+    # The contiguous run of comment lines around `anchor`, expanding while a
+    # neighboring line is still a `#` comment -- the paragraph a human editing
+    # the citation would actually touch, and nothing elsewhere in the file.
+    def comment_block(path, anchor)
+      lines = File.readlines(path)
+      index = lines.index { |line| line.include?(anchor) }
+      raise "anchor #{anchor.inspect} not found in #{path}" unless index
+
+      comment_line = ->(i) { i.between?(0, lines.size - 1) && lines[i].match?(/^\s*#/) }
+      first = index
+      first -= 1 while comment_line.call(first - 1)
+      last = index
+      last += 1 while comment_line.call(last + 1)
+      lines[first..last].join
+    end
+
+    citations.each do |relative_path, anchor|
+      it "#{relative_path} names the idiom, not a class that no longer exists, in the citing block" do
+        block = comment_block(File.join(root, relative_path), anchor)
+
+        expect(block).not_to include("Middleware::Timeout"),
+                             "the citing block in #{relative_path} still names the deleted class:\n#{block}"
+        expect(block).to match(/injected.clock/i),
+                         "the citing block in #{relative_path} no longer explains the idiom:\n#{block}"
+      end
     end
   end
 end

@@ -353,11 +353,12 @@ cause it:
 Shelling out is not one of them. Ruby's fiber scheduler hooks `Mixlib::ShellOut`'s `IO.select` and
 `Process.waitpid2`, measured under a 10MB stdout flood, so `bash` runs as an ordinary task.
 
-**`Middleware::Timeout` does not interrupt.** Interrupting arbitrary Ruby would need a watchdog
-thread, which the no-threads constraint rules out. It publishes a monotonic `env[:deadline]` a
-cooperative downstream can honor and raises `Exceeded` after the fact, which bounds reporting
-rather than execution. A middleware that hangs is not stopped by it, and `/quit` or Ctrl-C cannot
-stop it either, since cancellation lands only at the next scheduler yield point.
+**No middleware here can interrupt what runs inside it.** Interrupting arbitrary Ruby would need a
+watchdog thread, which the no-threads constraint rules out, so a middleware wanting to bound how
+long a downstream takes can only publish a value into `env` (a monotonic deadline, say) for a
+cooperative downstream to honor, and check afterward whether it was -- bounding reporting, never
+execution. A middleware that hangs is not stopped by any of this, and `/quit` or Ctrl-C cannot stop
+it either, since cancellation lands only at the next scheduler yield point.
 
 So: keep middleware cheap and non-blocking, and route IO through async-aware calls. The fiber
 posture and its measurements are in [`docs/concurrency.md`](docs/concurrency.md).

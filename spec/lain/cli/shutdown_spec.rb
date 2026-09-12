@@ -74,7 +74,7 @@ RSpec.describe Lain::CLI::Shutdown do
   end
 
   # A clock stub returning the given values in order, repeating the last one
-  # forever after (the Middleware::Timeout testing idiom): robust to an extra
+  # forever after (the injected-clock testing idiom): robust to an extra
   # `@clock.call` the coordinator might make after the deadline check.
   def clock_returning(*values)
     seq = values.dup

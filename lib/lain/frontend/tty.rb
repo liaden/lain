@@ -60,9 +60,9 @@ module Lain
       #   {Paths#state_home} by default -- injectable so specs use a tmpdir
       #   instead of touching real XDG state
       # @param clock [#call] monotonic time source for {#render_countdown},
-      #   injectable for tests -- the same seam {Middleware::Timeout} and
-      #   {CLI::Shutdown} use, so a countdown's remaining seconds are testable
-      #   without a real clock tick
+      #   injectable for tests -- the same injected-clock seam {CLI::Shutdown}
+      #   uses, so a countdown's remaining seconds are testable without a real
+      #   clock tick
       # @param state_path [String] {StatusFeed}'s published state, resolved
       #   through {ProjectDir} -- the one locator {StatusFeed} and {CLI::Up}
       #   default through too, so the three renderers of one feed cannot name

@@ -67,7 +67,8 @@ module Lain
       #   a {Telemetry::SessionClosed::REASONS} value ({CLI::Chronicle} satisfies it)
       # @param budget [#interrupt] the interrupt seam; {Agent::Budget} by default
       # @param clock [#call] monotonic time source, injectable for tests (the
-      #   {Middleware::Timeout} seam)
+      #   injected-clock idiom {Frontend::TTY} and {Frontend::Neovim::Compose}
+      #   also take)
       # @param grace [Numeric] seconds the countdown runs before expiry
       # @param actors [Enumerable<#settle>] long-lived children to settle on a
       #   graceful drain (the supervisor's drain view absorbs a failing actor,

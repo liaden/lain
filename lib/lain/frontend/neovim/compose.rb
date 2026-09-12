@@ -100,8 +100,8 @@ module Lain
         #   the same seam {Frontend::LineEditor} and {TTY::History} take
         # @param timeout [Numeric] see {GRACE}
         # @param clock [#call] monotonic seconds bounding {#settle}'s wait --
-        #   {RunClock::MONOTONIC} by default, the same seam {Middleware::Timeout}
-        #   and {CLI::Shutdown} take. Injectable so a spec can expire a 300s
+        #   {RunClock::MONOTONIC} by default, the same injected-clock seam
+        #   {CLI::Shutdown} takes. Injectable so a spec can expire a 300s
         #   bound without waiting 300 seconds, which is the only way an example
         #   can tell that the bound is anchored at all
         def initialize(rpc: Detached, notify: SILENT, timeout: GRACE, clock: RunClock::MONOTONIC)
