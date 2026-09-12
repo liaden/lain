@@ -1,6 +1,6 @@
 # Chunk — the epic loop closed: undo, worktree lifecycle, issue-scoped gates, test layout, the driver and its arms
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime for T14)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; TJ DeVries joins
@@ -1974,3 +1974,38 @@ Rulings made during execution:
     headlessly in three specs. The follow-up needs a `Conductor::Null`, `grading:` threaded through
     `Seams#driver`, and a bench-side builder that differs per epic entry only by its gate policy.
     **`Wiring` is not touched, and needs no new public seam.**
+- **T18** `ee833c8e`. The four epic skills name their submit stage and teach the plan's `Subject:`
+  line; `docs/commands.md` carries every command and config key this chunk added; `epic-tier.md` is
+  rewritten for issue-scoped gates, local landing and the driver; ROADMAP item 46 holds the
+  follow-ups. Its review caught a correction that was itself wrong (only `KEYS` is a private
+  constant, not `PRESETS`), and the spec now derives presets from the public constant rather than a
+  transcribed list. Three plan-vs-code corrections landed as the code behaves: `/implement-epic`
+  takes `--width N`, the goal driver's cap is 5 (25 is the per-`ask` agent ceiling) and the command
+  sits outside both, and `Config.load` reads three tables.
+
+## Integration checks, on `ee833c8e`
+
+1. **Suite, by count:** `rake pspec` on a quiet box — **17938 examples, 0 failures, 14 pending**,
+   all seven workers reporting. The chunk began at 16788, so it added 1150.
+2. **RuboCop:** 1559 files, no offenses, with **zero diff to `.rubocop.yml`** since `109a17e3`. No
+   `Metrics` cap was raised anywhere in the chunk; every trip was answered by an extraction.
+3. **`pre-commit run --all-files`:** every hook passed, `cargo fmt`, `clippy`, `test` and `deny`
+   included.
+4. **Replay:** `dry_replay_spec` and `journal_spec` — 54 examples, 0 failures. The record shapes
+   widened in several cards, and the recorded fixtures still fold.
+5. **Manual checks 4 to 7 are owed to the human** and unrun: undo in a real cockpit, worktrees on a
+   feature branch, the epic tier end to end against a local model, and the test layout on a target
+   project. **Check 8 (a `lain bench altitude` run) is deferred with its command.**
+
+## Close-out
+
+- Every card worktree and branch was retired as its card landed. At close: one worktree (`main`),
+  no `card/*` branches, and only the three branches that predate the chunk.
+- **An open finding, not fixed.** Four shadow-git stores under `~/.local/state/lain/workspace/` were
+  written at 16:44, after `df1445b8` gave every suite process a private state home at 16:13. The
+  `gc/` entries there are all explained — each names a worktree cut before that fix — but these are
+  not. Something still resolves the real state home under some spec path. The stray files are left
+  in place as evidence rather than deleted.
+- **Owed to the human:** CLAUDE.md's quiet check still reads `pgrep -f '[p]re-commit'`, which
+  false-matches any process whose command text holds the plain word. `docs/toolchain-traps.md` now
+  carries the precise form; the rule in CLAUDE.md is the human's to change.
