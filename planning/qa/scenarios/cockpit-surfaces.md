@@ -717,7 +717,15 @@ unreachable; if you see one, say which view produced it.
 **One more thing this took down, and it is cheap to check at attach:** an invalid-UTF-8 reminder in
 the workspace used to raise inside `Surfaces#prime` and leave **every** view dark, with nothing
 rescuing it. Drop a byte sequence that is not valid UTF-8 into a reminder or a manifest path in the
-sandbox project, restart the cockpit, and confirm all seven `lain://` buffers still prime.
+sandbox project, restart the cockpit, and confirm all eight `lain://` buffers still prime.
+
+**`lain://status` carries its own copy of that defense, so it is worth the same byte sequence.** Its
+fold scrubs an error message before splitting it, because `String#split` raises on invalid UTF-8 and
+that fold runs on the same sole drain thread — a raise there takes every view dark again by a
+different route. Point a chat at an epic whose `epic.md` holds invalid UTF-8: the buffer must draw
+`# epic status unavailable` with the error class and the scrubbed message indented under it, and the
+other seven must be untouched. A dark cockpit is the regression; so is a `lain://status` that draws
+the failure once and never retries, since the next trigger is supposed to fold again.
 
 ## 7 — The HUD segments
 
