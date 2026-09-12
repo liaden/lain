@@ -1,6 +1,6 @@
 # Simplify 01 — the rules and the loop: raise the limits, fix the citations, stop paying twice
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -576,10 +576,10 @@ After the last wave:
 - `bundle exec rake pspec` green, **and the example count recorded in the commit message**. No card
   here deletes an example, so the count must be unchanged from the pre-plan baseline. A drop means a
   worker died — per CLAUDE.md:65-66 that presents as a pass.
-- `bundle exec rubocop` clean, with **no new `rubocop:disable` anywhere**. T1 and T2 exist to remove
-  the need for those; adding one would invert the plan.
+- `bundle exec rubocop` clean, with **no new `rubocop:disable` anywhere**. T1 exists to remove the
+  need for those; adding one would invert the plan.
 - `bundle exec yard-lint` over the **whole tree** (not `--staged`), with the defect count compared
-  against the pre-plan count. T2 can only be judged whole-tree.
+  against the pre-plan count — a raised `ClassLength` must not have moved a docstring.
 - `pre-commit run --all-files` green, and separately confirm `.git/hooks/commit-msg` now exists and
   that a deliberately bad commit message is refused.
 - `bundle exec rake core:build && bundle exec rspec --tag core` after T6, since the daemon binary
@@ -602,3 +602,63 @@ No card's grounding had drifted: the four `Metrics/*` cops, `Rakefile`'s worker 
 task, the five `Sensitivity.new` sites, `consolidation.rb`'s one-guard stack, `Backend#initialize`'s
 `num_ctx` call, `ancestors` at arity 0 with no block, and the six non-`Lain::Error` classes all read
 exactly as documented.
+
+**Two Integration checks cited a `T2` that has no task card.** The Grounding section records why the
+card went — raising `ClassLength` makes zero of `Style/Documentation`'s 33 `AllowedConstants` entries
+removable, so the card would have had nothing to prune — but the checks below were never updated with
+it. Both now stand on their own: the `rubocop:disable` check on T1, and the whole-tree `yard-lint`
+check on the docstring hazard a raised `ClassLength` actually carries. A stale enumeration is worse
+than a missing one.
+
+### What landed
+
+Baseline before the first landing: **17,942 examples, 0 failures, 14 pendings**, 61s at 12 workers
+on `289000e0`.
+
+| card | commit | note |
+|---|---|---|
+| T1 | `439a30d2` | ClassLength/ModuleLength 300, MethodLength 15, AbcSize 22, Cyclomatic 12, Perceived 12 |
+| T3 | `c332c733` | CI sizes from `$(nproc)`; `.envrc`'s `LAIN_SPEC_WORKERS=12` applied by hand |
+| T5 | `e0ea1b8e` | task and script gone; two traps recovered into `docs/toolchain-traps.md` |
+| T8 | `f555919b` | 44 documents archived, 5 left; six citations repointed |
+| —  | `9c82283a` | archive fallout: a fixture path and a `lib/` comment followed the move |
+
+**The Metrics numbers are the human's, not the plan's proposal.** T1 shipped 300/300/25/30/12/14;
+the panel replicated the measurement and argued two of those unblock nothing and cannot fire until
+well past the observed worst. The human chose the tighter set above. The panel also found the
+`AbcSize` entry's stated reason factually false — ABC being `sqrt(A²+B²+C²)`, a constructor with
+twelve assignments scores 12.0, not near any limit — and that sentence was deleted rather than
+rewritten.
+
+**`.rubocop.yml` is not covered by the suite hook.** `ruby-checks` is `types_or: [ruby, rust]`, so a
+commit staging only YAML or markdown never runs `pspec`. That is how `f555919b` landed red: T8 moved
+a chunk document that `spec/lain/sensitivity/regions_spec.rb` reads as a fixture by hardcoded path —
+one deliberately fake key in 1700 lines of prose, serving as the positive and negative control in a
+single assertion. The plan's Grounding named two fixture consumers and this was not one of them.
+
+### Closed
+
+All seven cards landed. Final: `09b19a06` (CLAUDE.md), `6062beba` (CI once per push),
+`cd75dd18` (shared build dir), `439a30d2` (Metrics limits), `f555919b`+`9c82283a` (archive),
+`c332c733` (worker count), `e0ea1b8e` (flake hunter).
+
+**The rewrite of CLAUDE.md's Metrics rule silently dropped the repo's only ban on an inline
+`rubocop:disable`.** `lib/lain/provider/http/error_middleware.rb:9` records a real refactor made on
+that sentence's authority — a ten-branch `case` became a lookup table rather than carry a disable —
+and a sweep of `lib/`, `exe/` and `spec/` finds zero live inline Metrics disables. This plan's own
+Integration checks demanded "no new `rubocop:disable` anywhere" while the rules file no longer said
+it. Restored.
+
+**CLAUDE.md's export block, addressed explicitly to non-interactive agents because `.envrc` never
+reaches them, did not export `LAIN_SPEC_WORKERS`.** An agent following it verbatim ran at
+`physical_cores - 1` — the worst measured count — while reading a timing figure taken at twelve.
+
+**Ten comments naming the retired rule now have a named owner**, and 23 stock-sentence sites are
+explicitly marked as needing none: each justifies a class reopen and dies with it when 04 and 07
+merge the class back. `exe/lain` ×3, `provider/http/VENDOR.md:103`, `error_middleware.rb:9`,
+`spec/lain/seams/capability_degraded_spec.rb:45` and `spec/lain/status_feed/publication_spec.rb:8`
+sit in files no later plan opens.
+
+**A hook gap this plan did not close.** `ruby-checks` is `types_or: [ruby, rust]`, so a commit
+staging only markdown or YAML runs no suite at all. That is how `f555919b` landed red, and it means
+`.rubocop.yml` and `CLAUDE.md` changes are unguarded. Worth a card in a later plan.

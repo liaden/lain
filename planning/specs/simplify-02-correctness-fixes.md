@@ -1,6 +1,6 @@
 # Simplify 02 — one classifier per run, one guard chain, and three silent divergences closed
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -628,3 +628,103 @@ No card's grounding had drifted: the four `Metrics/*` cops, `Rakefile`'s worker 
 task, the five `Sensitivity.new` sites, `consolidation.rb`'s one-guard stack, `Backend#initialize`'s
 `num_ctx` call, `ancestors` at arity 0 with no block, and the six non-`Lain::Error` classes all read
 exactly as documented.
+
+### What landed
+
+| card | commit | note |
+|---|---|---|
+| T4 | `6bf0baa3` | block form yields after the store guard drops; neither form is lazy |
+
+**T2's ACs were mis-specified and the plan text is corrected above rather than the code bent to fit.**
+`ToolGuard.detached` mounts four guards, of which two do anything for the clerk's toolset:
+`RedactSecretReads` starts masking, and `RefuseSecretWrites` gains a contentlessness floor.
+`WithholdSecretPaths` holds `Filter::Null` and `GuardTestLayout` guards only `write_file`/`edit_file`,
+which the clerk does not hold — both are parity of shape, not new enforcement. The Intent line claims
+a *stack*, and the stack is delivered.
+
+**T3's third escalation trigger fired and the card lands anyway.** `lain up --num-ctx` above the
+trained maximum no longer refuses on the operator's terminal; the pane opens and dies. The two
+requirements are in direct conflict — a preflight that "asks no server anything" cannot check a
+trained maximum — and the rule wins, because refusing at preflight stops the cockpit opening for a
+server that is merely down. The death is loud: `remain-on-exit failed` plus `PaneCorpse` reading the
+scrollback back.
+
+**T7 found a second instance of the `rm .git` trap.** A `cp -a` of a *submodule* leaves a `.git`
+pointing into `.git/modules/<name>`, whose `core.worktree` still names the original checkout, so git
+in the copy writes into the original's working tree. A legitimate submodule is accepted because its
+admin names this checkout back; a copy answers with somebody else's path.
+
+### Integration checks
+
+Run at `f3be3975`, with six of seven cards landed.
+
+- `bundle exec rake pspec` — **17,974 examples, 0 failures, 14 pendings**, against a pre-plan
+  baseline of 17,942. The count rose, which is the direction that matters: `parallel_tests` reports
+  only the examples that survived, so a fall is how a dead worker disguises itself as a pass.
+- `bundle exec rubocop` — 1,567 files, no offenses, and **zero new `rubocop:disable`** anywhere in
+  `lib/`, `spec/` or `exe/` across the whole range.
+- `rake compile` then `spec/lain/rust/` — 259 examples, 0 failures on a freshly built `.so`, since a
+  stale one makes those specs pass for the wrong reason.
+- `spec/lain/sensitivity spec/lain/middleware spec/lain/cli/tool_guard_spec.rb` — 420 examples, 0
+  failures.
+- `spec/lain/project/root_defaults_spec.rb` — 38 examples, 0 failures, with **two allowlist entries
+  removed and none added**.
+- `bundle exec yard-lint lib/` — 3 defects, all in files this run never opened
+  (`cli/epic_submit.rb`, `cli/wiring/board_build.rb`, `project/repository.rb`). Not a regression.
+
+**`bundle exec rspec --tag core` is RED, and was red before this work started.** 42 examples, 7
+failures, every one `Lain::Tools::CoreExec against the real daemon` raising
+`tool_use_id must name the call this record is about, got nil` — a record validation, nothing to do
+with the daemon binary. Verified by running the same tier at `289000e0` in a throwaway worktree:
+**identical 7 failures**. This matters because simplify-01's T6 moved the binary path and this plan
+names that tier as the check for it, so without the baseline comparison the failure reads as a
+regression from a card that did not cause it.
+
+**Two `git stash` entries predate this work** (2026-07-28 and 2026-08-09, the second from a prior
+session's `worktree-agent-*`). Left untouched: the stash is shared between worktrees and popping
+somebody else's entry is the hazard CLAUDE.md names.
+
+### Closed
+
+All seven cards landed. `ba413db6` (survey classifier), `f3be3975` (worktree identity guard),
+`333caad7` (no socket at flag resolution), `402d15cf` (Rust timeline's algebra claims), `0da022e0`
+(consolidation guards), `5c53cdba` (error taxonomy), `6bf0baa3` (`#ancestors` block form).
+
+Final: **18,013 examples, 0 failures, 14 pendings**; `pre-commit run --all-files` green on every
+hook; `bundle exec rubocop` clean over 1,568 files with zero new `rubocop:disable`.
+
+**What the panel caught that a green suite did not.** T1's AC 5 degradation was unreachable from
+`exe/lain`: `project: Resolver.default_project` is a *keyword default*, evaluated on entry to
+`#initialize`, and the resolver parses every `.lain/config.toml` it walks — so `Config::Malformed`
+escaped before the card's rescue could run, and the spec passed only because it injected a Project.
+A spec and production believing different things about the secret boundary is the exact failure this
+card was opened to close, reproduced one level up. The degradation was deleted rather than patched;
+`exe/lain`'s `rescue Lain::Error` already renders the refusal without a backtrace.
+
+**Two corrected pages had re-acquired false claims about the boundary.** `ARCHITECTURE.md` briefly
+said `PATH_FIELDS` does not gate a `write_file` — it does (`policy.rb:75`), and the real reason a
+turn can rewrite the config is that the path classifies *ordinary*. And the retracted "no second
+filter can be constructed" claim survived at a fourth site, cited by a comment added in the same fix
+round. Both are why the invariant is now stated as a discipline (`Filter.new` in exactly one place
+in `lib/`) rather than an impossibility: `Filter` is a public constructor over anything answering
+`#classify`, and `Policy` is now such a thing.
+
+**T7 found a second door into the `rm .git` trap.** A `cp -a` of a *submodule* leaves an admin whose
+`core.worktree` still names the original checkout, so git in the copy writes into the original's
+working tree. The guard asks in both spellings, so a real submodule is accepted and a copied one
+refused.
+
+**T3's escalation resolved against the card.** `lain up --num-ctx` above the trained maximum no
+longer refuses on the operator's terminal. The preflight rule and that refusal cannot both hold — the
+check is a question to the server — and the rule wins, because refusing at preflight stops the
+cockpit opening for a server that is merely down.
+
+### Still owed
+
+- **Manual, human:** one `lain chat` that reads a denied path, has the model rewrite
+  `.lain/config.toml`, then runs `/survey .` — the sequence T1 closes, and the one defect here whose
+  failure is silent. And `lain chat --api-base http://127.0.0.1:1`, confirming the cockpit opens and
+  the first turn fails naming the unreachable base.
+- **`planning/qa/scenarios/` is stale in two places.** `session-and-window.md` §1 heads its block
+  "must refuse by name at construction" and lists `--num-ctx 999999`; that step still passes but now
+  refuses at launch, so the header needs splitting. Nothing covers the survey-classifier path.
