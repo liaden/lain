@@ -26,6 +26,49 @@ Start at [`qa/README.md`](qa/README.md), which says which scenario answers which
 each costs. A round's findings live beside the chunk specs while it is in flight, and are
 deleted once discharged -- git history is the archive.
 
+## The simplification series (`specs/simplify-*.md`)
+
+Fourteen plans cutting cruft out of a 49,165-code-line `lib/` — grounded 2026-09-12 against `d2bb133c`,
+lint-clean, and meant to be fed to `/execute-plan` together. 11-14 are multi-week and each carries a
+decision in its **Open decisions** that a human settles first.
+
+**Run order: `01:T1` → `02` → `03:T1` → `14` → `07` → the rest.** They are not independent, and four of
+the orderings are load-bearing:
+
+- **`01:T1` lands alone, as its own commit, before anything else.** It is one file — the `Metrics/*`
+  limits and the SRP rule that replaces "never loosen" — and 04, 05, 06, 07, 09, 10 and 12 are all
+  blocked on it. The rest of 01 (the CI fix, the chunk-doc archive, the CLAUDE.md rewrite) is unrelated
+  housekeeping and nothing waits on it.
+- **`02` is early because it is the correctness plan.** Later plans move the code its defects live in;
+  fixing a `Sensitivity` classification gap after three plans have reshaped the gate is strictly harder.
+- **`14` before `07`, and before `10:T1`.** 14 deletes seven of the rails 07's T3 tables and one of the
+  three rings its T1 folds, and 14's T1 removes four groups from the spec file 10's T1 splits. Deleting
+  is cheaper than restructuring and then deleting. 14 wants `03:T1` first, which is why 03's first card
+  jumps the queue.
+- **`07:T6` before `04:T2`.** T2 deletes `cli/up/hud.rb`; T6 first strips the jq filter out of it.
+
+**Decisions a human owns before the plan that needs them runs:** 14 in full (descope the editor review
+surface — everything in that plan is written on the premise), 12 in full (deferred; its T1 and T2 are
+extracted to run standalone), 11 (**marked do-not-run in this series** — see its Open decisions), 13's
+T11 (the flip), and 08's T9 (wire or retire the altitude cluster).
+
+| Plan | What it does |
+|---|---|
+| [`specs/simplify-01-toolchain-and-rules.md`](specs/simplify-01-toolchain-and-rules.md) | **Run this first.** New `Metrics/*` limits and an SRP rule replacing "never loosen"; spec-mirror rule relaxed; `LAIN_SPEC_WORKERS=12`; CI stops running the suite twice; the `commit-msg` hook installed; 49 landed chunk docs archived; five dangling citations of a missing design plan fixed. |
+| [`specs/simplify-02-correctness-fixes.md`](specs/simplify-02-correctness-fixes.md) | Defects the audit turned up while looking for cruft: three independent `Sensitivity` parses where a `/survey` can classify against a different table than the gate holds; a consolidation pass running 1 of 4 tool guards; `Backend.new` opening sockets; two silent Rust divergences; seven error classes `exe/lain` cannot render. |
+| [`specs/simplify-03-verified-deletions.md`](specs/simplify-03-verified-deletions.md) | What nothing reaches: two capabilities the repo's own `deletability_spec.rb` certifies, four dead files, `Notify`, `core_exec`, two spec-only middlewares, an uncalled `Tool#dig`, the unused half of the contract vocabulary, `DerivationAudit`, Bedrock, and eight test-only Nulls out of `lib/`. |
+| [`specs/simplify-04-unshard-cop-splits.md`](specs/simplify-04-unshard-cop-splits.md) | Folds back the collaborators a counter asked for — 31 files reopen their own class and 61 comments name a cop. `cli/wiring/` 8 files to 3, `epic_driver/`'s empty index, the four epic commands, ten REPL commands, the approval micro-objects, `Session::Journaled`'s eleven pass-throughs. |
+| [`specs/simplify-05-tool-seams.md`](specs/simplify-05-tool-seams.md) | One `Tool::FileTarget` for nine file tools that each re-derive the same four-step `#perform` while ignoring the `WorkerEnv#resolve` written for it; `code_outline` deleted; the secret boundary's tool coupling moved off two tables onto the input schema. |
+| [`specs/simplify-06-config-paths-errors.md`](specs/simplify-06-config-paths-errors.md) | One config parse (it is seven per startup), `ProjectDir` as the only thing that knows where `.lain/` is, and 31 config-refusal classes collapsed to one — with ~134 never-rescued error classes removed and their reasons moved to their raise sites. |
+| [`specs/simplify-07-frontend-dedup.md`](specs/simplify-07-frontend-dedup.md) | Three copies of one generation-stamped row ring, while the Lua side already has the 35-line primitive; two spellings of an inbox row that can disagree about a question's age; 24 mirror rail methods; six readers of `state.json`. |
+| [`specs/simplify-08-bench-reachability.md`](specs/simplify-08-bench-reachability.md) | **The mandate plan.** Both bench agent-construction sites pass `Toolset.new([])` and no instrumentation, so every number the bench has produced measures the model. Plus: the grade never reaches the Journal (+3 lines), a fourth arm (+5), and three written experiments with no `desc` block. |
+| [`specs/simplify-09-operations-as-objects.md`](specs/simplify-09-operations-as-objects.md) | Verbs terminate, adverbs decorate: `Effect::Handler`'s four decorators move to `Middleware`. `Timeline`'s three meets become store-bound operation objects, which makes a cross-store meet unconstructable and **is** the Rust seam. The context pipeline gets a name, so it can be selected and recorded. |
+| [`specs/simplify-10-spec-hygiene.md`](specs/simplify-10-spec-hygiene.md) | The suite is **not** bloated — 1.17 examples per branch-point, so recovery is 8-10%, not 50%. What is wrong is narrower: three files hold twelve-plus subjects, `:seam` grew fourfold in five weeks with 84% mis-tagged, and one 835-line guard cannot fail. |
+| [`specs/simplify-11-zeitwerk.md`](specs/simplify-11-zeitwerk.md) | Retires the manifest that is the repo's most-churned file (82 commits, 99 code lines) and which *causes* duplication. **−748 require lines.** Its hard part: under autoloading, the algebra registry's seal would close an empty registry while passing. Run it in a window of its own. |
+| [`specs/simplify-12-ask.md`](specs/simplify-12-ask.md) | **Big bet, multi-week.** Nine mechanisms for "park the agent and ask somebody" become one register keyed by a `subject_digest` every one of them already has. Lands in seven independently-green steps; `approval/` must be split into its three real parts before anything judges it. |
+| [`specs/simplify-13-rust-port.md`](specs/simplify-13-rust-port.md) | **Big bet.** States the algebraic laws as Rust `proptest` properties behind a sealed trait, freezes Ruby's answers as a conformance corpus **before** deleting it, and gates on a mutation score — replacing rule 5's "must pass against both implementations". Net ≈ −148 lines; the case is verification, not size. |
+| [`specs/simplify-14-nvim-descope.md`](specs/simplify-14-nvim-descope.md) | **Big bet, one decision.** The changeset-review surface — 66.6% of all runtime Lua, incl. a 775-line octo.nvim port, and ~7,200 spec lines — makes no strategy swappable, observable or comparable. Removes it, keeps `Review::Surface::Text` so `/review` still works. |
+
 ## Detailed specs (`specs/`)
 
 Precision specs (acceptance-criteria style, like `remaining-work.md`) for individual `[exp]` items,
