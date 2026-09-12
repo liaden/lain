@@ -243,6 +243,35 @@ above still exists at the path given. Drift and corrections:
   `draft`, so **T13 takes the cheap option** — add rows, do not replace the map with a sweep.
 
 
+**Baselines at `060bd46a`**, for the Integration checks' arithmetic:
+
+- `bundle exec rspec --dry-run` (default-excluded tiers off): **18,013 examples**, 1 pending.
+- Examples in the spec files this plan deletes wholesale: prefill 70, diagnostics 15, delta 40,
+  annotations 17, placement 10, recorded_policy 13, notify 60, desktop_discipline 3, core_exec 4,
+  derivation_audit 34, bedrock 11, bedrock_parity 16, bedrock_reference 9, http/providers/bedrock 6,
+  output_discipline 3 — **311 total**. Cards that edit a surviving spec file move the count further.
+- `yard-lint` whole-tree **cannot be run from the repo root while this chunk is in flight**: the
+  card worktrees live at `tmp/worktrees/` inside the project and yard-lint globs them, so it parses
+  a sibling card's half-deleted files and dies on `Errno::ENOENT`. Run it inside a single worktree,
+  or after the worktrees are retired.
+
+
+**Findings from execution, as cards land:**
+
+- **T2 deletes three files, not four. `lib/lain/review/annotations.rb` stays.** The Grounding's
+  "zero non-comment references outside itself and outside `spec/`" excluded specs by fiat, and a
+  spec is where its only consumer lives: `spec/lain/frontend/neovim/annotate_spec.rb:272` calls
+  `Lain::Review::Annotations.settle` as the subject under test, driven through a real nvim
+  harness, and `frontend/neovim/runtime/48_annotate.lua:148` names the module as the wire
+  contract for the payload. The class is bypassed in `lib/` — `review/session.rb:373` and
+  `session/replay.rb:171` build `AnnotationPlaced.new` directly — but that makes it a
+  test-only-collaborator question of T9's shape, not a deletion. `review.rb:30`'s require stays.
+- **`spec/lain/epic/intake/delta_spec.rb` does not exist.** T2's AC 3 named it; the live epic
+  intake delta coverage is in `spec/lain/epic/intake_spec.rb`.
+- **T7's lost store-growth assertion is coverage of the deleted object**, not of compaction:
+  general store-growth-on-success and no-growth-on-refusal both survive in
+  `spec/lain/compaction/derivation_spec.rb`. Nothing needs to move.
+
 ## Waves
 
 Wave 1: T1, T2, T3, T4, T5, T6, T7, T8, T10, T11, T12
