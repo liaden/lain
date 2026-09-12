@@ -18,13 +18,18 @@ require_relative "lain/dsl_catalog"
 # is forced.
 require_relative "lain/declarative"
 require_relative "lain/config"
+
+# A dependency-free leaf that names no Lain constant, moved AHEAD of the value
+# classes that want it: {Freezable::Fields} is the one owner of "intern a
+# String field, keep nil as the absence it signals", and a Data value built at
+# class-body time (TestLayout::None) needs it loaded by then.
+require_relative "lain/freezable"
 require_relative "lain/test_layout"
 require_relative "lain/cache_profile"
 require_relative "lain/proxy_bytes"
 require_relative "lain/canonical"
 require_relative "lain/content_addressed"
 require_relative "lain/prompt"
-require_relative "lain/freezable"
 require_relative "lain/inspectable"
 require_relative "lain/algebra"
 # After `algebra`, not before: IntervalPartition declares its meet semilattice

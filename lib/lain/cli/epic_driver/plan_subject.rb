@@ -67,7 +67,7 @@ module Lain
         # altogether -- which the write-time guard admits, since it lets a test
         # written before its class through by design.
         def self.canonical!(subject, plan)
-          return subject if TestLayout::PathShape.canonical?(subject)
+          return subject if TestLayout::Shapes::PathShape.canonical?(subject)
 
           raise NotCanonical, "#{plan.path} names the subject #{subject.inspect}, which is not a plain relative " \
                               "path inside the project: a subject carries no \".\" or \"..\" segment, no doubled " \

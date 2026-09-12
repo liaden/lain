@@ -41,13 +41,27 @@ module Lain
       # @return [Level, nil] nil for a path under no level root
       def level_of(path) = @levels.find { |level| level.holds?(path) }
 
-      # The level a test that names none belongs to: `unit` wherever the table
-      # declares it, since an untagged test claims nothing about being slow,
-      # and otherwise the first level that mirrors.
-      # @return [Level, nil] nil when no level mirrors
+      # The level a test that names none belongs to, in the order the answer is
+      # settled: what the table DECLARES; else the only level that mirrors, if
+      # there is only one; else {TestLayout::DEFAULT_LEVEL} wherever the table
+      # declares it.
+      #
+      # What it deliberately no longer does is fall back to "the first mirrored
+      # level". `level_roots` is a TOML table, so its Ruby order is the order
+      # the author typed the keys -- and two things act on this answer without
+      # ever naming it: the guard judges every untagged test against it, and
+      # the epic driver WRITES an issue's failing tests there. So re-ordering
+      # two lines of TOML silently moved both. A table that leaves the choice
+      # open is refused at load instead ({TestLayout::AmbiguousDefaultLevel}),
+      # which is why callers reached from a loaded table never see the nil.
+      # @return [Level, nil] nil when no level mirrors at all -- cargo, whose
+      #   unit tests are inline and whose `tests/` is answerable for no source
       def default_level
         mirrored = @levels.select(&:mirrored?)
-        mirrored.find { |level| level.name == "unit" } || mirrored.first
+        return mirrored.find { |level| level.name == @layout.default_level } if @layout.default_level
+        return mirrored.first if mirrored.one?
+
+        mirrored.find { |level| level.name == TestLayout::DEFAULT_LEVEL }
       end
 
       # A test file inside the test tree -- the top directory of a mirrored

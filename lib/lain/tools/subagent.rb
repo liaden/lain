@@ -1,17 +1,52 @@
 # frozen_string_literal: true
 
+require "active_support/concern"
 require "active_support/core_ext/module/delegation"
 require "monitor"
 
 module Lain
   module Tools
+    # The one field every model-facing spawner's input carries, and the words
+    # the model reads it by. Included by {Subagent::Input} and
+    # {Subagent::Choice::Input}.
+    #
+    # A Concern, not a shared superclass, because the two are SIBLINGS rather
+    # than a specialisation of one another: Choice's input adds `role` BESIDE
+    # this field without refining anything about it, and neither owns the other.
+    # Inheriting one from the other would also make the enclosing tool's
+    # identity look like a subtype of the other tool's, which it is not.
+    #
+    # Why it is shared at all: a rendered schema's BYTES are the prompt-cache
+    # key. Two spawners describing the same field in different words cost a
+    # cache miss on every call they appear in, and the difference reads exactly
+    # like a deliberate schema change to anyone diffing two runs -- so an
+    # improvement made to one and not the other is both a regression and an
+    # invisible one. One spelling, one place to improve it.
+    module Tasked
+      extend ActiveSupport::Concern
+
+      # Model-facing, and per {Tool::Input.field} the highest-leverage words in
+      # the schema.
+      TASK = "The task for the subagent to carry out on its own."
+
+      included do
+        field :prompt, :string, required: true, description: TASK
+      end
+    end
+
     class Subagent < Tool # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
+      # What the model calls a spawner, whatever roles it offers. NOT the same
+      # word as {CLI::Wiring::ToolsetBuild::SPAWN_REQUESTER} or
+      # {CLI::FleetWindows::FALLBACK_ROLE}, which happen to spell it the same:
+      # those name who a HUMAN is told is asking, the axis `announces_as` keeps
+      # separate from this one on purpose.
+      NAME = "subagent"
+
       # Just the task. Prefix strategy, attenuation posture and `only`-set are
       # construction-time config, so what a subagent may do is never a per-call
       # decision the model negotiates.
       class Input < Tool::Input
-        field :prompt, :string, required: true,
-                                description: "The task for the subagent to carry out on its own."
+        include Tasked
       end
 
       input_model Input
@@ -66,7 +101,7 @@ module Lain
       # is the model-facing tool name, so renaming it would change the rendered
       # schema bytes.
       def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
-                     max_depth: 1, name: "subagent", announces_as: name, mode: :one_shot,
+                     max_depth: 1, name: NAME, announces_as: name, mode: :one_shot,
                      log: Log::Null, persona: Role::Persona::Null, answer: ANSWER, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
@@ -633,10 +668,11 @@ module Lain
       # is_error result rather than a raise.
       class Choice < Tool
         # The task, and which role is to carry it out. Both are the model's to
-        # write; which roles exist is not.
+        # write; which roles exist is not. {Tasked} comes first so `prompt`
+        # still precedes `role` in the rendered schema.
         class Input < Tool::Input
-          field :prompt, :string, required: true,
-                                  description: "The task for the subagent to carry out on its own."
+          include Tasked
+
           field :role, :string, required: true,
                                 description: "Which of the roles on offer the subagent takes."
         end
@@ -655,7 +691,7 @@ module Lain
 
         # The model calls this "subagent" whatever roles it offers, so a role
         # added or dropped never changes the tool's name in a rendered schema.
-        def name = "subagent"
+        def name = Subagent::NAME
 
         def description
           "Spawns a subagent in the role you name (#{roles.join(" or ")}) to carry out `prompt` on " \
@@ -677,7 +713,11 @@ module Lain
           schema.merge("properties" => schema.fetch("properties").merge("role" => role))
         end
 
-        def parallel_safe? = true
+        # ASKED of what it holds rather than asserted: every call delegates to
+        # one spawner, so this tool is exactly as parallel-safe as the spawners
+        # on offer. Restating {Subagent#parallel_safe?}'s `true` would have gone
+        # on claiming it for a spawner wired to answer otherwise.
+        def parallel_safe? = @spawners.each_value.all?(&:parallel_safe?)
 
         # Each spawner descends as its own, so every role on offer is capped at
         # the child's ceiling exactly as a lone spawner would be.

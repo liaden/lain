@@ -82,40 +82,6 @@ module Lain
       # @return [#acquire] the resolved, decorated backend
       def self.resolve(...) = new(...).backend
 
-      # The ancestry a repository search may climb from `root`. Public, with
-      # {.repository_in} and {.worktree_root}, so the chat backend and the
-      # reaper find one repository and one worktree root, never two.
-      #
-      # THE SAME STOP RULE as the project resolver, and it is not decoration.
-      # This walk once had no ceiling, so on a box whose `$HOME` is itself a
-      # git work-tree -- the `~/.cfg` dotfiles convention -- a chat started
-      # anywhere under home resolved HOME as the repository and branched
-      # worker checkouts off the dotfiles repo. {Project::Resolver::Walk} cuts
-      # the ancestry at the first refused directory, so a repository BELOW one
-      # is still found and one AT or above it is not reachable at all.
-      #
-      # @param root [String] a resolved absolute directory
-      # @param paths [Paths] supplies the XDG bases the stop rule names
-      # @param home [String, nil] the user's home directory
-      # @return [Project::Resolver::Walk]
-      # @raise [Project::Resolver::UnusableHome] when `home` cannot bound the search
-      def self.search_from(root, paths:, home:)
-        refusals = Project::Resolver::Refusals.new(cwd: root, home: Project::Resolver::Home.new(home, File),
-                                                   paths:, filesystem: File)
-        Project::Resolver::Walk.new(cwd: root, refusals:)
-      end
-
-      # `.git` is a FILE inside a linked worktree and a directory in a primary
-      # one, and `exist?` covers both, which is why {Project::Resolver::GIT_ENTRY}
-      # is shared rather than re-spelled: two walks looking for the same thing
-      # must agree on what it looks like.
-      #
-      # @param walk [Project::Resolver::Walk]
-      # @return [String] the nearest directory holding a `.git` entry, or "" for none
-      def self.repository_in(walk)
-        walk.find { |dir| File.exist?(File.join(dir, Project::Resolver::GIT_ENTRY)) } || ""
-      end
-
       # Keyed on the REPOSITORY, never on the cwd: two runs started in
       # different subdirectories of one project lease out of one root (so the
       # clearing of a leftover checkout finds it), while two projects never
@@ -123,7 +89,7 @@ module Lain
       # checkout is retained for `[isolation] retain_days` and a reboot must not
       # cut that short.
       #
-      # @param repo [String] the repository, as {.repository_in} found it
+      # @param repo [String] the repository, as {Project::Repository.nearest} found it
       # @param paths [Paths]
       # @return [String]
       def self.worktree_root(repo, paths:) = File.join(paths.state_home, "worktrees", paths.project_hash(repo))
@@ -207,22 +173,21 @@ module Lain
       end
 
       # The repository `git worktree add` branches from, found by ascending
-      # from the project through {.search_from}.
+      # from the project through {Project::Repository}.
       def repo_root
-        walk = search
-        found = self.class.repository_in(walk)
-        return found unless found.empty?
+        nearest = nearest_repository
+        return nearest.path if nearest.found?
 
         raise NotARepository, "--isolation worktree needs a git repository to branch checkouts from, and " \
-                              "#{@root} is not inside one up to #{walk.boundary} (#{walk.reason}); run it " \
-                              "from a repository or use --isolation #{DEFAULT}"
+                              "#{nearest.searched(@root)}; run it from a repository or use " \
+                              "--isolation #{DEFAULT}"
       end
 
-      # Built HERE and not in #initialize, so `--isolation none` pays neither
+      # Searched HERE and not in #initialize, so `--isolation none` pays neither
       # the `stat` per ancestor nor the {Project::Resolver::UnusableHome}
       # refusal an absent `$HOME` earns: only the worktree branch walks.
-      def search
-        self.class.search_from(@root, paths: @paths, home: @home)
+      def nearest_repository
+        Project::Repository.nearest(@root, paths: @paths, home: @home)
       rescue Project::Resolver::UnusableHome => e
         raise UnboundedSearch, e
       end

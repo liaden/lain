@@ -323,10 +323,16 @@ module Lain
         unguarded(path, :unmirrored, "#{path} is under the #{level.name} level, which mirrors no source")
       end
 
+      # A stray in a layout with no default level has nothing to be judged
+      # AGAINST, so it is reported as the stray it is rather than reaching for
+      # a name that is not there. A loaded table cannot get here -- it is
+      # refused while ambiguous -- but {TestLayout::None} and a hand-built
+      # layout can, and this read used to be an unguarded `.name`.
       def content_verdict(path, level, content)
-        return path_verdict(path, level) unless @layout.preset.describes
+        against = level || @mapping.default_level
+        return path_verdict(path, level) unless @layout.preset.describes && against
 
-        verdict = described(path, (level || @mapping.default_level).name, @reader.read(content))
+        verdict = described(path, against.name, @reader.read(content))
         level ? verdict : strayed(path, verdict)
       end
 

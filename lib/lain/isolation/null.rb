@@ -42,11 +42,11 @@ module Lain
       # @return [false]
       def retained?(_path) = false
 
-      # No checkout was cut FROM anywhere, so this answers the repository the
-      # way {CLI::IsolationBackend} itself would find one -- the same search,
-      # the same stop rule -- rather than inventing a second walk that could
-      # disagree with it. A handback built over `--isolation none` still needs
-      # a real repository to merge a worker's commits into.
+      # No checkout was cut FROM anywhere, so this answers the repository
+      # through {Project::Repository} -- the one search, the one stop rule every
+      # layer asks -- rather than a second walk that could disagree with it. A
+      # handback built over `--isolation none` still needs a real repository to
+      # merge a worker's commits into.
       # @return [String] the nearest repository at or above the root this
       #   backend was built with
       # @raise [NoRepository] when this backend was built with no root, or the
@@ -56,12 +56,10 @@ module Lain
         raise NoRepository, "this Isolation::Null was built with no root to search from" unless @root
 
         resolved = Project::Resolver.resolved(File.expand_path(@root), File)
-        walk = CLI::IsolationBackend.search_from(resolved, paths: @paths, home: @home)
-        found = CLI::IsolationBackend.repository_in(walk)
-        return found unless found.empty?
+        nearest = Project::Repository.nearest(resolved, paths: @paths, home: @home)
+        return nearest.path if nearest.found?
 
-        raise NoRepository, "--isolation none has no checkout to answer with, and #{resolved} is not inside a " \
-                            "git repository up to #{walk.boundary} (#{walk.reason})"
+        raise NoRepository, "--isolation none has no checkout to answer with, and #{nearest.searched(resolved)}"
       end
     end
   end

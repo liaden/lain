@@ -168,6 +168,32 @@ RSpec.describe Lain::TestLayout do
     end
   end
 
+  # The answer decides where the guard holds an untagged test AND where the
+  # epic driver writes an issue's failing tests, and neither names it out loud
+  # -- so a table that leaves the choice to TOML key order is refused here
+  # rather than quietly resolved at the first untagged test.
+  describe "the level an untagged test belongs to" do
+    it "refuses a table that mirrors two levels and names no unit, listing the candidates" do
+      table = { "preset" => "rspec", "level_roots" => { "seam" => "spec/seam", "e2e" => "spec/e2e" } }
+
+      expect(refusal(table)).to be_a(described_class::AmbiguousDefaultLevel)
+        .and(have_attributes(candidates: %w[seam e2e], message: /default_level/))
+    end
+
+    it "accepts that same table once it declares which one" do
+      table = { "preset" => "rspec", "level_roots" => { "seam" => "spec/seam", "e2e" => "spec/e2e" },
+                "default_level" => "e2e" }
+
+      expect(described_class.from(table, path: config).mapping.default_level.name).to eq("e2e")
+    end
+
+    it "refuses a default_level naming a level the table does not declare" do
+      table = { "preset" => "rspec", "default_level" => "e2e" }
+
+      expect(refusal(table)).to be_a(described_class::InvalidValue).and(have_attributes(key: "default_level"))
+    end
+  end
+
   describe "an inline level" do
     it "is refused for a preset whose levels mirror, since its tests would have nowhere to go" do
       table = { "preset" => "rspec", "level_roots" => { "unit" => "spec/unit", "integration" => "inline" } }

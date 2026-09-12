@@ -92,12 +92,10 @@ module Lain
       def state(kind, repo) = File.join(@paths.state_home, "gc", "worktrees-#{@paths.project_hash(repo)}.#{kind}")
 
       def repo_root
-        walk = IsolationBackend.search_from(@root, paths: @paths, home: @home)
-        found = IsolationBackend.repository_in(walk)
-        return found unless found.empty?
+        nearest = Project::Repository.nearest(@root, paths: @paths, home: @home)
+        return nearest.path if nearest.found?
 
-        raise NotARepository, "lain worktrees gc needs a git repository, and #{@root} is not inside one up to " \
-                              "#{walk.boundary} (#{walk.reason})"
+        raise NotARepository, "lain worktrees gc needs a git repository, and #{nearest.searched(@root)}"
       rescue Project::Resolver::UnusableHome => e
         raise NotARepository, "lain worktrees gc stops its repository search at $HOME, and #{e.message}"
       end

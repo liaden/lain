@@ -677,6 +677,7 @@ that never chose them and start refusing its existing flat specs as strays.
 | `source_roots` | the preset's — `lib` under `rspec` | The roots a test mirrors. Non-empty, relative, and non-overlapping. |
 | `level_roots` | the preset's — `spec/unit`, `spec/seam`, `spec/integration` under `rspec` | Level name to its root. A level name is lowercase; roots may not nest. `cargo` maps `unit` to `inline`, which only a preset that does not mirror may use. |
 | `exempt` | the preset's, which is always empty | Globs no refusal applies to. A preset exempts nothing by design — an exemption is a project's own decision to state. |
+| `default_level` | unset — `unit` wherever the table declares that level, or the only level that mirrors | Where a test that names no level belongs: what the guard holds an untagged test to, and where `/implement-epic` writes an issue's failing tests. Must name a level the table declares. Required only when the table mirrors two or more levels and none is `unit`, which is otherwise refused rather than settled by whichever key was typed first. |
 
 ```toml
 [tests]

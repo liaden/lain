@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  TestLayout = Data.define(:preset, :source_roots, :level_roots, :exempt)
+  TestLayout = Data.define(:preset, :source_roots, :level_roots, :exempt, :default_level)
 
   # Where a project keeps its tests: which directories hold source, which hold
   # each level's tests, and which test paths are exempt from the mirror.
@@ -30,8 +30,13 @@ module Lain
     # Rust's `#[cfg(test)]` modules do, so there is no file to mirror.
     INLINE = "inline"
 
+    # The level name every preset ships, and the one an untagged test belongs
+    # to wherever a table declares it: an untagged test claims nothing about
+    # being slow, so the fastest level is where it is held to.
+    DEFAULT_LEVEL = "unit"
+
     PRESET = "preset"
-    KEYS = [PRESET, "source_roots", "level_roots", "exempt"].freeze
+    KEYS = [PRESET, "source_roots", "level_roots", "exempt", "default_level"].freeze
     private_constant :PRESET, :KEYS
 
     # A test cannot be placed: no layout is in force, the level is not one the
@@ -79,142 +84,6 @@ module Lain
                  mirrors: false, describes: false)
     ].to_h { |preset| [preset.name, Ractor.make_shareable(preset)] }.freeze
 
-    # A path the table names: relative, inside the project, and spelled one
-    # way only, because a path is tested against it by prefix and `./app`
-    # would silently miss everything under `app`. `-` is refused as a first
-    # character because a level root reaches a test runner's command line,
-    # where it would read as an option.
-    module PathShape
-      DOTS = %w[. ..].freeze
-
-      module_function
-
-      def canonical?(value)
-        value.is_a?(String) && !value.empty? && !value.start_with?("/", "~", "-") &&
-          value.split("/", -1).none? { |segment| segment.strip.empty? || DOTS.include?(segment) }
-      end
-    end
-
-    # Two roots overlap when they are equal or one lies inside the other, so a
-    # file under both would belong to each at once.
-    module Overlap
-      module_function
-
-      def pair(paths) = paths.combination(2).find { |one, other| overlap?(one, other) }
-      def overlap?(one, other) = one == other || one.start_with?("#{other}/") || other.start_with?("#{one}/")
-    end
-
-    # A refusal names the overlapping pair when that is what broke the rule,
-    # since the shape alone would read as correct.
-    module Clashing
-      def describe(value)
-        pair = clash(value)
-        pair ? "#{self}; #{pair.join(" and ")} overlap" : to_s
-      end
-    end
-
-    # Source roots may not overlap: a source under two of them would mirror to
-    # two test paths, and the guard would pass one and refuse the other.
-    Paths = Data.define(:minimum, :disjoint) do
-      include Clashing
-
-      def admits?(value) = shaped?(value) && !clash(value)
-
-      def shaped?(value)
-        value.is_a?(Array) && value.size >= minimum && value.all? { |path| PathShape.canonical?(path) }
-      end
-
-      def clash(value) = disjoint && shaped?(value) && Overlap.pair(value)
-
-      def to_s = "a #{"non-empty " unless minimum.zero?}list of #{"distinct, non-nested " if disjoint}relative paths"
-    end
-
-    # Level roots may neither repeat nor nest: a file under two roots has two
-    # levels, and no test path could satisfy both. `inline` is admitted only
-    # for a preset whose levels do not mirror, since a mirrored test needs a
-    # file of its own.
-    Levels = Data.define(:inline) do
-      include Clashing
-
-      def admits?(value) = shaped?(value) && !clash(value)
-
-      def shaped?(value) = value.is_a?(Hash) && !value.empty? && value.all? { |name, root| level?(name, root) }
-
-      def level?(name, root)
-        name.match?(/\A[a-z][a-z0-9_]*\z/) && (root == INLINE ? inline : PathShape.canonical?(root))
-      end
-
-      def clash(value) = shaped?(value) && Overlap.pair(value.values - [INLINE])
-
-      def to_s
-        "a table of lowercase level names to distinct, non-nested relative roots#{%( or "#{INLINE}") if inline}"
-      end
-    end
-
-    OneOf = Data.define(:values) do
-      def admits?(value) = values.include?(value)
-      def describe(_value) = to_s
-      def to_s = "one of #{values.join(", ")}"
-    end
-
-    # {PathShape} stays public: it is the sole authority on what a plain
-    # relative path inside the project looks like, and the plan-declared subject
-    # a test gets mirrored FROM has to be judged by the same rule the `[tests]`
-    # source roots are. Two copies of it meant tightening one left the other
-    # admitting what it now refuses, with no spec anywhere failing.
-    private_constant :Overlap, :Clashing, :Paths, :Levels, :OneOf
-
-    # Every refusal of a `[tests]` table, so a caller that degrades a bad
-    # table to a notice can rescue them all at once. The path is absent for a
-    # table built by hand rather than read from a file.
-    class Refusal < Error
-      attr_reader :path
-
-      def initialize(detail, path:)
-        @path = path
-        super("#{"#{path}: " if path}[tests] #{detail}")
-      end
-    end
-
-    # `[tests]` present but not a table.
-    class NotATable < Refusal
-      attr_reader :value
-
-      def initialize(value, path:)
-        @value = value
-        super("must be a table, got #{value.class}: #{value.inspect}", path:)
-      end
-    end
-
-    # A typo inside the table: refused, because a misspelt `source_roots`
-    # would otherwise guard the preset's roots while the author believes their
-    # own are in force.
-    class UnknownKeys < Refusal
-      attr_reader :keys
-
-      def initialize(keys, path:)
-        @keys = keys
-        super("has no keys #{keys.map(&:inspect).join(", ")}; known keys: #{KEYS.join(", ")}", path:)
-      end
-    end
-
-    # Every other key defaults from the preset, so without one the table
-    # cannot say what it overrides.
-    class MissingPreset < Refusal
-      def initialize(path:) = super("names no preset; set preset to one of #{PRESETS.keys.sort.join(", ")}", path:)
-    end
-
-    # A key's value outside its rule, named with the rule it broke.
-    class InvalidValue < Refusal
-      attr_reader :key, :value
-
-      def initialize(key, value, rule, path:)
-        @key = key
-        @value = value
-        super("#{key} = #{value.inspect} is not #{rule}", path:)
-      end
-    end
-
     # @param table [Object] whatever `raw["tests"]` parsed to; nil when absent
     # @param path [String, nil] the config file, named by every refusal
     # @param framework [String, nil] the framework the caller detected, the
@@ -229,7 +98,7 @@ module Lain
       defaults = preset(preset_named(table, path:))
       overrides = table.except(PRESET)
       admit!(overrides, defaults.preset, path:)
-      new(**defaults.to_h, **overrides.transform_keys(&:to_sym))
+      settled!(new(**defaults.to_h, **overrides.transform_keys(&:to_sym)), path:)
     end
 
     # @param name [String] a key of {PRESETS}
@@ -250,30 +119,59 @@ module Lain
 
     def self.preset_named(table, path:)
       name = table.fetch(PRESET) { raise MissingPreset.new(path:) }
-      presets = OneOf.new(values: PRESETS.keys.sort.freeze)
+      presets = Shapes::OneOf.new(values: PRESETS.keys.sort.freeze)
       raise InvalidValue.new(PRESET, name, presets.describe(name), path:) unless presets.admits?(name)
 
       name
     end
 
     def self.admit!(overrides, preset, path:)
-      rules = { "source_roots" => Paths.new(minimum: 1, disjoint: true),
-                "level_roots" => Levels.new(inline: !preset.mirrors),
-                "exempt" => Paths.new(minimum: 0, disjoint: false) }
-      overrides.each do |key, value|
+      rules = { "source_roots" => Shapes::Paths.new(minimum: 1, disjoint: true),
+                "level_roots" => Shapes::Levels.new(inline: !preset.mirrors),
+                "exempt" => Shapes::Paths.new(minimum: 0, disjoint: false) }
+      overrides.except("default_level").each do |key, value|
         rule = rules.fetch(key)
         raise InvalidValue.new(key, value, rule.describe(value), path:) unless rule.admits?(value)
       end
+      declared!(overrides, preset, path:)
     end
 
-    private_class_method :detected, :shaped!, :preset_named, :admit!
+    # `default_level` is the one CROSS-FIELD rule -- it has to name a level the
+    # table declares -- so it is judged only once `level_roots` has been
+    # admitted. Reading an unadmitted `level_roots` here meant a malformed one
+    # crashed this rule instead of being refused as itself.
+    def self.declared!(overrides, preset, path:)
+      return unless overrides.key?("default_level")
 
-    # Copies, not the caller's strings: the table arrives from a TOML parse the
+      value = overrides.fetch("default_level")
+      rule = Shapes::OneOf.new(values: (overrides["level_roots"] || preset.level_roots).keys)
+      raise InvalidValue.new("default_level", value, rule.describe(value), path:) unless rule.admits?(value)
+    end
+
+    # The table is read eagerly so it can be REFUSED; an undeterminable
+    # default level belongs in that refusal rather than at the first untagged
+    # test. See {AmbiguousDefaultLevel}.
+    def self.settled!(layout, path:)
+      return layout if layout.default_level || layout.mapping.default_level
+
+      mirrored = layout.mapping.levels.select(&:mirrored?).map(&:name)
+      return layout if mirrored.size < 2
+
+      raise AmbiguousDefaultLevel.new(mirrored, path:)
+    end
+
+    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!
+
+    # Never the caller's own strings: the table arrives from a TOML parse the
     # caller still holds, and this value has to stay `Ractor.shareable?`.
-    def initialize(preset:, source_roots:, level_roots:, exempt:)
-      super(preset:, source_roots: source_roots.map { |root| root.dup.freeze }.freeze,
-            level_roots: level_roots.to_h { |name, root| [name.dup.freeze, root.dup.freeze] }.freeze,
-            exempt: exempt.map { |glob| glob.dup.freeze }.freeze)
+    # {Freezable::Fields} is the one owner of that normalization -- interned,
+    # with nil kept as the absence it signals, which is exactly what an
+    # undeclared `default_level` is.
+    def initialize(preset:, source_roots:, level_roots:, exempt:, default_level: nil)
+      pin = Freezable::Fields
+      super(preset:, source_roots: pin.pinned_each(source_roots), exempt: pin.pinned_each(exempt),
+            level_roots: level_roots.to_h { |name, root| [pin.pinned(name), pin.pinned(root)] }.freeze,
+            default_level: pin.pinned(default_level))
     end
 
     # @return [Boolean] false only for {None}, which guards nothing
@@ -293,6 +191,8 @@ module Lain
 end
 
 # The parts reopen the class, so they load once `Data.define` has made it.
+require_relative "test_layout/shapes"
+require_relative "test_layout/refusals"
 require_relative "test_layout/mapping"
 require_relative "test_layout/constant_index"
 require_relative "test_layout/guard"

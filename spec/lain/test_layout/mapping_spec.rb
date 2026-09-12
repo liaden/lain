@@ -97,15 +97,28 @@ RSpec.describe Lain::TestLayout::Mapping do
     end
   end
 
-  it "takes the first mirrored level as the default for a test that names none" do
+  it "answers unit for a preset that mirrors, and nothing for cargo, which mirrors no level at all" do
     expect([rspec.default_level.name, mapping({ "preset" => "cargo" }).default_level]).to eq(["unit", nil])
   end
 
-  it "prefers unit as the default wherever the table declares it, then the table's order" do
+  # The order the author typed the keys in must not decide this: see
+  # {Lain::TestLayout::AmbiguousDefaultLevel} for what rides the answer.
+  it "answers unit wherever the table declares it, whichever key was typed first" do
     seam_first = mapping({ "preset" => "rspec", "level_roots" => { "seam" => "spec/seam", "unit" => "spec/unit" } })
-    no_unit = mapping({ "preset" => "rspec", "level_roots" => { "seam" => "spec/seam", "e2e" => "spec/e2e" } })
 
-    expect([seam_first.default_level.name, no_unit.default_level.name]).to eq(%w[unit seam])
+    expect(seam_first.default_level.name).to eq("unit")
+  end
+
+  it "takes the table's declared default_level over the unit convention" do
+    declared = mapping({ "preset" => "rspec", "default_level" => "seam" })
+
+    expect(declared.default_level.name).to eq("seam")
+  end
+
+  it "takes the only mirrored level when the table declares exactly one" do
+    lonely = mapping({ "preset" => "rspec", "level_roots" => { "e2e" => "spec/e2e" } })
+
+    expect(lonely.default_level.name).to eq("e2e")
   end
 
   describe "#exempt? and #test_file?" do

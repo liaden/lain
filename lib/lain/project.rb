@@ -107,6 +107,7 @@ end
 # Reopens the class, so it loads after the whole body -- {KINDS},
 # {Project::DETECTED_BY} and {Project::Unresolvable} resolve by name inside it.
 require_relative "project/resolver"
+require_relative "project/repository"
 
 # Reads {Resolver.config_path} and builds an {Approval::Remembered}, both from
 # method bodies only -- `lain/approval` loads well after this file.
