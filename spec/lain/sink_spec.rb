@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "json"
+require "tmpdir"
+
 # A tiny in-memory stand-in for Lain::Channel: records everything pushed so we
 # can assert on emitted events without depending on Channel's threading.
 class RecordingChannel
@@ -114,6 +117,30 @@ RSpec.describe Lain::Sink do
       it "#flush is a no-op returning self" do
         expect(adapter.flush).to be(adapter)
         expect(channel.events).to be_empty
+      end
+    end
+  end
+
+  # What the sink buys, end to end and with nothing doubled: bytes a tool
+  # produced arrive in the record already naming the call and the stream they
+  # came from, so no reader has to infer attribution from a line's position.
+  describe "a tool's bytes read back off a journal", :seam do
+    it "names the tool call and the stream on every chunk" do
+      channel = Lain::Channel.new
+      Lain::Sink::IOAdapter.new(channel, tool_use_id: "toolu_9", stream: :stdout).puts("building")
+      Lain::Sink::IOAdapter.new(channel, tool_use_id: "toolu_9", stream: :stderr).write("deprecated")
+      channel.close
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "session.ndjson")
+        journal = Lain::Journal.open(path)
+        while (event = channel.pop)
+          journal.record(event)
+        end
+        journal.close
+
+        expect(File.readlines(path).map { |line| JSON.parse(line).values_at("type", "tool_use_id", "stream", "bytes") })
+          .to eq([%W[tool_output toolu_9 stdout building\n], %w[tool_output toolu_9 stderr deprecated]])
       end
     end
   end

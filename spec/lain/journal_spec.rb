@@ -116,6 +116,76 @@ RSpec.describe Lain::Journal do
     end
   end
 
+  # The fd is what keeps the record parseable, not a rule about who may call
+  # `warn`. The Journal opens the session file itself and never stderr, so a
+  # terminal write from anywhere in the process lands on fd 2 -- a descriptor no
+  # reader of this file ever opens -- however badly it races with a record.
+  describe "a stray terminal write while records are being written", :seam do
+    # Warns from the deepest point a record reaches: while the line is still
+    # being built, before the write takes the lock.
+    let(:warns_while_encoding) do
+      Class.new do
+        def to_journal
+          warn "a stray warning from lib/"
+          { "type" => "noisy" }
+        end
+      end.new
+    end
+
+    # Reopens the process's REAL fd 2, so any unrelated warning emitted in this
+    # window lands in `path` instead of the runner's output. Harmless: each
+    # parallel_rspec worker is its own process and examples within one run
+    # serially, so the window belongs to this example alone.
+    def with_stderr_at(path)
+      saved = $stderr.dup
+      $stderr.reopen(path, "a")
+      yield
+    ensure
+      $stderr.reopen(saved)
+      saved.close
+    end
+
+    it "lands on fd 2, leaving every line of the record file parseable" do
+      Dir.mktmpdir do |dir|
+        record_path = File.join(dir, "session.ndjson")
+        stderr_path = File.join(dir, "stderr.log")
+        opened = described_class.open(record_path)
+
+        with_stderr_at(stderr_path) do
+          opened.record(warns_while_encoding)
+          opened.record("type" => "after")
+        end
+        opened.close
+
+        expect(File.readlines(record_path).map { |line| JSON.parse(line)["type"] }).to eq(%w[noisy after])
+        expect(File.read(stderr_path)).to include("a stray warning from lib/")
+      end
+    end
+
+    it "cannot tear a record even with four writers and a warning between each" do
+      Dir.mktmpdir do |dir|
+        record_path = File.join(dir, "session.ndjson")
+        opened = described_class.open(record_path)
+
+        with_stderr_at(File.join(dir, "stderr.log")) do
+          Array.new(4) do |writer|
+            Thread.new do
+              50.times do |i|
+                warn "noise from #{writer}"
+                opened.record("type" => "row", "writer" => writer, "i" => i)
+              end
+            end
+          end.each(&:join)
+        end
+        opened.close
+
+        rows = File.readlines(record_path).map { |line| JSON.parse(line) }
+        expect(rows.size).to eq(200)
+        expect(rows.map { |row| [row["writer"], row["i"]] }.uniq.size).to eq(200)
+      end
+    end
+  end
+
   describe "fd ownership" do
     it "does not close an injected IO it does not own" do
       journal.close

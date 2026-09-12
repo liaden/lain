@@ -145,8 +145,12 @@ Only the frontend may touch `$stdout`/`$stderr`. Everything else writes to an in
 `Lain::Sink` or pushes attributed events onto a `Lain::Channel`.
 `spec/output_discipline_spec.rb` fails on `puts`/`print`/`warn`/`$stdout`/`$stderr` anywhere in
 `lib/` outside `lib/lain/frontend/`; the Rust crates deny `clippy::print_stdout`/`print_stderr`.
-Not fussiness: the Journal is NDJSON and it is the experiment record — one stray warning
-interleaved into it makes `JSON.parse` fail on that line.
+
+The experiment record does not rest on that scan. The Journal holds its own descriptor —
+opened on the session file, never on a terminal stream — in sync mode, and writes each record
+whole under a monitor, so a stray `warn` lands on fd 2 and cannot interleave into the NDJSON.
+`spec/lain/journal_spec.rb` pins that. What a stray write costs is the **cockpit**: it
+scribbles into the chat pane the frontend is painting.
 
 ## Requires
 

@@ -549,11 +549,12 @@ the footgun that keeps `ext/lain` pure and synchronous. The full argument is in
 > Newline-delimited JSON: one JSON value per line, for streaming.
 > ([Specification](https://github.com/ndjson/ndjson-spec))
 
-The `Journal` format, and the reason for lain's output discipline. One stray `puts` interleaved into
-the stream makes `JSON.parse` fail on that line and corrupts the experiment record, so
-`spec/output_discipline_spec.rb` parses the AST of every file in `lib/` and fails on
-`puts`/`print`/`warn`/`$stdout`/`$stderr` outside the frontend. The Rust side denies
-`clippy::print_stdout` and `clippy::print_stderr` at the crate root for the same reason.
+The `Journal` format. A stray `puts` cannot reach this stream: the `Journal` holds its own
+descriptor, opened on the session file and never on a terminal stream, so a terminal write lands
+on fd 2 (`spec/lain/journal_spec.rb` pins it). Output discipline is enforced anyway, for the
+cockpit rather than the record — `spec/output_discipline_spec.rb` parses the AST of every file in
+`lib/` and fails on `puts`/`print`/`warn`/`$stdout`/`$stderr` outside the frontend, and the Rust
+side denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root.
 
 ### Write-ahead log (WAL)
 

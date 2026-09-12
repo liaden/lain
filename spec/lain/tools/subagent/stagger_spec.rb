@@ -135,9 +135,11 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     # 100% against the bare gem, no Lain involved, in
     # tmp/c3-probes/probe_bare_async_stderr_leak.rb). `spec/output_discipline
     # _spec.rb`'s AST scan cannot see this: the `warn` call lives inside the
-    # gem, not in lib/. A stray line interleaved into the Journal's NDJSON is
-    # exactly the catastrophe CLAUDE.md's output discipline section exists
-    # to prevent -- one bad byte and `JSON.parse` fails on that line. The
+    # gem, not in lib/. Those bytes go to fd 2, so they never reach the
+    # Journal -- it writes through its own descriptor, opened on the session
+    # file (see the fd examples in `spec/lain/journal_spec.rb`). What they
+    # smear is the cockpit: a line of gem chatter painted over the chat pane,
+    # from a raise the caller went on to handle cleanly. The
     # fix is `finished: false` at both `root.async` call sites in
     # {Stagger#call}/{Stagger#release_rest} (tested black-box here, not by
     # asserting the kwarg is present, since the observable property is the

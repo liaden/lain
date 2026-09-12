@@ -4,10 +4,21 @@ require "ripper"
 require "pathname"
 
 # Mechanical enforcement of the output-discipline rule: only the frontend may
-# touch the terminal. Everything else is handed a sink (see {Lain::Sink}). A
-# stray `warn` or `$stderr.puts` anywhere else can interleave plain text into
-# the NDJSON Journal and silently corrupt the experiment record, so we forbid it
-# here rather than in a paragraph of the README that nobody re-reads.
+# touch the terminal. Everything else is handed a sink (see {Lain::Sink}).
+#
+# What is at stake is the COCKPIT, not the experiment record. The record is safe
+# without this file: {Lain::Journal} holds its own descriptor -- opened on the
+# session file, never on a terminal stream -- in sync mode, and writes each
+# record whole under a monitor, so a stray `warn` lands on fd 2 and cannot
+# interleave into the NDJSON. `spec/lain/journal_spec.rb` pins that. What a
+# stray write costs is the pane the frontend is painting: it scribbles over the
+# chat and over the line editor's screen state, and no other spec can see that
+# happen.
+#
+# The rule earns its keep by forcing a shim, not by catching slips:
+# {Lain::Provider::HTTP::Logging::SinkLogger} exists because RubyLLM's Faraday
+# logger defaults to $stdout and this check refused it. An empty ALLOWLIST is a
+# rule at full compliance, not an idle guard.
 #
 # Robustness: we parse each file with Ripper and inspect the *syntax tree*, not
 # the raw text. That means the trigger words are never matched inside comments
