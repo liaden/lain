@@ -17,10 +17,11 @@ class RunSpecSupervisor
   # `live` is shared with the actors fake: an actor is live from its launch
   # until the retirement that ends it, so counting it in one object and
   # discounting it in the other is what makes the width bound observable.
-  def initialize(reports, live, raising: [])
+  def initialize(reports, live, raising: [], log: [])
     @reports = reports
     @live = live
     @raising = raising
+    @log = log
     @rows = []
     @retired = []
   end
@@ -33,6 +34,9 @@ class RunSpecSupervisor
 
   def retire(row)
     @retired << row.actor.id
+    # Shared with the grading seam's own log, so "graded BEFORE retired" is an
+    # ordering fact rather than two counts that happen to agree.
+    @log << [:retired, row.actor.id]
     @live[:now] -= 1
     raise Lain::Error, "the supervisor refused to retire #{row.actor.id}" if @raising.include?(row.actor.id)
 
@@ -159,14 +163,14 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
   # The loop, assembled over the fakes an example set up.
   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
-               width: 2, budget: nil, attempts: nil)
+               width: 2, budget: nil, attempts: nil, grading: nil, log: [])
     live = { now: 0 }
-    supervisor = RunSpecSupervisor.new(reports, live, raising: retiring)
+    supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
     settled = landing || RunSpecLanding.new(statuses)
     run = described_class.new(progress: progress_over(issues, statuses), plans:, actors:, supervisor:, gate:,
                               landing: settled, width:, budget:,
-                              **(attempts ? { attempts: } : {}))
+                              **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}))
     [run, actors, settled, supervisor]
   end
 
@@ -525,6 +529,72 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       reason = refused_by(RuntimeError.new("power cut mid-merge"))
 
       expect(reason).to include("lain epic land", "--resume", "a")
+    end
+  end
+
+  # The hook a bench binds its grader to. Retirement anchors, stops the actor
+  # and RELEASES its lease -- which removes the checkout -- so anything that
+  # judges an issue by running its tests has exactly one moment to do it: after
+  # the actor has settled, before it is retired.
+  describe "grading, between an actor settling and its retirement" do
+    def grading_into(log) = ->(issue_id, _row) { log << [:graded, issue_id] }
+
+    it "grades an issue before that issue is retired" do
+      log = []
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                      reports: { "a" => anchored("sha-a") }, grading: grading_into(log), log:)
+
+      run.call
+
+      expect(log).to eq([[:graded, "a"], [:retired, "a"]])
+    end
+
+    # The row is what carries the lease, so the seam can reach the checkout the
+    # actor worked in rather than being handed a path somebody guessed.
+    it "hands the seam the issue id and the registry row the lease rides on" do
+      seen = []
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                      reports: { "a" => anchored("sha-a") },
+                      grading: ->(issue_id, row) { seen << [issue_id, row] })
+
+      run.call
+
+      expect(seen.map(&:first)).to eq(["a"])
+      expect(seen.first.last).to respond_to(:actor)
+    end
+
+    it "grades every issue the run carries, each before its own retirement" do
+      log = []
+      run, = run_over(issues: [issue("a"), issue("b")],
+                      statuses: { "a" => "in_flight", "b" => "in_flight" },
+                      reports: { "a" => anchored("sha-a"), "b" => anchored("sha-b") },
+                      grading: grading_into(log), log:)
+
+      run.call
+
+      expect(log).to eq([[:graded, "a"], [:retired, "a"], [:graded, "b"], [:retired, "b"]])
+    end
+
+    # Nobody is benching an ordinary `/implement-epic` run, so the default
+    # grades nothing and the loop behaves exactly as it did before the seam.
+    it "grades nothing, and lands as usual, when no seam is given" do
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                      reports: { "a" => anchored("sha-a") })
+
+      expect(run.call.landed.map(&:issue_id)).to eq(["a"])
+    end
+
+    # One issue's grader blowing up must not take the run down with it: the
+    # rest of the loop is somebody else's landing.
+    it "stops only that issue when the grader itself raises" do
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                      reports: { "a" => anchored("sha-a") },
+                      grading: ->(*) { raise Lain::Error, "the grader could not run the suite" })
+
+      result = run.call
+
+      expect(result.landed).to be_empty
+      expect(result.reported.map(&:reason).join).to include("the grader could not run the suite")
     end
   end
 

@@ -158,15 +158,52 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
                              root: repo, paths:, config:)
   end
 
-  def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new)
+  def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil)
     described_class.for(mount: mounted, chronicle: record, paths:, root: repo, library: backend.library,
-                        journal: Lain::Channel::Null.instance, toolset_build:, asker: nil, config:, actors:)
+                        journal: Lain::Channel::Null.instance, toolset_build:, asker: nil, config:, actors:,
+                        **(grading ? { grading: } : {}))
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
-  def driven(width: 2)
+  def driven(width: 2, grading: nil)
     factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub) },
-                        record: chronicle).run(width:)
+                        record: chronicle, grading:).run(width:)
+  end
+
+  # What a chat lends the epic it is seated in. The grading hook has to ride
+  # these seams, or the hook the driver now owns is unreachable from the one
+  # object a caller outside the chat actually holds.
+  describe "Seams#driver" do
+    let(:conductor) { Class.new { def closed? = false }.new }
+
+    # The epic has to exist before the seams resolve one: an unmounted seat
+    # answers Factory::Unmounted, which carries no seams to inspect.
+    before { write_epic([issue("a")]) }
+
+    def seams_with(**over)
+      Lain::CLI::EpicDriver::Seams.new(mount:, paths:, journal: Lain::Channel::Null.instance,
+                                       toolset_build:, asker: nil, conductor:, **over)
+    end
+
+    def driver_from(seams)
+      seams.driver(root: repo, library: backend.library, chronicle: Lain::CLI::Chronicle::Null.new)
+    end
+
+    it "carries a grading seam through to the factory it builds" do
+      seam = ->(_issue_id, _row) { :graded }
+
+      factory = driver_from(seams_with(grading: seam))
+
+      expect(factory.instance_variable_get(:@optional).fetch(:grading)).to be(seam)
+    end
+
+    # An ordinary chat lends no grader, and must stay byte-identical: the
+    # driver's own Null is what grades nothing.
+    it "lends no grading seam by default" do
+      factory = driver_from(seams_with)
+
+      expect(factory.instance_variable_get(:@optional).fetch(:grading)).to be_nil
+    end
   end
 
   describe "with no epic mounted" do
@@ -292,6 +329,31 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
       expect(result.landed.map(&:issue_id)).to eq(["a"])
       expect(contains?(result.landed.first.sha)).to be(true)
+    end
+
+    # The hook a bench binds its grader to, over real leases. Retirement
+    # anchors, stops the actor and releases its lease -- which REMOVES the
+    # checkout -- so a grader that runs the subject's own suite has exactly one
+    # moment: after the actor settled, before it is retired. Asserting the
+    # actor's own committed file is readable at that moment proves both halves,
+    # the work being visible and the checkout still being there.
+    it "grades each issue in its own leased checkout, before retirement releases it" do
+      write_epic([issue("a", blocks: ["b"]), issue("b")])
+      %w[a b].each { |id| approve_plan(id) }
+      git(repo, "switch", "-q", "main")
+      graded = []
+      seam = lambda do |issue_id, row|
+        checkout = row.lease.worker_env.cwd
+        graded << { issue: issue_id, standing: Dir.exist?(checkout),
+                    work: File.exist?(File.join(checkout, "#{issue_id}.txt")) }
+      end
+
+      result = driven(grading: seam)
+
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+      expect(graded.map { |row| row[:issue] }).to eq(%w[a b])
+      expect(graded.map { |row| row[:standing] }).to all(be(true))
+      expect(graded.map { |row| row[:work] }).to all(be(true))
     end
 
     # One writer for pending -> in_flight, and it is the plan approval. An

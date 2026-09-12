@@ -16,7 +16,16 @@ module Lain
       # spends that method a send it has no room for, while the same lambda
       # built here costs it nothing. Every other member is a plain value, taken
       # after {Wiring#wire_agent} has settled them.
-      Seams = Data.define(:mount, :paths, :journal, :toolset_build, :asker, :conductor) do
+      # `grading` is what makes the driver's own hook reachable from outside the
+      # chat: a bench holds these seams, not the Factory's constructor, so a
+      # grader bound per issue has to ride here or it cannot be bound at all. It
+      # DEFAULTS, because an ordinary chat lends none and must construct exactly
+      # as it did.
+      Seams = Data.define(:mount, :paths, :journal, :toolset_build, :asker, :conductor, :grading) do
+        def initialize(mount:, paths:, journal:, toolset_build:, asker:, conductor:, grading: nil)
+          super
+        end
+
         # @param root [String] the project root, which is the checkout the
         #   epic's branch is cut in and landed onto
         # @param library [Skill::Library] the run's ONE skill library
@@ -24,7 +33,7 @@ module Lain
         # @return [Factory, Factory::Unmounted]
         def driver(root:, library:, chronicle:)
           Factory.for(mount:, chronicle:, paths:, root:, library:, journal:, toolset_build:, asker:,
-                      interrupt: stopping)
+                      grading:, interrupt: stopping)
         end
 
         private
@@ -99,8 +108,12 @@ module Lain
         # @param interrupt [#call] answers whether the run should stop
         # @param actors [#call, nil] `fleet ->` what launches an issue; the
         #   real {IssueActor} when nobody says otherwise
+        # @param grading [#call, nil] `call(issue_id, registration)`, judged
+        #   between an actor settling and its retirement, while its lease still
+        #   holds the checkout; nil grades nothing. A bench binds its own
+        #   per-issue grader here.
         def initialize(mount:, chronicle:, paths:, root:, library:, journal:, toolset_build:,
-                       asker: nil, config: nil, interrupt: -> { false }, actors: nil)
+                       asker: nil, config: nil, interrupt: -> { false }, actors: nil, grading: nil)
           @mount = mount
           @chronicle = chronicle
           @paths = paths
@@ -108,11 +121,12 @@ module Lain
           @library = library
           @journal = journal
           @toolset_build = toolset_build
-          # The four a caller may leave to this object: who answers a gate, the
-          # project's config, when to stop, and what launches an issue. One slot
-          # because they are the OPTIONAL half, and naming them apart bought
-          # nothing but the line that put #initialize over Metrics/MethodLength.
-          @optional = { asker:, config:, interrupt:, actors: }
+          # The five a caller may leave to this object: who answers a gate, the
+          # project's config, when to stop, what launches an issue, and what
+          # grades one. One slot because they are the OPTIONAL half, and naming
+          # them apart bought nothing but the line that put #initialize over
+          # Metrics/MethodLength.
+          @optional = { asker:, config:, interrupt:, actors:, grading: }
         end
 
         def mounted? = true
@@ -175,7 +189,7 @@ module Lain
         def loop_over(fleet, width:, budget:)
           Run.new(progress: -> { epics.progress(slug) }, plans: method(:plan_for), actors: actors(fleet),
                   supervisor: fleet, gate:, landing:, width:, budget:, attempts:,
-                  interrupt: @optional.fetch(:interrupt))
+                  interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded)
         end
 
         def gate = Gate.new(submit:, slug:, journals: method(:signoffs))

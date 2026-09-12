@@ -76,17 +76,19 @@ module Lain
         # @param interrupt [#call] answers whether the run should stop
         # @param attempts [#call] `issue_id ->` which attempt to launch under,
         #   derived from the anchors standing in the repository
+        # @param grading [#call] `call(issue_id, registration)`, judged between
+        #   an actor settling and its retirement -- see {#settle_one}. The Null
+        #   grades nothing, so an ordinary run is unchanged.
         def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:,
-                       width: WIDTH, budget: nil, interrupt: -> { false }, attempts: nil)
+                       width: WIDTH, budget: nil, interrupt: -> { false }, attempts: nil, grading: Ungraded)
           @progress = progress
           @plans = plans
           @actors = actors
           @supervisor = supervisor
           @landing = landing
-          @width = width
-          @budget = budget
-          @interrupt = interrupt
+          @bounds = Bounds.new(width:, budget:, interrupt:)
           @attempts = attempts || ->(_issue_id) { 1 }
+          @grading = grading
           @asking = Asking.new(gate:, interrupt:)
         end
 
@@ -121,8 +123,9 @@ module Lain
         end
 
         def stop_reason
-          return format(BUDGET_SPENT, budget: @budget) if @budget && @landed.size >= @budget
-          return INTERRUPTED if @interrupt.call
+          budget = @bounds.budget
+          return format(BUDGET_SPENT, budget:) if budget && @landed.size >= budget
+          return INTERRUPTED if @bounds.interrupt.call
 
           nil
         end
@@ -136,7 +139,7 @@ module Lain
         end
 
         def fill(folded)
-          startable(folded).take(@width - @live.size).each { |issue| launch(issue) }
+          startable(folded).take(@bounds.width - @live.size).each { |issue| launch(issue) }
         end
 
         def startable(folded) = ready(folded) { |issue| issue.status == STARTABLE }
@@ -181,9 +184,21 @@ module Lain
         # ONE ISSUE'S REFUSAL STOPS THAT ISSUE. Everything below can refuse --
         # the retirement, the gate, the queue -- and none of them may discard a
         # Result that already carries somebody else's landing.
+        # GRADED BEFORE IT IS RETIRED, and the order is the whole point.
+        # Retirement anchors the work, stops the actor and RELEASES its lease --
+        # which removes the checkout -- so anything that judges an issue by
+        # running the subject's own suite has exactly one moment to do it. The
+        # row is what carries the lease, so the seam reaches the checkout the
+        # actor really worked in rather than a path somebody guessed.
+        #
+        # A grader that raises is caught by the same rescue as everything else
+        # here: it stops THAT issue and leaves the run carrying whatever already
+        # landed.
         def settle_one
           entry = @live.shift
-          judge(entry, @supervisor.retire(row_of(entry)))
+          row = row_of(entry)
+          @grading.call(entry.issue_id, row)
+          judge(entry, @supervisor.retire(row))
         rescue StandardError => e
           reported(entry, "#{UNCARRIED}: #{e.class}: #{e.message}")
         end
@@ -326,6 +341,22 @@ module Lain
             STOPPED
           end
         end
+
+        # The grading hook's Null: nobody is benching an ordinary
+        # `/implement-epic` run, so it judges nothing and the loop is exactly
+        # what it was before the seam existed. A module answering the one
+        # message rather than a class to subclass -- what a caller supplies is a
+        # `#call`, never a type.
+        module Ungraded
+          def self.call(_issue_id, _registration) = nil
+        end
+
+        # What a run may do before it stops of its own accord: how many issues
+        # it carries at once, how many it may land in all, and what answers
+        # whether it should stop now. ONE value because {Run#stop_reason} reads
+        # them as one question -- and because naming them apart is what put
+        # `#initialize` over Metrics/MethodLength.
+        Bounds = Data.define(:width, :budget, :interrupt)
 
         # One issue whose work reached the working branch.
         Landed = Data.define(:issue_id, :sha) do

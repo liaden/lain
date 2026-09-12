@@ -60,6 +60,30 @@ class IsolationRecordingArm < Lain::Arm::SingleThread
   end
 end
 
+# Two altitude tasks at ONE size, which is the smallest suite that folds a
+# distribution (Altitude's own n >= 2 rule). A constant rather than a heredoc
+# inside the helper: the body is what pushed that method over MethodLength, and
+# the suite is a fixture rather than a step of the helper's work.
+#
+# The subjects are named ABSOLUTELY, at the committed projects: a suite's
+# subject paths resolve against its own directory, and this one is written into
+# a temp dir that holds no projects of its own.
+ALTITUDE_CLI_SUBJECTS = File.expand_path("../../fixtures/altitude/subjects", __dir__)
+
+ALTITUDE_CLI_SUITE = <<~YAML.freeze
+  tasks:
+    - id: order-total
+      size: small
+      subject: #{ALTITUDE_CLI_SUBJECTS}/order-total
+      level: unit
+      prompt: "add a refund to Order"
+    - id: invoice-lines
+      size: small
+      subject: #{ALTITUDE_CLI_SUBJECTS}/invoice-lines
+      level: unit
+      prompt: "net the invoice"
+YAML
+
 # Bench::CLI is ALL of `exe/lain bench`'s assembly: exe/lain only parses flags,
 # calls these methods, and `say`s the returned Strings. Every refused input is
 # a {Lain::Error} -- {CLI::Refusal} for the user's own mistakes, with the path
@@ -299,6 +323,146 @@ RSpec.describe Lain::Bench::CLI do
     it "raises the one named Lain error on an unknown isolation name" do
       expect { cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "docker") }
         .to raise_error(Lain::CLI::IsolationBackend::Unknown, /docker/)
+    end
+  end
+
+  # The four-arm DECOMPOSITION comparison, assembled. It spends more than
+  # `bench arms` does -- the epic arms drive a whole epic per task -- so every
+  # example here drives scripted seams through a Provider::Mock and resolves no
+  # live provider.
+  describe "#altitude_report" do
+    # The seams the epic and planned arms are driven by. Anonymous classes
+    # rather than named ones: a constant defined in an example group is a
+    # Lint/ConstantDefinitionInBlock offence, and these have no life outside it.
+    let(:launch) { Struct.new(:actor).new(Object.new) }
+
+    let(:fleet) do
+      Class.new do
+        def find(*) = :row
+        def retire(_row) = "anchored"
+      end.new
+    end
+
+    # A driver whose run CARRIED an issue: one that carried none refuses, which
+    # is right, but it is not what this example is about.
+    let(:driver) do
+      Class.new do
+        def run(**)
+          Lain::CLI::EpicDriver::Run::Result.new(
+            landed: [Lain::CLI::EpicDriver::Run::Landed.new(issue_id: "ledger", sha: "a" * 40)],
+            reported: [], stopped: nil
+          )
+        end
+      end.new
+    end
+
+    # The per-issue grades the driver's grading hook collects -- in production a
+    # {Lain::Grader::LeaseHarness} bound to each issue's own leased checkout.
+    # Without them threaded, both epic arms roll up nothing and every cell in
+    # their rows reads "not measured".
+    let(:epic_grades) do
+      -> { { "ledger" => Lain::Grader::Grade.new(score: 1.0, pass: true, why: "all 2 examples passed") } }
+    end
+
+    let(:seams) do
+      Lain::Bench::LiveArms::Seams.new(
+        planner: ->(*, **) { "Subject: lib/order.rb\n" }, actors: ->(*, **) { launch },
+        supervisor: fleet, progressive: driver, hands_off: driver, slug: "demo", records: -> { [] },
+        grades: epic_grades
+      )
+    end
+
+    let(:said) { [] }
+
+    # A sink that records rather than prints: the warning is the operator's, and
+    # nothing in lib may reach a real stream.
+    let(:sink) do
+      recorder = said
+      Class.new { define_method(:puts) { |*args| recorder << args.join(" ") } }.new
+    end
+
+    let(:grader) { Lain::Grader::Fixture.new("settled") { |f| f.check("ran at all") { true } } }
+
+    let(:provider) do
+      Lain::Provider::Mock.new(
+        responses: Array.new(6) do
+          text_response("done", model: "claude-sonnet-4",
+                                usage: Lain::Usage.new(input_tokens: 80, output_tokens: 20))
+        end
+      )
+    end
+
+    # The key is never needed: an injected provider short-circuits the backend's
+    # own resolution, and anthropic's model default is a constant.
+    def backend
+      Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS })
+    end
+
+    def with_fixture
+      Dir.mktmpdir("lain-altitude-cli") do |dir|
+        path = File.join(dir, "tasks.yml")
+        File.write(path, ALTITUDE_CLI_SUITE)
+        yield path
+      end
+    end
+
+    def altitude_report(path, **)
+      cli.altitude_report(fixture_path: path, backend:, seams:, grader:, sink:, provider:, **)
+    end
+
+    # The "grader score" table, arm => its mean cell. Read as CELLS rather than
+    # asserted with `include`, because "not measured" is a perfectly good
+    # substring of a report and satisfies every `include("epic-hands-off")` an
+    # unmeasured row would ever be checked with.
+    def score_rows(report)
+      block = report.split("\n\n").find { |part| part.start_with?("grader score\n") }
+      block.lines.drop(3).to_h do |line|
+        cells = line.chomp.split(/\s{2,}/)
+        [cells.first, cells[2]]
+      end
+    end
+
+    # THE WHOLE ROSTER IS WHAT THE COMMAND BUILDS, so every one of the four rows
+    # has to carry a real number. Two of them reading "not measured" is the
+    # comparison silently not happening.
+    it "returns the report as a String, with a real score for every arm on the roster" do
+      with_fixture do |path|
+        report = nil
+
+        expect { report = altitude_report(path) }.to output("").to_stdout.and output("").to_stderr
+        expect(report).to be_a(String)
+        expect(report).to include("== small ==")
+        expect(score_rows(report).keys).to eq(%w[one-shot plan-only epic-progressive epic-hands-off])
+        expect(score_rows(report).values).to all(match(/\A\d+\.\d+\z/))
+      end
+    end
+
+    # The warning is said BEFORE the first arm, and is deliberately not part of
+    # the report: a report is pasted into an issue, where a spend warning would
+    # read as a property of the experiment rather than of the command.
+    it "says what it is about to spend before the first arm, and keeps it out of the report" do
+      with_fixture do |path|
+        report = altitude_report(path)
+
+        expect(said.first).to include("spends real API money")
+        expect(report).not_to match(/spends real/i)
+      end
+    end
+
+    # The same pair `bench arms` refuses, refused by the same two guards rather
+    # than by a second copy of them.
+    it "refuses a set isolation with no journal to record its leases in" do
+      with_fixture do |path|
+        expect { altitude_report(path, isolation: "worktree") }
+          .to raise_error(described_class::Refusal, /--isolation worktree/)
+      end
+    end
+
+    it "refuses a journal given with no isolation name to resolve it for" do
+      with_fixture do |path|
+        expect { altitude_report(path, journal: Lain::Channel.new) }
+          .to raise_error(ArgumentError, /journal/)
+      end
     end
   end
 

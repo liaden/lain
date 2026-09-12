@@ -175,6 +175,51 @@ module Lain
                    grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
       end
 
+      # The four-arm DECOMPOSITION comparison ({Altitude}): the same work entered
+      # at four heights on {Arm::Ladder}, over a suite whose tasks sit on a size
+      # axis, reported per size.
+      #
+      # THIS SPENDS MORE THAN `bench arms` DOES, and by a wide margin: the two
+      # epic arms drive a whole epic per task -- planning, gating and landing
+      # every issue -- so budget it against the epic's issue count rather than
+      # against one ask per task. {Altitude} says so through `sink` before the
+      # first arm runs, which is why that warning is not part of the returned
+      # report: a report is pasted into an issue, where a spend warning would
+      # read as a property of the experiment rather than of the command.
+      #
+      # `seams` ARRIVES BUILT, and that is a real boundary rather than a
+      # convenience. The two epic arms are driven by {CLI::EpicDriver::Factory},
+      # which needs a chat's own wiring -- a mount, a chronicle, a skill library
+      # and a toolset build -- and none of those exist inside `bench`. So the
+      # caller that HAS them assembles the seams and hands them over; see
+      # {LiveArms::Seams}.
+      #
+      # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none",
+      # exactly as it does for {#arms_report}; a SET name still REQUIRES a
+      # `journal:`, and {#lease_options} says why.
+      #
+      # @param fixture_path [String] the committed {Altitude} suite the arms run
+      # @param backend [Lain::CLI::Backend] the resolved provider-and-Context seam
+      # @param seams [LiveArms::Seams] what the planned and gated arms are driven by
+      # @param grader [#grade] the fallback grader for an arm that builds none of
+      #   its own; the one-shot arm binds a {Grader::LeaseHarness} to its own
+      #   lease through `seams.grading` instead
+      # @param sink [#puts] where the cost warning is said, BEFORE the first arm
+      # @param isolation [String, nil] the `--isolation` name; nil leases nothing
+      # @param journal [#<<, nil] where lease telemetry lands; REQUIRED with an `isolation`
+      # @param price_book [Lain::PriceBook] prices every arm's journal
+      # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}
+      # @return [String] the report; never printed here
+      # @raise [Refusal] on an `isolation` with no journal
+      # @raise [Altitude::MissingFixture] when the suite path is not there
+      # @raise [Altitude::MalformedTask, Altitude::TooFewTasks] on a suite it cannot fold
+      def altitude_report(fixture_path:, backend:, seams:, grader:, sink: Sink::Null.new,
+                          isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)
+        Altitude.new(fixture_path:, spawn_seam: SpawnSeam.new(backend:, **spawn_options), grader:, sink:,
+                     arms: LiveArms.altitude(seams:, price_book:),
+                     **altitude_isolation(isolation, journal)).report
+      end
+
       # Record `runs` fresh live sessions of one task file (user prompts, one
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.
@@ -245,6 +290,16 @@ module Lain
         raise Refusal, "--isolation #{isolation} leases workers and has no journal to record them in" if journal.nil?
 
         { isolation:, journal: }
+      end
+
+      # {Altitude} takes a resolved BACKEND (or none), where {#arm_report} takes
+      # the pair. Both guards are reused rather than restated: {#lease_options}
+      # refuses a set name with nowhere to record its leases, and
+      # {#arm_isolation} refuses options given with no name to resolve them for.
+      # The `:isolation` key is dropped between them because the first answers it
+      # as a NAME and the second takes it as the positional argument.
+      def altitude_isolation(name, journal)
+        arm_isolation(name, **lease_options(isolation: name, journal:).except(:isolation))
       end
 
       # The `isolation:` keyword {Arm::Driver} is built with -- or NO keyword at

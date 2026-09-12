@@ -49,6 +49,67 @@ module Lain
         paths.map { |path| "#{task}\n\nYour share of this task is #{path}, and only #{path}." }
       end
 
+      # The two epic entries' labels. They differ in WHO answers the gates and in
+      # nothing else, so the names are the only thing telling their rows apart.
+      PROGRESSIVE = "epic-progressive"
+      HANDS_OFF = "epic-hands-off"
+
+      # What the altitude arms need and the orchestration arms do not: how a
+      # plan gets written, who carries it, and one already-built driver per epic
+      # entry -- each carrying the gate policy that entry is FOR, since the
+      # policy belongs to the driver and never to the ladder.
+      #
+      # A value rather than nine keywords on {.altitude}: they arrive together,
+      # they are threaded together, and a roster assembled from loose arguments
+      # is one where two arms can differ by a seam nobody passed.
+      # `grades` is what makes the epic rows READABLE. Both epic arms score by
+      # rolling up the per-issue grades their driver's grading hook collected,
+      # and an arm that rolled up none refuses -- correctly, but that prints
+      # "not measured" in every cell. Unthreaded, the only roster this builds
+      # could never show a four-arm comparison at all.
+      Seams = Data.define(:planner, :actors, :supervisor, :progressive, :hands_off, :slug, :records,
+                          :grading, :layout, :grades) do
+        # `grading` and `layout` default to nil rather than to the objects they
+        # stand for: `bench` loads BEFORE `arm` and `grader`, so a default naming
+        # either here would be a boot-time NameError. {.altitude} resolves them
+        # in a method body, where those units exist.
+        def initialize(planner:, actors:, supervisor:, progressive:, hands_off:, slug:,
+                       records: -> { [] }, grading: nil, layout: nil, grades: -> { {} })
+          super
+        end
+      end
+
+      # The DECOMPOSITION comparison `lain bench altitude` runs: the same work
+      # entered at four different heights on {Arm::Ladder}, lowest rung first, so
+      # the report reads from the cheapest entry to the richest.
+      #
+      # One instrument for all four, {.build}'s own rule and for its own reason:
+      # a comparison is only a comparison if the clock and the price book are
+      # shared.
+      #
+      # @param seams [Seams] what the planned and gated arms are driven by
+      # @param price_book [Lain::PriceBook] prices every arm's journal
+      # @return [Array<Lain::Arm>] one-shot, plan-only, then the two epic entries
+      def self.altitude(seams:, price_book: PriceBook.default)
+        instrument = Arm::Instrument.new(price_book:)
+        [Arm::OneShot.new(instrument:, grading: seams.grading || Arm::OneShot::PASS_THROUGH),
+         Arm::PlanOnly.new(instrument:, planner: seams.planner, actors: seams.actors,
+                           supervisor: seams.supervisor, layout: seams.layout || TestLayout::None),
+         *epic_entries(seams, instrument)]
+      end
+
+      # The two epic entries differ in ONE member -- which driver, and so which
+      # gate policy -- so they are built from one expression rather than two that
+      # could drift. Named because writing them out twice is what put
+      # {.altitude} over Metrics/AbcSize.
+      def self.epic_entries(seams, instrument)
+        [[PROGRESSIVE, seams.progressive], [HANDS_OFF, seams.hands_off]].map do |(name, driver)|
+          Arm::Epic.new(name:, driver:, slug: seams.slug, instrument:,
+                        records: seams.records, grades: seams.grades)
+        end
+      end
+      private_class_method :epic_entries
+
       # @param price_book [Lain::PriceBook] prices each arm's journal
       # @param decompose [#call] `call(task) -> Array<String>`, the orchestrator's
       #   split; the linear arms have nothing to decompose

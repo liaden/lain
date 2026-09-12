@@ -1,0 +1,63 @@
+# The altitude suite: the same kind of work at two SIZES, which is the axis the
+# arms are compared across. A SMALL task is one file and one behaviour, where a
+# plan is overhead; a LARGE task spans several files and carries an ordering
+# dependency between them, which is the work a plan -- or a whole epic -- is
+# supposed to buy its way into. Where on that axis each arm starts winning is
+# the question `lain bench altitude` exists to answer.
+#
+# Each task names:
+#
+#   size      the axis the report groups its rows by
+#   subject   a project of its OWN, resolved against THIS file's directory and
+#             COPIED into the arm's leased checkout, then graded by its own
+#             suite ({Grader::LeaseHarness}) rather than by a gold-file match --
+#             the arms here write real code, so real tests judge it
+#   level     the level root whose tests judge the work, and the one the grade
+#             is narrowed to
+#
+# The acceptance criteria an epic arm's issues are written from live with the
+# EPIC fixture, under `epic/<slug>/epic.md`, beside the plans that declare each
+# issue's `Subject:` line. That is what an epic is actually driven from, and a
+# second copy of the criteria here was read by nothing.
+#
+# TWO TASKS PER SIZE, because {Arm::Driver} folds a DISTRIBUTION per arm and one
+# run is not a distribution (its own n >= 2 rule). A size carrying fewer is
+# refused by name rather than reported as a single-sample point.
+tasks:
+  - id: order-total
+    size: small
+    subject: subjects/order-total
+    level: unit
+    prompt: |
+      In this project, `Order#refunded` returns nil and its unit test fails.
+      Make `Order#refunded` answer the refunded total of the order's lines,
+      which is 0 until a line has been refunded. Change lib/order.rb only.
+
+  - id: invoice-lines
+    size: small
+    subject: subjects/invoice-lines
+    level: unit
+    prompt: |
+      In this project, `Invoice#net` returns nil and its unit test fails.
+      Make `Invoice#net` answer the invoice's total less its discount.
+      Change lib/invoice.rb only.
+
+  - id: ledger-report
+    size: large
+    subject: subjects/ledger-report
+    level: unit
+    prompt: |
+      This project has three failing unit examples across two files. A ledger
+      must total its entries, a report must render that total, and the report's
+      header must carry the entry count. The report cannot be written until the
+      ledger totals, so the edits are ordered rather than independent.
+
+  - id: audit-trail
+    size: large
+    subject: subjects/audit-trail
+    level: unit
+    prompt: |
+      This project has three failing unit examples across two files. An audit
+      trail must record an entry, answer its entries in the order they arrived,
+      and summarise them as one line. The summary depends on the recording, so
+      the edits are ordered rather than independent.
