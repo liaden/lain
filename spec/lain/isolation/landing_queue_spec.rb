@@ -103,7 +103,11 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(result.report("w3").kind).to eq(:resolved)
     end
 
-    it "measures each landing: a fast-forward, then a merge" do
+    # The reports and the journal are asserted off ONE run: they are two
+    # projections of the same landing, and driving real git twice to read each
+    # separately cost a merge and some twenty git spawns per suite run for
+    # facts already established.
+    it "measures each landing -- a fast-forward, then a merge -- and journals one record per landing" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       w2 = worker("w2", "h" => "y\n")
 
@@ -111,6 +115,11 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
 
       expect(result.report("w1")).to have_attributes(kind: :merged, sha: w1.sha, fast_forward: true, ref: w1.ref)
       expect(result.report("w2")).to have_attributes(kind: :merged, sha: tip, fast_forward: false, ref: w2.ref)
+      expect(handbacks.map { |record| [record.worker_key, record.outcome, record.fast_forward] })
+        .to eq([["w1", :merged, true], ["w2", :merged, false]])
+      expect(handbacks.map(&:ref)).to eq([w1.ref, w2.ref])
+      expect(handbacks.map(&:sha)).to eq([w1.sha, tip])
+      expect(handbacks.map(&:strategy)).to all(eq(Lain::Isolation::MergeStrategy::DEFAULT.to_s))
     end
 
     it "gives the one resolver every leftover, in the intended order" do
@@ -175,21 +184,6 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     it "refuses a working branch that names nothing" do
       expect { described_class.new(repo_root: @repo, base: Lain::Isolation::WorkingBranch::NONE) }
         .to raise_error(described_class::Refused, /working branch/)
-    end
-  end
-
-  describe "each landing journals its report" do
-    it "writes one handback record per landing, with the strategy, the sha and the fast-forward" do
-      w1 = worker("w1", "f" => "a\nB1\nc\n")
-      w2 = worker("w2", "h" => "y\n")
-
-      queue.call([w1, w2])
-
-      expect(handbacks.map { |record| [record.worker_key, record.outcome, record.fast_forward] })
-        .to eq([["w1", :merged, true], ["w2", :merged, false]])
-      expect(handbacks.map(&:ref)).to eq([w1.ref, w2.ref])
-      expect(handbacks.map(&:sha)).to eq([w1.sha, tip])
-      expect(handbacks.map(&:strategy)).to all(eq(Lain::Isolation::MergeStrategy::DEFAULT.to_s))
     end
   end
 

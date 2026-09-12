@@ -1341,7 +1341,10 @@ RSpec.describe Lain::CLI::Wiring do
         # Memoized, so whichever caller came first would decide which notice a
         # broken table is told through: every caller names it instead.
         it "is built with the notice every caller hands it, never an order-dependent default" do
-          expect(described_class.instance_method(:handback).parameters).to eq([%i[req notice]])
+          # The KINDS, not the names: what matters is that nothing is optional,
+          # since an optional notice is what would let the first caller decide.
+          # Asserting the spelling too reddened this on a rename.
+          expect(described_class.instance_method(:handback).parameters.map(&:first)).to eq([:req])
         end
 
         it "tells the human a malformed [isolation] table was ignored, and hands back with lain's defaults" do

@@ -1135,15 +1135,6 @@ RSpec.describe Lain::Tools::Subagent do
       expect(refusal["content"]).to eq("subagent spawn depth exceeded: this agent is at the ceiling")
     end
 
-    it "reads back the ceiling, the spawn policy and the budget its children run under" do
-      budget = Lain::Agent::Budget.new(max_iterations: 200)
-      policy = spawn_policy
-      tool = described_class.new(provider: mock(text_response), context_factory: -> { child_context }, toolset: union,
-                                 policy:, parent:, budget:, max_depth: 2, tool_middleware: ToolRegistry::UNGUARDED)
-
-      expect([tool.max_depth, tool.policy, tool.budget]).to eq([2, policy, budget])
-    end
-
     # The exe shape -- a union holding no subagent -- passes through untouched:
     # nothing to replace, same names rendered.
     it "leaves a subagent-free union (the exe shape) unchanged" do

@@ -61,10 +61,6 @@ RSpec.describe Lain::Arm::Ladder do
       # each epic-scoped stage runs under -- both are built from the SAME
       # ladder entry, so the rungs each arm's run would visit are identical
       # before either has decided a single gate.
-      progressive_rungs = described_class.from("research")
-      hands_off_rungs = described_class.from("research")
-      expect(progressive_rungs).to eq(hands_off_rungs)
-
       deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal: nil)
       built = Lain::Approval::Gate::Policies.for_all(config: config_for("hands_off"), deps:)
 

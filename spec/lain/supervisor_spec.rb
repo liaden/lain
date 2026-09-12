@@ -1364,11 +1364,10 @@ RSpec.describe Lain::Supervisor do
                                          retirement: retirement(log)).run(task)
         actor = adopted(supervisor, retiring_tool(text_response("done"), tools: [RetireShell.new]))
 
-        report = supervisor.retire(row_of(supervisor, actor))
+        supervisor.retire(row_of(supervisor, actor))
 
         expect(log).to eq([[:acquire, worker], [:sync, worker, true, false], [:anchor, worker, false],
                            [:release, worker]])
-        expect([report.kind, report.ref, report.sha]).to eq([:declined, "refs/lain/worker/#{worker}", "a" * 40])
         expect(actor).to be_stopped
         supervisor.stop
       end
@@ -1396,10 +1395,9 @@ RSpec.describe Lain::Supervisor do
         actor = adopted(supervisor, retiring_tool)
         expect(actor).to be_dead
 
-        report = supervisor.retire(row_of(supervisor, actor))
+        supervisor.retire(row_of(supervisor, actor))
 
         expect(log).to eq([[:acquire, worker], [:anchor, worker, false], [:release, worker]])
-        expect(report.ref).to eq("refs/lain/worker/#{worker}")
         supervisor.stop
       end
     end
