@@ -62,4 +62,27 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
+      # `.envrc`'s 12 is a measurement taken on an 8-physical-core developer
+      # box (docs/spec-suite-performance.md); this repo is public, so
+      # GitHub's ubuntu-latest here is its 4-vCPU/16GB standard runner, not
+      # that box -- different, unmeasured hardware, so 12 does not transfer.
+      # It is NOT left unset either: `Rakefile:76-84`'s fallback counts
+      # unique PHYSICAL core ids from `lscpu -p=core`, and on a 4-vCPU
+      # runner that resolves to at best 3 and possibly 1, depending on SMT
+      # this box has not measured -- either way below the runner's own
+      # core count and at or near what docs/spec-suite-performance.md calls
+      # "the worst count tried." `nproc` -- logical count, read fresh at
+      # job time -- is the runner's own measurement rather than a pin or an
+      # accidental collapse toward serial. This also deliberately skips the
+      # Rakefile's own `- 1` headroom: that subtraction is a floor for
+      # hardware nobody has measured, chosen because guessing high risks an
+      # OOM that `parallel_tests` reports as a pass -- but docs/spec-suite-
+      # performance.md measured this asymmetry on an 8-physical/16-logical
+      # box and found the optimum ABOVE the logical count (12-14), so
+      # subtracting for headroom is the policy that measurement repudiates
+      # on hardware anyone has actually measured. At 4 workers on 16GB
+      # there is no OOM risk to hedge against -- this 8-core box runs 12 in
+      # the same memory. Do not "restore consistency" with `- 1` here.
+      - name: Size the parallel suite from the runner's own cores
+        run: echo "LAIN_SPEC_WORKERS=$(nproc)" >> "$GITHUB_ENV"
       - uses: pre-commit/action@v3.0.1
