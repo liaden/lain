@@ -476,7 +476,7 @@ module Lain
       # the inlined body, once for the Surface and once for the Repl, because
       # both are built from the same six collaborators this class holds -- the
       # repeated parameter list that named {ToolsetBuild}, showing up again. The
-      # follow-ups in planning/specs/chunk-review-missing-objects.md carry it.
+      # follow-ups in planning/archive/chunk-review-missing-objects.md carry it.
       # Do NOT clear the number by hoisting the three duplicate reads into
       # locals: that measures 15.81 and passes the cop by bending the method to
       # the limit, which is this comment's complaint one layer down.

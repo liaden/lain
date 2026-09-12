@@ -326,7 +326,7 @@ RSpec.describe Lain::Sensitivity::Regions do
       # it, in a 1700-line prose document, is the positive and the negative
       # control in one assertion.
       it "finds only the sample key in the plan that specified it" do
-        regions = detect(File.binread(repo_path("planning/specs/chunk-project-root-and-secret-boundary.md")))
+        regions = detect(File.binread(repo_path("planning/archive/chunk-project-root-and-secret-boundary.md")))
 
         expect(regions.map(&:reason)).to eq(["openai-style api key"])
         expect(regions.first.bytes).to start_with("sk-ant-")
