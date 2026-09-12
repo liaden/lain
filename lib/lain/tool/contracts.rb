@@ -2,8 +2,8 @@
 
 module Lain
   class Tool
-    # Design-by-contract for tools, in the Eiffel sense: preconditions that must
-    # hold before the work, postconditions that must hold after.
+    # Design-by-contract for tools, in the Eiffel sense: what must hold before
+    # the work is allowed to happen.
     #
     # Split from {Lain::Tool} because it answers a different question. The Tool
     # says what a capability *is*; Contracts says what must be true around using
@@ -49,14 +49,6 @@ module Lain
           own_preconditions << build_contract(message, predicate, subject)
         end
 
-        # Something that must hold *after* the tool runs, checked against
-        # `(input, invocation, result)`. Turns a silent wrong answer into a loud one.
-        # `subject:` behaves as {#requires}' does, and is asked for the subject
-        # of the CALL -- so it takes `(input, invocation)`, never the result.
-        def ensures(message, subject: nil, &predicate)
-          own_postconditions << build_contract(message, predicate, subject)
-        end
-
         # Base-class contracts first, so an inherited invariant is checked before a
         # subclass's own. Collected across the ancestry rather than stored once, so
         # subclasses compose contracts instead of overwriting them.
@@ -64,17 +56,9 @@ module Lain
           contracts_along_ancestry(:own_preconditions)
         end
 
-        def postconditions
-          contracts_along_ancestry(:own_postconditions)
-        end
-
         # Contracts declared directly on this class, not its ancestors.
         def own_preconditions
           @own_preconditions ||= []
-        end
-
-        def own_postconditions
-          @own_postconditions ||= []
         end
 
         private
@@ -173,19 +157,12 @@ module Lain
       def check_preconditions!(input, context)
         self.class.preconditions.each do |contract|
           satisfied = instance_exec(input, context, &contract.predicate)
-          violated!("precondition", contract, input, context) unless satisfied
+          violated!(contract, input, context) unless satisfied
         end
       end
 
-      def check_postconditions!(input, context, result)
-        self.class.postconditions.each do |contract|
-          satisfied = instance_exec(input, context, result, &contract.predicate)
-          violated!("postcondition", contract, input, context) unless satisfied
-        end
-      end
-
-      def violated!(kind, contract, input, context)
-        raise ContractViolation, "#{kind} failed for #{name}: #{sentence(contract, input, context)}"
+      def violated!(contract, input, context)
+        raise ContractViolation, "precondition failed for #{name}: #{sentence(contract, input, context)}"
       end
 
       # A static message is already the sentence; a `subject:`-carrying one is a

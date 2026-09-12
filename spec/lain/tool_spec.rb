@@ -133,6 +133,25 @@ RSpec.describe Lain::Tool do
       expect(nested.call(meta: { count: 3 })).to be_ok
     end
 
+    # The path every production tool takes. One declaration yields both the
+    # JSON Schema the model reads and the local validation, so the refusal a
+    # model is handed names the very field its schema told it to send.
+    it "refuses a field the tool's input model declares required, naming it" do
+      text_input = Class.new(Lain::Tool::Input) do
+        field :text, :string, required: true, description: "the text to echo"
+      end
+      modelled = Class.new(described_class) do
+        input_model text_input
+        def name = "modelled"
+        def description = "echoes a declared field"
+        def perform(input, _context) = Lain::Tool::Result.ok(input.text)
+      end.new
+
+      expect { modelled.call({}) }
+        .to raise_error(Lain::Tool::InvalidInput, /invalid input for modelled: Text can't be blank/)
+      expect(modelled.call(text: "hi").content).to eq("hi")
+    end
+
     it "validates array items" do
       lists = Class.new(described_class) do
         def name = "l"
@@ -165,16 +184,6 @@ RSpec.describe Lain::Tool do
     it "runs normally once the precondition holds" do
       expect(edit_class.new.call({ path: "a.rb" }, { read: ["a.rb"] }))
         .to eq(Lain::Tool::Result.ok("edited a.rb"))
-    end
-
-    it "checks postconditions against the produced result" do
-      guarded = Class.new(described_class) do
-        def name = "g"
-        def description = "d"
-        ensures("never reports an error") { |_input, _context, result| result.ok? }
-        def perform(_input, _context) = Lain::Tool::Result.error("i failed")
-      end.new
-      expect { guarded.call({}) }.to raise_error(Lain::Tool::ContractViolation, /postcondition failed/)
     end
 
     it "accumulates inherited contracts rather than overwriting them" do

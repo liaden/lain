@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 # Contracts is design-by-contract for tools: preconditions checked before
-# #perform, postconditions after, a violated predicate RAISING (our bug) rather
-# than returning an error Result (the world's failure). The motivating case is
-# edit_file's read-before-write invariant; this pins the mechanism directly.
+# #perform, a violated predicate RAISING (our bug) rather than returning an
+# error Result (the world's failure). The motivating case is edit_file's
+# read-before-write invariant; this pins the mechanism directly.
 RSpec.describe Lain::Tool::Contracts do
   # A tool whose write must be preceded by a read this session -- the read-
   # before-write contract in miniature, checked against the threaded context.
@@ -14,7 +14,6 @@ RSpec.describe Lain::Tool::Contracts do
       def input_schema = { type: :object, properties: { path: { type: :string } }, required: [:path] }
 
       requires("path was never read this session") { |input, context| context.read?(input["path"]) }
-      ensures("result must be ok") { |_input, _context, result| result.ok? }
 
       def perform(input, _context) = Lain::Tool::Result.ok("wrote #{input["path"]}")
     end
@@ -47,19 +46,6 @@ RSpec.describe Lain::Tool::Contracts do
     end
   end
 
-  describe "postconditions" do
-    it "raises ContractViolation when the postcondition fails after #perform" do
-      klass = Class.new(Lain::Tool) do
-        def name = "bad_post"
-        def input_schema = { type: :object, properties: {} }
-        ensures("must be an error") { |_input, _context, result| result.error? }
-        def perform(_input, _context) = Lain::Tool::Result.ok("fine")
-      end
-      expect { klass.new.call({}, nil) }
-        .to raise_error(Lain::Tool::ContractViolation, /postcondition failed for bad_post/)
-    end
-  end
-
   describe "composition across the ancestry" do
     it "checks a base-class contract before the subclass's own" do
       order = []
@@ -75,6 +61,29 @@ RSpec.describe Lain::Tool::Contracts do
       end
       sub.new.call({}, nil)
       expect(order).to eq(%i[base sub])
+    end
+
+    # Composition is what stops a subclass SILENTLY dropping an invariant it
+    # inherited: declaring nothing of its own is not a way out of read-before-
+    # write, which is the whole reason contracts are collected along the
+    # ancestry rather than read off the class.
+    it "holds a subclass to an inherited contract it never restated" do
+      sub = Class.new(write_tool_class)
+
+      expect { sub.new.call({ "path" => "a.txt" }, session) }
+        .to raise_error(Lain::Tool::ContractViolation, /precondition failed/)
+    end
+  end
+
+  # Contracts are asked BEFORE the work and nowhere else. A tool that has run
+  # already answered with a Result, and a Result says whether it failed -- so an
+  # after-the-fact predicate had a whole vocabulary and no invariant to state.
+  describe "the vocabulary" do
+    it "declares what must hold before the work, and nothing about after" do
+      expect(Lain::Tool).to respond_to(:requires)
+      expect(Lain::Tool).not_to respond_to(:ensures)
+      expect(Lain::Tool).not_to respond_to(:postconditions)
+      expect(Lain::Tool).not_to respond_to(:own_postconditions)
     end
   end
 
@@ -124,19 +133,6 @@ RSpec.describe Lain::Tool::Contracts do
 
       expect { klass.new.call({}, nil) }
         .to raise_error(Lain::Tool::ContractViolation, %r{/from/the/tool is refused})
-    end
-
-    it "gives a postcondition the same capability" do
-      klass = Class.new(Lain::Tool) do
-        def name = "post_naming"
-        def input_schema = { type: :object, properties: {} }
-        ensures("%<subject>s came back wrong", subject: ->(_i, _c) { "the answer" }) { |_i, _c, _r| false }
-        def perform(_input, _context) = Lain::Tool::Result.ok("fine")
-      end
-
-      expect { klass.new.call({}, nil) }
-        .to raise_error(Lain::Tool::ContractViolation,
-                        "postcondition failed for post_naming: the answer came back wrong")
     end
 
     # Backward compatibility is what keeps this change small: `requires` has

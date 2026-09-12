@@ -95,11 +95,12 @@ RSpec.describe Lain::Tools::TodoWrite do
     end
 
     # An item carrying BOTH a String and a Symbol spelling of a key used to be
-    # RESOLVED, by matching Tool#dig's precedence to the raw-schema validator's
-    # so the stored value was the validated one. Under {Tool::Input} the
-    # ambiguity is refused outright instead -- the same call {Lain::Canonical}
-    # makes -- because nothing justifies preferring either spelling, and a rule
-    # nobody remembers is worse than a loud failure. A deliberate renegotiation.
+    # RESOLVED, by reading it back with the same key-spelling precedence the
+    # raw-schema validator used, so the stored value was the validated one.
+    # Under {Tool::Input} the ambiguity is refused outright instead -- the same
+    # call {Lain::Canonical} makes -- because nothing justifies preferring
+    # either spelling, and a rule nobody remembers is worse than a loud
+    # failure. A deliberate renegotiation.
     it "refuses a mixed-key item rather than picking a spelling, naming the element by index" do
       mixed = { "content" => "canonical", :content => "shadow",
                 "status" => "in_progress", :status => "completed" }

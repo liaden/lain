@@ -434,9 +434,9 @@ it answers a different question than the Tool does: the Tool says what a capabil
 Contracts says what must be true around using it. The motivating case is `edit_file` requiring
 "this file was read this session", an invariant the tool depends on but does not establish, and
 one a free-form `bash` tool structurally cannot express. A violated predicate raises. `Tool#call`
-is what runs validate → preconditions → `#perform` → postconditions, which is why subclasses
-implement `#perform` and never `#call`: routing through the public entry point is what makes the
-contract and schema checks unskippable.
+is what runs validate → preconditions → `#perform`, which is why subclasses implement `#perform`
+and never `#call`: routing through the public entry point is what makes the contract and schema
+checks unskippable.
 
 ### Triaging a bash command
 

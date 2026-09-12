@@ -298,7 +298,7 @@ Performance/MethodObjectAsBlock:
 # values: Algebra and Reline registries, ActiveModel::Name, the shipped prompt
 # templates read off disk, a digest format String, and Tool/Contracts declarations.
 # Two shapes, both safe. The declaration-time ones (tool.rb's @input_model,
-# contracts.rb's @own_pre/postconditions, input.rb's @fields) run inside a class
+# contracts.rb's @own_preconditions, input.rb's @fields) run inside a class
 # body, so they are single-threaded by construction. The lazy `||=` ones are warmed
 # during `require` -- Algebra.registry, for instance, is reached from the `refute`
 # calls sitting in class bodies in purge_failed_inputs.rb and summarizing.rb, so the

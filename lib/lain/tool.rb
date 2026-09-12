@@ -122,10 +122,10 @@ module Lain
       false
     end
 
-    # The public entry point: validate, check preconditions, dispatch, check
-    # postconditions. Subclasses implement {#perform}, not this. Returning the
-    # checked {Result} here (rather than letting `#perform` be called directly)
-    # is what guarantees the contract and schema checks cannot be skipped.
+    # The public entry point: validate, check preconditions, dispatch.
+    # Subclasses implement {#perform}, not this. Returning the checked {Result}
+    # here (rather than letting `#perform` be called directly) is what
+    # guarantees the contract and schema checks cannot be skipped.
     # When an {#input_model} is declared, `checked` is a coerced Input instance
     # (`input.timeout` is an Integer whether the model sent 30 or "30"); otherwise
     # it is the raw Hash. Contracts and #perform both see the checked value.
@@ -137,7 +137,6 @@ module Lain
         raise InvalidResult, "#{self.class}#perform must return a Tool::Result, got #{result.class}"
       end
 
-      check_postconditions!(checked, context, result)
       result
     end
 
@@ -162,21 +161,6 @@ module Lain
     # checks run.
     def perform(_input, _context)
       raise NotImplemented, "#{self.class} must define #perform"
-    end
-
-    # Look a key up in a model-supplied input Hash, tolerant of key spelling:
-    # tries the given key, then its String form, then its Symbol form.
-    # Anthropic parses tool input with `symbolize_names: true` and specs write
-    # either, so a subclass reading a raw-schema tool's input needs this. The
-    # precedence MATCHES {SchemaValidator#dig} on purpose: pass the SAME key
-    # the schema declares (a String, for a raw-Hash schema) and the value a
-    # subclass reads is the value the validator checked -- they cannot diverge
-    # on a mixed-key item.
-    def dig(hash, key)
-      return hash[key] if hash.key?(key)
-      return hash[key.to_s] if hash.key?(key.to_s)
-
-      hash[key.to_sym]
     end
 
     # The session a tool records reads and writes against rides
