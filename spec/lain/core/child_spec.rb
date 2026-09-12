@@ -56,6 +56,26 @@ RSpec.describe Lain::Core::Child, :core do
     Timeout.timeout(2) { sleep(0.005) until threads.all? { |thread| thread.status == "sleep" } }
   end
 
+  # Where the compiled daemon is looked for, which is path arithmetic and needs
+  # no daemon -- so `core: false` against the file's tag, and these two run in
+  # the default suite rather than only under `--tag core`.
+  describe ".binary" do
+    it "resolves inside CARGO_TARGET_DIR when the environment names one", core: false do
+      shared = File.join(runtime_base, "shared-target")
+
+      expect(described_class.binary(env: { "CARGO_TARGET_DIR" => shared }))
+        .to eq(File.join(shared, "debug", "lain-core"))
+    end
+
+    # Derived by walking up from the SPEC tree, so it agrees with the subject
+    # only if both land on the workspace root `cargo build` writes into.
+    it "falls back to the workspace target directory when nothing names one", core: false do
+      workspace_target = File.expand_path("../../../target", __dir__)
+
+      expect(described_class.binary(env: {})).to eq(File.join(workspace_target, "debug", "lain-core"))
+    end
+  end
+
   describe "a daemon that never accepts" do
     # Alive for far longer than CONNECT_BUDGET and never binding: the connect
     # loop only ever sees ENOENT, and the dead-on-arrival check never fires.

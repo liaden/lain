@@ -161,8 +161,10 @@ module Lain
     end
 
     # Where the gem ships its own nvim plugin, located the same way
-    # {Core::Child::BINARY} is. This file sits at `lib/lain/paths.rb`, so two
-    # levels up from `__dir__` is the repo/gem root.
+    # {Core::Child::WORKSPACE_TARGET} is -- {Core::Child::BINARY} starts there
+    # but lets CARGO_TARGET_DIR move it, and a shipped asset has no such knob.
+    # This file sits at `lib/lain/paths.rb`, so two levels up from `__dir__` is
+    # the repo/gem root.
     NVIM_PLUGIN_ROOT = File.expand_path("../../plugin/nvim", __dir__)
 
     # `nvim_plugin_root:` is injectable, mirroring {Core::Child}'s `binary:`, so

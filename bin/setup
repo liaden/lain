@@ -6,3 +6,19 @@ set -vx
 bundle install
 
 # Do any other automated setup that you need to do here
+
+# Both hook types at once, from `default_install_hook_types` -- commit-msg is not
+# a default stage, so a checkout that never re-ran this has no commit-message
+# lint at all. Skipped rather than fatal: it gates commits, not the build. Hooks
+# live in the COMMON git dir, so running this from a linked worktree re-installs
+# them for the main checkout and every other worktree as well.
+if command -v pre-commit > /dev/null; then
+  pre-commit install
+fi
+
+# A linked worktree compiles its own lain-core unless CARGO_TARGET_DIR points at
+# a build that already exists. A tracked .cargo/config.toml cannot do this: a
+# relative target-dir resolves against its own checkout. So export it by hand, in
+# .envrc or wherever the worktree is created:
+#
+#     export CARGO_TARGET_DIR=/path/to/the/main/checkout/target

@@ -18,9 +18,30 @@ module Lain
         end
       end
 
-      # Where `rake core:build` compiles to (the workspace target dir).
-      # Injectable (`binary:`) so a packaged install can point elsewhere.
-      BINARY = File.expand_path("../../../target/debug/lain-core", __dir__)
+      # Where `cargo build` writes when nothing redirects it. Three levels up
+      # from `__dir__` is the repo/gem root -- {Paths::NVIM_PLUGIN_ROOT} is
+      # located the same way.
+      WORKSPACE_TARGET = File.expand_path("../../../target", __dir__)
+
+      # Pinned, not derived: `rake core:build` builds debug and the :core-tagged
+      # specs read what it wrote.
+      PROFILE = "debug"
+
+      # CARGO_TARGET_DIR first, because that is how a linked worktree runs
+      # against the main checkout's build instead of compiling its own. Empty
+      # reads as unset: cargo refuses an empty value, so no build lives under one.
+      #
+      # @param env [Hash] where CARGO_TARGET_DIR is read from
+      # @return [String] absolute path to the compiled daemon
+      def self.binary(env: ENV)
+        configured = env["CARGO_TARGET_DIR"].to_s
+        target = configured.empty? ? WORKSPACE_TARGET : File.expand_path(configured)
+        File.join(target, PROFILE, "lain-core")
+      end
+
+      # Resolved once, from the environment the process started in. Injectable
+      # (`binary:`) so a packaged install can point elsewhere.
+      BINARY = binary
 
       # Generous for a debug-build daemon binding a fresh socket, bounded so a
       # wedged binary fails in words rather than hanging.
