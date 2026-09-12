@@ -159,6 +159,15 @@ the cop.
   from such a copy **deleted the entire copy**. Nothing warns you; the pointer file looks inert.
   Copying a worktree for mutation, bisect or spike work is otherwise reasonable, so the rule is just:
   delete the pointer first, or copy from a real clone.
+- **The same trap sits one layer down, in a copied SUBMODULE checkout.** A submodule's `.git` is a
+  pointer file too (`gitdir: ../.git/modules/<name>`), and that admin directory names its checkout
+  back in `core.worktree` — which a `cp -a` does not change. So git run in the copy reads the
+  original's admin data *and* writes into the original's working tree: the entry above, with a
+  second door into it. A legitimate submodule and a copied one differ in exactly one thing, which
+  is whether the admin directory names THIS checkout back — a linked worktree says so in its
+  `gitdir` file, a submodule in `core.worktree`, and a copy of either answers with somebody else's
+  path. `spec/worktree_identity.rb` asks that at suite boot and refuses to run when the answer is
+  no; the remedy for a copy you made on purpose is the one above.
 - **A class named for a top-level constant SHADOWS it for everything lexically inside the
   enclosing namespace.** Defining `Effect::Handler::Sensitivity` made `gate.rb`'s bare
   `Sensitivity::Policy` resolve to `Handler::Sensitivity::Policy` and die — for every caller
@@ -253,6 +262,13 @@ the cop.
   stderr, and the second answer was the true one. Use file redirection (`cmd >out 2>err`) when the
   question is WHICH stream a thing came out of -- the pipeline idiom is a bash habit and it lies
   here.
+- **The interactive shell's `grep` is a function onto `ugrep`, which SKIPS a file it heuristically
+  calls binary** — no error, no warning, zero matches. `grep -m1 '^status:'` over every
+  `planning/specs/chunk-*.md` reported `chunk-skills-roles-tools.md` as having no status line, and
+  line 3 of that file reads `status: done`. The document is valid UTF-8, but `file -b` calls it
+  `data` and ugrep 7.8.4 takes that as a reason not to search it; a document was nearly left out of
+  an archival move over it. Same family as the zsh idiom above: a confident answer, not an error.
+  Pass `-a` whenever a grep's EMPTINESS is what you are about to act on.
 - **A `SystemExit` inside an example truncates the run and still reports "0 failures".** Thor
   turns a refusal into `exit(1)` and RSpec does not rescue `SystemExit` inside an example — one
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation

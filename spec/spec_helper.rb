@@ -6,6 +6,14 @@ require_relative "bootsnap_setup"
 
 require "lain"
 
+require_relative "worktree_identity"
+
+# Before any spec drives git, and so above the support glob rather than in it: a
+# copy of a linked worktree keeps the ORIGINAL's `.git` pointer file, so git run
+# here operates on the original's admin directory -- one such run deleted the
+# copy. Below `require "lain"`, which Project::Resolver's spellings need.
+WorktreeIdentity.verify!
+
 # The universal stdlib set: these appear across ten-plus spec files (Ruling 8 of the
 # 2026-07-14 review plan), so they load once here; rarer stdlib requires stay in their
 # leaf specs, mirroring the lib-side policy.
