@@ -7,9 +7,8 @@ require "tmpdir"
 # meta, grouped by that root), renders each lineage's transcript into the
 # court-clerk scaffold, and spawns the shipped `court_clerk` role once per
 # lineage -- FRESH-ROOT (the clerk reads the record, it never inherits the
-# parent's prompt). The clerk's memory_write is guarded by a dispatch chain
-# THIS class builds with {Middleware::RefuseSecretWrites} mounted, because that
-# guard does not come free from the spawn seam.
+# parent's prompt). The clerk's tools are guarded by a dispatch chain THIS class
+# builds over {CLI::ToolGuard.detached}, because the spawn seam supplies none.
 RSpec.describe Lain::Consolidation do
   let(:store) { Lain::Store.new }
   let(:recorder) { Lain::Memory::Recorder.new }
@@ -62,6 +61,15 @@ RSpec.describe Lain::Consolidation do
     provider.requests.flat_map do |request|
       request.messages.flat_map { |message| Array(message["content"]).grep(Hash).map { |block| block["text"] } }
     end.compact
+  end
+
+  # Every tool_result the clerk was handed back, as one String -- what the tool
+  # phase's guards left of each tool's own output.
+  def tool_results_seen(provider)
+    blocks = provider.requests.flat_map do |request|
+      request.messages.flat_map { |message| Array(message["content"]).grep(Hash) }
+    end
+    blocks.select { |block| block["type"] == "tool_result" }.map { |block| block["content"].to_s }.join("\n")
   end
 
   describe "each completed lineage gets one clerk pass" do
@@ -117,6 +125,83 @@ RSpec.describe Lain::Consolidation do
       refusals = journal_records(journal, "write_refused")
       expect(refusals.size).to eq(1)
       expect(refusals.first.to_journal["pattern"]).to eq("pem private key block")
+    end
+  end
+
+  # The pass is DETACHED -- no chat lends it a board -- so it runs the stack such
+  # a run builds for itself ({CLI::ToolGuard.detached}), which is also what
+  # {CLI::Improve} runs. Four guards, not one: the write refusal, the read mask,
+  # the listing filter and the test-layout guard.
+  describe "the detached stack's other three guards" do
+    # A real base64 body, not the sibling example's elided one: the read side
+    # detects the key bytes as their own regions, and those are what must not
+    # come back.
+    let(:pem) do
+      "-----BEGIN PRIVATE KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASCAUAwggE8AgEAAkEAqwertyuiop\n" \
+        "asdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890abcdef\n-----END PRIVATE KEY-----"
+    end
+    # One lineage, so one scripted pair of responses answers one clerk spawn.
+    let(:records) { turn_records(main) + turn_records(lineage_a.last) }
+
+    def improve = Lain::CLI::Improve.new(provider: Lain::Provider::Unreachable.new, context:, slots:)
+
+    # `"-----"` is the body that changed answer: {Tool::Input} admits it and the
+    # old NullOracle let it into the index, where the floor {CLI::ToolGuard}
+    # wires declines it. A blank body was already refused, by validation.
+    it "declines a body with no content, the floor the detached stack's oracle adds" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(memory_write("lineage-a", "-----")), text_response("A done")
+                                          ])
+
+      consolidation(provider).call(records)
+
+      expect(recorder.index.key?("lineage-a")).to be(false)
+      expect(journal_records(journal, "write_refused").first.to_journal["pattern"])
+        .to eq(Lain::Middleware::RefuseSecretWrites::ORACLE_DECLINE)
+    end
+
+    it "masks a credential region out of a file the clerk reads, with nobody there to release it" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "key.pem")
+        File.write(path, "#{pem}\n")
+        provider = Lain::Provider::Mock.new(responses: [
+                                              tool_response(["tu_read", "read_file", { "path" => path }]),
+                                              text_response("clerked A")
+                                            ])
+
+        consolidation(provider).call(records)
+
+        expect(tool_results_seen(provider)).to include("<redacted:1>")
+        expect(tool_results_seen(provider)).not_to include("MIIBVgIBADAN")
+        masks = journal_records(journal, "read_redacted")
+        expect(masks.size).to eq(1)
+        expect(masks.first.to_journal["released"]).to eq(0)
+      end
+    end
+
+    # The listing guard is mounted over the NULL filter on purpose: this pass's
+    # gate consults no path policy either, so a filtered listing would hide a
+    # path the clerk can still read by name. Pinned by identity, because giving
+    # it a real policy while the gate stays Null is the mistake.
+    it "mounts the listing guard over the Null filter, the posture a detached run chose" do
+      guard = consolidation(Lain::Provider::Unreachable.new)
+              .send(:guard_stack).to_a.grep(Lain::Middleware::WithholdSecretPaths).first
+
+      expect(guard.filter).to equal(Lain::Sensitivity::Filter::Null.instance)
+    end
+
+    # {CLI::ToolGuard.detached} builds a board, and a pass over N lineages is ONE
+    # run: the clerks share its region ledger and its layout run.
+    it "builds one board for the whole pass, however many lineages it clerks" do
+      pass = consolidation(Lain::Provider::Unreachable.new)
+      runs = Array.new(2) { pass.send(:guard_stack).to_a.grep(Lain::Middleware::GuardTestLayout).first.run }
+
+      expect(runs.first).to equal(runs.last)
+    end
+
+    it "holds the same guard classes in the same order as the improve pass" do
+      expect(consolidation(Lain::Provider::Unreachable.new).send(:guard_stack).to_a.map(&:class))
+        .to eq(improve.send(:guard_stack).to_a.map(&:class))
     end
   end
 

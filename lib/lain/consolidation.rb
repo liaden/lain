@@ -16,10 +16,11 @@ module Lain
   # WITHOUT tool middleware, so a credential-shaped `memory_write` would reach the
   # recorder unguarded -- and a memory, once indexed, replays into every future
   # context with no un-indexing it. This class therefore builds the clerk's OWN
-  # dispatch chain and mounts {Middleware::RefuseSecretWrites} in its tool phase,
-  # producing the same {Telemetry::WriteRefused} record the main agent does. A
-  # refusal is contained: the clerk's loop continues on the error result, and so
-  # does the pass onto the next lineage.
+  # dispatch chain over the stack a run with no chat builds for itself
+  # ({CLI::ToolGuard.detached}, as {CLI::Improve} does): the write refusal, and a
+  # credential region in a file the clerk reads left masked because nobody is at
+  # a surface to release it. A refusal is contained -- the clerk's loop continues
+  # on the error result, and so does the pass onto the next lineage.
   class Consolidation
     ROLE = :court_clerk
 
@@ -85,8 +86,8 @@ module Lain
       Outcome.new(root: lineage.root, result: build_clerk.ask(lineage.scaffold).text)
     end
 
-    # The point of this class is the last argument: a tool-phase
-    # {Middleware::RefuseSecretWrites} the spawn seam would not have supplied.
+    # The point of this class is the last argument: a tool-phase guard stack the
+    # spawn seam would not have supplied.
     def build_clerk
       allowed = role.attenuate(clerk_union)
       Agent.new(
@@ -105,10 +106,17 @@ module Lain
     # Each clerk turn is paired with the recorder's memory root in force at it.
     def clerk_journal = Memory::JournalMemoryRoot.new(journal: @journal, recorder:)
 
-    # A deliberate asymmetry: the guard journals to the RAW `@journal` because a
-    # refusal writes nothing and so has no memory root to pair, while the clerk's
-    # TURNS ride the wrapped {#clerk_journal}.
-    def guard_stack = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)])
+    # A deliberate asymmetry: what the guards record lands on the RAW `@journal`
+    # -- a refusal or a mask writes no memory, so neither has a root to pair --
+    # while the clerk's TURNS ride the wrapped {#clerk_journal}.
+    #
+    # Detached, not layered: no chat lends this pass a board, so its listing
+    # guard holds the Null filter, matching the gate it has -- none.
+    def guard_stack = detached_guard.call(WorkerEnv.default)
+
+    # {CLI::ToolGuard.detached} builds a BOARD, and says it is built ONCE: a pass
+    # over N lineages is one run, however many clerks it spawns.
+    def detached_guard = @detached_guard ||= CLI::ToolGuard.detached(journal: @journal)
 
     # The union the role attenuates FROM: it must hold every tool the clerk's
     # `only`-set names, or {Toolset#only} fails loudly. Both memory tools share the
