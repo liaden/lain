@@ -1,6 +1,6 @@
 # Simplify 03 — delete what nothing reaches, and move the test-only collaborators out of lib
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -207,6 +207,41 @@ of scope, since it is not on the deletion list. Both are corrected by the cards 
 - **Whether `Middleware::Timeout`'s testing precedent survives its deletion.** T5 keeps the three lib
   comments that cite it as an idiom, rewritten to name the idiom rather than the class. If the panel
   would rather keep the class for that reason, T5 shrinks to `Logging` alone.
+
+## Execution log
+
+**Base:** `main` at `a4cc9f22`. `origin/main` is 195 commits behind — worktrees are cut from
+`HEAD` by hand, never from `origin/main`.
+
+**Staleness re-check, 2026-09-12, `d2bb133c..a4cc9f22` (17 commits).** `lib/` moved in 29 files;
+nothing this plan deletes was touched. Every deletion target, require line and spec file named
+above still exists at the path given. Drift and corrections:
+
+- **T12's "five confirmed-dead constants" claim is false, and was false at grounding.**
+  `compaction/source.rb`, `provider/response_wal.rb`, `compaction/need.rb` and
+  `strategy/composed.rb` are byte-identical to `d2bb133c`, and all five constants have live
+  construction sites in their own files: `IdleGap` at `source.rb:364`, `Scheduling` at `:365`,
+  `StreamingFrame` at `response_wal.rb:267`, `Manual` in `need.rb:121`'s `DETECTORS` and again at
+  `:130`, `Untagged` raised at `composed.rb:145`. Three are `private_constant`, which is most
+  likely what the audit mistook for unreachable. **T12 shrinks to the registry half** —
+  `#providers` and `#resolve` — and the five constants stay.
+- **T3 has a site the grounding missed.** `cli/up/pane_command.rb:59` `CONSENT_ENV = %w[LAIN_DESKTOP]`
+  is real code, with a 25-line comment above it explaining why desktop consent is a second list;
+  `up_spec` pins `PANE_ENV` against `exe/lain`. Four further comment references:
+  `approval/escalation.rb:557`, `frontend/neovim/approval_view.rb:17`, `exe/lain:1044`,
+  `cli/epic_mount.rb:147`.
+- **T4 has a fifth name-string site:** `effect/handler/sensitivity.rb:16` names `core_exec` in a
+  comment beside `write_file`/`edit_file`/`bash`.
+- **T8's `--provider` enum is not in `exe/lain`.** Six `exe/lain` sites interpolate
+  `Lain::CLI::Backend::PROVIDERS` (`backend.rb:51`), which is T8's own file — so that wiring line
+  needs no orchestrator edit. `provider.rb:134` also names `Provider::BedrockReference` in a comment.
+- **Line drift only:** `.rubocop.yml` `:301`→`:341`, `:340`→`:382`, `:214`→`:260`;
+  `sensitivity/policy.rb:78`→`:82`; `cli/backend.rb:179`→`:183`, `:457`→`:465`.
+  `CLAUDE.md:146` is unchanged.
+- **Dependencies resolved:** simplify-01 and simplify-02 are `done`, so T9 may create
+  `spec/support/nulls/` and T10 owns the `CLAUDE.md` citation fix outright. simplify-14 is still
+  `draft`, so **T13 takes the cheap option** — add rows, do not replace the map with a sweep.
+
 
 ## Waves
 
