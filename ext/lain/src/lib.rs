@@ -1458,11 +1458,43 @@ mod ffi {
         /// one chained expression, the temporary `MutexGuard` outlives the
         /// `map_err` closure, so `missing_object`'s `const_get` would run --
         /// raising, allocating, and inviting GC -- with the store locked.
-        fn ancestors(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = store_ref(ruby, rb_self)?;
+        ///
+        /// `ancestors` is the one walk with a block form, and that rule shapes
+        /// it: materialize the chain, drop the guard, then yield. Yielding
+        /// under the lock would run arbitrary Ruby -- a `commit` on the same
+        /// store included -- against a non-reentrant `std::sync::Mutex`.
+        ///
+        /// So **neither form is lazy**, where Ruby's fetches one turn per
+        /// yield. The Enumerator is no escape: it is a view over this same
+        /// eager walk. Matching that laziness would mean one FFI crossing per
+        /// node, which `docs/rust-bindings.md`'s fourth admission test rules
+        /// out -- the whole walk beats plain Ruby by a margin a per-node
+        /// crossing would spend many times over. The answers agree; only the
+        /// fetch count does.
+        fn ancestors(ruby: &Ruby, rb_self: Obj<Timeline>) -> Result<Value, Error> {
+            // `enum_for` before the store is read, where
+            // `lib/lain/timeline.rb` puts it -- the placement IS the parity
+            // claim, and it keeps the no-block form O(1).
+            if !ruby.block_given() {
+                return Ok(rb_self.enumeratorize("ancestors", ()).as_value());
+            }
+
+            let store: &Store = store_ref(ruby, &rb_self)?;
             let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
             let arcs = walked.map_err(|e| missing_object(ruby, e))?;
-            turns_to_array(ruby, arcs)
+            let turns = turns_to_array(ruby, arcs)?;
+            // Guard dropped with the statement above, so these yields re-enter
+            // Ruby unlocked. Indexed off the Array rather than iterating it or
+            // using `magnus::block::Yield`: both hold the wrapped `Turn`s on
+            // the Rust heap, which Ruby's conservative collector does not scan,
+            // across a `rb_yield` that can collect. The Array roots its own
+            // elements from this frame.
+            for offset in 0..turns.len() {
+                let turn: Value = turns.entry(offset as isize)?;
+                let _: Value = ruby.yield_value(turn)?;
+            }
+            // Ruby's block form ends on a `while`, so it answers nil.
+            Ok(ruby.qnil().as_value())
         }
 
         fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {

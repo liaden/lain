@@ -8,6 +8,7 @@ RSpec.describe Lain::Ext::Timeline do
   subject(:timeline) { described_class.empty(store:) }
 
   let(:store) { Lain::Ext::Store.new }
+  let(:three) { say(say(say(timeline, "a"), "b", role: :assistant), "c") }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -39,7 +40,6 @@ RSpec.describe Lain::Ext::Timeline do
     end
 
     it "orders #to_a root first and #ancestors head first" do
-      three = say(say(say(timeline, "a"), "b", role: :assistant), "c")
       expect(three.to_a.map { |t| t.content.first["text"] }).to eq(%w[a b c])
       expect(three.ancestors.map { |t| t.content.first["text"] }).to eq(%w[c b a])
     end
@@ -133,9 +133,52 @@ RSpec.describe Lain::Ext::Timeline do
     e.message
   end
 
-  describe "time travel" do
-    let(:three) { say(say(say(timeline, "a"), "b", role: :assistant), "c") }
+  # `#ancestors` has two forms and the Rust binding only ever answered one of
+  # them: it is registered at arity 0, which says nothing about a block, so a
+  # block-passing caller got a silently discarded Array. Ledger#unique_turns is
+  # that caller, and a bench whose whole cost column reads zero raises nothing.
+  # These four pin both forms against Lain::Timeline#ancestors, the return
+  # value included.
+  describe "#ancestors" do
+    it "yields every ancestor to a block, head first" do
+      seen = []
+      three.ancestors { |turn| seen << turn }
 
+      expect(seen.length).to eq(3)
+      expect(seen.first.digest).to eq(three.head_digest)
+      expect(seen.map { |turn| turn.content.first["text"] }).to eq(%w[c b a])
+    end
+
+    # The Rust doc comment promises both of these, and a promise with no test
+    # is what this codebase otherwise refuses. The nil is Ruby's own answer
+    # (its body ends on a `while`); the valued `break` is the one thing a
+    # `?`-propagating yield loop could plausibly swallow.
+    it "answers nil, and hands a valued break straight back to the caller" do
+      expect(three.ancestors { |_turn| :ignored }).to be_nil
+      expect(three.ancestors { |turn| break turn.digest }).to eq(three.head_digest)
+    end
+
+    it "returns an enumerator when no block is given" do
+      walk = three.ancestors
+
+      expect(walk).to be_a(Enumerator)
+      expect(walk.take(2).map { |turn| turn.content.first["text"] }).to eq(%w[c b])
+    end
+
+    # The digests are content addresses, so agreeing on them is agreeing on
+    # both the walk order and what each node is -- the port's own oracle.
+    it "yields the same digests the Ruby timeline yields for the same commits" do
+      rust = []
+      ruby = []
+      three.ancestors { |turn| rust << turn.digest }
+      say(say(say(Lain::Timeline.empty(store: Lain::Store.new), "a"), "b", role: :assistant), "c")
+        .ancestors { |turn| ruby << turn.digest }
+
+      expect(rust).to eq(ruby)
+    end
+  end
+
+  describe "time travel" do
     it "rewinds n turns and past the root to empty" do
       expect(three.rewind.head.content).to eq(text("b"))
       expect(three.rewind(2).head.content).to eq(text("a"))
