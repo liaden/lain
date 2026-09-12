@@ -449,11 +449,15 @@ module Lain
         # The blockers still HOLDING this issue -- the same test
         # {Epic::Graph#ready} applies, so the two cannot disagree about stuck.
         def blockers(issue)
-          holding = @progress.graph.blocked_by(issue.id).reject { |id| @progress.status(id) == Lain::Epic::DONE }
+          holding = blockage.holding(issue.id)
           return "" if holding.empty?
 
           " (blocked by #{holding.map { |id| "`#{id}`" }.join(", ")})"
         end
+
+        # Memoized because this report reads one fixed fold: the relation was
+        # rebuilt per issue otherwise -- see {Epic::Blockage}.
+        def blockage = @blockage ||= Lain::Epic::Blockage.of(@progress.graph)
 
         # The document's own marks, so a status reads here the way the markdown
         # spells it.

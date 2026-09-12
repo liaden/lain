@@ -61,11 +61,15 @@ module Lain
       end
 
       # @param moves [Array<Move>]
+      # @param found [Array<Blocker>] the obstruction scan's result, for a
+      #   caller that has already run {#blockers} and would otherwise pay for
+      #   it twice. The scan reads every path's CONTENT to tell a file the turn
+      #   left alone from one a human has since edited, so running it twice
+      #   reads the whole change set twice.
       # @return [Restore::Result]
       # @raise [Blocked] before any IO, naming every obstruction
       # @raise [Restore::PartialApply] when IO fails midway
-      def apply(moves)
-        found = blockers(moves)
+      def apply(moves, found = blockers(moves))
         raise Blocked, found unless found.empty?
 
         moved(moves)

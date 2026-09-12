@@ -26,6 +26,9 @@ module Lain
         # buffer line, and the transport refuses a line that holds a newline.
         NEWLINES = /\R+/
 
+        # The only event kinds that move the fleet listing.
+        FLEET_KINDS = %i[spawn message].freeze
+
         # No epic resolved for this chat -- the frontend's null, answering the
         # one message the view asks of an epic.
         module Unmounted
@@ -55,17 +58,22 @@ module Lain
 
           private
 
-          def issues(progress) = progress.graph.map { |issue| "- #{glyph(issue)} -- #{state(progress, issue)}" }
+          # Indexed once per render rather than once per issue -- see
+          # {Epic::Blockage}.
+          def issues(progress)
+            blockage = Lain::Epic::Blockage.of(progress.graph)
+            progress.graph.map { |issue| "- #{glyph(issue)} -- #{state(issue, blockage)}" }
+          end
 
           # The document's own marks, so an issue reads here the way epic.md spells it.
           def glyph(issue) = "[#{Lain::Epic::Document::STATUS_MARKS.fetch(issue.status)}] `#{issue.id}` #{issue.title}"
 
           # Pending splits the way {Epic::Mermaid} splits it: free to start, or
           # held -- and by WHICH blockers, the question a pending issue raises.
-          def state(progress, issue)
+          def state(issue, blockage)
             return issue.status unless issue.status == "pending"
 
-            holding = progress.graph.blocked_by(issue.id).reject { |id| progress.status(id) == Lain::Epic::DONE }
+            holding = blockage.holding(issue.id)
             holding.empty? ? "pending, ready" : "pending, blocked by #{holding.map { |id| "`#{id}`" }.join(", ")}"
           end
 
@@ -90,9 +98,18 @@ module Lain
         # @param event [Object] one Channel event
         # @return [Array<String>, nil] the whole buffer, or nil when nothing it
         #   shows moved -- a refold that found no change redraws nothing
+        # Nothing is rebuilt or compared for an event that moves neither half.
+        # This runs on the sole drain thread for EVERY event -- a tool's stdout
+        # arrives many times a second -- and this buffer holds the issue list
+        # and the whole mermaid fence, so composing it and comparing it line by
+        # line per event was the cost, not the refold.
         def update(event)
-          @epic_lines = folded if refold?(event)
-          @fleet_lines = observed(event) if event.respond_to?(:kind)
+          refolded = refold?(event)
+          @epic_lines = folded if refolded
+          moved = fleet_event?(event)
+          @fleet_lines = observed(event) if moved
+          return nil unless refolded || moved || @shown.nil?
+
           lines = composed
           return nil if lines == @shown
 
@@ -140,13 +157,19 @@ module Lain
           [heading, "", "it failed with #{error.class}:", *message.split(NEWLINES).map { |line| "    #{line}" }]
         end
 
+        def refold?(event) = refold_types.any? { |type| event.is_a?(type) }
+
         # Matched by class, as {StatusFeed}'s own arms are. Reached at call time
         # because the epic tier loads after the frontend; the approval tier
-        # loads before it.
-        def refold?(event)
-          [Telemetry::TurnUsage, Lain::Epic::IssueTransition, Lain::Epic::StageTransition,
-           Lain::Approval::GateDecision].any? { |type| event.is_a?(type) }
+        # loads before it -- and memoized, so the late binding costs one list
+        # per view rather than a fresh four-element Array per event.
+        def refold_types
+          @refold_types ||= [Telemetry::TurnUsage, Lain::Epic::IssueTransition,
+                             Lain::Epic::StageTransition, Lain::Approval::GateDecision].freeze
         end
+
+        # Only these two move the fleet, so only these two rebuild its listing.
+        def fleet_event?(event) = event.respond_to?(:kind) && FLEET_KINDS.include?(event.kind)
 
         def observe(event)
           case event.kind

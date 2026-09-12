@@ -86,10 +86,14 @@ module Lain
           raise Refusal, "unknown /undo argument #{argument.inspect}: type /undo, or /undo skip"
         end
 
+        # The obstruction scan is handed to {Workspace::Revert#apply} rather
+        # than left for it to repeat: it reads the content of every path the
+        # turn changed, so scanning twice read the whole change set twice.
         def reverted(env, undo)
           revert = ::Lain::Workspace::Revert.new(root: env.snapshots.root)
-          blocked!(undo, undo.blocked + revert.blockers(undo.moves))
-          landed(env, undo, revert.apply(undo.moves))
+          found = revert.blockers(undo.moves)
+          blocked!(undo, undo.blocked + found)
+          landed(env, undo, revert.apply(undo.moves, found))
         end
 
         # Disk moved: the slot learns it first, so its next write is measured

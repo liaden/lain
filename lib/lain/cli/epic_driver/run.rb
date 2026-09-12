@@ -147,8 +147,11 @@ module Lain
         # Pending, and nothing standing in its way but its own plan.
         def unplanned(folded) = ready(folded) { |issue| issue.status == Lain::Epic::InFlight::PENDING }
 
+        # Indexed ONCE per pass, not once per issue: this is the driver's own
+        # loop, re-entered for every issue that settles.
         def ready(folded)
-          folded.graph.select { |issue| yield(issue) && untouched?(issue.id) && blockers_done?(issue, folded) }
+          blockage = Lain::Epic::Blockage.of(folded.graph)
+          folded.graph.select { |issue| yield(issue) && untouched?(issue.id) && blockage.clear?(issue.id) }
         end
 
         # An issue this run has already launched, landed or reported is not
@@ -156,12 +159,6 @@ module Lain
         # answer the same issue forever.
         def untouched?(id)
           [@live, @landed, @reported].none? { |seen| seen.any? { |entry| entry.issue_id == id } }
-        end
-
-        # An abandoned blocker still blocks -- {Epic::Graph#ready}'s rule, asked
-        # here of the same fold so the two cannot disagree.
-        def blockers_done?(issue, folded)
-          folded.graph.blocked_by(issue.id).all? { |id| folded.status(id) == Lain::Epic::DONE }
         end
 
         # A refusal stops THIS issue and nothing else: the plan is not approved,

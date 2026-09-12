@@ -6,6 +6,7 @@
 # grammar constants, so it loads first. The unit sits after `plan` in lain.rb
 # because Issue reads Gherkin::Criteria and Canonical.
 require_relative "epic/issue"
+require_relative "epic/blocking"
 require_relative "epic/graph"
 require_relative "epic/graph_fiber"
 require_relative "epic/stage"

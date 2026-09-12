@@ -89,9 +89,21 @@ module Lain
           "#" => "&num;"
         }.freeze
 
+        # Indexed ONCE, here. {Graph#fetch} builds a fresh id-keyed Hash per
+        # call and {Graph#map} a fresh Array, and this renderer asks for both
+        # once per issue in four different passes -- so reading them off the
+        # graph directly made a render quadratic in the issue count, on the
+        # frontend's sole drain thread every time the status buffer refolded.
         def initialize(progress)
-          @graph = progress.graph
+          graph = progress.graph
           @ready_ids = progress.ready.to_set(&:id)
+          @issues = graph.to_h { |issue| [issue.id, issue] }.freeze
+          # {Graph} is itself ordered by id ("equal issue sets are equal graphs
+          # whatever order they were built in"), so walking it directly IS the
+          # sorted walk -- a `.sort` here would only restate a promise
+          # {Graph}'s own constructor already keeps.
+          @ids = graph.map(&:id).freeze
+          @live = @ids.to_set
           @node_ids = assign_node_ids
         end
 
@@ -99,13 +111,7 @@ module Lain
 
         private
 
-        # {Graph} is itself ordered by id ("equal issue sets are equal graphs
-        # whatever order they were built in"), so walking it directly IS the
-        # sorted walk -- a second `.sort` here would only restate a promise
-        # {Graph}'s own constructor already keeps.
-        def ids = @graph.map(&:id)
-
-        def nodes = ids.map { |id| "    #{node(id)}[#{label(id)}]" }
+        def nodes = @ids.map { |id| "    #{node(id)}[#{label(id)}]" }
 
         def label(id) = "\"#{escape(id)}\""
 
@@ -117,7 +123,7 @@ module Lain
         # arrow points the same way the field reads: `a --> b` for `a.blocks`
         # naming `b`. {Issue#blocks} is already deduplicated and sorted.
         def blocks_edges
-          ids.flat_map { |id| @graph.fetch(id).blocks.map { |target| "    #{node(id)} --> #{node(target)}" } }
+          @ids.flat_map { |id| @issues.fetch(id).blocks.map { |target| "    #{node(id)} --> #{node(target)}" } }
         end
 
         # `related` is authored per-issue and not guaranteed symmetric, but the
@@ -125,7 +131,7 @@ module Lain
         # (or both) still draws exactly one dotted line, sorted by its own two
         # ids rather than by which issue happened to declare it.
         def related_edges
-          pairs = ids.flat_map { |id| @graph.fetch(id).related.map { |target| [id, target].sort } }.uniq.sort
+          pairs = @ids.flat_map { |id| @issues.fetch(id).related.map { |target| [id, target].sort } }.uniq.sort
           pairs.map { |left, right| "    #{node(left)} -.- #{node(right)}" }
         end
 
@@ -136,21 +142,21 @@ module Lain
         # node the diagram never declares. Live ones draw parent-to-child, the
         # direction lineage reads in.
         def discovered_from_edges
-          ids.filter_map do |id|
-            parent = @graph.fetch(id).discovered_from
-            "    #{node(parent)} -.-> #{node(id)}" if parent && ids.include?(parent)
+          @ids.filter_map do |id|
+            parent = @issues.fetch(id).discovered_from
+            "    #{node(parent)} -.-> #{node(id)}" if parent && @live.include?(parent)
           end
         end
 
         def class_defs = Mermaid::CLASS_STYLES.map { |state, style| "    classDef #{state} #{style}" }
 
-        def classes = ids.map { |id| "    class #{node(id)} #{state_of(id)}" }
+        def classes = @ids.map { |id| "    class #{node(id)} #{state_of(id)}" }
 
         # Every stored status classes as itself except `pending`, which splits
         # on {Progress#ready} into the two states an author actually acts on:
         # nothing to do yet (`blocked`) versus free to start (`pending`).
         def state_of(id)
-          issue = @graph.fetch(id)
+          issue = @issues.fetch(id)
           return issue.status unless issue.status == "pending"
 
           @ready_ids.include?(id) ? "pending" : "blocked"
@@ -172,7 +178,7 @@ module Lain
         # in the same order and land on the same ids.
         def assign_node_ids
           taken = {}
-          ids.to_h { |id| [id, claim("#{NODE_PREFIX}#{sanitized(id)}", taken)] }
+          @ids.to_h { |id| [id, claim("#{NODE_PREFIX}#{sanitized(id)}", taken)] }
         end
 
         def sanitized(id) = id.gsub(/[^A-Za-z0-9]/, "_")
