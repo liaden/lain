@@ -58,8 +58,8 @@ module Lain
         def self.instance = INSTANCE
       end
 
-      # @param sensitivity [Sensitivity] the classifier, injected -- its home,
-      #   cwd and project rules are all somebody else's to resolve
+      # @param sensitivity [#classify] the classifier, injected -- its home, cwd
+      #   and project rules are all somebody else's to resolve
       # @raise [ArgumentError] on a nil classifier
       def initialize(sensitivity:)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and a filter

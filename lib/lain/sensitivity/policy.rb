@@ -29,11 +29,15 @@ module Lain
       def reason = verdict.reason
     end
 
-    # Does this tool call name a sensitive path -- asked by
-    # {Effect::Handler::Gate}, so a `read_file` on `.env` reaches a human
-    # although `read_file` declares itself tier 1. The whole three-place
-    # boundary, and the measured detector behind it, is in ARCHITECTURE.md's
-    # "The secret boundary".
+    # The run's path boundary, at every moment somebody needs one: does this
+    # tool call name a sensitive path ({#gates?}), is it refused outright
+    # ({#denial}), which rows may a listing keep ({#filter}), and what is this
+    # one path ({#classify}) -- four phrasings of one question over one table.
+    #
+    # {#gates?} is the one {Effect::Handler::Gate} asks, so a `read_file` on
+    # `.env` reaches a human although `read_file` declares itself tier 1. The
+    # whole three-place boundary, and the measured detector behind it, is in
+    # ARCHITECTURE.md's "The secret boundary".
     #
     # The gate already turns on {Tool#requires_approval?}, which is the TIER
     # axis: whether the model controls the command string. This is the second
@@ -88,6 +92,8 @@ module Lain
         def gates?(_effect) = false
         def denial(_effect) = nil
 
+        def classify(_path) = ORDINARY.verdict
+
         # {Filter::Null}, which already means "withholds nothing" -- so the
         # Null's third answer needs no third object. A policy that gates
         # nothing listing everything is the same posture said once more.
@@ -101,13 +107,13 @@ module Lain
       # The listing half of the same boundary: what {Middleware::WithholdSecretPaths}
       # sifts a `grep`/`glob`/`list_files` result through.
       #
-      # It is THIS object's second answer rather than something a caller builds
-      # beside it, and that is the whole point. The classifier is exposed
-      # nowhere -- not here, not on the board -- so there is no way to construct
-      # a second filter over a different one. A gate that refuses a path while
+      # It is one of THIS object's answers rather than something a caller builds
+      # beside it, and that is the whole point. A gate that refuses a path while
       # the listing that found it enumerates the same path is the one
-      # disagreement this boundary cannot have, and this shape makes it
-      # unrepresentable rather than a property somebody has to remember to test.
+      # disagreement this boundary cannot have, so `Filter.new` happens in
+      # exactly one place in `lib/` -- here -- and every caller takes the filter
+      # that came with the gate. The discipline is what holds: {Filter} is a
+      # public constructor over anything answering `#classify`.
       attr_reader :filter
 
       # @param sensitivity [Sensitivity] the classifier, injected -- its home,
@@ -120,6 +126,13 @@ module Lain
         @filter = Filter.new(sensitivity:)
         freeze
       end
+
+      # A message rather than a reader handing the classifier out, so a
+      # {Lain::Survey::Walk} classifies through the run's own boundary.
+      #
+      # @param path [String] as a caller spells it; the classifier resolves it
+      # @return [Sensitivity::Verdict]
+      def classify(path) = @sensitivity.classify(path)
 
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first

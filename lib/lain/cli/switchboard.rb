@@ -274,8 +274,16 @@ module Lain
       # region model, and a command holding a ledger of its own would show
       # `<redacted:N>` for regions this run has already released. `snapshots`
       # does because `/undo` must read the log the Agent's deliveries feed.
+      #
+      # `sensitivity` is the same argument about the OTHER half of that command:
+      # it walks a tree, and ARCHITECTURE.md's "The secret boundary" says why
+      # "the same rules" is not the claim -- the claim is the same OBJECT. It is
+      # SNAPSHOTTED here, on the terms {ToolGuard.path_filter} states for its
+      # own snapshot, including what has to change should the slot ever become
+      # re-bindable.
       def surface_kwargs(conductor:, tty:)
-        { model_switch:, mode_switch:, ledger:, snapshots:, approval_prompt: prompt(conductor:, tty:) }
+        { model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:,
+          approval_prompt: prompt(conductor:, tty:) }
       end
 
       private

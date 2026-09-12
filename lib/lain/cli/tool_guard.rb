@@ -114,9 +114,10 @@ module Lain
       #
       # The filter is the BOARD's own, never one built here. A filter over a
       # freshly built classifier would judge a DIFFERENT set of paths than the
-      # gate, so a run would enumerate paths its own gate refuses to read;
-      # {Sensitivity::Policy} exposes no classifier, which is what makes that
-      # unrepresentable rather than merely untested.
+      # gate, so a run would enumerate paths its own gate refuses to read; the
+      # discipline that keeps that out is that `Filter.new` happens in exactly
+      # one place in `lib/`, inside {Sensitivity::Policy}, and every reader
+      # takes the filter that came with the gate.
       #
       # It SNAPSHOTS the filter where the gate re-reads `board.sensitivity` per
       # call, so that agreement rests on the slot being construction-fixed:

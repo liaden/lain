@@ -35,9 +35,15 @@ RSpec.describe Lain::CLI::Survey, :seam do
   # `changeset_opened`, and it must land in a directory this example owns.
   def paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home })
 
-  # `cwd:` is the surveyed tree rather than the process's own directory, so the
-  # `[sensitivity]` table this reads is one no example can be surprised by.
-  def command(**overrides) = described_class.new(paths:, cwd: @root, **overrides)
+  # The two halves {Lain::Project} splits, and the survey needs both: the table
+  # in force is the one under the project's ROOT, and a relative path is
+  # resolved from where the human is STANDING. A resolved Project rather than a
+  # bare directory, so no example can be surprised by a `[sensitivity]` table --
+  # and so that a survey run below the repository top reads the same table as
+  # one run at it.
+  def project_at(root, cwd = root) = Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag)
+
+  def command(**overrides) = described_class.new(paths:, project: project_at(@root), **overrides)
 
   def write(relative, body)
     File.join(@root, relative).tap do |path|
@@ -436,6 +442,82 @@ RSpec.describe Lain::CLI::Survey, :seam do
       expect(Dir.glob(File.join(paths.sessions_dir, "*.ndjson"))).not_to be_empty
     end
   end
+
+  # Where the project's own table went missing. The classifier was anchored on
+  # the process's working directory AND asked for the table under it, so every
+  # `lain survey` below the repository top resolved `<cwd>/.lain/config.toml`,
+  # found nothing, and classified with `Rules.empty` -- a project's denials
+  # silently not in force, which is the worst outcome the whole boundary is
+  # written against. The root answers "whose rules", the cwd answers "relative
+  # to what", and only a resolved {Lain::Project} carries both.
+  describe "a project's own rules, read from a working directory below its root" do
+    # A monorepo: the table at the repository top, the human standing two
+    # directories down, and the denied file below THEM -- so the two candidate
+    # directories tell each other apart, and the only way the file is withheld
+    # is that the root's table was found from the subdirectory.
+    def monorepo(table)
+      @project = File.join(@tmp, "monorepo")
+      @here = File.join(@project, "services", "api")
+      FileUtils.mkdir_p([File.join(@project, ".lain"), File.join(@here, "secrets")])
+      File.write(File.join(@project, ".lain", "config.toml"), table)
+      File.write(File.join(@here, "secrets", "payroll.ledger"), "a roster of salaries\n")
+      File.write(File.join(@here, "secrets", "README.md"), "# What lives here\n\nSalaries.\n")
+    end
+
+    # A BASENAME glob, which is the shape `Sensitivity::Rules` compiles: a
+    # path-shaped pattern with no anchor is refused outright, so `secrets/*`
+    # could not be written here even to describe the defect.
+    def denying_ledgers = monorepo(%([sensitivity]\ndenied = ["*.ledger"]\n))
+
+    def surveyed_from_below
+      described_class.new(paths:, project: project_at(@project, @here)).present(File.join(@here, "secrets"))
+    end
+
+    it "withholds a path this project denied, from a directory two levels below the root" do
+      denying_ledgers
+
+      expect(surveyed_from_below).to include("withheld 1 path", "payroll.ledger")
+    end
+
+    it "does not list the denied path as a file, which is the half a human would notice" do
+      denying_ledgers
+
+      expect(surveyed_from_below).not_to include("[ ] payroll.ledger")
+    end
+
+    it "still lists what the table says nothing about, so the rules narrow and do not close" do
+      denying_ledgers
+
+      expect(surveyed_from_below).to include("[ ] README.md")
+    end
+  end
+
+  # This table RESTRICTS, so dropping it fails OPEN -- a survey quietly listing
+  # what the project denied is the worst outcome available, and worse than a
+  # command that will not run. The refusal is a {Lain::Error}, so `exe/lain`
+  # renders it as a message rather than a backtrace.
+  describe "a config file that will not parse" do
+    before do
+      two_documents
+      FileUtils.mkdir_p(File.join(@root, ".lain"))
+      File.write(File.join(@root, ".lain", "config.toml"), "[sensitivity\ndenied = broken")
+    end
+
+    it "refuses rather than surveying with the project's rules silently dropped" do
+      expect { command }.to raise_error(Lain::Config::Malformed, /#{Regexp.escape(@root)}/)
+    end
+
+    it "refuses as a Lain::Error, which is what the exe renders as a message" do
+      expect { command }.to raise_error(Lain::Error)
+    end
+
+    # BEFORE the walk and before the journal: nothing is opened over a tree this
+    # command was never able to classify.
+    it "journals no round" do
+      expect { command.present(@root) }.to raise_error(Lain::Config::Malformed)
+      expect(opened_records).to be_empty
+    end
+  end
 end
 
 # The exe half. Thor owns the first word, so `lain survey ./docs` only reaches
@@ -556,6 +638,16 @@ RSpec.describe LainCLI, "the survey subcommand" do
       start("survey", "/some/tree", "--unbounded")
 
       expect(survey).to have_received(:present).with("/some/tree", scope: nil, unbounded: true)
+    end
+
+    # The resolution happens HERE, at the one call site `render` can turn a
+    # refusal into a message at. A keyword default inside the lib walks the tree
+    # for callers that already hold a Project -- and raises on a `.lain/` it
+    # cannot parse before anything in the lib could answer for it.
+    it "resolves the project itself rather than leaving the lib to default one" do
+      start("survey", "/some/tree")
+
+      expect(Lain::CLI::Survey).to have_received(:new).with(project: an_instance_of(Lain::Project))
     end
   end
 

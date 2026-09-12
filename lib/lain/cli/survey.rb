@@ -47,15 +47,16 @@ module Lain
     # running inside a session that already has a board, injects the board's
     # rather than minting a second.
     #
-    # == The classifier is the RUN's, anchored where the human is standing
+    # == The classifier is the RUN's, and it takes a resolved Project
     #
-    # `cwd:` and not the surveyed root: {Lain::Sensitivity} resolves a project's
-    # relative rules against a working directory, and the `[sensitivity]` table
-    # in force is the one belonging to the project the human invoked `lain` in.
-    # {Lain::Project} cannot stand in for it, since it requires cwd under root
-    # and a survey may point anywhere. A malformed table RAISES rather than
-    # degrading to a notice: this table RESTRICTS, so dropping it fails OPEN --
-    # {Config.sensitivity}'s own posture, not a decision taken here.
+    # Two questions, and a bare `cwd:` answered both with one directory: WHOSE
+    # rules are in force is the project's ROOT, and what a relative path
+    # resolves against is where the human is STANDING -- so `lain survey` run
+    # below the repository top found no `.lain/config.toml` at all and
+    # classified with `Rules.empty`. The surveyed tree is neither half: it is
+    # {#present}'s argument and may point anywhere. A malformed table RAISES
+    # rather than degrading to a notice: this table RESTRICTS, so dropping it
+    # fails OPEN -- {Config.sensitivity}'s own posture, not a decision taken here.
     class Survey
       HEADLINE = "surveying %<root>s at %<scope>s scope: %<count>d %<noun>s"
 
@@ -84,25 +85,28 @@ module Lain
                      max_critique_lines: bounds.max_critique_lines)
       end
 
+      # @param project [Lain::Project] the run's resolved project: its ROOT holds
+      #   the `[sensitivity]` table in force, its CWD is what a relative path
+      #   resolves against. REQUIRED and resolved by the CALLER -- `exe/lain` is
+      #   where a resolution that refuses can be rendered, and a resolver
+      #   evaluated here walks the tree (and can raise) before anybody reads it
       # @param paths [Paths] resolves `sessions_dir`, where the round is
       #   journaled, and supplies the HOME the classifier anchors its
       #   home-relative rules against
-      # @param cwd [String] what the classifier resolves a relative rule
-      #   against, and the project whose `[sensitivity]` table is in force
       # @param bounds [Review::Bounds] the sizes past which a view is refused
       # @param surface [#present, nil] where the corpus is drawn; nil builds the
       #   text surface over a buffer this object owns
-      # @param sensitivity [Lain::Sensitivity, nil] the run's path classifier;
-      #   nil builds one from `cwd` and this project's own rules
       # @param ledger [Sensitivity::Ledger, nil] the run's ONE region ledger;
       #   nil builds this process's one and only, per the class doc
       # @raise [Config::Malformed] when the project's config file cannot be read
-      def initialize(paths: Paths.new, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new,
-                     surface: nil, sensitivity: nil, ledger: nil)
+      # @raise [Lain::Sensitivity::Rules::Refusal] when its `[sensitivity]`
+      #   table is malformed -- a wrong table and an unreadable file are
+      #   different failures, and both refuse here
+      def initialize(project:, paths: Paths.new, bounds: Lain::Review::Bounds.new, surface: nil, ledger: nil)
         @paths = paths
         @bounds = bounds
         @surface = surface
-        @sensitivity = sensitivity || classifier(cwd)
+        @sensitivity = classifier(project)
         @projection = Lain::Survey::Projection.new(ledger: ledger || Lain::Sensitivity::Ledger.new)
       end
 
@@ -133,8 +137,11 @@ module Lain
       # scope does.
       def default_scope = Lain::Review::Partition::DEFAULT_SCOPE
 
-      def classifier(cwd)
-        Lain::Sensitivity.new(home: @paths.home, cwd:, rules: Config.sensitivity(root: cwd))
+      # Each half of the question asked of the half of the Project that answers
+      # it: the table under the root, the anchor at the cwd.
+      def classifier(project)
+        Lain::Sensitivity.new(home: @paths.home, cwd: project.cwd,
+                              rules: Config.sensitivity(root: project.root))
       end
 
       def corpus(walk, ceilings)

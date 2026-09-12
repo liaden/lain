@@ -20,6 +20,13 @@ RSpec.describe Lain::CLI::Command::Surface do
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
   let(:mode_switch) { instance_double(Lain::Mode::Switch) }
   let(:ledger) { Lain::Sensitivity::Ledger.new }
+  # The run's path boundary, the object {Lain::CLI::Wiring::BoardBuild} builds
+  # once and the board's gate holds. It reaches this surface through
+  # {Lain::CLI::Switchboard#surface_kwargs} on the live path, and `/survey`
+  # walks a tree through THIS one -- so the listing and the gate read one table.
+  let(:sensitivity) do
+    Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: Dir.tmpdir, cwd: Dir.tmpdir))
+  end
   let(:snapshots) { instance_double(Lain::Agent::SnapshotSlot) }
   # `/introspect` reads the run's own token ledger and occupancy off this, so
   # the spy answers both -- absence for the occupancy, which is what a chat
@@ -34,7 +41,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, model_switch:, mode_switch:, ledger:, snapshots:, **epic)
+                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, **epic)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -43,7 +50,7 @@ RSpec.describe Lain::CLI::Command::Surface do
         described_class.new(agent: instance_spy(Lain::Agent), role_spawn:, root:,
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
-                            status_feed:, model_switch:, mode_switch:, ledger:)
+                            status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:)
       end
 
       expect { libraryless.call }.to raise_error(ArgumentError, /library/)
@@ -60,7 +67,7 @@ RSpec.describe Lain::CLI::Command::Surface do
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             catalog: Lain::Skill::Catalog.load(root:), slots: Lain::Prompt::Slots.load(root:),
-                            status_feed:, model_switch:, mode_switch:, ledger:)
+                            status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:)
       end
 
       expect { paired.call }.to raise_error(ArgumentError, /catalog|slots|library/)
@@ -98,7 +105,7 @@ RSpec.describe Lain::CLI::Command::Surface do
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             library: Lain::Skill::Library.load(root:),
-                            status_feed:, model_switch:, ledger:)
+                            status_feed:, model_switch:, ledger:, sensitivity:)
       end
 
       expect { switchless.call }.to raise_error(ArgumentError, /mode_switch/)
@@ -189,7 +196,7 @@ RSpec.describe Lain::CLI::Command::Surface do
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             library: Lain::Skill::Library.load(root:),
-                            status_feed:, model_switch:, mode_switch:, ledger:)
+                            status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:)
       end
 
       expect { slotless.call }.to raise_error(ArgumentError, /snapshots/)
@@ -270,6 +277,20 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect { surface.commands.dispatch("/review-submit") { raise "fallthrough must not run" } }
         .to raise_error(Lain::Error, %r{branch feature/widget})
       expect(surface.outbox).to be(surface.outbox)
+    end
+  end
+
+  # The same failure the outbox example above is about, one boundary over, and
+  # this one narrows a security boundary rather than a report: `/survey` built
+  # its own classifier from its own re-read of `.lain/config.toml`, so a config
+  # rewritten mid-session left the listing walking one table while the gate
+  # beside it held another. IDENTITY, because two classifiers agreeing at the
+  # moment a spec looks is exactly what the defect looked like.
+  it "hands /survey the run's own path boundary, so the listing and the gate read one table" do
+    with_project do |root|
+      surveying = build_surface(root).commands.registry.find { |command| command.name == "survey" }
+
+      expect(surveying.sensitivity).to be(sensitivity)
     end
   end
 

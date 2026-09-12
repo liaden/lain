@@ -83,39 +83,36 @@ module Lain
         #   review. Required rather than defaulted: an outbox nothing else
         #   holds is a review the rest of the chat cannot see, and nothing
         #   about the wiring would look wrong.
-        # @param root [String] the project this chat was started in -- what the
-        #   classifier resolves a relative `[sensitivity]` rule against. NOT the
-        #   surveyed tree, which may point anywhere.
         # @param bounds [Lain::Review::Bounds] the sizes past which the sidebar
         #   refuses. Injected because the ceilings are a bench parameter, and a
         #   command that built its own could not be driven past one.
-        # @param paths [Paths] supplies the HOME the classifier anchors its
-        #   home-relative rules against. The round is journaled into the CHAT's
-        #   journal, so no sessions directory is resolved here.
         # @param ledger [Lain::Sensitivity::Ledger] the run's ONE region ledger.
         #   REQUIRED, no default and no Null: a defaulted one lets a forgotten
         #   injection become a SECOND ledger whose releases nobody ever sees, so
         #   a region the human released would still render `<redacted:N>` with
         #   every object present and nothing about the wiring looking wrong.
-        # @param sensitivity [Lain::Sensitivity, nil] the run's path classifier;
-        #   nil builds one from `root` and this project's own rules
+        # @param sensitivity [#classify] the run's path boundary -- the board's
+        #   own {Lain::Sensitivity::Policy}, whose table was compiled once at
+        #   startup. REQUIRED for the ledger's reason one boundary over
+        #   (ARCHITECTURE.md, "The secret boundary"), and it is the reason the
+        #   project root is no longer a parameter here.
         # @param cwd [String] where this chat is STANDING, a different question
-        #   from `root` ({Lain::Project} splits the authority boundary from
-        #   where a relative path resolves). The corpus names its files from it
-        #   because it is the directory the attached editor was started in;
-        #   naming from `root` breaks `/survey .` for every chat opened below
-        #   the repository top.
-        def initialize(outbox:, ledger:, root: Dir.pwd, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new,
-                       paths: Paths.new, sensitivity: nil)
+        #   from the project ROOT the board was built at ({Lain::Project}
+        #   splits the authority boundary from where a relative path resolves).
+        #   The corpus names its files from it because it is the directory the
+        #   attached editor was started in; naming from the root breaks
+        #   `/survey .` for every chat opened below the repository top.
+        def initialize(outbox:, ledger:, sensitivity:, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new)
           @outbox = outbox
-          @root = root
           @cwd = cwd
           @bounds = bounds
-          @paths = paths
           @sensitivity = sensitivity
           @projection = Lain::Survey::Projection.new(ledger:)
           freeze
         end
+
+        # PUBLIC so a wiring spec can assert IDENTITY, {Surface#outbox}'s reason.
+        attr_reader :sensitivity
 
         def name = "survey"
 
@@ -224,7 +221,7 @@ module Lain
           # shipping stops being the default, and it goes through `scope!` on
           # this one line whether the human named it or not.
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
-          walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: classifier)
+          walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: @sensitivity)
           session = round(walk, ceilings, surface, env, policy:)
           # The gesture rails, complete before a human can touch the sidebar.
           env.replies.bind_changeset_review(handover(session, env, scope, surface))
@@ -263,22 +260,12 @@ module Lain
           raise Error, format(ALREADY_OPEN, target: @outbox.target)
         end
 
-        # Anchored where the human is STANDING and not at the surveyed tree:
-        # {Lain::Sensitivity} resolves a project's relative rules against a
-        # working directory, and the table in force belongs to the project this
-        # chat was started in. Built lazily because the constructor freezes, and
-        # a memo written after that raises FrozenError at its first caller.
-        def classifier
-          @sensitivity || Lain::Sensitivity.new(home: @paths.home, cwd: @root,
-                                                rules: Config.sensitivity(root: @root))
-        end
-
         # `named_from:` is the chat's CWD and never the surveyed tree, because a
         # name minted here is resolved elsewhere: the editor opens a row against
         # the directory it was started in, and a verdict's refusal is read by a
-        # human standing in this one. Not `@root` either -- that sits at the
-        # repository top while a monorepo chat stands in a subtree, and naming
-        # from it would break the `/survey .` that works today.
+        # human standing in this one. Not the project root either -- that sits at
+        # the repository top while a monorepo chat stands in a subtree, and
+        # naming from it would break the `/survey .` that works today.
         def round(walk, ceilings, surface, env, policy:)
           source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),

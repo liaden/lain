@@ -495,11 +495,31 @@ tier-1 `read_file`/`grep`/`glob`/`list_files` check nothing themselves.
 | filter on the result | `Middleware::WithholdSecretPaths` → `Sensitivity::Filter` | which rows may the model see? |
 | mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` | which BYTES may leave? |
 
-`Policy` holds the only `Filter.new` in `lib/`, built in its own `#initialize`, and nothing
-exposes the classifier — so a gate that refuses a path while the listing that found it enumerates
-the same path is *unrepresentable* rather than merely untested. Both gate and filter turn on
-**not ordinary**, never on `Verdict#gated?`, which is false for a DENIED path and would wave
-`~/.ssh/id_rsa` through while withholding `.env`.
+The invariant is **one compiled `[sensitivity]` table per run, and one object that answers about
+a path**. The claim that stood here before — "`Policy` holds the only `Filter.new` in `lib/`" —
+was true and too narrow: a second FILTER was hard to build, but a second CLASSIFIER was not, and
+`/survey` built one from its own later re-read of `.lain/config.toml`. A session outlives that
+file: a turn may rewrite it — `write_file` is tier-1, and `.lain/config.toml` classifies *ordinary*,
+because the table names secrets and not itself — and so may a human in the next pane. So the listing walked one table while the gate beside
+it held another — both halves working, nothing wrong to look at.
+
+`Wiring::BoardBuild` therefore compiles the table once and hands the classifier to `Policy`, and
+`Switchboard#surface_kwargs` hands `/survey` **the Policy itself**: it answers `gates?`,
+`denial`, `filter` and `classify`, four phrasings of one question, so the survey walks through
+the gate rather than beside it. Two places still build a classifier of their own, both over that
+same compiled table and both deliberate: `BoardBuild::Classifiers` mints one **per gated bash
+call**, because a bash call names its own working directory and the triage rung must anchor the
+argv it reads on THAT one, and it holds an eager session-anchored one as the fallback for a `cwd`
+it cannot resolve — built eagerly so a wiring bug raises at startup rather than leaving the rung
+inert in silence.
+
+`Filter.new` happens in exactly one place in `lib/`, inside `Policy#initialize`, and every reader
+takes the filter that came with the gate. That is a discipline rather than an impossibility —
+`Filter` is a public constructor over anything answering `#classify` — and it is the discipline
+that keeps a gate from refusing a path the listing beside it enumerates.
+
+Both gate and filter turn on **not ordinary**, never on `Verdict#gated?`, which is false for a
+DENIED path and would wave `~/.ssh/id_rsa` through while withholding `.env`.
 
 `Policy::PATH_FIELDS` is the whole of what the boundary knows about tools — which input field
 names a path, per tool. That coupling cannot be abolished (something must know `bash` names a

@@ -496,7 +496,8 @@ class LainCLI < Thor
     desc "open PATH", "Walk a directory, open a round over it as it stands, and present it"
     def open(path)
       render do
-        Lain::CLI::Survey.new.present(path, scope: options[:scope]&.to_sym, unbounded: options[:unbounded])
+        Lain::CLI::Survey.new(project: Lain::Project::Resolver.default_project)
+                         .present(path, scope: options[:scope]&.to_sym, unbounded: options[:unbounded])
       end
     end
   end

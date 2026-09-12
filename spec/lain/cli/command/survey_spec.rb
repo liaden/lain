@@ -104,7 +104,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   # so a name is only openable if it is relative to where the chat stands. Left
   # to its `Dir.pwd` default the fixture would name every file by a `..` climb
   # out of the repository and into a tmpdir, which is correct and unreadable.
-  let(:command) { described_class.new(root: @root, cwd: @root, outbox:, paths:, ledger:) }
+  let(:command) { described_class.new(cwd: @root, outbox:, ledger:, sensitivity:) }
 
   # The run's ONE region ledger, injected because {Lain::Sensitivity::Ledger}'s
   # own class doc makes that rule 1 of three and "a raise rather than a note": a
@@ -113,6 +113,15 @@ RSpec.describe Lain::CLI::Command::Survey do
   # `<redacted:N>` in the survey with every object present and nothing wrong to
   # look at.
   let(:ledger) { Lain::Sensitivity::Ledger.new }
+
+  # The run's ONE path classifier, injected for the ledger's reason one
+  # boundary over: the chat's board compiles the `[sensitivity]` table once and
+  # every reader of it holds THAT object, so a survey cannot list a path the
+  # gate beside it refuses. A real one over the real tree, never a double --
+  # what the walk asks it is the whole of what a withheld path means. HOME is
+  # injected at a path nothing here creates, so its home-anchored rules cannot
+  # reach the developer's own dotfiles.
+  let(:sensitivity) { Lain::Sensitivity.new(home: @home, cwd: @root) }
 
   # The REAL outbox the chat's other review command reads, never a spy: what has
   # to be true is that the round THIS command opened is the round the rest of the
@@ -147,12 +156,6 @@ RSpec.describe Lain::CLI::Command::Survey do
       example.run
     end
   end
-
-  # HOME injected rather than exported: the classifier anchors its home-relative
-  # rules against it, and no example may reach the developer's own dotfiles. The
-  # ROUND is journaled into the chat's own journal, so no sessions directory is
-  # touched at all.
-  def paths = Lain::Paths.new(env: { "HOME" => @home })
 
   def write(relative, body)
     File.join(@root, relative).tap do |path|
@@ -236,8 +239,19 @@ RSpec.describe Lain::CLI::Command::Survey do
     # sees -- a released region still rendering `<redacted:N>` with every object
     # present and nothing about the wiring looking wrong.
     it "refuses to construct without the run's region ledger, rather than minting one of its own" do
-      expect { described_class.new(root: @root, outbox:, paths:) }
+      expect { described_class.new(outbox:, sensitivity:) }
         .to raise_error(ArgumentError, /ledger/)
+    end
+
+    # The same rule for the other collaborator the run has exactly one of, and
+    # the failure it keeps out is worse than a duplicate: a survey that built
+    # its own classifier would re-read `.lain/config.toml` LATER than the board
+    # did, so a config edited mid-session would have the listing enumerating
+    # paths the gate beside it still refuses -- both halves working, neither
+    # wrong to look at, and the boundary narrowed in silence.
+    it "refuses to construct without the run's classifier, rather than compiling a second table" do
+      expect { described_class.new(outbox:, ledger:) }
+        .to raise_error(ArgumentError, /sensitivity/)
     end
 
     it "refuses a flag it does not carry, rather than reading it as a path" do
@@ -398,7 +412,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     it "names files from the working directory when nobody says where the chat stands" do
       two_documents
       attached
-      defaulted = Dir.chdir(@root) { described_class.new(root: @tmp, outbox:, paths:, ledger:) }
+      defaulted = Dir.chdir(@root) { described_class.new(outbox:, ledger:, sensitivity:) }
 
       defaulted.call(@root, env)
 
@@ -446,7 +460,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       surface.instance_variable_set(:@editor, recording)
       replies.bind_editor(rail)
       replies.bind_review_editor(recording)
-      bounded = described_class.new(outbox:, root: @root, cwd: @root, ledger:,
+      bounded = described_class.new(outbox:, cwd: @root, ledger:, sensitivity:,
                                     bounds: Lain::Review::Bounds.new(max_files: 1))
 
       expect { bounded.call(@root, env) }.to raise_error(Lain::Error)
@@ -581,7 +595,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # MUTANT   TooLarge: this corpus is 2 files, over the ceiling of 1 -- ...
     it "resolves a typo'd scope before the tree is measured, so the refusal is the typo and not the size" do
       attached
-      oversized = described_class.new(root: @root, outbox:, paths:, ledger:,
+      oversized = described_class.new(outbox:, ledger:, sensitivity:,
                                       bounds: Lain::Review::Bounds.new(max_files: 1))
 
       expect { oversized.call("#{@root} --scope cumulatve", env) }
@@ -593,7 +607,8 @@ RSpec.describe Lain::CLI::Command::Survey do
     before { two_documents }
 
     def bounded(**ceilings)
-      described_class.new(root: @root, outbox:, paths:, ledger:, bounds: Lain::Review::Bounds.new(**ceilings))
+      described_class.new(outbox:, ledger:, sensitivity:,
+                          bounds: Lain::Review::Bounds.new(**ceilings))
     end
 
     it "refuses a tree past the file ceiling, in Bounds' own words" do
@@ -738,7 +753,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # -- adding a second is exactly what arms it, and the ceiling is what
     # notices.
     it "does not lift the ceilings that the other switch lifts" do
-      bounded = described_class.new(root: @root, cwd: @root, outbox:, paths:, ledger:,
+      bounded = described_class.new(cwd: @root, outbox:, ledger:, sensitivity:,
                                     bounds: Lain::Review::Bounds.new(max_files: 1))
       attached
 
@@ -833,7 +848,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # one of them: `Corpus#initialize` refuses it before a session exists.
     it "holds nothing when the LINE ceiling refuses, so a later /review is not locked out" do
       attached
-      bounded = described_class.new(root: @root, outbox:, paths:, ledger:,
+      bounded = described_class.new(outbox:, ledger:, sensitivity:,
                                     bounds: Lain::Review::Bounds.new(max_lines: 1))
 
       expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)

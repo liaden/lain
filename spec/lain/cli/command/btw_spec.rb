@@ -211,6 +211,7 @@ RSpec.describe "the /btw and /keep registration" do
         model_switch: instance_double(Lain::Context::ModelSwitch),
         mode_switch: instance_double(Lain::Mode::Switch),
         library: Lain::Skill::Library.load(root:), ledger: Lain::Sensitivity::Ledger.new,
+        sensitivity: Lain::Sensitivity::Policy::Null.instance,
         snapshots: instance_double(Lain::Agent::SnapshotSlot)
       )
 

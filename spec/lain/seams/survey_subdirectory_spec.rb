@@ -98,9 +98,16 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
   let(:inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}) }
   let(:editor) { SurveySubdirectoryEditor.new(rpc: inlet) }
   let(:questions) { Async::Queue.new }
-  # `root:` and `cwd:` are what {Command::Surface} threads from {Lain::Project},
-  # and they are two different directories in every monorepo chat.
-  let(:command) { Lain::CLI::Command::Survey.new(root: @repo, cwd: @here, outbox:, paths:, ledger:) }
+  # `cwd:` is what {Command::Surface} threads from {Lain::Project}'s other half,
+  # and it is a different directory from the repository top in every monorepo
+  # chat -- which is this whole fixture.
+  let(:command) { Lain::CLI::Command::Survey.new(cwd: @here, outbox:, ledger:, sensitivity:) }
+
+  # The run's ONE classifier, which the board compiles and
+  # {Lain::CLI::Command::Surface} threads in -- anchored on the chat's own cwd,
+  # exactly as {Wiring::BoardBuild} anchors the board's. Real, because a
+  # survey's withheld set is what it answers.
+  let(:sensitivity) { Lain::Sensitivity.new(home: @home, cwd: @here) }
 
   # The run's real reply router, so nothing between the command and the rails is
   # a double.
@@ -160,10 +167,6 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
   def greeter = File.join(@here, "lib", "greeter.rb")
 
   def source = SurveySubdirectoryFixture::GREETER
-
-  # HOME injected at a path nothing here creates, so no example can reach the
-  # developer's own dotfiles.
-  def paths = Lain::Paths.new(env: { "HOME" => @home })
 
   # An editor attached, exactly as {Lain::CLI::Repl#run} attaches one.
   def attached

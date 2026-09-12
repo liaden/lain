@@ -400,11 +400,12 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
-  # The listing filter is this object's SECOND answer over the SAME
-  # classifier, rather than something a caller builds beside it. That is what
-  # makes "the gate refused a path the listing enumerated" unrepresentable: the
-  # classifier is exposed nowhere, so there is no second filter to construct
-  # from a different one.
+  # The listing filter is one of this object's answers over the SAME classifier,
+  # rather than something a caller builds beside it. That is what keeps "the
+  # gate refused a path the listing enumerated" out: `Filter.new` happens in
+  # exactly one place in `lib/`, inside this class, and every reader takes the
+  # filter that came with the gate. A discipline rather than an impossibility --
+  # {Filter} is a public constructor over anything answering `#classify`.
   describe "#filter" do
     def sift(subject_filter, path) = subject_filter.sift([path]) { |row| [row] }
 
@@ -446,6 +447,41 @@ RSpec.describe Lain::Sensitivity::Policy do
       configured = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd:, rules: declared))
 
       expect(sift(configured.filter, "#{cwd}/prod.secret").withheld.map(&:reason)).to eq([:configured])
+    end
+  end
+
+  # The fourth phrasing of the one question, and the reason it is a message on
+  # this object rather than a reader handing the classifier out: a survey has to
+  # ask about a path it is about to LIST, and asking the policy is what puts the
+  # walk on the same table as the gate rather than beside it.
+  describe "#classify" do
+    let(:rules) { Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"] }) }
+
+    it "answers this policy's own classifier, project rules included" do
+      expect(policy.classify("#{cwd}/prod.secret")).to have_attributes(level: :denied, reason: :configured)
+    end
+
+    it "answers ordinary for a path no table names" do
+      expect(policy.classify("#{cwd}/README.md")).to be_ordinary
+    end
+
+    # The property that makes a survey safe to wire this way, stated as
+    # behaviour: what the gate gates is what this answers not-ordinary about,
+    # because there is one classifier behind both.
+    it "agrees with the gate, path for path" do
+      gated = "#{cwd}/prod.secret"
+
+      expect(policy.gates?(call("read_file", { "path" => gated }))).to be(true)
+      expect(policy.classify(gated)).not_to be_ordinary
+    end
+  end
+
+  # The Null answers it too, because a run that wired no classifier must still
+  # be able to walk a tree -- and everything it sees is ordinary, which is the
+  # same posture its `gates?` already takes.
+  describe "Null#classify" do
+    it "answers an ordinary verdict for anything at all" do
+      expect(described_class::Null.instance.classify("/home/tester/.ssh/id_rsa")).to be_ordinary
     end
   end
 

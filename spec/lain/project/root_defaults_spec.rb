@@ -122,33 +122,21 @@ module RootDefaultDiscipline
     "lain/cli/isolation_backend.rb" => %w[initialize:root],
     "lain/cli/review.rb" => %w[initialize:repo_root],
     "lain/cli/review_seams.rb" => %w[for:root],
-    # `lain survey` is `lain review`'s shape one source over, and this is the
-    # SAME argument `cli/review.rb`'s entry above makes: a one-shot command has
-    # no resolved Project to be threaded one. It is not a root either -- the
-    # survey's own root is the PATH argument, and this cwd only says which
-    # project's `[sensitivity]` table is in force and what a relative rule in it
-    # resolves against, which is the working directory by definition.
-    "lain/cli/survey.rb" => %w[initialize:cwd],
-    # `/survey` in a chat. `root:` is the SAME entry `command/review.rb` above
-    # has for the same reason: {Lain::CLI::Command::Surface} threads it in on
-    # the live path, and the default is the library-usability one a spec
-    # constructing the command by hand would otherwise have to restate. It is
-    # not the surveyed tree, which is the path argument.
-    #
-    # `cwd:` is `cli/survey.rb`'s entry below, one surface over, and it is NOT a
-    # root at all: it is where this chat is STANDING, which decides what a
-    # surveyed file is named -- the attached editor resolves a row against the
-    # directory it was started in, and `lain up` gives both panes one `-c`, so
-    # the chat's own working directory is that directory by definition.
-    # {Lain::CLI::Command::Surface} threads it in on the live path exactly as it
-    # threads `root:`, and this default is the library-usability one; it is
+    # `/survey` in a chat, and `cwd:` is NOT a root: it is where this chat is
+    # STANDING, which decides what a surveyed file is named -- the attached
+    # editor resolves a row against the directory it was started in, and `lain
+    # up` gives both panes one `-c`, so the chat's own working directory is that
+    # directory by definition. {Lain::CLI::Command::Surface} threads it in on
+    # the live path, and this default is the library-usability one; it is
     # {Lain::CLI::Wiring} that decides where the value comes FROM.
     #
     # Defaulting it to the ROOT instead is the defect this entry exists to keep
     # out -- it names every file of a monorepo chat's survey from the repository
     # top, which the editor then resolves under its own cwd, and it regresses
-    # `/survey .` from working to broken.
-    "lain/cli/command/survey.rb" => %w[initialize:cwd initialize:root],
+    # `/survey .` from working to broken. The command's own `root:` is GONE: it
+    # existed to compile a `[sensitivity]` table of its own, and the run's one
+    # classifier is threaded in instead.
+    "lain/cli/command/survey.rb" => %w[initialize:cwd],
     "lain/cli/up.rb" => %w[initialize:cwd],
     "lain/config.rb" => %w[self.load:root],
     "lain/dsl_catalog.rb" => %w[self.load:root],

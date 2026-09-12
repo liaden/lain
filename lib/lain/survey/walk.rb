@@ -152,9 +152,10 @@ module Lain
       # raises at its first caller, mid-run.
       #
       # @param root [String, Pathname] the directory to survey
-      # @param sensitivity [Sensitivity] the run's classifier, INJECTED: it
+      # @param sensitivity [#classify] the run's path boundary, INJECTED: it
       #   carries the home and cwd a path is resolved against, and constructing
-      #   one here would be a second classifier able to disagree with the gate
+      #   one here would be a second classifier able to disagree with the gate.
+      #   Both live paths pass the board's {Sensitivity::Policy} itself
       # @param shell_out_factory [#call] builds the subprocess runner, the
       #   `shell_out_factory` seam every git caller here takes
       # @raise [Refused] when `root` is not a directory

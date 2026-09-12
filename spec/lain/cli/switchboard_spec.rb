@@ -542,6 +542,22 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(kwargs.fetch(:snapshots)).to be(slot)
     end
 
+    # `/survey` walks a tree through the run's path boundary, so the board hands
+    # it over the same way it hands over the ledger and the snapshot slot.
+    # IDENTITY: a second policy over a second classifier is precisely the
+    # divergence -- a listing enumerating what the gate refuses -- and two
+    # policies compiled from one file agree until the file changes.
+    it "hands the run's path boundary to the command surface" do
+      classifier = Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
+      policy = Lain::Sensitivity::Policy.new(sensitivity: classifier)
+      board = switchboard(sensitivity: policy)
+
+      kwargs = board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor),
+                                    tty: instance_double(Lain::Frontend::TTY))
+
+      expect(kwargs.fetch(:sensitivity)).to be(policy)
+    end
+
     it "writes the snapshot after a flip to plan under the write-set scope", :seam do
       Dir.mktmpdir do |root|
         board = switchboard

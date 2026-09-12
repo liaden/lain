@@ -19,8 +19,8 @@ module Lain
       # {Tools::RunSkill} and {Backend#context}'s system prompt are readers of
       # one `.lain/` read rather than separate reads of the same tree.
       class Surface
-        # `chronicle:`, `status_feed:`, `model_switch:`, `mode_switch:`,
-        # `role_spawn:`, `library:`, `ledger:` and `snapshots:` are required, not defaulted:
+        # `chronicle:`, `status_feed:`, `model_switch:`, `mode_switch:`, `role_spawn:`,
+        # `library:`, `ledger:`, `sensitivity:` and `snapshots:` are required, not defaulted:
         # each is always wired in the live path, so a defaulted Null would only
         # mask a mis-wire. The mode switch is the sharpest case -- it is the slot
         # that reaches the gate, since {CLI::Switchboard#apply} DERIVES the gate
@@ -29,9 +29,10 @@ module Lain
         # reads. A defaulted library would silently be a SECOND read of the same
         # tree, and a defaulted {Lain::Sensitivity::Ledger} lets a forgotten
         # injection become a SECOND ledger whose releases nobody ever sees, so
-        # `/survey` would mask regions this run has already released. A
-        # defaulted snapshot slot would answer "nothing to undo" for a session
-        # that has changed files.
+        # `/survey` would mask regions this run has already released -- and the
+        # path boundary is that same argument one boundary over (ARCHITECTURE.md,
+        # "The secret boundary"). A defaulted snapshot slot would answer
+        # "nothing to undo" for a session that has changed files.
         #
         # `cwd:` is the OTHER half of {Lain::Project}: root is the authority
         # boundary, cwd is where a relative path resolves, and a monorepo chat
@@ -41,14 +42,15 @@ module Lain
         # `lain up` gives both panes one `-c`. `root:` stays on its own
         # business: {Meta} reads the project's `.lain/` config from it.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
-                       model_switch:, mode_switch:, library:, ledger:, snapshots:, approvals: nil, root: Dir.pwd,
-                       cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null, epic: nil)
+                       model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, approvals: nil,
+                       root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null, epic: nil)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
           @root = root
           @cwd = cwd
           @library = library
           @ledger = ledger
+          @sensitivity = sensitivity
           # The inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
@@ -153,7 +155,7 @@ module Lain
         # `/introspect` is only a READER and could never disagree with them.
         def review_commands
           [Review.new(root: @root, outbox:), ReviewSubmit.new(root: @root, outbox:),
-           Survey.new(root: @root, cwd: @cwd, outbox:, ledger: @ledger)]
+           Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity)]
         end
       end
     end
