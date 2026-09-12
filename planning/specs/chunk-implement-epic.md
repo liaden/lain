@@ -1670,6 +1670,7 @@ Cards landed:
 - **T13** `ae6a5441`. Suite 17579 examples, 0 failures, on T13's tree. `ToolsetBuild#epic_subagent(isolation:, handoff:, lane:)`, `Supervisor#retire` (anchor-only, `Retirement::Anchor` compare-and-swap), `AlreadyRetired`/`AlreadyReleased`/`OutsideLease`, and the `issue_orchestrator` role. Pre-commit caught two yard issues, `WorkerHandoff#reclaim`'s tag order and a duplicate `Leases::Lane` docstring, both fixed, plus the vsock load flake.
 - **T15** `591bf1dc`. Suite 17777 examples, 0 failures, on T15's tree. `IssueActor`, `IssueTests`, `PlanSubject`, `Leases::InPlace`, `WorkingBranch.owned`, and the `reviewer_code` role.
 - **T16** `dd3b2a58`. Suite 17833 examples, 0 failures, on T16's tree. `EpicDriver::Factory`/`Run`, `/implement-epic`, `AskHuman#withdraw`, the driver's own landing checkout. **Small debt:** `Run#refused_before_merging?` lists refusal classes by hand, so a new one added later would wrongly advise `--resume`.
+- **T17** `a32779d0`. Suite 17925 examples, 0 failures, on T17's tree. `LeaseHarness`, the four arms, `Bench::Altitude`, and the driver's grading seam. All four arms report a real score; the command that runs them is the deferred follow-up.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1942,3 +1943,34 @@ Rulings made during execution:
   - **Follow-up, a later chunk:** `Wiring` sits at 124/125 and `AskHuman` at 125/125, and
     `Tools::Holding` is a module coupled to its host's ivar, extracted to buy one line. The next card
     to touch either class has no headroom.
+- **T17's two gaps, ruled.** The card handed back without `lain bench altitude` wired, and with the
+  epic arm unable to grade through the real driver.
+  - The driver's card promised that grading hooks in between settle and retire. T17 takes
+    `epic_driver/factory.rb` and `run.rb` to add that one injected seam, defaulting to a Null.
+  - `lain bench altitude` is assembled through the same `CLI::Wiring` path `lain chat --epic` uses,
+    never rebuilt inside `bench`: an arm wired differently from production measures something else.
+    If that needs a genuinely new construction path, T17 stops and reports the design rather than
+    shipping a command that cannot run.
+- **`lain bench altitude` is DEFERRED to a follow-up card, with its design.** T17 stopped at the
+  escape hatch and named the blocker: `Wiring#assemble_surface` is private and reached only from
+  `build_repl` ← `Wiring#run`, on the statement that starts the Repl on a TTY, while `toolset_build`
+  and `epic_mount` are private and `command_env` reads a surface that is nil until that guard runs.
+  Assembling the driver headlessly needs a new public `Wiring` seam plus a Null TTY and Conductor —
+  a new construction path this chunk did not budget, in the file with one line of headroom left.
+  - **The ruling:** defer rather than expand. An arm wired differently from production measures
+    something else, and a second wiring is worse than no command.
+  - **What landed instead:** the arms, the lease grader and `Bench::CLI#altitude_report` as library
+    objects, spec'd and ready for whoever wires the command.
+  - **Integration check 8 (a manual `lain bench altitude` run) is deferred with it.** The other seven
+    checks stand.
+  - **T18 documents what exists**, never the unwired command, and leaves `exe/lain`'s "three
+    orchestration arms" text as it is, since it is still true.
+- **T17's review, and a correction to the deferral's design.** The panel found the bench measuring the
+  wrong thing: the fixture's subject project never reached the arm (`LeaseHarness` had no caller in
+  `lib/`, and the arm ran in lain's own checkout), an epic arm that never ran scored 0.0, and the four
+  arms were graded by three different mechanisms under one "score" column. All are in a fix round.
+  - **The deferred command's design is SMALLER than first recorded.** `EpicDriver::Seams` is a public
+    `Data` with a public `#driver`, and `ToolsetBuild` and `EpicMount.for` are already assembled
+    headlessly in three specs. The follow-up needs a `Conductor::Null`, `grading:` threaded through
+    `Seams#driver`, and a bench-side builder that differs per epic entry only by its gate policy.
+    **`Wiring` is not touched, and needs no new public seam.**
