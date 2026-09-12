@@ -69,9 +69,6 @@ module Lain
         @harness = harness
       end
 
-      # @return [#name, #root] the level root this grader judges by
-      attr_reader :level
-
       # @param _trajectory [Object] what the arm produced, deliberately unread
       # @return [Grade] the subject's own suite at this level root
       # @raise [NoCheckout] when the lease holds no checkout to run in

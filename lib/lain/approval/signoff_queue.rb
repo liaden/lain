@@ -113,10 +113,6 @@ module Lain
         end
       end
 
-      # The two-member key {#drained?}, {#parked} and {Epic::Stage}'s boundary
-      # rule all share -- named because three call sites passing the same pair
-      # around is an object, and because `policy` is a different axis that must
-      # never be folded into it.
       # An issue id as it arrives off a record: nil for an epic-wide stage,
       # otherwise the issue's name as text. Anything else is a damaged line,
       # refused BEFORE `to_s` -- a stringified Array names an issue nobody has,
@@ -131,6 +127,10 @@ module Lain
         end
       end
 
+      # The three-member key {#drained?}, {#parked} and {Epic::Stage}'s boundary
+      # rule all share -- named because three call sites passing the same triple
+      # around is an object, and because `policy` is a different axis that must
+      # never be folded into it.
       Partition = Data.define(:epic_slug, :stage, :issue_id) do
         def initialize(epic_slug:, stage:, issue_id: nil)
           # Interned before the guard, so `presence:` judges the bytes that get
@@ -238,8 +238,8 @@ module Lain
         Contracts::Item.check!(artifact_digest:)
 
         partition = Partition.new(epic_slug:, stage:, issue_id:)
-        # A throwaway Hash rather than the frozen {NOTHING} the read paths get:
-        # deleting from an absent partition is a no-op on a hash nobody keeps.
+        # Deleting from an absent partition is a no-op, so a throwaway Hash
+        # nobody keeps is enough here.
         items = @parked.fetch(partition, {})
         drained = items.delete(artifact_digest)
         # The emptied partition goes too. Every read is correct over a leftover

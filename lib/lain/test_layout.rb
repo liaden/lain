@@ -157,7 +157,12 @@ module Lain
       def to_s = "one of #{values.join(", ")}"
     end
 
-    private_constant :PathShape, :Overlap, :Clashing, :Paths, :Levels, :OneOf
+    # {PathShape} stays public: it is the sole authority on what a plain
+    # relative path inside the project looks like, and the plan-declared subject
+    # a test gets mirrored FROM has to be judged by the same rule the `[tests]`
+    # source roots are. Two copies of it meant tightening one left the other
+    # admitting what it now refuses, with no spec anywhere failing.
+    private_constant :Overlap, :Clashing, :Paths, :Levels, :OneOf
 
     # Every refusal of a `[tests]` table, so a caller that degrades a bad
     # table to a notice can rescue them all at once. The path is absent for a

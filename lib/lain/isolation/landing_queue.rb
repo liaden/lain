@@ -44,7 +44,7 @@ module Lain
       # What one worker's turn in the queue came to, as the handback's own
       # {WorkerHandoff::Report}.
       Landed = Data.define(:worker, :report) do
-        def moved? = %i[merged resolved].include?(report.kind)
+        def moved? = report.moved?
         def stale? = false
       end
 
@@ -209,7 +209,7 @@ module Lain
 
         private
 
-        def ancestor?(older, newer) = @parent.run("merge-base", "--is-ancestor", older, newer).exitstatus.zero?
+        def ancestor?(older, newer) = @parent.ancestor?(older, newer)
 
         # Exit 1 is both "conflicted" and "could not merge at all"; only the
         # first writes a tree first, so the tree is what tells them apart.
@@ -221,7 +221,7 @@ module Lain
           probed(:failed, detail: "git merge-tree failed (exit #{shell.exitstatus}): #{shell.stderr.strip}")
         end
 
-        def conflicted(fields) = fields.drop(1).reject(&:empty?).uniq.map { |path| path.force_encoding(Checkout::FILESYSTEM) }
+        def conflicted(fields) = fields.drop(1).reject(&:empty?).uniq.map { |path| path.force_encoding(FILESYSTEM) }
 
         def probed(verdict, paths: [], detail: "") = Probed.new(verdict:, paths:, detail:)
       end

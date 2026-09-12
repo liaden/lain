@@ -26,9 +26,6 @@ module Lain
     class LocalLanding
       IN_FLIGHT = "in_flight"
 
-      # What a queue report says that this issue's work reached the branch.
-      MOVED = %i[merged resolved].freeze
-
       # {Telemetry::Handback}'s journal type: the record a landing writes as it merges.
       LANDED = "handback"
 
@@ -196,7 +193,7 @@ module Lain
       # own merge is journaled, which is the crash between a merge and its
       # transition.
       def landed?(issue_id, report)
-        MOVED.include?(report.kind) || (report.kind == :nothing_to_do && @landings.merged?(issue_id))
+        report.moved? || (report.kind == :nothing_to_do && @landings.merged?(issue_id))
       end
 
       def unjournaled(issue_id, sha)
@@ -322,7 +319,7 @@ module Lain
         # also looks at what the branch itself carries.
         def all = anchored + carried
 
-        def landed?(sha) = @git.run("merge-base", "--is-ancestor", sha, @base.ref).exitstatus.zero?
+        def landed?(sha) = @git.ancestor?(sha, @base.ref)
 
         private
 
@@ -359,7 +356,7 @@ module Lain
         def changed(sha)
           listed = git!({}, "diff", "--name-only", "-z", "--relative", "--no-renames", "--diff-filter=d",
                         "#{@base.tip}...#{sha}")
-          listed.stdout.split("\0").map { |path| path.force_encoding(Isolation::Checkout::FILESYSTEM) }
+          listed.stdout.split("\0").map { |path| path.force_encoding(FILESYSTEM) }
         end
 
         def checked(tree, tests)

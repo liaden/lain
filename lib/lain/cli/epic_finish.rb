@@ -149,7 +149,7 @@ module Lain
       # conflict carries a `state`, a {Forge::Gh} refusal a `message`, a
       # {Forge::Promotion} refusal both.
       def stopped(answer)
-        said = %w[reason state message].filter_map { |key| answer.detail[key].to_s }.reject(&:empty?)
+        said = %w[reason state message].map { |key| answer.detail[key].to_s }.reject(&:empty?)
         ["  #{said.empty? ? "refused, with no reason recorded" : said.join(" -- ")}",
          "  nothing else finishes this epic until that is settled; run `lain epic finish` again after"]
       end

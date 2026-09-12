@@ -16,11 +16,6 @@ module Lain
       # cannot check for itself.
       CONFLICTED = /^<<<<<<< .*^=======$.*^>>>>>>> /m
 
-      # Paths come off a subprocess's stdout as bytes; the filesystem's own
-      # encoding is what they have to be tagged with to compare equal to the
-      # same path read any other way.
-      FILESYSTEM = Encoding.find("filesystem")
-
       # @param dir [String] the working tree every command runs in
       # @param shell_out_factory [#call] builds the subprocess runner
       def initialize(dir, shell_out_factory: Shell::Out.public_method(:new))
@@ -47,7 +42,13 @@ module Lain
       # somewhere `.git/MERGE_HEAD` is not.
       def merging? = ok?(run("rev-parse", "--verify", "--quiet", "MERGE_HEAD"))
 
-      def contains?(commit) = ok?(run("merge-base", "--is-ancestor", commit, "HEAD"))
+      # Whether `commit` is reachable from `of`. `of` defaults to HEAD because
+      # that is the common question, but it is a PARAMETER: pinning it meant
+      # every caller asking about a branch, a tip or another commit re-spelled
+      # the invocation, and five such spellings had accumulated around this one.
+      # @param commit [String] the possible ancestor
+      # @param of [String] what it would be an ancestor of
+      def ancestor?(commit, of = "HEAD") = ok?(run("merge-base", "--is-ancestor", commit, of))
 
       # What `ref` points at, or "" when it points at nothing. "No ref yet" and
       # "a ref on some other commit" both mean the same write is still owed,

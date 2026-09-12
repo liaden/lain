@@ -85,10 +85,7 @@ module Lain
         end
 
         # @return [Array<String>]
-        def initial
-          @epic_lines = folded
-          @shown = composed
-        end
+        def initial = @shown = composed
 
         # @param event [Object] one Channel event
         # @return [Array<String>, nil] the whole buffer, or nil when nothing it

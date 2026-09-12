@@ -99,11 +99,6 @@ module Lain
       # but also `.` and `..` and everything under `.git`, which is not content.
       SKIPPED = %w[. .. .git].freeze
 
-      # Paths out of a subprocess are `ASCII-8BIT` and paths out of `Dir.glob`
-      # carry this, and the two must compare and sort as one set
-      # ({Project::Dotfiles}, at length).
-      FILESYSTEM = Encoding.find("filesystem")
-
       Listing = Data.define(:path, :absolute, :size, :verdict)
 
       # One path the survey may read: how it is named, where it is, how big it

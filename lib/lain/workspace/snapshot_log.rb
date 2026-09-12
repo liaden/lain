@@ -165,10 +165,6 @@ module Lain
 
         private_class_method :staged, :unseen_blocker, :recorded, :changed, :prior, :side, :outside?
 
-        def nothing? = snapshot.nil?
-
-        def known? = blocked.empty?
-
         # The write-set scope never saw what a shell did, so an undo of its
         # snapshot restores only what lain's own tools wrote.
         def write_set? = scope == Snapshot::SCOPE_NOTE

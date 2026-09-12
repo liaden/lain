@@ -4,6 +4,14 @@ require "digest"
 require "fileutils"
 
 module Lain
+  # Paths come off a subprocess's stdout, `Dir.children` and `File.realpath` as
+  # bytes; the filesystem's own encoding is what they have to be tagged with to
+  # compare equal to the same path read any other way. Declared once, here,
+  # because it is a fact about paths and nothing else -- three copies of it had
+  # accumulated, each with its own fan-out of callers reaching for a different
+  # one.
+  FILESYSTEM = Encoding.find("filesystem")
+
   # XDG Base Directory resolution, every path suffixed `/lain` so this harness
   # never collides with a sibling tool sharing the same base. Project-scoped
   # `.lain/` is a separate, non-XDG concern; {ProjectDir} is its locator.

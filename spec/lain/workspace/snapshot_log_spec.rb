@@ -115,7 +115,7 @@ RSpec.describe Lain::Workspace::SnapshotLog do
 
   describe "#undo" do
     it "says there is nothing to undo before any turn changed a file" do
-      expect(log.undo(store:)).to be_nothing
+      expect(log.undo(store:)).to be(described_class::Undo::NOTHING)
     end
 
     context "with a turn the write-set scope recorded" do

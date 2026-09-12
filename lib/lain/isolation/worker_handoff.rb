@@ -107,6 +107,12 @@ module Lain
       class Report
         KINDS = %i[nothing_to_do merged resolved conflicted declined failed].freeze
 
+        # The kinds that moved the parent's tip. Declared beside {KINDS} so a
+        # seventh kind that also lands is one edit, not a hunt for every caller
+        # that spelled the pair out -- both of which failed silently, reporting
+        # work as skipped over a branch that had in fact moved.
+        MOVED = %i[merged resolved].freeze
+
         def self.nothing = new(kind: :nothing_to_do)
 
         # A {Worktree::Handback::Outcome} that needed no resolver, carried
@@ -121,6 +127,9 @@ module Lain
                 detail: -detail.to_s, sha: Freezable::Fields.pinned(sha),
                 fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"))
         end
+
+        # @return [Boolean] whether this outcome moved the parent's tip
+        def moved? = MOVED.include?(kind)
 
         # The one line a caller folds into the worker's result. It names the
         # PATHS on a resolved conflict and the REF on every outcome that left

@@ -118,7 +118,7 @@ module Lain
 
         # Against the branch by its full name: a tag of the trunk's name would
         # otherwise win git's disambiguation.
-        def merged?(commit) = @git.run("merge-base", "--is-ancestor", commit, "refs/heads/#{trunk}").exitstatus.zero?
+        def merged?(commit) = @git.ancestor?(commit, "refs/heads/#{trunk}")
 
         # @return [String] "landed on <trunk>", "folded into <branches>", or ""
         #   when no local branch reaches `commit`

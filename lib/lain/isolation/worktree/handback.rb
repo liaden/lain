@@ -286,7 +286,7 @@ module Lain
             listed = @parent.run("diff", "--name-only", "-z", "HEAD")
             return "(the dirty files could not be listed: #{listed.stderr.strip})" unless ok?(listed)
 
-            paths = listed.stdout.split("\0").map { |path| path.force_encoding(Checkout::FILESYSTEM) }
+            paths = listed.stdout.split("\0").map { |path| path.force_encoding(FILESYSTEM) }
             named = "in #{paths.first(NAMED).join(", ")}"
             paths.size > NAMED ? "#{named}, and #{paths.size - NAMED} more" : named
           end
@@ -306,7 +306,7 @@ module Lain
           # whether it now holds the worker's commit.
           def landed(ref, key)
             commit = @parent.target(ref)
-            return unlanded(ref, key, commit) unless @parent.contains?(commit)
+            return unlanded(ref, key, commit) unless @parent.ancestor?(commit)
 
             sha = @parent.head.stdout.strip
             outcome(:merged, key, ref:, parent_state: :merged, sha:, fast_forward: sha == commit)
@@ -477,7 +477,7 @@ module Lain
           return failed(key, "rev-parse HEAD", head) unless ok?(head)
 
           commit = head.stdout.strip
-          return outcome(:nothing_to_do, key) if @parent.contains?(commit)
+          return outcome(:nothing_to_do, key) if @parent.ancestor?(commit)
 
           held = @parent.target(ref)
           return outcome(:nothing_to_do, key, ref:, detail: ANCHOR_ONLY) if held == commit
@@ -531,7 +531,7 @@ module Lain
         def concluded(ref, key)
           commit = @parent.target(ref)
           return outcome(:merged, key, ref:, parent_state: :merged, sha: @parent.head.stdout.strip) if
-            @parent.contains?(commit)
+            @parent.ancestor?(commit)
 
           outcome(:failed, key, ref:, parent_state: :merged,
                                 detail: "the merge concluded in the parent does not contain #{ref} (#{commit})")

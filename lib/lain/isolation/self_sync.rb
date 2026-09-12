@@ -287,10 +287,10 @@ module Lain
           :lost
         end
 
-        def anchor
-          @tree.anchor(@anchor, @original) unless @anchored
-          @anchored = true
-        end
+        # {Tree#anchor} already returns without writing when the ref holds the
+        # commit, so a second call is idempotent on its own and needs no flag
+        # here to say so.
+        def anchor = @tree.anchor(@anchor, @original)
 
         # An ask that failed resolved nothing, and lain's next look measures
         # that the same way as an ask that answered. What neither may do is
@@ -352,7 +352,7 @@ module Lain
         def conflicted = @checkout.unmerged
 
         # Already on the tip, or nothing of its own to put there.
-        def level_with?(tip) = @checkout.contains?(tip) || ancestor?("HEAD", tip)
+        def level_with?(tip) = @checkout.ancestor?(tip) || ancestor?("HEAD", tip)
 
         # Compare-and-swapped against whatever the ref holds now, so a racing
         # writer fails loudly instead of being overwritten.
@@ -424,12 +424,12 @@ module Lain
         # {Checkout#unmerged} reads the same way.
         def touched(commit)
           paths = run!("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", commit).split("\0")
-          paths.map { |path| path.force_encoding(Checkout::FILESYSTEM) }
+          paths.map { |path| path.force_encoding(FILESYSTEM) }
         end
 
         def authorship(*revisions) = run!("log", "--format=%an%x1f%ae%x1f%at%x1f%s", *revisions).split("\n")
 
-        def ancestor?(commit, of) = ok?(git("merge-base", "--is-ancestor", commit, of))
+        def ancestor?(commit, of) = @checkout.ancestor?(commit, of)
 
         def run!(*args)
           shell = git(*args)

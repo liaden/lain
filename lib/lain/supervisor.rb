@@ -705,12 +705,10 @@ module Lain
         end
 
         # Everything the worker has, its working branch already has.
-        def nothing?(commit) = @base.name.empty? ? @parent.contains?(commit) : within?(commit, @base.tip)
+        def nothing?(commit) = @base.name.empty? ? @parent.ancestor?(commit) : within?(commit, @base.tip)
 
         # Whether `ancestor` is `commit` or reachable from it.
-        def within?(ancestor, commit)
-          ancestor == commit || @parent.run("merge-base", "--is-ancestor", ancestor, commit).exitstatus.zero?
-        end
+        def within?(ancestor, commit) = ancestor == commit || @parent.ancestor?(ancestor, commit)
 
         def written(named, commit, shell)
           return anchored(named, commit) if shell.exitstatus.zero?

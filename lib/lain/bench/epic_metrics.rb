@@ -13,7 +13,9 @@ module Lain
     class EpicMetrics
       ISSUE_TRANSITION = "issue_transition"
       SUPERSESSION_RECORD = "supersession_record"
-      GATE_DECISION = "gate_decision"
+      # `approval` loads ahead of `bench`, so the one place this tag is declared
+      # is nameable here -- unlike the two above it.
+      GATE_DECISION = Approval::SignoffQueue::JOURNAL_TYPE
 
       # The one status a transition must have LEFT for it to count as rework:
       # settled work an issue moved back out of, whether a later gate reopened

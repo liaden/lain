@@ -39,9 +39,6 @@ module Lain
         class OutsideSourceRoots < Refusal; end
         class UnknownLevel < Refusal; end
 
-        # The segments a relative path inside the project never carries.
-        DOTS = %w[. ..].freeze
-
         def initialize(subject:, level: nil)
           super(subject: -subject.to_s, level: level&.then { |name| -name.to_s })
         end
@@ -70,16 +67,11 @@ module Lain
         # altogether -- which the write-time guard admits, since it lets a test
         # written before its class through by design.
         def self.canonical!(subject, plan)
-          return subject if canonical?(subject)
+          return subject if TestLayout::PathShape.canonical?(subject)
 
           raise NotCanonical, "#{plan.path} names the subject #{subject.inspect}, which is not a plain relative " \
                               "path inside the project: a subject carries no \".\" or \"..\" segment, no doubled " \
                               "or trailing slash, and no leading \"/\", \"~\" or \"-\""
-        end
-
-        def self.canonical?(value)
-          !value.empty? && !value.start_with?("/", "~", "-") &&
-            value.split("/", -1).none? { |segment| segment.strip.empty? || DOTS.include?(segment) }
         end
 
         def self.level_in(text, plan, layout)
@@ -140,7 +132,7 @@ module Lain
         end
 
         private_class_method :subject_in, :level_in, :declarations, :prose, :fence?, :clean, :canonical!,
-                             :canonical?, :placed, :known, :undeclared, :ambiguous
+                             :placed, :known, :undeclared, :ambiguous
       end
     end
   end

@@ -82,11 +82,6 @@ module Lain
       # repository", per the fail-closed rule above.
       GIT_TIMEOUT = 10
 
-      # What Ruby's own path APIs label a path with. Fixed at process start from
-      # the locale, so it is `US-ASCII` under `LC_ALL=C` and `UTF-8` under a
-      # normal desktop one.
-      FILESYSTEM = Encoding.find("filesystem")
-
       # PATHS ARE BYTES HERE, AND EVERY COMPARISON IS MADE ON THEM. Three
       # spellings of one path meet in this module -- `ASCII-8BIT` out of a
       # subprocess, {FILESYSTEM} out of `Dir.children` and `File.realpath`, and

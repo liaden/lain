@@ -139,7 +139,7 @@ module Lain
             shared = named.zip(walked).take_while { |from, to| from == to }.size
 
             -[*Array.new(named.size - shared, ".."), *walked.drop(shared)]
-              .join(File::SEPARATOR).force_encoding(Survey::Walk::FILESYSTEM)
+              .join(File::SEPARATOR).force_encoding(FILESYSTEM)
           end
 
           # `File.expand_path` and not `realpath`: see the class doc's LEXICAL
