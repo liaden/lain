@@ -6,13 +6,15 @@ module Lain
     # `/implement-epic` drives, with a gate in front of every stage.
     #
     # It has TWO entries on the altitude bench, and they differ in ONE thing --
-    # who answers those gates. Progressive runs the human's own policy map, or an
-    # earlier run's answers replayed verbatim through
-    # {Approval::Gate::RecordedPolicy}; hands-off runs
-    # {Approval::Gate::Policy::HandsOff} at every gate, with nobody asked. Both
-    # walk the SAME rungs in the same order, which is what makes the pair a
-    # measurement of gating rather than two unrelated runs: the policy is carried
-    # by the driver this arm is handed, never by the ladder.
+    # who answers those gates. The arm never decides that itself: it only runs
+    # whichever driver it is handed, and the driver is what answers each gate --
+    # the human's own live policy map for progressive, or, for a bench replay, a
+    # driver that journals an earlier run's decisions back verbatim with no
+    # policy consulted at all; {Approval::Gate::Policy::HandsOff} at every gate,
+    # with nobody asked, for hands-off. Both entries walk the SAME rungs in the
+    # same order, which is what makes the pair a measurement of gating rather
+    # than two unrelated runs: the policy is carried by the driver this arm is
+    # handed, never by the ladder.
     #
     # It SPAWNS NOTHING ITSELF. The driver owns the loop -- issue actors, gates,
     # the landing queue -- so this arm's whole job is to run it once, price what

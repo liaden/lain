@@ -78,9 +78,10 @@ module RootDefaultDiscipline
 
   # Every parameter default in `lib/` that reads the working directory today,
   # as `<owner>:<parameter>`, relative to `lib/` like {OutputDiscipline}'s
-  # allowlist. Duplicated labels are deliberate: `review/delta.rb` has two
-  # classes whose `initialize` each default `repo_root:`, and collapsing them
-  # would let a third slip in unseen.
+  # allowlist. A label may legitimately repeat within one file's row -- two
+  # classes in the same file can each declare an `initialize` defaulting the
+  # same parameter -- and that repetition is deliberate: collapsing it to a
+  # Set would let a third such default slip in unseen, budgeted by its twin.
   #
   # An entry here is a place the resolved Project does NOT reach. Removing one
   # (by threading a real root to every caller) is progress; adding one needs an
@@ -153,7 +154,6 @@ module RootDefaultDiscipline
     "lain/project/resolver.rb" => %w[call:cwd],
     "lain/project_dir.rb" => %w[initialize:root],
     "lain/prompt/slots.rb" => %w[load:root],
-    "lain/review/delta.rb" => %w[initialize:repo_root initialize:repo_root],
     "lain/review/source.rb" => %w[initialize:repo_root],
     "lain/review/source/github_pr.rb" => %w[initialize:repo_root],
     "lain/review/source/local_branch.rb" => %w[initialize:repo_root],
@@ -365,9 +365,10 @@ module RootDefaultDiscipline
     end
   end
 
-  # Multiset, not Set: `Array#-` collapses the duplicate `initialize:repo_root`
-  # pair in `review/delta.rb`, which would let a third one through allowlisted
-  # by its twin.
+  # Multiset, not Set: a file's row can declare the same label twice (two
+  # classes in it each defaulting the same parameter), and `Array#-` collapses
+  # such a pair into one, which would let a third occurrence of that label
+  # through, allowlisted by a twin that was never really budgeting for it.
   def difference(from, minus)
     from.filter_map do |path, labels|
       extra = surplus(labels, minus.fetch(path, []))

@@ -27,13 +27,17 @@ end
 
 # The top of the ladder: a whole epic, walked by the driver `/implement-epic`
 # drives, with a gate in front of every stage. It has TWO entries on the bench
-# and they differ in ONE thing only -- who answers those gates:
+# and they differ in ONE thing only -- who answers those gates. The arm never
+# decides that itself; it only runs whichever driver it is handed. Here both
+# entries share this file's own {EpicSpecDriver}, which never consults a policy
+# at all -- it journals whatever decisions it is constructed with, tagged by a
+# plain policy name:
 #
-#   progressive  the human's own policy map, or an earlier run's answers
-#                replayed verbatim through {Approval::Gate::RecordedPolicy};
-#   hands-off    {Approval::Gate::Policy::HandsOff} at every gate, nobody asked.
+#   progressive  decisions tagged "recorded", replaying an earlier run's
+#                answers verbatim, denial included;
+#   hands-off    decisions tagged "hands_off", nobody asked.
 #
-# Same rungs, same driver, same fixture: only the answers differ, which is what
+# Same rungs, same driver, only the fixture's answers differ -- which is what
 # makes the pair a measurement rather than two unrelated runs.
 RSpec.describe Lain::Arm::Epic do
   let(:zero_clock) { Lain::Arm::Instrument.new(clock: -> { 0.0 }) }
