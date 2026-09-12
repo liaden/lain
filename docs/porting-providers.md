@@ -3,9 +3,8 @@
 This is the pattern the `vendor` branch used to fork Anthropic out of
 `ruby_llm` 1.16.0 (commit `2cf34b9`), written so openai/gemini/bedrock/the
 OpenAI-compatible shims can be ported the same way later without rediscovering
-it. Read `lib/lain/provider/http/VENDOR.md` for the file map and
-`~/.claude/plans/jiggly-greeting-avalanche.md` ("Transport: fork RubyLLM's
-HTTP layer") for why we fork at all.
+it. Read `lib/lain/provider/http/VENDOR.md` for the file map, and its own
+`## Why fork instead of depend` section for why we fork at all.
 
 Every claim below was checked against the actual `ruby_llm` 1.16.0 source
 (cloned locally, tag `1.16.0`, commit `2cf34b9`), not remembered.

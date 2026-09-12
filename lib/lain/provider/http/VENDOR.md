@@ -22,10 +22,9 @@ loss Lain's correctness gates cannot tolerate, and no configuration option
 undoes it. Forking the four files below it that make the HTTP round trip
 (`provider.rb`, `connection.rb`, `stream_accumulator.rb`, the Anthropic wire
 format) and taking ownership of the response mapping is cheaper and more
-honest than fighting the gem's own abstraction. See the plan
-(`~/.claude/plans/jiggly-greeting-avalanche.md`, "Transport: fork RubyLLM's
-HTTP layer") for the full argument, including why the Anthropic official SDK
-is kept as a correctness oracle rather than the primary path.
+honest than fighting the gem's own abstraction. See `ARCHITECTURE.md`'s Provider
+boundary section for why the Anthropic official SDK stays mounted as a
+correctness oracle rather than the primary path once the fork lands.
 
 ## Scope: Anthropic only
 

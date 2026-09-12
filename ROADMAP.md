@@ -6,10 +6,10 @@
 > choice moved the correct-call rate, and transfer that intuition to medical-literature tool-call
 > work where correctness cannot be eyeballed.
 >
-> **Sources of truth.** The approved architecture and its *why* live in
-> `~/.claude/plans/jiggly-greeting-avalanche.md`. Exploratory ideas live in `planning/`; grounding
-> sources in `references/`. This ROADMAP organizes them into a sequenced plan and folds in the
-> 2026 research scan and the TODO.md brainstorm.
+> **Sources of truth.** The approved architecture and its *why* live in `ARCHITECTURE.md`, and this
+> ROADMAP's own `## Status` and `## Milestones` sections are the committed plan. Exploratory ideas
+> live in `planning/`; grounding sources in `references/`. This ROADMAP organizes them into a
+> sequenced plan and folds in the 2026 research scan and the TODO.md brainstorm.
 >
 > **Tags.** `[built]` shipped · `[planned]` committed direction · `[exp]` exploratory / to be
 > validated on the bench itself.
@@ -1798,7 +1798,8 @@ XDG path relative, which put machine state back inside the user's repository)
 
 ## Map of the documents
 
-- **Architecture & why:** `~/.claude/plans/jiggly-greeting-avalanche.md` (approved).
+- **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
+  sections (approved).
 - **Remaining committed work** (task-level units, acceptance criteria, dependency map):
   `planning/remaining-work.md`.
 - **Exploratory ideas:** `planning/` — `research-scan-2026-07.md` (survey + prioritization),

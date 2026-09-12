@@ -1,7 +1,8 @@
 # Remaining Work — Lain (post-M3b), task-level breakdown
 
-> **Purpose.** A task-sized inventory of everything in `jiggly-greeting-avalanche.md` not yet built,
-> for folding into `ROADMAP.md`. Each **unit** is scoped to roughly one subagent hand-off and carries
+> **Purpose.** A task-sized inventory of everything committed in `ROADMAP.md`'s own `## Status` and
+> `## Milestones` sections not yet built, for folding back into `ROADMAP.md`. Each **unit** is
+> scoped to roughly one subagent hand-off and carries
 > an **acceptance** criterion (how you know it's done). Hard dependencies are noted; sequencing and
 > prioritization are yours. Units are labelled `M<band>-<stream>.<n>` for easy reference.
 
