@@ -32,21 +32,24 @@ scenario is already running** rather than driving a session just for it.
 `Surfaces#prime`'s own docstring states the principle: prime every view so "an idle session that
 shows no buffers reads as 'broken' (the first manual verification pass stumbled exactly there)".
 
-**The primed set is seven buffers, and it is not the same as the set of `lain://` names.** At attach
-`Surfaces#prime` creates `journal timeline workspace diff inbox request approval`. `lain://review`
-is **not** among them — nothing renders it until a `/survey` runs — so iterating it here reads as a
-missing buffer every time and teaches a driver to ignore the one check this section is:
+**The primed set is eight buffers, and it is not the same as the set of `lain://` names.** At attach
+`Surfaces#prime` creates `journal timeline workspace diff inbox request status approval`.
+`lain://review` is **not** among them — nothing renders it until a `/survey` runs — so iterating it
+here reads as a missing buffer every time and teaches a driver to ignore the one check this section
+is:
 
 ```bash
 S=$XDG_RUNTIME_DIR/lain/nvim-<hash>.sock
 nvim --server "$S" --remote-expr "join(map(getbufinfo({'buflisted':0}), {_,b -> b.name.' ('.b.linecount.')'}), '\n')"
-for b in journal timeline workspace diff inbox request approval; do
+for b in journal timeline workspace diff inbox request status approval; do
   echo "== lain://$b =="; nvim --server "$S" --remote-expr "join(getbufline(bufnr('lain://$b'), 1, 5), '\n')"
 done
 ```
 
-Expected placeholders, all seven, measured round 9. **Note `diff` is plural and `request` is
-singular** — that is not a typo here, and a driver grepping for one string across both will miss:
+Expected placeholders, all eight. Seven of them were measured round 9; **`lain://status` is new and
+has never been driven here**, so record what it actually holds rather than confirming the row below.
+**Note `diff` is plural and `request` is singular** — that is not a typo here, and a driver grepping
+for one string across both will miss:
 
 | buffer | at rest |
 |---|---|
@@ -56,9 +59,19 @@ singular** — that is not a typo here, and a driver grepping for one string acr
 | `lain://diff` | `(no requests yet)` — plural |
 | `lain://inbox` | `(no questions pending)` |
 | `lain://request` | `(no request yet)` — singular |
+| `lain://status` | `# lain status` / `no epic is mounted -- start the chat with --epic SLUG to see one here`, then `## fleet` / `(nothing running)` |
 | `lain://approval` | `(no approvals pending)` |
 
-**`lain://approval` is the newest of the seven and the reason this loop was corrected.** It used to
+**`lain://status` primes in every chat, epic or not, and that is the point.** Its epic half is a
+Null (`StatusView::Unmounted`) that answers with the sentence above, so a chat outside an epic gets
+a buffer explaining how to get one rather than no buffer at all — the same reasoning that put
+`lain://approval` in this loop. Both halves are always drawn: the epic lines, a blank, then the
+fleet listing. A `lain://status` that is **absent** in a non-epic chat is the regression, and it is
+the one this section would previously have called correct. It is created by the runtime with
+filetype `markdown` (the only read-only markdown buffer — it carries a mermaid fence) and takes no
+window of its own.
+
+**`lain://approval` is the newest of the eight and the reason this loop was corrected.** It used to
 be absent until the first pending parked, which made "the buffer is not there" and "there is nothing
 pending" indistinguishable — and `method.md`'s rule about reading it before answering a blind
 approval depended on telling them apart. It is now primed at attach holding `(no approvals pending)`,
@@ -67,8 +80,8 @@ and because the runtime opens its window only when it has rows, **priming it tak
 rest is the over-correction to watch for.
 
 It is also deliberately *not* in the runtime's `LainAttach` buffers payload — the runtime creates it
-itself — so a config iterating that payload still sees six names. Six there and seven here is
-correct, not a discrepancy.
+itself — so a config iterating that payload sees seven names (`00_constants.lua`'s `BUFFERS`, which
+`lain://status` **is** in). Seven there and eight here is correct, not a discrepancy.
 
 That view is still named misleadingly: it renders `Telemetry::ToolOutput` (streamed tool bytes)
 only, never the NDJSON session journal, and a rename was proposed rather than taken because
@@ -83,7 +96,7 @@ a `(no streamed tool output yet)` line sitting above real `cargo` output is that
 The cheap probe, run before and after a turn:
 
 ```bash
-for b in timeline request diff journal; do
+for b in timeline request diff journal status; do
   printf '%s=%s ' "$b" "$(nvim --server "$S" --remote-expr "getbufinfo('lain://$b')[0].linecount")"
 done; echo
 ```
@@ -101,6 +114,17 @@ ruby -rjson -e 'n=0; ARGF.each_line{|l| r=JSON.parse(l) rescue next; n+=1 if r["
 `Telemetry::RequestSent`. If one moves and the other does not while both event types are being
 journaled, that is the finding — and it is not the drain thread dying, because a dead drain stops
 all of them.
+
+**`lain://status` is the one view that redraws on nothing.** It refolds on four types —
+`Telemetry::TurnUsage`, `Epic::IssueTransition`, `Epic::StageTransition`, `Approval::GateDecision` —
+and updates its fleet half on any `:spawn` or `:message` kind, but `StatusView#update` **returns nil
+when the composed text is unchanged**, so a refold that found no movement posts nothing. A flat
+linecount across two asks is therefore correct here and a finding everywhere else in this loop:
+judge it by whether the buffer moves when the *epic* moves, not when a turn does. Drive it from
+§11 of `epic-tier.md` — a `/implement-epic` run walking an issue from pending to `in_flight` to
+`done` is the trigger that must show. Two failures to tell apart: a view that never redraws (the
+refold predicate missing a type) and one that redraws every turn with identical text (the nil-return
+lost, which reinstates the 141 ms full refold this design exists to avoid).
 
 ## 3 — The attach message
 

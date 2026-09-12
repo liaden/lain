@@ -1,11 +1,13 @@
 # Scenario: every command at the `you>` prompt
 
-**What it exercises:** `Command::Registry` and the eleven commands nothing else drives — `/help`,
-`/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit`,
-`/introspect` — alongside the ten that other scenarios touch only in passing (`/status`,
-`/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`).
-Eleven plus ten is the whole registry — twenty-one commands, pinned as a literal roster at
-`spec/lain/cli/command/surface_spec.rb:143-147`.
+**What it exercises:** `Command::Registry` and the twelve commands nothing else drives — `/help`,
+`/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/undo`, `/fork`, `/goal`, `/meta`, `/review-submit`,
+`/introspect` — alongside the eleven that other scenarios touch only in passing (`/status`,
+`/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`,
+`/implement-epic`). Twelve plus eleven is the whole registry — twenty-three commands, pinned as a
+literal roster at `spec/lain/cli/command/surface_spec.rb:143-147`. `/implement-epic` is driven end
+to end by `epic-tier.md` §10; here it only has to appear in `/help` and refuse by name outside an
+epic.
 
 **The question it answers:** does the command surface do what it says, and does it refuse in
 sentences a human can act on? Every command below is a **zero-model-turn** path — the registry is
@@ -107,6 +109,30 @@ rung at a time, is the finding.
 `accept_edits` that journals `manual` on the way down to `plan` has written a posture the session was
 never really in, and every later fold reads it as real.
 
+**The prompt itself shows the posture, and it must follow `/mode` at the very next prompt.** This is
+the half that had no check: `/mode` reporting correctly while the prompt shows a stale posture is two
+surfaces disagreeing about the same state, which is the class of defect this whole scenario exists
+for. Drive `/mode accept_edits`, then look at the prompt *before* typing anything else, then
+`/mode !` and look again. The wiring hands the prompt composer the **live** mode switch rather than a
+snapshotted posture precisely so this works; a prompt frozen at the posture the session started in
+is the regression, and it is invisible to `/mode`.
+
+**Each switch record names the toolset the flip resolved** — `toolset_digest` plus `tool_names`, read
+*before* the flip applies, so the record describes the set the incoming posture declared and not the
+outgoing one's. Two checks on the journal:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="mode_switch";
+  puts "#{r["from"]}->#{r["to"]} #{r["toolset_digest"]} (#{Array(r["tool_names"]).size} tools)"}' "$JOURNAL"
+```
+
+Every `mode_switch` line must carry a non-null `toolset_digest` — it is a required attribute, so a
+null means some caller journalled without one and the validation was bypassed. And the digest must
+**change across a posture flip that changes the tools**: `plan` and `auto` resolving to the same
+digest means the record is reading a live slot rather than the resolution, which would file each
+flip under the previous posture's tools. Cross-check one digest against the session header's
+toolset digest to confirm they are comparable values and not different shapes.
+
 ## 2 — `/pin` and `/unpin`
 
 The compaction lever, and the only commands that take a **turn digest**.
@@ -169,6 +195,87 @@ is how a human learns to distrust all of them.
 After a successful rewind, confirm the **next** turn's request does not contain the rewound
 content. The head moving in the display while the context still carries the discarded turns is the
 worst version of this bug and is invisible without reading the request.
+
+## 3b — `/undo`, which moves files while `/rewind` moves the conversation
+
+**The pair is the point, and mixing them up is the finding.** `/rewind` shortens the session and
+leaves the working tree alone; `/undo` puts back the files the last file-changing turn wrote and
+**never moves the Timeline**. Drive them in the same session and confirm each leaves the other's
+territory untouched: a `/undo` that shortens the chain, or a `/rewind` that reverts a file, is a
+serious defect and neither is visible if you only ever drive one.
+
+`/undo` names a turn by its **place among the file-changing turns**, never by a digest — deliberate,
+because a digest is not something a human can act on here. Typed again it walks one turn further
+back.
+
+```
+you> /undo                 before any file-changing turn: "nothing to undo: no turn has changed
+                           a file this session recorded"
+you> /undo nonsense        unknown /undo argument "nonsense": type /undo, or /undo skip
+```
+
+Then have the model write two files in two separate turns, and:
+
+```
+you> /undo                 "undid the latest of 2 undoable file-changing turns: restored <paths>"
+you> /undo                 "undid the only undoable file-changing turn: …"
+you> /undo                 back to "nothing to undo"
+```
+
+**Check the count is of turns still undoable, not of turns that ever existed.** A count that takes
+in turns already undone reads "2 of 3" with two left, and the class doc says so explicitly — after
+the first `/undo` above, the second must say *the only*, not *the latest of 2*.
+
+**Verify the effect, not the message**, as with `/pin`: read the files. Both directions must work —
+a turn that **created** a file has that file **deleted** by the undo, and a turn that **deleted** one
+has it restored. The success line distinguishes them (`restored …; deleted …`), and a turn needing
+neither says `no file needed putting back` rather than claiming a move.
+
+### The refusals, which are where this command earns its keep
+
+Every one lands **before anything moves**, and the last sentence of the blocked refusal says so
+(`Nothing was changed.`) — confirm that is true by reading the tree after each refusal, because a
+refusal that has already half-applied is the worst failure available here.
+
+1. **A turn in flight.** `cannot undo while a turn is in flight: a tool call may still be parked, and
+   it could write after the files are put back`. Manufacture it from a second surface while an
+   approval sits parked.
+2. **A live supervised worker.** `cannot undo while <role> (<worker_id>) is still running and may be
+   writing; let it settle or stop it first` — and it must **name** the worker, role and id both. Drive
+   it with a subagent running (`subagents-and-backends.md` has the launch).
+3. **A blocked path.** The refusal names **each** path and why, from a closed list of seven reasons:
+   `dirty` (changed since that turn), `symlink`, `directory` (something in the way the turn did not
+   make), `outside_root`, `ignored` (`.gitignore`'d, so nothing recorded what it held), `unrecorded`
+   (first written in that turn), `nested_repository`. The cheap three to provoke by hand are
+   **dirty** (edit the file yourself before undoing), **symlink** (replace it with one) and
+   **directory** (`rm` the file and `mkdir` its path).
+
+**And the way past a refusal, which is the design ruling to check.** A refusal with no escape would
+wedge every *later* undo — so the blocked refusal offers `/undo skip`, which drops that turn without
+restoring anything:
+
+```
+you> /undo skip            "skipped <place> without restoring anything: its changes stay on disk,
+                           and /undo now reaches the turn before it"
+```
+
+Confirm the two halves of that sentence are both true: the files it would have restored are
+**still on disk**, and the next `/undo` reaches the turn *before* the skipped one. A `skip` that
+restores anything, or that leaves the log pointing at the same turn, defeats the whole escape.
+
+**One scope caveat to read in the output, not in the code.** A turn recorded under the **write-set**
+scope appends `Only files lain's own tools wrote were restored: that turn ran under the write-set
+scope, which records nothing a shell did.` Drive one turn in each posture — the snapshot scope
+follows the posture — and confirm the caveat appears on the write-set one and **not** on the
+shadow-git one. A caveat printed unconditionally is as bad as one never printed: it teaches a human
+to distrust a complete restore.
+
+**The journal carries two records, and which one appears is the assertion:** `workspace_undone`
+(with `turn`, `snapshot`, `written`, `deleted`) for a revert, `workspace_undo_skipped` (`turn`,
+`snapshot`) for a skip. Unlike `/rewind`, the record is written **after** the files move, on purpose:
+a pointer move cannot fail but a file write can, so the record names what actually landed. Kill the
+process mid-undo if you can arrange it; a `workspace_undone` naming paths that are not on disk is
+the failure that ordering exists to prevent.
 
 ## 4 — `/fork`, `/btw`, `/keep`
 
