@@ -84,12 +84,12 @@ module Lain
       # clash -- because the value carries all seven members and a Data cannot
       # say which of them a caller actually wrote.
       #
-      # @param instrumentation [Instrumentation, Collaborators::OMITTED] what
-      #   the caller wrote, or the marker meaning they wrote nothing
+      # @param instrumentation [Instrumentation, Agent::OMITTED] what the caller
+      #   wrote, or the marker meaning they wrote nothing
       # @param legacy [Hash] the individual keywords they wrote instead
       def self.resolve(instrumentation, legacy)
         refuse_unknown(legacy.keys)
-        return new(**legacy) if Collaborators::OMITTED.equal?(instrumentation)
+        return new(**legacy) if OMITTED.equal?(instrumentation)
         raise ArgumentError, NO_VALUE if instrumentation.nil?
         raise ArgumentError, format(BOTH_STYLES, legacy: labelled(legacy.keys)) if legacy.any?
 
@@ -101,8 +101,10 @@ module Lain
       # `Data`'s own `unknown keyword:` because {Agent} names its collaborator
       # keywords on the signature and sweeps everything else into this resolver:
       # Ruby's bare message would report `providr:` unknown without ever naming
-      # `provider:`, and {Collaborators#refuse_unknown}'s list is unreachable
-      # from `Agent.new` for the same reason.
+      # `provider:`. That also makes this the ONLY vocabulary an `Agent.new` can
+      # trip, which is why {.collaborator_keywords} names the half this resolver
+      # does not own -- a second list behind the collaborator keywords would be
+      # unreachable.
       def self.refuse_unknown(keywords)
         unknown = keywords - members
         return if unknown.empty?
@@ -114,7 +116,7 @@ module Lain
       # The wiring keywords this resolver does NOT own. Subtracted rather than
       # listed, so a keyword can never appear in both halves of the message.
       def self.collaborator_keywords
-        (Collaborators::INGREDIENTS.keys + Collaborators::KEYWORDS) - members
+        (INGREDIENTS.keys + KEYWORDS) - members
       end
 
       private

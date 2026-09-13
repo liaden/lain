@@ -189,6 +189,37 @@ RSpec.describe Lain::Agent::ToolRunner do
     expect(seen[:context]).to eq(:ctx)
   end
 
+  # The digest gate, asked of a runner an {Lain::Agent} was HANDED rather than
+  # built. It lives here because this is where a toolset means something: the
+  # harvest that becomes the committed turn's `causal_parents:` reads THIS
+  # object's toolset, so the rule and the reader are one file apart no longer.
+  describe ".refuse_foreign_toolset" do
+    let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+
+    def runner(over: toolset) = described_class.new(handler: Lain::Effect::Handler::Mock.new, toolset: over)
+
+    it "passes a runner harvesting from the very same Toolset" do
+      expect { described_class.refuse_foreign_toolset(runner, toolset:) }.not_to raise_error
+    end
+
+    # Identity, not equality: the harvest drains per-INSTANCE state, so two
+    # equal toolsets holding different tool objects would harvest the wrong ones.
+    it "refuses a runner built over an equal-but-distinct Toolset" do
+      expect { described_class.refuse_foreign_toolset(runner(over: Lain::Toolset.new([EchoTool.new])), toolset:) }
+        .to raise_error(ArgumentError, /different Toolset/)
+    end
+
+    # This seam exists for duck-typed runners, so the gate has to answer a duck
+    # that cannot be asked. A NoMethodError would be the one crash among
+    # refusals that all say what to do.
+    it "refuses a runner stand-in that cannot answer #toolset, by name" do
+      mute = Class.new { def delivery(_response, context:) = { content: [], causal_parents: [context] } }.new
+
+      expect { described_class.refuse_foreign_toolset(mute, toolset:) }
+        .to raise_error(ArgumentError, /tool_runner:.*#toolset/m)
+    end
+  end
+
   # One user-turn delivery = the tool_result blocks PLUS the consumption
   # edges harvested from the toolset -- pinned here at the collaborator's own
   # boundary with consume-once fakes, so the contract does not rest on

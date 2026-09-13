@@ -7,7 +7,6 @@ require "active_support/core_ext/module/delegation"
 
 require_relative "agent/accounting"
 require_relative "agent/budget"
-require_relative "agent/collaborators"
 require_relative "agent/instrumentation"
 require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
@@ -54,6 +53,31 @@ module Lain
                         StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
     private_constant :FAILURE_REASONS
 
+    # Each of the three objects the loop drives, paired with the legacy
+    # keywords that BUILD it when it is not injected: the clash table
+    # {#refuse_double_wiring} consults. Four of these are {Instrumentation}
+    # members too, so their DEFAULTS come from that value; they stay named here
+    # because the clash rule is keyed on what a caller actually wrote.
+    INGREDIENTS = { model_caller: %i[provider model_middleware],
+                    tool_runner: %i[handler tool_middleware tool_observer],
+                    accounting: %i[journal] }.freeze
+
+    # The ingredient vocabulary, flat. Public because {#initialize} splits its
+    # own `**instrumented` splat on it, and because {Instrumentation.resolve}
+    # names the half it does not own from it -- one list, so the two refusals
+    # can never quote different keywords.
+    KEYWORDS = INGREDIENTS.values.flatten.freeze
+
+    # "No keyword was written here" -- which `nil` cannot say, because an
+    # explicit nil is a caller MISTAKE this class refuses
+    # ({#refuse_explicit_nil}). A bare frozen object, so nothing a caller could
+    # plausibly pass collides with it. It never escapes the constructor.
+    OMITTED = Object.new.freeze
+
+    MISSING_PROVIDER = "no provider: and no model_caller: -- the Agent needs something to call. Pass either the " \
+                       "provider (and a ModelCaller gets built over it) or a ModelCaller of your own."
+    private_constant :MISSING_PROVIDER
+
     # `request_override` is public on purpose: {CLI::ResendBridge} queues an
     # edited Request through this reader rather than threading its own handle
     # through construction.
@@ -62,10 +86,11 @@ module Lain
 
     delegate :usage, to: :accounting
 
-    # Private because every caller below is one: the curated public surface
-    # above is this class's own decision to widen, not a side effect of
-    # delegating through the retained {Collaborators} resolver.
-    delegate :model_caller, :tool_runner, :accounting, to: :@collaborators, private: true
+    # Private because every caller is one: the curated public surface above is
+    # this class's own decision to widen, and the three objects the loop drives
+    # are not part of it.
+    attr_reader :model_caller, :tool_runner, :accounting
+    private :model_caller, :tool_runner, :accounting
 
     # The Agent is the wiring point of the whole harness, and the honest split
     # is three-way: values that are ALREADY their own collaborators ({Budget},
@@ -79,20 +104,29 @@ module Lain
     # Each of the three objects the loop drives may be handed over WHOLE
     # (`model_caller:`, `tool_runner:`, `accounting:`) or as the INGREDIENTS it
     # is built from (`provider:`, `handler:`, `journal:` and their middleware),
-    # which is what every caller did before they were injectable. Mixing the two
-    # for ONE collaborator raises; {Collaborators} owns that rule, and
-    # {Instrumentation.resolve} owns the same rule for the seven keywords a run
-    # REPORTS through, still accepted through `**instrumented`.
+    # which is what every caller did before they were injectable. The styles
+    # compose ACROSS collaborators -- an injected ToolRunner beside a
+    # `provider:` says nothing contradictory -- and mixing them for ONE
+    # collaborator raises ({#refuse_double_wiring}). {Instrumentation.resolve}
+    # owns the same rule for the seven keywords a run REPORTS through, still
+    # accepted through `**instrumented`.
     #
-    # Collaborator keywords default to {Collaborators::OMITTED} rather than to
-    # their values because resolution has to tell "not written" from "written",
-    # and `nil` cannot serve: an explicit `nil` is a caller mistake
-    # {Collaborators} refuses rather than reads as a default. The marker never
-    # escapes this constructor.
+    # The refusals fire in a FIXED order -- instrumentation's vocabulary, then
+    # explicit nil, then double wiring, then a foreign toolset -- so a call with
+    # two mistakes always reports the same one: vocabulary first (a typo makes
+    # every later question meaningless), then the values, then what the values
+    # mean together. `MISSING_PROVIDER` is the exception, firing lazily while
+    # the ModelCaller is built, between the last two.
+    #
+    # Collaborator keywords default to {OMITTED} rather than to their values
+    # because resolution has to tell "not written" from "written", and `nil`
+    # cannot serve: an explicit `nil` is a caller mistake {#refuse_explicit_nil}
+    # refuses rather than reads as a default. The marker never escapes this
+    # constructor.
     #
     # @param toolset [Lain::Toolset] the run's capability set, rendered into
-    #   every Request and shared with `tool_runner:` -- {Collaborators} refuses
-    #   construction if the two disagree.
+    #   every Request and shared with `tool_runner:` -- construction is refused
+    #   if the two disagree ({ToolRunner.refuse_foreign_toolset}).
     # @param context [Lain::Context] the base rendering strategy, `(Timeline,
     #   Toolset, Workspace) -> Request`. Asked for per turn through
     #   `instrumentation.pipeline_source`, so a strategy that must re-decide
@@ -141,10 +175,10 @@ module Lain
     #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
     #   accepted directly so every call site that predates `instrumentation:`
     #   keeps its meaning. Writing both raises.
-    def initialize(toolset:, context:, instrumentation: Collaborators::OMITTED,
-                   model_caller: Collaborators::OMITTED, provider: Collaborators::OMITTED,
-                   tool_runner: Collaborators::OMITTED, handler: Collaborators::OMITTED,
-                   accounting: Collaborators::OMITTED, timeline: nil, workspace: Workspace.empty,
+    def initialize(toolset:, context:, instrumentation: OMITTED,
+                   model_caller: OMITTED, provider: OMITTED,
+                   tool_runner: OMITTED, handler: OMITTED,
+                   accounting: OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
                    snapshot_slot: SnapshotSlot.new, context_window: ContextWindow.default,
@@ -284,18 +318,93 @@ module Lain
       end
     end
 
-    # {Instrumentation} and {Collaborators} each own one half of the two-style
-    # resolution the constructor describes. Both resolve EAGERLY, so a wiring
-    # mistake raises here and not on the first turn. `instrumented` reaches
-    # {Collaborators} too, because four of its members (`journal`, the model and
-    # tool phases, the observer) are also ingredients and the clash table is
-    # keyed on the keywords a caller actually wrote.
+    # {Instrumentation} owns one half of the two-style resolution the
+    # constructor describes and {#resolve_collaborators} the other. Both resolve
+    # EAGERLY, so a wiring mistake raises here and not on the first turn.
+    # `instrumented` reaches the second half too, because four of its members
+    # (`journal`, the model and tool phases, the observer) are also ingredients
+    # and the clash table is keyed on the keywords a caller actually wrote.
     def wire_callers(request_override:, instrumentation:, instrumented:, **collaborators)
       @instrumentation = Instrumentation.resolve(instrumentation, instrumented)
-      @collaborators = Collaborators.new(toolset: @toolset, instrumentation: @instrumentation, **collaborators,
-                                         **instrumented.slice(*Collaborators::KEYWORDS))
+      resolve_collaborators(**collaborators, **instrumented.slice(*KEYWORDS))
       @request_override = request_override
     end
+
+    # The three objects the loop drives, resolved from either construction
+    # style. An unknown keyword never reaches here: every collaborator keyword
+    # is NAMED on {#initialize} and therefore policed by Ruby, and everything
+    # else is swept into `**instrumented`, whose vocabulary
+    # {Instrumentation.refuse_unknown} has already refused.
+    def resolve_collaborators(model_caller:, tool_runner:, accounting:, **ingredients)
+      refuse_explicit_nil({ model_caller:, tool_runner:, accounting:, **ingredients })
+      given = written(ingredients)
+      injected = written({ model_caller:, tool_runner:, accounting: })
+      refuse_double_wiring(injected, given)
+      @model_caller = injected.fetch(:model_caller) { built_model_caller(given) }
+      @tool_runner = injected.fetch(:tool_runner) { built_tool_runner(given) }
+      @accounting = injected.fetch(:accounting) { built_accounting(given) }
+      ToolRunner.refuse_foreign_toolset(@tool_runner, toolset: @toolset)
+    end
+
+    # The keys a caller actually wrote. Unlike a `compact`, this keeps an
+    # explicit nil visible for the check above.
+    def written(wiring) = wiring.reject { |_key, value| OMITTED.equal?(value) }
+
+    # An explicit nil is a mistake, not a request for the default: the way to
+    # take a default is to OMIT the keyword. Loud, because every silent reading
+    # is worse -- `handler: nil` read as a default becomes a LIVE
+    # {Effect::Handler::Live} over the real toolset, a nil that runs tools, and
+    # `journal: nil` would discard the experiment record a caller thought they
+    # had asked for. cli/tool_guard.rb takes the same position.
+    def refuse_explicit_nil(wiring)
+      nils = wiring.select { |_key, value| value.nil? }.keys
+      return if nils.empty?
+
+      raise ArgumentError, "#{labelled(nils)} was given as nil. Omit the keyword to take the default; nil is " \
+                           "not a wiring value, and reading it as one would hide the mistake."
+    end
+
+    # Both styles are valid; mixing them for ONE collaborator is not. A caller
+    # who hands over a {ModelCaller} *and* a `provider:` has stated two answers
+    # to "which provider does this run talk to", and quietly honouring one is
+    # how a bench arm measures an arm nobody configured.
+    def refuse_double_wiring(injected, given)
+      injected.each_key do |collaborator|
+        refuse_clash(collaborator, INGREDIENTS.fetch(collaborator) & given.keys)
+      end
+    end
+
+    def refuse_clash(collaborator, clash)
+      return if clash.empty?
+
+      raise ArgumentError, "#{collaborator}: was passed together with #{labelled(clash)}, which is what it " \
+                           "would have been BUILT from -- two answers to one wiring question. Pass the " \
+                           "collaborator or its ingredients, not both."
+    end
+
+    # `given` is the ingredients a caller actually WROTE, threaded as an
+    # argument rather than held on an ivar: it is construction-time input, and
+    # an Agent that kept it would be carrying dead wiring state for its whole
+    # life. `fetch` with a block keeps the Null-Object posture: the default is
+    # named at the one place that needs it, so nothing downstream tolerates nil.
+    # The four reporting keywords fall back to {Instrumentation}'s members
+    # rather than to a Null written here, so there is ONE statement of what a
+    # run reports through.
+    def built_model_caller(given)
+      ModelCaller.new(provider: given.fetch(:provider) { raise ArgumentError, MISSING_PROVIDER },
+                      middleware: given.fetch(:model_middleware) { @instrumentation.model_middleware })
+    end
+
+    def built_tool_runner(given)
+      ToolRunner.new(handler: given.fetch(:handler) { Effect::Handler::Live.new(toolset: @toolset) },
+                     middleware: given.fetch(:tool_middleware) { @instrumentation.tool_middleware },
+                     toolset: @toolset,
+                     observer: given.fetch(:tool_observer) { @instrumentation.tool_observer })
+    end
+
+    def built_accounting(given) = Accounting.new(journal: given.fetch(:journal) { @instrumentation.journal })
+
+    def labelled(keywords) = keywords.map { |keyword| "#{keyword}:" }.join(", ")
 
     # The mutable run context, kept apart from #initialize because what is there
     # is immutable wiring. The state machine owns its own state (initial:

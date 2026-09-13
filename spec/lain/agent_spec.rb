@@ -987,6 +987,36 @@ RSpec.describe Lain::Agent do
       expect(a.usage.input_tokens).to eq(12)
     end
 
+    # The clash rule is PER collaborator, so the two styles compose: an injected
+    # ToolRunner beside a `provider:` says nothing contradictory. `toolset:` is
+    # shared besides -- the Agent renders it and the runner harvests answered
+    # questions from it -- so it is never exclusive to a collaborator either.
+    it "mixes the two styles across different collaborators" do
+      tool_runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new, toolset:)
+      a = described_class.new(toolset:, context:, provider: wiring_value(:provider), tool_runner:)
+
+      expect(a.send(:tool_runner)).to be(tool_runner)
+      expect(a.send(:model_caller).provider).to be_a(Lain::Provider::Mock)
+    end
+
+    # The default-built runner's handler is LIVE over the Agent's own toolset,
+    # which is what makes `handler:` an ingredient rather than a requirement.
+    it "builds a ToolRunner whose handler is Live over the Agent's own toolset" do
+      handler = described_class.new(toolset:, context:, provider: wiring_value(:provider)).send(:tool_runner).handler
+
+      expect(handler).to be_a(Lain::Effect::Handler::Live)
+      expect(handler.tool_named("echo")).to be(toolset.to_a.find { |tool| tool.name == "echo" })
+    end
+
+    # The vocabulary the constructor polices, named once and read by
+    # {Lain::Agent::Instrumentation}'s own refusal so the two halves of one
+    # wiring surface cannot list different keywords.
+    it "names the ingredient vocabulary its refusals are keyed on" do
+      expect(described_class::KEYWORDS)
+        .to contain_exactly(:provider, :model_middleware, :handler, :tool_middleware, :tool_observer, :journal)
+      expect(described_class::OMITTED).to be_frozen
+    end
+
     it "demands a provider when no model_caller is injected" do
       expect { described_class.new(toolset:, context:) }
         .to raise_error(ArgumentError, /provider/)
@@ -997,10 +1027,10 @@ RSpec.describe Lain::Agent do
         .to raise_error(ArgumentError, /providr/)
     end
 
-    # Both styles are valid; mixing them for one collaborator is not.
-    { model_caller: %i[provider model_middleware],
-      tool_runner: %i[handler tool_middleware tool_observer],
-      accounting: %i[journal] }.each do |collaborator, ingredients|
+    # Both styles are valid; mixing them for one collaborator is not. Driven
+    # off the Agent's own table rather than a copy of it, so a new ingredient
+    # cannot gain a clash rule with no example.
+    described_class::INGREDIENTS.each do |collaborator, ingredients|
       ingredients.each do |ingredient|
         it "refuses #{collaborator}: passed alongside #{ingredient}:" do
           expect do
@@ -1172,8 +1202,9 @@ RSpec.describe Lain::Agent do
     # instrumentation resolver, which is therefore the only place a wiring typo
     # can be answered. It has to answer with the route to the fix: naming
     # `providr:` back at the caller without naming `provider:` is what Ruby's
-    # own `unknown keyword:` does, and what Collaborators' vocabulary list used
-    # to do before the slice put it out of reach.
+    # own `unknown keyword:` does. It is also the ONLY vocabulary refusal
+    # reachable from here: the collaborator keywords are named on the signature,
+    # so Ruby polices them and nothing behind them can ever be tripped.
     it "answers a typo with the keyword the caller meant, not just the typo" do
       message = begin
         described_class.new(toolset:, context:, providr: Lain::Provider::Mock.new(responses: []))
@@ -1187,7 +1218,7 @@ RSpec.describe Lain::Agent do
     end
 
     # `handler:` and `provider:` are NOT instrumentation members -- they are
-    # {Collaborators} ingredients -- so naming them beside a value that carries
+    # collaborator INGREDIENTS -- so naming them beside a value that carries
     # the phases those collaborators run in is the ordinary wiring, not a clash.
     it "composes with the collaborator ingredients it is not one of" do
       a = described_class.new(
@@ -1226,20 +1257,16 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # wire_callers collapses its three mirror assignments
-  # (@model_caller/@tool_runner/@accounting from `resolved`) into delegation to
-  # the retained Collaborators object, the same idiom `delegate :usage, to:
-  # :@accounting` already used for the fourth. Kept private (see
-  # collaborators.rb:61's attr_reader): the public surface at the top of this
-  # file is a curated, deliberate list, and this collapse is a readability
-  # change to a private wiring seam, not a new public API.
-  describe "wire_callers delegation (C4)" do
+  # `#wire_callers` resolves both halves of the two construction styles onto
+  # plain readers -- @model_caller/@tool_runner/@accounting -- kept private for
+  # the reason the public surface at the top of this file is a curated list:
+  # what the loop drives is not part of it.
+  describe "wire_callers" do
     # The point of resolving eagerly (agent.rb wire_callers' comment) is that a
     # wiring mistake is an error AT CONSTRUCTION, never deferred to the first
     # turn. No #ask happens in this example -- the raise has to come out of
-    # `described_class.new` itself, which is only possible if the collapsed
-    # delegation still resolves Collaborators/Instrumentation inside
-    # #wire_callers rather than lazily on first use.
+    # `described_class.new` itself, which is only possible if #wire_callers
+    # resolves both halves there rather than lazily on first use.
     it "still raises during initialize, before any turn runs, on a wiring mistake" do
       expect do
         described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
@@ -1249,14 +1276,13 @@ RSpec.describe Lain::Agent do
     end
 
     # The instrumentation clash above resolves inside `Instrumentation.resolve`,
-    # BEFORE `Collaborators.new` ever runs (agent.rb wire_callers: :359 then
-    # :360) -- so it raises even under a Collaborators built lazily, and does
-    # not by itself prove #wire_callers still resolves the delegated seam this
-    # card touched. This example trips a mistake INSIDE Collaborators
-    # (model_caller: alongside the provider: it would have been built from,
-    # collaborators.rb's INGREDIENTS[:model_caller]) and demands the same
-    # thing: no #ask, the raise comes out of `described_class.new` itself.
-    it "still raises during initialize on a Collaborators-level double-wiring mistake" do
+    # which runs FIRST -- so it raises even if the collaborator half were
+    # resolved lazily, and does not by itself prove that half is eager. This
+    # example trips a mistake in the collaborator half instead (model_caller:
+    # alongside the provider: it would have been built from, INGREDIENTS's own
+    # clash table) and demands the same thing: no #ask, the raise comes out of
+    # `described_class.new` itself.
+    it "still raises during initialize on a double-wiring mistake between collaborators" do
       model_caller = Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: []))
 
       expect do
@@ -1265,7 +1291,7 @@ RSpec.describe Lain::Agent do
       end.to raise_error(ArgumentError, /model_caller.*provider/m)
     end
 
-    # The delegated readers answer the same objects a caller injected -- not
+    # The readers answer the same objects a caller injected -- not
     # copies, not rebuilt ones. Private (constraint 2), so reached with #send
     # rather than a public call, same as the two other specs (subagent_spec.rb,
     # wiring_spec.rb) that reach this seam from outside.

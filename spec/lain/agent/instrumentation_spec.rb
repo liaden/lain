@@ -112,7 +112,7 @@ RSpec.describe Lain::Agent::Instrumentation do
   # because it is a statement about THIS value: either a caller hands one over,
   # or the legacy keywords build one, never both.
   describe ".resolve" do
-    let(:omitted) { Lain::Agent::Collaborators::OMITTED }
+    let(:omitted) { Lain::Agent::OMITTED }
 
     it "builds one from the legacy keywords when none was handed over" do
       journal = RecordingChannel.new
@@ -139,9 +139,9 @@ RSpec.describe Lain::Agent::Instrumentation do
     end
 
     # This is where every wiring typo lands: {Lain::Agent} names its collaborator
-    # keywords on the signature and sweeps everything else through here, which
-    # also puts {Lain::Agent::Collaborators#refuse_unknown}'s vocabulary list out
-    # of reach. So the message has to carry the WHOLE vocabulary, or an operator
+    # keywords on the signature and sweeps everything else through here, so
+    # nothing behind those named keywords can ever be tripped. The message has
+    # to carry the WHOLE vocabulary, then, or an operator
     # gets Data's bare `unknown keyword: :providr` with no route to `provider:`.
     it "names the whole wiring vocabulary, both halves of it, not just the typo" do
       message = refusal_message { described_class.resolve(omitted, { jurnal: RecordingChannel.new }) }
@@ -153,7 +153,7 @@ RSpec.describe Lain::Agent::Instrumentation do
     end
 
     # Asked FIRST, ahead of the both-styles clash, because a typo makes every
-    # later question meaningless -- the order {Lain::Agent::Collaborators} keeps.
+    # later question meaningless -- the order {Lain::Agent}'s refusals keep.
     # Read the other way round: a typo is not something the value "CARRIES", so
     # the clash message would be saying something false about it.
     it "reads a typo beside a handed-over value as a typo, not as a clash" do

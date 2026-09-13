@@ -174,12 +174,52 @@ module Lain
       # Which capability set {#answered_questions} harvests from. Readable
       # because the harvest becomes the committed turn's `causal_parents:`, so an
       # {Agent} handed a runner it did not build has to check that the two are
-      # looking at the same set ({Collaborators#refuse_foreign_toolset}).
+      # looking at the same set ({.refuse_foreign_toolset}).
       attr_reader :toolset
 
       # Readable for `toolset`'s reason: what a runner was wired to is not
       # private business when the Agent did not build it.
       attr_reader :handler, :middleware, :observer
+
+      # The digest gate, asked of a runner an {Agent} was HANDED rather than
+      # built. It belongs here, where a toolset means something: {#delivery}
+      # harvests answered questions from THIS object's toolset and the {Agent}
+      # commits them as the turn's `causal_parents:`, which are Merkle digest
+      # input -- so a runner looking at a different capability set writes a
+      # DIFFERENT Timeline for the same conversation, and because `Canonical`
+      # bytes serve turn hashing and prompt-cache stability both, the symptom is
+      # an unexplained cache miss and never an error.
+      #
+      # Identity, not equality, is the honest test: the harvest drains
+      # per-INSTANCE state (`take_answered_questions` empties its queue), so two
+      # equal toolsets holding different tool objects would harvest from the
+      # wrong ones.
+      #
+      # @param runner [ToolRunner] the handed-over runner, or any stand-in for one
+      # @param toolset [Lain::Toolset] the Agent's own capability set
+      # @raise [ArgumentError] if the two disagree, or if the runner cannot say
+      def self.refuse_foreign_toolset(runner, toolset:)
+        refuse_mute_runner(runner)
+        return if runner.toolset.equal?(toolset)
+
+        raise ArgumentError, "tool_runner: was built over a different Toolset than toolset:. The runner harvests " \
+                             "answered questions from its own toolset and the Agent commits them as the turn's " \
+                             "causal_parents, so two sets means two digests for one conversation. Build it as " \
+                             "ToolRunner.new(handler:, toolset:) with that same Toolset, or omit tool_runner:."
+      end
+
+      # The gate above sends one message, so a runner that cannot answer it is
+      # refused by name. This seam exists for duck-typed runners, and a bare
+      # NoMethodError would be the one crash among refusals that all say what to
+      # do.
+      def self.refuse_mute_runner(runner)
+        return if runner.respond_to?(:toolset)
+
+        raise ArgumentError, "tool_runner: does not answer #toolset, so there is no way to check that it harvests " \
+                             "from the same capabilities the model is shown. A stand-in for #{ToolRunner} has to " \
+                             "expose the toolset its answered-question harvest reads."
+      end
+      private_class_method :refuse_mute_runner
 
       # `toolset:` exists for {#answered_questions}' harvest alone -- dispatch
       # still routes through `handler`, never a direct tool lookup.

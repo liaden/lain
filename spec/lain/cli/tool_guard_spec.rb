@@ -161,6 +161,21 @@ RSpec.describe Lain::CLI::ToolGuard do
   # that ALWAYS substituted the always-approve stand-in -- silently approving
   # and releasing every region of every read, in every run, with no human
   # anywhere -- passed the whole suite.
+  # {Lain::Agent::Instrumentation} is a collaborator of the Agent's, not a shard
+  # of it: two of its three callers are outside `Agent`, and this is one. So it
+  # stayed its own object when the collaborator RESOLVER folded back in, and
+  # this example is where that asymmetry is pinned rather than remembered.
+  describe Lain::CLI::ToolGuard::Journaled do
+    it "builds the instrumentation a journal-only run hands to Agent.new" do
+      journal = RecordingChannel.new
+
+      instrumentation = described_class.new(journal:).instrumentation
+
+      expect(instrumentation).to be_a(Lain::Agent::Instrumentation)
+      expect(instrumentation.journal).to be(journal)
+    end
+  end
+
   describe "which queue the read guard parks on" do
     it "parks on the board's own queue when the run wired one" do
       board = ToolGuardSpecBoard.new(approvals: queue)
