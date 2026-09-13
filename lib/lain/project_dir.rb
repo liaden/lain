@@ -14,7 +14,7 @@ module Lain
   # noise in a user's repository, and `git add -A` committed the file. Machine
   # state that changes every turn is what `$XDG_STATE_HOME` is for, so
   # {#state_path} resolves to the `<state_home>/<kind>/<project_hash>` shape
-  # {Epic::Home.container} and {Paths#sessions_dir} already use.
+  # {Paths#container} composes for every durable per-project artifact.
   #
   # **The answer is always ABSOLUTE, or there is no answer** -- a relative state
   # path resolves against the process's cwd, which is the project, so it is the
@@ -42,15 +42,18 @@ module Lain
   # second file -- unchanged behaviour, and `lain up` pins both panes to one cwd
   # (`tmux -c`) so the cockpit never hits it.
   #
-  # {#state_path} is the ONE resolver for the state feed, and
+  # This class owns every `.lain/` name, and {#container} is the one door onto
+  # {Paths#container} for a caller holding a project ROOT rather than a key --
+  # the recipe itself lives beside its ingredients, one layer down.
   # `spec/lain/project_dir_spec.rb` parses every file in `lib/` and fails on any
-  # expression that composes the path again, in any spelling. This class does
-  # not yet own every `.lain/` name (`config.toml`, `SLOTS_DIR`, `USER_DIR`,
-  # `prompt.toml` and `epics` each still compose their own), and it stands on
-  # both sides of the line it draws -- {#dir} resolves `@root` lexically while
-  # {#state_path} uses it only as a hash input. The honest shape is a
-  # `StatusFeed::Location`, deferred because extracting it has to move three
-  # renderers' defaults with it.
+  # expression that composes one of those paths again, in any spelling -- they
+  # were composed sixteen ways before that guard grew to cover them,
+  # `config.toml` three independent ways alone.
+  #
+  # It still stands on both sides of the line it draws -- {#dir} resolves
+  # `@root` lexically while {#state_path} uses it only as a hash input. The
+  # honest shape is a `StatusFeed::Location`, deferred because extracting it has
+  # to move three renderers' defaults with it.
   #
   # The shipped plugins hold the convention in their own languages. `plugin/nvim`
   # recomputes the recipe (`vim.fn.sha256(cwd):sub(1, 12)` is byte-for-byte
@@ -65,6 +68,26 @@ module Lain
     # The directory itself, relative to a project root.
     DIR = ".lain"
 
+    # Every artifact name under it, in one list because having one place that
+    # spells them is the whole point: `config.toml` was written three
+    # independent ways (two `File.join`s and a bare `".lain/config.toml"`
+    # string), and a fourth was one line of code away.
+    CONFIG_FILE = "config.toml"
+    PROMPT_FILE = "prompt.toml"
+    EPICS_DIR = "epics"
+    SLOTS_DIR = "slots"
+    SKILLS_DIR = "skills"
+    META_DIR = "meta"
+    SERVICES_FILE = "services.rb"
+
+    # The file {Summarizer::Catalog} loads, and the directory `/meta` writes
+    # reviewable declarations into. Ruby's own `foo.rb`-plus-`foo/` convention
+    # reads a pair like this as one unit and these deliberately are not --
+    # NOTHING loads the directory -- so they sit side by side here, which is the
+    # one place a reader meets both names at once.
+    SUMMARIZERS_FILE = "summarizers.rb"
+    SUMMARIZER_DRAFTS_DIR = "summarizers"
+
     # {StatusFeed::Publication}'s atomically-replaced state struct.
     STATE_FILE = "state.json"
 
@@ -74,10 +97,22 @@ module Lain
     # would land beside this one instead of needing a second kind.
     STATE_KIND = "status"
 
-    # A root-RELATIVE name under the project directory, so a class body can
-    # compute a constant without reading `Dir.pwd` at require time (see
-    # {Summarizer::Catalog::DSL_PATH}).
-    def self.join(*names) = File.join(DIR, *names)
+    class << self
+      # A root-RELATIVE name under the project directory, so a class body can
+      # compute a constant without reading `Dir.pwd` at require time (see
+      # {Summarizer::Catalog::DSL_PATH}).
+      def join(*names) = File.join(DIR, *names)
+
+      # The naming half of the class/instance split, and only the names a class
+      # BODY asks for -- a DSL path, a `/meta` destination, a filename a message
+      # quotes -- all of them resolved before any root exists. Every one has a
+      # root-resolving twin among the instance readers below.
+      def config = join(CONFIG_FILE)
+      def meta = join(META_DIR)
+      def summarizers = join(SUMMARIZERS_FILE)
+      def summarizer_drafts = join(SUMMARIZER_DRAFTS_DIR)
+      def services = join(SERVICES_FILE)
+    end
 
     # @param root [String] the project directory; the working directory by
     #   default, which is what the three renderers of the state feed pass
@@ -94,10 +129,36 @@ module Lain
 
     def dir = File.join(@root, DIR)
 
+    def config = under(CONFIG_FILE)
+    def prompt = under(PROMPT_FILE)
+    def epics = under(EPICS_DIR)
+    def slots = under(SLOTS_DIR)
+    def skills = under(SKILLS_DIR)
+    def meta = under(META_DIR)
+    def summarizers = under(SUMMARIZERS_FILE)
+    def summarizer_drafts = under(SUMMARIZER_DRAFTS_DIR)
+    def services = under(SERVICES_FILE)
+
     def state_path = File.join(state_dir, STATE_FILE)
+
+    # A durable state container for THIS project: {Paths#container} composes the
+    # recipe, and what this adds is the key, which is the project.
+    #
+    # The key is defaulted rather than fixed because two callers legitimately
+    # key on something else and both are better read at the call: {Project::Consent}
+    # takes the FULL digest of the root where everyone else takes twelve
+    # characters, and {CLI::GcSchedule} names a file in the container rather
+    # than a directory under it.
+    #
+    # @param kind [String] the segment under `$XDG_STATE_HOME/lain`
+    # @param key [String] what distinguishes this project inside that segment
+    # @return [String] an absolute path, creating nothing
+    def container(kind, key: @paths.project_hash(@root)) = @paths.container(kind, key:)
 
     private
 
-    def state_dir = File.join(@paths.state_home, STATE_KIND, @paths.project_hash(@root))
+    def under(name) = File.join(dir, name)
+
+    def state_dir = container(STATE_KIND)
   end
 end

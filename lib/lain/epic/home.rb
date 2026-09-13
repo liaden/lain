@@ -58,12 +58,19 @@ module Lain
       # -- {Config::Epics} closes the set at construction, so reaching here means
       # a config-shaped double, and quietly defaulting would write a user's epics
       # somewhere they never asked for.
+      # The XDG kind and the in-repo directory read as the same word and are
+      # two namespaces: `<state_home>/epics/<hash>` holds state for every
+      # project on the machine, `<root>/.lain/epics` one project's committed
+      # tree. Spelled separately on purpose -- renaming the `.lain/` directory
+      # through {ProjectDir} must not silently relocate the state container and
+      # orphan what is in it.
       def self.container(config:, paths:, root: Dir.pwd)
         home = config.epics_home
+        project = ProjectDir.new(root:, paths:)
         directory =
           case home
-          when :xdg then File.join(paths.state_home, "epics", paths.project_hash(root))
-          when :repo then File.join(root, ".lain", "epics")
+          when :xdg then project.container("epics")
+          when :repo then project.epics
           else raise Error, "epics_home #{home.inspect} names no artifact home (expected :xdg or :repo)"
           end
         directory.freeze

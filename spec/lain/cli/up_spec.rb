@@ -629,9 +629,17 @@ RSpec.describe Lain::CLI::Up do
     # working directory, so a default composed HERE cannot produce it -- which
     # is what makes this an assertion about delegation rather than about two
     # spellings of the same string.
+    #
+    # The double answers the two OTHER names the locator now owns because the
+    # gc schedule's project walk asks every candidate directory for its config
+    # file and its marker directory on the way past. They point nowhere, so the
+    # walk finds nothing and this example stays about the feed.
     it "asks the ONE project locator for the HUD's state file rather than composing one" do
       elsewhere = "/tmp/the-locator-said-here/state.json"
-      allow(Lain::ProjectDir).to receive(:new).and_return(instance_double(Lain::ProjectDir, state_path: elsewhere))
+      allow(Lain::ProjectDir).to receive(:new)
+        .and_return(instance_double(Lain::ProjectDir, state_path: elsewhere,
+                                                      config: "/tmp/the-locator-said-here/config.toml",
+                                                      dir: "/tmp/the-locator-said-here/.lain"))
       calls = []
       spy = lambda do |*args|
         calls << args

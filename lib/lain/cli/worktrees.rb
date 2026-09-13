@@ -90,7 +90,13 @@ module Lain
         File.exist?(state("anchors", repo)) ? File.readlines(state("anchors", repo), chomp: true) : []
       end
 
-      def state(kind, repo) = File.join(@paths.state_home, "gc", "worktrees-#{@paths.project_hash(repo)}.#{kind}")
+      # The key is a FILENAME here, not a directory: one `gc` container holds
+      # every project's journals, so the project keys the file. {GcSchedule}
+      # writes its stamp and log beside these under the same convention.
+      def state(kind, repo)
+        ProjectDir.new(root: repo, paths: @paths)
+                  .container("gc", key: "worktrees-#{@paths.project_hash(repo)}.#{kind}")
+      end
 
       def repo_root
         nearest = Project::Repository.nearest(@root, paths: @paths, home: @home)

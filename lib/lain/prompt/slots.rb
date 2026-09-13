@@ -16,9 +16,6 @@ module Lain
     # override (plus tools) grows past the floor -- eligible-for-the-cache is not
     # the same as cached.
     class Slots
-      # Where a project's overrides live, on the `.lain/` convention (like `.git/`).
-      SLOTS_DIR = File.join(".lain", "slots")
-
       # The top-level slots the shipped templates declare holes for. A file naming
       # anything else is a typo surfaced loudly rather than silently ignored.
       KNOWN = %w[system].freeze
@@ -46,7 +43,7 @@ module Lain
         # so a spec can point the hole defaults at a fixture tree, exactly as
         # {Skill::Catalog.load} injects its shipped scaffolds.
         def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR)
-          dir = File.join(root, SLOTS_DIR)
+          dir = ProjectDir.new(root:).slots
           new(
             fills: read_fills(dir),
             role_fills: read_role_fills(File.join(dir, "role")),

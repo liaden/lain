@@ -109,7 +109,7 @@ end
 require_relative "project/resolver"
 require_relative "project/repository"
 
-# Reads {Resolver.config_path} and builds an {Approval::Remembered}, both from
+# Reads the config path off {ProjectDir} and builds an {Approval::Remembered}, both from
 # method bodies only -- `lain/approval` loads well after this file.
 require_relative "project/consent"
 

@@ -75,15 +75,19 @@ module Lain
       # @return [Array<String>] the command a run is started with
       def command = [@ruby, File.expand_path(@program), "worktrees", "gc"]
 
-      def stamp_path = File.join(dir, "worktrees-#{key}.stamp")
+      def stamp_path = state("stamp")
 
-      def log_path = File.join(dir, "worktrees-#{key}.log")
+      def log_path = state("log")
 
       private
 
-      def dir = File.join(@paths.state_home, "gc")
-
-      def key = @paths.project_hash(@root)
+      # {CLI::Worktrees} names its journals in the same container by the same
+      # convention: the key is a filename, since one `gc` container holds every
+      # project's files rather than a directory per project.
+      def state(kind)
+        ProjectDir.new(root: @root, paths: @paths)
+                  .container("gc", key: "worktrees-#{@paths.project_hash(@root)}.#{kind}")
+      end
 
       def lain? = File.basename(@program) == "lain"
 

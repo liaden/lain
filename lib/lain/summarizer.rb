@@ -32,7 +32,7 @@ module Lain
     # where its file is, who evaluates it, and the one lookup callers make.
     class Catalog < DslCatalog
       # The project-scoped DSL file, on the `.lain/` convention (like `.git/`).
-      DSL_PATH = ProjectDir.join("summarizers.rb")
+      DSL_PATH = ProjectDir.summarizers
 
       # Resolved at CALL time: {Builder} loads after this class body (see the
       # note at the foot of this file), so a constant read here would NameError.

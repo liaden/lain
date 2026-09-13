@@ -162,13 +162,11 @@ module Lain
     #
     # @param root [String] a project root
     # @return [Resolved]
-    def self.resolved(root) = Resolved.for(path_for(root))
+    def self.resolved(root) = Resolved.for(ProjectDir.new(root:).config)
 
-    def self.path_for(root) = File.join(root, ".lain", "config.toml")
-
-    # Both private: the four readers above are this class's whole door onto the
-    # file, and {Resolved.for} is the door for anything holding a path already.
-    private_class_method :path_for, :resolved
+    # Private: the four readers above are this class's whole door onto the file,
+    # and {Resolved.for} is the door for anything holding a path already.
+    private_class_method :resolved
 
     # @return [Config] every field at its default -- the value an absent file yields.
     def self.empty

@@ -25,10 +25,6 @@ module Lain
       SHIPPED_DIR = Paths::Shipped::SKILL_SHIPPED_DIR
       private_constant :SHIPPED_DIR
 
-      # Where a project's own skills live, on the `.lain/` convention (like `.git/`).
-      USER_DIR = File.join(".lain", "skills")
-      private_constant :USER_DIR
-
       class << self
         # Read the shipped skills, then overlay the project's user skills (a user
         # `<name>` REPLACES the shipped one of that name). The one disk read;
@@ -36,7 +32,7 @@ module Lain
         # injectable so a spec can load against a fixture tree without touching
         # the real shipped templates.
         def load(root: Dir.pwd, shipped_dir: SHIPPED_DIR)
-          new(read_dir(shipped_dir).merge(read_dir(File.join(root, USER_DIR))))
+          new(read_dir(shipped_dir).merge(read_dir(ProjectDir.new(root:).skills)))
         end
 
         private

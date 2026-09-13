@@ -87,7 +87,7 @@ module Lain
       # @param repo [String] the repository, as {Project::Repository.nearest} found it
       # @param paths [Paths]
       # @return [String]
-      def self.worktree_root(repo, paths:) = File.join(paths.state_home, "worktrees", paths.project_hash(repo))
+      def self.worktree_root(repo, paths:) = ProjectDir.new(root: repo, paths:).container("worktrees")
 
       # `realpath`, not `expand_path`. This object and {Project::Resolver} both
       # ascend for `.git`, and they once ascended DIFFERENT ancestries: a

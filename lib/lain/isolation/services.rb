@@ -14,9 +14,9 @@ module Lain
     # its frozen declaration, so a provisioning or port-discovery hook can chain
     # off the returned service without reshaping the loader.
     class Services < DslCatalog
-      # Public because {CLI::IsolationBackend}s missing-compose-file refusal
+      # Public because {CLI::IsolationBackend}'s missing-compose-file refusal
       # names it back to the user.
-      DSL_PATH = ProjectDir.join("services.rb")
+      DSL_PATH = ProjectDir.services
 
       # Resolved at CALL time: {Builder} loads after this class body, so a
       # constant read here would NameError.

@@ -159,7 +159,12 @@ module Lain
 
         # @param root [String] a resolved project root
         # @return [String] the mark's path, whether or not it exists
-        def path_for(root) = File.join(@paths.state_home, DIR, Digest::SHA256.hexdigest(root))
+        # `key:` is passed rather than defaulted, which is what makes the
+        # full-width digest visible here instead of discoverable by reading every
+        # sibling container.
+        def path_for(root)
+          ProjectDir.new(root:, paths: @paths).container(DIR, key: Digest::SHA256.hexdigest(root))
+        end
 
         private
 
@@ -210,7 +215,7 @@ module Lain
         answers = (config || Config.load(root: project.root)).approval
         marks = record || Record.new(paths:)
         granted = grant?(project:, answers:, record: marks, confirm:)
-        report(notice, project, answers) unless granted
+        report(notice, project, answers, paths:) unless granted
         new(granted:, answers:)
       end
 
@@ -255,10 +260,10 @@ module Lain
       # Said only when there is something to say: a project whose file grants
       # nothing has nothing ignored, and a startup line about it would fire in
       # every chat in every project that has never used the table.
-      def self.report(notice, project, answers)
+      def self.report(notice, project, answers, paths:)
         return if answers.allow.empty?
 
-        notice.call(format(UNCONSENTED, path: Resolver.config_path(project.root),
+        notice.call(format(UNCONSENTED, path: ProjectDir.new(root: project.root, paths:).config,
                                         count: answers.allow.length, root: Shellwords.escape(project.root)))
       end
 

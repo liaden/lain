@@ -43,7 +43,7 @@ module Lain
             def self.open(root:, paths:, session: SecureRandom.hex(6),
                           shell_out_factory: Mixlib::ShellOut.public_method(:new))
               expanded = File.expand_path(root.to_s)
-              dir = File.join(paths.state_home, "workspace", paths.project_hash(expanded))
+              dir = ProjectDir.new(root: expanded, paths:).container("workspace")
               new(root: expanded, dir:, index: File.join(dir, "index-#{session}"), shell_out_factory:).ready
             end
 

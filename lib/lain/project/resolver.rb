@@ -66,8 +66,6 @@ module Lain
       # {Refusals} and a {Walk} of its own from the same inputs.
       GIT_ENTRY = ".git"
 
-      CONFIG_FILE = "config.toml"
-
       # `home:` was not a usable absolute directory. Loud rather than degrading,
       # per the class docstring.
       #
@@ -158,14 +156,6 @@ module Lain
       rescue SystemCallError
         path
       end
-
-      # The ONE spelling of a project's config file: {Declarations} scans for it
-      # and {Resolver#marker_rung} names it at the boundary, and spelled twice the
-      # two could disagree about where rung 2's evidence lives.
-      #
-      # @param dir [String]
-      # @return [String]
-      def self.config_path(dir) = File.join(dir, ProjectDir.join(CONFIG_FILE))
 
       # The one place `$HOME` is validated, so no other object has to guess
       # what an unusable one means.
@@ -299,9 +289,14 @@ module Lain
       # whole reachable ancestry before rung 3 is tried, so a config a user can
       # see and the parser cannot read is a real error.
       class Declarations
-        def initialize(walk:, filesystem:)
+        # The `paths:` is threaded rather than left to {ProjectDir}'s default,
+        # which would build one over the live environment: nothing about a
+        # walk's config lookup should depend on `$HOME` being set, and a
+        # locator handed a defaulted {Paths} is one reader away from doing so.
+        def initialize(walk:, filesystem:, paths:)
           @walk = walk
           @filesystem = filesystem
+          @paths = paths
           @declined = []
         end
 
@@ -326,7 +321,7 @@ module Lain
         private
 
         def declared_in(dir)
-          path = Resolver.config_path(dir)
+          path = ProjectDir.new(root: dir, paths: @paths).config
           return nil unless @filesystem.exist?(path)
 
           declared = declared_root(path)
@@ -419,7 +414,7 @@ module Lain
         here = resolve!(:cwd, cwd)
         walk = Walk.new(cwd: here, refusals: Refusals.new(cwd: here, home: @home, paths: @paths,
                                                           filesystem: @filesystem))
-        declarations = Declarations.new(walk:, filesystem: @filesystem)
+        declarations = Declarations.new(walk:, filesystem: @filesystem, paths: @paths)
         # Ordered, not incidental: {Declarations#declined?} can only answer for
         # what the scan actually read, so detection has to run before the report.
         rung, found = detect(root, walk, declarations, here)
@@ -444,7 +439,7 @@ module Lain
       def root_at(rung, walk, declarations)
         case rung
         when :config then declarations.root
-        when :lain_dir then walk.find { |dir| @filesystem.directory?(marker(dir, ProjectDir::DIR)) }
+        when :lain_dir then walk.find { |dir| @filesystem.directory?(ProjectDir.new(root: dir, paths: @paths).dir) }
         when :git then walk.find { |dir| @filesystem.exist?(marker(dir, GIT_ENTRY)) }
         end
       end
@@ -463,8 +458,9 @@ module Lain
       # has already refused, so naming what sat there must not mean parsing a
       # config it declined to trust -- nor raising on one that will not parse.
       def marker_rung(dir)
-        return :config if @filesystem.exist?(Resolver.config_path(dir))
-        return :lain_dir if @filesystem.directory?(marker(dir, ProjectDir::DIR))
+        project = ProjectDir.new(root: dir, paths: @paths)
+        return :config if @filesystem.exist?(project.config)
+        return :lain_dir if @filesystem.directory?(project.dir)
         return :git if @filesystem.exist?(marker(dir, GIT_ENTRY))
 
         :none

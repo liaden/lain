@@ -242,6 +242,44 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  # The recipe every durable per-project artifact is named by. It lives here,
+  # beside the two readers that compose it, and {Lain::ProjectDir#container} is
+  # the door for a caller holding a project root rather than a key. Eight
+  # expressions wrote it out by hand before this method.
+  describe "#container" do
+    it "composes state_home, the kind and the key" do
+      expect(paths("XDG_STATE_HOME" => "/xdg").container("epics", key: "deadbeef1234"))
+        .to eq("/xdg/lain/epics/deadbeef1234")
+    end
+
+    it "creates nothing, unlike #sessions_dir" do
+      Dir.mktmpdir do |tmp|
+        state = File.join(tmp, "state")
+        paths("XDG_STATE_HOME" => state).container("epics", key: "deadbeef1234")
+
+        expect(File.exist?(state)).to be(false)
+      end
+    end
+
+    # Required, not defaulted: this class knows the recipe and the caller knows
+    # what identifies its project inside a kind -- which is how the consent
+    # store's full-width digest and the gc journals' flattened filename both
+    # read at the call rather than as exceptions hidden in a default.
+    it "takes a key that is a filename rather than a directory" do
+      expect(paths("XDG_STATE_HOME" => "/xdg").container("gc", key: "worktrees-abc.stamp"))
+        .to eq("/xdg/lain/gc/worktrees-abc.stamp")
+    end
+
+    it "is what #sessions_dir is composed from" do
+      Dir.mktmpdir do |tmp|
+        p = paths("XDG_STATE_HOME" => tmp)
+
+        expect(p.sessions_dir(project: "deadbeef1234"))
+          .to eq(p.container("sessions", key: "deadbeef1234"))
+      end
+    end
+  end
+
   describe "#sessions_dir" do
     it "nests under state_home/sessions/<project-hash> and creates it" do
       Dir.mktmpdir do |tmp|

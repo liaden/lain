@@ -724,10 +724,17 @@ every turn, with nothing in `lib/` writing a `.gitignore` for it — so every se
 `Paths` for the one file that left it. `ProjectDir#state_path` is the
 one Ruby resolver *for that file*: `StatusFeed`, `CLI::Up`'s HUD and `Frontend::TTY`'s prompt all
 default through it, and `spec/lain/project_dir_spec.rb` parses every file in `lib/` with Ripper and
-fails on any expression that recomposes the path, in any spelling. It is **not** yet the authority
-for the whole `.lain/` tree — `config.toml`, the prompt/skill slot dirs, `epics/` and `/meta/` still
-compose their own names, which is a tracked follow-up. The shipped tmux and nvim plugins hold the
-same convention in shell and Lua and are the deliberate remaining consumers of the state path.
+fails on any expression that recomposes the path, in any spelling. It is now the authority for the
+whole `.lain/` tree too — `config.toml`, `prompt.toml`, the slot and skill directories, `epics/`,
+`/meta/`'s two destinations and both DSL files are named readers on it. The
+`<state_home>/<kind>/<key>` recipe that names the sessions, status, epics, worktrees, workspace, gc
+and consent containers is `Paths#container`, one layer down beside the `state_home` and
+`project_hash` it composes; `ProjectDir#container` is the door for a caller holding a project root
+rather than a key, and supplies the key. The Ripper scan grew with all of it and watches every one
+of those names, plus `ProjectDir#dir` itself — the one reader that hands out the project directory
+without spelling it. Neither owner file needs an exemption: the recipe, named once where its
+ingredients live, mentions only one of them. The shipped tmux and nvim plugins hold the same
+convention in shell and Lua and are the deliberate remaining consumers of the state path.
 
 ## Subagent, Supervisor, and isolation
 

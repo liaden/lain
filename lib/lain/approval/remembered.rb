@@ -70,7 +70,9 @@ module Lain
       # this list.
       ANSWERS = %i[allow deny].freeze
 
-      WHERE = ".lain/config.toml"
+      # Frozen explicitly: the locator composes a fresh String per call, where
+      # the literal this replaced was frozen by the magic comment.
+      WHERE = ProjectDir.config.freeze
       # Interpolation makes these mutable Strings whatever the magic comment
       # says, and a reason travels into the Journal.
       TOOL_REFUSED = "remembered in #{WHERE}: [[approval.deny_tool]] refuses every %s call".freeze
@@ -177,10 +179,10 @@ module Lain
           end
         end
 
-        # @param root [String] a project root; `.lain/config.toml` is resolved
-        #   under it, the same way {Config.load} composes it
+        # @param root [String] a project root; the config file is resolved
+        #   under it by {ProjectDir}, the one locator {Config.load} asks too
         def initialize(root: Dir.pwd)
-          @path = File.join(root, ".lain", "config.toml")
+          @path = ProjectDir.new(root:).config
         end
 
         attr_reader :path

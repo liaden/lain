@@ -161,7 +161,7 @@ module Lain
       # feed lives -- a prompt format is something a user writes and may commit,
       # and machine state is not.
       def self.config_path(paths: Paths.new, project: Dir.pwd)
-        [File.join(project, ".lain", "prompt.toml"), File.join(paths.config_home, "prompt.toml")]
+        [ProjectDir.new(root: project).prompt, File.join(paths.config_home, "prompt.toml")]
           .find { |candidate| File.exist?(candidate) } || DEFAULT_CONFIG
       end
 

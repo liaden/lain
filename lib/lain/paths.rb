@@ -258,11 +258,28 @@ module Lain
       Digest::SHA256.hexdigest(resolved(dir))[0, 12]
     end
 
+    # The ONE recipe for durable per-project state: `sessions`, `status`,
+    # `epics`, `worktrees`, `workspace`, `gc` and `consent` are all this shape,
+    # and it was written out eight times before this method -- once split across
+    # two methods, once flattening the key into a filename, once taking a digest
+    # of a different width. It sits HERE, beside {#state_home} and
+    # {#project_hash}, because a composition belongs with its ingredients;
+    # {ProjectDir#container} is the door for a caller that has a project root
+    # rather than a key, and keys it through {#project_hash}.
+    #
+    # The key is required, never defaulted: this class knows the recipe, and the
+    # caller knows what distinguishes its project inside a kind.
+    #
+    # @param kind [String] the segment under `$XDG_STATE_HOME/lain`
+    # @param key [String] what identifies this project within that segment
+    # @return [String] an absolute path, creating nothing
+    def container(kind, key:) = File.join(state_home, kind, key)
+
     # The one XDG path this harness writes durable state into, so it is the one
     # accessor that ensures the directory exists rather than leaving creation to
     # the caller -- {Journal.open}'s mkdir_p-then-own pattern.
     def sessions_dir(project: project_hash)
-      ensure_dir(File.join(state_home, "sessions", project))
+      ensure_dir(container("sessions", key: project))
     end
 
     # The cross-project harness-improver sink: ONE file, not partitioned by
