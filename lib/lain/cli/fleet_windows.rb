@@ -27,7 +27,7 @@ module Lain
     # NON-interactive `$SHELL -c`, where zsh reads `.zshenv` and never
     # `.zshrc`, direnv's hook does not run, and nothing has put lain on PATH
     # -- measured, a window that died of status 127 within milliseconds of
-    # opening. So the command is {Up.pane_command}'s recipe, the same one
+    # opening. So the command is {PaneCommand.call}'s recipe, the same one
     # /fork's window and /btw's popup carry, and the window opens in a
     # working directory the same way both of those do, so the pane resolves
     # the project its parent was looking at. The bare line survives in one
@@ -67,7 +67,7 @@ module Lain
       SHORT = 8
 
       # What a fleet window runs, ahead of the spawn digest. An ARRAY, not a
-      # shell line: it is composed into {Up.pane_command}'s recipe, which
+      # shell line: it is composed into {PaneCommand.call}'s recipe, which
       # escapes every argument itself.
       WATCH_ARGV = %w[watch].freeze
 
@@ -106,13 +106,13 @@ module Lain
       # pane's non-interactive `$SHELL -c` PATH is a window that blinks out
       # with nobody told.
       #
-      # `command` is the whole {Up.pane_command} recipe, which puts a few
+      # `command` is the whole {PaneCommand.call} recipe, which puts a few
       # hundred bytes of environment into a durable NDJSON record -- GEM_HOME
       # and GEM_PATH, so the home directory and the username, plus every
       # allowlisted LAIN_ value. Weighed and kept, because the preamble IS the
       # evidence: a 127 is a question about what the pane could and could not
       # resolve, and a record naming only the subcommand cannot answer it.
-      # {Up::PaneCommand} already keeps secrets out of that string on the
+      # {PaneCommand} already keeps secrets out of that string on the
       # stronger ground that it is legible from `tmux list-panes` and the
       # process table, so what lands here is bounded by that same rule.
       WindowDied = Data.define(:digest, :window, :command, :status) do
@@ -267,7 +267,7 @@ module Lain
       # @param surface [TmuxSurface] the one object that shells out to tmux
       # @param watch_argv [Array<String>] the lain subcommand a window runs;
       #   the spawn digest is appended and the whole thing composed by
-      #   {Up.pane_command}
+      #   {PaneCommand.call}
       # @param cap [Integer] windows allowed per turn before capping
       # @param role_for [#call] record -> role name (nil for no role); the
       #   seam a roster-aware wiring can fill later
@@ -390,7 +390,7 @@ module Lain
       # window, and they are frozen in {#initialize} instead.
       def open_window(record, digest)
         name = "#{window_role(record)}-#{short(digest)}".freeze
-        command = Up.pane_command(*@watch_argv, digest).freeze
+        command = PaneCommand.call(*@watch_argv, digest).freeze
         @windows[digest] = name
         @opened += 1
         @pump.enqueue(Pump::Open.new(command:, name:, session: @session, cwd: @cwd))

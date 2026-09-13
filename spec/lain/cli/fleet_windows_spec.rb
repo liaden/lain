@@ -88,11 +88,11 @@ RSpec.describe Lain::CLI::FleetWindows do
   def rename_argvs = recorded.select { |argv| argv.include?("rename-window") }
 
   # The whole tmux request a fleet window is opened with, spelled once: a
-  # pane-runnable command from {Up::PaneCommand}, a start directory, the
+  # pane-runnable command from {Lain::CLI::PaneCommand}, a start directory, the
   # role-named window, and the pane-hold tail chained into the same list.
   def expected_open_argv(name, digest: spawn_digest, cwd: Dir.pwd)
     ["tmux", "new-window", "-P", "-c", cwd, "-n", name,
-     Lain::CLI::Up.pane_command("watch", digest), ";",
+     Lain::CLI::PaneCommand.call("watch", digest), ";",
      "set-window-option", "-t", "=#{name}", "remain-on-exit", "failed"]
   end
 
@@ -252,7 +252,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet.drain_pending
 
       record = deaths.first
-      expect(record.command).to eq(Lain::CLI::Up.pane_command("watch", spawn_digest))
+      expect(record.command).to eq(Lain::CLI::PaneCommand.call("watch", spawn_digest))
       expect(record.status).to eq(42)
       expect(record.window).to eq("researcher-5aaa1111")
     end
@@ -425,7 +425,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet << spawn_record
       fleet.drain_pending
 
-      expect(opened_command).to eq(Lain::CLI::Up.pane_command("watch", spawn_digest))
+      expect(opened_command).to eq(Lain::CLI::PaneCommand.call("watch", spawn_digest))
     end
 
     it "opens the window in a working directory, never leaving the pane's start dir to tmux" do
@@ -460,7 +460,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       elsewhere.drain_pending
 
       expect(opened_command)
-        .to eq(Lain::CLI::Up.pane_command("watch", "--session", "/tmp/somewhere.ndjson", spawn_digest))
+        .to eq(Lain::CLI::PaneCommand.call("watch", "--session", "/tmp/somewhere.ndjson", spawn_digest))
     end
 
     it "keeps the capped actor's printed line the bare one a human types, not the pane recipe" do
@@ -721,7 +721,7 @@ RSpec.describe Lain::CLI::FleetWindows do
          .join(File::PATH_SEPARATOR)
     end
 
-    # The two things a spec has to say before {Up::PaneCommand}'s recipe can
+    # The two things a spec has to say before {Lain::CLI::PaneCommand}'s recipe can
     # be run for real. `$PROGRAM_NAME` is read when the recipe is composed and
     # under rspec it is the rspec binary, so the program a pane would exec has
     # to be named; and PATH has to become the one a pane really gets, per
@@ -820,12 +820,12 @@ RSpec.describe Lain::CLI::FleetWindows do
           fleet << usage_record
           sleep(0.3)
 
-          # `eq`, not a partial match: {Up::PaneCommand} is a pure function of
+          # `eq`, not a partial match: {Lain::CLI::PaneCommand} is a pure function of
           # ENV, `Gem.paths` and `$PROGRAM_NAME`, and {#as_a_pane_would} pins
           # all three -- so a dropped `exec` or a lost `unset` in the preamble
           # has to fail the one example that runs a real pane.
           expect(deaths_seen.first).to have_attributes(
-            digest: spawn_digest, status: 127, command: Lain::CLI::Up.pane_command("watch", spawn_digest)
+            digest: spawn_digest, status: 127, command: Lain::CLI::PaneCommand.call("watch", spawn_digest)
           )
         end
       end

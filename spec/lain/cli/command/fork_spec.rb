@@ -59,7 +59,7 @@ RSpec.describe Lain::CLI::Command::Fork do
       fork_command.call("", env)
 
       expect(tmux_surface).to have_received(:window)
-        .with(command: Lain::CLI::Up.pane_command("chat", "--fork", selector),
+        .with(command: Lain::CLI::PaneCommand.call("chat", "--fork", selector),
               name: "fork-ab12ab12ab12", cwd: Dir.pwd)
     end
 

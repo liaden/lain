@@ -118,14 +118,14 @@ module Lain
           inside_tmux? ? place_window(env, selector, printable) : outside_tmux(printable)
         end
 
-        # The WINDOW command is {Up.pane_command}'s recipe, not the printable
+        # The WINDOW command is {PaneCommand.call}'s recipe, not the printable
         # line: a tmux pane sources no interactive chruby, so a bare `lain chat`
         # would exec the wrong ruby -- while the PRINTED line runs in the user's
         # own shell and stays bare. `cwd:` pins the parent's project root so the
         # child's session dir resolves the SAME project. The rescue is scoped to
         # this method so it can never read a local the raise skipped.
         def place_window(env, selector, printable)
-          placement = env.tmux_surface.window(command: Up.pane_command("chat", "--fork", selector),
+          placement = env.tmux_surface.window(command: PaneCommand.call("chat", "--fork", selector),
                                               name: window_name(selector), cwd: Dir.pwd)
           placed(placement, printable)
         rescue TmuxSurface::TmuxUnavailable => e

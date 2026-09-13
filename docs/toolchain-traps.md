@@ -296,6 +296,18 @@ the cop.
   and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
   probing`.
 
+  Added 2026-09-13, from a run with three implementing agents and two reviewing ones live at load
+  average ~10 on an eight-core box. Both drive real `git` through an epic driver's actor loop, both
+  went red in a pre-commit run and neither is reproducible alone — `spec/lain/cli/epic_driver/`
+  passed 70/70 three times in a row immediately after each failure:
+  `Lain::CLI::EpicDriver::IssueTests` (the failing example's own name was lost to the parallel
+  runner's output, which is itself worth knowing: `parallel_rspec` prints the group header without
+  the example when a worker fails late); and
+  `Lain::CLI::EpicDriver::IssueActor refuses an attempt whose anchor still stands, naming the ref,
+  and launches the next attempt`. Two DIFFERENT examples failed on two consecutive runs of the same
+  tree, which is the tell that separates load sensitivity from a real regression: a regression picks
+  the same example every time.
+
   Added 2026-08-28, and it is the one shape this ledger did not yet carry: two examples in
   `neovim_runtime_spec`'s `answering a parked approval in the editor, end to end` group fail
   **in isolation** while the same file passes inside a full `pspec` run --

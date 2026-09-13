@@ -15,7 +15,7 @@ module Lain
     # THE LAUNCHING BINARY, UNDER THE RUNNING RUBY, never `lain` looked up on
     # PATH. A spawned name resolves against the launcher's PATH, which under
     # `bundle exec` holds an installed gem production may not have -- the
-    # trap {Up::PaneCommand} documents for tmux panes. A launcher whose program
+    # trap {PaneCommand} documents for tmux panes. A launcher whose program
     # is not lain (rspec, say) has no lain binary to spawn, so it spawns
     # nothing and leaves the stamp alone.
     #

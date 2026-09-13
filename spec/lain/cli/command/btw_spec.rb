@@ -34,8 +34,8 @@ RSpec.describe Lain::CLI::Command::Btw do
     it "runs the child through Up's pane recipe (never a bare `lain chat`), rooted at this project's cwd" do
       selector = "#{File.basename(journal_path)}@#{head}"
       expect(tmux_surface).to receive(:popup) do |command:, cwd:, **|
-        expect(command).to eq(Lain::CLI::Up.pane_command("chat", "--btw", "--fork", selector,
-                                                         "--prompt", "why is the build red?"))
+        expect(command).to eq(Lain::CLI::PaneCommand.call("chat", "--btw", "--fork", selector,
+                                                          "--prompt", "why is the build red?"))
         expect(cwd).to eq(Dir.pwd)
         placement
       end

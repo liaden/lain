@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "mixlib/shellout"
+require "shellwords"
 
 module Lain
   module CLI
@@ -135,10 +137,6 @@ module Lain
       # {#launch_plan}'s return shape: what to print, in print order, then
       # exactly the `Kernel.exec` array {#attach_command} composed.
       LaunchPlan = Data.define(:messages, :argv)
-
-      # Kept as the established public seam so /fork's window and /btw's popup
-      # still reach {PaneCommand} under the name they already use.
-      def self.pane_command(*argv) = PaneCommand.call(*argv)
 
       # The `up` flags as this class's constructor keywords. It earns its keep
       # by keeping one translation in one place: two flags decide `nvim:`, and
@@ -525,6 +523,216 @@ module Lain
         end
       end
 
+      # The planning half of `lain up --nvim`: the shared socket and the nvim
+      # pane's command. The socket is computed ONCE here and handed to both
+      # panes explicitly, so agreement is by construction rather than two sides
+      # re-deriving the convention. `option` is the resolved answer to two
+      # flags, not the spelling of either: nil is `--no-nvim`, "" derives the
+      # plugin's deterministic socket, a non-empty String is used verbatim.
+      class Cockpit
+        # A relative socket resolves against each pane's own directory, so
+        # requiring an absolute path is the rule rather than a formatting
+        # preference -- the socket is the ONE name the editor and the chat must
+        # agree on.
+        #
+        # It also refuses a Thor quirk exactly, without knowing about Thor: a
+        # BARE `--nvim-socket` makes Thor supply the flag's own name, so the
+        # cockpit would listen on a relative file called `nvim_socket`.
+        # Comparing against the flag's name would be a heuristic; "not an
+        # absolute path" is the rule the socket needs anyway.
+        class UnusableSocket < Error
+          def initialize(option)
+            super("--nvim-socket #{option.inspect} is not an absolute path -- the nvim socket is the one " \
+                  "name the editor pane and the chat pane must agree on, and a relative one resolves " \
+                  "against whichever pane reads it. Write `--nvim-socket=/path/to.sock`, or leave the " \
+                  "flag off to use the per-project socket lain derives.")
+          end
+        end
+
+        def initialize(option:, cwd:, paths:)
+          @option = option
+          @cwd = cwd
+          @paths = paths
+        end
+
+        def requested? = !@option.nil?
+
+        # The whole of the layout wiring: `:LainStart` lays out now if lain has
+        # attached, else arms a one-shot so the views open when the sibling
+        # pane's `chat --nvim` lands. The rtp injection through `--cmd` is
+        # evaluated before nvim sources rtp `plugin/` files, which is what makes
+        # `:LainStart` exist with zero user config.
+        #
+        # THE SHAPE IS FORCED twice over, both halves measured on 2026-08-05
+        # against nvim 0.12.4:
+        #
+        # 1. NOT `if exists(':LainStart') | LainStart | endif`, the idiom this
+        #    wants: `-c` takes ONE Ex command, so every bar-chained form dies on
+        #    `E488: Trailing characters` at the first bar -- `if|endif`,
+        #    `try|endtry`, even `execute`. The cost was total: nvim came up on
+        #    the "Press ENTER" prompt, never served its socket, and
+        #    `chat --nvim` waited in ep_poll forever.
+        # 2. NOT `silent! LainStart`, which fixes that and hides the next fault:
+        #    it swallows any error `:LainStart` ITSELF raises, and shipped just
+        #    long enough to find a layout that never opened, in silence. The
+        #    ternary guards existence instead, so a bare `nvim --listen` is
+        #    unharmed and a real failure reaches the screen.
+        LAIN_START = "execute exists(':LainStart') ? 'LainStart' : ''"
+
+        # Suppresses the user's start screen, which would otherwise cover the
+        # cockpit until the first view arrives: a dashboard plugin draws over
+        # exactly the empty unnamed buffer nvim boots into, and the cockpit's
+        # nvim boots into nothing by design.
+        #
+        # NAMING the buffer is what trips snacks' own guard, measured against
+        # nvim 0.12.4: it bails with reason "buffer has a name". The
+        # neighbouring `argc(-1) > 0` guard looks more portable and is wrong
+        # here -- the only argument worth passing is the project directory, and
+        # snacks RE-enables the dashboard for a lone directory argument when its
+        # explorer is on.
+        #
+        # Scheme-shaped so `:file` leaves it alone: a bare word is taken as a
+        # relative filename and expanded against the cwd, which showed up as a
+        # buffer named for a path in the project that nobody could open.
+        #
+        # `lain-cockpit://`, NOT `lain://`: init.lua's fallback scan treats
+        # every `lain://` buffer as layout-eligible, and this is a placeholder
+        # the runtime never created.
+        SCRATCH_BUFFER = "file lain-cockpit://start"
+
+        # Scoped to the ONE buffer this pane just named, not the whole nvim
+        # process: `:h 'swapfile'` is local to buffer, so a bare `set
+        # noswapfile` (`--cmd`/`-c` alike) or the `-n` startup flag -- which
+        # resets the GLOBAL default rather than scoping anything -- would
+        # silently disable swap recovery for every file a human later opens
+        # in the review tab.
+        #
+        # BEFORE `SCRATCH_BUFFER`, not after: measured directly against nvim
+        # 0.12.4, `:file` renames the buffer in place without touching its
+        # buffer-local options, so a `setlocal` issued first survives the
+        # rename. Issued after is too late regardless -- `:file` is what
+        # CREATES the buffer's swapfile, so by the time a trailing `setlocal
+        # noswapfile` would run, a second cockpit's `-c SCRATCH_BUFFER` has
+        # already collided with a dirty peer's and nvim is blocked on "Press
+        # ENTER", never reaching this `-c` at all.
+        #
+        # Two cockpits on two different projects otherwise collide on this
+        # one swap path -- `SCRATCH_BUFFER` is a constant, not derived from
+        # cwd -- and the cockpit's scratch buffer is DIRTY as soon as a view
+        # lands, which is its steady state and exactly what trips `E325`
+        # (dirty, not "busy": an unmodified peer's swapfile collides onto
+        # `.swo` in silence instead). nvim's own recovery prompt for that
+        # blocks the pane before it serves RPC, so `lain://approval`/
+        # `:LainApprove` are unreachable while the chat pane looks healthy
+        # from outside.
+        NO_SWAPFILE = "setlocal noswapfile"
+
+        def nvim_pane_command
+          Shellwords.join(["nvim", *rtp_flag, "--listen", socket,
+                           "-c", NO_SWAPFILE, "-c", SCRATCH_BUFFER, "-c", LAIN_START])
+        end
+
+        def chat_flags = ["--nvim", socket]
+
+        # EMPTY IS THE DERIVE SENTINEL, deliberately: `--nvim-socket ""` is an
+        # empty shell variable, and "an empty flag means no flag" is the reading
+        # `--root` already takes. Anything else must be ABSOLUTE -- see
+        # {UnusableSocket}.
+        def socket
+          @socket ||= begin
+            raise UnusableSocket, @option unless @option.empty? || @option.start_with?(File::SEPARATOR)
+
+            @option.empty? ? derived_socket : @option
+          end
+        end
+
+        # The degrade case: the shipped plugin cannot be located. The cockpit
+        # still opens either way -- see {#rtp_flag}.
+        def plugin_missing? = !Dir.exist?(@paths.nvim_plugin_root)
+
+        def nvim_plugin_root = @paths.nvim_plugin_root
+
+        private
+
+        def rtp_flag
+          return [] if plugin_missing?
+
+          ["--cmd", "set rtp+=#{nvim_plugin_root}"]
+        end
+
+        # The plugin's own convention byte-for-byte, with `Paths#project_hash`
+        # as the Ruby twin of its sha256(getcwd). The 0700 directory is ensured
+        # only on THIS derived path: runtime_dir is ours to create, where an
+        # explicit --nvim-socket's parent is the caller's.
+        def derived_socket
+          File.join(@paths.runtime_dir, "nvim-#{@paths.project_hash(@cwd)}.sock").tap do |sock|
+            FileUtils.mkdir_p(File.dirname(sock), mode: 0o700)
+          end
+        end
+      end
+
+      # The status-right HUD's string composition. Everything here is a STRING
+      # for tmux's own `$SHELL -c` at the `#(...)` job boundary {Up}'s class
+      # comment explains, so state_path is escaped for THAT shell, not ours.
+      class Hud
+        # The HUD arrives ALREADY RENDERED, in {Lain::StatusFeed}'s `hud` field
+        # -- glyph, counts, the clamped context percentage, the run's token
+        # spend and the composed mode lighter, all of it composed once by
+        # {Lain::StatusFeed::Reading}. So this job's whole work is picking one
+        # field out of one line, and the seven-line jq program it replaces (plus
+        # its byte-for-byte twin in `plugin/tmux/scripts/lain-status`, plus a
+        # named warning for a missing `jq`) is gone with it.
+        #
+        # NO `$` ANYWHERE, and that is the one rule shaping this. tmux 3.4
+        # escapes a `$` in an option value to a backslash-dollar and stores it
+        # escaped (3.8 does not), so the job tmux later hands the shell is a
+        # syntax error -- swallowed by the `2>/dev/null` below, leaving a
+        # permanent "lain: no state yet" on every tmux 3.4, which is Ubuntu
+        # 24.04's and every GitHub runner's. That is why this reads the field
+        # with `sed` rather than with the parameter expansion the shipped script
+        # uses: a script FILE has no such rule and can be free of PATH entirely,
+        # while an option value may not name a shell variable at all.
+        #
+        # Ending the field at the first `"` is sound rather than lucky:
+        # {Lain::StatusFeed::Reading} strips `"`, `\` and `#` out of the one
+        # segment that is free-form, and every other segment is a count or a
+        # clamped percentage.
+        EXTRACT = %q{sed -n 's/.*"hud":"\([^"]*\)".*/\1/p'}
+
+        # How often tmux re-runs the `#(...)` job. A fact about this renderer --
+        # what a redraw costs, how stale its numbers may get -- not about
+        # sessions, windows or attaching, so it does not live on {Up}.
+        DEFAULT_INTERVAL = 5
+
+        # @param state_path [String] the state file the job reads, resolved by
+        #   {Lain::ProjectDir#state_path} -- which today lives under
+        #   `$XDG_STATE_HOME/lain`, not in the project
+        # @param interval [Integer] seconds between re-renders; tmux's
+        #   `status-interval`, which {Up} writes as a session option
+        def initialize(state_path:, interval: DEFAULT_INTERVAL)
+          @state_path = state_path
+          @interval = interval
+        end
+
+        # `state_path` is public because the file sits in a directory named by
+        # twelve hex characters of a hash, so {Up::Report#hud_line} has to tell
+        # the operator where it is. Reading it hands out a name, not authority.
+        attr_reader :interval, :state_path
+
+        # `grep .` is the never-blank guard, and it is not decoration: an
+        # ordinary fresh `up` window, before StatusFeed's first publish writes
+        # `state.json`, leaves the extractor with nothing to print and rendered a
+        # LITERALLY BLANK status-right (reproduced through an attached PTY
+        # capture). Empty stdout fails `grep`, and `|| echo` then says so in
+        # words -- which a state file from a lain too old to publish the field
+        # reaches by the same route.
+        #
+        # @return [String] the status-right value
+        def status_right
+          "#(#{EXTRACT} #{Shellwords.escape(state_path)} 2>/dev/null | grep . || echo 'lain: no state yet')"
+        end
+      end
+
       # @param options [Hash] `up`'s parsed flags; {Flags} is where they are read
       # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
       # @param path [String, nil] the PATH argument: the project directory to open
@@ -643,7 +851,7 @@ module Lain
       # `@chat_args` is the exe's `-- ARGS` capture: chat's own flags to
       # validate, never Up's. The recipe only escapes each one for the shell
       # tmux hands the string to; Up never parses or knows the flag names.
-      def default_chat_command = self.class.pane_command("chat", *@chat_args)
+      def default_chat_command = PaneCommand.call("chat", *@chat_args)
 
       # The ordering IS the fix, and each step is load-bearing.
       #
@@ -746,7 +954,7 @@ module Lain
         warn_missing_plugin
         @tmux.act("respawn-pane", "-k", "-t", chat_target, "-c", @cwd, @cockpit.nvim_pane_command)
         @tmux.act("split-window", "-h", "-t", chat_target, "-c", @cwd,
-                  self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
+                  PaneCommand.call("chat", *@cockpit.chat_flags, *@chat_args))
       end
 
       # Probed only on the create path: a reattach never rebuilds the pane
@@ -810,8 +1018,3 @@ module Lain
     end
   end
 end
-
-# Both reopen the Up class body above, so they load after it.
-require_relative "up/cockpit"
-require_relative "up/hud"
-require_relative "up/pane_command"

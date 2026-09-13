@@ -36,7 +36,7 @@ module Lain
 
         def usage = "/btw <question> -- ask an ephemeral side-question in a tmux popup (/keep inside it to keep it)"
 
-        # The popup runs {Up.pane_command}'s recipe, never the printable line: a
+        # The popup runs {PaneCommand.call}'s recipe, never the printable line: a
         # tmux pane sources no interactive chruby (see CLAUDE.md's toolchain
         # note), so a bare `lain chat` would exec the wrong ruby -- while the
         # PRINTED fallback (no usable tmux) runs in the user's own shell and
@@ -50,8 +50,8 @@ module Lain
           raise Error, "usage: #{usage}" if question.empty?
 
           selector = anchored_selector(env)
-          rendered(env.tmux_surface.popup(command: Up.pane_command("chat", "--btw", "--fork", selector,
-                                                                   "--prompt", question),
+          rendered(env.tmux_surface.popup(command: PaneCommand.call("chat", "--btw", "--fork", selector,
+                                                                    "--prompt", question),
                                           cwd: Dir.pwd, title: "btw", width: WIDTH, height: HEIGHT))
         rescue TmuxSurface::TmuxUnavailable => e
           "btw: no usable tmux (#{e.message}); run it yourself:\n  #{printable(selector, question)}"
