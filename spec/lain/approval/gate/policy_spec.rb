@@ -492,7 +492,8 @@ RSpec.describe Lain::Approval::Gate::Policy do
                                                       journal: Lain::Journal.new(io: journal_io))
 
       expect { Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
-        .to raise_error(Lain::Approval::Gate::Policies::UnusableSeam) do |error|
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal) do |error|
+          expect(error.kind).to eq(:unusable_seam)
           expect(error.message).to include("research")
           expect(error.message).to include("adjudicated")
           expect(error.message).to include("read back")
@@ -516,7 +517,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:)
 
       expect { Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
-        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /role_spawn.*brief|brief.*role_spawn/m)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /role_spawn.*brief|brief.*role_spawn/m)
     end
 
     it "leaves `deferred` the policy that spends nothing -- both stay selectable" do

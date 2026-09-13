@@ -30,25 +30,84 @@ module Lain
       # is a one-line edit here. Two lists would drift, and the drift's shape is
       # a config that loads and then refuses to build.
       module Policies
-        # Config refuses these at load, so this is the factory answering for
-        # the config ducks it did not parse -- a {Lain::Error} rather than the
-        # bare KeyError a plain `fetch` would raise past `exe/lain`'s mapping.
-        class Unknown < Error; end
+        # Every refusal this factory makes, as one class. Four bespoke errors
+        # for a four-entry catalog read as four things a caller might rescue
+        # apart, and nothing ever did -- `exe/lain` maps {Lain::Error} and no
+        # site in `lib/` names one of the four. {Config::Refusal}'s posture,
+        # one subsystem over: the sentence is what sends an operator to a line
+        # of `[epics.gates]`, and the class name was never the part doing that.
+        #
+        # What the four carried that a reader still needs is WHICH entry and
+        # WHY, so the stage, the policy and the seams are attributes and
+        # {#kind} keeps the four apart for anyone who does want to branch on
+        # one. The distinction that earns its keep is `:missing_seam` against
+        # `:unusable_seam`: one says wire it, the other says wire something
+        # else, and the fix differs.
+        class Refusal < Error
+          # @return [Symbol] `:unknown_policy`, `:missing_seam`,
+          #   `:unusable_seam`, or `:unknown_seam` -- the last being a recipe
+          #   ROW written wrong rather than a session wired wrong
+          attr_reader :kind
+          # @return [String, nil] the `[epics.gates]` stage that asked
+          attr_reader :stage
+          # @return [String, nil] the configured policy name
+          attr_reader :policy
+          # @return [Array<String>] the seams this refusal is about
+          attr_reader :seams
 
-        # A policy configured into a session that never wired what it needs.
-        class MissingSeam < Error; end
+          # Config refuses these at load, so this is the factory answering for
+          # the config ducks it did not parse -- a {Lain::Error} rather than the
+          # bare KeyError a plain `fetch` would raise past `exe/lain`'s mapping.
+          def self.unknown_policy(policy, stage:, known:)
+            new("epic stage #{stage.to_s.inspect} is configured for the unknown gate policy " \
+                "#{policy.inspect} (known policies: #{known.join(", ")})",
+                kind: :unknown_policy, stage:, policy:)
+          end
 
-        # A seam that is PRESENT and cannot do what its policy needs of it.
-        # Distinct from {MissingSeam} because the fix differs: one says wire it,
-        # this one says wire something else.
-        class UnusableSeam < Error; end
+          # A policy configured into a session that never wired what it needs.
+          # Only the ABSENT seams are named, so the sentence says "missing"
+          # rather than "needs": claiming a session wired neither of two seams
+          # when it wired one would send a reader to the wrong one.
+          def self.missing_seam(missing, stage:, policy:)
+            new("epic stage #{stage.to_s.inspect} is configured for the #{policy.inspect} gate " \
+                "policy, but this session is missing #{missing.join(", ")}",
+                kind: :missing_seam, stage:, policy:, seams: missing)
+          end
 
-        # Refused at CONSTRUCTION, because the alternative is that
-        # {Recipe#build} -- the one method whose whole job is to refuse by name
-        # -- dies on `public_send` with an unnamed NoMethodError while trying to
-        # name it. A spec over the shipped rows would not have covered this:
-        # rows are added by hand.
-        class UnknownSeam < Error; end
+          # A seam that is PRESENT and cannot do what its policy needs of it.
+          def self.unusable_seam(detail, stage:, policy:)
+            new("epic stage #{stage.to_s.inspect} is configured for the #{policy.inspect} " \
+                "gate policy, but #{detail}",
+                kind: :unusable_seam, stage:, policy:)
+          end
+
+          # Refused at CONSTRUCTION, because the alternative is that
+          # {Recipe#build} -- the one method whose whole job is to refuse by
+          # name -- dies on `public_send` with an unnamed NoMethodError while
+          # trying to name it. A spec over the shipped rows would not have
+          # covered this: rows are added by hand.
+          def self.unknown_seam(unknown, known:)
+            new("a gate policy recipe declares #{unknown.join(", ")}, which the dependencies " \
+                "value does not carry (its seams are #{known.join(", ")})",
+                kind: :unknown_seam, seams: unknown)
+          end
+
+          # MESSAGE FIRST, on {Config::Refusal}'s shape, because `raise Refusal,
+          # "detail"` is a live idiom in this codebase (`cli/backend/ollama_tier.rb`,
+          # `cli/chat_launch.rb`) and Ruby routes it to `.new` with one positional.
+          # A leading `kind` would take the sentence as the discriminator and
+          # leave the refusal rendering as a bare class name -- discarding the
+          # operator sentence this class exists to carry. `kind:` stays REQUIRED
+          # so that idiom fails loudly at its own line rather than building a
+          # refusal that cannot say which one it is.
+          def initialize(message, kind:, stage: nil, policy: nil, seams: [])
+            @kind = kind
+            @stage = stage&.to_s
+            @policy = policy
+            @seams = seams.map(&:to_s).freeze
+            super(message)
+          end
+        end
 
         # Every collaborator any policy could want, as ONE value so a caller
         # wires a session once instead of per stage.
@@ -67,11 +126,11 @@ module Lain
         # The seams a policy needs and how to build it from them. Both members
         # are data, so adding a policy is adding a row.
         Recipe = Data.define(:seams, :builder) do
-          # @raise [UnknownSeam] when a declared seam is not a {Deps} member
+          # @raise [Refusal] `:unknown_seam` when a declared seam is not a {Deps} member
           def initialize(seams:, builder:)
             seams = seams.map(&:to_sym).freeze
             unknown = seams - Deps.members
-            raise UnknownSeam, unknown_message(unknown) unless unknown.empty?
+            raise Refusal.unknown_seam(unknown, known: Deps.members) unless unknown.empty?
 
             super
           end
@@ -80,12 +139,13 @@ module Lain
           # @param stage [#to_s] which stage asked, named in a refusal
           # @param policy [String] the configured name, named in a refusal
           # @return [Policy]
-          # @raise [MissingSeam] naming every seam this recipe needs and deps lacks
+          # @raise [Refusal] `:missing_seam`, naming every seam this recipe
+          #   needs and deps lacks
           def build(deps, stage:, policy:)
             # `nil?`, not falsiness: {Deps} documents the adjudication seams as
             # NIL-able, so a seam deliberately wired to `false` is wired.
             missing = seams.select { |seam| deps.public_send(seam).nil? }
-            raise MissingSeam, missing_message(missing, stage, policy) unless missing.empty?
+            raise Refusal.missing_seam(missing, stage:, policy:) unless missing.empty?
 
             construct(deps, stage, policy)
           end
@@ -100,21 +160,7 @@ module Lain
           def construct(deps, stage, policy)
             builder.call(deps)
           rescue Error => e
-            raise UnusableSeam, "epic stage #{stage.to_s.inspect} is configured for the #{policy.inspect} " \
-                                "gate policy, but #{e.message}"
-          end
-
-          def unknown_message(unknown)
-            "a gate policy recipe declares #{unknown.join(", ")}, which the dependencies value does not " \
-              "carry (its seams are #{Deps.members.join(", ")})"
-          end
-
-          # Only the ABSENT seams are named, so the sentence says "missing"
-          # rather than "needs": claiming a session wired neither of two seams
-          # when it wired one would send a reader to the wrong one.
-          def missing_message(missing, stage, policy)
-            "epic stage #{stage.to_s.inspect} is configured for the #{policy.inspect} gate policy, " \
-              "but this session is missing #{missing.join(", ")}"
+            raise Refusal.unusable_seam(e.message, stage:, policy:)
           end
         end
 
@@ -164,8 +210,9 @@ module Lain
         # @param config [#gate_policy_for] the loaded {Lain::Config}
         # @param deps [Deps] the session's wiring
         # @return [Policy]
-        # @raise [Unknown] when config names a policy the catalog has no recipe for
-        # @raise [MissingSeam] when the recipe needs a seam `deps` left nil
+        # @raise [Refusal] `:unknown_policy` when config names a policy the
+        #   catalog has no recipe for, `:missing_seam` when the recipe needs a
+        #   seam `deps` left nil
         def self.for(stage:, config:, deps:)
           policy = config.gate_policy_for(stage)
           recipe(policy, stage).build(deps, stage:, policy:)
@@ -184,16 +231,13 @@ module Lain
         # @param config [#gate_policy_for] the loaded {Lain::Config}
         # @param deps [Deps] the session's wiring
         # @return [Hash{String => Policy}] frozen, keyed by stage in pipeline order
-        # @raise [Unknown, MissingSeam] for ANY stage, before the session runs
+        # @raise [Refusal] for ANY stage, before the session runs
         def self.for_all(config:, deps:)
           Epic::STAGES.to_h { |stage| [stage, self.for(stage:, config:, deps:)] }.freeze
         end
 
         def self.recipe(policy, stage)
-          CATALOG.fetch(policy) do
-            raise Unknown, "epic stage #{stage.to_s.inspect} is configured for the unknown gate policy " \
-                           "#{policy.inspect} (known policies: #{names.join(", ")})"
-          end
+          CATALOG.fetch(policy) { raise Refusal.unknown_policy(policy, stage:, known: names) }
         end
         private_class_method :recipe
       end

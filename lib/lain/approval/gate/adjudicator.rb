@@ -117,6 +117,245 @@ module Lain
         # then: one Adjudicator per address at a time.
         class AlreadyDecided < Error; end
 
+        # Which artifact addresses a machine has already SETTLED, read off the
+        # journal.
+        #
+        # A FOLD rather than a set: the record is the state, so two readers of
+        # one journal agree by construction. RE-WALKED per lookup rather than
+        # indexed once, because the whole question is whether somebody ELSE --
+        # another Adjudicator, another session -- settled this address since we
+        # last looked, which a snapshot cannot answer.
+        #
+        # {Adjudicator::TERMINAL_POLICY} is the discriminator and the only
+        # honest one available: {Gate}'s registry is add-only, so it answers
+        # "was this APPROVED" and leaves a terminal DENIAL looking exactly like
+        # an artifact nobody judged. A `deferred` record is deliberately NOT
+        # terminal -- parking is an invitation to come back.
+        #
+        # == The identity is the DIGEST ALONE
+        #
+        # `(epic_slug, stage)` is on every record, so ignoring it here is a
+        # decision: one address adjudicated in `alpha/epic_plan` refuses the
+        # same CONTENT in `beta/research`, permanently, with no override short
+        # of editing the journal. Chosen because it fails CLOSED and because it
+        # is the identity {Gate#approved?} already uses -- an approval carries
+        # across partitions, so a partition-scoped refusal could disagree with a
+        # global approval, the exact disagreement {AlreadyDecided} prevents.
+        #
+        # It stops mattering as submissions arrive pre-qualified:
+        # `Submission#digest` addresses `{stage, slug, artifact}`, so the same
+        # artifact in two partitions is already two addresses.
+        class Decided
+          # A nil `decisions:` builds cleanly and then dies INSIDE the fold --
+          # mid-decision, after both spawns are paid for, naming neither the
+          # argument nor the caller that omitted it. Refused where the mistake
+          # was made.
+          MISSING = "Decided needs the journal read back -- the Journal.records duck (an Enumerable of parsed " \
+                    "Hashes or raw NDJSON lines), got nil. There is no 'nothing was decided' default."
+          private_constant :MISSING
+
+          # @param entries [Enumerable<Hash, String>] the {Journal.records} duck
+          #   -- parsed Hashes or raw NDJSON lines -- RE-ENUMERATED on every
+          #   lookup. The two Enumerator shapes are not interchangeable:
+          #   `File.foreach(path)` (no block) re-opens the file per walk and is
+          #   correct; `File.open(path).each_line` and `io.each_line` are
+          #   one-shot, so a second lookup answers "nothing decided" and the
+          #   guard fails OPEN. An Array snapshot is one-shot in the same way --
+          #   it cannot contain the record this decision is about to write.
+          def initialize(entries)
+            raise ArgumentError, MISSING if entries.nil?
+
+            @entries = entries
+          end
+
+          # The precondition {Adjudicator#call} runs before it spends anything.
+          #
+          # @param digest [String] the artifact address about to be judged
+          # @return [nil] when no machine has settled this address
+          # @raise [AlreadyDecided] naming the address and the verdict it
+          #   already carries
+          def ensure_undecided!(digest)
+            settled = self[digest]
+            raise AlreadyDecided, refusal(digest, settled) if settled
+          end
+
+          private
+
+          # The LAST match, not the first. Which record refuses does not matter
+          # -- any terminal one does -- but which the MESSAGE names does: two
+          # conflicting terminal records for one address are reachable through
+          # the concurrent window {AlreadyDecided} documents, and journal order
+          # is time order, so the last written is the one that stands.
+          def [](digest)
+            Journal.records(@entries, type: SignoffQueue::JOURNAL_TYPE)
+                   .select { |record| terminal?(record, digest) }
+                   .to_a.last
+          end
+
+          def terminal?(record, digest)
+            record["policy"].to_s == TERMINAL_POLICY && record["artifact_digest"].to_s == digest.to_s
+          end
+
+          def refusal(digest, settled)
+            "artifact #{digest} already has a terminal adjudication (approved: #{settled["approved"]}) -- " \
+              "Gate's approval registry is add-only, so a second verdict would leave it disagreeing " \
+              "with the journal"
+          end
+        end
+
+        # {Adjudicator}'s OWN construction contract, not {Approval::Contracts}.
+        module Contracts
+          # The three members that make this record JOINABLE, guarded together:
+          # a blank one still constructs, still journals, and can never be
+          # matched back to the `gate_decision` it was reached under.
+          #
+          # `digest` is deliberately NOT required: a failed or blank spike
+          # journals one of these with a reason and no content address, and that
+          # record is the evidence that the gate TRIED.
+          #
+          # `latency` is guarded rather than coerced: `to_f` turns nil into 0.0,
+          # writing "the spike was instant" -- a measurement nobody made -- into
+          # the experiment record.
+          class Evidence < Declarative::Carrier
+            attribute :artifact_digest
+            attribute :epic_slug
+            attribute :stage
+            attribute :latency
+            validates :artifact_digest, presence: { message: "must name the artifact it was gathered about, got nil" }
+            validates :epic_slug, presence: { message: "must name the epic it belongs to, got nil" }
+            validates :stage, presence: { message: "must name the stage it was gathered at, got nil" }
+            validates :latency, numericality: { greater_than_or_equal_to: 0,
+                                                message: "must be seconds >= 0, got %<value>s" }
+          end
+        end
+
+        # One spike's findings over one artifact, journaled as `gate_evidence`.
+        #
+        # Content-addressed rather than merely stored: the digest rides onto the
+        # {GateDecision} and the parked {SignoffQueue::Item}, so a reviewer
+        # holding either can name the exact evidence text the verdict was
+        # reached on. The text is journaled beside it because nothing else
+        # stores spike output -- the digest addresses it, this line IS it.
+        #
+        # `digest` and `text` are nil together exactly when nothing was
+        # gathered, and `reason` is populated exactly then. That record is still
+        # written: "the gate tried and could not gather" is an experiment
+        # result, not an absence.
+        #
+        # `question` is carried HERE and not only on {SignoffQueue::Item}, whose
+        # copy is nullable and unrecoverable from the journal -- otherwise a
+        # review rebuilt after a restart would hold the evidence and the model's
+        # hesitation with nothing to say what was being asked.
+        #
+        # `latency` is the SPIKE's seconds: {GateDecision} already journals what
+        # the verdict cost, while the spawn that spent the tokens journaled
+        # nothing. Seconds and not tokens because {Skill::RoleSpawn} hands back a
+        # {Tool::Result} with no usage on it; the child's own turns journal
+        # theirs, and a reader joins the two.
+        GateEvidence = Data.define(:artifact_digest, :epic_slug, :stage, :question, :digest, :text,
+                                   :latency, :reason) do
+          include Telemetry::Journalable
+
+          # THE blankness test. {Adjudicator#findings} routes on it and
+          # {.gathered} refuses on it, so the producer and its canary cannot
+          # drift about what "nothing" is -- which is how the U+00A0 hole got
+          # in: two `strip` calls, both wrong, unable to contradict each other.
+          #
+          # Sharing makes the canary a second CHECK, not a second OPINION: it
+          # cannot catch this class being wrong about blankness, only a caller
+          # who skipped the routing. The deliberate trade, since a genuinely
+          # independent predicate would be a second definition of "nothing".
+          #
+          # The predicate lives in {Lain::Blankness}, below both this and
+          # {Question::Answer}, rather than one unit reaching up into the other.
+          def self.blank?(value) = Blankness.blank?(value)
+
+          # The digest is taken from the record's OWN stored text, AFTER
+          # construction clamped it, never from the argument. That makes "the
+          # address names the bytes this line carries" structural rather than a
+          # promise: a truncated text cannot end up addressed by the digest of
+          # the full one, leaving `evidence_digest` naming bytes nobody kept.
+          #
+          # Blank findings are refused here as well as in {Adjudicator#findings},
+          # as a CANARY. `Canonical.digest("")` is a real address, so a record
+          # built this way would answer `gathered?` true and let a bare APPROVE
+          # close a gate on nothing. Nothing reaches it today; it is here so a
+          # later caller cannot.
+          def self.gathered(text, gated, latency:)
+            raise ArgumentError, "evidence with no findings is missing evidence -- use .missing" if blank?(text)
+
+            record = new(**gated, digest: nil, text:, latency:, reason: nil)
+            record.with(digest: Canonical.digest(record.text))
+          end
+
+          def self.missing(reason, gated, latency:) = new(**gated, digest: nil, text: nil, latency:, reason:)
+
+          def initialize(artifact_digest:, epic_slug:, stage:, question:, digest:, text:, latency:, reason:)
+            # Settled into their journaled bytes BEFORE the guard, so
+            # `presence:` judges what actually gets written: a stage whose #to_s
+            # is blank passes a presence check on the raw object and then writes
+            # a partition key nothing can match back.
+            joinable = { artifact_digest: frozen(artifact_digest), epic_slug: interned(epic_slug),
+                         stage: interned(stage) }
+            Contracts::Evidence.check!(**joinable, latency:)
+
+            super(**joinable, question: clamped(question), digest:, text: text && clamped(text),
+                              latency: latency.to_f, reason: frozen(reason))
+          end
+
+          def gathered? = !digest.nil?
+
+          private
+
+          # Interned where the prose is dup'd-and-frozen: a stage or an epic
+          # repeats across every record in a run, a digest and a spike's
+          # findings do not.
+          def interned(value) = -value.to_s
+
+          def frozen(value) = value && value.to_s.dup.freeze
+
+          # Nothing upstream bounds a model's answer, and one runaway spike
+          # would put a multi-megabyte line in an NDJSON experiment record.
+          def clamped(value) = value.to_s[0, MAX_TEXT].freeze
+        end
+
+        # WHAT a verdict does, as two objects rather than a branch at the call
+        # site. This class IS the terminal outcome: it settles the address and
+        # parks nothing; {Deferral} inverts both. Splitting them rather than
+        # testing a symbol keeps "a deferral never settles" and "a terminal
+        # verdict never parks" single statements instead of two conditionals
+        # that could disagree.
+        class Outcome
+          attr_reader :policy, :reason
+
+          def initialize(answer:, policy:, reason:)
+            @answer = answer
+            @policy = policy
+            @reason = reason
+          end
+
+          # The answer is already known, so {Policy::StandingAnswer} resolves
+          # the promise up front and no fiber parks.
+          def asker = Policy::StandingAnswer.new(@answer)
+
+          # A terminal verdict has nothing awaiting sign-off, so the caller
+          # never asks whether to enqueue.
+          def park(_queue, **) = nil
+
+          # Remembered, so a second adjudication over this address is refused.
+          def remember(terminal, digest, approved) = terminal[digest] = approved
+        end
+
+        # Doubt, in every form it arrives in. It parks and settles NOTHING: a
+        # deferral is an invitation to come back, so re-running the same address
+        # later must stay allowed -- exactly the case {AlreadyDecided} must not
+        # catch.
+        class Deferral < Outcome
+          def park(queue, **attributes) = queue.park(**attributes)
+
+          def remember(_terminal, _digest, _approved) = nil
+        end
+
         # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
         #   seam ({Skill::RoleSpawn}); injected, so this class depends on the
         #   message and not on how a child is assembled
@@ -295,9 +534,3 @@ module Lain
     end
   end
 end
-
-# AFTER the class body: each child reopens {Adjudicator} and reads one of its
-# constants, so the class and the constants must already exist.
-require_relative "adjudicator/decided"
-require_relative "adjudicator/evidence"
-require_relative "adjudicator/outcome"

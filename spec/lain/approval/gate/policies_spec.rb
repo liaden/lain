@@ -128,7 +128,8 @@ RSpec.describe Lain::Approval::Gate::Policies do
       askerless = described_class::Deps.new(queue:, asker: nil, journal:)
 
       expect { described_class.for(stage: "research", config: config_with(research: "interactive"), deps: askerless) }
-        .to raise_error(described_class::MissingSeam) do |error|
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.kind).to eq(:missing_seam)
           expect(error.message).to include("research")
           expect(error.message).to include("interactive")
           expect(error.message).to include("asker")
@@ -143,7 +144,9 @@ RSpec.describe Lain::Approval::Gate::Policies do
                                            builder: ->(_deps) { raise "must not be built" })
 
       expect { recipe.build(deps, stage: "epic_plan", policy: "adjudicated") }
-        .to raise_error(described_class::MissingSeam) do |error|
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.kind).to eq(:missing_seam)
+          expect([error.stage, error.policy, error.seams]).to eq(["epic_plan", "adjudicated", %w[role_spawn brief]])
           expect(error.message).to include("epic_plan")
           expect(error.message).to include("adjudicated")
           expect(error.message).to include("role_spawn")
@@ -171,7 +174,8 @@ RSpec.describe Lain::Approval::Gate::Policies do
       recipe = described_class::Recipe.new(seams: %i[queue role_spawn], builder: ->(*) {})
 
       expect { recipe.build(deps, stage: "epic_plan", policy: "adjudicated") }
-        .to raise_error(described_class::MissingSeam) do |error|
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.kind).to eq(:missing_seam)
           expect(error.message).to include("is missing role_spawn")
           expect(error.message).not_to include("none")
         end
@@ -195,7 +199,8 @@ RSpec.describe Lain::Approval::Gate::Policies do
   describe "a recipe declaring a seam the dependencies value does not carry" do
     it "refuses at construction, naming the typo and the members that exist" do
       expect { described_class::Recipe.new(seams: %i[askr], builder: ->(*) {}) }
-        .to raise_error(described_class::UnknownSeam) do |error|
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.kind).to eq(:unknown_seam)
           expect(error.message).to include("askr")
           expect(error.message).to include("asker")
         end
@@ -211,8 +216,12 @@ RSpec.describe Lain::Approval::Gate::Policies do
         .not_to raise_error
     end
 
+    # Asserted on the instance THIS path raises, not on the class: one refusal
+    # now serves four kinds, so a class-level ancestry check would be the same
+    # example in every group that has one.
     it "is a Lain::Error, so exe/lain's mapping catches it" do
-      expect(described_class::UnknownSeam.ancestors).to include(Lain::Error)
+      expect { described_class::Recipe.new(seams: %i[askr], builder: ->(*) {}) }
+        .to raise_error(Lain::Error) { |error| expect(error.kind).to eq(:unknown_seam) }
     end
   end
 
@@ -238,7 +247,8 @@ RSpec.describe Lain::Approval::Gate::Policies do
       config = config_with(research: "hands_off", epic_plan: "hands_off", issue_plan: "hands_off")
 
       expect { described_class.for_all(config:, deps: askerless) }
-        .to raise_error(described_class::MissingSeam) do |error|
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.kind).to eq(:missing_seam)
           expect(error.message).to include("implementation")
           expect(error.message).to include("asker")
         end
@@ -268,7 +278,8 @@ RSpec.describe Lain::Approval::Gate::Policies do
       config.define_singleton_method(:gate_policy_for) { |_stage| "signoff" }
 
       expect { described_class.for(stage: "research", config:, deps:) }
-        .to raise_error(described_class::Unknown) do |error|
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.kind).to eq(:unknown_policy)
           expect(error.message).to include("signoff")
           expect(error.message).to include("research")
           expect(error.message).to include("hands_off")
@@ -276,8 +287,11 @@ RSpec.describe Lain::Approval::Gate::Policies do
     end
 
     it "is a Lain::Error, so exe/lain's mapping catches it" do
-      expect(described_class::Unknown.ancestors).to include(Lain::Error)
-      expect(described_class::MissingSeam.ancestors).to include(Lain::Error)
+      config = Object.new
+      config.define_singleton_method(:gate_policy_for) { |_stage| "signoff" }
+
+      expect { described_class.for(stage: "research", config:, deps:) }
+        .to raise_error(Lain::Error) { |error| expect(error.kind).to eq(:unknown_policy) }
     end
   end
 

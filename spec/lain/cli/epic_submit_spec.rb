@@ -328,7 +328,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # The seam exercised here is the `interactive` recipe's `asker`, which a
   # session with no TTY does not have. An `adjudicated` stage in a session that
   # wired no role spawn and brief refuses the same way -- the last example --
-  # and in both cases it is {Policies::MissingSeam}, raised by `for_all` at
+  # and in both cases it is {Policies::Refusal}, raised by `for_all` at
   # WIRING time, naming the stage, the policy, and the seam.
   describe "a policy this session cannot construct" do
     before do
@@ -340,17 +340,21 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "names the stage, the policy, and the missing seam" do
       expect { unaskable.submit("epic_plan") }
-        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /epic_plan.*interactive.*asker/m)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*asker/m)
     end
 
     # Refused at wiring, so it refuses for a stage nobody is submitting too.
     it "refuses even when the stage being submitted is buildable" do
       expect { unaskable.submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /epic_plan/)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan/)
     end
 
     it "journals no gate_decision" do
-      expect { unaskable.submit("epic_plan") }.to raise_error(Lain::Approval::Gate::Policies::MissingSeam)
+      # The regex is the discriminator, and it is load-bearing: `Refusal` is now
+      # EVERY refusal this factory makes, so a bare class match would be
+      # satisfied by an unknown-policy or unknown-seam refusal too.
+      expect { unaskable.submit("epic_plan") }
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*asker/m)
 
       expect(gate_decisions).to be_empty
     end
@@ -359,7 +363,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # caller that constructs this command without one is refused by name.
     it "refuses an adjudicated stage in a session that wired no role spawn or brief" do
       expect { command(gates: hands_off.merge("implementation" => "adjudicated")).submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /implementation.*adjudicated.*role_spawn, brief/m)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /implementation.*adjudicated.*role_spawn, brief/m)
     end
   end
 
@@ -534,7 +538,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # and printed a backtrace at a user standing at a half-answered gate.
     it "refuses a half-wired terminal as a missing seam, not a NoMethodError" do
       expect { command(gates: hands_off.merge("research" => "interactive"), output: nil).submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /research.*interactive.*asker/m)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /research.*interactive.*asker/m)
     end
 
     it "fails closed on end of input" do
