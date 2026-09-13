@@ -34,8 +34,8 @@ module Lain
       #   the table is absent, or anything a project wrote in its place
       # @param path [String] the config file, threaded into every refusal raised
       #   here so it names the file to open
-      # @raise [Refusal] naming what is wrong with the table
       # @return [Epics]
+      # @raise [Refusal] naming what is wrong with the table
       def self.from(table, path:)
         table = {} if table.nil?
         raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
