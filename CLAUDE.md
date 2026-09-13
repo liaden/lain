@@ -30,7 +30,7 @@ export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; 
 ```
 
 ```bash
-bundle exec rake pspec         # THE suite command: 57s at 12 workers, 17,766 examples, 2026-09-13.
+bundle exec rake pspec         # THE suite command: 51s at 12 workers, 17,837 examples, 2026-09-13.
                                # Bare `rspec` is the same examples SERIALLY, ~3m17s, no extra signal.
 bundle exec rspec path/to/one_spec.rb   # one file or one example: use this, not a bare `rspec`
 bundle exec rubocop -a         # safe autocorrect only; never -A

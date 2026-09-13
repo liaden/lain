@@ -19,7 +19,7 @@ module Lain
         # that is what makes reading a Hash another thread mutates safe, and it
         # is the same invariant that lets {ListView} be lock-free. Nothing
         # here may park: `@questions.open` is the editor's NON-BLOCKING path
-        # ({RenderQueue#post_question} refuses a full queue rather than waiting
+        # (the question rail in {RenderQueue::RAILS} refuses a full queue rather than waiting
         # on it), and nothing on the far side of it calls back into the view.
         class Gestures
           # A listed record that is no question set at all -- a bare

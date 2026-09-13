@@ -740,7 +740,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   # hypothetical.
   #
   # Both objects already answer this the only way that is safe -- the post is
-  # {RenderQueue#post_question}'s NON-BLOCKING push, refused rather than
+  # the question rail's NON-BLOCKING push, refused rather than
   # awaited -- and both say so in prose. This is the prose made mechanical,
   # over the REAL inlet with a saturated queue: a refusal in bounded time, so a
   # regression fails in two seconds instead of hanging a CI worker forever (a

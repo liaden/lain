@@ -81,111 +81,182 @@ module Lain
       # select loop and inbound dispatch; this owns nothing nvim-shaped except
       # turning one queued command into the right `nvim_exec_lua` call.
       class RenderQueue
-        # Append already-rendered plain lines to the journal. Guarded on
-        # `_G.__lain` so a render that races a not-yet-injected runtime is a
-        # harmless no-op rather than an error notification.
-        APPEND = "local lines = ...; if _G.__lain then _G.__lain.render(lines) end"
-
-        # Whole-buffer replace for a named read-only state view. Same
-        # not-yet-injected guard as {APPEND}. The third argument is OPTIONAL and
-        # is the rendering stamp: only lain://inbox carries one, because only its
-        # gesture has to name the rendering it came from.
-        SET_VIEW = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_view(name, lines, gen) end"
-
-        # Whole-buffer replace for the ONE editable view, lain://request.
-        # Distinct from {SET_VIEW} only in the lua entry point it calls, which
-        # skips the nomodifiable flip.
-        SET_REQUEST = "local name, lines = ...; if _G.__lain then _G.__lain.set_request(name, lines) end"
-
-        # Open lain://compose on the human's draft. A third entry point
-        # rather than a flag on {SET_REQUEST}: that buffer is `nofile` and
-        # never written, this one is `acwrite`, named, and SHOWN -- the two
-        # have nothing in common but the word "editable".
-        SET_COMPOSE = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_compose(name, lines, gen) end"
-
-        # Open lain://question on a pending set's rendered document.
-        # {SET_COMPOSE}'s shape with the set's content digest in place of the
-        # counter -- one more entry point rather than a flag, because that
-        # buffer folds per question, indents to the grammar's two spaces, and
-        # its write can be REFUSED; none of that is compose's.
-        SET_QUESTION = "local name, lines, digest = ...; " \
-                       "if _G.__lain then _G.__lain.set_question(name, lines, digest) end"
-
-        OPEN_REVIEW = "local path, gen, slug = ...; if _G.__lain then _G.__lain.open_review(path, gen, slug) end"
-
-        REVIEW_REFUSED = "local message = ...; if _G.__lain then _G.__lain.review_refused(message) end"
-
-        # No buffer NAME argument, the one difference from {SET_VIEW}: that entry
-        # point serves five buffers and has to be told which, while the sidebar
-        # is a singleton in the review's own tabpage. The stamp is REQUIRED
-        # rather than optional -- a sidebar row moves the moment the scope
-        # toggles, and a line count cannot tell the two renderings apart.
+        # THE ONE CHUNK every rail rides, and the whole of what Ruby now holds
+        # of lua. The entry point is DATA ({RAILS}) rather than thirteen
+        # near-identical strings, each of which spelled out its own
+        # `local a, b = ...; _G.__lain.fn(a, b)` binding -- thirteen places an
+        # argument could be dropped or transposed with nothing said, because
+        # nvim discards a notify's error. `runtime/01_dispatch.lua` binds them
+        # instead, where `unpack` can do neither.
         #
-        # `sides` is a FACT about the round -- which of {Review::SIDES} it
-        # presents at all -- never a layout instruction. It rides THIS rail
-        # rather than {OPEN_CHANGESET} because this one precedes the layout: the
-        # editor builds its panes on the first sidebar render, so a fact sent
-        # with the open arrives after the window it would have prevented.
-        SET_REVIEW = "local lines, gen, sides = ...; " \
-                     "if _G.__lain then _G.__lain.set_review(lines, gen, sides) end"
+        # The `if _G.__lain` guard stays, and it does NOT ask the question the
+        # dispatch asks: this one is a render racing a not-yet-injected runtime,
+        # which is transient and harmless, so it no-ops. An entry point the
+        # runtime does not have is a table row disagreeing with the lua half,
+        # and that one raises over there.
+        DISPATCH = "local fn, args = ...; if _G.__lain then _G.__lain.dispatch(fn, args) end"
 
-        # Go to the review's tabpage, building the layout first if the human
-        # closed it. The ONE entry point in `41_layout.lua` that takes focus,
-        # and the reason it is a separate rail rather than a flag on
-        # {SET_REVIEW}: that one lands on every redraw and must move nobody, so
-        # a flag would put "does this move the human" in the hands of whoever
-        # last called the render.
-        REVIEW_FOCUS = "if _G.__lain then _G.__lain.review_layout() end"
-
-        # The round is over. NO ARGUMENTS, {REVIEW_FOCUS}'s reason: what a
-        # settled round leaves on screen is the editor's own question.
+        # One rail: the `_G.__lain` entry point it reaches, the parameters that
+        # entry point declares, and whether its producer may be made to wait.
         #
-        # It exists because nothing about a verdict is visible in the editor --
-        # the tabpage, its panes and every buffer survive one -- so the review's
-        # stamps would outlive the review that issued them and a note placed
-        # afterwards would name a review nobody holds (`47_diff.lua`'s
-        # `review_settled` carries the measurement).
-        REVIEW_SETTLED = "if _G.__lain then _G.__lain.review_settled() end"
-
-        # The new side is the real file on disk, the old side a scratch buffer
-        # whose content rides in this argument list. Ruby runs git, never the
-        # editor: an injected chunk shelling out would put half the review model
-        # in the editor.
+        # `params` is not documentation. The lua half has to BIND what Ruby
+        # sends, and a chunk taking two arguments against a queue pushing three
+        # drops the third in silence -- the one failure shape a payload
+        # assertion cannot see. That used to be pinned for ONE rail, by
+        # asserting on the text of its chunk; spelled here it is pinned for all
+        # thirteen, by a spec that reads the `function _G.__lain.<lua>(<params>)`
+        # declarations out of the shipped runtime and compares them. So the
+        # spelling is LUA's and not Ruby's: {RAILS}`[:thread]` says `anchor`
+        # because that is what `51_thread.lua` calls it, whatever the Ruby
+        # caller's own parameter is named.
         #
-        # `revisions` is a map rather than two more positionals -- the pair is
-        # two commit-ish Strings that look alike, are adjacent, and mean opposite
-        # sides. `47_diff.lua` stamps each buffer with its own so a note records
-        # which diff it was authored against.
-        OPEN_CHANGESET = "local path, old_lines, line, revisions = ...; " \
-                         "if _G.__lain then _G.__lain.open_changeset(path, old_lines, line, revisions) end"
+        # `blocking` is the producer's nature rather than the rail's: a
+        # background renderer outpacing nvim can be back-pressured by the queue,
+        # while every other producer here is called from a path that cannot
+        # afford to park -- Reline's input loop, a reactor fiber, or somebody
+        # else's lock -- so a full queue must ANSWER it instead. This field is
+        # the PUSH MODE only; what {RenderInlet} does with the result is decided
+        # at the door, by whether that caller handed it a sentence. The two
+        # agree by construction, because the only doors that pass no sentence
+        # are the two blocking rails' -- and a disagreement would be loud rather
+        # than silent either way: a refusing door on a blocking rail parks, and
+        # a raising door on a non-blocking one lets ThreadError out.
+        Rail = Data.define(:lua, :params, :blocking)
 
-        # Show one anchor's conversation in the thread pane, keyed by the
-        # ANCHOR ID and not by a line: the pane's buffer is swapped as the cursor
-        # moves, and a line only names a position in the rendering that drew it,
-        # while an id is a stamp Ruby minted and can hand back unchanged.
-        SET_THREAD = "local anchor_id, lines = ...; if _G.__lain then _G.__lain.set_thread(anchor_id, lines) end"
+        # Every rail, keyed by the name its callers use. A new view is a ROW:
+        # it used to be a lua string, a `post_*` method pushing it, and a mirror
+        # on {RenderInlet} wrapping that.
+        RAILS = {
+          # Append already-rendered plain lines to the journal.
+          render: Rail.new(lua: "render", params: "lines", blocking: true),
 
-        # Whole-buffer replace for lain://approval. No buffer NAME, for
-        # {SET_REVIEW}'s reason -- the list is a singleton, so the lua half
-        # names its own -- and a THIRD argument no other view sends: how many of
-        # the lines are answerable rows. The keys bound in that buffer have to
-        # be inert everywhere else in it (the hint line, the empty state), and a
-        # count Ruby mints is the only thing that says so without lua pattern
-        # matching text Ruby drew. The stamp is REQUIRED like {SET_REVIEW}'s: a
-        # row moves the instant any other call is answered.
-        #
-        # `calls` and `call_index` ride beside `rows` because lua cannot
-        # recover either from `lines` -- {ApprovalView::Rendering}'s own
-        # comment is where the shape and the reason both live. `calls` is one
-        # entry per PARKED CALL and `call_index` is `rows`-shaped, resolving a
-        # cursor line to its member of `calls`.
-        SET_APPROVAL = "local lines, gen, rows, calls, call_index = ...; " \
-                       "if _G.__lain then _G.__lain.set_approval(lines, gen, rows, calls, call_index) end"
+          # Whole-buffer replace for a named read-only state view. The third
+          # argument is OPTIONAL and is the rendering stamp: a view whose
+          # gesture has to name the rendering it came from sends one, and
+          # `45_views.lua` is where which views do is written down. See
+          # {#post_view} -- this is the one rail the table cannot hold whole.
+          view: Rail.new(lua: "set_view", params: "name, lines, gen", blocking: true),
 
-        # `args` is exactly what the entry point named by `lua` takes, already in
-        # order. Holding the argument LIST rather than named fields is what lets
-        # entry points of different arity share one queue and one sender.
-        Command = Data.define(:args, :lua)
+          # Whole-buffer replace for the ONE editable view, lain://request.
+          # Distinct from {view} only in the lua entry point it calls, which
+          # skips the nomodifiable flip.
+          request: Rail.new(lua: "set_request", params: "name, lines", blocking: true),
+
+          # Open lain://compose on the human's draft. A third entry point rather
+          # than a flag on {request}: that buffer is `nofile` and never written,
+          # this one is `acwrite`, named, and SHOWN -- the two have nothing in
+          # common but the word "editable".
+          #
+          # NOT blocking, and the first rail that was not: it is queued from
+          # Reline's INPUT LOOP, inside keypress dispatch, where a blocked push
+          # would freeze the prompt's rendering with the human given no feedback
+          # at all. A full queue means nvim has stopped draining, which is the
+          # same fact as "no editor took the draft".
+          compose: Rail.new(lua: "set_compose", params: "name, lines, generation", blocking: false),
+
+          # Open lain://question on a pending set's rendered document. {compose}'s
+          # shape with the set's content digest in place of the counter -- one
+          # more entry point rather than a flag, because that buffer folds per
+          # question, indents to the grammar's two spaces, and its write can be
+          # REFUSED; none of that is compose's.
+          #
+          # Not blocking for a sharper reason than {compose}'s: it is posted
+          # from inside {QuestionView}'s lock, so a blocking push against a full
+          # queue would hold that lock -- and the same lock is what a write in
+          # the editor takes.
+          question: Rail.new(lua: "set_question", params: "name, lines, digest", blocking: false),
+
+          review: Rail.new(lua: "open_review", params: "path, generation, epic_slug", blocking: false),
+
+          review_refusal: Rail.new(lua: "review_refused", params: "message", blocking: false),
+
+          # No buffer NAME argument, the one difference from {view}: that entry
+          # point serves five buffers and has to be told which, while the sidebar
+          # is a singleton in the review's own tabpage. The stamp is REQUIRED
+          # rather than optional -- a sidebar row moves the moment the scope
+          # toggles, and a line count cannot tell the two renderings apart.
+          #
+          # `sides` is a FACT about the round -- which of {Review::SIDES} it
+          # presents at all -- never a layout instruction. It rides THIS rail
+          # rather than {changeset} because this one precedes the layout: the
+          # editor builds its panes on the first sidebar render, so a fact sent
+          # with the open arrives after the window it would have prevented.
+          #
+          # Not blocking for {question}'s reason rather than {compose}'s: it is
+          # queued from the editor-command consumer's own fiber, so a blocking
+          # push against a full queue would park the surface that answers every
+          # OTHER verb on that rail -- including the refusal this one owes them.
+          review_sidebar: Rail.new(lua: "set_review", params: "lines, gen, sides", blocking: false),
+
+          # Go to the review's tabpage, building the layout first if the human
+          # closed it. The ONE entry point in `41_layout.lua` that takes focus,
+          # and the reason it is a separate rail rather than a flag on
+          # {review_sidebar}: that one lands on every redraw and must move
+          # nobody, so a flag would put "does this move the human" in the hands
+          # of whoever last called the render.
+          review_focus: Rail.new(lua: "review_layout", params: "", blocking: false),
+
+          # The round is over. NO ARGUMENTS, {review_focus}'s reason: what a
+          # settled round leaves on screen is the editor's own question.
+          #
+          # It exists because nothing about a verdict is visible in the editor --
+          # the tabpage, its panes and every buffer survive one -- so the review's
+          # stamps would outlive the review that issued them and a note placed
+          # afterwards would name a review nobody holds (`47_diff.lua`'s
+          # `review_settled` carries the measurement).
+          #
+          # Posted from the review session's own verdict path, which is serving
+          # a gesture the human just made -- so it answers rather than parks.
+          review_settled: Rail.new(lua: "review_settled", params: "", blocking: false),
+
+          # The new side is the real file on disk, the old side a scratch buffer
+          # whose content rides in this argument list. Ruby runs git, never the
+          # editor: an injected chunk shelling out would put half the review model
+          # in the editor.
+          #
+          # `revisions` is a map rather than two more positionals -- the pair is
+          # two commit-ish Strings that look alike, are adjacent, and mean opposite
+          # sides. `47_diff.lua` stamps each buffer with its own so a note records
+          # which diff it was authored against.
+          changeset: Rail.new(lua: "open_changeset", params: "path, old_lines, line, revisions",
+                              blocking: false),
+
+          # Show one anchor's conversation in the thread pane, keyed by the
+          # ANCHOR ID and not by a line: the pane's buffer is swapped as the cursor
+          # moves, and a line only names a position in the rendering that drew it,
+          # while an id is a stamp Ruby minted and can hand back unchanged.
+          thread: Rail.new(lua: "set_thread", params: "anchor, lines", blocking: false),
+
+          # Whole-buffer replace for lain://approval. No buffer NAME, for
+          # {review_sidebar}'s reason -- the list is a singleton, so the lua half
+          # names its own -- and a THIRD argument no other view sends: how many of
+          # the lines are answerable rows. The keys bound in that buffer have to
+          # be inert everywhere else in it (the hint line, the empty state), and a
+          # count Ruby mints is the only thing that says so without lua pattern
+          # matching text Ruby drew. The stamp is REQUIRED like {review_sidebar}'s:
+          # a row moves the instant any other call is answered.
+          #
+          # `calls` and `call_index` ride beside `rows` because lua cannot
+          # recover either from `lines` -- {ApprovalView::Rendering}'s own
+          # comment is where the shape and the reason both live. `calls` is one
+          # entry per PARKED CALL and `call_index` is `rows`-shaped, resolving a
+          # cursor line to its member of `calls`.
+          #
+          # Not blocking for {question}'s reason, one lifetime up: it is posted
+          # from the approval surface's own fiber on the reactor, and a blocking
+          # push against a full queue would park the fiber that is the editor's
+          # only view of a PARKED AGENT -- while the queue's fail-closed clock
+          # ran down underneath it.
+          approval: Rail.new(lua: "set_approval", params: "lines, gen, rows, calls, call_index",
+                             blocking: false)
+        }.freeze
+
+        # What one queued render is: the `_G.__lain` entry point to call, and
+        # exactly what that entry point takes, already in its order. The CHUNK
+        # is no longer part of it -- every rail rides {DISPATCH} -- and holding
+        # the argument LIST rather than named fields is still what lets entry
+        # points of different arity share one queue and one sender.
+        Command = Data.define(:entry, :args)
         private_constant :Command
 
         # The one byte `nvim_buf_set_lines` refuses inside an item; see
@@ -205,112 +276,52 @@ module Lain
           @queue = Thread::SizedQueue.new(capacity)
         end
 
-        # Queue an append. Safe from any thread. BLOCKS the caller once the
-        # queue is full, and raises ClosedQueueError once {#close} has run --
-        # {Neovim#post} rescues that (see its comment).
-        # @param lines [Array<String>]
-        def post_render(lines)
-          @queue.push(Command.new(args: [lines], lua: APPEND))
+        # Queue one rail. Safe from any thread.
+        #
+        # A rail whose {Rail#blocking} is set BLOCKS the caller once the queue
+        # is full, and raises ClosedQueueError once {#close} has run --
+        # {Neovim#post} rescues that (see its comment). Every other rail raises
+        # ThreadError rather than parking, which is what lets {RenderInlet} turn
+        # a full queue into a sentence instead of a stall.
+        #
+        # @param rail [Symbol] a key of {RAILS}
+        # @param args [Array] the entry point's arguments, in the order its own
+        #   `params` declares them
+        # @raise [KeyError] naming a rail no row declares. Loud HERE because it
+        #   is the one place it can be: past this point the render is a notify,
+        #   and nvim discards a notify's error.
+        def post(rail, *args)
+          declared = RAILS.fetch(rail)
+          @queue.push(Command.new(entry: declared.lua, args:), !declared.blocking)
         end
 
-        # `editable:` picks the lua entry point: read-only state views get
-        # {SET_VIEW}, lain://request gets {SET_REQUEST}, which skips the
-        # nomodifiable flip. Same queue, backpressure and death behavior either
-        # way -- one render pipeline, not two.
+        # THE ONE RAIL THE TABLE CANNOT HOLD WHOLE -- {RAILS}`[:view]`'s own
+        # phrasing, and both halves of it are true: `view:` and `request:` are
+        # rows like every other rail, and this adapter is what a CALLER needs on
+        # top of them. Three things happen here that are not data: `editable:`
+        # chooses between the two rows, the rendering stamp changes the call's
+        # ARITY rather than adding an argument, and the lines are checked as no
+        # other rail's are. A table carrying those would need a `sanitize`
+        # column true for two rows of thirteen and an arity column that is a
+        # range for one, which is worse than a method with a reason.
+        #
         # @param name [String] the lain:// buffer name
         # @param lines [Array<String>]
-        # @param editable [Boolean]
-        # @param generation [Integer, nil] stamps the buffer so a gesture
-        #   from it can say WHICH rendering the human is looking at -- today
-        #   lain://inbox alone. Its absence is ARITY, not a nil argument: a nil
-        #   crosses msgpack and arrives in lua as `vim.NIL`, which is TRUTHY
-        #   there. Built by branch and never by `compact`, which cannot tell
-        #   "no stamp" from "no lines" -- it would send `[name, generation]`
-        #   and lua would bind the stamp as the buffer's lines.
+        # @param editable [Boolean] read-only state views ride `RAILS[:view]`,
+        #   lain://request rides `RAILS[:request]`, which skips the nomodifiable
+        #   flip. Same queue, backpressure and death behavior either way -- one
+        #   render pipeline, not two.
+        # @param generation [Integer, nil] stamps the buffer so a gesture from it
+        #   can say WHICH rendering the human is looking at. Its absence is
+        #   ARITY, not a nil argument: a nil crosses msgpack and arrives in lua
+        #   as `vim.NIL`, which is TRUTHY there. Built by branch and never by
+        #   `compact`, which cannot tell "no stamp" from "no lines" -- it would
+        #   send `[name, generation]` and lua would bind the stamp as the
+        #   buffer's lines.
         def post_view(name, lines, editable: false, generation: nil)
           checked = checked_lines(name, lines)
-          args = generation.nil? ? [name, checked] : [name, checked, generation]
-          @queue.push(Command.new(args:, lua: editable ? SET_REQUEST : SET_VIEW))
-        end
-
-        # The ONE non-blocking post. Every other producer is a background
-        # thread that can afford to be back-pressured; this one is queued from
-        # Reline's INPUT LOOP, inside keypress dispatch, where a blocked push
-        # would freeze the prompt's rendering with the human given no feedback
-        # at all. A full queue means nvim has stopped draining, which is the
-        # same fact as "no editor took the draft" -- so it raises ThreadError
-        # here and {RpcThread#open_compose} turns that into the honest answer.
-        # @param name [String] the lain:// buffer name
-        # @param lines [Array<String>]
-        # @param generation [Integer] stamped onto the buffer so the editor's
-        #   answer says WHICH compose it is answering
-        def post_compose(name, lines, generation)
-          @queue.push(Command.new(args: [name, lines, generation], lua: SET_COMPOSE), true)
-        end
-
-        # Non-blocking like {#post_compose}, and for a sharper reason: this one
-        # is posted from inside {QuestionView}'s lock, so a blocking push
-        # against a full queue would hold that lock -- and the same lock is what
-        # a write in the editor takes.
-        # @param name [String] the lain:// buffer name
-        # @param lines [Array<String>]
-        # @param digest [String] the set's content digest, stamped onto the
-        #   buffer so every write and abandon says WHICH set it answers
-        def post_question(name, lines, digest)
-          @queue.push(Command.new(args: [name, lines, digest], lua: SET_QUESTION), true)
-        end
-
-        def post_review(path, generation, epic_slug)
-          @queue.push(Command.new(args: [path, generation, epic_slug], lua: OPEN_REVIEW), true)
-        end
-
-        def post_review_refusal(message)
-          @queue.push(Command.new(args: [message], lua: REVIEW_REFUSED), true)
-        end
-
-        # Non-blocking for {#post_question}'s reason rather than
-        # {#post_render}'s: queued from the editor-command consumer's own fiber,
-        # so a blocking push against a full queue would park the surface that
-        # answers every OTHER verb on that rail -- including the refusal this one
-        # owes them.
-        #
-        # @param lines [Array<String>] the sidebar's whole buffer
-        # @param generation [Integer] the stamp those lines were rendered under
-        # @param sides [Array<String>] which of {Review::SIDES} the round
-        #   presents -- a fact, not an instruction. A survey of files as they
-        #   stand has no old side for anything it will ever hold; a changeset
-        #   has both even where one file is an addition. What to build out of
-        #   that is the editor's own question ({#post_review_focus}'s rule), so
-        #   nothing here says "open two windows".
-        def post_review_sidebar(lines, generation, sides)
-          @queue.push(Command.new(args: [lines, generation, sides], lua: SET_REVIEW), true)
-        end
-
-        # No arguments at all, which is the one thing to notice: where the human
-        # is put is the editor's own question, and a Ruby-side answer would be a
-        # second opinion about a layout only the editor can see.
-        def post_review_focus = @queue.push(Command.new(args: [], lua: REVIEW_FOCUS), true)
-
-        # No arguments either, and non-blocking like its three neighbours: this
-        # is posted from the review session's own verdict path, which is serving
-        # a gesture the human just made.
-        def post_review_settled = @queue.push(Command.new(args: [], lua: REVIEW_SETTLED), true)
-
-        def post_changeset(path, old_lines, line, revisions)
-          @queue.push(Command.new(args: [path, old_lines, line, revisions], lua: OPEN_CHANGESET), true)
-        end
-
-        def post_thread(anchor_id, lines)
-          @queue.push(Command.new(args: [anchor_id, lines], lua: SET_THREAD), true)
-        end
-
-        # Non-blocking for {#post_question}'s reason, one lifetime up: this is
-        # posted from the approval surface's own fiber on the reactor, and a
-        # blocking push against a full queue would park the fiber that is the
-        # editor's only view of a PARKED AGENT -- while the queue's fail-closed
-        # clock ran down underneath it.
-        def post_approval(lines, generation, rows, calls, call_index)
-          @queue.push(Command.new(args: [lines, generation, rows, calls, call_index], lua: SET_APPROVAL), true)
+          rail = editable ? :request : :view
+          generation.nil? ? post(rail, name, checked) : post(rail, name, checked, generation)
         end
 
         # Send everything currently queued, one nvim_exec_lua notify per
@@ -366,7 +377,7 @@ module Lain
         end
 
         def send_command(client, command)
-          client.session.notify("nvim_exec_lua", command.lua, command.args)
+          client.session.notify("nvim_exec_lua", DISPATCH, [command.entry, command.args])
         end
       end
 
@@ -423,73 +434,93 @@ module Lain
         def drain(client) = @queue.drain(client)
         def close = @queue.close
 
-        # The BLOCKING posts: a background producer outpacing nvim is
+        # The BLOCKING post: a background producer outpacing nvim is
         # back-pressured by the queue, and a queue closed by RPC-thread death
         # raises ClosedQueueError through to the caller ({Neovim#post} rescues
         # it, having its own reason to treat the last render as a lost race).
-        def post_render(lines) = deliver { @queue.post_render(lines) }
+        def post_render(lines) = post(:render, lines)
 
+        # The other blocking one, and the only leg that still reaches past
+        # {#post}: {RenderQueue#post_view} is the one rail that is not a table
+        # row, and its own comment says why.
         def post_view(name, lines, editable: false, generation: nil)
           deliver { @queue.post_view(name, lines, editable:, generation:) }
         end
 
-        # The NON-BLOCKING opens. Every one is called from a path that cannot
-        # afford to park -- Reline's input loop, the reply consumer's fiber, or
-        # (the question) somebody else's lock -- so a full queue refuses instead
-        # of blocking, and a refusal is the answer rather than an exception.
-        #
-        # ONE refusal MECHANISM for all of them, because from the caller's side
-        # there is one fact: no editor is taking this. A dead thread (closed
-        # queue), an editor that stopped draining (full queue) and never having
-        # attached are indistinguishable from here.
-        #
-        # The SENTENCE is the caller's, and the argument is REQUIRED so it cannot
-        # be forgotten: a default is how "composing needs an attached editor"
-        # once reached a human answering a question.
+        # The NON-BLOCKING opens, one line each: the rail is a row in
+        # {RenderQueue::RAILS} and all that is left to say at the door is which
+        # sentence a detached editor answers with. See {#post}.
         def open_compose(lines, generation)
-          refusable(Compose::DETACHED) { @queue.post_compose(Compose::BUFFER, lines, generation) }
+          post(:compose, Compose::BUFFER, lines, generation, refusal: Compose::DETACHED)
         end
 
         def open_question(lines, digest)
-          refusable(QuestionView::DETACHED) { @queue.post_question(QuestionView::BUFFER, lines, digest) }
+          post(:question, QuestionView::BUFFER, lines, digest, refusal: QuestionView::DETACHED)
         end
 
         def open_review(path, generation, epic_slug)
-          refusable(REVIEW_DETACHED) { @queue.post_review(path, generation, epic_slug) }
+          post(:review, path, generation, epic_slug, refusal: REVIEW_DETACHED)
         end
 
-        def review_refused(message) = refusable(UNREPORTED) { @queue.post_review_refusal(message) }
+        def review_refused(message) = post(:review_refusal, message, refusal: UNREPORTED)
 
         # The changeset review's three. Each answers a refusal rather than
         # raising for the reason above AND one of its own: {Review::Surface} is
         # a port whose adapters DECLINE in words, so a detached editor has to be
         # a value the adapter can hand back, never an exception it has to catch.
         def set_review(lines, generation, sides)
-          refusable(SIDEBAR_DETACHED) { @queue.post_review_sidebar(lines, generation, sides) }
+          post(:review_sidebar, lines, generation, sides, refusal: SIDEBAR_DETACHED)
         end
 
         def open_changeset(path, old_lines, line, revisions)
-          refusable(CHANGESET_DETACHED) { @queue.post_changeset(path, old_lines, line, revisions) }
+          post(:changeset, path, old_lines, line, revisions, refusal: CHANGESET_DETACHED)
         end
 
-        def set_thread(anchor_id, lines) = refusable(THREAD_DETACHED) { @queue.post_thread(anchor_id, lines) }
+        def set_thread(anchor_id, lines) = post(:thread, anchor_id, lines, refusal: THREAD_DETACHED)
 
-        def review_focus = refusable(FOCUS_DETACHED) { @queue.post_review_focus }
+        def review_focus = post(:review_focus, refusal: FOCUS_DETACHED)
 
         # Answers {SETTLE_UNREPORTED} rather than raising, like every other leg:
         # a detached editor is also an editor with no review tabpage to tear
         # down, so a refusal here is a fact and never an error.
-        def review_settled = refusable(SETTLE_UNREPORTED) { @queue.post_review_settled }
+        def review_settled = post(:review_settled, refusal: SETTLE_UNREPORTED)
 
         # lain://approval's, and its refusal is READ rather than reported:
         # {ApprovalView} withholds the stamp of a rendering nothing took, so a
         # keypress citing one is refused instead of resolving against rows nobody
         # can see.
         def set_approval(lines, generation, rows, calls, call_index)
-          refusable(ApprovalView::DETACHED) { @queue.post_approval(lines, generation, rows, calls, call_index) }
+          post(:approval, lines, generation, rows, calls, call_index, refusal: ApprovalView::DETACHED)
         end
 
         private
+
+        # Every rail's one door: queue it, wake the loop, and answer whether it
+        # landed.
+        #
+        # The `refusal` is the whole of the difference between the two kinds of
+        # producer here. WITHOUT one, a full queue parks the caller and a closed
+        # one raises -- that is a background renderer, which can be
+        # back-pressured, and whose ClosedQueueError is {Neovim#post}'s to
+        # rescue. WITH one, a full or closed queue ANSWERS that sentence
+        # instead, because every other producer is called from a path that
+        # cannot afford to park -- Reline's input loop, a reactor fiber, or
+        # somebody else's lock -- and because from the caller's side a dead
+        # thread, an editor that stopped draining, and never having attached are
+        # ONE fact: no editor is taking this.
+        #
+        # The SENTENCE is PASSED rather than tabled, for two reasons that agree.
+        # Three of them belong to the view object that speaks them
+        # ({Compose::DETACHED} and its two siblings), and this file is required
+        # ahead of all three in `neovim.rb`'s manifest, so a table could not name
+        # them at class-body time anyway. And naming each at its own door is what
+        # keeps a human answering a question from being told that composing needs
+        # an attached editor -- which is the defect the parameter was added for.
+        def post(rail, *args, refusal: nil)
+          return deliver { @queue.post(rail, *args) } if refusal.nil?
+
+          refusable(refusal) { @queue.post(rail, *args) }
+        end
 
         def deliver
           yield

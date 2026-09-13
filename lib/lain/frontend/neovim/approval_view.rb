@@ -105,8 +105,8 @@ module Lain
         # something other than what a `y` releases. `/m` so a newline is CARRIED
         # rather than silently dropped; `input.inspect` is what keeps a raw one
         # unreachable, and it has to, because nothing downstream re-checks
-        # ({RenderQueue#checked_lines} guards `post_view`, and this view posts
-        # through `post_approval`).
+        # ({RenderQueue#checked_lines} guards {RenderQueue#post_view}, and this
+        # view posts on the approval rail, which it does not guard).
         #
         # ONE MODE, RULED. Word-wrapping the PREAMBLE (lain's own prose) while
         # hard-wrapping the CALL (bytes that must survive) was considered and

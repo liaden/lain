@@ -390,7 +390,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
 
   # End to end: a survey is a review of files AS THEY STAND, so the round
   # presents one side and the layout opens two windows rather than three. The
-  # fact rides {Frontend::Neovim::RpcThread::SET_REVIEW}'s third argument, which
+  # fact rides the review sidebar rail's third argument, which
   # is the render that PRECEDES the layout -- so nothing is built and then
   # hidden.
   #

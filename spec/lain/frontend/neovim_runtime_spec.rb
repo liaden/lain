@@ -287,6 +287,73 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # THE RAIL TABLE'S ONE GATE, and it is here rather than in
+  # `rpc_thread_spec.rb` because a dispatch that COMPILES but names a lua
+  # function wrongly fails nowhere else: every rail rides an `nvim_exec_lua`
+  # NOTIFY, nvim discards a notify's error, and a misnamed entry point is a
+  # whole surface that silently never draws.
+  #
+  # The unit side pins the table against the runtime's SOURCE -- that the
+  # declarations exist, spelled as {RenderQueue::RAILS} says. This pins it
+  # against a runtime that has actually been INJECTED AND RUN, which is the
+  # difference between a name in a file and a name on `_G.__lain`: a module that
+  # loads and then errors publishes nothing, and the source would still read
+  # fine. The rest of the proof is that every other example in this file renders
+  # at all: they all reach their views through this one chunk now.
+  describe "the rail table's one lua dispatch" do
+    def rails = Lain::Frontend::Neovim::RenderQueue::RAILS
+
+    def arity_of(rail) = rail.params.empty? ? 0 : rail.params.split(",").size
+
+    # Every entry point the table names, stood aside for a recorder, so a rail
+    # is observed by the NAME it dispatches on rather than by whatever that
+    # entry point would have drawn -- several of them open windows.
+    #
+    # IT REPLACES, WHICH MEANS IT CAN ALSO CREATE, and an earlier draft did
+    # exactly that: `_G.__lain[name] = function() ... end` for every row made
+    # every row reachable, so a table naming `set_thread_NOPE` passed. So the
+    # names are CHECKED before they are stood aside, and the ones that were not
+    # already live functions come back to be named in the failure -- which is
+    # the whole of what this example can see that the source read cannot.
+    #
+    # @return [Array<String>] table rows naming nothing this runtime published
+    def install_rail_recorder
+      inspector.exec_lua(<<~LUA, [rails.each_value.map(&:lua)])
+        _G.__rails = {}
+        local absent = {}
+        for _, name in ipairs(...) do
+          if type(_G.__lain[name]) ~= "function" then
+            table.insert(absent, name)
+          else
+            _G.__lain[name] = function(...) _G.__rails[name] = select("#", ...) end
+          end
+        end
+        return absent
+      LUA
+    end
+
+    it "reaches every rail's lua entry point, with the arity its row declares" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        wait_until { buffer_lines("lain://workspace") == ["(no reminders)"] }
+        absent = install_rail_recorder
+
+        expect(absent).to be_empty, "rail rows naming no live _G.__lain function: #{absent.inspect}. " \
+                                    "A module that loads and then errors publishes nothing, and its " \
+                                    "source still reads fine -- which is why this is checked here."
+
+        rails.each_value do |rail|
+          inspector.exec_lua(Lain::Frontend::Neovim::RenderQueue::DISPATCH,
+                             [rail.lua, Array.new(arity_of(rail)) { |index| index }])
+        end
+
+        expect(inspector.exec_lua("return _G.__rails", []))
+          .to eq(rails.each_value.to_h { |rail| [rail.lua, arity_of(rail)] })
+      end
+    end
+  end
+
   # The reason this coverage exists: `<CR>` on an inbox row must put that
   # set's document in lain://question. Every piece of that path shipped before
   # this -- the keys, the :LainOpen command, the view that resolves the line,

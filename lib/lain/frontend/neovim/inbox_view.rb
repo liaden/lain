@@ -56,7 +56,8 @@ module Lain
       # queue, a keypress would hold both locks waiting for the RPC thread --
       # the one thread that empties that queue AND the thread that serves the
       # editor's own writes. It cannot: the post is
-      # {RenderQueue#post_question}'s non-blocking push, which REFUSES a full
+      # the question rail's non-blocking push ({RenderQueue::RAILS}),
+      # which REFUSES a full
       # queue rather than waiting on it, and the refusal comes back as this
       # gesture's report. Nothing on the far side ever calls back here either,
       # so the two locks are only ever taken in one order. There is a spec that

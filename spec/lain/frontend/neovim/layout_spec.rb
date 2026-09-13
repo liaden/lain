@@ -387,7 +387,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # fact arrives, because the layout is built on the first sidebar render,
   # before any row is opened.
   describe "a round that presents fewer sides than the vocabulary has slots" do
-    # The wire's third argument, exactly as `RpcThread::SET_REVIEW` sends it: a
+    # The wire's third argument, exactly as the review sidebar rail sends it: a
     # list of {Lain::Review::SIDES}, never a layout instruction.
     def set_review(lines, generation, sides) = lua("_G.__lain.set_review(...)", [lines, generation, sides])
 

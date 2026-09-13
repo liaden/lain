@@ -36,9 +36,10 @@ RSpec.describe Lain::Frontend::Neovim::CommandInbox do
     inbox.review_refused("review generation 7 is not open")
     frontend.instance_variable_get(:@rpc).instance_variable_get(:@inlet).drain(client)
 
-    expect(session).to have_received(:notify).with("nvim_exec_lua",
-                                                   Lain::Frontend::Neovim::RenderQueue::REVIEW_REFUSED,
-                                                   ["review generation 7 is not open"])
+    expect(session).to have_received(:notify).with(
+      "nvim_exec_lua", Lain::Frontend::Neovim::RenderQueue::DISPATCH,
+      ["review_refused", ["review generation 7 is not open"]]
+    )
   end
 
   # The third direction: an answer lain produced ITSELF, from the editor's

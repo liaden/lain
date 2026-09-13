@@ -31,7 +31,7 @@
 -- unusable.
 --
 -- WHAT CROSSES THE WIRE, and the one place this reads the wire's parameter more
--- richly than its name. `SET_THREAD` names its first argument `anchor_id`, and
+-- richly than its name. Ruby's thread rail names its first argument `anchor`, and
 -- its reasoning -- key on an id Ruby minted, never on a line, because a line
 -- only names a position in the rendering that drew it -- is kept exactly. What
 -- that reasoning does not supply is the fact this module cannot work without:
@@ -39,7 +39,7 @@
 -- carries the file, never its notes), the pane is cursor-driven, and only Ruby
 -- knows. So the anchor arrives whole -- `{ id, path, side, line }` -- and the
 -- id stays OPAQUE here: it is a key and a stamp, never parsed, which is the
--- half of `SET_THREAD`'s rule that binds. A bare id is refused BY NAME rather than
+-- half of that rail's rule that binds. A bare id is refused BY NAME rather than
 -- accommodated, so a caller sending the old shape learns why in one sentence
 -- instead of watching a pane that never opens.
 --

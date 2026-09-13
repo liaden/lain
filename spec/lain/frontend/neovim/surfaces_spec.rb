@@ -290,11 +290,14 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
 
   # What the queue would send to `nvim_exec_lua`, drained through a client
   # double: the argument LIST is the wire contract, so it is what is asserted.
+  # Every rail rides one chunk now ({RenderQueue::DISPATCH}), which carries
+  # `[entry point, its arguments]` -- the arity under test is the inner list's,
+  # so that is what this unwraps to.
   def queued_args(queue)
     sent = []
     session = Class.new do
       def initialize(sent) = @sent = sent
-      def notify(_method, _lua, args) = @sent << args
+      def notify(_method, _lua, args) = @sent << args.last
     end.new(sent)
     queue.drain(Struct.new(:session).new(session))
     sent

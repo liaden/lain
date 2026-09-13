@@ -1098,7 +1098,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   # A survey of files as they stand presents ONE side, and Ruby says so on
-  # the sidebar rail before any row is opened ({RpcThread::SET_REVIEW}'s third
+  # the sidebar rail before any row is opened (the review sidebar rail's third
   # argument). The old side is then not a window with an empty buffer in it --
   # it is not built at all, and neither is the buffer.
   describe "a round that presents one side" do

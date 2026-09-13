@@ -68,11 +68,16 @@ module RefusalWidthDiscipline
 
   # The calls whose named argument IS a rail sentence, with the position that
   # carries it. Anchored on the method name at the CALL SITE, which is what
-  # keeps this honest: `rpc_thread.rb` also holds nine lua eval sources
-  # (`SET_VIEW` and its siblings, 82-132 characters and long for good reason),
-  # and they are excluded because of how they are USED -- as the body of an
-  # `nvim_exec_lua` -- rather than because of which class holds them. A rule
-  # keyed on the holding class sweeps every one of them in.
+  # keeps this honest: `rpc_thread.rb` also holds a lua eval source
+  # (`RenderQueue::DISPATCH`), and it is excluded because of how it is USED --
+  # as the body of an `nvim_exec_lua` -- rather than because of which class
+  # holds it. A rule keyed on the holding class sweeps it in.
+  #
+  # That one measures 72 today, so nothing would fail even under a looser rule.
+  # It was NINE constants of 82-132 characters until the rails became a table,
+  # which is what the rule was written against, and the next chunk is free to be
+  # long again: the exclusion is about the wrong question being asked, not about
+  # a number that happens to be safe this week.
   #
   # `refuse` is deliberately NOT a sink, though `Review::Surface::Neovim#refuse`
   # is the port's decline-in-words entry point. The name means five different
@@ -968,14 +973,19 @@ RSpec.describe "refusal width discipline" do
   end
 
   # The false positive that would wreck this spec, pinned so a looser derivation
-  # cannot land quietly. These nine are 82-132 characters of lua, they are long
-  # for a good reason, and a rule keyed on which CLASS holds a constant sweeps
-  # every one of them into the subject set.
-  it "excludes the lua eval sources that share a file with the rail's own refusals" do
+  # cannot land quietly: a rule keyed on which CLASS holds a constant sweeps the
+  # rail chunk into the subject set, where it is measured as prose and is not.
+  #
+  # ANCHORED POSITIVELY, and it has to be: a bare `not_to include("DISPATCH")`
+  # goes green the instant that constant is renamed, which is the vacuous shape
+  # the nine-name version of this example had. The `const_get` is what fails
+  # loudly instead.
+  it "excludes the lua eval source that shares a file with the rail's own refusals" do
+    holder = Lain::Frontend::Neovim::RenderQueue
     names = measured.select { |one| one.site.file == "lain/frontend/neovim/rpc_thread.rb" }.map(&:name)
 
-    expect(names).not_to include("SET_VIEW", "SET_REQUEST", "SET_COMPOSE", "SET_QUESTION", "SET_REVIEW",
-                                 "SET_THREAD", "SET_APPROVAL", "OPEN_CHANGESET", "REVIEW_REFUSED")
+    expect(holder.const_get(:DISPATCH)).to include("_G.__lain.dispatch")
+    expect(names).not_to include("DISPATCH")
   end
 
   # A template is SHORTER than what nvim_echo receives, so measuring one passes

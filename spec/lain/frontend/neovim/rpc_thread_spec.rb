@@ -234,9 +234,10 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
 
     inlet.drain(client)
 
-    expect(session).to have_received(:notify).with("nvim_exec_lua",
-                                                   Lain::Frontend::Neovim::RenderQueue::OPEN_REVIEW,
-                                                   ["/epics/alpha/epic.md", 7, "alpha"])
+    expect(session).to have_received(:notify).with(
+      "nvim_exec_lua", Lain::Frontend::Neovim::RenderQueue::DISPATCH,
+      ["open_review", ["/epics/alpha/epic.md", 7, "alpha"]]
+    )
   end
 end
 
@@ -297,8 +298,9 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
       queue.post_view("lain://inbox", ["ok", "researcher  3s  which db?\nand why?"])
 
       expect(sent(queue)).to have_received(:notify).with(
-        "nvim_exec_lua", described_class::SET_VIEW,
-        ["lain://inbox", ["ok", "[lain://inbox line 2: a rendering broke the one-line-per-record contract]"]]
+        "nvim_exec_lua", described_class::DISPATCH,
+        ["set_view",
+         ["lain://inbox", ["ok", "[lain://inbox line 2: a rendering broke the one-line-per-record contract]"]]]
       )
     end
 
@@ -311,8 +313,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
       queue.post_view("lain://workspace", [(+"reminder caf\xE9 here").force_encoding(Encoding::UTF_8)])
 
       expect(sent(queue)).to have_received(:notify).with(
-        "nvim_exec_lua", described_class::SET_VIEW,
-        ["lain://workspace", [(+"reminder caf\xE9 here").force_encoding(Encoding::UTF_8)]]
+        "nvim_exec_lua", described_class::DISPATCH,
+        ["set_view", ["lain://workspace", [(+"reminder caf\xE9 here").force_encoding(Encoding::UTF_8)]]]
       )
     end
 
@@ -322,8 +324,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
       queue = described_class.new
       queue.post_view("lain://timeline", nil)
 
-      expect(sent(queue)).to have_received(:notify).with("nvim_exec_lua", described_class::SET_VIEW,
-                                                         ["lain://timeline", nil])
+      expect(sent(queue)).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                         ["set_view", ["lain://timeline", nil]])
     end
   end
 
@@ -333,11 +335,11 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_review("/epics/alpha/epic.md", 7, "alpha")
+    queue.post(:review, "/epics/alpha/epic.md", 7, "alpha")
     queue.drain(client)
 
-    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::OPEN_REVIEW,
-                                                   ["/epics/alpha/epic.md", 7, "alpha"])
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                   ["open_review", ["/epics/alpha/epic.md", 7, "alpha"]])
   end
 
   it "sends a question-open render command carrying the buffer, the document and the digest" do
@@ -346,29 +348,29 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_question("lain://question", ["## `q` (choose one)"], "blake3:c0ffee")
+    queue.post(:question, "lain://question", ["## `q` (choose one)"], "blake3:c0ffee")
     queue.drain(client)
 
     expect(session).to have_received(:notify).with(
-      "nvim_exec_lua", described_class::SET_QUESTION,
-      ["lain://question", ["## `q` (choose one)"], "blake3:c0ffee"]
+      "nvim_exec_lua", described_class::DISPATCH,
+      ["set_question", ["lain://question", ["## `q` (choose one)"], "blake3:c0ffee"]]
     )
   end
 
   # The sidebar is a SINGLETON in the review's own tabpage, so the lua half
   # names its own buffer and there is no `name` argument to disambiguate one
-  # from another -- the difference from {SET_VIEW}, which serves five.
+  # from another -- the difference from the view rail, which serves five.
   it "sends a review-sidebar render carrying the lines and the rendering's stamp" do
     queue = described_class.new
     session = instance_double(Neovim::Session)
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_review_sidebar(["  M lib/lain/agent.rb"], 3, %w[old new])
+    queue.post(:review_sidebar, ["  M lib/lain/agent.rb"], 3, %w[old new])
     queue.drain(client)
 
-    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_REVIEW,
-                                                   [["  M lib/lain/agent.rb"], 3, %w[old new]])
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                   ["set_review", [["  M lib/lain/agent.rb"], 3, %w[old new]]])
   end
 
   # The sides ride THIS rail rather than the changeset open, and the reason is
@@ -381,19 +383,61 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_review_sidebar(["  A guide.md"], 1, ["new"])
+    queue.post(:review_sidebar, ["  A guide.md"], 1, ["new"])
     queue.drain(client)
 
-    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_REVIEW,
-                                                   [["  A guide.md"], 1, ["new"]])
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                   ["set_review", [["  A guide.md"], 1, ["new"]]])
   end
 
-  # The lua half has to BIND what Ruby sends: a chunk taking two arguments and
-  # a queue pushing three drops the third silently, which is the one failure
-  # shape a payload assertion above cannot see.
-  it "binds every argument the sidebar render sends, in the chunk the editor runs" do
-    expect(described_class::SET_REVIEW).to include("local lines, gen, sides = ...")
-      .and include("_G.__lain.set_review(lines, gen, sides)")
+  # The lua half has to BIND what Ruby sends: an entry point taking two
+  # arguments against a rail declaring three drops the third silently, which is
+  # the one failure shape a payload assertion above cannot see.
+  #
+  # EVERY RAIL, and that is the change worth noticing. Each rail used to carry
+  # its own `local a, b = ...` binding inside its own chunk, so the only thing
+  # assertable was the text of one constant -- this was written for the sidebar
+  # and the other twelve went unpinned. One dispatch makes the whole table
+  # comparable against the declarations the shipped runtime really has.
+  it "declares, for every rail, the entry point and parameter list the shipped runtime has" do
+    source = Lain::Frontend::Neovim::RuntimeLoader.new.module_paths.map { |path| File.read(path) }.join
+
+    undeclared = described_class::RAILS.reject do |_, rail|
+      source.include?("function _G.__lain.#{rail.lua}(#{rail.params})")
+    end
+
+    expect(undeclared).to be_empty, lambda {
+      listing = undeclared.map { |name, rail| "  #{name}: _G.__lain.#{rail.lua}(#{rail.params})" }.join("\n")
+      "A rail names an entry point the shipped lua runtime does not declare with that parameter list. " \
+        "The spelling is LUA's, and `runtime/01_dispatch.lua` binds positionally, so a renamed or " \
+        "reordered parameter is silent on the wire:\n#{listing}\n"
+    }
+  end
+
+  # A rail nobody declared is the one failure the lua half cannot report: past
+  # the push the render is a notify, and nvim discards a notify's error.
+  it "refuses a rail no row declares, at the push rather than on the wire" do
+    expect { described_class.new.post(:no_such_view, ["a"]) }.to raise_error(KeyError)
+  end
+
+  # The `blocking` column is a real difference and not a label, and nothing else
+  # in this file observes the PARKING half -- a blocking push passes every
+  # end-to-end spec in the repo, which is exactly why it needs pinning where it
+  # can be seen.
+  it "parks a blocking rail on a full queue while a non-blocking one answers at once" do
+    queue = described_class.new(capacity: 1)
+    queue.post(:render, ["fills the one slot"])
+    parked = Thread.new { queue.post(:render, ["waits for room"]) }
+    Timeout.timeout(5) { Thread.pass until parked.status == "sleep" }
+
+    expect { queue.post(:question, "lain://question", ["a"], "blake3:c0ffee") }.to raise_error(ThreadError)
+    expect(parked).to be_alive
+
+    session = instance_double(Neovim::Session)
+    allow(session).to receive(:notify)
+    queue.drain(instance_double(Neovim::Client, session:))
+
+    expect(parked.join(5)).to be(parked)
   end
 
   # Ruby runs git, never the editor: the old side arrives as LINES this side
@@ -405,12 +449,12 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_changeset("lib/lain/agent.rb", ["was"], 12, { "old" => "base0", "new" => "head1" })
+    queue.post(:changeset, "lib/lain/agent.rb", ["was"], 12, { "old" => "base0", "new" => "head1" })
     queue.drain(client)
 
     expect(session).to have_received(:notify).with(
-      "nvim_exec_lua", described_class::OPEN_CHANGESET,
-      ["lib/lain/agent.rb", ["was"], 12, { "old" => "base0", "new" => "head1" }]
+      "nvim_exec_lua", described_class::DISPATCH,
+      ["open_changeset", ["lib/lain/agent.rb", ["was"], 12, { "old" => "base0", "new" => "head1" }]]
     )
   end
 
@@ -420,20 +464,20 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_thread("anchor-1", ["why this way?"])
+    queue.post(:thread, "anchor-1", ["why this way?"])
     queue.drain(client)
 
-    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_THREAD,
-                                                   ["anchor-1", ["why this way?"]])
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                   ["set_thread", ["anchor-1", ["why this way?"]]])
   end
 
   # The flag itself, at the object that carries it: every OTHER producer here is
   # a background thread that can afford back-pressure, and this one is not.
   it "raises rather than parking a producer when the queue is full" do
     queue = described_class.new(capacity: 1)
-    queue.post_render(["fills the one slot"])
+    queue.post(:render, ["fills the one slot"])
 
-    expect { Timeout.timeout(2) { queue.post_question("lain://question", ["a"], "blake3:c0ffee") } }
+    expect { Timeout.timeout(2) { queue.post(:question, "lain://question", ["a"], "blake3:c0ffee") } }
       .to raise_error(ThreadError)
   end
 end

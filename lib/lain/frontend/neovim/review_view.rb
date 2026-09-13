@@ -288,8 +288,9 @@ module Lain
         # @param scope [Symbol] the name of a {Review::Partition} strategy as a
         #   Symbol; anything else raises via {SCOPE_ROWS}' `fetch`
         # @return [Rendered] the whole buffer and the stamp it must be posted
-        #   under, which is `RenderQueue::SET_REVIEW`'s second argument --
-        #   REQUIRED there rather than optional as `SET_VIEW`'s is, because a
+        #   under, which is the second argument of {RenderQueue::RAILS}' review
+        #   sidebar rail -- REQUIRED there rather than optional as the view
+        #   rail's stamp is, because a
         #   sidebar row moves the moment the scope toggles
         def render(changeset, scope:)
           rows = send(SCOPE_ROWS.fetch(scope), changeset)

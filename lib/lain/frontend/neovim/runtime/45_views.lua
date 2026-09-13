@@ -10,16 +10,25 @@
 -- append-mostly, so the trimmed write makes that preservation the common case --
 -- and skips redraw work for free.
 --
--- b:lain_view_generation is the RENDERING STAMP, and it is optional: a
--- view whose gesture resolves through a Ruby-side line -> digest index sends
--- one, every other view sends nothing and the buffer never gains the variable.
--- lain://inbox is the only such view today. It matters because this buffer's
--- positions are NOT stable -- a retired item takes its row out and every row
--- below moves up -- so the line a human presses on means nothing without
--- saying WHICH rendering it is a line of, and the line COUNT cannot say that:
--- two renderings are routinely the same height. `set_compose` and
--- `set_question` have stamped their buffers for exactly this reason since they
--- existed; this is that same idea on a projection.
+-- b:lain_view_generation is the RENDERING STAMP, and on THIS entry point it is
+-- OPTIONAL: a view whose gesture resolves through a Ruby-side line -> digest
+-- index sends one, and among the buffers set_view serves, lain://inbox is the
+-- only one that does.
+--
+-- IT IS NOT THE ONLY STAMPED BUFFER, and the sentence that used to say so was
+-- wrong in both its halves. `46_sidebar.lua`'s set_review and
+-- `62_approval.lua`'s set_approval write the same variable themselves, and
+-- REQUIRE it rather than allowing it -- each on its own entry point, because
+-- each of those buffers is a singleton the lua half names for itself and so has
+-- no `name` argument to route through here. Three writers, one variable, one
+-- meaning; only this one may be skipped.
+--
+-- It matters because these buffers' positions are NOT stable -- a retired item
+-- takes its row out and every row below moves up -- so the line a human presses
+-- on means nothing without saying WHICH rendering it is a line of, and the line
+-- COUNT cannot say that: two renderings are routinely the same height.
+-- `set_compose` and `set_question` have stamped their buffers for exactly this
+-- reason since they existed; this is that same idea on a projection.
 function _G.__lain.set_view(name, lines, gen)
   local buf = named_buf(name)
   if gen ~= nil then
