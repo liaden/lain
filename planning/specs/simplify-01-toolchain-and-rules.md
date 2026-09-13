@@ -41,7 +41,9 @@ is a precedent this plan follows, not one it sets. `Layout/LineLength: Max: 120`
 
 **What the limits produced.** **31 files in `lib/` reopen their own class or module mid-file.** The
 worst are `review/docent.rb` (six halves at :84, :475, :608, :703, :811, :904), `supervisor.rb`
-(five `Supervisor` halves plus three `Retirement` halves), and `supervisor/restart.rb` (four each).
+(five `Supervisor` halves plus three `Retirement` halves -- **as of 2026-09-13 that is three and
+zero**: simplify-04's T11 moved `Retirement` out to the worktree-handback subtree and deleted
+`TurnMailbox`), and `supervisor/restart.rb` (four each).
 `lib/lain/timeline.rb` — CLAUDE.md's own comment-density exemplar — has three (:22, :267, :320).
 
 The idiom is a stock sentence, originated in `frontend/tty.rb:371-373` and then cited by name:

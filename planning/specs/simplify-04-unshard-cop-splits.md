@@ -1137,3 +1137,36 @@ per public entry point", which licenses one spec covering several subjects. It d
 spec whose mirrored path has no file. This is a real breakage of a stated rule, accepted knowingly
 for readability, and it should be revisited by whoever next moves this subtree rather than
 inherited as though the rule had covered it.
+
+
+### The quarantined card collided with nothing, and its acceptance criterion was undrivable
+
+T11 was put alone in its own wave because it shared `lib/lain/cli/wiring.rb` with two other cards,
+and because **a move conflicts silently — it drops half an extraction rather than failing**. The
+caution was sound and the isolation cost nothing, but the collision was not real: **`CLI::Wiring`
+constructs no `Supervisor::Retirement` at all.** The chat path takes the `Retirement::Null` default,
+and what `Wiring` builds is its own unrelated `Wiring::Handback` Data. The card's Files list and its
+"Reachable from" line both name `wiring.rb`; it was correctly left untouched.
+
+Two consequences for the card's own text, so the record does not read as an unmet criterion. Its
+first acceptance criterion says to drive a worker retirement **through the chat path** — not
+drivable, because that path is the Null. And it describes the outcome as the worker's commits
+becoming **reachable from the parent branch**, which is merging, and retirement never merges. The
+spec that landed asserts the opposite and correct thing: the parent's state is byte-identical and
+the commit sits under the ref. The spec is right; the criterion was wrong.
+
+**The length cop's blind spot, measured on the largest move in the plan.** `supervisor.rb` lost
+**139 of 349 code lines — 40%** — and `Metrics/ClassLength` moved by **3**, from 174 to 171, because
+`Retirement` (54), `Anchor` (58) and `TurnMailbox` (15) were nested bodies it subtracts entirely. A
+card gated on "stop if the result exceeds the raised limit" would have seen nothing in either
+direction. `supervisor.rb`'s own comment still claims the split "keeps every class body within
+Metrics/ClassLength instead of loosening it"; the three remaining bodies total 171 against a limit of
+300, so that sentence was already false before this card and is left for whoever next edits it.
+
+**A deletion took two live regression tests with it.** Removing `TurnMailbox` removed the only
+non-Null `Agent#mailbox:` implementation — no production site passes one, so the deletion is right —
+but two examples pinning a real `Agent` invariant went with it, and the tree stayed green without
+them. Proven rather than assumed: reintroducing the historical defect the code's own comments
+describe, capturing the mailbox *after* the provider round trip instead of before, leaves 17,730
+examples passing and not one spec notices. They were `Agent` tests wearing a `TurnMailbox`
+describe-block; they are rehomed onto `Lain::Agent` in T11's own commit rather than deferred.
