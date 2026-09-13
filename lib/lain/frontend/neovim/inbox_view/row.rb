@@ -4,18 +4,20 @@ module Lain
   module Frontend
     class Neovim
       class InboxView
-        # One listed set, drawn. It draws and nothing else: no clock (the age
-        # arrives resolved, so this object cannot race one), no store, no lock.
-        # The width it fits a whole item against is the enclosing view's
-        # {InboxView::WIDTH}, the buffer's own convention; the cut and the wrap
-        # themselves are {Fold}'s, shared with {ApprovalView} rather than one
-        # row's own.
+        # One listed set, drawn. It draws and nothing else: no clock (the
+        # INSTANT arrives resolved, so this object cannot race one), no store,
+        # no lock. The width it fits a whole item against is the enclosing
+        # view's {InboxView::WIDTH}, the buffer's own convention; the cut and
+        # the wrap themselves are {Fold}'s, shared with {ApprovalView} rather
+        # than one row's own; and the row inside them -- sender, age, question
+        # -- is {Tools::AskHuman::InboxRow}'s, shared with the terminal's drain
+        # so the two surfaces cannot name one question two ages.
         class Row
           # @param item [InboxView::Item] the listed set
-          # @param age [String] how long it has sat here, already rendered
-          def initialize(item, age:)
+          # @param now [Time] the instant this render is ageing against
+          def initialize(item, now:)
             @item = item
-            @age = age
+            @now = now
           end
 
           # ONE LINE EXACTLY WHEN THAT LINE IS THE WHOLE ITEM. Anything else --
@@ -81,17 +83,16 @@ module Lain
           # two lines is comparing like with like.
           def whole = @whole ||= drawn(questions)
 
-          # EVERY FIELD THE RECORD SUPPLIES GOES THROUGH {#prose}, sender
-          # included: nvim refuses a line holding a newline, the render rides as
-          # a NOTIFY, and the buffer then silently stops taking writes. Scrubbing
-          # the sender also makes the EDITOR more dependable --
-          # `RECORD_START[INBOX]` and 70_inbox.lua's `inbox_row` both find a row
-          # by the two-space-padded `from  age  question` shape.
-          #
-          # Scrubbed BEFORE the {SENDER} clamp, so the clamp measures what is
-          # drawn. The age needs no rule: it is this view's own arithmetic over
-          # two Times, never a record's bytes.
-          def drawn(text) = "#{prose(@item.from)[0, SENDER]}  #{@age}  #{prose(text)}".lstrip
+          # EVERY FIELD THE RECORD SUPPLIES IS SCRUBBED, sender included: nvim
+          # refuses a line holding a newline, the render rides as a NOTIFY, and
+          # the buffer then silently stops taking writes. Scrubbing the sender
+          # also makes the EDITOR more dependable -- `RECORD_START[INBOX]` and
+          # 70_inbox.lua's `inbox_row` both find a row by the two-space-padded
+          # `from  age  question` shape, which is why the padding and the
+          # leading strip are the shared row's rather than this file's.
+          def drawn(text)
+            Tools::AskHuman::InboxRow.at(from: @item.from, summary: text, asked_at: @item.asked_at, now: @now).to_s
+          end
 
           # Every question of the set, in the order it asks them.
           # {Tools::AskHuman} merges {Question::Set#to_body} into the event body
@@ -114,18 +115,11 @@ module Lain
             listed.is_a?(Array) ? listed : []
           end
 
-          # A rendered LINE may not carry a newline: `nvim_buf_set_lines` refuses
-          # one and the render rides as a notify, so a view that emits one loses
-          # every later write to its buffer in silence.
-          #
-          # THE STRIP IS LOAD-BEARING, and it is
-          # {Tools::AskHuman::Announcement#headline}'s own -- that method strips
-          # each line, so the summary this view is handed already has, while
-          # {Question} keeps the body's bytes verbatim. Without the same strip
-          # here a question ending in a newline made {#whole} differ from
-          # {#summary} by one trailing space, manufacturing a two-line item, and
-          # a keys line for the whole list, out of whitespace no human can see.
-          def prose(text) = text.to_s.gsub(NEWLINES, " ").strip
+          # The scrub the shared row applies to a field, reached for HERE
+          # because {#questions} joins several bodies into one string before
+          # that row ever sees it. One spelling, so a body scrubbed on the way
+          # into the join and the row scrubbed on the way out agree.
+          def prose(text) = Tools::AskHuman::InboxRow.one_line(text)
 
           def elided = Fold.cut(summary)
 

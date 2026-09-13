@@ -669,6 +669,17 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include("researcher").and include("deploy now?").and include("3s")
     end
 
+    # THE SHARED ROW, on this surface. Pinned as a whole LINE rather than three
+    # `include`s, because what one row buys is the layout as much as the age --
+    # and the editor's lain://inbox draws this same string.
+    it "lists a pending question as the row the editor's inbox also draws" do
+      input.string = "\n"
+
+      drain_tty.drain_inbox([item(question: "which db?")]) { |_answer| nil }
+
+      expect(output.string.lines.first.chomp).to eq("orchestrator  2m  which db?")
+    end
+
     it "yields a non-empty answer to the block -- the resolution seam" do
       input.string = "postgres\n"
       resolved = []

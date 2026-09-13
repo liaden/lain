@@ -59,16 +59,6 @@ module Lain
       class InboxView
         NAME = "lain://inbox"
 
-        # See {Row}: a pending question is model- or human-authored prose, and a
-        # rendered LINE may not carry a newline.
-        NEWLINES = /\R+/
-
-        # How much of a sender's name the column shows. A clamp on the LEAD, so
-        # a fleet's rows still line up their ages -- and the only field {Row}
-        # draws the same way in its summary and in its body, because a truncated
-        # name is a column decision rather than something the fold recovers.
-        SENDER = 19
-
         EMPTY = ["(no questions pending)"].freeze
 
         # How wide a rendered line may be before it is cut or wrapped. Sized as
@@ -390,7 +380,8 @@ module Lain
         def render
           return placeholder if @pending.empty?
 
-          drawn = @pending.map { |digest, item| [digest, lines_for(item)] }
+          now = @clock.call
+          drawn = @pending.map { |digest, item| [digest, lines_for(item, now)] }
           @renderings.remember(owners: owners_in(drawn))
           drawn.flat_map(&:last) + trailer_for(drawn)
         end
@@ -421,8 +412,9 @@ module Lain
           EMPTY.dup
         end
 
-        # ONE ITEM, drawn by {Row}, with the clock resolved to an age on the way
-        # in so nothing below this line can race one.
+        # ONE ITEM, drawn by {Row}, with the INSTANT resolved on the way in so
+        # nothing below this line can read a clock of its own -- and so every
+        # row of one render ages against one moment.
         #
         # A ROW MAY SPAN LINES, which only holds because {Renderings} addresses
         # by IDENTITY -- one entry per line, built by {#render}'s own pass. An
@@ -430,19 +422,11 @@ module Lain
         # did not choose the moment a row grew.
         #
         # EVERY field a row draws off the record -- the question AND the sender --
-        # goes through {Row#prose} first, so nothing this view posts can carry a
-        # newline into a line. {RenderQueue#checked_lines} stays a BACKSTOP rather
-        # than the guard, and one scrubbed field beside an unscrubbed one would
-        # read as a rule when it is an oversight.
-        def lines_for(item) = Row.new(item, age: age_of(item.asked_at)).lines
-
-        def age_of(asked_at)
-          seconds = (@clock.call - asked_at).to_i
-          return "#{seconds}s" if seconds < 60
-          return "#{seconds / 60}m" if seconds < 3600
-
-          "#{seconds / 3600}h"
-        end
+        # is scrubbed by {Tools::AskHuman::InboxRow}, so nothing this view posts
+        # can carry a newline into a line. {RenderQueue#checked_lines} stays a
+        # BACKSTOP rather than the guard, and one scrubbed field beside an
+        # unscrubbed one would read as a rule when it is an oversight.
+        def lines_for(item, now) = Row.new(item, now:).lines
       end
     end
   end

@@ -2319,9 +2319,8 @@ RSpec.describe Lain::CLI::Wiring::Askers do
   end
 
   # Absent a name, the correlation that identifies the asker everywhere else
-  # stands in -- unclamped here, because the two surfaces that render a sender
-  # column clamp it themselves ({Frontend::TTY::Inbox::NAME_WIDTH},
-  # {Frontend::Neovim::InboxView::SENDER}).
+  # stands in -- unclamped here, because the row both surfaces render it
+  # through clamps it ({Tools::AskHuman::InboxRow::NAME_WIDTH}).
   it "falls back to the asker's own correlation when no agent was named" do
     Sync do
       asker = askers.enrol(parent).asker

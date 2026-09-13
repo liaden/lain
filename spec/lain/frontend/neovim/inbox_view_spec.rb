@@ -45,7 +45,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   def text(body) = [{ "type" => "text", "text" => body }]
 
   # The sender column as the buffer prints it -- the leading field of
-  # {InboxView#line_for}'s two-space-padded row.
+  # {Tools::AskHuman::InboxRow}'s two-space-padded row.
   def senders(lines) = lines.map { |line| line.split("  ").first }
 
   def one_question(id, body) = Lain::Question::Set.new(questions: [Lain::Question.new(id:, body:)])
@@ -117,6 +117,16 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       expect(lines.size).to eq(1)
       expect(lines.first).to include("researcher").and include("deploy now?")
+    end
+
+    # THE SHARED ROW, on this surface. The terminal's drain lists the same
+    # question as the same line (see inbox_row_spec, which drives both from one
+    # instant) -- sender, age and summary, two spaces between the columns,
+    # which is the shape `70_inbox.lua` reads a row back out of.
+    it "lists a pending question as the row the terminal drain also draws" do
+      lines = view.update(question_record("blake3:q1", from: "orchestrator", question: "which db?"))
+
+      expect(lines).to eq(["orchestrator  0s  which db?"])
     end
 
     it "lists two questions from two agents, each with sender and age" do
@@ -1713,7 +1723,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # The row a record naming NOBODY draws: {InboxView::Row} lstrips, so the age
+    # The row a record naming NOBODY draws: {Tools::AskHuman::InboxRow} lstrips, so the age
     # leads the line and the sender-then-age anchor the runtime usually reads is
     # not there. The editor has a second pattern for exactly this line, and
     # without it a whole item would be inert -- silently, since the fold around
@@ -1737,7 +1747,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # An AGE CAN GO BACKWARDS -- `InboxView#age_of` subtracts an observation time
+    # An AGE CAN GO BACKWARDS -- `InboxRow.aged` subtracts an observation time
     # from a later clock read, and neither is monotonic, so an NTP step or a
     # suspend draws `-5s`. Until the editor's patterns admitted the minus sign,
     # that row matched neither of them, and the failure is the worst shape this

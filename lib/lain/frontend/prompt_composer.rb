@@ -437,7 +437,7 @@ module Lain
           humanize(@clock.idle) unless @agent.dispatching?
         end
 
-        # Coarse on purpose, {TTY::Inbox#age_of}'s shape: a prompt answers "how
+        # Coarse on purpose, {Tools::AskHuman::InboxRow}'s shape: a prompt answers "how
         # long have I been away", never "when exactly".
         def humanize(seconds)
           return "#{seconds.round}s" if seconds < MINUTE

@@ -483,18 +483,20 @@ module Lain
 
       # The arrival note and the /inbox drain listing. Presentation only: the
       # reply RESOLUTION stays with the caller's block.
+      #
+      # A LISTED ROW IS NOT THIS CLASS'S: {Tools::AskHuman::InboxRow} draws it,
+      # sender clamp, age and line-break scrub included, and the editor's
+      # lain://inbox draws the same one. This surface hands in the instant to
+      # age against and paints two columns; nothing else here is a row. That is
+      # not the cross-layer reach a comment here once refused -- that was one
+      # frontend loading ANOTHER, where this is both frontends reading the row
+      # owned by the tool that asks the question, which depends on neither.
       class Inbox
         # Both surfaces, always: which one is live is not a fact this class can
         # hold -- nvim dies mid-session and `/inbox` answers regardless -- so a
         # note naming only one would be wrong the moment the editor came or
         # went.
         POINTER = "/inbox here, or the inbox buffer in nvim"
-
-        # {Neovim::InboxView::SENDER} clamps the same names for the editor's
-        # own inbox column. Stated here rather than reached for across the
-        # layer, because a frontend that has to load another to draw a line is
-        # a dependency in the wrong direction.
-        NAME_WIDTH = 19
 
         # What a human can do HERE, said once above the prompt. The document
         # below renders the same checkboxes the editor ticks and a terminal
@@ -503,13 +505,11 @@ module Lain
         # puzzle nobody should have to solve.
         GESTURE = "type a reply -- ticking boxes is the nvim buffer"
 
-        # A note is one line on the TERMINAL, which is a stronger claim than
-        # "holds no \n": a lone \r redraws it from column 0, so the asker and
-        # everything before it is overwritten by whatever follows. Every
-        # character a terminal reads as a line break is replaced by a space.
-        # Stated here because this class owns the screen -- the value object
-        # bounds its summary, but what a terminal does with the bytes is ours.
-        BREAKS = /[\r\n\v\f\u{0085}\u{2028}\u{2029}]/
+        # Which columns this surface paints, and the whole of what it adds to a
+        # shared row. A table rather than a branch per column, so a row drawn
+        # here and one drawn in the editor can differ by escape codes and by
+        # nothing else.
+        COLOURS = { from: :yellow, age: :dim }.freeze
 
         # @param output [#puts, #flush] where the arrival note and drain listing are written
         # @param pastel [Pastel] presentation stays out of this class, as with
@@ -528,7 +528,8 @@ module Lain
         # {Tools::AskHuman::Handback#summary} for a reply handed back, which is
         # the bound's one-sentence measurement rather than the reply itself.
         def arrival(question, from: nil)
-          @output.puts(@pastel.yellow(one_line("? #{asker(from)}#{summarized(question)}  (#{POINTER})")))
+          note = "? #{asker(from)}#{summarized(question)}  (#{POINTER})"
+          @output.puts(@pastel.yellow(Tools::AskHuman::InboxRow.one_line(note)))
           @output.flush
         end
 
@@ -595,8 +596,13 @@ module Lain
         # exactly one answer, so a document for any other set would show a
         # human the questions their reply is not going to answer, which is the
         # one thing a reply surface must never do.
+        #
+        # ONE clock read for the whole listing: two rows of one drain aged
+        # against two moments is the same defect, one surface down, that
+        # sharing the row closes between surfaces.
         def listing(items, answering)
-          [*items.map { |item| line_for(item) }, *document_for(answering.question)]
+          now = @clock.call
+          [*items.map { |item| line_for(item, now) }, *document_for(answering.question)]
         end
 
         # The block below the listing, asked OF the value rather than
@@ -639,9 +645,19 @@ module Lain
         # bytes are the body verbatim, so a question with a table in it was a
         # five-line row that buried the item under it and then repeated,
         # verbatim, in the document below.
-        def line_for(item)
-          one_line("#{@pastel.yellow(clamped(item.from))} #{@pastel.dim(age_of(item.asked_at))}  " \
-                   "#{summarized(item.question)}")
+        #
+        # The line itself is {Tools::AskHuman::InboxRow}'s, and so is the scrub
+        # that keeps it to one terminal line -- this surface hands in the
+        # instant to age against and paints two of the three columns.
+        def line_for(item, now)
+          Tools::AskHuman::InboxRow
+            .at(from: item.from, summary: summarized(item.question), asked_at: item.asked_at, now:)
+            .drawn { |column, text| painted(column, text) }
+        end
+
+        def painted(column, text)
+          colour = COLOURS[column]
+          colour ? @pastel.public_send(colour, text) : text
         end
 
         # An {Announcement}'s BYTES are a lone question's body verbatim -- a
@@ -660,24 +676,11 @@ module Lain
           question.respond_to?(:summary) ? question.summary : question
         end
 
-        def one_line(text) = text.gsub(BREAKS, " ")
-
         # "" for an arrival nobody attributed, so the note concatenates back to
         # the unattributed line rather than branching on a missing name.
         def asker(from)
-          name = clamped(from)
+          name = Tools::AskHuman::InboxRow.sender(from)
           name.empty? ? "" : "#{name} "
-        end
-
-        def clamped(from) = from.to_s[0, NAME_WIDTH]
-
-        # Coarse on purpose: the inbox answers "how stale", not "when exactly".
-        def age_of(asked_at)
-          seconds = (@clock.call - asked_at).to_i
-          return "#{seconds}s" if seconds < 60
-          return "#{seconds / 60}m" if seconds < 3600
-
-          "#{seconds / 3600}h"
         end
       end
 

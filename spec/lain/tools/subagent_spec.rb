@@ -2403,9 +2403,10 @@ RSpec.describe Lain::Tools::Subagent do
       # Surface 1 -- the TTY. `Frontend::TTY::Inbox` renders `item.from` in
       # both places it names an asker: the arrival note (`#arrival`, through
       # `HumanReplies#render_arrival`) and the `/inbox` drain (`#line_for`).
-      # Clamped here to the width the three surfaces share.
+      # Clamped here through the shared row, which is where the width the
+      # surfaces collide on now has its one spelling.
       def tty_senders(items)
-        items.map { |item| item.from.to_s[0, Lain::Frontend::TTY::Inbox::NAME_WIDTH] }
+        items.map { |item| Lain::Tools::AskHuman::InboxRow.sender(item.from) }
       end
 
       # Surface 2 -- the nvim inbox buffer. It does NOT consume the arrival:
