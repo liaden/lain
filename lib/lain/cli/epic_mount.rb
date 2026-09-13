@@ -35,9 +35,6 @@ module Lain
       # a status line rather than as something that just cost a tool.
       UNWIRED = "request_review is not wired for this chat: %<reason>s"
 
-      # The startup-notice seam's null, matching {Frontend::PromptComposer::SILENT}.
-      SILENT = ->(_message) {}
-
       # No epic resolved, so no tool. `tools` is the entire duck {ToolsetBuild}
       # depends on; the class comment says why `home` and `review` are absent.
       module NoEpic

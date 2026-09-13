@@ -68,7 +68,7 @@ module Lain
         #
         # @param completion [Completion] the built instance to make {.current} and bind the key to
         # @param notify [#call] renders a warning line ({TTY#render_warning})
-        def install(completion, notify: LineEditor::SILENT)
+        def install(completion, notify: SILENT)
           @current = completion
           claim_key(notify) unless LineEditor.bound?(KEY)
           completion

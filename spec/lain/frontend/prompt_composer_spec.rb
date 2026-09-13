@@ -415,7 +415,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     describe "a config whose style comes from a variable" do
       let(:by_variable) { Lain::Ext::Prompt.from_toml(%(format = "[$model]($accent)"\n)) }
 
-      def accented(accent, notify: Lain::Frontend::PromptComposer::SILENT)
+      def accented(accent, notify: Lain::SILENT)
         renderer(format: by_variable, state: state.merge("accent" => accent), notify:)
       end
 
@@ -787,7 +787,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
 
     let(:state) { { "model" => "opus", "occupancy" => "38%", "fleet" => nil, "idle" => "12m" } }
 
-    def compose(path:, notify: Lain::Frontend::PromptComposer::SILENT)
+    def compose(path:, notify: Lain::SILENT)
       renderer = described_class.renderer(state:, path:, screen: -> { 200 }, notify:)
       described_class.new(theme: plain, renderer:).compose("> ")
     end

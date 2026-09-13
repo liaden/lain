@@ -79,9 +79,6 @@ module Lain
         ABANDONED = :abandoned
         private_constant :ABANDONED
 
-        # Reports nowhere -- the Null that keeps {#open} free of a nil check.
-        SILENT = ->(_message) {}
-
         # The Null editor, and the DEFAULT. The duck answers a NOTICE explaining
         # why the draft went nowhere, or nil when it landed: a boolean would make
         # the caller invent the sentence, and the object that failed is the one

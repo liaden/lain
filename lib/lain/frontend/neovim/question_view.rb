@@ -92,10 +92,6 @@ module Lain
         STALE = "this buffer answers a question set that is no longer open, so nothing was submitted -- " \
                 "your text is untouched, and the set it answers is listed in the inbox"
 
-        # Reports nowhere ({Compose::SILENT}'s shape), so no path below needs a
-        # nil check on the notifier.
-        SILENT = ->(_message) {}
-
         # Routes nowhere. Safe as a DEFAULT only because the default editor is
         # {Detached}: an unwired view can never open a set, so no write can ever
         # reach this. Production hands over a queue push.

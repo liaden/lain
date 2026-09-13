@@ -27,10 +27,6 @@ module Lain
       # other belongs would be a config file's denials read as permissions.
       # They are assembled in one place so a reader sees both names at once.
       module BoardBuild
-        # The startup-notice seam's null, matching {CLI::EpicMount::SILENT} and
-        # {Project::Consent::SILENT}.
-        SILENT = ->(_message) {}
-
         # Said when the config file cannot be parsed at all, so the project's
         # own additions are lost. It names what is still standing, because "not
         # in force" alone reads as "you have no boundary".

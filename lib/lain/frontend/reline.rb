@@ -61,10 +61,6 @@ module Lain
       COMMAND_INDICATOR = "[cmd]"
       INSERT_INDICATOR = "[ins]"
 
-      # Reports nowhere -- the Null that keeps {Registry#dispatch} from growing
-      # a nil check.
-      SILENT = ->(_message) {}
-
       # Taught at the moment it is useful rather than announced at every session
       # start. Not a startup banner: this is a design DIFFERENCE, not a fault,
       # and a line printed every session about behaviour the human cannot change

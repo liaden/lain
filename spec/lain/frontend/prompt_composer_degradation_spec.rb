@@ -8,7 +8,7 @@
 RSpec.describe "Lain::Frontend::PromptComposer degradation" do
   let(:theme) { Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false)) }
 
-  def prompt_for(renderer, notify: Lain::Frontend::PromptComposer::SILENT)
+  def prompt_for(renderer, notify: Lain::SILENT)
     Lain::Frontend::PromptComposer.new(theme:, renderer:, notify:)
   end
 

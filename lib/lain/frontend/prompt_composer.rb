@@ -56,11 +56,6 @@ module Lain
       # fix.
       RENDERER_FAULTS = [StandardError, ScriptError, SystemStackError].freeze
 
-      # The Null notifier ({Sink::Null}'s shape): satisfies the same `#call`
-      # duck and sends the message nowhere, so {#compose} never asks whether
-      # anyone is listening. A frontend passes `method(:render_warning)`.
-      SILENT = ->(_message) {}
-
       # Two fields rather than one string because the split is the frontend's
       # contract with Reline, and a value that has already made it cannot be
       # handed over half-applied.

@@ -66,9 +66,6 @@ module Lain
       # Where the marks live under {Paths#state_home}.
       DIR = "consent"
 
-      # The startup-notice seam's null, matching {CLI::EpicMount::SILENT}.
-      SILENT = ->(_message) {}
-
       # The rung an explicit `--root`/`--cwd` produces, read from
       # {Project::DETECTED_BY} rather than spelled again, so a rename of the rung
       # breaks loudly here instead of silently ceasing to grant.

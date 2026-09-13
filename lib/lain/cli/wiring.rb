@@ -271,7 +271,7 @@ module Lain
         @conductor_opener = conductor_opener
         # Nobody is looking at anything until #run builds a frontend, and that
         # is the honest value for the window -- not a stand-in for one.
-        @human_line = Lain::Frontend::PromptComposer::SILENT
+        @human_line = SILENT
       end
 
       # Assemble the run's collaborators over the now-open chronicle and hand off
@@ -443,7 +443,7 @@ module Lain
       def prompt_renderer(agent, notice)
         state = Frontend::PromptComposer::RunState.new(agent:, clock: run_clock, status_feed: @status_feed,
                                                        mode: @switchboard.mode_switch)
-        Frontend::PromptComposer.renderer(state:, notify: notice || Frontend::PromptComposer::SILENT)
+        Frontend::PromptComposer.renderer(state:, notify: notice || SILENT)
       end
 
       # The seam `spec/lain/cli_spec.rb` drives, which is what pins `session:` as

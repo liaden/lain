@@ -128,7 +128,7 @@ module Lain
       def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: nil,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
                      journal: Channel::Null.instance, resend_bridge: Unbridged, epic: StatusView::Unmounted,
-                     compose_notify: Compose::SILENT, question_notify: QuestionView::SILENT,
+                     compose_notify: SILENT, question_notify: SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
         # Bound long after this returns (see {#bind_changeset_review}), so it
