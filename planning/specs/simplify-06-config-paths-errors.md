@@ -1,6 +1,6 @@
 # Simplify 06 — one config parse, one path authority, one refusal per input source
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -760,3 +760,32 @@ plan. simplify-03 was `in-progress` with twelve of thirteen cards landed; its la
 `tools/subagent.rb`, `cli/wiring/toolset_build.rb`, `cli/wiring/askers.rb`,
 `tools/request_review.rb` and `cli/epic_submit/adjudication.rb`, so no card touching those was
 started until it landed.
+
+
+### Close-out
+
+All seven cards landed. Two refused part of what they were asked and were right to.
+
+**The plan's named mechanism does not exist for this problem.** T5's Reuse note said `declare
+raising:` was the way to collapse the seven config families; it covers **0 of 7**, structurally, on
+four independent walls. The origin was `declarative.rb`'s own worked example, which demonstrated the
+mechanism over precisely the refusal it cannot express. A docstring is load-bearing for planning,
+not only for calling — that example has been corrected.
+
+**A `$HOME` reader was left unrouted, deliberately.** Routing the project resolver through the
+shared reader would have turned a spec-pinned `UnresolvableProject` refusal into a silent success on
+any box with a passwd entry, because `Dir.home` answers from there when `$HOME` is merely unset.
+`$HOME` inferred as a project root is exactly what the authority boundary forbids. Proven by
+applying the routing and watching the refusal stop firing. The integration check that demanded five
+fewer disables is corrected to four.
+
+**Three of this plan's manifest instructions were wrong**, each found by the card that had to follow
+it: two files belonged in their own subtree's index rather than `lib/lain.rb`, and one placement the
+plan asked for was impossible outright. Verify a manifest line; do not trust it.
+
+**Two things this chunk added that outlive it.** The config parse is now memoized on
+`[ino, size, mtime-ns]` — not `(mtime-seconds, size)`, which is the bootsnap key this repo has
+already been bitten by and which collides for real here, because the process rewrites that file
+itself. And the error taxonomy has a ratchet: every declared error class must show one piece of
+discrimination, and **a raise is deliberately not evidence**, since raising is what all
+eighty-nine deleted classes did.
