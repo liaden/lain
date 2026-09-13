@@ -11,7 +11,7 @@ module Lain
     # Configuration it builds carries no `ollama_api_key` and the inherited
     # `#headers` answers empty. A fact about this class, not the transport it
     # inherits: that can carry a Bearer since
-    # {Provider::Ollama::Deployment::Cloud}, and a caller who hands `config:` a
+    # {Provider::Ollama::Deployment}, and a caller who hands `config:` a
     # key-bearing Configuration will send it.
     #
     # The wire is `{ "model": ..., "embeddings": [[float, ...], ...], ... }` --

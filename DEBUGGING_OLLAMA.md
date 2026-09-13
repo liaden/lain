@@ -368,7 +368,7 @@ re-run, not compared directly against new output.
 ## 2026-08-24 — there is a second ollama arm now, and this file is not its log
 
 `--provider ollama-cloud` dials `https://ollama.com` through the same `Provider::Ollama` class,
-picking an `Ollama::Deployment::Cloud` instead of the `Local` this file has always meant. The wire
+picking an `Ollama::Deployment.cloud` instead of the `.local` this file has always meant. The wire
 is byte-identical, so everything above about the *protocol* still applies to both arms. Nothing
 above about the *serving stack* does — `num_batch`, `num_ctx`, the KV-cache tier, ROCm vs Vulkan,
 thermals, the GPU generation: none of it is ours on the cloud arm, and none of it is observable

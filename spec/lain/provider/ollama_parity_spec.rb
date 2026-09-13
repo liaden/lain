@@ -19,7 +19,7 @@ RSpec.describe Lain::Provider::Ollama do
   # deployment-shaped has reached the wire path, which is the one thing this
   # chunk promised it would not do.
   #
-  # `.cloud` builds a real `Deployment::Cloud` (a false `#local?`, no
+  # `.cloud` builds a real hosted `Deployment` (a false `#local?`, no
   # loaded-runner probing, a Bearer header the deployment declares) over the
   # SAME `OllamaWire` double the group above uses -- the real decode path, no
   # cassette, and no network reachable on this default-on spec either way.

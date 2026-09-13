@@ -181,7 +181,7 @@ serves the full figure for any model.
 
 ### What lain actually does today: nothing
 
-`Deployment::Cloud#model_metadata?` returns `false`, so `Provider::Ollama#trained_context_tokens`
+The hosted `Deployment#model_metadata?` returns `false`, so `Provider::Ollama#trained_context_tokens`
 returns `nil` **before it reaches the transport** — no request is made. That predicate shipped
 `false` because whether `/api/show` answered off-loopback was unverified at the time.
 
@@ -296,7 +296,7 @@ admission gate, not after waiting, so a refused request costs latency but no inf
   positively correct, not merely defensible.** There is no reset header to name, and naming one
   would replace faraday-retry's working `Retry-After` default with a guess. The `header_parser_block`
   is likewise unnecessary because the value is plain integer seconds.
-- **`Deployment::Cloud::DEFAULT_ADMISSION_WIDTH = 1` is conservative.** This subscription's
+- **`Deployment::DEFAULT_ADMISSION_WIDTH = 1` is conservative.** This subscription's
   measured allowance is **4 concurrent plus 15 queued**. The default of 1 is still the right one to
   ship — its comment's reasoning ("the only default that is safe on every plan") is unaffected by
   one plan turning out to be wider — but an operator on this plan can raise
@@ -328,7 +328,7 @@ alone. Anything decoding cloud responses must not depend on the sibling duration
 The useful reframing, and it is stronger than a cache measurement would have been: **it does not
 matter whether the backend caches.** Lain declares capabilities it can *demonstrate*, and there is
 nothing on this wire to demonstrate one from. So `CacheProfile::NO_CACHING` and the absence of
-`:prompt_caching` from `Deployment::Cloud::CAPABILITIES` are correct **regardless of backend
+`:prompt_caching` from `Deployment::CAPABILITIES` are correct **regardless of backend
 behaviour**. Ollama's pricing page metering "cached input tokens" separately is suggestive and is
 not evidence.
 
@@ -360,7 +360,7 @@ The 401 is issued before any inference, so it costs nothing but a round trip.
 
 ### `/api/ps` has no cloud meaning
 
-Not measured, because `Deployment::Cloud#runner_status?` answers `false` before the request is
+Not measured, because the hosted `Deployment#runner_status?` answers `false` before the request is
 made, and that is the correct design: `/api/ps` lists **loaded runners**, a concept a serverless
 host does not have. A rescue-based approach would spend a round trip per denominator lookup against
 somebody's quota purely to rediscover a 404.

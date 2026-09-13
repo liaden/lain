@@ -153,7 +153,7 @@ RSpec.describe Lain::Oracle::SecretRead do
 
     # NOT hypothetical: `OLLAMA_API_KEY` is exported into some developers'
     # shells by direnv, so the suite really does run with it set. Nothing in
-    # `lib/` or `exe/` reads it -- `Deployment::Cloud` only NAMES it in a
+    # `lib/` or `exe/` reads it -- `Deployment` only NAMES it in a
     # refusal message, `Provider::Ollama.cloud` requires `api_key:` explicitly
     # rather than reaching for the environment, and
     # `Configuration.register_provider_options` registers `ollama_api_key` with

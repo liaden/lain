@@ -14,7 +14,7 @@ module Lain
   class Provider
     # Ollama's native `/api/chat`. A free, local, temperature-0 bench arm -- a
     # determinism oracle for tests, an exploration target on the "Provider /
-    # model" axis -- and, through {Deployment::Cloud}, a metered hosted one.
+    # model" axis -- and, through {Deployment.cloud}, a metered hosted one.
     #
     # A neutral {Lain::Provider}, NOT the OpenAI-compat shim RubyLLM's Ollama
     # integration is. The native path is chosen over `/v1/...` because that
@@ -60,7 +60,7 @@ module Lain
     # STILL ABSENT: rate-limit backoff, because the header vocabulary the
     # native cloud path returns is unverified and naming an unseen header would
     # replace faraday-retry's working default with a guess
-    # ({Deployment::Cloud} states the case).
+    # ({Deployment} states the case).
     class Ollama < Provider
       include Encoding
       include Decoding
@@ -86,14 +86,14 @@ module Lain
       # one subsystem built to catch them, so the capability policy's
       # `:degrade` journals those gaps instead.
       #
-      # Read from the loopback deployment rather than written out a third time.
+      # Read from the deployment rather than written out a third time.
       # `#capabilities` delegates, so a literal here would be a copy nothing
       # consults -- free to drift from the value actually answered while every
-      # spec asserting against it stayed green. The constant survives because
-      # it is what an outside reader asks for, and because "the ollama arm's
-      # capabilities" is a real question whose deployment-independent answer
-      # holds only while both arms agree.
-      CAPABILITIES = Deployment::Local::CAPABILITIES
+      # spec asserting against it stayed green. The constant survives because it
+      # is what an outside reader asks for, and a deployment-independent answer
+      # is now structural rather than a coincidence: both arms read the one
+      # {Deployment::CAPABILITIES}, so there is nothing left to disagree.
+      CAPABILITIES = Deployment::CAPABILITIES
 
       # Exactly `.new`, and deliberately adds nothing: the bare construction has
       # to keep meaning loopback, because
@@ -114,13 +114,13 @@ module Lain
       def self.local(**options) = new(**deployment_free(options, "local"))
 
       # `api_key:` is REQUIRED rather than read from the environment here.
-      # {Deployment::Cloud} refuses a blank key by naming `OLLAMA_API_KEY` and
+      # {Deployment.cloud} refuses a blank key by naming `OLLAMA_API_KEY` and
       # where to get one, which is the right message only if the caller that
       # read the variable is the one being told -- and that caller is the CLI,
       # not this class. A provider that reached for ENV itself would also make
       # its own construction untestable without mutating the environment.
       #
-      # @param api_key [String] the subscription key, refused blank by {Deployment::Cloud}
+      # @param api_key [String] the subscription key, refused blank by {Deployment.cloud}
       # @param admission_width [Integer, nil] concurrent round trips this plan permits
       # @param options [Hash] forwarded verbatim to {#initialize}
       # @option options [String] :api_base override the base this arm dials
@@ -129,7 +129,7 @@ module Lain
       #   omitting it yields an UNJOURNALED provider
       # @return [Ollama] a provider dialling the cloud host
       def self.cloud(api_key:, admission_width: nil, **options)
-        new(deployment: Deployment::Cloud.new(api_key:, admission_width:),
+        new(deployment: Deployment.cloud(api_key:, admission_width:),
             **deployment_free(options, "cloud"))
       end
 
@@ -138,8 +138,8 @@ module Lain
       #
       # Forwarded blind, Ruby's later-wins keyword rule resolves it silently and
       # in the more dangerous direction: `Ollama.cloud(api_key:, deployment:
-      # Deployment::Local.new)` validates the cloud credential, discards the
-      # `Cloud` it just built, and hands back a LOOPBACK provider whose
+      # Deployment.local)` validates the cloud credential, discards the hosted
+      # deployment it just built, and hands back a LOOPBACK provider whose
       # `admission_width` is nil -- an unbounded caller against a metered plan,
       # from a call that reads as explicitly cloud. Nothing downstream can
       # notice, which is {CLI::Backend::Endpoint}'s test for what must be
@@ -158,7 +158,7 @@ module Lain
       end
       private_class_method :deployment_free
 
-      # @param deployment [#api_base] WHOSE ollama this is. {Deployment::Local}
+      # @param deployment [#api_base] WHOSE ollama this is. {Deployment.local}
       #   by DEFAULT, and the default is the contract: a bare construction
       #   still means loopback, so `Oracle::SecretRead.tier`'s guarantee is
       #   untouched by this keyword existing.
@@ -208,7 +208,7 @@ module Lain
       #   injected both could see.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
                      sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE,
-                     deployment: Deployment::Local.new, spool: nil)
+                     deployment: Deployment.local, spool: nil)
         super()
         raise ArgumentError, RETRIES_OWN_THE_SPOOL if retries && spool
 

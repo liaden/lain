@@ -113,7 +113,7 @@ module ProviderConstruction
   # being covered by the allowlist -- a guard that fails open and looks green.
   #
   # `local` and `cloud` are singleton methods on the PROVIDER class, and are not
-  # the `Deployment::Local` / `Deployment::Cloud` value objects that share the
+  # the `Deployment.local` / `Deployment.cloud` value constructors that share the
   # words -- those are a different thing, constructed nowhere this guard looks.
   #
   # Named one at a time rather than "any method on a provider constant", which

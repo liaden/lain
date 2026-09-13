@@ -80,7 +80,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       expect(provider.send(:queue_for_capacity?)).to be(false)
     end
 
-    # Free-plan width, read by Deployment::Cloud from its own env key. Pinned
+    # Free-plan width, read by the hosted Deployment from its own env key. Pinned
     # here because the CLI is the caller that must NOT quietly pass a width of
     # its own and reopen the metered-plan starvation the default exists for.
     it "leaves the cloud plan's width to the deployment's own default" do
@@ -255,7 +255,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
     end
 
     # It is a CLASS method precisely so that Backend#model -- read per turn by
-    # three collaborators -- cannot build a Deployment::Cloud, cannot re-read
+    # three collaborators -- cannot build a hosted Deployment, cannot re-read
     # ENV, and cannot raise about a missing key. Asking with the environment
     # empty is the whole assertion.
     it "answers for the cloud arm with no key in the environment at all" do
@@ -415,11 +415,12 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       expect(held_by(tier).map(&:inspect).join).not_to include(secret)
     end
 
-    # The other half: it keeps no Deployment::Cloud, whose #to_h is unredacted
-    # by construction and cannot be otherwise while api_key is a public reader.
+    # The other half: it keeps no Deployment at all. #to_h withholds the key
+    # from a reader, but the api_key reader #apply needs cannot, so a held
+    # deployment is still a held credential.
     it "keeps no deployment at all" do
       tier = with_key(secret) { cloud }
-      expect(held_by(tier).grep(Lain::Provider::Ollama::Deployment::Cloud)).to be_empty
+      expect(held_by(tier).grep(Lain::Provider::Ollama::Deployment)).to be_empty
     end
   end
 

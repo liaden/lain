@@ -151,7 +151,7 @@ RSpec.describe Lain::Embedder::Ollama do
 
     # THE BYPASS PATH, reproduced end to end. No deployment anywhere: a
     # Configuration is built directly, given a key with an interior CRLF, and
-    # handed to this embedder. `Deployment::Cloud`'s refusal cannot reach here,
+    # handed to this embedder. The hosted `Deployment`'s refusal cannot reach here,
     # so before the transport's wire-format guard this raised a bare
     # `ArgumentError` from inside Net::HTTP -- outside `Lain::Error`, outside
     # `Embedder::Error`, outside `wrapping_errors` and therefore outside every

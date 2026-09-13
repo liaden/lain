@@ -477,7 +477,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     # An inspector that walks members itself never calls `#inspect`, which is the
-    # gap `Provider::Ollama::Deployment::Cloud` records for a live credential.
+    # gap `Provider::Ollama::Deployment` records for a live credential.
     # `pp` is that shape, and so is the suite's own object formatter.
     it "withholds it from pp, which walks the members rather than asking" do
       expect(PP.pp(payloaded, +"")).not_to include("SECRETPAYLOAD")

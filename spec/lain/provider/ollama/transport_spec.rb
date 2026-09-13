@@ -152,7 +152,7 @@ RSpec.describe Lain::Provider::Ollama::Transport do
     # `Connection#ensure_configured!` refuses construction when any entry is
     # unset, so requiring the key here would refuse every LOCAL connection --
     # which is the whole default arm. The refusal that names OLLAMA_API_KEY
-    # lives in `Deployment::Cloud`, where it is per-deployment.
+    # lives in `Deployment`, where it is per-deployment.
     it "declares the key as an option without making it a requirement" do
       expect(described_class.configuration_options).to include(:ollama_api_base, :ollama_api_key)
       expect(described_class.configuration_requirements).to be_empty
@@ -167,7 +167,7 @@ RSpec.describe Lain::Provider::Ollama::Transport do
     # The BYPASS path -- a Configuration built directly, no deployment in it.
     # `Configuration`'s generated setter (`http/configuration.rb:38-41`) coerces
     # a blank String to nil, so a whitespace key never becomes `Bearer `. That
-    # setter is the guard here, NOT `Deployment::Cloud`, which is not in this
+    # setter is the guard here, NOT `Deployment`, which is not in this
     # path at all.
     it "sends no header for a blank key, which the Configuration setter has already nilled" do
       expect(described_class.new(config_with(ollama_api_key: "   ")).headers).to eq({})
@@ -175,10 +175,10 @@ RSpec.describe Lain::Provider::Ollama::Transport do
 
     # The LIMIT of that guard, recorded rather than fixed: the setter
     # special-cases String and nothing else, so a non-String set directly still
-    # reaches the wire. `Deployment::Cloud` refuses this by name and is the door
+    # reaches the wire. `Deployment` refuses this by name and is the door
     # every shipped caller uses; this pins what the backstop alone does NOT do,
     # so nobody mistakes it for a validator.
-    it "does not itself refuse a non-String key, which only Deployment::Cloud does" do
+    it "does not itself refuse a non-String key, which only Deployment does" do
       expect(described_class.new(config_with(ollama_api_key: 12_345)).headers)
         .to eq("Authorization" => "Bearer 12345")
     end
@@ -240,18 +240,18 @@ RSpec.describe Lain::Provider::Ollama::Transport do
   end
 
   # BLOCKER: the block above asserts a literal it transcribes ITSELF
-  # (`"Bearer #{key}"`), so it never mentions {Deployment::Cloud} and cannot
+  # (`"Bearer #{key}"`), so it never mentions {Deployment} and cannot
   # see the deployment's declaration drift. Mutation-proved: dropping the
   # `Bearer ` scheme from `Cloud#headers` left the block above green.
   #
   # These two close that by asserting the wire against
-  # `Deployment::Cloud#headers` -- the declaration itself, never re-typed --
+  # `Deployment#headers` -- the declaration itself, never re-typed --
   # so the transport that SENDS and the deployment that DECLARES cannot
   # disagree without a failure. The pair is the reason the deployment's
   # `#headers` is allowed to exist at all while being merged nowhere: it is a
   # checked declaration, and this is the check.
   describe "agreeing with the deployment that declares the header" do
-    let(:cloud) { Lain::Provider::Ollama::Deployment::Cloud.new(api_key: key) }
+    let(:cloud) { Lain::Provider::Ollama::Deployment.cloud(api_key: key) }
     let(:declared) { cloud.headers["Authorization"] }
 
     def transport_for(deployment)
@@ -260,7 +260,7 @@ RSpec.describe Lain::Provider::Ollama::Transport do
 
     def json(body) = { status: 200, headers: { "Content-Type" => "application/json" }, body: }
 
-    it "sends exactly what Deployment::Cloud declares, on chat, show and ps alike" do
+    it "sends exactly what the Deployment declares, on chat, show and ps alike" do
       transport = transport_for(cloud)
       base = transport.api_base
       carries = { headers: { "Authorization" => declared } }
@@ -280,7 +280,7 @@ RSpec.describe Lain::Provider::Ollama::Transport do
     # same transport class over the local deployment sends no credential at all
     # to a loopback server.
     it "sends no Authorization at all on the local arm, on all three endpoints" do
-      transport = transport_for(Lain::Provider::Ollama::Deployment::Local.new)
+      transport = transport_for(Lain::Provider::Ollama::Deployment.local)
       base = transport.api_base
       keyless = ->(request) { !request.headers.key?("Authorization") }
       chat = stub_request(:post, "#{base}/api/chat").with(&keyless).to_return(**json("{}"))
@@ -321,7 +321,7 @@ RSpec.describe Lain::Provider::Ollama::Transport do
 
     # The guard that makes the above unreachable through lain's own doors.
     it "cannot arise from Local#apply, which nils the key on the way through" do
-      configured = Lain::Provider::Ollama::Deployment::Local.new.apply(
+      configured = Lain::Provider::Ollama::Deployment.local.apply(
         Lain::Provider::HTTP::Configuration.new.tap { |config| config.ollama_api_key = key }
       )
 
@@ -330,14 +330,14 @@ RSpec.describe Lain::Provider::Ollama::Transport do
   end
 
   # THE BYPASS PATH, and the reason this guard exists in the transport at all.
-  # {Deployment::Cloud} refuses an unusable key by name, but it is not in every
+  # {Deployment} refuses an unusable key by name, but it is not in every
   # path: a Configuration built DIRECTLY, with no deployment anywhere, reaches
   # the wire unfiltered. There the adapter used to raise a bare `ArgumentError`
   # -- outside {Lain::Error}, so outside `wrapping_errors` and every rescue in
   # the codebase -- whose message QUOTES the offending header value, i.e. the
   # live credential, defeating all three redaction guards from the outside.
   #
-  # WIRE FORMAT, NOT POLICY, and the split is the point: {Deployment::Cloud}
+  # WIRE FORMAT, NOT POLICY, and the split is the point: {Deployment}
   # answers "is this a credential a human plausibly meant to set" and names
   # `OLLAMA_API_KEY`; this answers "may this value be put in an HTTP header at
   # all", which is a fact about HTTP rather than about Ollama. Neither is a copy

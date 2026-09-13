@@ -23,7 +23,7 @@
 # `#instance_variables` override can redact it, so a failing expectation on
 # those headers -- or on any structure containing them -- renders the live
 # Bearer into rspec's failure output and from there into a terminal someone
-# scrolls back through. `Deployment::Cloud`'s own comment records the same
+# scrolls back through. `Deployment`'s own comment records the same
 # limitation. This is the first spec in the repo that holds a real key, so it
 # asserts on PRESENCE, SHAPE, or the deployment's own declaration, and never on
 # the header Hash itself.
@@ -98,7 +98,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
   describe "/api/show on the cloud host" do
     let(:transport) do
       config = Lain::Provider::HTTP::Configuration.new
-      described_class::Deployment::Cloud.new(api_key: ENV.fetch("OLLAMA_API_KEY")).apply(config)
+      described_class::Deployment.cloud(api_key: ENV.fetch("OLLAMA_API_KEY")).apply(config)
       described_class::Transport.new(config)
     end
 
@@ -130,7 +130,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
     # performs NO `--num-ctx` refusal: a `--num-ctx 500000` against a 128k model
     # is accepted in silence. Flipping `model_metadata?` is out of this spec's scope.
     it "is not asked by the provider, because the deployment declares it absent" do
-      deployment = described_class::Deployment::Cloud.new(api_key: ENV.fetch("OLLAMA_API_KEY"))
+      deployment = described_class::Deployment.cloud(api_key: ENV.fetch("OLLAMA_API_KEY"))
 
       expect(deployment.model_metadata?).to be(false)
       # nil WITHOUT a round trip -- #trained_context_tokens returns on the
@@ -240,7 +240,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
     # header to name.
     it "leaves the reset-header knobs unset, which is what makes Retry-After work" do
       config = Lain::Provider::HTTP::Configuration.new
-      described_class::Deployment::Cloud.new(api_key: ENV.fetch("OLLAMA_API_KEY")).apply(config)
+      described_class::Deployment.cloud(api_key: ENV.fetch("OLLAMA_API_KEY")).apply(config)
 
       expect(config.rate_limit_reset_header).to be_nil
       expect(config.header_parser_block).to be_nil
@@ -301,7 +301,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
                       "options" => { "num_predict" => 1, "temperature" => 0 } })
     end
 
-    def chat_uri = URI("#{described_class::Deployment::Cloud::API_BASE}/api/chat")
+    def chat_uri = URI("#{described_class::Deployment::CLOUD_API_BASE}/api/chat")
 
     def post
       uri = chat_uri

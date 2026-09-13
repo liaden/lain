@@ -97,8 +97,13 @@ module Lain
     # -- and the Journal is NDJSON, where one such line is the failure this whole
     # bound exists to prevent. {Overrun#inspect} therefore names the safe members
     # and withholds the content, with `to_s` and `pretty_print` following it,
-    # after the pattern {Provider::Ollama::Deployment::Cloud} set for a live
-    # credential. What remains is `#to_h`, pattern matching, and any whole-object
+    # after the pattern {Provider::Ollama::Deployment} set for a live
+    # credential. That pattern has since GROWN: the deployment now redacts
+    # `#to_h`, `#deconstruct_keys` and `#deconstruct` as well, because a Journal
+    # record is a Hash and `Data` opens both destructuring doors. This class has
+    # not followed, and the reason is that a payload is not a credential -- it
+    # is the tool's own output, and a caller destructuring for it has asked. So
+    # what remains here is `#to_h`, pattern matching, and any whole-object
     # serialiser (`Marshal`, YAML) -- what `Data` gives every value, and none of
     # it reached by accident: the payload comes out only where a caller names
     # {Overrun#content}, destructures for it, or asks for the whole object.
@@ -376,7 +381,7 @@ module Lain
         # put the whole payload into a `"#{over}"` -- an interpolation a
         # consumer writes without thinking, and one NDJSON line is all the
         # Journal needs to stop being parseable. `pretty_print` is overridden
-        # for the same reason `Provider::Ollama::Deployment::Cloud` overrides
+        # for the same reason `Provider::Ollama::Deployment` overrides
         # it: `pp` walks the members itself rather than calling `#inspect`.
         def inspect
           "#<data #{self.class} subject=#{subject.inspect} size=#{size} limit=#{limit} " \

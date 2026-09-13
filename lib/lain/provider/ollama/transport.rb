@@ -16,7 +16,7 @@ module Lain
       # `configuration_requirements` nonetheless stays EMPTY: it is a
       # class-level list `Connection#ensure_configured!` refuses construction
       # over, so requiring the key would refuse every loopback connection. The
-      # refusal that names `OLLAMA_API_KEY` belongs to {Deployment::Cloud},
+      # refusal that names `OLLAMA_API_KEY` belongs to {Deployment},
       # where it is per-deployment.
       #
       # The Configuration options are registered below through
@@ -51,7 +51,7 @@ module Lain
         # open, and the adapter refuses all three alike.
         #
         # It lives HERE, in the object that puts a value into a header, and
-        # {Deployment::Cloud} reads it from here rather than keeping a copy.
+        # {Deployment} reads it from here rather than keeping a copy.
         UNUSABLE_IN_HEADER = /[[:cntrl:]]/
 
         # Deliberately says nothing about the value. This is the one string in
@@ -156,7 +156,7 @@ module Lain
         #
         # Whether a key is any GOOD is deliberately not asked here: that would
         # be a SECOND definition of "there is a key", and two of those is how
-        # they drift. {Deployment::Cloud} refuses a nil, non-String,
+        # they drift. {Deployment} refuses a nil, non-String,
         # whitespace-only or control-character key BY NAME, and on the bypass
         # path Configuration's generated setter already coerces a blank String
         # to nil. That setter special-cases `String` and nothing else, so a
@@ -206,7 +206,7 @@ module Lain
 
         # TWO GUARDS, AND THEY ARE NOT DUPLICATES -- the same shape as the
         # secret boundary's gate/filter/mask split. POLICY ("is this a
-        # credential a human plausibly meant to set?") is {Deployment::Cloud}'s,
+        # credential a human plausibly meant to set?") is {Deployment}'s,
         # the door every shipped caller comes through. WIRE FORMAT ("may this
         # value go into an HTTP header at all?") is owned HERE, because this is
         # the object that puts it there and CR/LF being illegal in a field value

@@ -1,18 +1,16 @@
 # frozen_string_literal: true
 
-# The deployment protocol, asked once of both implementations instead of
-# restated in two files. {Lain::Provider::Ollama::Deployment::Local} and
-# {Lain::Provider::Ollama::Deployment::Cloud} share no superclass -- they are
-# told apart by what they ANSWER, not by what they inherit -- so this group is
-# the only written-down copy of the message set, and a third deployment that
-# forgets one of them fails here rather than at the first turn against a real
-# endpoint.
+# The deployment protocol, asked once of both arms instead of restated twice.
+# {Lain::Provider::Ollama::Deployment.local} and `.cloud` answer the same eleven
+# messages, so this group is the only written-down copy of the message set, and
+# a third deployment that forgets one of them fails here rather than at the
+# first turn against a real endpoint.
 #
-# It pins SHAPE, never a value: every concrete answer (the base, the header,
-# the width) is what distinguishes the two, and belongs in each sibling's own
-# file. The one exception is `apply`, whose shape IS a value question -- a
-# deployment that answered a `request_timeout` and then failed to write it
-# would satisfy every other example here.
+# It pins SHAPE, never a value: every concrete answer (the base, the header, the
+# width) is what distinguishes the two, and belongs in each arm's own examples.
+# The one exception is `apply`, whose shape IS a value question -- a deployment
+# that answered a `request_timeout` and then failed to write it would satisfy
+# every other example here.
 #
 # Include with a subject named `deployment`, and a `counterpart:` callable
 # answering the OTHER deployment -- the mixed-state property below is the one
@@ -46,10 +44,10 @@ RSpec.shared_examples "an ollama deployment" do |options|
     expect([uri.scheme, uri.host]).to match([a_string_matching(/\Ahttps?\z/), a_string_matching(/\S/)])
   end
 
-  # Deliberately NOT "and every key and value is a String": `Local`'s Hash is
-  # empty, so `all(be_a(String))` passes over nothing and the assertion reads
-  # as coverage it does not have. The shape of a populated header set is
-  # {Cloud}'s own business, and is asserted there.
+  # Deliberately NOT "and every key and value is a String": the loopback arm's
+  # Hash is empty, so `all(be_a(String))` passes over nothing and the assertion
+  # reads as coverage it does not have. The shape of a populated header set is
+  # the hosted arm's own business, and is asserted there.
   it "answers a frozen headers Hash" do
     expect(deployment.headers).to be_a(Hash).and be_frozen
   end

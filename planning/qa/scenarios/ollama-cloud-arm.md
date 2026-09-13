@@ -81,7 +81,7 @@ loud: it under-reports occupancy by ~16x, **and** it makes `Compaction::Source` 
 **Known asymmetry, not a bug to report:** pass `--num-ctx` and the resolution drops back to
 `guessed` regardless of the table, because `narrowest` returns nil only when *both* ceilings are
 absent. Also: the cloud arm performs **no `--num-ctx` refusal at all**, because
-`Deployment::Cloud#model_metadata?` is `false`. Both are recorded follow-ups.
+the hosted `Deployment#model_metadata?` is `false`. Both are recorded follow-ups.
 
 ## 4. Windows come from the weights, not the library page
 
@@ -115,7 +115,7 @@ otherwise:** a 429 carries `x-ratelimit-max-concurrent: 4` and `x-ratelimit-queu
 `retry-after` in integer seconds — and **no reset header**, which is why lain leaves
 `rate_limit_reset_header` nil and lets faraday-retry honour `Retry-After` on its own.
 
-`Deployment::Cloud` declares an admission width of **1** by default, raised by
+The hosted `Deployment` declares an admission width of **1** by default, raised by
 `LAIN_OLLAMA_CLOUD_CONCURRENCY`. That is deliberately below the plan's real capacity: safe on every
 tier, and a caller who knows better can say so.
 

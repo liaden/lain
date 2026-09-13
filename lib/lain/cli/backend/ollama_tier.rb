@@ -42,18 +42,19 @@ module Lain
       #
       # {Provider::Ollama.cloud} requires `api_key:` and deliberately does not
       # reach for the environment, so the CLI -- the caller that looked the
-      # variable up -- is the one {Deployment::Cloud}'s named refusal reaches.
+      # variable up -- is the one {Deployment.cloud}'s named refusal reaches.
       # This class does the lookup and owns none of the diagnosis: "unset",
       # "whitespace only" and "carries a control character" are three different
       # messages, and they live on the deployment beside the header that would
       # otherwise carry the damage.
       #
       # THE KEY IS NEVER HELD. The eager refusal is a PROBE -- it builds a
-      # {Deployment::Cloud}, lets it refuse, and drops it -- and {#provider}
+      # hosted {Deployment}, lets it refuse, and drops it -- and {#provider}
       # reads the variable again when it really builds one. What that buys is
       # that no CLI object holds a live credential for the length of a run:
-      # `Deployment::Cloud#to_h` is unredacted and cannot be while `api_key` is
-      # a public reader, so the safest place for one is nowhere. That sentence
+      # `Deployment#to_h` withholds the key from a reader, but the `api_key`
+      # reader {#apply} needs cannot, so the safest place for one is nowhere.
+      # That sentence
       # is PINNED, not merely asserted: an example walks `#instance_variables`
       # and fails on any of them holding the key. Stated in prose it survived a
       # planted `@held_key = ENV.fetch(...)` with the whole suite green.
@@ -128,7 +129,7 @@ module Lain
         # The flag the base itself came from, which is neither of the above.
         ENDPOINT_FLAG = "--api-base"
 
-        API_KEY_ENV_KEY = Provider::Ollama::Deployment::Cloud::API_KEY_ENV_KEY
+        API_KEY_ENV_KEY = Provider::Ollama::Deployment::API_KEY_ENV_KEY
 
         # NOT the local default `qwen3:4b`, which does not exist on the cloud at
         # all, so inheriting it would make a bare `--provider ollama-cloud` a
@@ -185,7 +186,7 @@ module Lain
         # arm defaults to is a pure function of its NAME. Asking an instance
         # would mean {Backend#model} -- read per turn by {Backend#context},
         # {WindowBook} and {Compaction::Source#window_for} -- building a tier
-        # and a {Deployment::Cloud}, re-reading ENV, and being able to raise
+        # and a hosted {Deployment}, re-reading ENV, and being able to raise
         # {Deployment::MissingAPIKey} from any of those call sites.
         #
         # @param name [String] a name in {NAMES}
@@ -206,7 +207,7 @@ module Lain
 
         # Built and DROPPED: the constructor IS the refusal, and the class
         # docstring says why nothing here keeps what it hands back.
-        def probe_credential = naming_the_flag { Provider::Ollama::Deployment::Cloud.new(api_key: key) }
+        def probe_credential = naming_the_flag { Provider::Ollama::Deployment.cloud(api_key: key) }
 
         # The deployment's refusal names the VARIABLE but not which flag asked
         # for one, so an operator running `--provider anthropic
@@ -224,7 +225,7 @@ module Lain
           raise e.class, "#{e.message}; #{flag} #{@name} is what asked for it"
         end
 
-        # An unset `--api-base` means {Deployment::Cloud::API_BASE}, which is
+        # An unset `--api-base` means {Deployment::CLOUD_API_BASE}, which is
         # https by construction.
         #
         # Through {Endpoint} FIRST. {Backend} has already run the value through

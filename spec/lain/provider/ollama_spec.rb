@@ -109,7 +109,7 @@ RSpec.describe Lain::Provider::Ollama do
     it "defaults to the Local deployment, which is what a bare construction promises" do
       provider = described_class.new(transport: transport_sync({}))
 
-      expect(provider.instance_variable_get(:@deployment)).to eq(Lain::Provider::Ollama::Deployment::Local.new)
+      expect(provider.instance_variable_get(:@deployment)).to eq(Lain::Provider::Ollama::Deployment.local)
     end
 
     # The end-to-end half, because "loopback" is a claim about what reaches the
@@ -140,7 +140,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     it "dials ollama.com for a cloud provider that was told no base" do
-      expect(endpoint_of(cloud)).to eq(Lain::Provider::Ollama::Deployment::Cloud::API_BASE)
+      expect(endpoint_of(cloud)).to eq(Lain::Provider::Ollama::Deployment::CLOUD_API_BASE)
     end
 
     # `api_base:` keeps ONE meaning across both arms -- "the base this
@@ -165,8 +165,8 @@ RSpec.describe Lain::Provider::Ollama do
       config = cloud.instance_variable_get(:@config)
 
       expect([config.request_timeout, config.max_retries])
-        .to eq([Lain::Provider::Ollama::Deployment::Cloud::REQUEST_TIMEOUT,
-                Lain::Provider::Ollama::Deployment::Cloud::MAX_RETRIES])
+        .to eq([Lain::Provider::Ollama::Deployment::CLOUD_REQUEST_TIMEOUT,
+                Lain::Provider::Ollama::Deployment::CLOUD_MAX_RETRIES])
     end
 
     # `Deployment#headers` is the deployment's DECLARATION of its auth;
@@ -196,7 +196,7 @@ RSpec.describe Lain::Provider::Ollama do
     # locality rule keep answering for the loopback arm.
     it "forwards the deployment's declared admission width, and stays silent for the local one" do
       expect([cloud.send(:admission_width), described_class.new(transport: transport_sync({})).send(:admission_width)])
-        .to eq([Lain::Provider::Ollama::Deployment::Cloud::DEFAULT_ADMISSION_WIDTH, nil])
+        .to eq([Lain::Provider::Ollama::Deployment::DEFAULT_ADMISSION_WIDTH, nil])
     end
 
     # A factory NAMES its deployment. Ruby's later-wins keyword rule would
@@ -205,12 +205,12 @@ RSpec.describe Lain::Provider::Ollama do
     # caller gets a loopback provider with an unbounded admission width from a
     # call that reads as explicitly cloud.
     it "refuses a second deployment rather than letting the last keyword win" do
-      expect { described_class.cloud(api_key: "sk-test", deployment: Lain::Provider::Ollama::Deployment::Local.new) }
+      expect { described_class.cloud(api_key: "sk-test", deployment: Lain::Provider::Ollama::Deployment.local) }
         .to raise_error(ArgumentError, /already states its deployment/)
     end
 
     it "refuses one on the local door too, which has the identical hazard" do
-      cloud_deployment = Lain::Provider::Ollama::Deployment::Cloud.new(api_key: +"sk-test")
+      cloud_deployment = Lain::Provider::Ollama::Deployment.cloud(api_key: +"sk-test")
 
       expect { described_class.local(deployment: cloud_deployment) }
         .to raise_error(ArgumentError, /already states its deployment/)
@@ -236,7 +236,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     def provider_for(runner_status:, model_metadata:)
-      deployment = instance_double(Lain::Provider::Ollama::Deployment::Local,
+      deployment = instance_double(Lain::Provider::Ollama::Deployment,
                                    runner_status?: runner_status, model_metadata?: model_metadata)
       described_class.new(deployment:, transport: exploding, config: Lain::Provider::HTTP::Configuration.new)
     end
