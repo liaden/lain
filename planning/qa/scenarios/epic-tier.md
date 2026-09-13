@@ -427,8 +427,9 @@ the first attempt's anchor still stands.
 
 ## 11 — The `lain://status` buffer
 
-Needs the nvim cockpit. The attach protocol is **15**; a mismatch warns and keeps going rather than
-failing the attach.
+Needs the nvim cockpit. The attach token is a **digest of the injected runtime**, not a number: an
+editor still holding a runtime some other lain injected is refused ONCE, with the stale marker
+cleared, so running lain again attaches. A fresh editor never sees it.
 
 ```bash
 lain up --nvim        # then, in the chat pane, lain chat --epic <slug>

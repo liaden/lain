@@ -1187,7 +1187,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
       @nvim = Neovim.attach_unix(socket)
       @nvim.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @nvim.channel_id])
+                     [Lain::VERSION, Lain::Frontend::Neovim.protocol, @nvim.channel_id])
       example.run
     ensure
       @nvim = nil

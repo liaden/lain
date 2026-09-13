@@ -5,11 +5,14 @@
 -- logic or RPC handling: a bare `nvim --listen` with no plugin attaches
 -- identically (zero-install is the contract, this plugin is sugar).
 --
--- No protocol number is quoted here, deliberately. This file said "protocol 3"
--- through five bumps of it, because nothing could tell it had gone stale: the
--- version lives in ONE place (Frontend::Neovim::PROTOCOL) and is stamped into
--- doc/lain.txt, where a spec pins every stamp to that constant. A copy with no
--- guard on it is worse than no copy.
+-- No protocol number is quoted here, deliberately -- and there is no longer one
+-- to quote. This file said "protocol 3" through five bumps of it, because
+-- nothing could tell it had gone stale. The token is now a digest of the
+-- injected runtime (Frontend::Neovim.protocol), derived rather than declared, so
+-- a copy of it is not a thing anybody can write down at all. Read it off
+-- `data.protocol` in a User LainAttach, or the runtime's own published token
+-- (|lain-stale-runtime| names it). `vim.g.lain_rpc_version` below answers only
+-- "has an attach happened", which is all this file asks of it.
 --
 -- What lives here instead:
 --

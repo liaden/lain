@@ -336,7 +336,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       second.run do
         commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
         expect(commands).to include("LainResend", "LainSend", "LainContext", "LainVersion")
-        expect(inspector.get_var("lain_rpc_version")).to eq(described_class::PROTOCOL)
+        expect(inspector.get_var("lain_rpc_version")).to eq(described_class.protocol)
       end
     end
 
@@ -350,26 +350,39 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # Panel fix #3. The handshake compares the injection PROTOCOL, not the gem
-    # version -- a gem release alone must never warn, or every bump cries wolf.
-    it "does not warn on a gem version bump alone" do
-      frontend = described_class.new(channel:, socket_path: @socket, version: "9.9.9")
+    # The handshake compares the RUNTIME, not the gem version -- a gem release
+    # alone must never refuse, or every bump cries wolf. The two were conflated
+    # once and made every future release a false mismatch; the digest keeps them
+    # apart by construction, since the gem version is not among the bytes it
+    # covers, and this is that property said out loud.
+    it "does not refuse on a gem version bump alone" do
+      first = described_class.new(channel:, socket_path: @socket, version: "1.1.1")
+      first.run { wait_until { inspector.get_var("lain_rpc_version") == described_class.protocol } }
 
-      frontend.run do
+      second = described_class.new(channel: Lain::Channel.new, socket_path: @socket, version: "9.9.9")
+      second.run do
         inspector.command("LainVersion")
-        wait_until { messages.include?("9.9.9") }
-        expect(messages).not_to include("mismatch")
+        expect(wait_until { messages.include?("9.9.9") }).to be(true)
       end
     end
 
-    it "warns without crashing on a runtime/gem protocol mismatch" do
-      frontend = described_class.new(channel:, socket_path: @socket, protocol: "999")
-
-      frontend.run do
-        wait_until { messages.include?("mismatch") }
-        expect(messages).to include("mismatch")
-        expect(inspector.evaluate("1 + 1")).to eq(2) # the editor is alive, not crashed
+    # A refused attach must leave the editor USABLE, and leave the runtime it
+    # refused over exactly as it found it. The integer's mismatch only ever echoed
+    # a warning and carried on, so "did it crash the session" was the whole
+    # question; a refusal has to answer it about a real editor holding a real
+    # older runtime, which is the only state that reaches the refusal at all.
+    it "leaves the editor alive and its older runtime intact when it refuses" do
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket, protocol: "OLDER-RUNTIME").run do
+        wait_until do
+          inspector.exec_lua("return type(_G.__lain) == 'table' and _G.__lain.protocol", []) == "OLDER-RUNTIME"
+        end
       end
+
+      expect { described_class.new(channel:, socket_path: @socket).run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
+      expect(inspector.evaluate("1 + 1")).to eq(2)
+      expect(inspector.exec_lua("return _G.__lain.protocol", [])).to eq("OLDER-RUNTIME")
+      expect(inspector.exec_lua("return vim.g.lain_rpc_version", [])).to eq("OLDER-RUNTIME")
     end
   end
 
@@ -806,32 +819,61 @@ RSpec.describe Lain::Frontend::Neovim do
     end
   end
 
-  # Review fix: the protocol contract, pinned WITHOUT an editor -- which is the
-  # point of the group, not an incidental economy. `LAIN_NVIM=0` is a supported mode
+  # The protocol contract, pinned WITHOUT an editor -- which is the point of the
+  # group, not an incidental economy. `LAIN_NVIM=0` is a supported mode
   # (spec/support/tags.rb), and in it every other pin on this contract is filtered
   # out: the panel reverted BOTH halves to "8", undoing the bump entirely, and the
-  # suite answered 10449 examples, 0 failures. Both properties below are pure reads
-  # of source already on disk, so neither needs the editor that was hiding them.
+  # suite answered 10449 examples, 0 failures. Every property below is a pure read
+  # of source already on disk, so none of them needs the editor that was hiding them.
   describe "the protocol contract" do
     let(:runtime) { Lain::Frontend::Neovim::RuntimeLoader.new.source }
 
-    # The lockstep, said in the one place it can be said with no nvim running. It
-    # COMPLEMENTS the live attach checks rather than replacing them -- a runtime that
-    # fails to LOAD still has the right number in its text, and only an editor catches
-    # that. What this catches is the reverse: half a bump.
-    it "holds the same protocol in the gem and in the runtime it injects" do
-      expect(runtime[/RUNTIME_PROTOCOL = "(\d+)"/, 1]).to eq(described_class::PROTOCOL)
+    # What replaced the lockstep, and it is stronger rather than weaker: there is
+    # no second copy to be in step WITH. The token is the digest of the exact
+    # bytes the gem injects, so "half a bump" -- the failure the lockstep example
+    # existed to catch -- is not a state the two halves can be in.
+    it "hands the editor a digest of the runtime it injects" do
+      expect(described_class.protocol).to eq(Lain::Ext.blake3_hex(runtime))
+      expect(described_class.protocol).to match(/\A[0-9a-f]{64}\z/)
     end
 
-    # "A history that SKIPS a version is worse than none" is the history block's own
-    # rule, and d125aba is the proof it is not hypothetical: a bump shipped with no
-    # line, and entry "5" is the backfill. Asserting the entry for TODAY's number
-    # states a fact about today; this states the RULE, so the next bump cannot go
-    # green without its line -- which is what the panel's mutant did, moving both
-    # constants to "10", sweeping the doc stamps, and skipping the entry, at 0
-    # failures.
-    it "keeps an entry for every protocol from 2 up to the constant" do
-      expect(protocol_history.keys.map(&:to_i)).to eq((2..described_class::PROTOCOL.to_i).to_a)
+    # THE CARD'S WHOLE THESIS, and the reason a derived token beats a declared
+    # one: a comment's worth of bytes in one module moves the version, and there
+    # is no declaration anywhere for anyone to have forgotten. The edit is made
+    # against a COPY so the assertion is about the loader rather than about
+    # whatever the tree happens to hold.
+    it "changes when one runtime module's bytes change, with no declaration touched" do
+      Dir.mktmpdir("lain-runtime-digest") do |dir|
+        head = File.join(dir, "runtime.lua")
+        modules = File.join(dir, "runtime")
+        FileUtils.cp(Lain::Frontend::Neovim::RuntimeLoader::HEAD, head)
+        FileUtils.cp_r(Lain::Frontend::Neovim::RuntimeLoader::MODULES, modules)
+        loader = Lain::Frontend::Neovim::RuntimeLoader.new(head:, modules:)
+        before = Lain::Ext.blake3_hex(loader.source)
+
+        edited = File.join(modules, "80_version.lua")
+        File.write(edited, "#{File.read(edited)}-- a comment, and nothing else\n")
+
+        expect(Lain::Ext.blake3_hex(loader.source)).not_to eq(before)
+      end
+    end
+
+    # The property the example above rests on, mechanised rather than described:
+    # a declared version somewhere in the frontend would be a number somebody has
+    # to remember, and the fifteen entries this replaced are the evidence that
+    # remembering is the part that fails. Both spellings the pair used, because
+    # either one coming back re-creates the whole defect.
+    it "declares no protocol version anywhere a bump could be forgotten" do
+      root = File.expand_path("../../..", __dir__)
+      sources = Dir[File.join(root, "lib/**/*.{rb,lua}")] + Dir[File.join(root, "plugin/**/*.{lua,vim}")]
+      expect(sources).not_to be_empty
+
+      # Unquoted counts. `PROTOCOL = 16` is the same defect as `PROTOCOL = "16"`
+      # and a regex asking for a quote misses half of it -- measured, by mutation:
+      # the quoted pair reddened this and the bare pair did not. The trailing `_`
+      # exclusion is what keeps Core's unrelated PROTOCOL_VERSION out of it.
+      declared = sources.select { |path| File.read(path).match?(/^\s*(?:local\s+)?[A-Z_]*PROTOCOL\s*=[^=]/) }
+      expect(declared).to be_empty, "a hand-maintained protocol version is back in: #{declared.inspect}"
     end
   end
 end

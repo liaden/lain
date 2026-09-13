@@ -121,9 +121,10 @@ module DeletionMap
       # does not say.
       consumers: ["lib/lain/review/surface/neovim.rb", "spec/lain/review/surface/neovim_spec.rb"],
       edits: {
-        "lib/lain/frontend/neovim.rb" => ['require_relative "neovim/thread_view"', "__lain.set_thread"],
-        "spec/lain/frontend/neovim_runtime_spec.rb" => ["LainReviewOpen LainNote LainNoteDone LainThread",
-                                                        "set_review open_changeset set_thread"],
+        # Down from four markers to one: the other three named the protocol-9
+        # changelog entry and the two examples that swept it, and the changelog
+        # went when the handshake token stopped being a hand-maintained integer.
+        "lib/lain/frontend/neovim.rb" => ['require_relative "neovim/thread_view"'],
         "plugin/nvim/doc/lain.txt" => ["*:LainThread*", "*lain://thread*"]
       },
       forces: %w[docent], plan: REVIEW_SURFACE, untestable: nil

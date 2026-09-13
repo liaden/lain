@@ -133,7 +133,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     @socket = socket
     @editor = Neovim.attach_unix(socket)
     @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
     @editor.exec_lua(ThreadFixture::CURSOR_TICK_PROBE, [])
     example.run
   ensure

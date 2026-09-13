@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 15) . |lain-contract|
+  6. The attach contract ............... |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -170,7 +170,7 @@ lain.hud()              The HUD line the running session published, already
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 15)                           *lain-contract*
+6. THE ATTACH CONTRACT                                         *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -195,6 +195,29 @@ a channel when its process goes, and the check asks whether the recorded
 channel is still LIVE rather than whether a marker is present -- so attaching
 again into the same editor just works, and nothing needs clearing by hand.
 
+                                                          *lain-stale-runtime*
+                                                             *__lain.protocol*
+A DIFFERENT LAIN'S RUNTIME, which is a separate thing and NOT an invariant.
+The runtime publishes the digest of the chunk it was injected from: >vim
+    :echo luaeval('__lain.protocol')
+<
+It is set from the last line of the chunk, so it exists only if the whole
+runtime loaded. When a lain attaches to an editor whose loaded runtime reports
+a different digest -- an older or newer lain was in here and has gone -- the
+attach is refused ONCE, at the terminal, naming both. Running lain again
+attaches; there is nothing to clear by hand and `g:lain_rpc_version` is left
+alone.
+
+It announces rather than protects, and the sentence says so. Re-injecting
+replaces everything the new runtime defines and clears every augroup it owns,
+so what survives is whatever the older runtime had and the newer one has not:
+a command it defined, an autocmd it created, still pointed at a channel that
+is gone. Quit the editor instead if you would rather start clean.
+
+A leftover `g:lain_rpc_version` with no runtime behind it is NOT this and
+refuses nothing -- the check reads |__lain.protocol|, which only a runtime
+that actually loaded can have set.
+
 ------------------------------------------------------------------------------
 6.1 USER EVENTS                                                  *lain-events*
 
@@ -216,11 +239,18 @@ LainAttach              Fires once per attach, deliberately LAST: by the
                           protocol     the contract the running runtime
                                        actually speaks
 
-                        Trust `data.protocol` as the runtime's version.
-                        `g:lain_rpc_version` is only the gem's CLAIM -- the
-                        token the gem injected at attach -- and a mismatched
-                        runtime has already warned about it; the payload
-                        field is what the running Lua really speaks.
+                        `data.protocol` is a DIGEST of the injected runtime,
+                        not a version number: it moves whenever any of the
+                        runtime's lua changes, and nothing declares it. It is
+                        sent from the last line of the chunk, so it is a true
+                        reading of what is running here.
+
+                        `g:lain_rpc_version` carries the same token but is
+                        stamped by the chunk HEAD, before a single module has
+                        run -- a chunk that failed mid-load still set it. Use
+                        it to ask whether an attach has happened at all;
+                        compare runtimes with `data.protocol` or
+                        |__lain.protocol|.
 
                                                             *User-LainRender*
 LainRender              Fires after every landed render; `ev.data` carries
@@ -524,7 +554,7 @@ says so rather than acting when there is no review diff under you, and says so
 when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 15)                           *lain-compose*
+6.5 COMPOSING A MESSAGE                                         *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -558,7 +588,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 ANSWERING A QUESTION SET (PROTOCOL 15)                     *lain-question*
+6.6 ANSWERING A QUESTION SET                                   *lain-question*
                                                              *lain://question*
 
 The agent asks in SETS: one question or several in a single ask, each with a
@@ -629,7 +659,7 @@ document and reads a typed reply, which answers the WHOLE set in prose rather
 than by selection. Ticking is the editor's gesture, and the only one.
 
 ------------------------------------------------------------------------------
-6.7 APPROVING A TOOL CALL (PROTOCOL 15)                         *lain-approval*
+6.7 APPROVING A TOOL CALL                                       *lain-approval*
                                                              *lain://approval*
                                                                *:LainApprove*
                                                                   *:LainDeny*
@@ -699,7 +729,7 @@ lain never writes this buffer's answer for you and never pre-selects one: an
 unanswered window denies, so there is no default to press <CR> on.
 
 ------------------------------------------------------------------------------
-6.8 REVIEWING A DOCUMENT (PROTOCOL 15)                           *lain-review*
+6.8 REVIEWING A DOCUMENT                                         *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -730,7 +760,7 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.9 READING A CHANGESET (PROTOCOL 15)                       *lain-review-diff*
+6.9 READING A CHANGESET                                     *lain-review-diff*
 
 A changeset review opens each changed file as a PAIR. On the right is the real
 file: 'buftype' is empty, so your language server and treesitter attach to it

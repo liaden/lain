@@ -447,40 +447,26 @@ RSpec.describe "lain nvim plugin", :nvim do
         expect(doc).to include(group)
       end
 
-      # Read from the constant, never as a literal: this file's LAST example
-      # already learned that a hardcoded token turns every bump into a false
-      # green -- and this line then certified "protocol 5" through a bump to
-      # "6", which is exactly the drift the assertion exists to catch.
-      expect(doc).to include("LainReviewDone").and include("LainAnnotate")
-      # `include` is case-sensitive and satisfied by ONE marker, so it pinned
-      # line 14 and let the other three drift. Counting them instead pinned how
-      # MANY sections the doc has, which is not a property of anything -- adding
-      # the question section broke a green assertion about protocol numbers.
-      # What holds is the shape: a PARENTHESIZED "(protocol n)" is this file's
-      # current-contract stamp, every one of them states the same contract, and
-      # that contract is the constant. Prose recording when a feature landed is
-      # deliberately not this shape and is left alone.
+      # The stamps are GONE, and their absence is the assertion. Every heading in
+      # this doc used to carry a parenthesised "(protocol n)" pinned to the gem's
+      # constant -- which worked, and cost a sweep across seven headings on every
+      # bump. There is no constant now: the handshake token is a digest of the
+      # injected runtime, so a number written here would be a number with nothing
+      # to be checked against, which is the defect the digest replaced.
       #
-      # And the limit, stated so nobody reads more into it than it says: this
-      # certifies UNIFORMITY and agreement with the constant, never PLACEMENT. A
-      # stamp added to a section that never carried one passes, correctly -- the
-      # stamp means "this section states the current contract", not "this feature
-      # landed at n" -- and a stamp DELETED from one of several passes too. The two
-      # structural ones are anchored by name below, which is where placement is
-      # pinnable without pinning how many sections the doc has.
-      stamps = doc.scan(/\(protocol (\d+)\)/i).flatten
-      expect(stamps).not_to be_empty
-      expect(stamps.uniq).to eq([Lain::Frontend::Neovim::PROTOCOL]),
-                             "(protocol n) stamps disagree: found #{stamps.uniq.inspect}, expected " \
-                             "every one to be #{Lain::Frontend::Neovim::PROTOCOL.inspect}"
+      # Prose recording when a feature landed ("since protocol 9, b:lain_view no
+      # longer names a view") is a different shape and is deliberately left alone:
+      # it is history, and history does not go stale.
+      expect(doc).to include("LainReviewDone").and include("LainAnnotate")
+      stamps = doc.scan(/\(protocol \d+\)/i)
+      expect(stamps).to be_empty,
+                        "doc/lain.txt carries hand-written protocol stamps again: #{stamps.uniq.inspect}"
 
-      # The contract section's own heading and its TOC line: the two stamps that
-      # are structure rather than decoration, so a sweep that DROPS one of them --
-      # invisible to the uniformity check above, which sees only the survivors --
-      # fails here by name.
-      protocol = Lain::Frontend::Neovim::PROTOCOL
-      expect(doc).to match(/^6\. THE ATTACH CONTRACT \(PROTOCOL #{protocol}\)/)
-      expect(doc).to match(/^\s+6\. The attach contract \(protocol #{protocol}\)/)
+      # The contract section's own heading and its TOC line, anchored by name --
+      # the two places a sweep that renamed or dropped the section would show, and
+      # the one thing the stamps were structurally good for.
+      expect(doc).to match(/^6\. THE ATTACH CONTRACT\s+\*lain-contract\*/)
+      expect(doc).to match(/^\s+6\. The attach contract [. ]+\|lain-contract\|/)
 
       Dir.mktmpdir("lain-helptags") do |dir|
         FileUtils.cp(File.join(plugin_root, "doc", "lain.txt"), dir)
@@ -662,7 +648,7 @@ RSpec.describe "lain nvim plugin", :nvim do
         # The CONSTANT, not a literal: this example is about a bare nvim
         # attaching at all, and a hardcoded token turns every protocol bump
         # into a false failure here (an earlier bump did).
-        wait_until { lua("return vim.g.lain_rpc_version") == Lain::Frontend::Neovim::PROTOCOL }
+        wait_until { lua("return vim.g.lain_rpc_version") == Lain::Frontend::Neovim.protocol }
         expect(lua("return vim.fn.exists(':LainSend')")).to eq(2)
         expect(lua("return vim.fn.exists(':LainStart')")).to eq(0)
       end

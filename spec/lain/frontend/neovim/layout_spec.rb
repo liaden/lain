@@ -22,7 +22,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
     @editor = Neovim.attach_unix(socket)
     @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
     example.run
   ensure
     @editor = nil

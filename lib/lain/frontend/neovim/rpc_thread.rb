@@ -32,6 +32,50 @@ module Lain
         end
       end
 
+      # An editor whose LOADED lain runtime was injected from a different source,
+      # announced by that runtime's successor before it loads. The handshake token
+      # is a digest of the injected chunk (see {Neovim.protocol_of}), so "a
+      # different runtime" is a fact the lua half establishes against what the
+      # runtime in that editor published about itself -- `__lain.protocol`, which
+      # `99_attach.lua` sets only once every module has executed. A leftover
+      # `g:lain_rpc_version` with no runtime behind it is not this and does not
+      # raise: refusing on litter costs a human their editor for nothing.
+      #
+      # AN ANNOUNCEMENT, NOT AN INVARIANT, and the distinction is worth the
+      # sentence because {SocketOwned} next door IS an invariant. That one latches
+      # and two lains never coexist. This one fires ONCE and the re-run replaces
+      # the runtime -- because the token moves on every edit to any of the runtime
+      # modules, so a guard that latched would cost a developer their editor each
+      # time they touched a line of lua, which is worse than the hand-maintained
+      # integer it replaced. What survives the replacement is whatever the older
+      # runtime had and the newer one does not: a command it dropped, an autocmd
+      # it stopped creating, still wired to a channel that died. This tells
+      # somebody that is so. It does not undo it, and the sentence says as much.
+      #
+      # The consent is recorded on the runtime being replaced, never on the
+      # editor, so the next runtime that differs announces itself too.
+      #
+      # A {Lain::Error} for {SocketOwned}'s reason -- exe/lain presents it as a
+      # notice, and what the human needs back is a sentence, not a backtrace.
+      class RuntimeStale < Lain::Error
+        # How much of a digest a human is asked to compare by eye. Enough to be
+        # sure two differ, short enough to read in a sentence -- the same trade
+        # {CLI::ForkPoint} makes for a Store digest.
+        SHOWN = 12
+
+        # @param socket_path [String] the socket the attach was refused at
+        # @param installed [String] the token the loaded runtime published
+        # @param injecting [String] the token this gem's runtime would carry
+        def initialize(socket_path, installed, injecting)
+          super("the nvim listening at #{socket_path} has a lain runtime loaded that this gem did not inject " \
+                "(it reports #{installed.to_s[0, SHOWN]}..., against #{injecting[0, SHOWN]}...) -- an older or " \
+                "newer lain left it there. Running lain again replaces it, which is the whole of the fix for " \
+                "the parts that overlap; what it cannot take back is anything that runtime has and this one " \
+                "does not -- a command it defined, an autocmd it created -- which stays behind wired to a " \
+                "channel that is gone. Quit the editor first if you would rather start clean.")
+        end
+      end
+
       # The outbound half of {RpcThread}'s work: the backlog of not-yet-sent
       # render commands and ITS backpressure. {RpcThread} owns attach, the
       # select loop and inbound dispatch; this owns nothing nvim-shaped except
@@ -964,7 +1008,8 @@ module Lain
 
         # @param socket_path [String] a listening nvim's unix socket
         # @param version [String] the gem version, surfaced by :LainVersion
-        # @param protocol [String] the runtime.lua handshake token (see {PROTOCOL})
+        # @param protocol [String, nil] the runtime.lua handshake token, or nil to
+        #   digest the chunk being injected -- see {Neovim.protocol_of} and {#attach}
         # @param listener [Listener] this thread's hand-offs, bundled into one
         #   object. Every method MUST NOT block this thread: each runs inline
         #   after the microsecond ack, so a listener that needs to do real work
@@ -973,7 +1018,7 @@ module Lain
         #   render queue. Defaults to {Listener::Null}.
         # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY};
         #   overridable so a spec can saturate the queue at a scale that runs fast
-        def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
+        def initialize(socket_path:, version: Lain::VERSION, protocol: nil,
                        listener: Listener::Null.new,
                        render_capacity: RenderQueue::DEFAULT_CAPACITY)
           @socket_path = socket_path
@@ -1083,8 +1128,25 @@ module Lain
           @socket = Socket.unix(@socket_path)
           @connection = ::Neovim::Connection.new(@socket, @socket)
           @client = ::Neovim::Client.from_event_loop(::Neovim::EventLoop.new(@connection))
-          refusal = @client.exec_lua(RUNTIME.source, [@version, @protocol, @client.channel_id])
-          raise SocketOwned.new(@socket_path, refusal["channel"]) unless refusal.nil?
+          source = RUNTIME.source
+          # Root-qualified: `Neovim` inside this body is the gem's module at
+          # every other call site in this file (`::Neovim::Client` below), and
+          # one spelling meaning two things is how that trap bites.
+          token = @protocol || ::Lain::Frontend::Neovim.protocol_of(source)
+          refusal = @client.exec_lua(source, [@version, token, @client.channel_id])
+          refuse(refusal, token) unless refusal.nil?
+        end
+
+        # The two things the injection can decline, kept apart because they are
+        # different news for the human: another lain is IN there, or another
+        # lain's runtime was LEFT there. The token is digested off `source` rather
+        # than off a second {RuntimeLoader#source} call, so it names the exact
+        # bytes nvim was handed and not a re-read that could have changed
+        # underneath.
+        def refuse(refusal, token)
+          raise SocketOwned.new(@socket_path, refusal["channel"]) if refusal["refused"] == "owned"
+
+          raise RuntimeStale.new(@socket_path, refusal["installed"], token)
         end
 
         def serve

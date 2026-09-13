@@ -106,7 +106,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
     @editor = Neovim.attach_unix(socket)
     @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
     example.run
   ensure
     @editor = nil
@@ -903,7 +903,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "captures the global cwd at attach, not whichever window was lcd'd" do
       lua("vim.cmd('lcd docs')")
       lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-          [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+          [Lain::VERSION, described_class.protocol, @editor.channel_id])
 
       open_changeset("docs/guide.txt", guide_old_lines)
 

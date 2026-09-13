@@ -149,7 +149,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
     Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
     @editor = Neovim.attach_unix(socket)
     @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+                     [Lain::VERSION, Lain::Frontend::Neovim.protocol, @editor.channel_id])
     example.run
   ensure
     @editor = nil

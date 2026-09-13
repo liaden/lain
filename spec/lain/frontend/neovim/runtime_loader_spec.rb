@@ -249,7 +249,7 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
     # (one is planned) must not be able to leave this green by accident.
     it "hands the editor the protocol the gem holds" do
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == Lain::Frontend::Neovim::PROTOCOL }
+        wait_until { inspector.get_var("lain_rpc_version") == Lain::Frontend::Neovim.protocol }
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end

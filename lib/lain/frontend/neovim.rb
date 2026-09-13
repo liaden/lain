@@ -22,105 +22,39 @@ module Lain
     # {RpcThread}, sole owner of every nvim call -- one editor thread fed by an
     # inbox, the actor shape the gem's single-threaded session forces.
     class Neovim
-      # The Ruby<->runtime.lua contract version, compared at attach against the
-      # copy hardcoded in runtime.lua (RUNTIME_PROTOCOL). Bump BOTH when the
-      # injected protocol changes -- commands, render entry points, handshake
-      # shape -- and never for a gem release: the gem version is display
-      # (:LainVersion), this is compatibility, and conflating them made every
-      # future gem bump a false mismatch warning.
-      # The history below says WHAT CHANGED and names no card: it is read to date
-      # a change and to tell whether a running runtime has some feature, and a
-      # card id answers neither. The REASONS behind each entry live at the site
-      # that implements it.
-      # "2": :LainReply and the inbox drain autocmd.
-      # "3": the User LainAttach/LainRender events, b:lain_view on every
-      #   lain:// buffer, lain://workspace in the runtime's buffer set, and the
-      #   six documented lain* syntax groups.
-      # "4": the lain://compose round trip -- the set_compose render entry
-      #   point, and the "compose"/"compose_abandon" commands its
-      #   BufWriteCmd/BufUnload autocmds send back.
-      # "5": the review surface -- the open_review/review_refused render entry
-      #   points, :LainAnnotate and :LainReviewDone, and the
-      #   b:lain_review_generation / b:lain_review_epic_slug stamps.
-      # "6": the lain://question round trip -- the set_question render entry
-      #   point, b:lain_question_digest, the question fold predicate, and the
-      #   "question"/"question_abandon" commands. "question" is the FIRST
-      #   command whose answer is not an ack: its response is the write's
-      #   verdict (see {RpcThread#answer}).
-      # "7": the inbox's open gesture -- :LainOpen and the "open" command it
-      #   sends, carrying the CURSOR LINE, with <CR> and `r` both bound to it.
-      # "8": set_view gained an OPTIONAL third argument, the rendering stamp it
-      #   writes to b:lain_view_generation, and "open"'s second argument moved
-      #   from the line COUNT to that stamp.
-      # "9": the changeset review surface. Render entry points
-      #   __lain.set_review, __lain.open_changeset and __lain.set_thread;
-      #   __lain.review_layout / __lain.review_place and the tabpage slots those
-      #   place through; __lain.review_notes_held. Commands
-      #   :LainReviewOpen, :LainNote, :LainNoteDone and :LainThread. A config
-      #   hooking protocol 3 must re-read one thing: b:lain_view no longer names
-      #   a VIEW, since the diff pair's old side carries
-      #   lain://review/OLD/<path> and differs per FILE. Dispatch on
-      #   b:lain_review_side / b:lain_review_revision / b:lain_review_path
-      #   instead -- stamped on both sides of the live pair and WITHDRAWN when
-      #   you move off a file.
-      # "10": :LainReviewMark {state} sends "review_mark" -- the cursor's line,
-      #   the state, and b:lain_view_generation -- bound in lain://review as `x`
-      #   (reviewed) and `u` (unreviewed), ONE KEY PER STATE, because the state
-      #   rides the wire and a toggle computed from a rendering that has since
-      #   moved flips the wrong hunk in silence. :LainReviewVerdict {verdict}
-      #   sends "review_verdict", the first ANSWERED verb outside a review
-      #   buffer: its return leg is what the command fails with, and it names
-      #   Lain::Review::VERDICTS rather than restating the vocabulary in lua. No
-      #   new render entry point -- a refused mark comes back on
-      #   __lain.review_refused.
-      # "11": one lain per editor. The injected chunk now RETURNS -- nil once it
-      #   has loaded, and a refusal table BEFORE it loads anything at all when a
-      #   live RPC channel already owns this editor, which {RpcThread#attach}
-      #   raises as {SocketOwned}. The owner is named by the runtime's
-      #   __lain.channel, this table's first non-function member: the channel id
-      #   was a chunk local nothing could read, so a re-injection silently
-      #   repointed every :Lain* command at a channel that then died.
-      #   LIVENESS, never presence -- a marker left behind by a lain that has
-      #   gone away must not cost the human their editor, so the recorded
-      #   channel is asked of nvim rather than trusted.
-      # "12": the approval surface. Render entry point __lain.set_approval draws
-      #   lain://approval, stamping b:lain_view_generation with the rendering and
-      #   b:lain_approval_rows with how many of its leading lines are answerable
-      #   calls. :LainApprove and :LainDeny answer the call under the cursor,
-      #   bound in that buffer as `y` and `n`; both send the "approval" verb
-      #   carrying the line, the verdict and the stamp. ONE COMMAND PER VERDICT,
-      #   protocol 10's rule for the same reason: the verdict rides the wire,
-      #   because a decision computed from a rendering that has since moved
-      #   answers the neighbouring call in silence. ACKED, never answered -- a
-      #   verdict resolves a promise, which must happen on the reactor, so it
-      #   rides the command inbox to the consumer fiber rather than being served
-      #   on the RPC thread.
-      # "13": __lain.set_review gained a THIRD argument, `sides` -- which of
-      #   {Lain::Review::SIDES} the round presents at all, as a list. A survey of
-      #   files as they stand answers `["new"]`; a changeset answers both,
-      #   including for a file it added. A FACT, never an instruction: the editor
-      #   opens the navigator plus the round's sides and leaves the rest of the
-      #   slot vocabulary unopened. The vocabulary itself is unchanged at
-      #   sidebar/old/new.
-      # "14": __lain.set_approval gained TWO more arguments, `calls` and
-      #   `call_index`, stamping b:lain_approval_calls and
-      #   b:lain_approval_call_index. A wrapped item's command is cut and
-      #   re-indented across several of lain://approval's rendered lines, so a
-      #   reader who reassembles one by joining them gets INDENT lodged
-      #   mid-token; these two variables are the reader's own unbroken copy.
-      #   `calls` is ONE ENTRY PER PARKED CALL, never per row -- msgpack does
-      #   not dedupe shared objects, so a copy per row a wrapped item spans
-      #   made the wire payload quadratic in that call's length. `call_index`
-      #   is b:lain_approval_rows-shaped (one entry per row, 1-based) and
-      #   names which member of `calls` the row resolves to --
-      #   `calls[call_index[N]]` is row N's command in full.
-      # "15": lain://status joins the runtime's BUFFERS set, so the User
-      #   LainAttach payload names it, and it is built with the "markdown"
-      #   filetype rather than the shared "lain" one: it carries a mermaid code
-      #   fence of the epic's issue graph, and markdown is the filetype an
-      #   image plugin draws one under. It rides the existing __lain.set_view
-      #   entry point; no new command.
-      PROTOCOL = "15"
+      # The Ruby<->runtime.lua handshake token for a chunk: a blake3 digest of the
+      # exact bytes that go to `nvim_exec_lua`.
+      #
+      # DERIVED, never declared, and that is the whole of the design. What stood
+      # here was an integer and a hundred lines of changelog, bumped by hand in
+      # two places whenever the injected surface changed -- and a number somebody
+      # has to remember to bump is a number somebody forgets. A digest of the
+      # runtime cannot be forgotten on a change, because a change IS the digest
+      # moving. The fifteen entries it replaced say what each bump bought and are
+      # kept in docs/neovim-protocol-history.md; git has the diffs.
+      #
+      # METHODS rather than a constant, forced: {Lain::Ext} owns blake3 and the
+      # compiled extension loads AFTER `lain/frontend` in lain.rb's manifest, so
+      # there is no moment during this class body at which a digest could be
+      # taken.
+      #
+      # Takes the source rather than reading it, so {RpcThread#attach} can digest
+      # the bytes it holds in its hand instead of a second read that could have
+      # changed underneath -- one rule, and the one place it matters calls it
+      # with what it is actually injecting.
+      #
+      # @param source [String] the chunk as it will be injected
+      # @return [String] 64 hex characters
+      def self.protocol_of(source) = Ext.blake3_hex(source)
+
+      # The token for the runtime as it stands on disk right now.
+      #
+      # Read through the loader on every call rather than memoized, for
+      # {RuntimeLoader#source}'s own reason: the runtime is a thing on disk, not a
+      # thing the process learned at boot.
+      #
+      # @return [String] 64 hex characters
+      def self.protocol = protocol_of(RuntimeLoader.new.source)
 
       # Seconds teardown waits on the resend worker before giving up the join. A
       # bridged offer holds that worker for a whole model round trip, so a bare
@@ -158,7 +92,10 @@ module Lain
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param socket_path [String] a listening nvim's unix socket
       # @param version [String] the gem version, surfaced by :LainVersion
-      # @param protocol [String] the runtime handshake token (see {PROTOCOL})
+      # @param protocol [String, nil] the runtime handshake token. nil is the
+      #   answer -- {RpcThread} digests the bytes it is about to inject, which is
+      #   the only reading that cannot go stale. A String overrides it, which is
+      #   how a spec stands an editor up holding a runtime this gem did not write.
       # @param store [Lain::Store] backs the live Timeline behind
       #   lain://timeline. Defaults to {Buffers::DetachedStore}: an un-wired
       #   frontend renders the timeline as unavailable rather than holding a
@@ -188,7 +125,7 @@ module Lain
       # @param epic [#lines] what lain://status draws: {StatusView::Mounted}
       #   for a chat seated in an epic, which {CLI::Wiring} resolves, and
       #   {StatusView::Unmounted} by default, whose buffer says none is mounted
-      def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
+      def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: nil,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
                      journal: Channel::Null.instance, resend_bridge: Unbridged, epic: StatusView::Unmounted,
                      compose_notify: Compose::SILENT, question_notify: QuestionView::SILENT,

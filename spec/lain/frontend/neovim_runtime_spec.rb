@@ -122,7 +122,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         wait_until { seen["LainAttach"].any? && seen["LainRender"].any? }
 
         attach = seen["LainAttach"].first
-        expect(attach["protocol"]).to eq(described_class::PROTOCOL)
+        expect(attach["protocol"]).to eq(described_class.protocol)
         expect(attach["buffers"]).to match_array(all_views)
 
         # Priming posts every view at attach, so each named buffer announces
@@ -783,213 +783,170 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     Lain::Frontend::Neovim::RuntimeLoader.new.source
   end
 
-  # The Lain-named things that are NOT commands: the two User autocmd patterns a
-  # human's config hooks. Read off their definition sites so the sweeps' exemption
-  # is a property of the runtime rather than of a list somebody remembered to edit.
-  def runtime_events
-    runtime_source.scan(/pattern = "(Lain\w+)"/).flatten.uniq
-  end
+  describe "the runtime digest" do
+    # A GENUINELY STALE RUNTIME: a real lain, whose real `_G.__lain` and real
+    # commands are still installed, injected under a token that is not this gem's,
+    # whose process has since gone away.
+    #
+    # A bare `vim.g.lain_rpc_version` write is NOT this, and the distinction is
+    # the whole of what the gate is for -- a guard that fires on a leftover
+    # variable with no runtime behind it is refusing an editor that has nothing
+    # wrong with it. Every example below that means "stale" uses this.
+    #
+    # `:LainGhost` is the residue the refusal exists to warn about: a command this
+    # runtime defines and ours does not, so re-injection cannot take it away.
+    def install_stale_runtime(token: "OLD-RUNTIME-TOKEN")
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket, protocol: token).run do
+        wait_until { live_protocol == token }
+        inspector.exec_lua("vim.api.nvim_create_user_command('LainGhost', function() end, {}); return true", [])
+      end
+      token
+    end
 
-  describe "protocol lockstep" do
-    it "bumps PROTOCOL to 15 and attaches without a mismatch warning" do
+    # What the RUNTIME says is loaded here, published only once every module has
+    # executed -- as against `g:lain_rpc_version`, which the chunk head stamps
+    # before a single module runs and which therefore says only what was injected.
+    def live_protocol
+      inspector.exec_lua("return type(_G.__lain) == 'table' and _G.__lain.protocol or nil", [])
+    end
+
+    # Through lua, not `get_var`: the gem's `get_var` raises "Key not found" for an
+    # absent global rather than answering nil, and an editor no lain has touched is
+    # the starting state of half these examples.
+    def injected_stamp = inspector.exec_lua("return vim.g.lain_rpc_version", [])
+
+    def ghost? = inspector.exec_lua("return vim.fn.exists(':LainGhost')", []) == 2
+
+    # The token is DERIVED from the bytes injected, so "the two halves agree" is
+    # not a thing anybody maintains -- it is the same expression twice.
+    it "attaches to an editor holding no runtime, stamping it with the digest of what it injected" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "15" }
-        expect(described_class::PROTOCOL).to eq("15")
-        messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
-        expect(messages).not_to include("mismatch")
+        wait_until { live_protocol == described_class.protocol }
+        expect(described_class.protocol).to eq(Lain::Ext.blake3_hex(runtime_source))
+        expect(injected_stamp).to eq(described_class.protocol)
       end
     end
 
-    # The example above cannot see runtime.lua's RUNTIME_PROTOCOL. `g:lain_rpc_version`
-    # is the token the GEM injected, so BOTH of its reads come from PROTOCOL, and a
-    # runtime.lua left behind at "8" satisfies them unchanged -- the absent-warning line
-    # is the only thing tying the two halves together, and an absence is worth nothing
-    # until the warning is known to fire at all. What is new here is the WARNING TEXT:
-    # the attach payload's `data.protocol` (pinned at the top of this file, and
-    # documented for a human's config to trust) already reads the lua half on the happy
-    # path, but nothing exercised the unhappy one. Attaching with a deliberately wrong
-    # token is what makes the mismatch branch run and state its own constant.
-    it "makes the runtime name its own RUNTIME_PROTOCOL when the gem's token is wrong" do
-      frontend = described_class.new(channel:, socket_path: @socket, protocol: "0")
+    # The lua half cannot hold a literal copy of a digest of itself, so what it
+    # compares against is what the runtime IN THIS EDITOR published about itself --
+    # which exists only if a runtime really loaded here.
+    it "refuses an editor whose live runtime was injected from a different source" do
+      stale = install_stale_runtime
 
-      frontend.run do
-        messages = wait_until do
-          out = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
-          out if out.include?("mismatch")
-        end
-        expect(messages).to include(
-          "lain: runtime.lua protocol #{described_class::PROTOCOL} / gem protocol 0 mismatch"
-        )
-      end
+      expect { described_class.new(channel:, socket_path: @socket).run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale, /#{stale[0, 12]}/)
     end
 
-    # The other direction, and the one the pair above cannot state: "0" is BEHIND the
-    # runtime, so every mismatch the suite had seen was a runtime running ahead of its
-    # gem. A gem ahead of its runtime is the shape an upgrade actually takes -- a new
-    # gem attaching to an nvim still holding a cached older chunk -- and it has to warn
-    # just as loudly. The check is equality, not ordering, and this is that sentence.
-    it "warns just as loudly when the gem's token is AHEAD of the runtime's" do
-      frontend = described_class.new(channel:, socket_path: @socket, protocol: "99")
+    # The refusal names the socket, for {SocketOwned}'s reason: the human who has
+    # to act on it is at the terminal that just tried to attach, and a sentence
+    # about "the editor" names nothing they can point at when two are open.
+    it "names the socket and the runtime this gem would have injected" do
+      install_stale_runtime
 
-      frontend.run do
-        messages = wait_until do
-          out = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
-          out if out.include?("mismatch")
-        end
-        expect(messages).to include(
-          "lain: runtime.lua protocol #{described_class::PROTOCOL} / gem protocol 99 mismatch"
-        )
-      end
+      expect { described_class.new(channel:, socket_path: @socket).run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale,
+                        /#{Regexp.escape(@socket)}.*#{described_class.protocol[0, 12]}/m)
     end
 
-    # The number advertises a contract, so the entry that dates it may not name a thing
-    # that does not exist -- an entry claiming a capability the runtime has not got is
-    # worse than no entry, which is the failure this bump was split out to avoid.
-    #
-    # Read off the LIVE runtime, never off the lua source: a `function _G.__lain.x` that
-    # a load-order mistake never installs greps identically to one that works. Two
-    # spellings are checkable and both are swept -- `__lain.name`, and a `Lain*` name
-    # with or WITHOUT its colon, because the panel appended "The LainDiffOpen command
-    # was dropped." to the entry below and a colon-only scan stayed green. The two
-    # Lain-named things that are legitimately not commands are the User autocmd
-    # patterns, and they are subtracted BY SOURCE -- read off the runtime's own
-    # `pattern = "Lain..."` sites -- so the exemption cannot grow by hand.
-    #
-    # The limit, stated so nobody reads more into a green run than it says: a claim
-    # only becomes visible here once it is SPELLED as an entry point or a command. A
-    # bare noun ("the set_thread_soon render entry point") is prose, and no scanner
-    # can tell prose from a claim. The example after this one is what pushes new
-    # entries into the spellings that can be checked.
-    #
-    # Since protocol 11 the table has a member that is NOT a function -- the
-    # ownership marker `__lain.channel` -- so the check is in two parts rather
-    # than one. EXISTENCE is what the sweep is for and it binds on every name;
-    # the stricter "and it is callable" binds on exactly the names the runtime
-    # publishes with `function _G.__lain.`, read off the source so the exemption
-    # is one datum and cannot grow by hand into "anything that is there".
-    it "names, in its history, only entry points and commands the runtime really has" do
-      history = protocol_history.values.join
-      members = history.scan(/__lain\.(\w+)/).flatten.uniq
-      commands = history.scan(/\bLain[A-Z]\w+\b/).uniq - runtime_events
-      expect(members).not_to be_empty
-      expect(commands).not_to be_empty
+    # THE GATE. `g:lain_rpc_version` outlives the runtime that set it -- a `:source`
+    # of somebody's config, a plugin, an editor that was attached and had its
+    # `_G.__lain` cleared -- and a leftover variable is not a stale runtime. Refusing
+    # on one costs a human their editor over litter.
+    it "does not refuse on a leftover stamp with no runtime behind it" do
+      inspector.exec_lua("vim.g.lain_rpc_version = ('0'):rep(64); return true", [])
 
       frontend = described_class.new(channel:, socket_path: @socket)
-      frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == described_class::PROTOCOL }
-        kinds = members.to_h { |name| [name, inspector.exec_lua("return type(_G.__lain[...])", [name])] }
-        absent = kinds.select { |_, kind| kind == "nil" }.keys
-        expect(absent).to be_empty, "history names __lain members the runtime has not got: #{absent.inspect}"
-        published = runtime_source.scan(/function _G\.__lain\.(\w+)/).flatten.uniq
-        miscast = kinds.select { |name, kind| published.include?(name) && kind != "function" }.keys
-        expect(miscast).to be_empty, "history names entry points the runtime has not got as functions: #{miscast}"
-        # 2 is an exact full match; 3 is "matches several", which a name that is a
-        # PREFIX of two others answers without being a command itself. It is EXISTENCE,
-        # not health -- a command whose body raises answers 2 as happily as one that
-        # works -- which is the right scope for a handshake and no more than that.
-        undefined = commands.reject { |name| inspector.exec_lua("return vim.fn.exists(':' .. ...)", [name]) == 2 }
-        expect(undefined).to be_empty, "history names commands the runtime has not got: #{undefined.inspect}"
+      frontend.run do |handle|
+        inspector.command("LainReply over the litter")
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["over the litter"]])
       end
     end
 
-    # The convention the sweep above rests on, mechanised rather than described.
-    # Entries 2..8 wrote their entry points bare (`set_view`), which no scanner can
-    # tell from prose; from 9 on they carry the `__lain.` prefix, and that prefix is
-    # the whole reason the sweep can see anything. Stated as a comment it was a rule
-    # nothing enforced -- the same shape as the history block's own "a history that
-    # SKIPS a version is worse than none", which also went unasserted until the panel
-    # looked.
+    # PROPORTIONALITY, and it is the whole of why refusing is affordable. The digest
+    # moves on every edit to any runtime module, so a guard that latched would cost
+    # a developer their editor each time they touched a line of lua. It announces
+    # ONCE and the re-run is the consent.
     #
-    # Only multi-word names are checked, and deliberately: `render` and `tick` are
-    # published entry points AND ordinary English, so a scan for them bare would fire
-    # on prose. A snake_case name in a comment is never anything but the function.
-    it "spells every entry point it names with its __lain. prefix, from 9 on" do
-      published = runtime_source.scan(/function _G\.__lain\.(\w+)/).flatten.uniq.grep(/_/)
-      expect(published).not_to be_empty
+    # And it clears a PRIVATE flag to do it, never `g:lain_rpc_version`: that
+    # variable is published surface, and the shipped plugin reads it to decide
+    # whether an editor is attached at all (`plugin/nvim/lua/lain/init.lua`). An
+    # earlier draft cleared it and left :LainStart telling an attached human their
+    # editor was not attached.
+    it "announces once, leaves the published stamp alone, and attaches on the re-run" do
+      stale = install_stale_runtime
 
-      bare = protocol_history.filter_map do |version, entry|
-        named = published.select { |name| entry.match?(/(?<!__lain\.)\b#{name}\b/) }
-        [version, named] if version.to_i >= 9 && named.any?
+      expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
+      expect(injected_stamp).to eq(stale)
+
+      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend.run do |handle|
+        inspector.command("LainReply reclaimed")
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["reclaimed"]])
       end
-      expect(bare).to be_empty,
-                      "history entries name entry points without the __lain. prefix the sweep reads: #{bare.inspect}"
+      expect(live_protocol).to eq(described_class.protocol)
     end
 
-    # The four the review surface added. Written down rather than derived, because
-    # "what protocol 9 added" is a fact about HISTORY -- git knows it, the running
-    # runtime does not, and a spec that shells out to git to decide what to assert is
-    # worse than a list. The example above is what keeps the list honest: a name here
-    # that the runtime lacks fails there, by name.
-    it "records in its history what protocol 9 actually bought" do
-      entry = protocol_history["9"]
-      expect(entry).not_to be_nil, "no \"9\" entry: a history that SKIPS a version is worse than none"
-      %w[LainReviewOpen LainNote LainNoteDone LainThread].each do |command|
-        expect(entry).to include(":#{command}")
+    # WHAT THE ANNOUNCEMENT IS AND IS NOT, said out loud so nobody reads more into
+    # it later. Re-injection replaces everything the new chunk defines and every
+    # augroup in it is `clear = true`, so what survives is exactly what the newer
+    # runtime no longer has -- and it survives the consented re-attach too. This is
+    # a WARNING that an editor is carrying another lain's leavings, not a repair of
+    # them; the repair is quitting nvim, which is what the sentence says.
+    it "does not pretend the consented re-attach removes the older runtime's leavings" do
+      install_stale_runtime
+      expect(ghost?).to be(true)
+
+      expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
+      described_class.new(channel:, socket_path: @socket).run { wait_until { owner_channel } }
+
+      expect(ghost?).to be(true)
+    end
+
+    # The half a one-shot gets wrong if it records its consent against the EDITOR
+    # rather than against the runtime it consented to replace: a guard that fires
+    # once and is then permanently satisfied is not a guard at all past its first
+    # use. The flag is cleared when a runtime installs, so the NEXT difference
+    # announces itself too.
+    it "announces again the next time the runtime differs, rather than staying satisfied" do
+      install_stale_runtime
+
+      expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { wait_until { owner_channel } }
+
+      expect { described_class.new(channel:, socket_path: @socket, protocol: "A-THIRD-RUNTIME").run { nil } }
+        .to raise_error(Lain::Frontend::Neovim::RuntimeStale, /#{described_class.protocol[0, 12]}/)
+    end
+
+    # The ordinary case -- the human quits lain and starts another one in the same
+    # editor -- and it must cost nothing at all.
+    it "attaches over a runtime injected from the SAME source, saying nothing" do
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { wait_until { owner_channel } }
+
+      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend.run do |handle|
+        inspector.command("LainReply same source")
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["same source"]])
       end
-      %w[set_review open_changeset set_thread].each do |point|
-        expect(entry).to include("__lain.#{point}")
+    end
+
+    # Ownership is settled BEFORE the digest, and the order is the contract: a live
+    # lain's editor must be left exactly as it was found, and the stale check writes
+    # a flag, which is still a write.
+    it "refuses a live owner by channel, whatever the runtimes say" do
+      first = described_class.new(channel:, socket_path: @socket)
+
+      first.run do
+        wait_until { owner_channel }
+
+        expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket, protocol: "OTHER").run { nil } }
+          .to raise_error(Lain::Frontend::Neovim::SocketOwned)
+        expect(live_protocol).to eq(described_class.protocol)
       end
-      # Two documentation corrections, which are the reason this bump owed more
-      # than a number: b:lain_view stopped naming a view, and the review pair's stamps
-      # are what a gesture reads instead of parsing a buffer name apart.
-      expect(entry).to include("b:lain_view").and include("b:lain_review_side")
-    end
-
-    # The example above's shape, for the protocol 10 bump. Written down for its
-    # reason -- "what protocol 10 added" is a fact about HISTORY, which the
-    # running runtime does not know -- and kept honest by the same two sweeps: a
-    # command named here that the runtime does not define fails the doc sweep in
-    # `spec/plugin/nvim_plugin_spec.rb`, and an entry has to exist at all because
-    # `neovim_spec.rb` pins one per version up to the constant.
-    #
-    # The STATES are read off `Review::MARK_STATES` rather than typed out. An
-    # entry naming `x` and `u` without saying which state each key sends would
-    # document the keys and lose the card: there are two keys precisely because
-    # the state rides the wire, so an entry a TOGGLE would also satisfy has not
-    # recorded the change.
-    it "records in its history what protocol 10 actually bought" do
-      entry = protocol_history["10"]
-      expect(entry).not_to be_nil, "no \"10\" entry: a history that SKIPS a version is worse than none"
-      %w[LainReviewMark LainReviewVerdict].each { |command| expect(entry).to include(":#{command}") }
-      %w[review_mark review_verdict].each { |verb| expect(entry).to include(verb) }
-      expect(entry).to include(*Lain::Review::MARK_STATES).and include("Lain::Review::VERDICTS")
-    end
-
-    # The protocol 11 bump, in the shape the two above use. What it has to record is a
-    # DISTINCTION and not a feature: an entry saying only "a second attach is
-    # refused" is satisfied by the implementation that refuses on presence, and
-    # that one costs a human their editor for as long as one lain has ever
-    # crashed in it. So the entry names the marker, and names liveness.
-    it "records in its history what protocol 11 actually bought" do
-      entry = protocol_history["11"]
-      expect(entry).not_to be_nil, "no \"11\" entry: a history that SKIPS a version is worse than none"
-      expect(entry).to include("__lain.channel").and include("SocketOwned")
-      expect(entry).to match(/LIVENESS, never presence/i)
-    end
-
-    # The protocol 12 bump, in the shape the three above use. What it has to record is
-    # again a DISTINCTION rather than a feature, and there are two.
-    #
-    # A key PER VERDICT: an entry saying only "the editor can answer approvals"
-    # is satisfied by a toggle key that computes the verdict from the rendering
-    # on screen, which answers the neighbouring call the moment the list has
-    # moved -- silently, both values being legal. So the entry names both
-    # commands and says the verdict rides the wire.
-    #
-    # ACKED and not ANSWERED: the two rails a gesture can take differ in which
-    # THREAD serves it, and this one has to ride the inbox because deciding
-    # resolves a promise. An entry that did not say so would leave the next card
-    # free to "simplify" it onto the answered rail, where it would block the RPC
-    # thread on the reactor -- a stop condition this project has hit twice.
-    it "records in its history what protocol 12 actually bought" do
-      entry = protocol_history["12"]
-      expect(entry).not_to be_nil, "no \"12\" entry: a history that SKIPS a version is worse than none"
-      expect(entry).to include("__lain.set_approval").and include("b:lain_approval_rows")
-      %w[LainApprove LainDeny].each { |command| expect(entry).to include(":#{command}") }
-      expect(entry).to match(/verdict rides the wire/i)
-      expect(entry).to match(/acked, never answered/i)
     end
   end
 

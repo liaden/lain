@@ -22,6 +22,19 @@
 --
 -- Injected args: the gem version (display only, surfaced by :LainVersion), the
 -- protocol token (compatibility), and the RPC channel id to call back on.
+--
+-- The protocol token is a DIGEST of the WHOLE INJECTED CHUNK -- this head plus
+-- every `runtime/NN_*.lua` after it, which is what the loader concatenates and
+-- what nvim is handed -- taken by the Ruby half over exactly those bytes. Not of
+-- this file: a digest of the head alone would move for none of the twenty-three
+-- modules that carry the surface.
+--
+-- It used to be an integer written out twice, once here and once in Ruby, bumped
+-- in lockstep by hand -- and a number two files have to agree on is a number one
+-- of them forgets. A digest cannot be forgotten, because a change to any module
+-- IS the digest moving. What it costs is that this file can hold no literal copy
+-- to compare against, so what it compares against is what the runtime already in
+-- this editor published about itself (`__lain.protocol`, below).
 local gem_version, protocol, chan = ...
 
 -- ONE LAIN PER EDITOR, settled before a single other line of this chunk runs.
@@ -62,17 +75,50 @@ if owner ~= chan and channel_alive(owner) then
   return { refused = "owned", channel = owner }
 end
 
--- The Ruby<->runtime contract version: the twin of Frontend::Neovim::PROTOCOL.
--- Bumped in lockstep with it when the injected protocol changes -- never for a
--- gem release, which is why the handshake does not compare gem versions. A
--- mismatch WARNS and keeps going: a stale editor half-works (commands still
--- fire, renders still land) rather than crashing the human's session outright.
-local RUNTIME_PROTOCOL = "15"
-if protocol ~= RUNTIME_PROTOCOL then
-  vim.api.nvim_echo({
-    { "lain: runtime.lua protocol " .. RUNTIME_PROTOCOL .. " / gem protocol " .. tostring(protocol) .. " mismatch", "WarningMsg" },
-  }, true, {})
+-- A RUNTIME FROM ANOTHER LAIN, AND THE ONE ANNOUNCEMENT ABOUT IT. Settled
+-- second, after ownership, never before it.
+--
+-- NOT an invariant, and the heading above deliberately does not claim one. `ONE
+-- LAIN PER EDITOR` is enforced: it latches, it cannot be cleared by re-running,
+-- and two lains never coexist. This is a one-shot ANNOUNCEMENT, and after it the
+-- two runtimes do coexist -- see below for why that is the right trade and what
+-- it does not buy.
+--
+-- WHAT IS CHECKED is a runtime that is really here: `_G.__lain.protocol`, which
+-- `99_attach.lua` publishes after every module above it has executed. Not
+-- `g:lain_rpc_version`, which the line below stamps before a single module runs
+-- and which outlives any runtime that set it -- a `:source` of a config, a
+-- cleared `_G.__lain`, an editor somebody tidied. A leftover variable is not a
+-- stale runtime, and refusing on one costs a human their editor over litter.
+--
+-- WHAT IT BUYS is that somebody is told. Re-injection replaces everything this
+-- chunk defines and every augroup in it is `clear = true`, so what survives is
+-- exactly what the newer runtime no longer has: a command it dropped, an autocmd
+-- it stopped creating, still wired to a channel that died. That residue survives
+-- the consented re-attach too. Telling the human is the whole of the value; the
+-- repair is quitting nvim, which is what the sentence Ruby raises says.
+--
+-- ANNOUNCED ONCE, because the token moves on every edit to any module: a guard
+-- that latched would cost a developer their editor each time they touched a line
+-- of lua, which is worse than the integer this replaced. The consent is recorded
+-- on THIS RUNTIME (`stale_announced`, cleared the moment a runtime finishes
+-- installing) rather than on the editor, so the next time a runtime differs it
+-- announces itself too instead of being permanently satisfied.
+--
+-- Nothing published is touched on the way out. Ownership above returns before
+-- this line for exactly that reason: a live lain's editor must be left as it was
+-- found, and setting a flag is still a write.
+local live = type(_G.__lain) == "table" and _G.__lain or nil
+if live ~= nil and live.protocol ~= nil and live.protocol ~= protocol and not live.stale_announced then
+  live.stale_announced = true
+  return { refused = "stale", installed = live.protocol }
 end
+
+-- The token the gem INJECTED, stamped before the modules load and never cleared
+-- by anything here. Published surface: the shipped plugin reads it to decide
+-- whether an editor has been attached at all, so a refusal that deleted it would
+-- leave :LainStart telling an attached human their editor was not attached.
+-- What the runtime actually RUNNING here speaks is `__lain.protocol`.
 vim.g.lain_rpc_version = protocol
 
 -- The one namespace every module publishes through, declared HERE rather than in
