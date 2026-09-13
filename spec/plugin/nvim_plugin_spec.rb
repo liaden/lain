@@ -271,6 +271,28 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(lua("return require('lain').status()")).to eq("cache" => "warm", "inbox" => 2)
     end
 
+    # The HUD arrives ALREADY RENDERED in the published struct, so a lualine
+    # component asks for a string rather than re-deriving a glyph, a deadline
+    # comparison and a clamped percentage in Lua. That derivation lives in
+    # Lain::StatusFeed::Reading, once, and nothing here carries a copy of it.
+    it "hud() returns the published line, and nothing when none has been published" do
+      boot_nvim
+      expect(lua("return require('lain').hud()")).to be_nil
+
+      publish("inbox_count" => 2, "hud" => "\u{1F525} fleet:1 inbox:2 ")
+
+      expect(lua("return require('lain').hud()")).to eq("\u{1F525} fleet:1 inbox:2 ")
+    end
+
+    # A state file from a lain too old to publish the line: absence, not an
+    # error and not a half-derived guess.
+    it "hud() answers nothing for a state file carrying no published line" do
+      boot_nvim
+      publish("inbox_count" => 2)
+
+      expect(lua("return require('lain').hud()")).to be_nil
+    end
+
     # AC: given a session whose state file lives outside the project, the
     # plugin's own resolver names THAT file -- not merely "some path".
     it "state_path() resolves to the file at the new XDG location" do

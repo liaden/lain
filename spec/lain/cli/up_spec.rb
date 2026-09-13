@@ -26,7 +26,7 @@ load File.expand_path("../../../exe/lain", __dir__)
 #   (never fails) when no tmux binary is on PATH -- an environment gap, not a
 #   lain regression, the same idiom spec/support/tags.rb uses for :nvim.
 # * "degrading loudly" injects a FAKE shell_out_factory, so the no-tmux /
-#   broken-tmux / no-jq scenarios run on every machine regardless of what is
+#   broken-tmux / no-nvim scenarios run on every machine regardless of what is
 #   actually installed there.
 #
 # A Mixlib::ShellOut double satisfying the one duck #run exercises:
@@ -79,9 +79,14 @@ RSpec.describe Lain::CLI::Up do
 
     after { system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL) }
 
+    # The status job prints a FIELD now, so a fixture has to carry the one a
+    # real publish would have stamped -- composed through the same object
+    # StatusFeed composes it with, so a fixture cannot agree with a renderer
+    # that both got wrong.
     def write_state(cache_deadline:, fleet:, inbox_count:)
-      File.write(state_path, JSON.generate({ "cache_deadline" => cache_deadline, "fleet" => fleet,
-                                             "inbox_count" => inbox_count }))
+      struct = { "cache_deadline" => cache_deadline, "fleet" => fleet, "inbox_count" => inbox_count }
+      File.write(state_path,
+                 JSON.generate(struct.merge("hud" => Lain::StatusFeed::Reading.new(struct).hud(now: Time.now))))
     end
 
     def tmux(*args) = Open3.capture2("tmux", "-L", socket, *args).first.strip
@@ -128,9 +133,9 @@ RSpec.describe Lain::CLI::Up do
 
     it "never blanks the HUD before StatusFeed's first publish (state.json not written yet)" do
       # No write_state call: this is the ordinary fresh-`up` window, before
-      # any turn has run and StatusFeed has ever published. jq fails
-      # (nonzero, no such file) -- the assertion on the raw option value is
-      # deterministic (no reliance on tmux's async status-bar refresh
+      # any turn has run and StatusFeed has ever published. The extractor
+      # finds nothing (no such file) -- the assertion on the raw option value
+      # is deterministic (no reliance on tmux's async status-bar refresh
       # timing); the live-render check below reuses #eval_status_job for the
       # same reason the other examples do.
       up.call
@@ -218,7 +223,7 @@ RSpec.describe Lain::CLI::Up do
     # gone before anything can be read) and a server that exited under us.
     # Either way the answer is "could not tell", and a diagnostic that cannot
     # answer must not close the cockpit -- the rule {#keep_failed_pane} and the
-    # jq fallback already follow.
+    # status job's own never-blank fallback already follow.
     it "launches anyway when tmux will not say whether the pane died -- a diagnostic never fails `lain up`" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       mute_probe = lambda do |*args|
@@ -517,17 +522,18 @@ RSpec.describe Lain::CLI::Up do
     it "orders messages as warnings first, the announcement last" do
       # has-session must miss (nonzero) so #call actually creates -- the
       # announcement under test is "created", not "reattaching".
-      no_jq = lambda do |*args|
-        raise Errno::ENOENT, "no such file or directory - jq" if args.first == "jq"
+      no_nvim = lambda do |*args|
+        raise Errno::ENOENT, "no such file or directory - nvim" if args.first == "nvim"
 
         FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
       end
 
-      plan = described_class.new(session: "lain", state_path:, shell_out_factory: no_jq).launch_plan(nested: false)
+      plan = described_class.new(session: "lain", state_path:, nvim: true,
+                                 shell_out_factory: no_nvim).launch_plan(nested: false)
 
       expect(plan.messages).to eq(
-        ["jq not found on PATH -- status-right falls back to raw state.json " \
-         "(install jq for the formatted warmth/fleet/inbox HUD)",
+        ["nvim not found on PATH -- opening the plain chat window instead of the cockpit " \
+         "(install neovim for the editor pane, or pass --no-nvim to stop asking)",
          "HUD state: #{state_path}",
          "created tmux session 'lain'"]
       )
@@ -901,7 +907,7 @@ RSpec.describe Lain::CLI::Up do
     def run_up(calls, chat_args: [], preflight: FakeShellOut.new(0, ""), session_exists: false, **keywords)
       spy = lambda do |*args|
         calls << args
-        # Only the launching binary gets the example's answer: `jq --version`
+        # Only the launching binary gets the example's answer: `nvim --version`
         # comes through the same factory, and handing IT a refusal would prove
         # the wrong thing.
         others = FakeShellOut.new(args[1] == "has-session" && !session_exists ? 1 : 0, "")
@@ -910,9 +916,9 @@ RSpec.describe Lain::CLI::Up do
       described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy, **keywords).call
     end
 
-    # By the BINARY, not by "the call that is not tmux": `jq` and `nvim` are
-    # probed through the same factory, and a helper that matched either of
-    # those would pass for the wrong reason.
+    # By the BINARY, not by "the call that is not tmux": `nvim` is probed
+    # through the same factory, and a helper that matched it would pass for the
+    # wrong reason.
     def preflight_call(calls) = calls.find { |args| args.first == $PROGRAM_NAME }
 
     # The raised object, for the examples that assert on the message rather
@@ -1075,7 +1081,7 @@ RSpec.describe Lain::CLI::Up do
 
     # Told apart by tmux VERB rather than by binary: the corpse probe is
     # `display-message`, its capture is `capture-pane`, and `has-session`
-    # drives the create-vs-reattach branch. `jq --version` falls to the same
+    # drives the create-vs-reattach branch. `nvim --version` falls to the same
     # else-branch as the ordinary tmux calls, which is what it wants (present,
     # exit 0). The pre-flight is stubbed out entirely -- the construction-refusal
     # group above is where it is exercised, and the real one would spawn rspec.
@@ -1346,24 +1352,24 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # Covered indirectly by every nvim/jq degrade example above, and directly
+  # Covered indirectly by every nvim degrade example above, and directly
   # here, because the indirect coverage all runs through `Up` and so pins the
   # DECISIONS rather than the probe. The probe is where the one interesting
   # rule lives: a binary that is not installed is a degrade, never an error.
-  describe "Binaries, the PATH probe the HUD and the cockpit share" do
+  describe "Binaries, the PATH probe the cockpit uses" do
     def probing(answer)
       calls = []
       present = described_class::Binaries.new(shell_out_factory: lambda { |*args|
         calls << args
         answer.respond_to?(:call) ? answer.call : answer
-      }).present?("jq")
+      }).present?("nvim")
       [present, calls]
     end
 
     it "asks with --version, which is the one flag every such binary has and none does work for" do
       _, calls = probing(FakeShellOut.new(0, ""))
 
-      expect(calls).to eq([%w[jq --version]])
+      expect(calls).to eq([%w[nvim --version]])
     end
 
     it "answers true when the binary is there and answers" do
@@ -1377,10 +1383,10 @@ RSpec.describe Lain::CLI::Up do
     end
 
     # THE rule, and the reason this is an object rather than a line: `lain up`
-    # must open a cockpit on a machine with no jq and no nvim. An ENOENT that
-    # escaped here would fail the launch over a status bar.
+    # must open a cockpit on a machine with no nvim at all. An ENOENT that
+    # escaped here would fail the launch over a missing editor.
     it "answers false rather than raising when the binary is not on PATH at all" do
-      expect(probing(-> { raise Errno::ENOENT, "jq" }).first).to be false
+      expect(probing(-> { raise Errno::ENOENT, "nvim" }).first).to be false
     end
   end
 
@@ -1650,117 +1656,54 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # The HUD's own render, driven straight through `sh` rather than through
-  # a tmux server, so the new StatusFeed fields are pinned on every machine
-  # that has jq -- not only on one that also has tmux. The filter under test is
-  # the SAME Up::Hud::JQ_FILTER the tmux plugin script embeds byte-for-byte
-  # (spec/plugin/tmux_plugin_spec.rb pins that), so one render is one HUD.
-  describe "Hud, rendering the state feed's fields" do
-    def jq_present? = system("jq", "--version", out: File::NULL, err: File::NULL)
-
-    before { skip("jq not found on PATH") unless jq_present? }
-
+  # The HUD's own job, driven straight through `sh` rather than through a tmux
+  # server, so it is pinned on every machine rather than only on one that also
+  # has tmux. What the job DOES is read one field: StatusFeed publishes the line
+  # already rendered, and every segment of it is pinned in
+  # spec/lain/status_feed/reading_spec.rb -- so what is left to prove here is
+  # that this renderer prints what a real feed wrote, and says so honestly when
+  # there is nothing to print.
+  describe "Hud, printing the line the state feed published" do
     around do |example|
       Dir.mktmpdir { |dir| @state_dir = dir and example.run }
     end
 
     let(:state_path) { File.join(@state_dir, "state.json") }
 
-    def render(state)
-      File.write(state_path, JSON.generate(state))
-      value, = Lain::CLI::Up::Hud.new(state_path:).status_right(jq_present: true)
-      eval_status_job(value)
+    def job = Lain::CLI::Up::Hud.new(state_path:).status_right
+
+    # A REAL StatusFeed at the very path the job is handed -- real JSON, real
+    # emoji, a real atomic publish. This is what replaced the byte-for-byte
+    # comparison against the jq filter the shipped plugin script embedded: the
+    # two renderers agree because there is one line and both print it, and that
+    # is checkable end to end rather than by diffing two program texts.
+    it "prints the line a real StatusFeed published" do
+      now = Time.utc(2026, 9, 13, 12, 0, 0)
+      feed = Lain::StatusFeed.new(path: state_path, clock: -> { now })
+      feed << Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-a", from: "parent", to: nil)
+
+      expect(eval_status_job(job)).to eq(feed.state["hud"].strip)
+      expect(eval_status_job(job)).to eq("\u2744 fleet:1 inbox:0")
     end
 
-    # The HUD's trailing space is the one thing `eval_status_job` (and every other
-    # example here) deliberately strips, so the padding gets its own unstripped
-    # render rather than a `.strip` removed from the shared helper.
-    def render_raw(state)
-      File.write(state_path, JSON.generate(state))
-      value, = Lain::CLI::Up::Hud.new(state_path:).status_right(jq_present: true)
-      job = value.strip.delete_prefix("#(").delete_suffix(")")
-      Open3.capture3("sh", "-c", job).first.chomp
+    # The never-blank contract, at both of the two ways there is nothing to
+    # print: no file at all (the ordinary fresh `up` window, before the first
+    # publish) and a file from a lain too old to publish the field.
+    it "says so in words rather than blanking, when there is no line to print" do
+      expect(eval_status_job(job)).to eq("lain: no state yet")
+
+      File.write(state_path, JSON.generate({ "cache_deadline" => nil, "fleet" => [], "inbox_count" => 0 }))
+
+      expect(eval_status_job(job)).to eq("lain: no state yet")
     end
 
-    def warm_state(**overrides)
-      { "cache_deadline" => (Time.now + 300).utc.iso8601, "fleet" => %w[a b], "inbox_count" => 3 }.merge(overrides)
-    end
-
-    it "names both a pending approval and the context occupancy" do
-      out = render(warm_state("approvals_pending" => 1, "occupancy" => 0.34))
-
-      expect(out).to eq("🔥 fleet:2 inbox:3 approve:1 ctx:34%")
-    end
-
-    # A state written before these fields existed (an older `lain`, a
-    # hand-written fixture, the pre-first-turn publish where occupancy is
-    # genuinely absent) must render the line it always did -- a HUD that says
-    # "approve:0 ctx:--" on every quiet chat is noise, not information.
-    it "says nothing about either when the state carries neither" do
-      expect(render(warm_state)).to eq("🔥 fleet:2 inbox:3")
-    end
-
-    it "stays quiet about approvals while none are parked" do
-      expect(render(warm_state("approvals_pending" => 0, "occupancy" => nil))).to eq("🔥 fleet:2 inbox:3")
-    end
-
-    it "renders a genuinely empty context as 0%, since only ABSENCE is silent" do
-      expect(render(warm_state("occupancy" => 0.0))).to eq("🔥 fleet:2 inbox:3 ctx:0%")
-    end
-
-    # StatusFeed publishes used/window, and a ratio above 1.0 is a NORMAL
-    # published value rather than a defect. A live chat now divides by the
-    # window its provider says it is serving ({CLI::Backend#context_window}), so
-    # this is rarer than it was -- but a model no book carries and no server
-    # reports on still falls to {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192,
-    # which is deliberately small so compaction fires early rather than never.
-    # "ctx:244%" is what an unclamped filter would then put on a status bar.
-    it "clamps a ratio above 1.0 rather than rendering a nonsense percentage" do
-      expect(render(warm_state("occupancy" => 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100%")
-    end
-
-    # The mode. StatusFeed publishes the lighter already composed, so this
-    # filter carries no copy of the posture/layer ladder and no comparison
-    # against the default posture's NAME -- "silent under accept_edits" is one
-    # rule, declared once, in Mode::Posture.
-    it "names the posture and every active layer through the composed lighter" do
-      expect(render(warm_state("mode_lighter" => "MAN AA"))).to eq("🔥 fleet:2 inbox:3 MAN AA")
-    end
-
-    it "says nothing about the mode under the default posture, whose lighter is empty" do
-      expect(render(warm_state("mode_lighter" => ""))).to eq("🔥 fleet:2 inbox:3")
-    end
-
-    it "says nothing about the mode before the first switch, when the key is absent" do
-      expect(render(warm_state("posture" => nil, "mode_lighter" => nil))).to eq("🔥 fleet:2 inbox:3")
-    end
-
-    # This session's spend on this key. Labelled `session:` rather than
-    # `usage:` on purpose -- the number is what THIS process paid, and another
-    # client on the same subscription is invisible to it, so the label may not
-    # read as the plan's consumption.
-    it "names the session's cumulative token spend" do
-      expect(render(warm_state("run_tokens" => 27_997))).to eq("🔥 fleet:2 inbox:3 run:27997")
-    end
-
-    it "stays quiet before the first turn, when no tokens have been spent at all" do
-      expect(render(warm_state("run_tokens" => nil))).to eq("🔥 fleet:2 inbox:3")
-    end
-
-    # A genuinely zero spend is a real reading, not an absence -- the same
-    # distinction the occupancy segment draws, and only ABSENCE is silent.
-    it "renders a zero spend, since only ABSENCE is silent" do
-      expect(render(warm_state("run_tokens" => 0))).to eq("🔥 fleet:2 inbox:3 run:0")
-    end
-
-    # The line's last character was the `%` of `ctx:NN%`, hard against the
-    # right edge of the bar. The pad is the LAST thing the filter concatenates,
-    # so it is there whatever the optional segments did -- and it lives inside
-    # the jq expression rather than on the tmux option value, where trailing
-    # whitespace is the more fragile of the two.
-    it "ends with exactly one trailing space, so the bar has room to breathe" do
-      expect(render_raw(warm_state("occupancy" => 0.34))).to eq("🔥 fleet:2 inbox:3 ctx:34% ")
-      expect(render_raw(warm_state)).to eq("🔥 fleet:2 inbox:3 ")
+    # The `$`-free rule the constant's own comment argues: tmux 3.4 stores a
+    # dollar in an option value escaped, and the job it later hands the shell is
+    # then a syntax error the `2>/dev/null` swallows -- a permanent "no state
+    # yet" on Ubuntu 24.04 and every GitHub runner.
+    it "names no shell variable, and no filter program" do
+      expect(job).not_to include("$")
+      expect(job).not_to include("jq")
     end
   end
 
@@ -1790,20 +1733,19 @@ RSpec.describe Lain::CLI::Up do
         .to raise_error(Lain::CLI::Up::TmuxUnavailable, %r{no/such/socket})
     end
 
-    it "warns namedly and falls back to a jq-free status formatter when jq is missing" do
+    # The jq probe is gone with the filter: the status job needs no optional
+    # binary, so there is no degraded HUD left to warn about. What survives is
+    # the claim that mattered -- the option value names the state file and no
+    # program that could be missing from a box.
+    it "writes a status-right that names the state file and depends on no optional binary" do
       calls = []
-      no_jq = lambda do |*args|
-        calls << args
-        raise Errno::ENOENT, "no such file or directory - jq" if args.first == "jq"
+      spy = ->(*args) { calls << args and FakeShellOut.new(0, "") }
 
-        FakeShellOut.new(0, "")
-      end
+      report = described_class.new(state_path:, shell_out_factory: spy).call
 
-      report = described_class.new(state_path:, shell_out_factory: no_jq).call
-
-      expect(report.warnings.join).to match(/jq/i)
-      status_right_call = calls.find { |args| args.include?("status-right") }
-      status_right_value = status_right_call.last
+      expect(report.warnings).to be_empty
+      expect(calls).not_to include(%w[jq --version])
+      status_right_value = calls.find { |args| args.include?("status-right") }.last
       expect(status_right_value).not_to include("jq")
       expect(status_right_value).to include(state_path)
     end
@@ -2253,7 +2195,7 @@ end
 # session keeps its own) -- the same session-scoped rule the HUD options and
 # `monitor-bell` already follow.
 RSpec.describe Lain::CLI::Up, "the size of the session it creates" do
-  # Nothing here opens it -- the HUD only composes a jq command around the path
+  # Nothing here opens it -- the HUD only composes a shell job around the path
   # -- but it is spelled through `Dir.tmpdir` rather than a literal `/tmp`
   # anyway, because in this repo TMPDIR is a decision (it has to share a
   # filesystem with the checkout) and a hardcoded `/tmp` is a bad pattern for

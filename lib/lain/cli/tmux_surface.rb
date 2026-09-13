@@ -62,11 +62,12 @@ module Lain
         def initialize(target:, status:) = super(target: -target, status:)
       end
 
-      # tmux's OWN `#{...}` format-string syntax (`man tmux` FORMATS), not
-      # Ruby interpolation -- the identical trap {Up::Hud::JQ_FILTER}'s comment
-      # documents for jq's `\(...)`. Named constants (rather than inline
-      # literals) so the `rubocop:disable` covers exactly these two strings,
-      # nowhere else.
+      # tmux's OWN `#{...}` format-string syntax (`man tmux` FORMATS), not Ruby
+      # interpolation. A single-quoted literal is the whole defence, and it has
+      # to stay one: the moment a `"` goes round one of these, Ruby tries to
+      # interpolate the name inside it and the file stops loading.
+      # Named constants (rather than inline literals) so the `rubocop:disable`
+      # covers exactly these strings, nowhere else.
       COMMAND_LIST_NAME_FORMAT = '#{command_list_name}' # rubocop:disable Lint/InterpolationCheck
       CLIENT_CONTROL_MODE_FORMAT = '#{client_control_mode}' # rubocop:disable Lint/InterpolationCheck
       PANE_DEATH_FORMAT = '#{pane_dead}:#{pane_dead_status}' # rubocop:disable Lint/InterpolationCheck

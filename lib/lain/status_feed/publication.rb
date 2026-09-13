@@ -14,8 +14,8 @@ module Lain
     # directory (so the rename is a same-filesystem, single-inode-swap
     # operation), and only `File.rename` -- never a partial `File.write` --
     # ever lands on the published path. A reader polling that path
-    # (tmux's `#(jq …)`) therefore only ever observes a WHOLE, valid struct,
-    # never a half-written one; a failed write (ENOSPC, permissions) leaves
+    # (tmux's `#(...)` status job) therefore only ever observes a WHOLE, valid
+    # struct, never a half-written one; a failed write (ENOSPC, permissions) leaves
     # the prior good state in place instead of corrupting it, and raises,
     # because a state feed that cannot write is not a state feed that should
     # pretend it did.

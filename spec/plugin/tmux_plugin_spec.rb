@@ -11,9 +11,9 @@ require "time"
 # `run-shell .../plugin/tmux/lain.tmux` from any tmux.conf must:
 #
 # * interpolate `#{lain_status}` in status-left/-right into a
-#   `#('lain.tmux' status #{q:pane_current_path})` job -- jq render when
-#   jq is on PATH, raw-cat fallback when it is not, an honest "lain: no
-#   state yet" when the pane's project has no state file yet;
+#   `#('lain.tmux' status #{q:pane_current_path})` job -- printing the line
+#   Lain::StatusFeed published, and an honest "lain: no state yet" when the
+#   pane's project has no state file yet;
 # * bind prefix keys for the /btw popup and /fork window, each wrapped in
 #   if-shell so a machine without `lain` degrades to a display-message,
 #   never a bound error;
@@ -21,10 +21,12 @@ require "time"
 #
 # Same two-tier idiom as spec/lain/cli/up_spec.rb: examples that need a real
 # tmux run against a scratch `-L` server (never Joel's real session) and
-# skip -- never fail -- when tmux or jq is absent from PATH; everything the
-# status script can prove alone runs directly through `sh`, on every
-# machine. The --btw/--fork flags themselves land elsewhere -- these examples
-# pin the COMMAND LINES the bindings would run, not the flags' effect.
+# skip -- never fail -- when tmux is absent from PATH; everything the status
+# script can prove alone runs directly through `sh`, on every machine. Nothing
+# here skips for a missing renderer any more: the HUD is composed in Ruby and
+# published as one field, so the script needs no binary at all. The --btw/--fork
+# flags themselves land elsewhere -- these examples pin the COMMAND LINES the
+# bindings would run, not the flags' effect.
 #
 # The plugin's two shell files are split by what each is ALLOWED to know.
 # The feed lives at `$XDG_STATE_HOME/lain/status/<hash>/state.json`,
@@ -39,9 +41,14 @@ require "time"
 # cross-pinned against Ruby's locator here for the same reason
 # `nvim_plugin_spec.rb` cross-pins the Lua copy: a third spelling of one
 # recipe drifts into a blank status bar otherwise.
+#
+# The HUD itself is no longer such a recipe. Lain::StatusFeed::Reading composes
+# the line, Lain::StatusFeed publishes it as a field, and both renderers print
+# that field -- so what is pinned below is that the script prints what a REAL
+# feed wrote, which is stronger than the byte-for-byte filter comparison it
+# replaces.
 RSpec.describe "plugin/tmux" do
   def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
-  def jq_present? = system("jq", "--version", out: File::NULL, err: File::NULL)
 
   let(:plugin_dir) { File.expand_path("../../plugin/tmux", __dir__) }
   let(:plugin_entry) { File.join(plugin_dir, "lain.tmux") }
@@ -64,11 +71,18 @@ RSpec.describe "plugin/tmux" do
     Lain::ProjectDir.new(root: dir, paths: Lain::Paths.new(env: plugin_env)).state_path
   end
 
+  # The renderers print a FIELD now, so a fixture has to carry the one a real
+  # publish would have stamped -- composed through the same object StatusFeed
+  # composes it with, so a fixture can never agree with a plugin that both got
+  # wrong. Every rendered string the examples below assert is unchanged from
+  # when a jq program produced it, which is the migration's own evidence.
   def write_state(cache_deadline:, fleet:, inbox_count:, dir: @dir, **extra)
-    write_json(state_path(dir),
-               JSON.generate({ "cache_deadline" => cache_deadline, "fleet" => fleet,
-                               "inbox_count" => inbox_count }.merge(extra.transform_keys(&:to_s))))
+    struct = { "cache_deadline" => cache_deadline, "fleet" => fleet, "inbox_count" => inbox_count }
+             .merge(extra.transform_keys(&:to_s))
+    write_json(state_path(dir), JSON.generate(rendered(struct)))
   end
+
+  def rendered(struct) = struct.merge("hud" => Lain::StatusFeed::Reading.new(struct).hud(now: Time.now))
 
   def write_json(path, body)
     FileUtils.mkdir_p(File.dirname(path))
@@ -89,13 +103,36 @@ RSpec.describe "plugin/tmux" do
       Open3.capture3(env, status_script, path)
     end
 
-    it "embeds Up::Hud::JQ_FILTER verbatim, so the plugin and `lain up` render one HUD" do
-      expect(File.read(status_script)).to include(Lain::CLI::Up::Hud::JQ_FILTER)
+    # What replaced the byte-for-byte pin against `Up::Hud::JQ_FILTER`: there is
+    # no filter to compare any more, and comparing two program texts never
+    # proved they agreed on real bytes anyway. This drives a REAL StatusFeed at
+    # the very path the script is handed -- real JSON, real emoji, a real atomic
+    # publish -- and holds the script's output against the line that feed says
+    # it published.
+    it "prints the line a real StatusFeed published, over the file that feed wrote" do
+      now = Time.utc(2026, 9, 13, 12, 0, 0)
+      feed = Lain::StatusFeed.new(path: state_path, clock: -> { now })
+      feed << Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-a", from: "parent", to: nil)
+
+      out, _err, status = run_status
+
+      expect(out.chomp).to eq(feed.state["hud"])
+      expect(out.chomp).to eq("\u2744 fleet:1 inbox:0 ")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # The other half of the same claim. Asserted by READING the script, for the
+    # reason the digest-binary example below is: a runtime check passes
+    # vacuously on the day someone adds the call back behind a `command -v`
+    # guard.
+    it "invokes no filter program, and is executable" do
+      code = File.read(status_script).lines.grep_v(/^\s*#/).join
+
+      expect(code).not_to match(/\bjq\b/)
       expect(File.executable?(status_script)).to be true
     end
 
-    it "renders the warm HUD line from state.json via jq" do
-      skip("jq not found on PATH") unless jq_present?
+    it "renders the warm HUD line from state.json" do
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3)
 
       out, _err, status = run_status
@@ -108,7 +145,6 @@ RSpec.describe "plugin/tmux" do
     # verbatim-embedding example above is the mechanism, this is the effect:
     # the fields StatusFeed gained render identically out of the tmux plugin.
     it "renders the parked-approval count and the context occupancy the state feed now publishes" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3,
                   approvals_pending: 1, occupancy: 0.34)
 
@@ -122,7 +158,6 @@ RSpec.describe "plugin/tmux" do
     # script renders it without knowing a posture from a layer -- and stays
     # quiet under the silent default, whose lighter is the empty string.
     it "renders the composed mode lighter, and nothing when it is empty" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0, posture: "manual", mode_lighter: "MAN AA")
       expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0 MAN AA")
 
@@ -135,7 +170,6 @@ RSpec.describe "plugin/tmux" do
     # mechanism, this is the effect. Chomped rather than stripped, because the
     # trailing pad is the assertion.
     it "renders the session's token spend, and pads the line with one trailing space" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0, occupancy: 0.34, run_tokens: 27_997)
 
       out, _err, status = run_status
@@ -150,7 +184,6 @@ RSpec.describe "plugin/tmux" do
     # server reports on still measures against ContextWindow's 8,192-token
     # conservative fallback -- so a ratio above 1.0 still reaches this renderer.
     it "clamps the occupancy percentage at 100, exactly as Up::Hud does" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0, occupancy: 2.44)
 
       out, _err, status = run_status
@@ -160,7 +193,6 @@ RSpec.describe "plugin/tmux" do
     end
 
     it "shows the cold glyph once the cache deadline has passed" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: (Time.now - 300).utc.iso8601, fleet: [], inbox_count: 0)
 
       out, _err, status = run_status
@@ -177,7 +209,6 @@ RSpec.describe "plugin/tmux" do
     end
 
     it "prints 'lain: no state yet', never an error, on a corrupt state file" do
-      skip("jq not found on PATH") unless jq_present?
       write_json(state_path, "{half a jso")
 
       out, _err, status = run_status
@@ -186,10 +217,10 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    # jq -r on a zero-byte file exits 0 with EMPTY output (so does cat), so a
-    # bare existence check would render a silently blank segment -- the exact
-    # never-blank violation the script's own contract forbids. Panel probe
-    # probe_state_variants.sh, fix round.
+    # A bare existence check would let a zero-byte file render a silently blank
+    # segment -- the exact never-blank violation the script's own contract
+    # forbids. A zero-byte state file is a mid-write or truncated one, and it
+    # reads as "no state yet".
     it "prints 'lain: no state yet', never a blank segment, on a zero-byte state file" do
       write_json(state_path, "")
 
@@ -206,10 +237,9 @@ RSpec.describe "plugin/tmux" do
     # which resolves the pane's directory at render time -- share one renderer
     # without either of them teaching it their own way of finding the file.
     it "renders the HUD from whatever state file path it is handed" do
-      skip("jq not found on PATH") unless jq_present?
       arbitrary = write_json(File.join(@dir, "somewhere else", "feed.json"),
-                             JSON.generate({ "cache_deadline" => nil, "fleet" => %w[a b c],
-                                             "inbox_count" => 2 }))
+                             JSON.generate(rendered({ "cache_deadline" => nil, "fleet" => %w[a b c],
+                                                      "inbox_count" => 2 })))
 
       out, _err, status = run_status({}, path: arbitrary)
 
@@ -232,14 +262,14 @@ RSpec.describe "plugin/tmux" do
       expect(code).not_to match(/sha256sum|shasum|openssl|realpath|readlink/)
     end
 
-    # The effect: strip PATH down to jq alone -- no coreutils, no
-    # digest tool -- and the HUD still renders, because resolving the input
-    # was somebody else's job.
-    it "renders with nothing but jq on PATH" do
-      skip("jq not found on PATH") unless jq_present?
+    # The effect, and the strongest form this example has ever taken: an EMPTY
+    # PATH. Reading the file and picking the published field out of it are both
+    # shell builtins now, so there is no binary left to take away -- `/bin/sh`
+    # itself is found by the absolute shebang, not through PATH.
+    it "renders with an empty PATH, having no binary left to lose" do
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1)
 
-      out, _err, status = run_status({ "PATH" => jq_only_bin })
+      out, _err, status = run_status({ "PATH" => "" })
 
       expect(out.strip).to eq("🔥 fleet:1 inbox:1")
       expect(status.exitstatus).to eq(0)
@@ -265,33 +295,18 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    it "falls back to raw state.json via cat when jq is missing" do
-      write_state(cache_deadline: nil, fleet: %w[a], inbox_count: 1)
+    # A state file from before the line was published -- an older `lain`, or a
+    # hand-built fixture. There is nothing to print and nothing here that could
+    # derive it, so the honest sentence is the answer. The jq-less fallback this
+    # replaces dumped raw JSON into the status bar instead, which was never a
+    # HUD; it only satisfied "never blank".
+    it "prints 'lain: no state yet' for a state file carrying no published line" do
+      write_json(state_path, JSON.generate({ "cache_deadline" => nil, "fleet" => %w[a], "inbox_count" => 1 }))
 
-      out, _err, status = run_status({ "PATH" => jqless_bin })
+      out, _err, status = run_status
 
-      expect(JSON.parse(out)).to eq({ "cache_deadline" => nil, "fleet" => %w[a], "inbox_count" => 1 })
+      expect(out.strip).to eq("lain: no state yet")
       expect(status.exitstatus).to eq(0)
-    end
-
-    # A PATH holding cat but no jq, so the fallback branch runs
-    # deterministically even on machines where jq IS installed.
-    def jqless_bin
-      bin = File.join(@dir, "jqless-bin")
-      FileUtils.mkdir_p(bin)
-      cat = %w[/bin/cat /usr/bin/cat].find { |path| File.executable?(path) }
-      File.symlink(cat, File.join(bin, "cat"))
-      bin
-    end
-
-    # The mirror image: jq and NOTHING else -- no cat, no sha256sum, no
-    # realpath. `/bin/sh` itself is found by its absolute shebang, not
-    # through PATH, so the script still starts.
-    def jq_only_bin
-      bin = File.join(@dir, "jq-only-bin")
-      FileUtils.mkdir_p(bin)
-      File.symlink(which("jq"), File.join(bin, "jq"))
-      bin
     end
   end
 
@@ -380,7 +395,6 @@ RSpec.describe "plugin/tmux" do
     end
 
     it "renders the HUD for a directory by resolving it and handing the file over" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3)
 
       expect(render).to eq(["🔥 fleet:2 inbox:3", 0])
@@ -397,7 +411,7 @@ RSpec.describe "plugin/tmux" do
     it "degrades to the honest sentence when no digest binary exists to resolve with" do
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1)
 
-      expect(render(env: plugin_env.merge("PATH" => bin_holding("bash", "jq", "cat")))).to eq(
+      expect(render(env: plugin_env.merge("PATH" => bin_holding("bash", "cat")))).to eq(
         ["lain: no state yet", 0]
       )
     end
@@ -410,10 +424,9 @@ RSpec.describe "plugin/tmux" do
     # a PATH without it exited 1 with EMPTY stdout rather than degrading.
     # Nothing outside the digest chain may be reachable on PATH now.
     it "renders with no coreutils on PATH beyond the digest tool" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1)
 
-      expect(render(env: plugin_env.merge("PATH" => bin_holding("bash", "jq", "sha256sum")))).to eq(
+      expect(render(env: plugin_env.merge("PATH" => bin_holding("bash", "sha256sum")))).to eq(
         ["\u{1f525} fleet:1 inbox:1", 0]
       )
     end
@@ -449,7 +462,7 @@ RSpec.describe "plugin/tmux" do
     # what makes a mute first tool the interesting case rather than an absent
     # one. Named per exit code so each row of the example gets its own PATH.
     def bin_with_mute_digest(exit_code)
-      bin = bin_holding("bash", "jq", "cat", as: "mute-#{exit_code}-bin")
+      bin = bin_holding("bash", "cat", as: "mute-#{exit_code}-bin")
       shim = File.join(bin, "sha256sum")
       File.write(shim, "#!/bin/sh\nexit #{exit_code}\n")
       FileUtils.chmod(0o755, shim)
@@ -560,7 +573,6 @@ RSpec.describe "plugin/tmux" do
     end
 
     it "renders the same warm HUD line `lain up` shows, through the interpolated job" do
-      skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3)
       boot
 
@@ -581,7 +593,6 @@ RSpec.describe "plugin/tmux" do
     # the only layer that can do it correctly, because only tmux sees the
     # literal path.
     it "neutralizes a hostile pane cwd -- the HUD renders, the payload never runs" do
-      skip("jq not found on PATH") unless jq_present?
       canary = File.join(@dir, "PWNED")
       # Every metacharacter the status job's shell could act on, not just the
       # quote the original regression used: `$(...)` substitution and a
@@ -633,7 +644,6 @@ RSpec.describe "plugin/tmux" do
     # job splits on an install path with spaces (panel probe
     # probe_plugin_dir_spaces.sh, fix round).
     it "survives an install path with spaces in it" do
-      skip("jq not found on PATH") unless jq_present?
       spaced = File.join(@dir, "plugin dir")
       FileUtils.mkdir_p(spaced)
       FileUtils.cp_r(File.join(plugin_dir, "."), spaced)

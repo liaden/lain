@@ -12,7 +12,7 @@ module Lain
     #
     # == Why the lighter is composed here AND the names published beside it
     #
-    # Three renderers read the published state feed -- `lain up`'s jq filter,
+    # Three renderers read the published state feed -- `lain up`'s status job,
     # `plugin/tmux/scripts/lain-status`, and nvim's lualine. Publishing only the
     # NAMES would give each its own copy of the lighter table AND its own
     # comparison against the default posture's name (`accept_edits` must render

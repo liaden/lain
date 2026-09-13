@@ -216,9 +216,9 @@ RSpec.describe Lain::Frontend::TTY do
       tty_with_state.prompt
 
       expect(Reline).to have_received(:readmultiline)
-        .with(a_string_including(described_class::Warmth::WARM), true)
+        .with(a_string_including(Lain::StatusFeed::Reading::WARM), true)
       expect(Reline).not_to have_received(:readmultiline)
-        .with(a_string_including(described_class::Warmth::COLD), true)
+        .with(a_string_including(Lain::StatusFeed::Reading::COLD), true)
     end
 
     # The same file {Lain::StatusFeed} and `lain up` default to, ASKED of
@@ -241,7 +241,7 @@ RSpec.describe Lain::Frontend::TTY do
       end
 
       expect(Reline).to have_received(:readmultiline)
-        .with(a_string_including(described_class::Warmth::WARM), true)
+        .with(a_string_including(Lain::StatusFeed::Reading::WARM), true)
     end
 
     it "renders a cold glyph when the deadline has already passed" do
@@ -251,7 +251,7 @@ RSpec.describe Lain::Frontend::TTY do
       tty_with_state.prompt
 
       expect(Reline).to have_received(:readmultiline)
-        .with(a_string_including(described_class::Warmth::COLD), true)
+        .with(a_string_including(Lain::StatusFeed::Reading::COLD), true)
     end
 
     it "renders today's bare prompt when no state file has ever been published" do
@@ -385,7 +385,7 @@ RSpec.describe Lain::Frontend::TTY do
                           wall_clock: -> { Time.at(1_000) }, history_path: File.join(@prompt_dir, "history"))
                      .prompt("> ")
 
-      expect(Reline).to have_received(:readmultiline).with("#{described_class::Warmth::WARM} > ", true)
+      expect(Reline).to have_received(:readmultiline).with("#{Lain::StatusFeed::Reading::WARM} > ", true)
     end
   end
 

@@ -359,8 +359,13 @@ module Lain
           nil
         end
 
+        # Through {StatusFeed::Reading} for the same reason every other reader
+        # is: one object knows the struct's shape, and a second spelling of
+        # `state["fleet"]` here is how a key rename becomes a silent nil.
+        def reading = Lain::StatusFeed::Reading.new(@status_feed.state)
+
         def fleet
-          size = @status_feed.state["fleet"].size
+          size = reading.fleet_size
           size.positive? ? size.to_s : nil
         end
 
@@ -371,11 +376,12 @@ module Lain
         # threshold exported across two namespaces grows a second `>=` in the
         # next reader and the two drift.
         #
-        # `to_i` rather than a nil guard: a feed that has published no streak
-        # reads as zero, which is healthy, and absence must never render as a
-        # stall. That covers a state struct written before the field existed AND
-        # a `--no-journal --no-nvim` run, where no tee is built and this reads
-        # absent for the life of the session.
+        # The READING is {StatusFeed::Reading}'s and the JUDGMENT is this
+        # class's, and that split is deliberate: a reader that also decided what
+        # a number MEANS would no longer be a reader, and the threshold has one
+        # home already. Absence reads as zero, which is healthy -- a state struct
+        # written before the field existed, and a `--no-journal --no-nvim` run
+        # where no tee is built at all, must never render as a stall.
         #
         # THE READING LATCHES, deliberately. Only a SUCCESSFUL derivation clears
         # the streak, so a session that refused twice and then settled into the
@@ -392,9 +398,7 @@ module Lain
         # deterministic over a history that only grows, so clearing on one trades
         # a reading that is LATE for one that is WRONG.
         def compaction
-          streak = @status_feed.state["derivation_refusal_streak"].to_i
-
-          Compaction::Source::Derived.stalled?(streak) ? "stalled" : nil
+          Compaction::Source::Derived.stalled?(reading.derivation_refusal_streak) ? "stalled" : nil
         end
 
         # The posture's own lighter, then every active layer's, in the precedence

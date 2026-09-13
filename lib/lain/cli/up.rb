@@ -5,8 +5,8 @@ require "mixlib/shellout"
 module Lain
   module CLI
     # `lain up`: create (idempotently) or attach to the "lain" tmux session and
-    # give it the session-scoped HUD -- status-right/status-interval reading the
-    # published state file via jq, `monitor-bell` on the chat window.
+    # give it the session-scoped HUD -- status-right/status-interval printing
+    # the line {Lain::StatusFeed} published, `monitor-bell` on the chat window.
     #
     # Session-scoped, never global: tmux's session-beats-global inheritance is
     # what keeps the theme plugin's globals untouched, so this needs zero
@@ -14,7 +14,7 @@ module Lain
     # a second `lain up` re-applies the same harmless option writes rather than
     # spawning a duplicate.
     #
-    # Every tmux/jq invocation goes through Mixlib::ShellOut with an ARGV array,
+    # Every tmux invocation goes through Mixlib::ShellOut with an ARGV array,
     # never a command string, so nothing here quotes against a shell of ours.
     # The ONE place a shell reappears is the `#(...)` job tmux embeds in
     # `status-right` and interprets with its OWN `$SHELL -c` at render time --
@@ -110,8 +110,9 @@ module Lain
       Report = Data.define(:session, :created, :warnings, :state_path)
 
       # `created` is what makes a second `lain up` read as "reattaching" rather
-      # than "duplicating"; `warnings` carries the jq-missing notice the exe
-      # says before attaching, so a degraded HUD is never a silent one.
+      # than "duplicating"; `warnings` carries the notices the exe says before
+      # attaching -- a missing nvim, an unlocatable plugin -- so a degraded
+      # cockpit is never a silent one.
       class Report
         # The Report's own knowledge: it already carries exactly the two fields
         # that decide the line, so the exe just says what comes back.
@@ -502,11 +503,11 @@ module Lain
         end
       end
 
-      # "Is this one installed, and does it answer?" -- asked of `jq` for the
-      # HUD and of `nvim` for the cockpit. `--version` is the probe because it
-      # is the one flag both have and neither does work for, and ENOENT is the
-      # answer that matters: an absent binary is a DEGRADE here, never an error,
-      # so the rescue is the point of the object rather than a guard on it.
+      # "Is this one installed, and does it answer?" -- asked of `nvim` for the
+      # cockpit. `--version` is the probe because it is the one flag such a
+      # binary has and does no work for, and ENOENT is the answer that matters:
+      # an absent binary is a DEGRADE here, never an error, so the rescue is the
+      # point of the object rather than a guard on it.
       #
       # Extracted so {Up} owns no shell_out_factory of its own -- no ivar, no
       # call site -- and every subprocess `lain up` causes goes through an
@@ -707,9 +708,9 @@ module Lain
         keep_failed_pane
       end
 
-      # The degrade contract, on the jq fallback's "degraded is never silent"
-      # rule: no nvim binary means a single chat pane plus a named warning,
-      # probed only on the create path.
+      # The degrade contract, and its "degraded is never silent" rule: no nvim
+      # binary means a single chat pane plus a named warning, probed only on the
+      # create path.
       #
       # The message names no FLAG, because the cockpit is the default and the
       # operator need not have typed one -- "--nvim ignored" read as a reproach
@@ -759,9 +760,7 @@ module Lain
       end
 
       def configure_session
-        status_right, warning = @hud.status_right(jq_present: @binaries.present?("jq"))
-        @warnings << warning if warning
-        set_option("status-right", status_right)
+        set_option("status-right", @hud.status_right)
         set_option("status-interval", @hud.interval.to_s)
         @tmux.act("set-window-option", "-t", chat_target, "monitor-bell", "on")
       end

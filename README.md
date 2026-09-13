@@ -387,13 +387,21 @@ nvim's own `stack traceback:` or does not arrive at all.
   🔥 fleet:2 inbox:1                          14:32
 ```
 
-**The HUD** is the `🔥 fleet:2 inbox:1` segment. 🔥 means the provider's cached prefix is still
-inside its sliding TTL and ❄ means it has gone cold, `fleet` is how many subagents are running,
+**The HUD** is the `🔥 fleet:2 inbox:1` segment. 🔥 means the provider's cached prefix was inside
+its sliding TTL **at the last publish** and ❄ means it was not, `fleet` is how many subagents are running,
 and `inbox` is how many questions are waiting on you. It reads the state file `Lain::StatusFeed`
 publishes — under `$XDG_STATE_HOME/lain/status/`, keyed by project rather than written into your
 source tree — so it describes the project the active pane is sitting in. `lain up` prints the
-resolved path when it starts. With `jq`
-on `PATH` you get that form; without it, the raw JSON. It is never blank and never an error.
+resolved path when it starts. The line is composed once, in Ruby, and published as a field, so
+every surface shows the same string and none of them needs a JSON filter. It is never blank and
+never an error.
+
+**The marker is as fresh as the last publish, and a publish happens on an event.** Sit idle past
+the provider's cache window and the HUD still shows the marker your last turn earned — which is
+wrong in the optimistic direction, 🔥 where the truth is ❄. The prompt's own ●/○ is re-derived at
+every turn boundary and no more often, so neither surface updates during a long idle. `elapsed`,
+`idle` and `since_compaction` in the state file have always had the same property. Treat the
+marker as "how the cache stood when lain last did something", not as a live reading.
 
 **The editor pane** needs nothing installed. `lain chat --nvim` injects its whole runtime into a
 bare `nvim --listen` at attach time, so the gem and the editor cannot drift out of sync. Seven
@@ -503,7 +511,7 @@ and a journal.
 |---|---|
 | Cache-hit ratio stays near zero on Claude | Anthropic's minimum cacheable prefix is **4096 tokens**. A short system prompt silently will not cache, with no error and nothing on the wire to tell you. Check the prefix length before anything else. |
 | Compaction leaves elision lines instead of summaries | The local summarizer had nothing to answer it. `ollama serve` and `ollama pull qwen3:4b`. The fire fails inside its task boundary, so nothing raises. |
-| HUD prints raw JSON, or `lain: no state yet` | `jq` is not on `PATH` (raw JSON), or no session has published a state file for this project yet — `lain up` prints the path it is watching. Both are degraded states by design, never errors. |
+| HUD prints `lain: no state yet` | No session has published a state file for this project yet, or the file was written by a `lain` too old to publish the rendered line — `lain up` prints the path it is watching. A degraded state by design, never an error. |
 | lain refuses to start, `$HOME is "" ... not an absolute path` | `$HOME` is **empty or relative** — a systemd unit with `Environment=HOME=`, an `env -i` cron job, or a container that sets it to something odd. (Genuinely *unset* is fine: lain asks the passwd database.) Every XDG fallback is built on `$HOME`, so a relative one would write lain's state into whatever directory you happen to be in. Export an absolute `HOME`. Setting `XDG_STATE_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` fixes the *paths* but not the refusal: the secret-path classifier anchors on `$HOME` directly, and a relative anchor mis-classifies in silence, which is worse than stopping. |
 | `--windows` opens no subagent viewers | It needs `$TMUX` and a session journal. It is incompatible with `--no-journal`. |
 | HUD freezes, `lain watch` stops updating, tools stop overlapping | Something is blocking the reactor. See [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor). |

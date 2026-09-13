@@ -446,13 +446,18 @@ module Lain
         end
       end
 
-      # Reads {StatusFeed}'s published state FILE directly -- the "one state
-      # feed, three renderers" split, never an in-process registry, since
-      # StatusFeed and TTY may be different processes.
+      # The cache marker at the prompt. Reads {StatusFeed}'s published state
+      # FILE rather than an in-process registry, since StatusFeed and TTY may be
+      # different processes -- and reads it through {StatusFeed::Reading}, which
+      # is the one place the deadline comparison and the two glyphs live. This
+      # class is what is LEFT once that moves out: which palette colour each
+      # answer takes, and the fact that "nothing published" draws nothing at all.
+      #
+      # Re-read on every render, deliberately. The marker a human watches for
+      # while idle is the one that has to go cold on its own, and the published
+      # HUD string cannot -- it is stamped at publish time, and a publish needs
+      # an event.
       class Warmth
-        WARM = "●" # filled circle -- the cache was read or written within its sliding TTL
-        COLD = "○" # hollow circle -- the deadline StatusFeed last published has already passed
-
         # @param path [String] StatusFeed's published state file
         # @param clock [#call] absolute (wall) time source, injectable so a
         #   spec never races a real deadline comparison
@@ -468,36 +473,12 @@ module Lain
         #   StatusFeed whose `cache_deadline` is still `null`) -- callers
         #   never branch on nil, they just concatenate
         def prefix(pastel)
-          deadline = read_deadline
-          return "" if deadline.nil?
-
-          warm?(deadline) ? "#{pastel.green(WARM)} " : "#{pastel.dim(COLD)} "
+          case StatusFeed::Reading.at(@path).warmth(now: @clock.call)
+          when :warm then "#{pastel.green(StatusFeed::Reading::WARM)} "
+          when :cold then "#{pastel.dim(StatusFeed::Reading::COLD)} "
+          else ""
+          end
         end
-
-        private
-
-        # The contract is "never raise at the prompt, for ANY file content": a
-        # missing file, a malformed one, and a syntactically-VALID but
-        # semantically-wrong one are all the same "no warmth to report" case.
-        # Two narrow rescues -- reading bytes vs. coercing them -- so the
-        # coverage each guards is self-evident rather than one broad catch.
-        def read_deadline
-          raw = read_state["cache_deadline"]
-          raw && Time.iso8601(raw)
-        rescue ArgumentError, TypeError, NoMethodError
-          # ArgumentError: Time.iso8601 rejected the string (bad timestamp).
-          # TypeError: `["cache_deadline"]` on a parsed Array/Integer/etc.
-          # NoMethodError: `["cache_deadline"]` on a parsed true/false/nil.
-          nil
-        end
-
-        def read_state
-          JSON.parse(File.read(@path))
-        rescue Errno::ENOENT, JSON::ParserError
-          {}
-        end
-
-        def warm?(deadline) = deadline > @clock.call
       end
 
       # The arrival note and the /inbox drain listing. Presentation only: the

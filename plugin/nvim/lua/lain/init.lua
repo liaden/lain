@@ -15,7 +15,7 @@
 --
 --   * the deterministic per-project server socket, served on VimEnter
 --     (ported from the reference dotfiles autocmd -- see start_server)
---   * lain.socket_path() / lain.state_path() / lain.status() -- three
+--   * lain.socket_path() / lain.state_path() / lain.status() / lain.hud() --
 --     read-only conveniences
 --   * :LainStart -- a window layout over the runtime-injected buffers
 --
@@ -221,6 +221,25 @@ function M.status()
     return decoded
   end
   return nil
+end
+
+-- The HUD line, already rendered: Lain::StatusFeed::Reading composes it (the
+-- marker, the fleet and inbox counts, a parked-approval count, the clamped
+-- context percentage, the run's token spend and the composed mode lighter) and
+-- Lain::StatusFeed publishes it as one field, so a lualine component asks for a
+-- string instead of carrying a Lua copy of that derivation. nil when no session
+-- has published state, and nil too for a state file written by a lain too old
+-- to carry the field -- absence rather than a half-derived guess.
+function M.hud()
+  local state = M.status()
+  if type(state) ~= "table" then
+    return nil
+  end
+  local line = state.hud
+  if type(line) ~= "string" or line == "" then
+    return nil
+  end
+  return line
 end
 
 -- The buffers eligible for layout: the LainAttach payload when our listener

@@ -51,8 +51,8 @@ directly, and the split is deliberate. tmux expands `#{pane_current_path}`
 happen when the plugin is sourced — a path computed then would be confidently
 wrong in every pane sitting somewhere else. `lain.tmux` is bash and does that
 work each render; `scripts/lain-status` is POSIX `sh` that is simply *told* a
-file, so the one script whose contract is to never blank and never error keeps
-`jq` as its only optional dependency.
+file, so the one script whose contract is to never blank and never error needs
+no binary on `PATH` at all.
 
 **If the plugin's own path contains spaces**, quote it *inside* the
 `run-shell` argument — tmux passes that argument to `sh -c` without
@@ -64,12 +64,22 @@ run-shell "'/path/with spaces/lain/plugin/tmux/lain.tmux'"
 
 ## What you get
 
-- **`#{lain_status}`** renders `🔥 fleet:2 inbox:3` — cache warmth (🔥 while
-  the provider's cached prefix is still inside its sliding TTL, ❄ after),
-  subagent fleet size, and how many questions await you. With `jq` on PATH it
-  uses the exact filter `lain up` uses; without `jq` it degrades to the raw
-  JSON; with no state file yet it prints `lain: no state yet`. Never blank,
-  never an error.
+- **`#{lain_status}`** renders `🔥 fleet:2 inbox:3` — cache warmth (🔥 if the
+  provider's cached prefix was inside its sliding TTL at the last publish, ❄
+  otherwise),
+  subagent fleet size, and how many questions await you. `Lain::StatusFeed`
+  publishes that line already rendered, so this prints a field rather than
+  deriving anything — the same string `lain up` shows, by construction. With no
+  state file yet it prints `lain: no state yet`. Never blank, never an error.
+
+  **The marker is as fresh as the last publish, not as fresh as the last
+  `status-interval` tick.** A publish happens when lain observes an event, so an
+  idle session keeps showing its last turn's marker, and past the provider's
+  cache window that is wrong in the optimistic direction — 🔥 where the truth is
+  ❄. Before the line was pre-rendered this segment re-evaluated the deadline on
+  every tick and was the only live warmth indicator lain had; it no longer is,
+  and no other surface took over. Read it as "how the cache stood when lain last
+  did something".
 - **`prefix + b`** — open an ephemeral side-question popup (`lain chat --btw`).
 - **`prefix + F`** — fork the session into a new window (`lain chat --fork`).
 
@@ -93,7 +103,7 @@ arguments are fine).
 
 ## Requirements
 
-tmux ≥ 3.2 (`display-popup`); `jq` optional but recommended; and, to resolve
+tmux ≥ 3.2 (`display-popup`); and, to resolve
 a pane's directory to its state file, one of `sha256sum`, `shasum` or
 `openssl` — with none of the three the HUD reads `lain: no state yet` rather
 than guessing. `scripts/lain-status` itself needs none of them: it is handed

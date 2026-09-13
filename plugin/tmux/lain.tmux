@@ -19,12 +19,12 @@
 # Every default is an option (`set -g @lain_... "..."` BEFORE the run-shell
 # line): @lain_btw_key, @lain_fork_key, @lain_btw_command, @lain_fork_command.
 #
-# WHY THE JOB CALLS THIS FILE AND NOT scripts/lain-status DIRECTLY (T9/F50).
-# The feed moved out of the project into
+# WHY THE JOB CALLS THIS FILE AND NOT scripts/lain-status DIRECTLY.
+# The feed lives outside the project, at
 # `$XDG_STATE_HOME/lain/status/<sha256(realpath(dir))[0,12]>/state.json`, so
 # something has to turn a pane's directory into a file name. It cannot be
 # `scripts/lain-status`: that one is POSIX `sh` whose contract is to never
-# blank and never error with `jq` its only optional dependency, and a digest
+# blank and never error while needing no binary on PATH at all, and a digest
 # binary is not something POSIX promises. And it cannot happen when this file
 # is SOURCED: tmux expands `#{pane_current_path}` per pane at RENDER time, so
 # a path computed here at install time would describe one directory and be

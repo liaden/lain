@@ -13,16 +13,13 @@ module Lain
       # `#state` answers its honest zero/empty struct rather than erroring on
       # a file that was never written.
       #
-      # Presentation only -- the warm/cold glyph decision mirrors
-      # {Frontend::TTY::Warmth}'s (same glyphs, same "deadline > now" rule),
-      # duplicated rather than shared because that class reads the PUBLISHED
-      # FILE by design (a separate process may render it) while this reads
-      # the in-process instance directly; the two are different collaborators
-      # answering the same question from different data, not one reused.
+      # Presentation only. The warm/cold DECISION and the two glyphs belong to
+      # {Lain::StatusFeed::Reading}, which reads a published file for
+      # {Frontend::TTY::Warmth} and the live struct here -- one object over
+      # either source, so the two surfaces cannot come to disagree about a
+      # deadline. What is left here is which of the three answers gets which
+      # words, and that is genuinely this command's own.
       class Status
-        WARM = "●" # filled circle -- cache_deadline is still ahead of the clock
-        COLD = "○" # hollow circle -- past deadline, or no cache activity observed yet
-
         # @param clock [#call] wall-clock source for the warm/cold comparison,
         #   injectable so a spec never races a real deadline (matches Warmth's
         #   own seam)
@@ -41,8 +38,8 @@ module Lain
         # named here are read, so a {StatusFeed} that publishes MORE renders
         # exactly as it does today.
         def call(_args, env)
-          state = env.status.state
-          counts(state).inject(cache_line(state)) { |rendered, (name, value)| metric(rendered, name, value) }
+          reading = Lain::StatusFeed::Reading.new(env.status.state)
+          counts(reading).inject(cache_line(reading)) { |rendered, (name, value)| metric(rendered, name, value) }
         end
 
         private
@@ -50,11 +47,11 @@ module Lain
         # The rows that are only a name and a number. The cache row is NOT one
         # of them -- its value names a warm/cold token rather than counting
         # something -- so it is built on its own and these follow it.
-        def counts(state) = { "fleet" => state["fleet"].size, "inbox" => state["inbox_count"] }
+        def counts(reading) = { "fleet" => reading.fleet_size, "inbox" => reading.inbox_count }
 
-        def cache_line(state)
+        def cache_line(reading)
           Lain::Renderable.new.with(:label, "status:").plain("\n")
-                          .with(:label, "  cache ").with(*warmth(state["cache_deadline"]))
+                          .with(:label, "  cache ").with(*warmth(reading))
         end
 
         def metric(rendered, name, value)
@@ -62,12 +59,18 @@ module Lain
         end
 
         # `[token, words]` -- exactly the pair {Renderable#with} takes, so the
-        # warm/cold DECISION and the token that shows it are made in one place
-        # rather than derived twice.
-        def warmth(deadline)
-          return [:cold, "#{COLD} cold (no cache activity yet)"] if deadline.nil?
-
-          Time.iso8601(deadline) > @clock.call ? [:warm, "#{WARM} warm"] : [:cold, "#{COLD} cold"]
+        # token and the words that show one answer are chosen together.
+        #
+        # THREE answers, not two: a feed that has published no deadline at all
+        # is not a cache that went cold, and only this surface has the room to
+        # say which it is in words.
+        def warmth(reading)
+          glyphs = Lain::StatusFeed::Reading
+          case reading.warmth(now: @clock.call)
+          when :warm then [:warm, "#{glyphs::WARM} warm"]
+          when :cold then [:cold, "#{glyphs::COLD} cold"]
+          else [:cold, "#{glyphs::COLD} cold (no cache activity yet)"]
+          end
         end
       end
     end

@@ -1510,7 +1510,47 @@ RSpec.describe Lain::StatusFeed do
                                                 "occupancy", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
                                                 "run_tokens", "posture", "layers", "mode_lighter",
-                                                "elapsed", "idle", "since_compaction")
+                                                "elapsed", "idle", "since_compaction", "hud")
+    end
+
+    # The HUD is published PRE-RENDERED, which is what lets the shipped tmux
+    # script print a field instead of carrying a copy of the derivation -- and
+    # what let the jq dependency go. {Reading} composes it; this class only has
+    # to stamp it, because this class is the only object that holds every value
+    # the line names.
+    it "publishes the HUD line already rendered, so a reader needs no filter program" do
+      now = Time.utc(2026, 9, 13, 12, 0, 0)
+      feed = described_class.new(path:, clock: -> { now })
+
+      feed << turn_usage(cache_read: 1)
+      feed << spawn_event("a")
+      feed << message_event("q1", to: "human")
+
+      expect(published["hud"]).to eq("\u{1F525} fleet:1 inbox:1 ctx:0% run:16 ")
+    end
+
+    it "renders the cold marker into the published line once the deadline has passed" do
+      now = Time.utc(2026, 9, 13, 12, 0, 0)
+      feed = described_class.new(path:, clock: -> { now })
+      feed << turn_usage(cache_read: 1)
+
+      now += 10_000
+      feed << spawn_event("a")
+
+      expect(published["hud"]).to start_with("\u2744")
+    end
+
+    # A rendering is not an event. It reads the wall clock, so it belongs with
+    # the measures -- stamped at write time, never compared -- and putting it in
+    # the change token would make a marker flip earn a write on a run where
+    # nothing a reader cares about moved.
+    it "keeps the rendered line out of the change token" do
+      feed = described_class.new(path:)
+
+      feed << spawn_event("a")
+
+      expect(feed.observed).not_to have_key("hud")
+      expect(feed.state).to have_key("hud")
     end
 
     it "creates the destination directory (the project's .lain/) on demand" do

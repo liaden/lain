@@ -106,7 +106,7 @@ RSpec.describe Lain::CLI::Command::Status do
       rendered = command.call("", env_with(status: feed))
 
       expect(rendered.select { |segment| segment.token == :warm }.map(&:text))
-        .to eq(["#{described_class::WARM} warm"])
+        .to eq(["#{Lain::StatusFeed::Reading::WARM} warm"])
     end
 
     it "names the cold token once the deadline has passed" do
@@ -134,7 +134,7 @@ RSpec.describe Lain::CLI::Command::Status do
       feed = feed_publishing(wide_state(cache_deadline: (now + 60).iso8601))
 
       expect(command.call("", env_with(status: feed)).text)
-        .to eq("status:\n  cache #{described_class::WARM} warm\n  fleet 2\n  inbox 3")
+        .to eq("status:\n  cache #{Lain::StatusFeed::Reading::WARM} warm\n  fleet 2\n  inbox 3")
     end
 
     # Naming a token is not the same as the theme registering one: an
@@ -152,7 +152,7 @@ RSpec.describe Lain::CLI::Command::Status do
 
         painted = command.call("", env_with(status: feed)).paint(theme)
 
-        expect(painted).to include(colored.dim("#{described_class::COLD} cold (no cache activity yet)"))
+        expect(painted).to include(colored.dim("#{Lain::StatusFeed::Reading::COLD} cold (no cache activity yet)"))
       end
 
       it "paints the warm state" do
@@ -160,7 +160,7 @@ RSpec.describe Lain::CLI::Command::Status do
 
         painted = command.call("", env_with(status: feed)).paint(theme)
 
-        expect(painted).to include(colored.green("#{described_class::WARM} warm"))
+        expect(painted).to include(colored.green("#{Lain::StatusFeed::Reading::WARM} warm"))
       end
     end
   end

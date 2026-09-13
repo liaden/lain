@@ -35,8 +35,8 @@ that contract:
 
   - a deterministic per-project server socket, so `lain chat --nvim` finds
     your editor with no flags (|lain-socket|)
-  - `lain.socket_path()`, `lain.state_path()` and `lain.status()`, three
-    read-only conveniences
+  - `lain.socket_path()`, `lain.state_path()`, `lain.status()` and
+    `lain.hud()`, four read-only conveniences
   - `:LainStart`, a window layout over the injected buffers (|lain-api|)
   - this document, which describes the attach contract as a config consumer
     sees it (|lain-contract|)
@@ -146,6 +146,25 @@ lain.status()           The decoded contents of |lain.state_path()| (the
                         the tmux HUD), or nil when no session has published.
                         The gem writes the file atomically, so a read never
                         sees a half-written state.
+
+                                                                  *lain.hud()*
+lain.hud()              The HUD line the running session published, already
+                        rendered -- marker, fleet, inbox, parked approvals,
+                        context percentage, token spend and mode lighter --
+                        or nil when no session has published one. This is
+                        the string the tmux status bar shows; a lualine
+                        component wants this rather than |lain.status()|,
+                        which hands back the whole struct and leaves the
+                        rendering to you.
+
+                        The warm/cold marker in it is as fresh as the last
+                        publish, and a publish happens when lain observes an
+                        event -- so an idle session keeps showing its last
+                        turn's marker, and past the provider's cache window
+                        that marker is wrong in the optimistic direction. A
+                        component that needs a live reading must take
+                        `cache_deadline` off |lain.status()| and compare it
+                        itself; nothing lain ships does that any more.
 
                                                                 *lain.setup()*
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.

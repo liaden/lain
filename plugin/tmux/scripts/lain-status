@@ -1,77 +1,91 @@
 #!/bin/sh
-# Renders the lain HUD line (warmth / fleet / inbox / approvals / context /
-# mode) for a tmux status bar.
+# Prints the lain HUD line (warmth / fleet / inbox / approvals / context /
+# run spend / mode) for a tmux status bar.
 #
 #   lain-status [STATE_FILE]
 #
 # STATE_FILE is the struct Lain::StatusFeed publishes. This script is TOLD
 # that path and derives nothing: no project directory, no `.lain/`, no
 # `$XDG_STATE_HOME`, and above all no `sha256(realpath(dir))[0, 12]`. That is
-# the point. Since F50 the feed lives at
+# the point. The feed lives at
 # `$XDG_STATE_HOME/lain/status/<project-hash>/state.json`, and resolving a
 # directory to it needs a digest binary POSIX does not mandate -- while THIS
-# file's whole contract is that it never blanks and never errors, with `jq`
-# its one optional dependency. So resolution belongs to whoever already knows
-# the directory: `lain up` interpolates an absolute path into its own
-# session-scoped status-right, and `lain.tmux` resolves `#{pane_current_path}`
-# per pane at render time. Both hand the answer here.
+# file's whole contract is that it never blanks and never errors. So
+# resolution belongs to whoever already knows the directory: `lain up`
+# interpolates an absolute path into its own session-scoped status-right, and
+# `lain.tmux` resolves `#{pane_current_path}` per pane at render time. Both
+# hand the answer here.
 #
 # No argument, or a path that is not there, is therefore not an error and not
 # a bug -- it is a caller that could not resolve, and it reads as "no state
 # yet" like any other absent file.
 #
-# The filter reads seven keys ("cache_deadline","fleet","inbox_count",
-# "approvals_pending","occupancy","run_tokens","mode_lighter") and ignores
-# the rest; the last four are rendered only when present, so a state file
-# written by an older lain still renders the line it always did. The line
-# always ends with one trailing space, so the last segment does not sit hard
-# against the right edge of the bar. run_tokens is what THIS machine spent on
-# THIS key over THIS run -- not a plan's consumption and not a whole resumed
-# session, which is why it renders as "run:" and never "usage:" or "session:";
-# oracle spend is deliberately not in it. See Up::Hud::JQ_FILTER and
-# Lain::StatusFeed for both rulings. mode_lighter arrives
-# ALREADY COMPOSED (the posture's lighter plus every active layer's, empty
-# under the silent default posture), so this script carries no copy of the
-# mode ladder -- see Up::Hud::JQ_FILTER. The occupancy percentage is clamped
-# to 100: an unmatched model (every Ollama id, most Bedrock ids) is measured
-# against ContextWindow's 8,192 conservative fallback, which can publish a
-# ratio well above 1.0.
+# IT DERIVES NOTHING FROM THE STRUCT EITHER. The line arrives ALREADY
+# RENDERED, in the feed's own `hud` field, composed by
+# Lain::StatusFeed::Reading -- glyph, counts, the clamped context percentage,
+# the run's token spend and the composed mode lighter, all of it. This file
+# used to carry a jq program that was a byte-for-byte copy of the Ruby one,
+# which is two spellings of one HUD and a hard dependency on a binary POSIX
+# does not mandate. Both are gone: picking one field out of one line is a
+# shell builtin, so nothing here needs a single binary on PATH.
 #
-# The jq filter below is Lain::CLI::Up::JQ_FILTER, byte for byte -- one HUD,
-# two renderers, pinned by spec (spec/plugin/tmux_plugin_spec.rb). Without
-# jq the raw JSON still shows (cat), and every failure path -- no state
-# file yet, corrupt state, jq mid-write race -- prints an honest
+# WHAT THE PRE-RENDERED FIELD COSTS is freshness of the warm/cold marker. jq
+# re-evaluated `now` on every status-interval tick; this prints the marker the
+# last PUBLISH earned, and a publish happens on an event. An idle session
+# therefore shows its last turn's marker however long it sits, and past the
+# provider's cache window that marker is wrong -- optimistically, 🔥 where the
+# truth is ❄. No surface is better off: lain's terminal prompt composes its own
+# marker once per input cycle, so it is stamped at the turn boundary too. This
+# job was the only one that re-evaluated on a timer, and keeping it meant
+# keeping a second spelling of the whole HUD.
+#
+# Every failure path -- no state file yet, a truncated or corrupt state, a
+# file written by a lain too old to publish the line -- prints an honest
 # "lain: no state yet", never an error and never a blank status segment.
 set -eu
 
 state="${1:-}"
 
-# -s, not -f: jq -r (and cat) on a ZERO-BYTE file exits 0 with empty
-# output, which would render a silently blank segment -- the exact
-# never-blank violation this script exists to prevent. A zero-byte state
-# file is a mid-write/truncated state and reads as "no state yet". An empty
-# argument lands in the same branch, and means the caller could not resolve.
-if [ -z "$state" ] || [ ! -s "$state" ]; then
-  echo "lain: no state yet"
+# -s, not -f alone: a ZERO-BYTE file would yield no field and render a
+# silently blank segment -- the exact never-blank violation this script exists
+# to prevent. A zero-byte state file is a mid-write/truncated state and reads
+# as "no state yet". An empty argument lands in the same branch, and means the
+# caller could not resolve. `-f` and `-r` are here so an unreadable path or a
+# directory cannot fail the redirection below, which under `set -e` would exit
+# with a shell diagnostic instead of the honest sentence.
+if [ -z "$state" ] || [ ! -f "$state" ] || [ ! -r "$state" ] || [ ! -s "$state" ]; then
+  printf '%s\n' "lain: no state yet"
   exit 0
 fi
 
-# This is a jq filter, byte-for-byte pinned against Lain::CLI::Up::Hud::JQ_FILTER
-# by the spec; single quotes keep the shell out of it. It uses NO jq variable
-# (`$name`) on purpose -- see that constant's comment: tmux 3.4 escapes a `$` in
-# an option value and the other renderer then feeds jq a broken filter. `\(...)`
-# below is jq's interpolation, not a shell expansion.
-# shellcheck disable=SC2016
-JQ_FILTER='(if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
-+ " fleet:\(.fleet | length) inbox:\(.inbox_count)"
-+ (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
-+ (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)
-+ (if .run_tokens then " run:\(.run_tokens)" else "" end)
-+ (if (.mode_lighter // "") != "" then " " + .mode_lighter else "" end)
-+ " "'
+# `"hud":"<line>"` out of the published JSON, with parameter expansion alone.
+# Ending the field at the first `"` is sound rather than lucky: the publisher
+# (Lain::StatusFeed::Reading) strips `"`, `\` and `#` out of the one segment
+# that is free-form, and every other segment is a count or a clamped
+# percentage -- so no JSON parser is needed to find where the value stops. The
+# exact spelling is JSON.generate's, which is the only writer this file ever
+# reads. `read` rather than `cat` keeps the whole thing free of PATH, and the
+# loop finds the field wherever in the file it sits rather than assuming one
+# line.
+line=""
+hud=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    *'"hud":"'*)
+      rest=${line#*'"hud":"'}
+      hud=${rest%%'"'*}
+      ;;
+  esac
+done <"$state"
 
-if command -v jq >/dev/null 2>&1; then
-  jq -r "$JQ_FILTER" "$state" 2>/dev/null || echo "lain: no state yet"
+# Empty covers both "no such field" (a lain too old to publish it) and a field
+# published empty, and the never-blank contract makes the sentence the answer
+# to both. printf rather than echo, because the line is data from upstream and
+# `echo` would read a leading `-n` as a flag -- and printf is a builtin in
+# every shell that ships as /bin/sh, so it costs nothing of the no-PATH
+# property above.
+if [ -n "$hud" ]; then
+  printf '%s\n' "$hud"
 else
-  cat "$state" 2>/dev/null || echo "lain: no state yet"
+  printf '%s\n' "lain: no state yet"
 fi

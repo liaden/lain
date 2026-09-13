@@ -462,7 +462,7 @@ module Lain
     # value to compare.
     #
     # @return [Hash] string-keyed, JSON-shaped
-    def state = observed.merge(measures)
+    def state = rendered(observed.merge(measures))
 
     # Everything derived from an EVENT: the change token. Equal to a previous
     # reading iff nothing this feed cares about has happened since.
@@ -507,8 +507,18 @@ module Lain
     # a real publish -- that is what stamps them at write time rather than at
     # compare time.
     def publish_if_changed
-      @publication.call(observed) { |current| current.merge(measures) }
+      @publication.call(observed) { |current| rendered(current.merge(measures)) }
     end
+
+    # The HUD, stamped alongside the measures and for their reason: it reads the
+    # wall clock, so it is a snapshot rather than a change token, and comparing
+    # it would earn a write every time a marker flipped with nothing else moved.
+    #
+    # This class renders it because it is the only object holding every value
+    # the line names -- {Reading} owns the SHAPE, and publishing the result is
+    # what lets `plugin/tmux/scripts/lain-status` print a field instead of
+    # carrying a second copy of the derivation in a jq program.
+    def rendered(struct) = struct.merge("hud" => Reading.new(struct).hud(now: @clock.call))
 
     def default_path = ProjectDir.new.state_path
   end
@@ -517,6 +527,7 @@ end
 # This file is `status_feed/`'s index. Every child reopens the class above, so
 # they load AFTER the class body -- `effect/handler.rb`'s ordering, for the
 # same reason (CLAUDE.md, Requires).
+require_relative "status_feed/reading"
 require_relative "status_feed/publication"
 require_relative "status_feed/mode_state"
 require_relative "status_feed/journaled_usage"

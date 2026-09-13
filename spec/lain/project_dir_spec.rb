@@ -31,9 +31,8 @@ module ProjectDirDiscipline
   # constant cannot silently disarm the scan.
   #
   # `STATE_NAME` is the ANCHOR: an expression that does not name the file is not
-  # rebuilding its path, which is what keeps {Lain::CLI::Up::Hud}'s
-  # `JQ_MISSING_WARNING` -- a sentence with `state.json` in it and nothing else
-  # -- from reading as a composition.
+  # rebuilding its path, which is what keeps a sentence with `state.json` in it
+  # and nothing else from reading as a composition.
   STATE_NAME = "state.json"
   PROJECT_NAME = ".lain"
   CWD_READERS = %w[pwd getwd].freeze
@@ -233,10 +232,9 @@ module ProjectDirDiscipline
       [PROJECT_NAME, STATE_NAME].select { |name| string_including?(node, name) }
     end
 
-    # The kind, matched as a whole path SEGMENT rather than as a substring:
-    # {Lain::CLI::Up::Hud::JQ_MISSING_WARNING} is a real sentence carrying both
-    # "status-right" and "state.json", and a substring match would read that
-    # message as a composition.
+    # The kind, matched as a whole path SEGMENT rather than as a substring: a
+    # warning carrying both "status-right" and "state.json" is a real sentence,
+    # and a substring match would read that message as a composition.
     def kind_name(node)
       return nil unless node[0] == :@tstring_content
 
@@ -548,10 +546,10 @@ RSpec.describe Lain::ProjectDir do
       expect(scan(%(# joins Dir.pwd with .lain and state.json\nx = 1\n))).to be_empty
     end
 
-    # {Lain::CLI::Up::Hud::JQ_MISSING_WARNING} is a sentence with `state.json` in
-    # it. Naming the file is not rebuilding its path, which is why the scan wants
-    # a second ingredient before it calls anything a composition -- and why the
-    # kind is matched as a path SEGMENT: this sentence also says "status-right".
+    # A warning sentence with `state.json` in it. Naming the file is not
+    # rebuilding its path, which is why the scan wants a second ingredient before
+    # it calls anything a composition -- and why the kind is matched as a path
+    # SEGMENT: this sentence also says "status-right".
     it "leaves a message that merely names the file alone" do
       expect(scan('x = "jq not found on PATH -- status-right falls back to raw state.json"')).to be_empty
     end
