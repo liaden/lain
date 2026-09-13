@@ -522,6 +522,59 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  # The whole object graph a real launch assembles, driven through the object
+  # the exe drives -- not by constructing a {Lain::CLI::Wiring} directly. The
+  # wiring factory is the seam: it builds the REAL wiring over the project,
+  # chronicle, status feed and run clock this launch resolved, wires an agent
+  # over an offline backend, and then raises so no conversation starts.
+  #
+  # It is the acceptance criterion for folding the wiring's single-caller
+  # collaborators back in: the graph has to come out whole from ONE object.
+  describe "the object graph a launch assembles" do
+    around do |example|
+      Dir.mktmpdir("lain-launch-graph") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    # Only the network edge is faked; provider resolution, context, slots and
+    # spawn policies stay the real Backend's, exactly as the exe wires them.
+    def offline_backend
+      Class.new(Lain::CLI::Backend) do
+        def provider(**) = Lain::Provider::Mock.new(responses: [])
+      end.new({ provider: "ollama", model: nil, max_tokens: 64 })
+    end
+
+    def launched
+      built = []
+      factory = lambda do |**kwargs|
+        wiring = Lain::CLI::Wiring.new(**kwargs)
+        recorder, session = wiring.run_state(nil)
+        built = [wiring, wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:,
+                                           backend: offline_backend), session]
+        raise Lain::Error, "stop here"
+      end
+      project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+      expect do
+        described_class.new({ journal: false, provider: "ollama", model: nil, max_tokens: 64, grace: 5 },
+                            wiring_factory: factory, project_factory: -> { project })
+                       .call { |_notice| nil }
+      end.to raise_error(Lain::Error, "stop here")
+      built
+    end
+
+    it "builds an agent, a toolset, a board and a journaled session from the one wiring" do
+      wiring, agent, session = launched
+
+      expect(agent).to be_a(Lain::Agent)
+      expect(agent.toolset.fetch("bash")).to be_a(Lain::Tools::Bash)
+      expect(wiring.approvals).to be_a(Lain::Approval::Queue)
+      expect(wiring.role_spawn).to be_a(Lain::Skill::RoleSpawn)
+      expect(session).to be_a(Lain::Session)
+    end
+  end
+
   # A resolver double honoring Resume#call's keyword signature.
   def refusing_resolver(refusal)
     resolver = Object.new

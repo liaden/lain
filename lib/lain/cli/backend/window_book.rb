@@ -284,7 +284,7 @@ module Lain
         # crash the conservative fallback replaces.
         #
         # The provider {#book} asks is a THROWAWAY, deliberately, and the
-        # exception to the rule {Wiring::AgentBuild#journal_degradation} states:
+        # exception to the rule {Wiring#journal_degradation} states:
         # a served window is a fact about a live SERVER and there is no asking
         # one without a client.
         def narrowest(reported) = [@backend.num_ctx, reported].compact.min

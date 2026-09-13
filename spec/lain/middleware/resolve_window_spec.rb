@@ -8,7 +8,7 @@
 # What is here is the middleware's own contract -- WHEN it fires, and that it
 # fires exactly once and outside the work. WHETHER a re-resolution changes the
 # answer belongs to {Lain::CLI::Backend::WindowBook::Live}, and the wiring that
-# points this at the run's own book to `spec/lain/cli/wiring/agent_build_spec.rb`.
+# points this at the run's own book to `spec/lain/cli/wiring_spec.rb`.
 RSpec.describe Lain::Middleware::ResolveWindow do
   # Records the order, because "before the turn" is the whole claim: a refresh
   # that landed after the downstream had already read a window would satisfy a

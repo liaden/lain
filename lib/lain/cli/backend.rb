@@ -408,7 +408,7 @@ module Lain
       # resolved per EVENT rather than captured here.
       #
       # {Backend::Summarizer::RunJournal}'s own reason, and it binds harder on
-      # this path: `Wiring::AgentBuild` builds the chat provider inside
+      # this path: `Wiring#spooled_provider` builds the chat provider inside
       # `#backing`, and {#pipeline_source} -- where {#journal} gets bound -- runs
       # a line later, through {CompactionMount}. A provider handed `journal` by
       # value would hold {Channel::Null} for the whole session: every wait

@@ -123,7 +123,7 @@ module ParallelCommutationSpecSupport
   #
   # SHAPE: it is handed a {Memory::Recorder}, not a bare {Memory::Index}, because
   # that is what SHIPS -- `Wiring::BaseTools.build` passes the session's Recorder
-  # (`cli/wiring/base_tools.rb:18`), the same MUTABLE holder memory_write writes
+  # (`Lain::CLI::Wiring::BaseTools`), the same MUTABLE holder memory_write writes
   # through, and Recorder delegates #fetch to its current snapshot so it satisfies
   # the same duck. This matters here specifically: {Tools::MemoryRead#parallel_safe?}
   # justifies itself with "@index is a FROZEN Memory::Index snapshot injected at

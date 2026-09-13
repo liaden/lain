@@ -101,7 +101,7 @@ module RootDefaultDiscipline
     # writer was always rooted here, through `workspace/snapshot.rb`'s entry,
     # and the slot that replaced it inherits that default for every Agent built
     # without one. A live chat's own Agent never takes it:
-    # {Lain::CLI::Wiring::AgentBuild} hands its slot the resolved project root.
+    # {Lain::CLI::Wiring} hands its snapshot slot the resolved project root.
     # A subagent spawned INSIDE a live chat does take it --
     # `Tools::Subagent`'s `spawn_agent` builds a bare Agent -- so a child's
     # snapshots are rooted at the working directory, exactly as they were

@@ -337,7 +337,7 @@ module Lain
                                           denial: -> { switchboard.call.denial })
         end
 
-        # The stack {AgentBuild} mounts in the parent's tool phase, built again
+        # The stack {Wiring#backing} mounts in the parent's tool phase, built again
         # for each child over the same board and the same chronicle: one region
         # ledger, one approval queue, one filter and one layout for the whole
         # run. The board thunk is read when a child is built, so a board still

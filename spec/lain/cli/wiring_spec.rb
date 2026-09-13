@@ -118,6 +118,181 @@ class WiringSpecStartSpy < SimpleDelegator
   end
 end
 
+# The two members {Lain::CLI::Wiring#run_state} reads off a resume result. A
+# Data rather than a double because what is asserted is identity -- the
+# recorder that comes back IS the one resumed -- and a double answering a fresh
+# object on each call could not show that.
+WiringSpecResumed = Data.define(:recorder, :session)
+
+# Records what the backend was asked for a provider WITH, because
+# {Lain::CLI::Wiring}'s `#spooled_provider` has as its whole content the pair
+# of keywords it passes -- the spool tee and the channel -- and the object that
+# comes back is the same mock either way. Only the network edge is faked; the
+# rest is the real {Lain::CLI::Backend} the exe builds.
+class WiringAgentSpecBackend < Lain::CLI::Backend
+  attr_reader :provider_calls
+
+  def initialize(options, mock:)
+    super(options)
+    @mock = mock
+    @provider_calls = []
+  end
+
+  def provider(**kwargs)
+    @provider_calls << kwargs
+    @mock
+  end
+
+  # Wrapped IN PLACE OF {Lain::CLI::Backend}'s own memo, deliberately: `super`
+  # fills `@context_window` with the real book, and this assignment then
+  # replaces it with the counting wrapper -- so there is one object, and it is
+  # the one the wiring hands the Agent. Counting on a second book built to
+  # observe would answer a question nobody is asking.
+  def context_window = @context_window ||= WiringAgentSpecWindow.new(super)
+end
+
+# Counts the re-resolutions the turn stack triggers and delegates the three
+# reader messages, so "the trigger fired on the run's own book" is a property
+# an example can see. A real {Lain::CLI::Backend::WindowBook::Live} answers the
+# same duck and would count nothing.
+class WiringAgentSpecWindow
+  attr_reader :refreshes, :trail
+
+  # `trail` is SHARED with the chronicle's turn member in the ordering example
+  # below, because a list of classes says what the stack holds and not what ran
+  # first -- and it is the running order three docstrings call load-bearing.
+  def initialize(book, trail = [])
+    @book = book
+    @refreshes = 0
+    @trail = trail
+  end
+
+  def reresolve
+    @refreshes += 1
+    @trail << :window
+    @book.reresolve
+  end
+
+  def resolve(model) = @book.resolve(model)
+  def window_tokens(model) = @book.window_tokens(model)
+  def occupancy(used_tokens, model:) = @book.occupancy(used_tokens, model:)
+end
+
+# Captures the timeline handle the agent build hands the chronicle so an example
+# can call it back AFTER the Agent exists. That is the only way to see whether
+# the closure caught a live binding or a permanent nil -- the defect
+# `wiring.rb` documents at its own `@agent = build_agent(...)` line.
+class WiringAgentSpecChronicle < Lain::CLI::Chronicle::Null
+  attr_reader :timeline_handle
+
+  # The record journal a live chat writes its `capability_degraded` records to.
+  # Defaulted to the Null's own /dev/null one, so every group that does not read
+  # bytes back behaves exactly as it did before the keyword existed.
+  def initialize(record_journal = nil)
+    @record_journal = record_journal
+    super()
+  end
+
+  def record_journal = @record_journal || super
+
+  def turn_middleware(timeline)
+    @timeline_handle = timeline
+    super
+  end
+
+  # MEMOIZED where the Null answers a fresh spool per call, so "the provider
+  # was teed into THE chronicle's spool" is an identity an example can assert
+  # at all. Against the unmemoized one every comparison is between two distinct
+  # Nulls and passes for the wrong reason -- or fails for it.
+  def spool = @spool ||= super
+end
+
+# A chronicle whose turn phase is NOT empty.
+#
+# Written because the ordering assertions against the Null chronicle CANNOT
+# FAIL: its `turn_middleware` is an empty Stack, so `[ResolveWindow, *[]]` and
+# `[*[], ResolveWindow]` are the same list, and a mutant moving the refresh to
+# the innermost position survived the entire suite. Benign today -- JournalTurns
+# runs its work after `downstream` and reads no window -- but the ordering is
+# stated as load-bearing in three docstrings, and a documented claim that
+# nothing holds is the shape this chunk keeps producing.
+class WiringAgentSpecJournallingChronicle < WiringAgentSpecChronicle
+  # Named so the ordering reads as a list of classes, and RECORDING so the same
+  # example can pin what actually ran first.
+  class Member < Lain::Middleware::Base
+    def initialize(trail)
+      @trail = trail
+      super()
+    end
+
+    def call(env, &app)
+      @trail << :chronicle
+      downstream(env, &app)
+    end
+  end
+
+  def initialize(trail)
+    @trail = trail
+    super()
+  end
+
+  def turn_middleware(_timeline) = Lain::Middleware::Stack.new([Member.new(@trail)])
+end
+
+# The Switchboard's side of the seam, recorded. A stand-in rather than the real
+# board because the point of the seam is that the agent build is HANDED one:
+# what an example needs to see is which object the Agent was built over, and
+# that {Lain::CLI::Wiring}'s `#agent_over` never went looking for one of its own.
+class WiringAgentSpecBoard
+  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals, :sensitivity, :snapshots
+
+  # The posture a real board starts in declares `:shadow_git`; the stand-in
+  # answers the write-set scope so building an Agent over it shells no git.
+  def snapshot_scope = :write_set
+
+  def bind_snapshots(slot)
+    @snapshots = slot
+  end
+
+  # The run's ONE region ledger, the approval queue an unattended board leaves
+  # nil, and the path policy -- all real, because the three tool-phase guards
+  # take them as required keywords with no default and a double answering nil
+  # for any of them would test a construction production cannot reach.
+  #
+  # `sensitivity` joined that list when {CLI::ToolGuard} started
+  # reading the listing filter off the board's policy instead of passing a
+  # Null. It is the slot a real {CLI::Switchboard} has always had; this
+  # stand-in simply had no reason to answer it until something asked.
+  def initialize(toolset, approvals: nil)
+    @toolset = toolset
+    @gate_calls = []
+    @grafted = []
+    @ledger = Lain::Sensitivity::Ledger.new
+    @approvals = approvals
+    @sensitivity = Lain::Sensitivity::Policy.new(
+      sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
+    )
+  end
+
+  # The one value the tool guard is built over, as a real board holds it: these
+  # same slots, and a test layout run declaring none.
+  def guard_inputs
+    @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(
+      ledger:, approvals:, sensitivity:, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared
+    )
+  end
+
+  def gate(inner:)
+    @gate_calls << inner
+    Lain::Effect::Handler::Gate.new(policy: Lain::Tools::Subagent::UNGATED, inner:)
+  end
+
+  def graft(context)
+    @grafted << context
+    context
+  end
+end
+
 RSpec.describe Lain::CLI::Wiring do
   # Provider resolution, context, slots, and spawn policies stay the real
   # Backend's; only the network edge swaps for Provider::Mock, so the whole
@@ -316,7 +491,7 @@ RSpec.describe Lain::CLI::Wiring do
     #
     # It is pinned here rather than by handing the same book to two objects and
     # comparing their arithmetic: that proves the division agrees and nothing
-    # about the wiring. Deleting `context_window:` from AgentBuild#backing left
+    # about the wiring. Deleting `context_window:` from Wiring#backing left
     # the whole suite green while a running chat printed 86% at the prompt and
     # published 0.216 to state.json -- the two-surfaces-disagreeing state the
     # card calls worse than being uniformly wrong. No book is injected here; the
@@ -2533,6 +2708,727 @@ RSpec.describe Lain::CLI::Wiring do
           expect([sifted.count, sifted.reasons]).to eq([1, [:credential]])
         end
       end
+    end
+  end
+
+  # The fold's acceptance criteria. Six single-caller collaborators came back
+  # into this class, so what used to be asserted against a module function is
+  # asserted here against the object that does the work: the run's state, the
+  # epic it is seated in, and -- already pinned above, at the shell verdict --
+  # the ONE object two seams share.
+  describe "the collaborators this class absorbed" do
+    # AC 3. The resumed halves arrive from the resume result rather than being
+    # built fresh, and BOTH are decorated by the chronicle: decorating one and
+    # not the other is a run whose usage records name a memory root its reads
+    # never wrote.
+    describe "a resumed run's state" do
+      it "restores the resumed recorder and session rather than building fresh ones" do
+        recorder = Lain::Memory::Recorder.new
+        session = Lain::Session.new(memory: recorder)
+
+        restored, = wiring.run_state(WiringSpecResumed.new(recorder:, session:))
+
+        expect(restored).to be(recorder)
+      end
+
+      # The fresh half, and the one thing about it that is this class's own
+      # answer rather than a constructor default: a fresh Session runs at the
+      # PROJECT's cwd, never at whatever `Dir.pwd` the process happens to hold.
+      it "builds a fresh pair, seated at the project's own cwd" do
+        recorder, session = wiring.run_state(nil)
+
+        expect(recorder).to be_a(Lain::Memory::Recorder)
+        expect(session.worker_env.cwd).to eq(wiring.chat_env.cwd)
+      end
+    end
+
+    # AC 4. The mount is resolved ONCE and read twice -- the toolset takes its
+    # tools, an attached editor's lain://status takes its slug -- because
+    # {CLI::EpicMount} builds the one {Epic::Review} per slug and a second
+    # mount would be a second guard over one journal.
+    describe "the epic a chat is seated in" do
+      around do |example|
+        Dir.mktmpdir("lain-wiring-epic") do |dir|
+          @tmp = File.realpath(dir)
+          FileUtils.mkdir_p(epic_root)
+          with_env("XDG_STATE_HOME" => File.join(@tmp, "state")) { example.run }
+        end
+      end
+
+      def epic_root = File.join(@tmp, "project")
+
+      def seated(options = {})
+        described_class.new(options: { grace: 5, **options }, chronicle:, status_feed:,
+                            tty_factory: lambda { |channel:, **|
+                              Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new("quit\n"),
+                                                      history_path: File.join(@tmp, "history"))
+                            },
+                            project: Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project,
+                                                       detected_by: :flag))
+      end
+
+      # What the editor is HANDED, taken off the `#run` path rather than from a
+      # reader: {Wiring#editor_seams} is the one place a mount becomes a view,
+      # and the Repl is where that view lands. The Repl's own `#run` is stubbed
+      # because the conversation is not the claim -- what the example reads is
+      # the seam hash a real assembly composed on its way to one.
+      def epic_handed_to_editor(chat)
+        seen = {}
+        allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap { |repl| allow(repl).to receive(:run) { |**seams| seen.replace(seams) } }
+        end
+        chat.run(backend:, resumed: nil, nvim: nil)
+        chat.conductor.close(reason: :exit)
+        seen.fetch(:epic)
+      end
+
+      def write_demo
+        graph = Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "the a issue")])
+        config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
+        Lain::Epic::Home.resolve(config:, paths: Lain::Paths.new, root: epic_root, slug: "demo").write_epic(graph)
+      end
+
+      it "mounts the declared epic once, so the toolset and the editor read the same mount" do
+        write_demo
+        chat = seated
+
+        expect(chat.send(:epic_mount)).to be_a(Lain::CLI::EpicMount).and(equal(chat.send(:epic_mount)))
+        expect(chat.send(:epic_mount).slug).to eq("demo")
+      end
+
+      it "tells the notice why a mount was abandoned, on the first call only" do
+        heard = []
+        chat = seated(epic: "nope")
+
+        2.times { chat.send(:epic_mount, ->(message) { heard << message }) }
+
+        expect(heard.size).to eq(1)
+        expect(heard.first).to include("request_review is not wired")
+      end
+
+      it "hands the editor the mounted epic, folded from the root the mount resolved" do
+        write_demo
+
+        expect(epic_handed_to_editor(seated).lines)
+          .to include("# epic `demo`", a_string_including("`a` the a issue"))
+      end
+
+      it "hands the editor the unmounted null when the chat is in no epic" do
+        expect(epic_handed_to_editor(seated)).to equal(Lain::Frontend::Neovim::StatusView::Unmounted)
+      end
+    end
+  end
+end
+
+# What the Agent is built FROM, driven at the seam that takes the board as an
+# argument rather than resolving one: the provider the run talks to, the
+# compaction wiring hung off it, the instrumentation stack, and the executor
+# the board's gate closes over.
+RSpec.describe Lain::CLI::Wiring, "the Agent build" do
+  let(:mock_provider) do
+    Lain::Provider::Mock.new(responses: [
+                               Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                                  stop_reason: :end_turn)
+                             ])
+  end
+  let(:backend) { WiringAgentSpecBackend.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider) }
+  let(:chronicle) { WiringAgentSpecChronicle.new }
+  let(:channel) { Lain::Channel.new }
+  let(:board) { WiringAgentSpecBoard.new(Lain::Toolset.new) }
+  let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
+  let(:wiring) do
+    described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                        project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
+  end
+
+  # The root every snapshot is rooted at reaches the build off the wiring's own
+  # {Lain::Project} rather than as a keyword, which is what the snapshot example
+  # below reads back. A REAL directory, because {Lain::Project} resolves its
+  # root through `File.realpath` and refuses one that is not there.
+  around do |example|
+    Dir.mktmpdir("lain-agent-build-root") { |dir| @root = File.realpath(dir) and example.run }
+  end
+
+  def build(**overrides)
+    wiring.send(:agent_over, board:, channel:, backend:, session: Lain::Session.new, **overrides)
+  end
+
+  # Both branches of the `channel:` default are reached through #wire_agent,
+  # the public seam, because a run makes exactly these two provider calls and
+  # in this order: the toolset build takes the Null default, and the agent
+  # build takes the run's live Channel. Asking the private method directly
+  # would prove the method's own arithmetic and say nothing about which caller
+  # gets which, which is the whole of what this group is about.
+  describe "the provider the run talks to" do
+    # The SPOOLED calls a real assembly made, in the order it made them. A run
+    # asks the backend for a provider on other errands too -- the library's, and
+    # the summarizer arm's -- and those are not round trips this class tees, so
+    # the set is the calls that named a spool at all. Its SIZE is asserted
+    # because `all` over an empty list is a pass, which is exactly what a
+    # regression that stopped spooling would produce.
+    def spooled_calls
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+      backend.provider_calls.select { |call| call.key?(:spool) }
+    end
+
+    it "tees every round trip into the chronicle's response spool" do
+      calls = spooled_calls
+
+      expect(calls.size).to eq(2)
+      expect(calls).to all(include(spool: chronicle.spool))
+    end
+
+    # A subagent leaves the default: its stream is not rendered, so only the
+    # spool tee matters there. Handing it the main chat's live Channel instead
+    # would put a child's tokens on the human's screen.
+    it "defaults the channel to the Null one, so an unrendered stream stays unrendered" do
+      expect(spooled_calls.first[:channel]).to be(Lain::Channel::Null.instance)
+    end
+
+    it "passes the run's live channel through when one is handed in" do
+      expect(spooled_calls.last[:channel]).to be(channel)
+    end
+  end
+
+  # The written/not-written pair is driven through the ASSEMBLY rather than at
+  # the method, over a provider that really lacks a capability the Context
+  # really requires: what a flag would change is the policy, but what shipped
+  # broken for twelve POC journals was the wiring -- a policy with a record
+  # type, an emitter, a reader and no caller. Reaching the method directly
+  # could not have caught that. The journal read back is the CHRONICLE's own
+  # record journal, which is the file a live chat writes these to.
+  describe "the capability degradations a run records" do
+    let(:io) { StringIO.new }
+    let(:chronicle) { WiringAgentSpecChronicle.new(Lain::Journal.new(io:)) }
+    let(:context) { Lain::Context.new(model: "qwen3:4b", max_tokens: 64) }
+
+    def degraded_lines
+      io.string.each_line.filter_map { |line| Lain::Journal.parse(line) }
+                         .select { |record| record["type"] == "capability_degraded" }
+    end
+
+    # The real ollama declaration -- `%i[streaming thinking structured_output]`,
+    # no `:prompt_caching` -- against the real {Lain::Context::REQUIRES}. A
+    # double answering `supports?` would be asserting on the double.
+    def wire_over(capabilities)
+      lacking = Lain::Provider::Mock.new(capabilities:)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:,
+                        backend: WiringAgentSpecBackend.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                                            mock: lacking))
+    end
+
+    it "writes one record per capability the provider cannot give the context" do
+      wire_over(Lain::Context::REQUIRES - %i[prompt_caching])
+
+      expect(Lain::Context::REQUIRES).to include(:prompt_caching)
+      expect(degraded_lines.map { |record| record.values_at("capability", "requirer", "provider") })
+        .to eq([%w[prompt_caching Lain::Context Lain::Provider::Mock]])
+    end
+
+    it "writes nothing when the provider supports everything the context requires" do
+      wire_over(Lain::Context::REQUIRES)
+
+      expect(io.string).to be_empty
+    end
+
+    # The wired policy is `:degrade` and may never be `:strict`:
+    # `Policy::Strict#handle_missing` reuses {Lain::Provider#require!}, so the
+    # missing capability above would raise {Lain::Provider::Unsupported} at turn
+    # one of every ollama chat. Stated as behaviour rather than as a constant
+    # comparison, so it survives the constant being renamed.
+    # The one of the three that stays at the method, because it is about the
+    # POLICY and not about the wiring: `:strict` would raise HERE, inside the
+    # call the two examples above reach through an assembly that would then
+    # never return. `journal:` is what makes driving it directly cheap -- the
+    # method needs one message, so a StringIO-backed {Lain::Journal} is the
+    # whole fixture.
+    it "degrades rather than raising, which is the whole of why :strict is not wired" do
+      lacking = Lain::Provider::Mock.new(capabilities: Lain::Context::REQUIRES - %i[prompt_caching])
+
+      expect { wiring.send(:journal_degradation, context, lacking, journal: Lain::Journal.new(io:)) }
+        .not_to raise_error
+      expect(described_class::DEGRADE).to eq(:degrade)
+    end
+  end
+
+  describe "the provider and instrumentation the Agent is backed by" do
+    subject(:backing) { wiring.send(:backing, backend, channel, -> {}, board:) }
+
+    it "hands back the provider it spooled and the instrumentation over it" do
+      expect(backing[:provider]).to be(mock_provider)
+      expect(backing[:instrumentation]).to be_a(Lain::Agent::Instrumentation)
+    end
+
+    # The same class list `spec/lain/cli_spec.rb` pins through the Wiring seam,
+    # asserted here against the module that now builds it: a credential-shaped
+    # memory_write is withheld in the TOOL phase, before it reaches the recorder,
+    # an unreleased region is masked out of a read in the same phase, before its
+    # bytes can reach an Event or the prompt-cache prefix, and a sensitive path
+    # is dropped out of a listing before the enumeration is believed.
+    it "puts all three secret guards, then the test layout guard, in the tool phase" do
+      expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+    end
+
+    # An unattended run leaves {Lain::CLI::Switchboard#approvals} nil, and the
+    # read guard takes its queue as a required keyword -- so the stand-in has to
+    # be substituted HERE, at the wiring, or the run raises on construction.
+    # Selected by CLASS, not by position: this example is about the read guard
+    # being constructible without a queue, and indexing at the end of the stack
+    # tied it to being the last entry, which a third guard then made false.
+    it "substitutes the unqueued stand-in when the board wired no approval queue" do
+      expect { backing }.not_to raise_error
+      expect(backing[:instrumentation].tool_middleware.to_a.grep(Lain::Middleware::RedactSecretReads))
+        .not_to be_empty
+    end
+
+    # The run's own member sits ahead of the chronicle's, so the Null
+    # chronicle's empty phase is no longer an empty stack -- it is the window
+    # refresh alone.
+    it "takes the turn phase from the chronicle, ahead of which it puts the window refresh" do
+      expect(backing[:instrumentation].turn_middleware.to_a.map(&:class))
+        .to eq([Lain::Middleware::ResolveWindow])
+    end
+
+    # The OWNER of the re-resolution trigger, named here because the book
+    # cannot own it: {CLI::Backend::WindowBook::Live} has no clock and no turn
+    # count, and re-resolving per READ would let one turn's three readers see
+    # three windows. It must refresh the run's ONE book -- the same instance
+    # handed to the Agent as `context_window:` -- or the reader that self-
+    # corrects is not the reader anything divides by.
+    # The ordering, against a turn stack that HAS another member -- the only
+    # arrangement in which the wrong order is distinguishable. Both halves are
+    # asserted: what the stack holds, and what ran first.
+    it "puts the window refresh outermost, ahead of the chronicle's own members" do
+      trail = backend.context_window.trail
+      journalling = described_class.new(
+        options: { grace: 5 }, chronicle: WiringAgentSpecJournallingChronicle.new(trail), status_feed:,
+        project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
+      )
+      stack = journalling.send(:backing, backend, channel, -> {}, board:)[:instrumentation].turn_middleware
+
+      stack.call({}) { |env| env }
+
+      expect(stack.to_a.map(&:class))
+        .to eq([Lain::Middleware::ResolveWindow, WiringAgentSpecJournallingChronicle::Member])
+      expect(trail).to eq(%i[window chronicle])
+    end
+
+    it "refreshes the very book the Agent is handed, once per turn" do
+      backing[:instrumentation].turn_middleware.call({}) { |env| env }
+
+      expect(backing[:context_window]).to be(backend.context_window)
+      expect(backend.context_window.refreshes).to eq(1)
+    end
+
+    it "builds its provider over the live channel, not the Null default" do
+      backing
+
+      expect(backend.provider_calls.first[:channel]).to be(channel)
+    end
+  end
+
+  describe "the Agent itself" do
+    # The seam's constraint, stated as an assertion: the board ARRIVES. Were
+    # this method to memoize one of its own, `Wiring#approvals`, the command
+    # surface and every subagent's gate policy would each read a different
+    # switchboard -- or nil.
+    # `backend.context` answers a FRESH value at every call by design, so what
+    # is asserted is the routing, not an identity the subject never promised:
+    # the board grafted exactly once, and the Agent holds what that graft
+    # returned.
+    it "builds over the board it was handed, never one it resolved itself" do
+      agent = build
+
+      expect(agent.toolset).to be(board.toolset)
+      expect(board.grafted.one?).to be(true)
+      expect(agent.context).to be(board.grafted.first)
+    end
+
+    it "wraps a Live executor over the board's toolset in the board's own gate" do
+      build
+
+      expect(board.gate_calls.map(&:class)).to eq([Lain::Effect::Handler::Live])
+    end
+
+    it "seeds the Agent with a resumed Timeline when one is passed" do
+      resumed = Lain::Timeline.new(head_digest: nil, store: Lain::Store.new)
+
+      expect(build(timeline: resumed).timeline).to eq(resumed)
+    end
+
+    it "gives the Agent a RequestOverride, so the resend bridge has its slot" do
+      expect(build.request_override).to be_a(Lain::Agent::RequestOverride)
+    end
+
+    # The nil-capture guard. The handle is built BEFORE the Agent it reads, so
+    # it can only be a thunk over a binding assigned afterwards; a plain return
+    # value would leave it nil forever and every turn-middleware read would
+    # raise NoMethodError on the first turn.
+    it "hands the chronicle a timeline handle that resolves to the built Agent" do
+      agent = build
+
+      expect(chronicle.timeline_handle.call).to be(agent.timeline)
+    end
+
+    # The slot is born here and handed to the board, which is what lets a
+    # `/mode` flip rebind it: the board is the one object that sees the flip.
+    it "hands the board a snapshot slot rooted at the project, under the board's posture" do
+      build
+
+      expect(board.snapshots).to be_a(Lain::Agent::SnapshotSlot)
+      expect(board.snapshots.root).to eq(@root)
+      expect(board.snapshots.label).to eq("write_set")
+    end
+  end
+
+  # The default posture's scope, from the first turn, in a chat Wiring built
+  # from a project SUBDIRECTORY, with a real bash call writing a file no lain
+  # tool records. Bash is tier 3 and would park on the approval queue, so the
+  # board is flipped to auto first: a posture declaring the same shadow scope,
+  # so the slot is not rebound.
+  describe "a chat Wiring built in accept_edits, launched from a subdirectory", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-agent-build-project") do |project|
+        Dir.mktmpdir("lain-agent-build-state") do |state|
+          @project = File.realpath(project)
+          @state = state
+          FileUtils.mkdir_p(File.join(@project, "sub"))
+          example.run
+        end
+      end
+    end
+
+    let(:shell_write) { "printf unrecorded > #{File.join(@project, "made-by-bash.txt")}" }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["tu_1", "bash", { "command" => shell_write }]),
+                                 Lain::Response.new(content: [{ "type" => "text", "text" => "done" }],
+                                                    stop_reason: :end_turn)
+                               ])
+    end
+
+    def wired_chat
+      wiring = described_class.new(
+        options: { grace: 5 }, chronicle:, status_feed: instance_double(Lain::StatusFeed),
+        project: Lain::Project.new(root: @project, cwd: File.join(@project, "sub"), kind: :project,
+                                   detected_by: :flag),
+        paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state })
+      )
+      recorder, session = wiring.run_state(nil)
+      [wiring, wiring.wire_agent(channel:, recorder:, session:, backend: WiringAgentSpecBackend.new(
+        { provider: "ollama", model: nil, max_tokens: 64 }, mock: provider
+      ))]
+    end
+
+    it "records a file no lain tool wrote in the next snapshot, rooted at the project root" do
+      wiring, agent = wired_chat
+      board = wiring.role_spawn.seam.gate_policy.board.call
+      board.mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+
+      agent.ask("make it")
+
+      entry = board.snapshots.log.to_a.last
+      body = agent.timeline.store.fetch(entry.snapshot).body
+      expect(entry.files.keys).to eq(["made-by-bash.txt"])
+      expect(body.fetch("root")).to eq(@project)
+      expect(body.fetch("snapshot_scope")).to eq(Lain::Workspace::Snapshot::Scope::ShadowGit::NOTE)
+    end
+  end
+
+  describe "the switchboard memo Wiring keeps" do
+    let(:status_feed) { instance_double(Lain::StatusFeed) }
+    let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
+    let(:wired_backend) do
+      Class.new(Lain::CLI::Backend) do
+        def initialize(options, mock:)
+          super(options)
+          @mock = mock
+        end
+
+        def provider(**) = @mock
+      end.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider)
+    end
+
+    def wire
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend: wired_backend)
+    end
+
+    # Assigned as a SIDE EFFECT of building the agent: #switchboard is memoized
+    # at its one call site, and three readers depend on that having happened.
+    # Moving the memo into this module is the failure the card is written to
+    # avoid, so the readers are what pin it.
+    it "is assigned by the time the parked-approval queue is read" do
+      wire
+
+      expect(wiring.approvals).to be_a(Lain::Approval::Queue)
+    end
+
+    # Reaching {Command::Env}'s own refusal AT ALL is the assertion:
+    # `@switchboard.surface_kwargs` runs first and would raise NoMethodError on
+    # nil before any Env existed. What the refusal then names is the pair
+    # #build_repl owns and this call deliberately withholds -- never
+    # `approvals`, which is nil exactly when the memo is.
+    it "is assigned by the time the command surface is assembled" do
+      wire
+
+      expect { wiring.send(:assemble_surface, agent: nil, library: nil, tty: nil) }
+        .to raise_error(ArgumentError, /\[:replies, :agent\]/)
+    end
+
+    # A subagent's gate policy is {ToolsetBuild::LivePolicy} over the thunk
+    # `-> { @switchboard }`, read at SPAWN time -- turns after the Agent was
+    # built, which is what lets it be late. Reached here through public readers
+    # only ({Wiring#role_spawn}, {Skill::RoleSpawn#seam},
+    # {Tools::Subagent::Seam#gate_policy}), because the point is the seam a
+    # child really travels over and not an ivar.
+    def child_gate_policy = wiring.role_spawn.seam.gate_policy
+
+    # Driving `.board.call` IS driving the thunk: that is the call
+    # {LivePolicy#call} makes on every child tier-3 dispatch. The ungated
+    # stand-in this once also named is gone from lib/ and {ToolsetBuild} now
+    # requires a `switchboard:`, so "it did not resolve the ungated default"
+    # has no default to be about -- an assertion that could no longer fail.
+    it "is what a subagent's gate policy thunk resolves" do
+      wire
+
+      expect(child_gate_policy.board.call).to be_a(Lain::CLI::Switchboard)
+    end
+
+    # The privilege-inversion guard, stated as the thing a child's dispatch
+    # actually consults: {LivePolicy#call} resolves the board, asks it for
+    # `policy_switch`, and calls whatever that slot currently holds.
+    #
+    # The queue assertion is the one that is not a tautology, and the direction
+    # is the whole of why: the left side travels the CHILD's thunk out to a
+    # board and back, where the right side is {Wiring}'s own reader over the
+    # memo. Two paths, one object. Comparing a board's `approvals` against
+    # itself -- which an earlier edition of this example did -- is
+    # `x.approvals == x.approvals` and passes for any board at all, including
+    # the ungated one.
+    #
+    # What then adjudicates is the run's escalation ladder. Against an ungated
+    # board it would be {Tools::Subagent::UNGATED}, an unconditional approver:
+    # a child could do what its parent must ask to do, which is a privilege
+    # inversion and not a wiring omission.
+    it "gates a child through the run's own queue, the one its parent is gated by" do
+      wire
+      resolved = child_gate_policy.board.call
+
+      expect(resolved.approvals).to be(wiring.approvals)
+      expect(resolved.policy_switch.current).to be_a(Lain::Approval::Escalation)
+      expect(resolved.policy_switch.current).not_to be_a(Lain::Effect::Handler::Gate::ApproveAll)
+    end
+
+    # The third axis, over the SAME seam and the SAME thunk. It matters that
+    # both chains resolve one board rather than two: a `LiveSensitivity` built
+    # over a second thunk would answer a different session's policy, and every
+    # behavioural check would still agree while nothing was configured.
+    def child_sensitivity = wiring.role_spawn.seam.sensitivity
+
+    it "resolves a child's sensitivity through the run's own board" do
+      wire
+
+      expect(child_sensitivity.board.call).to be_a(Lain::CLI::Switchboard)
+    end
+
+    # The identity that makes the privilege inversion unrepresentable: ONE
+    # board, so one {Sensitivity::Policy}, so the paths a child's gate refuses
+    # are the paths its parent's gate refuses -- by construction rather than by
+    # two wirings agreeing. A second thunk here would satisfy every behavioural
+    # check in this suite and still point at a different session.
+    #
+    # `#sensitivity` is read off the resolved board rather than off Wiring,
+    # which keeps no public reader for it: the board IS the parent gate's
+    # source, so reading its slot is reading what the parent consults.
+    it "resolves that sensitivity from the same board its gate policy resolves" do
+      wire
+      board = child_sensitivity.board.call
+
+      expect(board).to be(child_gate_policy.board.call)
+      expect(child_sensitivity.board.call.sensitivity).to be(board.sensitivity)
+    end
+
+    # The late half, which the two above cannot see: the thunk closes over an
+    # IVAR, so it must answer the board that is there WHEN IT IS CALLED, not
+    # one captured while the toolset was being built -- at which point the memo
+    # is still nil. Building the toolset alone and reading the thunk before the
+    # agent exists is the only place that distinction is visible.
+    it "reads nil until the agent build assigns it, which is what makes the thunk late" do
+      recorder, = wiring.run_state(nil)
+      wiring.send(:build_toolset, recorder, backend: wired_backend, parent: -> {},
+                                            ask_human: Lain::Tools::AskHuman.new(parent: -> {}))
+
+      expect(wiring.role_spawn.seam.gate_policy.board.call).to be_nil
+    end
+  end
+end
+
+# The capability floor's own seam, and it earns a group of its own for one
+# thing the assemblers above it cannot show. This module is where the session's
+# {Lain::Shell::Verdict} reaches {Lain::Tools::Bash}, and the keyword carrying
+# it has a permissive default -- which is exactly how an unwired guard ships
+# green forever. So what is asserted here is the IDENTITY of what arrives,
+# alongside the default staying indistinguishable from the tool's own.
+RSpec.describe Lain::CLI::Wiring::BaseTools do
+  let(:recorder) { Lain::Memory::Recorder.new }
+  let(:channel) { RecordingChannel.new }
+
+  # `@verdict` is read through the ivar for `toolset_build_spec`'s reason:
+  # {Lain::Tools::Bash} exposes no reader, and adding one to widen a spec's
+  # reach would be the spec shaping the subject.
+  def bash_in(floor) = floor.find { |tool| tool.name == "bash" }
+
+  def verdict_of(floor) = bash_in(floor).instance_variable_get(:@verdict)
+
+  def excluding(*programs)
+    Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: programs))
+  end
+
+  # The keyword carrying the session's journal has a Null default too, and a
+  # permissive default is exactly how a wired-looking guard ships doing nothing.
+  # So this is driven through {Lain::CLI::Wiring::ToolsetBuild} -- the object
+  # that assembles this floor for every chat -- with the real bash tool running
+  # a real command and NO double anywhere below the assembler. What is asserted
+  # is that the record lands in the journal that session was built with.
+  describe "the journal a live session's assembler hands the floor" do
+    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+    let(:chronicle) { Lain::CLI::Chronicle::Null.new }
+    let(:journal) { RecordingChannel.new }
+    let(:parent) { -> { Lain::Timeline.new } }
+    let(:assembler) do
+      Lain::CLI::Wiring::ToolsetBuild.new(backend:, provider: backend.provider(spool: chronicle.spool),
+                                          chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
+                                          parent:, journal:, library: backend.library,
+                                          epic: Lain::CLI::EpicMount::NoEpic, root: Dir.pwd,
+                                          switchboard: -> { SpecNulls::NoSwitchboard },
+                                          askers: SpecNulls::UnwiredAskers.build)
+    end
+
+    def live_bash = assembler.build(recorder, ask_human: Lain::Tools::AskHuman.new(parent:)).fetch("bash")
+
+    it "lands the bash tool's arm record in that session's journal" do
+      live_bash.call({ command: "ls -la" }, Lain::Tool::Invocation.new(tool_use_id: "tu_live", channel:))
+
+      expect(journal.events.grep(Lain::Telemetry::ShellArm).map { |arm| [arm.tool_use_id, arm.verdict] })
+        .to eq([["tu_live", :allow]])
+    end
+  end
+
+  describe "the floor itself" do
+    it "hands the bash tool the verdict it was built with, by identity" do
+      chosen = excluding("curl")
+
+      expect(verdict_of(described_class.build(recorder, verdict: chosen))).to be(chosen)
+    end
+
+    # The behavioural half of the same claim: the floor's bash really answers
+    # through the session's table, so a program the project ruled out is a
+    # refusal at the tool's own arm choice too.
+    it "gives the floor a verdict that refuses the program the session excluded" do
+      floor = described_class.build(recorder, verdict: excluding("curl"))
+
+      expect(verdict_of(floor).call("curl http://example.com")).to be_deny
+    end
+
+    # The exec tools are named in one place production reads
+    # ({Lain::Approval::Escalation::Triage::COMMAND_TOOLS}) and built in one
+    # place a chat reaches (this floor). A name on that list the floor never
+    # builds is a tool nothing can reach while the approval vocabulary still
+    # vouches for it -- which is how a second exec tool sat there unoffered.
+    # So the two halves are asserted against each other rather than separately.
+    it "offers bash, and names no command tool the floor does not build" do
+      names = described_class.build(recorder).map(&:name)
+
+      expect(names).to include("bash")
+      expect(Lain::Approval::Escalation::Triage::COMMAND_TOOLS - names).to be_empty
+    end
+
+    # The floor is what a subagent role attenuates FROM, so the ONE bash the
+    # floor holds is the one a child inherits -- there is no second tool to
+    # wire, and no way for a child's verdict to differ from its parent's.
+    it "builds exactly one bash, so a child cannot inherit a different verdict" do
+      floor = described_class.build(recorder, verdict: excluding("curl"))
+
+      expect(floor.count { |tool| tool.name == "bash" }).to eq(1)
+    end
+
+    # The default is what an unwired build gets, and it must restrict nothing:
+    # a floor built with no session behaves byte-for-byte as it did before the
+    # keyword existed.
+    it "defaults to a verdict that restricts no program" do
+      expect(verdict_of(described_class.build(recorder)).call("curl http://example.com")).to be_allow
+    end
+
+    # A bash built with no verdict at all still runs the term arm, which is the
+    # property the default exists to protect: `Tools::Subagent` runs an ungated
+    # handler and `bash_spec` constructs the tool alone, so sharing the
+    # session's instance has to stay an INJECTION rather than a dependency.
+    it "still runs the term arm with no verdict wired, and spawns no shell" do
+      no_shell = ->(*, **) { raise "a shell was spawned" }
+      floor = described_class.build(recorder, exec: Lain::Exec::Local.new(shell_out_factory: no_shell))
+
+      result = bash_in(floor).call({ command: "ls -la" }, Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:))
+
+      expect(result).to be_ok
+      expect(result.content).to include("exit status: 0")
+    end
+  end
+end
+
+# How the chat handoff finds the repository a worker's work merges back into.
+# It used to derive that separately from the {Lain::Isolation::Worktree}
+# backend that actually cut the worker checkouts -- a second, git-shelled
+# `rev-parse --show-toplevel` that can disagree with the backend's own answer
+# under GIT_CEILING_DIRECTORIES (see the divergence example below). Reading
+# the backend's own #repo_root instead makes the two answers unrepresentable
+# as different directories.
+RSpec.describe Lain::CLI::Wiring, "the handback a worker's work comes home on", :seam do
+  around do |example|
+    Dir.mktmpdir("lain-handback-repo") do |dir|
+      @repo = File.realpath(dir)
+      init_repo(@repo)
+      @root = File.join(@repo, "sub")
+      FileUtils.mkdir_p(@root)
+      example.run
+    end
+  end
+
+  def init_repo(dir) = FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", dir)
+
+  # The fleet backend a `--isolation worktree` chat resolves, reached through
+  # the wiring rather than built beside it: what is under test is the handback
+  # the run's OWN isolation produces, and a second backend built here could
+  # answer a different repository than the one the run cut checkouts from.
+  def handback_of_chat
+    described_class.new(options: { grace: 5, isolation: "worktree" },
+                        chronicle: Lain::CLI::Chronicle::Null.new,
+                        status_feed: instance_double(Lain::StatusFeed),
+                        project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
+                   .send(:handback, nil)
+  end
+
+  it "wires the handoff with the working branch's repository" do
+    expect(handback_of_chat.handoff).not_to equal(Lain::Isolation::WorkerHandoff::Null)
+  end
+
+  # THE DIVERGENCE. `--isolation worktree` launched from a SUBDIRECTORY of the
+  # repository, under GIT_CEILING_DIRECTORIES pointed at the repository root
+  # itself: git's own discovery walk stops BEFORE reaching that root when it
+  # starts below it (verified against a real `git rev-parse --show-toplevel`),
+  # so a handoff that re-derives its root by shelling out raises where the
+  # backend -- whose own repository search is a plain directory walk, not a
+  # git subprocess -- resolved and cut worktrees just fine.
+  it "answers from the backend's own repository rather than raising under GIT_CEILING_DIRECTORIES" do
+    with_env("GIT_CEILING_DIRECTORIES" => @repo) do
+      handback = nil
+      expect { handback = handback_of_chat }.not_to raise_error
+
+      expect(handback.handoff.instance_variable_get(:@repo_root)).to eq(@repo)
     end
   end
 end

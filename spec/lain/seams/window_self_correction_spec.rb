@@ -7,7 +7,7 @@ require "tmpdir"
 # End to end, over the wiring the defect was measured on: a real
 # {Lain::CLI::Backend} resolves the run's window book from a real `--num-ctx`
 # and a real (stubbed-at-the-socket) ollama, the real turn stack
-# {Lain::CLI::Wiring::AgentBuild} builds re-resolves it, and a real
+# {Lain::CLI::Wiring} builds re-resolves it, and a real
 # {Lain::Compaction::Source} journals what it divided by.
 #
 # The defect: an operator's `--num-ctx` is a REQUEST, not a measurement. With
@@ -69,11 +69,15 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
                                         num_ctx:, compact_keep: 2)
   end
 
-  # THE REAL TURN STACK, from the module that wires one for a live chat, over
+  # THE REAL TURN STACK, from the object that wires one for a live chat, over
   # the run's own book. Rebuilding the composition here would prove that this
   # file can compose a middleware, which is not the claim.
   def turn_stack
-    Lain::CLI::Wiring::AgentBuild.turn_phase(Lain::CLI::Chronicle::Null.new, -> {}, backend.context_window)
+    Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+                          status_feed: instance_double(Lain::StatusFeed),
+                          project: Lain::Project.new(root: Dir.pwd, cwd: Dir.pwd, kind: :project,
+                                                     detected_by: :flag))
+                     .send(:turn_phase, -> {}, backend.context_window)
   end
 
   # The response ECHOES the model, as a real provider's does, because that is
