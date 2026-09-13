@@ -11,6 +11,9 @@ require_relative "config/epics"
 require_relative "config/gates"
 require_relative "config/answers"
 require_relative "config/isolation"
+# Last: {Config::Resolved} builds all four tables above, and the two that live
+# outside this subtree, on demand.
+require_relative "config/resolved"
 
 module Lain
   # Reads `<root>/.lain/config.toml`. Absence is not an error -- {.load} on a
@@ -75,14 +78,7 @@ module Lain
     #   is not a table, carries a key that table does not know, holds a value
     #   outside that key's rule, or -- under `[approval]` -- carries a remembered
     #   entry that could never match a call
-    def self.load(root: Dir.pwd)
-      path = path_for(root)
-      return empty unless File.exist?(path)
-
-      raw = read(path)
-      new(epics: Epics.from(raw["epics"], path:), approval: Answers.from(raw["approval"], path:),
-          isolation: Isolation.from(raw["isolation"], path:))
-    end
+    def self.load(root: Dir.pwd) = resolved(root).config
 
     # The `[sensitivity]` table, and NOTHING else in the file -- what a project
     # adds to the path classifier's built-in tables, and the one thing it may
@@ -111,12 +107,7 @@ module Lain
     # @raise [Refusal] when `[sensitivity]` is not a table, names a strength this
     #   class does not know, gives one as a single value rather than a list, or
     #   carries a pattern that could never match anything
-    def self.sensitivity(root:)
-      path = path_for(root)
-      return Sensitivity::Rules.empty unless File.exist?(path)
-
-      Sensitivity::Rules.from(read(path)["sensitivity"], path:)
-    end
+    def self.sensitivity(root:) = resolved(root).sensitivity
 
     # The `[shell]` table: the programs this project has ruled out of every
     # shell command, whatever else the command says.
@@ -138,12 +129,7 @@ module Lain
     # @raise [Refusal] when `[shell]` is not a table, names a key this class does
     #   not read, gives `exclude` as a single value rather than a list, or
     #   carries an entry that could never match a program
-    def self.shell_exclusions(root:)
-      path = path_for(root)
-      return Shell::Exclusions.empty unless File.exist?(path)
-
-      Shell::Exclusions.from(read(path)["shell"], path:)
-    end
+    def self.shell_exclusions(root:) = resolved(root).shell_exclusions
 
     # The `[tests]` table: where this project keeps its tests, which the
     # layout guard holds a test file's path to.
@@ -166,25 +152,23 @@ module Lain
     # @raise [Malformed] when the file exists but cannot be read as TOML
     # @raise [Refusal] when `[tests]` is not a table, names a key the layout does
     #   not read, names no preset, or holds a value outside its key's rule
-    def self.test_layout(root:, framework: nil)
-      path = path_for(root)
-      table = File.exist?(path) ? read(path)["tests"] : nil
-      TestLayout.from(table, path:, framework:)
-    end
+    def self.test_layout(root:, framework: nil) = resolved(root).test_layout(framework:)
+
+    # The shared parse, so the four readers above cannot disagree about what
+    # the file says -- only about how loudly to complain. It is shared across
+    # the PROCESS, not merely across these four: {Project::Resolver} reads the
+    # same file for a `root =` before any of them, and comes through here too.
+    # {Resolved} carries what invalidates it.
+    #
+    # @param root [String] a project root
+    # @return [Resolved]
+    def self.resolved(root) = Resolved.for(path_for(root))
 
     def self.path_for(root) = File.join(root, ".lain", "config.toml")
 
-    # The shared parse, so the two readers above cannot disagree about what the
-    # file says -- only about how loudly to complain.
-    def self.read(path)
-      Tomlrb.load_file(path)
-    rescue Tomlrb::ParseError, ArgumentError, SystemCallError => e
-      # "The file is there but unusable" is one failure to a caller, whichever
-      # of the three raised it; {Malformed#describe} keeps them apart in words.
-      raise Malformed.new(path, e)
-    end
-
-    private_class_method :path_for, :read
+    # Both private: the four readers above are this class's whole door onto the
+    # file, and {Resolved.for} is the door for anything holding a path already.
+    private_class_method :path_for, :resolved
 
     # @return [Config] every field at its default -- the value an absent file yields.
     def self.empty

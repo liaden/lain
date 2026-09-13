@@ -144,13 +144,31 @@ module Lain
         # but only to where a project stands before it opts in, and the
         # land-time check still refuses a misplaced test.
         #
+        # The refusal arm is NARROW ON PURPOSE, and the width has to be checked
+        # rather than inherited. {Config::Refusal} is one class for all seven
+        # config tables, so the class alone no longer says which table refused
+        # -- `#table` does. Rescuing it bare here would degrade the layout on an
+        # `[isolation]` typo and let the chat start, which is the restricting
+        # posture collapsing into the granting one at the only site that could
+        # hide it. Today the shared parse is lazy per table, so a foreign
+        # refusal cannot arrive here at all; this arm is what keeps that true if
+        # it ever stops being.
+        #
         # @param project [Lain::Project]
         # @param notice [#call, nil]
         # @return [Lain::Middleware::GuardTestLayout::Run]
         def test_layout(project:, notice: nil)
           layout_run(Config.test_layout(root: project.root), project)
-        rescue Config::Refusal, Config::Malformed => e
-          (notice || SILENT).call(format(IGNORED_LAYOUT, reason: e.message))
+        rescue Config::Refusal => e
+          raise unless e.table == Lain::TestLayout::TABLE
+
+          ignored_layout(e, project, notice)
+        rescue Config::Malformed => e
+          ignored_layout(e, project, notice)
+        end
+
+        def ignored_layout(error, project, notice)
+          (notice || SILENT).call(format(IGNORED_LAYOUT, reason: error.message))
           layout_run(Lain::TestLayout::None, project)
         end
 

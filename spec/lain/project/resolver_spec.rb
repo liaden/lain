@@ -189,6 +189,24 @@ RSpec.describe Lain::Project::Resolver do
                                                              detected_by: :config)
     end
 
+    # The scan comes through {Lain::Config::Resolved}, the same shared parse the
+    # six table readers use, rather than reimplementing {Config}'s private
+    # reader as it did. So the walk's own read is the process's ONE read of that
+    # file, and every reader that follows finds it already done -- which is what
+    # makes "parsed once per startup" true rather than "parsed twice".
+    it "reads the declaring file once, and leaves it read for the table readers" do
+      root = File.join(tmp, "work", "repo")
+      path = write(File.join(root, ".lain", "config.toml"), %(root = "."\n[epics]\nhome = "repo"\n))
+      cwd = mkdir("work", "repo", "src")
+      allow(Tomlrb).to receive(:load_file).and_call_original
+
+      project = resolver.call(cwd:).project
+
+      expect(project.root).to eq(root)
+      expect(Lain::Config.load(root: project.root).epics_home).to eq(:repo)
+      expect(Tomlrb).to have_received(:load_file).with(path).once
+    end
+
     it "declines a declared root that is not an ancestor-or-self of cwd, falling to the next rung" do
       init_repo(File.join(tmp, "work", "repo"))
       elsewhere = mkdir("work", "elsewhere")

@@ -257,6 +257,30 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         expect(told.join).to include("[tests]")
       end
     end
+
+    # The degrade is the `[tests]` table's own and nobody else's, and the width
+    # of this rescue has to be checked rather than inherited: since the seven
+    # config families collapsed into one {Lain::Config::Refusal}, the class no
+    # longer says which table refused -- `#table` does. A bare rescue here would
+    # let an `[isolation]` typo degrade the layout and start the chat, which is
+    # a restricting table failing open at the one site that could hide it.
+    #
+    # The refusal is INJECTED because today's shared parse builds each table on
+    # the reader that asks for it, so `Config.test_layout` cannot raise about a
+    # foreign table at all. This arm is what keeps that safe if it ever stops
+    # being true, and an arm no example drives is an arm nobody maintains.
+    it "re-raises a refusal about another table rather than degrading the layout" do
+      in_tree(config: "[tests]\npreset = \"rspec\"\n") do |root, _home|
+        told = []
+        foreign = Lain::Config::Refusal.new("retain_days = -1 is not a whole number of days",
+                                            path: File.join(root, ".lain", "config.toml"),
+                                            table: Lain::Config::Isolation::TABLE)
+        allow(Lain::Config).to receive(:test_layout).and_raise(foreign)
+
+        expect { run_at(root, notice: told.method(:push)) }.to raise_error(foreign)
+        expect(told).to be_empty
+      end
+    end
   end
 
   describe ".shell_verdict" do

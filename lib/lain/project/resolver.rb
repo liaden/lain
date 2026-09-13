@@ -333,11 +333,17 @@ module Lain
           declared && reachable(path, declared, dir)
         end
 
-        def declared_root(path)
-          Tomlrb.load_file(path)["root"]
-        rescue Tomlrb::ParseError, ArgumentError, SystemCallError => e
-          raise Config::Malformed.new(path, e)
-        end
+        # Through the SAME parse the six table readers use, which is the
+        # difference between this scan and what it replaced. It used to be
+        # {Config}'s private reader copied out verbatim -- its three-class
+        # rescue and its {Config::Malformed} rename included -- so a fourth way
+        # of failing to read a config file, added there, would never have
+        # reached the one caller that opens these files first.
+        #
+        # And it is first: this walk runs during root resolution, before any
+        # table is asked for, so ordinarily it is this call that does the
+        # process's one parse and the six readers that find it already done.
+        def declared_root(path) = Config::Resolved.for(path).declared_root
 
         # A `~` is refused LEXICALLY and never handed to `File.expand_path`,
         # which would resolve it through getpwnam -- on an SSSD or LDAP-backed
