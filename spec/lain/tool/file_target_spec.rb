@@ -184,7 +184,7 @@ RSpec.describe Lain::Tool::FileTarget do
   end
 
   describe "three of the eight tools, driven whole through the seam" do
-    # AC 1 and AC 2. Driven through the real tool, because the point of the
+    # Driven through the real tool, because the point of the
     # seam is that the tools stopped re-deriving this.
     describe "read_file" do
       subject(:tool) { Lain::Tools::ReadFile.new }
@@ -213,14 +213,12 @@ RSpec.describe Lain::Tool::FileTarget do
       end
     end
 
-    # AC 3.
     it "refuses a missing list_files target with one sentence naming the resolved path" do
       result = Lain::Tools::ListFiles.new.call({ path: "nope" }, invocation_with(session_at(tmpdir)))
 
       expect(result).to have_attributes(is_error: true, content: "no such directory: #{tmpdir}/nope")
     end
 
-    # AC 5.
     it "names the verb write_file was performing when the write is denied", if: Process.uid != 0 do
       path = write("locked.txt", "old\n")
       File.chmod(0o000, path)

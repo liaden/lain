@@ -241,6 +241,20 @@ RSpec.describe CommentCensus do
       end
     end
 
+    # The tree itself, not a fixture. Every example above proves the classifier
+    # can TELL a ticket from a third-party token; none of them proved the tree
+    # is clean, so six `AC n` citations landed across two commits while this
+    # file stayed green. CLAUDE.md gives the ban no exempt tier, so the honest
+    # assertion is that the banned section is empty -- and it names the sites,
+    # because a bare count tells whoever reddens this nothing about where.
+    it "carries no project-scheme citation anywhere the checker scans" do
+      stdout, _stderr, = run_cli("--check-tickets")
+      sites = stdout.lines.drop_while { |line| !line.start_with?("PROJECT SCHEMES") }
+                          .drop(1).take_while { |line| line.start_with?("  ") }
+
+      expect(sites).to be_empty, "project-scheme citations are banned in comments:\n#{sites.join}"
+    end
+
     it "refuses to guess: a shape in neither list is reported as unknown, not as a ticket" do
       unknown = "# QQ7 is a scheme nobody has classified yet.\n"
 

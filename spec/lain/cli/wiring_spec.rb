@@ -2717,7 +2717,7 @@ RSpec.describe Lain::CLI::Wiring do
   # epic it is seated in, and -- already pinned above, at the shell verdict --
   # the ONE object two seams share.
   describe "the collaborators this class absorbed" do
-    # AC 3. The resumed halves arrive from the resume result rather than being
+    # The resumed halves arrive from the resume result rather than being
     # built fresh, and BOTH are decorated by the chronicle: decorating one and
     # not the other is a run whose usage records name a memory root its reads
     # never wrote.
@@ -2742,7 +2742,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # AC 4. The mount is resolved ONCE and read twice -- the toolset takes its
+    # The mount is resolved ONCE and read twice -- the toolset takes its
     # tools, an attached editor's lain://status takes its slug -- because
     # {CLI::EpicMount} builds the one {Epic::Review} per slug and a second
     # mount would be a second guard over one journal.
