@@ -1,6 +1,8 @@
 # Simplify 11 — retire the manifest that every new unit has to edit
 
-status: draft — **do not run in this series**; see Open decisions
+status: draft — **queued, not shelved: runs after simplify-08 and simplify-10 land, alone, in a window of
+its own** (human, 2026-09-13). The "runs alone" part is the reason for the sequencing, not a footnote on
+it — see Open decisions.
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -10,16 +12,21 @@ panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patter
 `lib/lain.rb` is the most-churned file in the repository — **82 commits in nine weeks for 99 code
 lines of pure require list** — because CLAUDE.md's centralized-requires rule makes it a serialization
 point every new unit must edit. That rule also forces a committing constraint, has caused at least one
-merge to trip a cop neither branch crossed, and is **directly producing duplication**: one view cannot
-read a sibling's constant because the manifest loads it first, so the constant is written twice in
-Ruby and a third time in Lua.
+merge to trip a cop neither branch crossed, and **was directly producing duplication**: one view could not
+read a sibling's constant because the manifest loads it first, so the constant was written twice in Ruby
+and a third time in Lua. **That last one is fixed as of 2026-09-13** — simplify-07's T7 extracted
+`Fold::INDENT` as a leaf loaded before both consumers, which is what CLAUDE.md's own requires rule
+prescribes, so the plan's strongest concrete deliverable has been delivered by other means. What remains
+is churn, a committing constraint, and a merge hazard.
 
 Zeitwerk is already in the bundle and only 17 of 749 files need an inflection. This plan replaces the
 manifest with a loader, deletes 24 index files, and removes the rules the manifest existed to support.
 
 Delivers: **−748 `require_relative` lines and −24 files**; `lib/lain.rb` from 99 code lines to ~40; the
-commit-ordering rule gone from CLAUDE.md; and four documented load-order workarounds in the bench
-removed.
+commit-ordering rule gone from CLAUDE.md; and the documented load-order workarounds in the bench removed
+— **as many of the four as simplify-08's T9 leaves standing**, since three of them sit in the altitude
+cluster T9 decides on. The fifth item, the `inbox_view` duplication, is **already gone**: simplify-07's T7
+removed it without Zeitwerk. See Open decisions.
 
 ## Grounding
 
@@ -76,8 +83,11 @@ algebra has now been filed by the class body that makes it, so the process-wide 
 
 **Under Zeitwerk, class bodies do not run until a constant is referenced.** So a seal at require time
 would close an **empty** registry, and `spec/algebra_laws_spec.rb` would sweep nothing while passing.
-Filed today: 24 claims and 5 refutations. This is the one place the manifest is doing real work that
-autoloading cannot replicate, and the plan must answer it explicitly rather than discovering it at T2.
+Filed at the time of writing: 24 claims and 5 refutations; re-measured 2026-09-13 it is roughly **18
+declarations and 6 refutations**, with `lib/lain.rb:141-162` now mirroring the three Timeline claims onto
+`Lain::Ext::Timeline`. **The count moves — read the registry, never this number.** The argument does not
+move: this is the one place the manifest is doing real work that autoloading cannot replicate, and the
+plan must answer it explicitly rather than discovering it at T2.
 
 Two further load-time facts in the same file: `:120-135` requires `lain/lain` (the compiled extension)
 and **re-raises `LoadError`** with a build instruction, because there is no degraded mode —
@@ -126,7 +136,7 @@ the ledger has shifted.
 ## Open decisions
 
 - **Eager-load or lazy?** T1 proposes `loader.eager_load` unconditionally, because three separate things
-  depend on every class being loaded: the algebra seal (24 claims), the shareability sweep (267 classes),
+  depend on every class being loaded: the algebra seal (~18 declarations), the shareability sweep (267 classes),
   and the 28 specs that enumerate `lib/`. Eager loading gives up Zeitwerk's lazy benefit and adds boot
   time to every `lain` invocation and every one of the 12 spec workers. **Measure it in T1 and report the
   number before T2 commits to it.** If the cost is material, the alternative is eager-loading only in
@@ -142,6 +152,36 @@ the ledger has shifted.
 - **Whether `CLAUDE.md`'s requires rule is replaced or deleted.** T6 replaces it with a Zeitwerk-shaped
   rule (naming conventions, where an inflection goes, what `ignore` is for). Deleting it outright would
   leave nothing saying how a new file is found.
+- **Scheduled 2026-09-13: after 08 and 10, alone.** The human's ruling is that **simplify-08 and
+  simplify-10 run now and this plan runs afterwards, once both have landed**, in a window of its own.
+  That is the same constraint the Orchestrator contract already states (*"Run this plan alone"*) and the
+  same one the bullet above reaches (*"if it runs, it runs last, alone"*) — the ruling settles **when**,
+  not whether. The sequencing is not administrative: T2 deletes 748 require lines across 749 files, so
+  any plan in flight conflicts on almost every file it touches, and a rebase across 749 files is not a
+  rebase.
+- **Two things landed in the window that weaken the case without changing the decision.**
+  - **simplify-07's T7 has shipped, and with it T4's fifth item.** The panel called
+    `inbox_view.rb:83-87`'s respelling of `ApprovalView::INDENT` this plan's *strongest concrete
+    deliverable*. It is gone: `Fold::INDENT` is now the one Ruby spelling, read by
+    `lib/lain/frontend/neovim/inbox_view.rb:84` and `approval_view.rb:96`, by exactly the mechanism
+    CLAUDE.md's requires rule already prescribes — a leaf loaded before both consumers. **T4 shrinks to
+    confirming that leaf is still the right shape under autoloading**, which is what its own text
+    anticipated. What is left of the case is 748 require lines, a 1.5× churn ratio, and four bench
+    awkwardnesses.
+  - **Three of those four bench workarounds sit in files simplify-08's T9 may retire.**
+    `live_arms.rb:9-11`, `live_arms.rb:70-80` and `altitude.rb:24-28` are all in the altitude cluster T9
+    decides on; only `compare.rb:214-217` is certainly outside it. **So T4 cannot be finalised until 08's
+    T9 decision is known** — which the new sequencing guarantees, since 08 lands first. If T9 retires the
+    cluster, T4 is one workaround and a verification, and the panel should be asked again whether that
+    is a plan.
+- **simplify-09 was dropped entirely on 2026-09-13, and T2's counts are stale independently of that.**
+  T2's fourth-from-last escalation trigger warns that simplify-09's T3 and T4 would change the registry
+  counts in AC 5. **That trigger is void** — 09 is not running. But AC 5's *"twenty-four claims and five
+  refutations"* is stale anyway: measured today the registry holds roughly **18 declarations and 6
+  refutations**, and `lib/lain.rb:141-162` now mirrors the three Timeline claims onto
+  `Lain::Ext::Timeline`. **The card must read the registry rather than copy any number from this plan** —
+  and it must not treat the seal as incidental while doing so; `planning/specs/research-algebra-registry-vs-operations.md`
+  is the record of why the registry and its close are load-bearing.
 
 ## Waves
 
@@ -247,8 +287,10 @@ card must pick one and justify it:
    runtime one.
 
 The Open decisions favour (1) if T1's measurement permits. **Whichever is chosen, the count is the
-check**: 24 claims (elementwise 7, meet_semilattice 5, monoid 4, pure 4, attenuation 2,
-commutative_monoid 2) and 5 refutations.
+check**: whatever the registry holds before the loader is introduced must still be there after. At the
+time of writing that was 24 declarations (elementwise 7, meet_semilattice 5, monoid 4, pure 4,
+attenuation 2, commutative_monoid 2) and 5 refutations; on 2026-09-13 it is roughly 18 and 6. **Capture
+the real numbers first and compare against those** — the comparison is the check, not the constants.
 
 **Acceptance criteria**
 
@@ -272,7 +314,7 @@ Scenario: the shareability sweep still sees every value class
 
 Scenario: the sealed registry holds every claim
   When the registry is enumerated after load
-  Then it holds twenty-four claims and five refutations
+  Then it holds every declaration the registry held before the loader was introduced
 
 Scenario: an empty registry is still refused
   Given the law sweep
@@ -297,11 +339,15 @@ registry half's real deliverable**), plus a CLI spec for AC 1
   Zeitwerk could break about it. Note `Registry#seal` is `freeze` over a process global, so exercising the
   empty case needs the injected-registry seam at `algebra.rb:306`.
 - **If the seal cannot be made to work under autoloading in either shape, stop the whole plan.** The
-  registry is how 24 algebraic claims are held to their laws, and no amount of require-line deletion is
+  registry is how lain's algebraic claims are held to their laws, and no amount of require-line deletion is
   worth losing it silently.
-- simplify-09's T3 trims the registry's production surface and its T4 moves three of the five
-  `meet_semilattice` claims onto operation objects. If 09 has landed, **the expected counts in AC 5 are
-  different** — read the registry rather than copying numbers from this plan.
+- **This trigger is void, and the counts were wrong anyway.** It warned that simplify-09's T3 and T4 would
+  change the expected counts in AC 5; **simplify-09 was dropped entirely on 2026-09-13**. But AC 5's
+  *"twenty-four claims and five refutations"* is stale on its own — measured, the registry holds roughly
+  **18 declarations and 6 refutations**, and `lib/lain.rb:141-162` now mirrors the three Timeline claims
+  onto `Lain::Ext::Timeline`. **Read the registry; copy no number from this plan.** And do not treat the
+  seal as incidental while doing so — `planning/specs/research-algebra-registry-vs-operations.md` records
+  why the registry and its close are load-bearing.
 - If a file turns out to depend on load *order* rather than on a constant being defined — a monkey-patch,
   a `Module#prepend`, an `ActiveSupport::Concern` whose `included` hook must run before something else —
   autoloading will not preserve it. `active_support/core_ext` is one known case: CLAUDE.md records that
@@ -357,27 +403,33 @@ whole tree
 
 ### T4 — Remove the load-order workarounds the manifest forced   [wave 3] [risk: medium]
 
-**Depends on:** T2
-**Files:** modify `lib/lain/bench/live_arms.rb`, `lib/lain/bench/altitude.rb`,
-`lib/lain/compare.rb`, `lib/lain/frontend/neovim/inbox_view.rb`; modify the corresponding spec files
+**Depends on:** T2, and on **simplify-08's T9 decision** being known
+**Files:** modify `lib/lain/compare.rb` and — only if T9 kept them — `lib/lain/bench/live_arms.rb`,
+`lib/lain/bench/altitude.rb`; verify `lib/lain/frontend/neovim/fold.rb`'s leaf under autoloading; modify
+the corresponding spec files
 **Reuse:** the four workarounds each name their own cause in a comment, so each comment becomes the
 record of why it went
 **Shared-file wiring:** none
 **Reachable from:** `LiveArms.build` is on the `bench arms` path; `inbox_view` renders on the live editor
 path. AC 1 drives `bench arms`; AC 3 drives the editor.
 
-Four workarounds whose stated reason is gone:
+Four workarounds whose stated reason is gone — **and three of the four sit in files simplify-08's T9 may
+retire**, so this card cannot be finalised until T9's decision on the altitude cluster is known:
 
-- `live_arms.rb:9-11` — `LiveArms` can become a constant map rather than a module-with-builder.
+- `live_arms.rb:9-11` — `LiveArms` can become a constant map rather than a module-with-builder. *(in T9's
+  scope)*
 - `live_arms.rb:70-80` — `Seams` can default `grading:` and `layout:` to the objects they stand for,
-  rather than to `nil` resolved in a method body.
-- `altitude.rb:24-28` — `METRICS` can name constants at class-body time.
-- `compare.rb:214-217` — the pin of `compare` before `bench` goes.
+  rather than to `nil` resolved in a method body. *(in T9's scope)*
+- `altitude.rb:24-28` — `METRICS` can name constants at class-body time. *(in T9's scope)*
+- `compare.rb:214-217` — the pin of `compare` before `bench` goes. *(the one certainly outside it)*
 
-And the fifth, which is the most valuable because it removes a **duplication** rather than an awkwardness:
-`inbox_view.rb:83-87` can read `ApprovalView::INDENT` instead of respelling it. **But simplify-07's T7
-may already have solved this** by extracting a shared fold leaf — if so, this card confirms the leaf is
-still the right shape under autoloading and does nothing else.
+**The fifth item is DONE, and it was the most valuable one.** `inbox_view.rb:83-87` respelling
+`ApprovalView::INDENT` was the duplication the panel called this plan's strongest concrete deliverable.
+**simplify-07's T7 landed and removed it** — `Fold::INDENT` is now the one Ruby spelling, read by
+`lib/lain/frontend/neovim/inbox_view.rb:84` and `approval_view.rb:96` — by the mechanism CLAUDE.md's
+requires rule already prescribes: a leaf loaded before both consumers, no Zeitwerk required. **So this
+card shrinks to confirming that leaf is still the right shape under autoloading**, exactly as its own text
+anticipated, plus whichever of the four workarounds T9 leaves standing.
 
 **Acceptance criteria**
 

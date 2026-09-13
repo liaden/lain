@@ -1,9 +1,37 @@
 # Simplify 14 — take the code-review product out of the study bench
 
-status: draft
+status: **declined 2026-09-13 by the human** — see the ruling below
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; TJ DeVries joins for the Lua
+
+## The ruling
+
+**Declined 2026-09-13 by the human**, and recorded in a sibling plan rather than here:
+`planning/specs/simplify-07-frontend-dedup.md:833`, under *"The simplify-14 question, answered"* —
+*"14 is unlikely to run, so T3 goes ahead as written. The rails it tables include the seven the review
+surface uses; if 14 is ever revived it will delete a table rather than a scatter, which is the cheaper
+direction to discover."* simplify-07 closed its chunk on that basis and `88c13d54` is in HEAD. This note
+exists so a reader looking 14 up finds the decline here instead of finding `draft` and deferring
+something on its account — simplify-10's T1 was deferred that way until the decline surfaced.
+
+**The plan is kept, not deleted, because reviving it is still coherent.** Nothing it would remove has
+been removed. As of 2026-09-13 the four groups T1 names are all still present in
+`spec/lain/frontend/neovim_runtime_spec.rb`:
+
+| group | lines | code | examples |
+|---|---|---|---|
+| *"the review round trip"* (`:1169`) | 199 | 89 | 5 |
+| *"the refusal rail's width"* (`:1368`) | 372 | 204 | 10 |
+| *"a review that survives the tabpage"* (`:2648`) | 432 | 266 | 10 |
+| *"a long note grown in a pane"* (`:3080`) | 533 | 362 | 12 |
+| **total** | **1,536 (42.5% of the file)** | **921** | **37 of 102 (36.3%)** |
+
+Two further groups touch modules this plan would delete without being named for deletion: *"a user
+command that refuses"* (`:2478`, citing `65_review`, `46_sidebar`, `47_diff`) and *"folds"* (`:2294`,
+citing `51_thread`). **The blast radius was always larger than four groups** — which is why simplify-10
+was right to sequence around 14 while it was live, and why a revival needs a fresh grounding rather than
+this document's numbers.
 
 ## Intent
 
