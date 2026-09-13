@@ -285,6 +285,13 @@ Scenario: the resolver reads a declared root through the shared parse
 (AC 1), `spec/lain/project/resolver_spec.rb` (AC 4)
 
 **Escalation triggers**
+- **A widened rescue in `board_build.rb` becomes a real defect the moment this card lands.** T5
+  widened `board_build.rb:156` from `TestLayout::Refusal` to `Config::Refusal`, which is harmless
+  today because `Config.test_layout` reads only the `tests` key. Once `Config::Resolved` makes that
+  reader resolve off a **shared parse that validates other tables**, an `[isolation]` refusal is
+  swallowed into `IGNORED_LAYOUT` and degrades the layout instead of refusing the chat — collapsing
+  exactly the posture split this card's next trigger protects. Narrow that rescue as part of this
+  card, or prove the shared parse cannot surface a foreign table's refusal there.
 - **`project/resolver.rb:337` parses *before* the six others**, during root resolution — so a
   process-lifetime memo keyed on root cannot be warm yet when the resolver needs it. If the honest
   shape is "the resolver's parse seeds the memo", say so; if it is "two parses, not seven", say that
@@ -482,8 +489,19 @@ AC 1 and AC 3
 `lib/lain/config/answers.rb`, `config/epics.rb`, `config/gates.rb`, `config/isolation.rb`,
 `lib/lain/shell/exclusions.rb`, `lib/lain/test_layout/refusals.rb`, `lib/lain/test_layout.rb`,
 `lib/lain/sensitivity.rb`, `lib/lain/cli/wiring/board_build.rb`; modify the seven families' spec files
-**Reuse:** **`Declarative#declare raising:`** (`declarative.rb:91-100`) already threads one refusal
-class through a whole validation block — this is the mechanism, and it is under-used at six live sites.
+**Reuse:** ~~`Declarative#declare raising:` is the mechanism~~ — **this was wrong, and it was tried
+before it was disbelieved.** It covers **0 of the 7 families, structurally**, on four independent
+walls: the message it produces is ActiveModel's, attribute-prefixed and unconditional, where these
+readers must emit a path-and-table prefix; `raise refusal, message` is `Class#exception(String)`, one
+positional, so there is no seam for a per-call value and `path` comes back nil; `check!(**attrs)` is
+kwargs-only while all seven `NotATable` checks run on the raw parsed table *before* keywords exist;
+and no raw entry point exists to add one. The deliverable below is still right — only this route was.
+
+**Where the wrong thesis came from, because it is still live:** `declarative.rb`'s own worked example
+demonstrates `declare raising:` over an `Epics`/`home` validation — precisely the refusal it cannot
+express. A planner reading that docstring gets this thesis. The example also named a class this card
+deletes. Fixed with the card; the lesson is that a mechanism's docstring is load-bearing for planning,
+not just for calling.
 The five families that already have a `Refusal` base establish the `path ? "#{path}: " : ""` prefix.
 **Shared-file wiring:** `require_relative "config/refusal"` in `lib/lain/config.rb`'s require block,
 before the four `config/*` tables
@@ -549,7 +567,15 @@ AC 1 and AC 2
 **Files:** modify roughly 40 files across `lib/`, each deleting one to six bodiless error classes and
 moving its reason to the raise site; modify the corresponding spec files
 **Reuse:** the surviving classes and `Lain::Error` itself; `declare raising:` for anything that needs a
-per-declaration refusal
+per-declaration refusal — that phrasing is accurate as written, but read T5's corrected Reuse note
+first: the mechanism cannot thread a **per-call** value, so any raise site here that needs a path in
+its message hits the same four walls.
+
+**A hazard for this card specifically, found while landing T5.** `Config::Refusal.new`'s first
+positional is the *detail*, so `raise Config::Refusal, "message"` is legal Ruby and silently produces
+a refusal carrying **no file and no table**. This card rewrites on the order of 134 raise sites; that
+shorthand will look correct at every one of them and quietly drop the filename from a refusal a human
+reads. Use the named factories.
 **Shared-file wiring:** none
 **Reachable from:** every deletion is verified by the suite still distinguishing the failures callers
 actually discriminate on; AC 1 drives a real refusal through `exe/lain`'s renderer
