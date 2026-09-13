@@ -30,9 +30,6 @@ module Lain
     # NO TASK IS EVER DROPPED. Every task in the fixture is scored, on every
     # arm: there is no sampling, no cap, and no path that skips one.
     class DisclosureSweep
-      # A checkout or packaging mistake, never user input to refuse.
-      class MissingFixture < Lain::Error; end
-
       # A malformed fixture is a bug in the fixture to surface loudly, never a
       # task to silently skip.
       class MalformedTask < Lain::Error; end
@@ -157,7 +154,8 @@ module Lain
       end
 
       def existing!(path)
-        raise MissingFixture, "no disclosure sweep fixture at #{path}" unless File.file?(path)
+        # A checkout or packaging mistake, never user input to refuse.
+        raise Error, "no disclosure sweep fixture at #{path}" unless File.file?(path)
 
         path
       end

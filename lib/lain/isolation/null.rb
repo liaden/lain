@@ -9,12 +9,6 @@ module Lain
     # {WorkerEnv.default} is recomputed per `acquire`, never a frozen constant,
     # so a lease taken after a `Dir.chdir` still names the current directory.
     class Null
-      # {#repo_root} either has no root to search from, or finds no repository
-      # above the one it was built with. Raised rather than answering nil or
-      # the cwd -- either would let a caller mistake "this backend cuts no
-      # checkouts" for "there is nothing to merge into".
-      class NoRepository < Error; end
-
       # `root:` has no default -- the root-defaults discipline
       # (`spec/lain/project/root_defaults_spec.rb`) exists precisely to stop a
       # root being inferred from the process cwd, and every zero-arg
@@ -49,17 +43,21 @@ module Lain
       # merge a worker's commits into.
       # @return [String] the nearest repository at or above the root this
       #   backend was built with
-      # @raise [NoRepository] when this backend was built with no root, or the
+      # @raise [Error] when this backend was built with no root, or the
       #   search from it finds no repository
       # @raise [Project::Resolver::UnusableHome] when `home` cannot bound the search
       def repo_root
-        raise NoRepository, "this Isolation::Null was built with no root to search from" unless @root
+        # {#repo_root} either has no root to search from, or finds no repository
+        # above the one it was built with. Raised rather than answering nil or
+        # the cwd -- either would let a caller mistake "this backend cuts no
+        # checkouts" for "there is nothing to merge into".
+        raise Error, "this Isolation::Null was built with no root to search from" unless @root
 
         resolved = Project::Resolver.resolved(File.expand_path(@root), File)
         nearest = Project::Repository.nearest(resolved, paths: @paths, home: @home)
         return nearest.path if nearest.found?
 
-        raise NoRepository, "--isolation none has no checkout to answer with, and #{nearest.searched(resolved)}"
+        raise Error, "--isolation none has no checkout to answer with, and #{nearest.searched(resolved)}"
       end
     end
   end

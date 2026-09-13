@@ -58,11 +58,6 @@ module Lain
       # review different things, and the two unambiguous spellings are cheap.
       class Ambiguous < Error; end
 
-      # `--base` against a pull request. Held apart from {Ambiguous} because the
-      # remedy is nothing alike: this one is a flag that does not apply, not a
-      # target that reads two ways.
-      class BaseNotOverridable < Error; end
-
       HEADLINE = "reviewing %<label>s at %<scope>s scope: %<base>s..%<head>s"
 
       # {Source::DiffOrigin}'s report, rendered, and ONLY when it fell back: a
@@ -205,13 +200,16 @@ module Lain
         # @param base [String, nil]
         # @return [Resolved]
         # @raise [Ambiguous] for a pull request spelling that also names a branch
-        # @raise [BaseNotOverridable] for `--base` against a pull request
+        # @raise [Error] for `--base` against a pull request
         # @raise [Source::UnknownRef] for a ref or pull request that resolves to
         #   nothing -- {Source}'s own doctrine, and the one this class inherits
         #   rather than restates
         def resolve(target, base:)
           return branch(target, base) unless pull_request?(target)
-          raise BaseNotOverridable, base_message(target) unless base.nil?
+          # `--base` against a pull request, said apart from the {Ambiguous} below
+          # because the remedy is nothing alike: this one is a flag that does not
+          # apply, not a target that reads two ways.
+          raise Error, base_message(target) unless base.nil?
           raise Ambiguous, ambiguous_message(target) if branch?(target)
 
           pull_request(target)

@@ -22,15 +22,6 @@ module Lain
     # accept it. The layout also names the framework, so no detection lives
     # here.
     class TestGeneration
-      # Raised by {#call} when EVERY scenario in the Criteria is rubric-flagged
-      # (`mechanical: false`): spawning a child with an empty scenario section
-      # would be a silent no-op, indistinguishable from the caller's side from
-      # "generated nothing because nothing needed generating". Loud beats both
-      # that and an implicit "the caller already checked" precondition, the same
-      # doctrine {MalformedBlock} applies to an empty gherkin fence. Names the
-      # criteria digest so the caller can trace which Criteria was empty.
-      class NothingMechanical < Error; end
-
       SKILL = :"gherkin-tests"
       private_constant :SKILL
 
@@ -82,8 +73,15 @@ module Lain
       def call(criteria, subject:, level:)
         mechanical, rubric_scenarios = criteria.partition(&:mechanical)
         if mechanical.empty?
-          raise NothingMechanical, "criteria #{criteria.digest} has no mechanical scenarios to generate " \
-                                   "tests for -- every scenario is rubric-flagged"
+          # Raised by {#call} when EVERY scenario in the Criteria is rubric-flagged
+          # (`mechanical: false`): spawning a child with an empty scenario section
+          # would be a silent no-op, indistinguishable from the caller's side from
+          # "generated nothing because nothing needed generating". Loud beats both
+          # that and an implicit "the caller already checked" precondition, the same
+          # doctrine {MalformedBlock} applies to an empty gherkin fence. Names the
+          # criteria digest so the caller can trace which Criteria was empty.
+          raise Error, "criteria #{criteria.digest} has no mechanical scenarios to generate " \
+                       "tests for -- every scenario is rubric-flagged"
         end
 
         target = @guard.layout.mapping.test_path(subject, level:)

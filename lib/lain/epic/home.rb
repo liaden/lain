@@ -41,7 +41,6 @@ module Lain
       # Error taxonomy: a refusal subclasses {Lain::Error} beside its raiser.
       class MalformedName < Error; end
       class MissingArtifact < Error; end
-      class UnknownHome < Error; end
       class EscapesHome < Error; end
 
       # The read-side counterpart of {Paths::Unwritable} and a separate class
@@ -65,7 +64,7 @@ module Lain
           case home
           when :xdg then File.join(paths.state_home, "epics", paths.project_hash(root))
           when :repo then File.join(root, ".lain", "epics")
-          else raise UnknownHome, "epics_home #{home.inspect} names no artifact home (expected :xdg or :repo)"
+          else raise Error, "epics_home #{home.inspect} names no artifact home (expected :xdg or :repo)"
           end
         directory.freeze
       end

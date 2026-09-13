@@ -213,7 +213,7 @@ RSpec.describe Lain::Grader::ToolCallIndex do
       expect(lineage.last).to eq(chain.to_a.first.digest)
     end
 
-    it "raises DanglingLineage naming the missing digest when a predecessor is absent from the entry set" do
+    it "raises naming the missing digest when a predecessor is absent from the entry set" do
       chain = Lain::Timeline.empty(store:)
                             .commit(role: :user, content: text("hi"))
                             .commit(role: :assistant, content: text("hello"))
@@ -225,7 +225,7 @@ RSpec.describe Lain::Grader::ToolCallIndex do
       entries = journal_turns(chain).reject { |record| record.fetch("digest") == missing_digest }
 
       expect { described_class.new(entries).lineage(chain.head_digest).to_a }
-        .to raise_error(described_class::DanglingLineage, /#{Regexp.escape(missing_digest)}/)
+        .to raise_error(Lain::Error, /#{Regexp.escape(missing_digest)}/)
     end
   end
 end

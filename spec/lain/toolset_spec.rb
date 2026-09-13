@@ -31,7 +31,7 @@ RSpec.describe Lain::Toolset do
 
     it "refuses two tools with the same name" do
       expect { described_class.new([tool(:dup), tool(:dup)]) }
-        .to raise_error(described_class::DuplicateTool, /named "dup"/)
+        .to raise_error(Lain::Error, /named "dup"/)
     end
 
     it "is Enumerable in name order regardless of construction order" do

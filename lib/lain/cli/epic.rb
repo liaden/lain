@@ -252,7 +252,7 @@ module Lain
       #   `epic.md` afterward to tell the parts apart
       # @param slug [String, nil] the epic; omitted resolves to the sole one
       # @return [String] the applied edit, rendered
-      # @raise [Epic::UnknownIssue] naming `id`, before anything is written
+      # @raise [Error] naming `id`, before anything is written
       # @raise [Lain::Error] any other refusal from {Epic::Graph}, likewise
       #   before anything is written
       def split(id, into, slug = nil)
@@ -506,7 +506,7 @@ module Lain
         #
         # A record naming ANOTHER epic is dropped here rather than handed to the
         # fold: this walk spans every session the project ever ran, so
-        # {Epic::ForeignJournal} would fire on the normal case and is
+        # the folds foreign-journal refusal would fire on the normal case and is
         # deliberately unreachable from here.
         #
         # A record with a BLANK slug is kept, so the fold's own guard refuses it.

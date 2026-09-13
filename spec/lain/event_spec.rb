@@ -27,7 +27,7 @@ RSpec.describe Lain::Event do
     # AC: the kind set is closed and loud.
     it "raises a named error identifying the kind and listing the four legal kinds" do
       expect { event(kind: :banana, payload_digest: "blake3:p") }
-        .to raise_error(Lain::Event::InvalidKind,
+        .to raise_error(Lain::Error,
                         "kind must be one of turn, spawn, message, snapshot, got :banana")
     end
 
@@ -142,7 +142,7 @@ RSpec.describe Lain::Event do
 
       it "rejects any other role" do
         expect { turn(role: "system") }
-          .to raise_error(Lain::Event::InvalidRole, /must be one of/)
+          .to raise_error(Lain::Error, /must be one of/)
       end
 
       it "accepts a Symbol role" do
@@ -202,7 +202,7 @@ RSpec.describe Lain::Event do
 
       it "answers no body fields when detached (built from digests alone), loudly" do
         detached = event(kind: :turn, payload_digest: "blake3:p")
-        expect { detached.role }.to raise_error(Lain::Event::Detached, /carries no body/)
+        expect { detached.role }.to raise_error(Lain::Error, /carries no body/)
       end
     end
 
@@ -295,7 +295,7 @@ RSpec.describe Lain::Event do
 
     it "shares the envelope's closed, loud kind set" do
       expect { described_class.new(kind: :banana, body: {}) }
-        .to raise_error(Lain::Event::InvalidKind, /got :banana/)
+        .to raise_error(Lain::Error, /got :banana/)
     end
 
     it "is deeply immutable, hence Ractor-shareable" do

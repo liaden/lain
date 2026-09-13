@@ -137,7 +137,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     head = git(held, "rev-parse", "HEAD")
 
     expect { step(writing(target, green)) }
-      .to raise_error(described_class::AlreadyGreen, /#{Regexp.escape(target)}/)
+      .to raise_error(Lain::Error, /#{Regexp.escape(target)}/)
     expect(git(held, "rev-parse", "HEAD")).to eq(head)
   end
 
@@ -148,7 +148,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     File.write(File.join(held, ".rspec"), "--format progress\n")
     provider = mock(text_response("unused"))
 
-    expect { step(provider, harness: unrun) }.to raise_error(described_class::NoLayout, /\[tests\]/)
+    expect { step(provider, harness: unrun) }
+      .to raise_error(Lain::Error, /declares no test layout.*add a \[tests\] table/m)
     expect(provider.call_count).to eq(0)
   end
 
@@ -156,7 +157,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     head = git(held, "rev-parse", "HEAD")
 
     expect { step(writing("spec/models/order_spec.rb", red), harness: unrun) }
-      .to raise_error(described_class::NotGenerated, /#{Regexp.escape(target)}/)
+      .to raise_error(Lain::Error, /#{Regexp.escape(target)}/)
     expect(git(held, "rev-parse", "HEAD")).to eq(head)
   end
 end

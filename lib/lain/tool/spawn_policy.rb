@@ -72,8 +72,6 @@ module Lain
       # but `sibling_template`, kept on the duck so the spawn seam never asks a
       # strategy what kind it is.
       module PrefixStrategy
-        class Unknown < Error; end
-
         # A fresh root: a new, empty Timeline over the SAME Store. The child's
         # first commit becomes a root with no render lineage to the parent, so
         # the causal DAG stays reconstructable while `meet(child, parent)` is the
@@ -242,7 +240,7 @@ module Lain
         # {Toolset#only} takes toward an absent tool.
         def self.fetch(name)
           klass = REGISTRY.fetch(name.to_sym) do
-            raise Unknown, "unknown prefix strategy #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
+            raise Error, "unknown prefix strategy #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
           end
           klass.new
         end
@@ -256,8 +254,6 @@ module Lain
       # questions: which toolset the child RENDERS (what the model sees), and
       # whether the Handler must refuse a disallowed call over a union schema.
       module AttenuationPosture
-        class Unknown < Error; end
-
         # The model sees only the allowed tools' schemas. Enforcement is the
         # render itself -- a tool absent from the schema is a tool the model
         # cannot name. The default arm; it forfeits sibling cache-sharing (every
@@ -301,7 +297,7 @@ module Lain
 
         def self.fetch(name)
           klass = REGISTRY.fetch(name.to_sym) do
-            raise Unknown, "unknown attenuation posture #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
+            raise Error, "unknown attenuation posture #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
           end
           klass.new
         end

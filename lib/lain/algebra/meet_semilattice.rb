@@ -55,9 +55,9 @@ module Lain
       def self.refuse_unnamed_bottom(subject, operation, bottom)
         return if bottom.is_a?(String) && !bottom.strip.empty?
 
-        raise Unexplained, "#{subject} declares a meet semilattice on ##{operation} without naming its " \
-                           "bottom; `bottom:` takes a short description (\"the empty Timeline, per store\"), " \
-                           "not a value -- a bottom is relative to a store, so there is no one value to record"
+        raise Error, "#{subject} declares a meet semilattice on ##{operation} without naming its " \
+                     "bottom; `bottom:` takes a short description (\"the empty Timeline, per store\"), " \
+                     "not a value -- a bottom is relative to a store, so there is no one value to record"
       end
     end
   end

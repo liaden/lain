@@ -17,7 +17,6 @@ module Lain
     private_constant :DANGLING_EDGE
 
     class MalformedGraph < Error; end
-    class UnknownIssue < Error; end
 
     # One structural edit to an epic's issue set: the issues leaving, the issues
     # arriving in their place, and the edge rewrite that keeps every third party
@@ -123,7 +122,7 @@ module Lain
       def ids = issues.map(&:id).freeze
 
       def fetch(id)
-        by_id.fetch(id) { raise UnknownIssue, "no issue #{id.inspect} in the epic graph" }
+        by_id.fetch(id) { raise Error, "no issue #{id.inspect} in the epic graph" }
       end
 
       # Pending, and every blocker done. `ready` is DERIVED here rather than

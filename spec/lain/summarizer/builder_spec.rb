@@ -144,7 +144,7 @@ RSpec.describe Lain::Summarizer::Builder do
         def suitable?(result) = true
       end
     RUBY
-      .to raise_error(described_class::Duplicate, /coverage/)
+      .to raise_error(Lain::Error, /coverage/)
   end
 
   # A declared class is anonymous, so anything Ruby prints about it -- an
@@ -186,12 +186,12 @@ RSpec.describe Lain::Summarizer::Builder do
 
   it "refuses an unknown DSL verb loudly, naming the known verbs" do
     expect { load_catalog(%(summariser "typo" do\nend\n)) }
-      .to raise_error(described_class::Unknown, /summariser.*summarizer/m)
+      .to raise_error(Lain::Error, /summariser.*summarizer/m)
   end
 
   it "refuses a duplicate summarizer name loudly, naming the collision" do
     expect { load_catalog(coverage_dsl + coverage_dsl) }
-      .to raise_error(described_class::Duplicate, /coverage/)
+      .to raise_error(Lain::Error, /coverage/)
   end
 
   # `return if ENV["CI"]` is idiomatic in a config file, and this DSL is the

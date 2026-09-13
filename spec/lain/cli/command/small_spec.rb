@@ -409,7 +409,7 @@ RSpec.describe Lain::CLI::Command::ImplementEpic do
   it "refuses by name when no epic is mounted, naming --epic" do
     env = build_command_env(epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted)
 
-    expect { command.call("", env) }.to raise_error(Lain::CLI::EpicDriver::NoEpicMounted, /--epic/)
+    expect { command.call("", env) }.to raise_error(Lain::Error, /this chat is in no epic/)
   end
 
   # The width is a knob, so a human who wants the issues taken one at a time can

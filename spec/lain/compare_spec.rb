@@ -224,7 +224,7 @@ RSpec.describe Lain::Compare do
 
     it "refuses runs under different postures, naming both" do
       expect { compare(:manual, :auto) }
-        .to raise_error(Lain::Compare::Posture::Mismatch, /\bmanual\b.*\bauto\b/m)
+        .to raise_error(Lain::Error, /\bmanual\b.*\bauto\b/m)
     end
 
     it "compares runs whose journals hold no mode record -- a run from before modes existed" do
@@ -239,7 +239,7 @@ RSpec.describe Lain::Compare do
     # in this file.
     it "refuses postures that differ across an unrecorded run standing between them" do
       expect { compare(:manual, nil, :auto) }
-        .to raise_error(Lain::Compare::Posture::Mismatch, /\bmanual\b.*\bauto\b/m)
+        .to raise_error(Lain::Error, /\bmanual\b.*\bauto\b/m)
     end
 
     # Absence is not a claim, so it cannot contradict one. A guard that refused
@@ -326,7 +326,7 @@ RSpec.describe Lain::Compare do
     it "refuses a run that switched against one that stayed put" do
       switched = journaled(%w[manual auto])
       expect { described_class.guard!(switched, described_class.for(:auto)) }
-        .to raise_error(described_class::Mismatch, /manual → auto/)
+        .to raise_error(Lain::Error, /manual → auto/)
     end
 
     it "compares two runs that took the same trajectory" do
@@ -341,7 +341,7 @@ RSpec.describe Lain::Compare do
       damaged = [{ "type" => "mode_switch", "from" => "plan", "to" => "manual" },
                  { "type" => "mode_switch", "from" => "auto", "to" => "plan" }]
       expect { described_class.from_journal(damaged) }
-        .to raise_error(described_class::BrokenChain, /\bmanual\b.*\bauto\b/m)
+        .to raise_error(Lain::Error, /\bmanual\b.*\bauto\b/m)
     end
 
     # An empty list of postures IS absence, and a Recorded holding none would be

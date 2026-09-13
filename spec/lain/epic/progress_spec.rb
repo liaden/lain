@@ -86,7 +86,7 @@ RSpec.describe Lain::Epic::Progress do
       entries = journaled(transition(issue_id: "ghost"))
 
       expect { fold(entries, graph: chain) }
-        .to raise_error(Lain::Epic::UnknownIssue, /"ghost".*"alpha"/m)
+        .to raise_error(Lain::Error, /"ghost".*"alpha"/m)
     end
 
     it "folds a split issue's own history as inert, leaving its parts untouched" do
@@ -121,7 +121,7 @@ RSpec.describe Lain::Epic::Progress do
       graph = graph_of(issue("y")).split("y", into: [issue("y1")]).split("y1", into: [issue("y1a")])
       entries = journaled(transition(issue_id: "y", to_status: "done"))
 
-      expect { fold(entries, graph:) }.to raise_error(Lain::Epic::UnknownIssue, /"y"/)
+      expect { fold(entries, graph:) }.to raise_error(Lain::Error, /names unknown issue "y" in epic/)
     end
 
     # A merge reaches that boundary in ONE edit. Graph#merge passes no
@@ -132,12 +132,12 @@ RSpec.describe Lain::Epic::Progress do
       graph = graph_of(issue("y"), issue("w")).merge("y", "w", as: issue("z", discovered_from: "y"))
       entries = journaled(transition(issue_id: "w", to_status: "done"))
 
-      expect { fold(entries, graph:) }.to raise_error(Lain::Epic::UnknownIssue, /"w"/)
+      expect { fold(entries, graph:) }.to raise_error(Lain::Error, /names unknown issue "w" in epic/)
     end
 
     it "names the remedy rather than the machinery" do
       expect { fold(journaled(transition(issue_id: "ghost")), graph: chain) }
-        .to raise_error(Lain::Epic::UnknownIssue, /Re-journal the transition|declare the missing provenance/)
+        .to raise_error(Lain::Error, /Re-journal the transition|declare the missing provenance/)
     end
   end
 
@@ -262,7 +262,7 @@ RSpec.describe Lain::Epic::Progress do
                           stage_event(stage: "research", epic_slug: "gamma"))
 
       expect { fold(entries, graph: chain) }
-        .to raise_error(Lain::Epic::ForeignJournal, /"alpha".*"beta".*"gamma"/m)
+        .to raise_error(Lain::Error, /"alpha".*"beta".*"gamma"/m)
     end
 
     # Scenario: a journal for another epic is refused as a lain error

@@ -60,13 +60,6 @@ module Lain
     # this is the only place {Shell::Verdict}'s answer has ever been written
     # down, and a verdict nobody records is a layer nobody can measure.
     class Escalation
-      # Raised INSIDE the consult, so a rung answering a non-Ruling becomes a
-      # fault like any other broken rung rather than a NoMethodError far from
-      # its cause.
-      class NotARuling < Error; end
-
-      class UnknownVerdict < Error; end
-
       # A name, not a nil, so journal readers never guard.
       LADDER = "ladder"
 
@@ -97,7 +90,6 @@ module Lain
         # reason an {AutoSurface}'s allow is suppressed over a fault where a
         # human's is honoured.
         AUTHORITIES = %i[automatic human].freeze
-        class UnknownAuthority < Error; end
 
         def self.allow(rung:, because:, **rest) = new(verdict: :allow, rung:, reason: because, **rest)
         def self.deny(rung:, because:, **rest) = new(verdict: :deny, rung:, reason: because, **rest)
@@ -109,10 +101,10 @@ module Lain
 
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic)
           unless VERDICTS.include?(verdict)
-            raise UnknownVerdict, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
+            raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
           unless AUTHORITIES.include?(authority)
-            raise UnknownAuthority, "unknown authority #{authority.inspect}; expected one of #{AUTHORITIES.inspect}"
+            raise Error, "unknown authority #{authority.inspect}; expected one of #{AUTHORITIES.inspect}"
           end
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:)
@@ -200,7 +192,10 @@ module Lain
         ruling = rung.call(effect, context)
         return ruling if ruling.is_a?(Ruling)
 
-        raise NotARuling, "#{name} answered #{ruling.class}; a rung rules or abstains"
+        # Raised INSIDE the consult, so a rung answering a non-Ruling becomes a
+        # fault like any other broken rung rather than a NoMethodError far from
+        # its cause.
+        raise Error, "#{name} answered #{ruling.class}; a rung rules or abstains"
       rescue StandardError => e
         # A rung's own failure -- a failed spawn, an unreadable config -- is a
         # fault and never an approval. Deny-when-unsure binds every rung.

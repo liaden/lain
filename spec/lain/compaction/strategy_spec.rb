@@ -128,12 +128,12 @@ RSpec.describe Lain::Compaction::Strategy do
   describe "the two questions Base answers for every strategy" do
     it "refuses a subclass that redefines the validated ranges, naming the hook to write" do
       expect { Class.new(described_class::Base) { def ranges(_messages, span:) = [span] } }
-        .to raise_error(described_class::Sealed, /propose_ranges/)
+        .to raise_error(Lain::Error, /propose_ranges/)
     end
 
     it "refuses a subclass that redefines the collapse, naming what to write" do
       expect { Class.new(described_class::Base) { def collapse(_messages) = "not a Replacement" } }
-        .to raise_error(described_class::Sealed, /blocks/)
+        .to raise_error(Lain::Error, /blocks/)
     end
 
     # The natural typo, and the one that used to pass in silence: the card's own
@@ -152,7 +152,7 @@ RSpec.describe Lain::Compaction::Strategy do
 
           elementwise(on: :collapse, each: :attested, registry: scratch)
         end
-      end.to raise_error(described_class::Sealed, /blocks/)
+      end.to raise_error(Lain::Error, /blocks/)
     end
 
     it "still allows the hooks, and generating over the inherited blocks" do

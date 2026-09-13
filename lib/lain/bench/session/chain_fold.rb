@@ -135,8 +135,8 @@ module Lain
         end
 
         # `content` and `meta` announce their corruption through the digest they
-        # then fail to re-derive, and a bad `role` raises a named
-        # {Event::InvalidRole} -- but this field reaches neither check, because
+        # then fail to re-derive, and a bad `role` is refused by {Event} naming
+        # the roles it allows -- but this field reaches neither check, because
         # {Event#normalize_causal} maps and sorts it before any digest exists,
         # so a null arrives as a NoMethodError three frames down. Shape-checked
         # here so the whole record type answers corruption in ONE currency.

@@ -66,9 +66,6 @@ module Lain
     # building a bash {Rule::Call} from a PARSED term rather than the raw
     # string; until then this is a hole with a name.
     class Risk
-      # A keepsake built, or altered, by anything other than a classification.
-      class Forged < Error; end
-
       # What a persister writes down: deeply frozen and scalar-valued, so it
       # goes straight into a config table.
       Keepsake = Data.define(:tool, :input)
@@ -98,7 +95,8 @@ module Lain
         private_class_method :new, :[], :for, :scalar
 
         def with(**)
-          raise Forged, "a keepsake is what Risk computed; classify a new call instead of editing one"
+          # A keepsake built, or altered, by anything other than a classification.
+          raise Error, "a keepsake is what Risk computed; classify a new call instead of editing one"
         end
       end
 

@@ -4,18 +4,6 @@ require "active_support/core_ext/string/inflections"
 
 module Lain
   module Epic
-    # The journal handed to {Progress.fold} names other epics and never the one
-    # it was asked to fold. Loud rather than folded to "nothing happened here":
-    # a typo'd slug and the wrong journal both land exactly there, and both
-    # would report a live epic as untouched. Named for what it IS rather than
-    # for "mixed epics", which is neither necessary (one foreign epic is enough)
-    # nor sufficient (this epic's records beside another's are partitioned away).
-    class ForeignJournal < Error; end
-
-    # A {Progress} asked to describe no epic at all. A {Lain::Error}, like its
-    # sibling above, so `exe/lain` reports it rather than printing a backtrace.
-    class UnnamedEpic < Error; end
-
     # The provenance a graph's LIVE issues declare, and the two questions the
     # fold asks of an id: is it CURRENT, and if not, is it HISTORY?
     #
@@ -107,8 +95,14 @@ module Lain
         named = named_epics(records)
         return if named.empty? || named.include?(@epic_slug)
 
-        raise ForeignJournal, "no record in this journal names epic #{@epic_slug.inspect} -- it names " \
-                              "#{named.map(&:inspect).join(", ")} instead (wrong journal, or a misspelled slug)"
+        # The journal handed to {Progress.fold} names other epics and never the one
+        # it was asked to fold. Loud rather than folded to "nothing happened here":
+        # a typo'd slug and the wrong journal both land exactly there, and both
+        # would report a live epic as untouched. Said for what it IS rather than
+        # for "mixed epics", which is neither necessary (one foreign epic is enough)
+        # nor sufficient (this epic's records beside another's are partitioned away).
+        raise Error, "no record in this journal names epic #{@epic_slug.inspect} -- it names " \
+                     "#{named.map(&:inspect).join(", ")} instead (wrong journal, or a misspelled slug)"
       end
 
       # Sorted, so the refusal above names the epics in an order that is a
@@ -144,7 +138,7 @@ module Lain
         return id if @lineage.current?(id)
         return nil if @lineage.superseded?(id)
 
-        raise UnknownIssue, unknown_message(id)
+        raise Error, unknown_message(id)
       end
 
       # Says what to DO, not what the walk failed to find, because the id can
@@ -215,7 +209,7 @@ module Lain
       # @param entries [Enumerable<Hash, String>] journal lines or records
       # @param graph [Graph] the parsed document's issue graph
       # @param epic_slug [String] the epic to fold; a journal naming only OTHER
-      #   epics is refused as {ForeignJournal}
+      #   epics is refused, naming the epics it does hold
       # @return [Progress]
       def self.fold(entries, graph:, epic_slug:)
         Refold.new(entries, graph:, epic_slug:).call
@@ -227,7 +221,7 @@ module Lain
       end
 
       # One issue's effective status.
-      # @raise [UnknownIssue] for an id this epic does not hold
+      # @raise [Error] for an id this epic does not hold
       def status(id) = graph.fetch(id).status
 
       # Pending, with every blocker done -- {Graph#ready} over the overlay.
@@ -263,9 +257,9 @@ module Lain
       end
 
       def refuse_foreign!(item, slug)
-        raise ForeignJournal, "progress for epic #{slug.inspect} was handed a sign-off parked in epic " \
-                              "#{item.epic_slug.inspect} (#{item.artifact_digest}) -- one epic's fold never " \
-                              "carries another's"
+        raise Error, "progress for epic #{slug.inspect} was handed a sign-off parked in epic " \
+                     "#{item.epic_slug.inspect} (#{item.artifact_digest}) -- one epic's fold never " \
+                     "carries another's"
       end
 
       # Interned first, so the check judges the bytes that get stored: a slug
@@ -280,7 +274,9 @@ module Lain
       end
 
       def refuse_unnamed!(offender)
-        raise UnnamedEpic, "epic_slug must name the epic this progress is about (got #{offender.inspect})"
+        # A {Progress} asked to describe no epic at all. A {Lain::Error}, so
+        # `exe/lain` reports it rather than printing a backtrace.
+        raise Error, "epic_slug must name the epic this progress is about (got #{offender.inspect})"
       end
     end
   end

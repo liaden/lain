@@ -190,7 +190,7 @@ RSpec.describe Lain::Approval::Remembered do
         keepsake = keepsake_for(root, read_file, { "path" => "README.md" })
 
         expect { persister_at(root).remember(keepsake, as: :maybe) }
-          .to raise_error(described_class::UnknownAnswer, /maybe/)
+          .to raise_error(Lain::Error, /:maybe is not written from a keepsake/)
       end
     end
 
@@ -278,7 +278,7 @@ RSpec.describe Lain::Approval::Remembered do
         keepsake = keepsake_for(root, read_file, { "path" => "README.md" })
 
         expect { persister_at(root).remember(keepsake, as: :deny_tool) }
-          .to raise_error(described_class::UnknownAnswer, /refuse_tool/)
+          .to raise_error(Lain::Error, /refuse_tool/)
       end
     end
 
@@ -451,11 +451,11 @@ RSpec.describe Lain::Approval::Remembered do
   describe Lain::Approval::Remembered::Persister::Toml do
     it "refuses a value that would not survive the round trip" do
       expect { described_class.value(BigDecimal("0.1")) }
-        .to raise_error(described_class::Unwritable, /round trip/)
+        .to raise_error(Lain::Error, /round trip/)
     end
 
     it "refuses a non-finite float" do
-      expect { described_class.value(Float::INFINITY) }.to raise_error(described_class::Unwritable, /finite/)
+      expect { described_class.value(Float::INFINITY) }.to raise_error(Lain::Error, /is not a finite number/)
     end
   end
 end

@@ -26,8 +26,8 @@ module Lain
     # `grader` is the producing class's NAME, not the object: a self-describing
     # value, never a live reference. `subject_digest` addresses whatever was
     # graded, resolved by {Grader::Journaling#digest_for} in a pinned order that
-    # never guesses -- and where nothing in that order applies, an
-    # `UndigestableSubject` raises rather than silently addressing the subject's
+    # never guesses -- and where nothing in that order applies, it raises
+    # rather than silently addressing the subject's
     # `Object#inspect` identity. It is an attribution key, not a claim that two
     # equal digests graded byte-identical subjects across runs.
     #

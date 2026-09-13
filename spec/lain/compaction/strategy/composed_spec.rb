@@ -152,7 +152,7 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
 
     it "refuses collapsing a slice no operand proposed, rather than dying on nil" do
       expect { (left | right).collapse(messages) }
-        .to raise_error(described_class::Untagged, /Left \| Right/)
+        .to raise_error(Lain::Error, /Left \| Right/)
     end
   end
 
@@ -186,7 +186,7 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
       foreign = (stranger | right).ranges(messages, span: 0..7).first
 
       expect { (left | right).collapse(messages[foreign], range: foreign) }
-        .to raise_error(described_class::Untagged, /Left \| Right/)
+        .to raise_error(Lain::Error, /Left \| Right/)
     end
   end
 

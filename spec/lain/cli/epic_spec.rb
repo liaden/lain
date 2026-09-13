@@ -760,7 +760,7 @@ RSpec.describe Lain::CLI::Epic do
       write_epic("alpha", chain)
       before_bytes = epic_home.epic.read
 
-      expect { command.split("z", "z1,z2", "alpha") }.to raise_error(Lain::Epic::UnknownIssue, /z/)
+      expect { command.split("z", "z1,z2", "alpha") }.to raise_error(Lain::Error, /no issue "z" in the epic graph/)
       expect(epic_home.epic.read).to eq(before_bytes)
       expect(graph_revisions).to be_empty
     end
@@ -854,7 +854,7 @@ RSpec.describe Lain::CLI::Epic do
       write_epic("alpha", chain)
       session("one.ndjson", transition("ghost"))
 
-      expect { command.status }.to raise_error(Lain::Epic::UnknownIssue, /ghost/)
+      expect { command.status }.to raise_error(Lain::Error, /issue "ghost"/)
     end
   end
 end

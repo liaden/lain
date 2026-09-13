@@ -144,7 +144,7 @@ RSpec.describe Lain::Workspace::Snapshot do
 
     it "raises on an unknown name, naming the registered scopes" do
       expect { described_class.resolve(:everything) }
-        .to raise_error(described_class::Unknown, /everything.*write_set/m)
+        .to raise_error(Lain::Error, /everything.*write_set/m)
     end
 
     it "hands the write-set straight back, ignoring the root" do

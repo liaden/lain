@@ -20,14 +20,6 @@ module Lain
       # tool's name. Loud, at the first place the ambiguity is observable.
       class DuplicateToolUse < Error; end
 
-      # {Answers} handed to {#run} that were built for a DIFFERENT turn. Once
-      # `answers:` is written, `response` serves only as the default's source, so
-      # a mismatched pair would answer one turn's calls with another's ids and
-      # commit it. Internal-only today ({Agent::ToolDelivery} builds both from
-      # one response, one line apart), which is exactly when a silent version is
-      # cheapest to prevent.
-      class ForeignAnswers < Error; end
-
       # The post-dispatch observers a {ToolRunner} accepts: one message,
       # `#observe(tool_result_block, tool_name)`, sent once per completed result.
       # Deliberately narrow, so nothing about oracles or summaries leaks into the
@@ -335,8 +327,14 @@ module Lain
       def refuse_foreign_answers(response, answers)
         return if answers.answers?(response)
 
-        raise ForeignAnswers, "these answers were built for a different turn: #{answers.uses.map(&:id).inspect} " \
-                              "against #{response.tool_uses.map(&:id).inspect}"
+        # {Answers} handed to {#run} that were built for a DIFFERENT turn. Once
+        # `answers:` is written, `response` serves only as the default's source, so
+        # a mismatched pair would answer one turn's calls with another's ids and
+        # commit it. Internal-only today ({Agent::ToolDelivery} builds both from
+        # one response, one line apart), which is exactly when a silent version is
+        # cheapest to prevent.
+        raise Error, "these answers were built for a different turn: #{answers.uses.map(&:id).inspect} " \
+                     "against #{response.tool_uses.map(&:id).inspect}"
       end
 
       # NOT `to_h`, which is last-wins and would answer a lie: the first block

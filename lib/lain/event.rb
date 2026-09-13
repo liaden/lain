@@ -27,13 +27,6 @@ module Lain
     KINDS = %i[turn spawn message snapshot].freeze
     ROLES = %w[user assistant].freeze
 
-    class InvalidKind < Error; end
-    class InvalidRole < Error; end
-
-    # Asking a digests-only envelope for a body field is a caller bug, not a
-    # nil: the body exists, in the Store, under `payload_digest`.
-    class Detached < Error; end
-
     attr_reader :kind, :from, :to, :render_parent, :causal_parents,
                 :correlation, :payload_digest, :body, :carried_payload, :digest
 
@@ -42,7 +35,7 @@ module Lain
     # is named.
     def self.normalize_kind(kind)
       symbol = kind.to_s.to_sym
-      raise InvalidKind, "kind must be one of #{KINDS.join(", ")}, got #{kind.inspect}" unless KINDS.include?(symbol)
+      raise Error, "kind must be one of #{KINDS.join(", ")}, got #{kind.inspect}" unless KINDS.include?(symbol)
 
       symbol
     end
@@ -51,7 +44,7 @@ module Lain
     # and one unfrozen String is enough to break Ractor shareability downstream.
     def self.normalize_role(role)
       string = -role.to_s
-      raise InvalidRole, "role must be one of #{ROLES.join(", ")}, got #{string.inspect}" unless ROLES.include?(string)
+      raise Error, "role must be one of #{ROLES.join(", ")}, got #{string.inspect}" unless ROLES.include?(string)
 
       string
     end
@@ -175,9 +168,11 @@ module Lain
 
     def fetch_body(key)
       if body.nil?
-        raise Detached, "#{self} carries no body; it lives in the Store under #{payload_digest}. " \
-                        "This envelope was rebuilt from digests alone -- fetch that payload through " \
-                        "a Store, or build it via Event.turn to carry one"
+        # Asking a digests-only envelope for a body field is a caller bug, not a
+        # nil: the body exists, in the Store, under `payload_digest`.
+        raise Error, "#{self} carries no body; it lives in the Store under #{payload_digest}. " \
+                     "This envelope was rebuilt from digests alone -- fetch that payload through " \
+                     "a Store, or build it via Event.turn to carry one"
       end
 
       body.fetch(key)

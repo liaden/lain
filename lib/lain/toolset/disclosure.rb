@@ -7,12 +7,10 @@ module Lain
     # a third subclass, never an edit here or in {Lain::Toolset}. The base
     # class names the one message an arm must answer and carries no behavior.
     class Disclosure
-      class NotImplemented < Error; end
-
       # @param _toolset [Lain::Toolset] the capability set to render
       # @return the provider-neutral tool schema for this arm's disclosure
       def render(_toolset)
-        raise NotImplemented, "#{self.class} must define #render"
+        raise Error, "#{self.class} must define #render"
       end
     end
   end

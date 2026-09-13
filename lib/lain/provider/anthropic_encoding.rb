@@ -27,17 +27,6 @@ module Lain
       # encoder that emits Anthropic bytes is where it is enforced.
       CACHE_LIMIT = 4
 
-      # More cache breakpoints than Anthropic will accept, caught at encode time
-      # with a named error instead of a cryptic wire 400.
-      class TooManyCacheMarkers < Error; end
-
-      # `extra` can carry a raw `tool_choice` AND a structured_output marker,
-      # which also forces tool_choice. #encode merges structured_fields BEFORE
-      # the generic extra forward, so an unchecked raw `tool_choice` would win
-      # silently: no error, just a forced structured answer quietly not being
-      # forced.
-      class ConflictingToolChoice < Error; end
-
       # `cache_control` in Anthropic's only currently offered flavor. Named once
       # so the emitted marker is a single shared, frozen object.
       EPHEMERAL = { "type" => "ephemeral" }.freeze
@@ -87,7 +76,12 @@ module Lain
       def check_tool_choice_conflict!(extra)
         return unless extra.key?(STRUCTURED_OUTPUT_KEY) && extra.key?(TOOL_CHOICE_KEY)
 
-        raise ConflictingToolChoice,
+        # `extra` can carry a raw `tool_choice` AND a structured_output marker,
+        # which also forces tool_choice. #encode merges structured_fields BEFORE
+        # the generic extra forward, so an unchecked raw `tool_choice` would win
+        # silently: no error, just a forced structured answer quietly not being
+        # forced.
+        raise Error,
               "extra carries both a raw #{TOOL_CHOICE_KEY.inspect} and a #{STRUCTURED_OUTPUT_KEY.inspect} " \
               "marker, which also forces tool_choice -- remove one"
       end
@@ -123,7 +117,9 @@ module Lain
         count = [request.tools, request.system, request.messages].sum { |part| count_markers(part) }
         return if count <= CACHE_LIMIT
 
-        raise TooManyCacheMarkers,
+        # More cache breakpoints than Anthropic will accept, caught at encode time
+        # with a message naming the count instead of a cryptic wire 400.
+        raise Error,
               "request carries #{count} cache breakpoints; Anthropic accepts at most #{CACHE_LIMIT}"
       end
 

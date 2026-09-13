@@ -20,11 +20,6 @@ module Lain
       # fall through unconditionally: replaying an observation would assert what
       # the world looks like NOW from a record of what it looked like then.
       class Recorded
-        # A call with no recording and nothing behind it. Named per the
-        # error-taxonomy convention: a refusal subclasses {Lain::Error} next to
-        # the owner that raises it.
-        class Declined < Error; end
-
         # The inner an unrecorded call falls through to when a caller supplied
         # none: it refuses, loudly. A Null Object rather than a nil the five verbs
         # would each have to test for, and stating the duck as five methods is
@@ -49,8 +44,10 @@ module Lain
             private
 
             def refuse(verb, given)
-              raise Declined, "no recorded outcome for #{verb}(#{given.inspect}) and nothing behind the " \
-                              "recording to perform it -- a replay miss is not a success"
+              # A call with no recording and nothing behind it. A replay miss is
+              # a refusal, not a success, so it is loud rather than nil.
+              raise Error, "no recorded outcome for #{verb}(#{given.inspect}) and nothing behind the " \
+                           "recording to perform it -- a replay miss is not a success"
             end
           end
         end

@@ -24,7 +24,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
       retirement = described_class.new(sync: Lain::Isolation::SelfSync::Null, anchor:)
 
       expect { retirement.surrender(lease, worker_id: "worker-1") }
-        .to raise_error(Lain::Supervisor::AlreadyReleased, /worker-1's lease was already released/)
+        .to raise_error(Lain::Error, /worker-1's lease was already released/)
       expect(anchor).not_to have_received(:standing)
     end
   end

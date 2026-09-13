@@ -94,7 +94,7 @@ RSpec.describe Lain::Bench::Sweep do
       stale.flush
 
       expect { described_class.new(k: 5, embeddings_path: stale.path, model: "nomic-embed-text").report }
-        .to raise_error(Lain::Bench::Sweep::StaleEmbeddings, /some-other-model/) { |e|
+        .to raise_error(Lain::Error, /some-other-model/) { |e|
           expect(e.message).to include("nomic-embed-text")
         }
     ensure
@@ -111,7 +111,7 @@ RSpec.describe Lain::Bench::Sweep do
       tampered.flush
 
       expect { described_class.new(k: 5, embeddings_path: tampered.path).report }
-        .to raise_error(Lain::Bench::Sweep::StaleEmbeddings, /content digest/)
+        .to raise_error(Lain::Error, /content digest/)
     ensure
       tampered&.close!
     end

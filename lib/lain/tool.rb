@@ -22,7 +22,6 @@ module Lain
   # are kept apart on purpose: the contract mechanism stays Eiffel-honest (a
   # violation raises), while loop totality is the handler's job.
   class Tool
-    class NotImplemented < Error; end
     class InvalidInput < Error; end
     class InvalidResult < Error; end
     class ContractViolation < Error; end
@@ -54,14 +53,14 @@ module Lain
     # The model-facing identifier. Must be overridden; there is no sensible
     # default name for an abstract capability.
     def name
-      raise NotImplemented, "#{self.class} must define #name"
+      raise Error, "#{self.class} must define #name"
     end
 
     # The model-facing description. This string is the single highest-leverage
     # lever on tool-call accuracy, which is the whole reason the bench exists, so
     # it is required rather than defaulted to something vacuous.
     def description
-      raise NotImplemented, "#{self.class} must define #description"
+      raise Error, "#{self.class} must define #description"
     end
 
     # The upfront-catalog-safe projection of {#description}: its first line only,
@@ -160,7 +159,7 @@ module Lain
     # must return a {Result}. Never call this directly; go through {#call} so the
     # checks run.
     def perform(_input, _context)
-      raise NotImplemented, "#{self.class} must define #perform"
+      raise Error, "#{self.class} must define #perform"
     end
 
     # The session a tool records reads and writes against rides

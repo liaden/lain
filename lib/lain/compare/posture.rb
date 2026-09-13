@@ -32,13 +32,6 @@ module Lain
     # and failed every fixture in the repo. What absence must not do is go
     # unsaid -- {Compare#report} names it in as many words.
     module Posture
-      # Raised when two runs ran under postures that are known to differ.
-      class Mismatch < Lain::Error; end
-
-      # Raised when a journal's `mode_switch` records do not chain -- a flip
-      # away from a posture that was not in force. See {.from_journal}.
-      class BrokenChain < Lain::Error; end
-
       # The journal discriminator {Telemetry::ModeSwitch} derives from its class
       # basename. Named here because {.from_journal} matches on it.
       RECORD_TYPE = "mode_switch"
@@ -120,7 +113,7 @@ module Lain
       #
       # @param entries [Enumerable<Hash, String>] journal lines or records
       # @return [Posture] {UNRECORDED} when no flip was recorded
-      # @raise [BrokenChain] when the records do not chain
+      # @raise [Error] when the records do not chain
       def self.from_journal(entries)
         flips = Journal.records(entries, type: RECORD_TYPE).to_a
         return UNRECORDED if flips.empty?
@@ -142,17 +135,20 @@ module Lain
       def self.chained!(previous, flip)
         return true if flip["from"].to_s == previous["to"].to_s
 
-        raise BrokenChain, "mode_switch records do not chain: a run in " \
-                           "#{previous["to"]} cannot switch from #{flip["from"]}"
+        # Raised when a journal's `mode_switch` records do not chain -- a flip
+        # away from a posture that was not in force. See {.from_journal}.
+        raise Error, "mode_switch records do not chain: a run in " \
+                     "#{previous["to"]} cannot switch from #{flip["from"]}"
       end
       private_class_method :chained!
 
       # @return [true] when the two runs may be compared
-      # @raise [Mismatch] when both postures are recorded and differ
+      # @raise [Error] when both postures are recorded and differ
       def self.guard!(one, other)
         return true if one.agrees_with?(other)
 
-        raise Mismatch, "cannot compare runs under different postures: #{one} vs #{other}"
+        # Raised when two runs ran under postures that are known to differ.
+        raise Error, "cannot compare runs under different postures: #{one} vs #{other}"
       end
     end
   end

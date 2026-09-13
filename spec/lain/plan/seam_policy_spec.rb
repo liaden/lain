@@ -272,14 +272,14 @@ RSpec.describe "Lain::Plan seam policies" do
   end
 
   describe "Scenario: a mainline-bearing policy seeded from a different root fails loud" do
-    it "raises MainlineMismatch when the policy mainline root differs from run's root" do
+    it "refuses when the policy mainline root differs from run's root" do
       store = Lain::Store.new
       seeded = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "pre" }])
       policy = Lain::Plan::ForkPerStep.new(mainline: seeded)
       runner = Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
 
       expect { runner.run(timeline: Lain::Timeline.empty(store:), pipeline: SeamPolicyFixtures::DEFAULT) }
-        .to raise_error(Lain::Plan::Runner::MainlineMismatch, /does not match run root/)
+        .to raise_error(Lain::Error, /does not match run root/)
     end
 
     it "runs cleanly when the policy mainline root matches run's root" do

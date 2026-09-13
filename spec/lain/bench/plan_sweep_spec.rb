@@ -203,7 +203,7 @@ RSpec.describe Lain::Bench::PlanSweep do
       plan = File.join(@dir, "empty.md")
       File.write(plan, "# Just prose, no plan\n\nNothing here parses as a step line.\n")
       expect { described_class.new(plan_path: plan, runs_path: fixtures[:runs_path]) }
-        .to raise_error(Lain::Bench::PlanSweep::Fixture::MalformedFixture, /empty\.md/)
+        .to raise_error(Lain::Error, /empty\.md/)
     end
 
     it "raises when a scripted run is missing a plan-required step, naming the run and the step" do
@@ -219,7 +219,7 @@ RSpec.describe Lain::Bench::PlanSweep do
               s4: { file: "README.md", content: "## Usage" }
       YAML
       expect { described_class.new(plan_path: fixtures[:plan_path], runs_path: runs) }
-        .to raise_error(Lain::Bench::PlanSweep::Fixture::MalformedFixture, /alpha.*s3|s3.*alpha/m)
+        .to raise_error(Lain::Error, /alpha.*s3|s3.*alpha/m)
     end
   end
 end

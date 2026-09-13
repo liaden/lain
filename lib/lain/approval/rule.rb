@@ -120,9 +120,6 @@ module Lain
         # deterministic decision is possible and the call must escalate.
         class Undeclared < Error; end
 
-        # A Call built around something that is not a validated {Tool::Input}.
-        class NotValidated < Error; end
-
         # A Call built, or altered, through any door but {.for}.
         class Forged < Error; end
 
@@ -181,7 +178,8 @@ module Lain
         # re-runs `initialize` with whatever it is handed -- so both took a raw
         # Hash, or a bare command String, straight to a rule.
         def initialize(tool:, input:)
-          raise NotValidated, not_validated_message(input) unless input.is_a?(Tool::Input)
+          # A Call built around something that is not a validated {Tool::Input}.
+          raise Error, not_validated_message(input) unless input.is_a?(Tool::Input)
 
           super
         end

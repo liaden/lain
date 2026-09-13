@@ -18,12 +18,6 @@ module Lain
       # TestHarness parses. `Command` proves the duck with an explicit argv and
       # regexes, needing no second language installed.
       module Adapter
-        # Detection could not single out a framework: nothing matched, more than
-        # one did, or the one that matched has no adapter written yet. It names
-        # every probe it tried so the failure is diagnosable, and it never
-        # guesses -- an explicit `adapter:` is the way past it.
-        class Undetectable < Lain::Error; end
-
         # The framework's result file was unreadable as the format the adapter
         # expects (an empty file from a runner that died before writing, a
         # truncated document). Loud, because a silently-zeroed grade would read
@@ -62,7 +56,7 @@ module Lain
 
         # @param root [String] the project directory to fingerprint
         # @return [#command,#parse] the adapter for the single framework detected
-        # @raise [Undetectable] on no match, ambiguity, or an unimplemented match
+        # @raise [Error] on no match, ambiguity, or an unimplemented match
         def self.detect(root)
           matched = PROBES.select { |probe| probe.match.call(root) }
           choose(root, matched)
@@ -78,16 +72,20 @@ module Lain
         end
 
         def self.choose(root, matched)
-          raise Undetectable, "no test framework detected in #{root} -- probed for #{probed}" if matched.empty?
+          # Detection could not single out a framework: nothing matched, more than
+          # one did, or the one that matched has no adapter written yet. It names
+          # every probe it tried so the failure is diagnosable, and it never
+          # guesses -- an explicit `adapter:` is the way past it.
+          raise Error, "no test framework detected in #{root} -- probed for #{probed}" if matched.empty?
 
           if matched.size > 1
             names = matched.map(&:framework).join(", ")
-            raise Undetectable, "ambiguous test framework in #{root}: #{names} all matched"
+            raise Error, "ambiguous test framework in #{root}: #{names} all matched"
           end
 
           probe = matched.first
           if probe.build.nil?
-            raise Undetectable, "detected #{probe.framework} in #{root}, but its adapter is not implemented yet"
+            raise Error, "detected #{probe.framework} in #{root}, but its adapter is not implemented yet"
           end
 
           probe.build.call(root)

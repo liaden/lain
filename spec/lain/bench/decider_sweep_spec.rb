@@ -141,7 +141,7 @@ RSpec.describe Lain::Bench::DeciderSweep do
       missing = fixture_path("does-not-exist")
 
       expect { described_class.new(fixture_path: missing).report }
-        .to raise_error(described_class::MissingFixture, /#{Regexp.escape(missing)}/)
+        .to raise_error(Lain::Error, /#{Regexp.escape(missing)}/)
     end
   end
 

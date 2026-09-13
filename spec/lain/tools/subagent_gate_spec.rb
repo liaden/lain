@@ -230,7 +230,7 @@ RSpec.describe "Subagent gating" do
       )
 
       expect { tool.call({ "prompt" => "go" }, invocation) }
-        .to raise_error(Lain::Tools::Subagent::NoCapability, /permits none of the spawn's tools \(bash\)/)
+        .to raise_error(Lain::Error, /permits none of the spawn's tools \(bash\)/)
     end
 
     it "leaves the child's set alone under an unattenuating posture" do

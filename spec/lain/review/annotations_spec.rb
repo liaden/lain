@@ -158,7 +158,7 @@ RSpec.describe Lain::Review::Annotations do
 
     it "refuses a note with nothing in it, and one that names no revision" do
       expect { settle(note(text: "   ")) }.to raise_error(ArgumentError, /text/)
-      expect { settle(note(revision: "")) }.to raise_error(Lain::Review::Anchor::InvalidField, /revision/)
+      expect { settle(note(revision: "")) }.to raise_error(Lain::Error, /revision/)
     end
   end
 
@@ -169,7 +169,7 @@ RSpec.describe Lain::Review::Annotations do
     # line, "" is, and the two are different facts.
     it "is an anchor, while no anchor at all is refused" do
       expect(settle(note(anchor_text: "")).first.anchor_text).to eq("")
-      expect { settle(note(anchor_text: nil)) }.to raise_error(Lain::Review::Anchor::InvalidField, /anchor_text/)
+      expect { settle(note(anchor_text: nil)) }.to raise_error(Lain::Error, /anchor_text/)
     end
   end
 

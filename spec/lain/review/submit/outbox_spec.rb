@@ -118,7 +118,7 @@ RSpec.describe Lain::Review::Submit::Outbox do
 
     it "refuses a submit with nothing held, naming what opens one, and touches no executor" do
       expect { outbox.submit(executor:) }
-        .to raise_error(described_class::NotOpen, /no changeset review is open/)
+        .to raise_error(Lain::Error, /no changeset review is open/)
       expect(executor.calls).to be_empty
     end
 
@@ -325,7 +325,7 @@ RSpec.describe Lain::Review::Submit::Outbox do
       outbox.submit(executor:)
 
       expect { outbox.submit(executor:) }
-        .to raise_error(described_class::AlreadySent, /4271/)
+        .to raise_error(Lain::Error, /already posted to pull request 4271/)
       expect(executor.calls.size).to eq(1)
     end
 
@@ -339,7 +339,7 @@ RSpec.describe Lain::Review::Submit::Outbox do
       outbox.submit(executor:)
 
       expect { outbox.submit(executor:) }
-        .to raise_error(described_class::AlreadySent, /only the pull request itself can answer/)
+        .to raise_error(Lain::Error, /only the pull request itself can answer/)
       expect(executor.calls.size).to eq(1)
     end
 

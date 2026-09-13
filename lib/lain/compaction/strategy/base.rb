@@ -9,9 +9,6 @@ module Lain
       # rescue site and spec that learned this name reaches it here.
       NotAPartition = IntervalPartition::NotAPartition
 
-      # A subclass redefining one of the two methods {Base} defines FOR it.
-      class Sealed < Error; end
-
       # The contract every span-collapse strategy implements: which sub-spans of
       # the droppable span it will collapse, and what replaces one.
       #
@@ -180,8 +177,9 @@ module Lain
           instead = SEALED[name]
           return if instead.nil?
 
-          raise Sealed, "#{self} redefines ##{name}, which Strategy::Base defines once for every strategy " \
-                        "so that a caller cannot reach an unvalidated answer; implement #{instead}"
+          # A subclass redefining one of the two methods {Base} defines FOR it.
+          raise Error, "#{self} redefines ##{name}, which Strategy::Base defines once for every strategy " \
+                       "so that a caller cannot reach an unvalidated answer; implement #{instead}"
         end
 
         private

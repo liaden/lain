@@ -219,7 +219,7 @@ module Lain
           # the caller that owns the released-lease vocabulary, and a second name
           # for one refusal would let two callers disagree about what it means.
           def kept(lease, worker_id, detail = "")
-            raise Supervisor::AlreadyReleased, format(RELEASED, worker: worker_id) if lease.released?
+            raise Error, format(RELEASED, worker: worker_id) if lease.released?
 
             standing = @anchor.standing(lease, worker_id:)
             return reported(standing.refusal, SelfSync::Result::NONE, detail) if standing.taken?

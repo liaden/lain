@@ -659,7 +659,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "refuses a plan for an issue the epic does not hold, before anything is journaled" do
       home.plan("ghost").write("a plan for nothing\n")
 
-      expect { command.submit("issue_plan", issue: "ghost") }.to raise_error(Lain::Epic::UnknownIssue, /ghost/)
+      expect { command.submit("issue_plan", issue: "ghost") }.to raise_error(Lain::Error, /issue "ghost"/)
       expect(gate_decisions).to be_empty
     end
   end
@@ -682,12 +682,12 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "refuses when no issue is named" do
-      expect { command.submit("issue_plan") }.to raise_error(described_class::NeedsIssue, /issue_plan/)
+      expect { command.submit("issue_plan") }.to raise_error(Lain::Error, /issue_plan/)
     end
 
     it "refuses an implementation with no changeset address" do
       expect { command.submit("implementation", issue: "a") }
-        .to raise_error(described_class::NeedsDigest, /implementation/)
+        .to raise_error(Lain::Error, /implementation/)
     end
   end
 

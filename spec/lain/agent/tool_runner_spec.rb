@@ -406,7 +406,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       foreign = described_class::Answers.for(tool_response(["tu_9", "echo", {}]))
 
       expect { described_class.new(handler: echoing_handler).run(response, context: nil, answers: foreign) }
-        .to raise_error(described_class::ForeignAnswers, /built for a different turn/)
+        .to raise_error(Lain::Error, /built for a different turn/)
     end
 
     # Gate 4 refuses to name a result for an id no result can name. Translated,

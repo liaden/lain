@@ -91,7 +91,7 @@ RSpec.describe Lain::CLI::Command::Registry do
 
     it "refuses a second command claiming a registered name, loudly" do
       expect { registry.register(probe_class.new("help", [])) }
-        .to raise_error(described_class::Collision, /help/)
+        .to raise_error(Lain::Error, /command "help" is already registered/)
     end
   end
 

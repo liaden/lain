@@ -37,16 +37,6 @@ module Lain
     # `Lain::Epic::...` reference below sits inside a method body -- and is
     # spelled in full, because a bare `Epic` resolves to the sibling {CLI::Epic}.
     class EpicSubmit
-      # Its own class so `exe/lain` and a spec can tell "you did not say which
-      # issue" from "the artifact is missing" -- the remedies differ.
-      class NeedsIssue < Error; end
-
-      # The implementation stage gates a CHANGESET, and no artifact in the epic
-      # home addresses one. Nothing here re-hashes a working tree to invent it:
-      # something else already computed that address, and a second opinion on the
-      # same content is how two records of one thing start disagreeing.
-      class NeedsDigest < Error; end
-
       # An implementation is built to an approved plan, so its gate refuses to
       # open until the issue's plan AS IT STANDS -- criteria included -- carries
       # an approval. Its own class because the remedy is a different command.
@@ -161,15 +151,21 @@ module Lain
         def issue!(stage)
           return @issue unless @issue.to_s.strip.empty?
 
-          raise NeedsIssue, "the #{stage} stage gates one issue's work, and nothing named the issue -- " \
-                            "lain epic submit #{stage} --issue ID"
+          # Said apart from "the artifact is missing", because the remedies
+          # differ: this one names no issue at all.
+          raise Error, "the #{stage} stage gates one issue's work, and nothing named the issue -- " \
+                       "lain epic submit #{stage} --issue ID"
         end
 
         def digest!(stage)
           return @digest unless @digest.to_s.strip.empty?
 
-          raise NeedsDigest, "the #{stage} stage gates a changeset, and no artifact in the epic home addresses " \
-                             "one -- lain epic submit #{stage} --issue ID --digest ADDRESS"
+          # The implementation stage gates a CHANGESET, and no artifact in the epic
+          # home addresses one. Nothing here re-hashes a working tree to invent it:
+          # something else already computed that address, and a second opinion on the
+          # same content is how two records of one thing start disagreeing.
+          raise Error, "the #{stage} stage gates a changeset, and no artifact in the epic home addresses " \
+                       "one -- lain epic submit #{stage} --issue ID --digest ADDRESS"
         end
       end
 

@@ -37,9 +37,6 @@ module Lain
     # path -- context the decomposing arm lost by working a slice in isolation.
     # The control never diverges from itself, which is why it is the control.
     class ArmSweep
-      # A checkout or packaging mistake, never user input to refuse.
-      class MissingFixture < Lain::Error; end
-
       # A recording that names no task in the suite, is missing a required
       # field, or is asked a prompt it never recorded -- a malformed fixture is
       # a bug to surface loudly, never a task silently skipped or mis-scored.
@@ -171,7 +168,8 @@ module Lain
 end
 
 # After the class body: {Recordings} and {Report} reopen ArmSweep and raise its
-# MissingFixture/MalformedRecording, defined above. Separate FILES, not nested
+# MalformedRecording, defined above, or a bare {Lain::Error} for a fixture that
+# is not on disk. Separate FILES, not nested
 # classes, because `Metrics/ClassLength` counts a nested class's lines as the
 # enclosing class's own.
 require_relative "arm_sweep/recordings"

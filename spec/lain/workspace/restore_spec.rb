@@ -116,7 +116,7 @@ RSpec.describe Lain::Workspace::Restore do
 
     it "refuses namedly when no snapshot exists at or before the turn" do
       expect { restorer.restore(turn: 1) }
-        .to raise_error(Lain::Workspace::Restore::NoSnapshot, /turn 1/)
+        .to raise_error(Lain::Error, /no :snapshot at or before turn 1/)
     end
   end
 

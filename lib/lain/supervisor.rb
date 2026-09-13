@@ -29,18 +29,6 @@ module Lain
     # rows into the second.
     class AlreadyRunning < Error; end
 
-    # A row retires once; a second retirement is a caller holding a stale row.
-    class AlreadyRetired < Error; end
-
-    # A row whose lease was already released has no checkout left to rebase or
-    # anchor, and "nothing to do" would read as an actor that committed
-    # nothing.
-    class AlreadyReleased < Error; end
-
-    # An actor launched anywhere but its lease's checkout runs its tools in
-    # whatever directory it was handed -- the run's own tree, if that.
-    class OutsideLease < Error; end
-
     # @param journal [#<<] where a bounded {Drain}'s timeout record and every
     #   reap's {WorkerReaped} land; the Null channel by default.
     # @param isolation [#acquire] the isolation backend each adoption leases a
@@ -190,8 +178,8 @@ module Lain
     # @return [Isolation::WorkerHandoff::Report] the anchored ref and the full
     #   SHA it holds; `:nothing_to_do` only for an actor that committed
     #   nothing its working branch lacks
-    # @raise [AlreadyRetired] for a row already retired
-    # @raise [AlreadyReleased] for a row whose lease was already released
+    # @raise [Error] for a row already retired
+    # @raise [Error] for a row whose lease was already released
     def retire(registration)
       retirable!(registration)
       @retired << registration
@@ -210,14 +198,18 @@ module Lain
       worker = registration.worker_id
       raise ArgumentError, "this supervisor never adopted #{registration.role} (#{worker})" unless
         @registry.include?(registration)
-      raise AlreadyRetired, "#{worker} was already retired" if retired?(registration)
+      # A row retires once; a second retirement is a caller holding a stale row.
+      raise Error, "#{worker} was already retired" if retired?(registration)
       # A reap is not a release: {Retain}'s anchors and releases nothing, so a
       # row it reaped still holds its checkout, and is still retirable.
       #
       # The sentence is the retirement's own, named rather than copied: the
       # retirement refuses the identical case one layer down, and two spellings
       # of one refusal are two things a caller could come to depend on.
-      raise AlreadyReleased, format(Isolation::Worktree::Handback::Retirement::RELEASED, worker:) if
+      # A row whose lease was already released has no checkout left to rebase or
+      # anchor, and "nothing to do" would read as an actor that committed
+      # nothing.
+      raise Error, format(Isolation::Worktree::Handback::Retirement::RELEASED, worker:) if
         registration.lease.released?
     end
 
@@ -376,7 +368,9 @@ module Lain
 
     def refuse(actor, leased, why)
       actor.stop
-      raise OutsideLease, "the actor adopted into #{leased.cwd} #{why}"
+      # An actor launched anywhere but its lease's checkout runs its tools in
+      # whatever directory it was handed -- the run's own tree, if that.
+      raise Error, "the actor adopted into #{leased.cwd} #{why}"
     end
   end
 

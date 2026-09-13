@@ -21,12 +21,6 @@ module Lain
     class ToolCallIndex
       include Enumerable
 
-      # A referenced predecessor (a turn's `parent` or root `spawned_from`)
-      # names a digest absent from this index's entry set. Loud, because a
-      # partial journal slice must never read as a shorter-but-genuine chain
-      # root -- the lineage walk could not tell the two apart.
-      class DanglingLineage < Error; end
-
       # One paired call, keyed by the issuing turn's digest in {#calls}.
       # `is_error`/`result` are nil for a `tool_use` with no recorded outcome:
       # it never executed, so nothing is fabricated for it.
@@ -87,13 +81,17 @@ module Lain
 
       # Every digest the walk visits is validated BEFORE it is yielded, so a
       # dangling predecessor never gets treated as (or yielded as) a turn
-      # this index actually has -- {DanglingLineage} names the missing
+      # this index actually has -- the refusal below names the missing
       # digest rather than the walk silently ending one step early.
       def record_for(digest)
         @by_digest.fetch(digest) do
-          raise DanglingLineage, "lineage references turn #{digest.inspect}, which is absent from " \
-                                 "this entry set -- a dangling predecessor reads as a corrupted or " \
-                                 "partial journal slice, never as a chain root"
+          # A referenced predecessor (a turn's `parent` or root `spawned_from`)
+          # names a digest absent from this index's entry set. Loud, because a
+          # partial journal slice must never read as a shorter-but-genuine chain
+          # root -- the lineage walk could not tell the two apart.
+          raise Error, "lineage references turn #{digest.inspect}, which is absent from " \
+                       "this entry set -- a dangling predecessor reads as a corrupted or " \
+                       "partial journal slice, never as a chain root"
         end
       end
 
@@ -102,9 +100,9 @@ module Lain
       # `spawned_from` meta. `||` is exactly this precedence: a non-root turn
       # always has a `parent` and is never consulted for `spawned_from`. A
       # digest present with NEITHER field is a legitimate root and answers
-      # nil here without raising -- {DanglingLineage} is for a predecessor
-      # digest that is itself absent from the entry set, not for the absence
-      # of a predecessor field.
+      # nil here without raising -- the dangling-lineage refusal is for a
+      # predecessor digest that is itself absent from the entry set, not for the
+      # absence of a predecessor field.
       def predecessor(record)
         record["parent"] || record.dig("meta", "spawned_from")
       end

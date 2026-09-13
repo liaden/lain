@@ -60,9 +60,6 @@ module Lain
       # this exists for.
       class NotAKeepsake < Error; end
 
-      # A strength nobody defined. Closed set, checked before any bytes move.
-      class UnknownAnswer < Error; end
-
       # A tool-wide refusal handed something that is not a tool's name.
       class NotAToolName < Error; end
 
@@ -197,7 +194,7 @@ module Lain
         # @return [Entry] what was appended
         # @raise [NotAKeepsake] when handed anything else, `nil` included, or a
         #   keepsake that is not deeply frozen
-        # @raise [UnknownAnswer] when `as` names no strength this door writes
+        # @raise [Error] when `as` names no strength this door writes
         # @raise [Unparseable] when the file on disk is not TOML
         def remember(keepsake, as:)
           raise NotAKeepsake, not_a_keepsake(keepsake) unless keepsake.is_a?(Risk::Keepsake)
@@ -207,7 +204,8 @@ module Lain
           # does -- so shareability is a free second question with one right
           # answer, asked before any bytes move.
           raise NotAKeepsake, not_settled(keepsake) unless Ractor.shareable?(keepsake)
-          raise UnknownAnswer, unknown_answer(as) unless ANSWERS.include?(as)
+          # A strength nobody defined. Closed set, checked before any bytes move.
+          raise Error, unknown_answer(as) unless ANSWERS.include?(as)
 
           entry = Entry.for_keepsake(keepsake)
           append(shaped(entry, as))
@@ -333,9 +331,6 @@ module Lain
         # a {Risk::Keepsake} can hold are rendered here, and anything outside
         # that set is REFUSED rather than approximated.
         module Toml
-          # A value shape TOML has no honest spelling for.
-          class Unwritable < Error; end
-
           ESCAPES = { "\\" => "\\\\", "\"" => "\\\"", "\b" => "\\b", "\t" => "\\t",
                       "\n" => "\\n", "\f" => "\\f", "\r" => "\\r" }.freeze
           # Every byte a TOML basic string may not carry raw; the `\uXXXX`
@@ -349,7 +344,8 @@ module Lain
             when Integer, true, false then held.to_s
             when Float then number(held)
             when Hash then inline_table(held)
-            else raise Unwritable, unwritable(held)
+            # A value shape TOML has no honest spelling for.
+            else raise Error, unwritable(held)
             end
           end
 
@@ -370,7 +366,7 @@ module Lain
           # The non-finite Floats spell as bare `inf`/`nan` in TOML, and come
           # back as values no tool field ever equals.
           def self.number(held)
-            raise Unwritable, "#{held.inspect} is not a finite number" unless held.finite?
+            raise Error, "#{held.inspect} is not a finite number" unless held.finite?
 
             held.to_s
           end

@@ -254,7 +254,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
   it "refuses an issue with no acceptance criteria, before anything is leased" do
     supervising do |supervisor|
-      expect { launch(supervisor, "c") }.to raise_error(described_class::NoCriteria, /issue c/)
+      expect { launch(supervisor, "c") }.to raise_error(Lain::Error, /issue c/)
       expect(supervisor.to_a).to be_empty
     end
   end
@@ -264,7 +264,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     git(repo, "update-ref", anchor, epic_tip)
 
     supervising do |supervisor|
-      expect { launch(supervisor, "a") }.to raise_error(described_class::AttemptStands, /#{Regexp.escape(anchor)}/)
+      expect { launch(supervisor, "a") }.to raise_error(Lain::Error, /#{Regexp.escape(anchor)}/)
       expect(provider.call_count).to eq(0)
 
       expect(launch(supervisor, "a", attempt: 2).worker_id).to eq("issue.demo.a.2")

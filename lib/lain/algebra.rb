@@ -35,7 +35,8 @@ module Lain
   # one with something to lose -- it generates a method before it files -- but a
   # family of verbs where only some carry the guard invites the next verb to be
   # the one that forgets. ({Elementwise.not_elementwise} files nothing on any
-  # registry: it always raises {Contradiction}.)
+  # registry: it always refuses, because a refutation of an operation the
+  # includer also declares is a contradiction.)
   #
   # The modules are stateless -- class-level verbs and, for {Elementwise} and
   # {Pure}, instance behavior, never an ivar -- so including one cannot disturb
@@ -55,14 +56,6 @@ module Lain
     # A structure claimed for an operation the class does not answer -- almost
     # always a typo, or a declaration written above the method it names.
     class Unanswered < Error; end
-
-    # A refutation with no stated reason, or a bottom with no stated shape. An
-    # unexplained negative is worse than none: it tells a later reader that
-    # somebody once knew something.
-    class Unexplained < Error; end
-
-    # One operation both declared and refuted for the same structure.
-    class Contradiction < Error; end
 
     # The same claim made twice, which would silently shadow the first.
     class Duplicate < Error; end
@@ -265,8 +258,11 @@ module Lain
       def refuse_unexplained(entry)
         return unless entry.reason.to_s.strip.empty?
 
-        raise Unexplained, "#{entry.subject} refutes #{entry.structure} on ##{entry.operation} without saying " \
-                           "why; an unexplained negative is worse than none"
+        # A refutation with no stated reason, or a bottom with no stated shape. An
+        # unexplained negative is worse than none: it tells a later reader that
+        # somebody once knew something.
+        raise Error, "#{entry.subject} refutes #{entry.structure} on ##{entry.operation} without saying " \
+                     "why; an unexplained negative is worse than none"
       end
 
       # A second entry on the same (class, operation, structure) is always a
@@ -279,7 +275,8 @@ module Lain
         return if clash.nil?
         raise Duplicate, shadowed(clash, entry) if clash.instance_of?(entry.class)
 
-        raise Contradiction, contradicted(clash, entry)
+        # One operation both declared and refuted for the same structure.
+        raise Error, contradicted(clash, entry)
       end
 
       def shadowed(clash, entry)

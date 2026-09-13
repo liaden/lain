@@ -331,7 +331,7 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "refuses a verdict outside the closed set" do
       expect { described_class::Ruling.new(verdict: :maybe, rung: "rules", reason: "?") }
-        .to raise_error(described_class::UnknownVerdict, /maybe/)
+        .to raise_error(Lain::Error, /unknown verdict :maybe; expected one of/)
     end
 
     it "is a deeply frozen value, so it is safe to journal and share" do

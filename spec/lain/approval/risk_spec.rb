@@ -407,7 +407,7 @@ RSpec.describe Lain::Approval::Risk do
       keepsake = risk.classify(call_for(read_file, { "path" => "lib/lain.rb" })).keepsake
 
       expect { keepsake.with(input: { "path" => "../../etc/shadow" }) }
-        .to raise_error(described_class::Forged, /classify a new call/)
+        .to raise_error(Lain::Error, /classify a new call/)
       expect { keepsake.class.new(tool: "bash", input: {}) }.to raise_error(NoMethodError)
     end
 

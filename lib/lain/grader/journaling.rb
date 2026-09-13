@@ -12,14 +12,6 @@ module Lain
     # recovers which criteria a run was graded against straight from the record,
     # with no live Gherkin doc to re-parse.
     class Journaling
-      # Raised when a subject cannot be addressed for the journal. Loud beats an
-      # ADDRESS-derived attestation: hashing `subject.to_s` would journal a
-      # digest keyed on the subject's `Object#inspect` identity -- its memory
-      # address -- rather than its content, which LOOKS content-addressed but is
-      # not reproducible across processes, or even across two objects that mean
-      # the same thing.
-      class UndigestableSubject < Lain::Error; end
-
       # @param inner [#grade] any grader duck; `inner.class.name` is what
       #   {Telemetry::GradeRecord#grader} attributes the verdict to
       # @param criteria_digest [String, nil] the {Gherkin::Criteria#digest}
@@ -31,7 +23,7 @@ module Lain
       #   subject's shape better than any duck-typed fallback here could.
       #   Absent, {#grade} falls back to `subject.digest` (when the subject
       #   answers one), then {Canonical.digest} for a bare String subject, and
-      #   raises {UndigestableSubject} rather than guess further.
+      #   raises rather than guess further.
       def initialize(inner:, criteria_digest: nil, journal: Channel::Null::INSTANCE, subject_digest: nil)
         @inner = inner
         @criteria_digest = criteria_digest
@@ -59,7 +51,13 @@ module Lain
         return subject.digest if subject.respond_to?(:digest)
         return Canonical.digest(subject) if subject.is_a?(String)
 
-        raise UndigestableSubject,
+        # Raised when a subject cannot be addressed for the journal. Loud beats an
+        # ADDRESS-derived attestation: hashing `subject.to_s` would journal a
+        # digest keyed on the subject's `Object#inspect` identity -- its memory
+        # address -- rather than its content, which LOOKS content-addressed but is
+        # not reproducible across processes, or even across two objects that mean
+        # the same thing.
+        raise Error,
               "cannot address a #{subject.class} subject for the journal -- pass subject_digest: " \
               "or give it a canonical #digest"
       end

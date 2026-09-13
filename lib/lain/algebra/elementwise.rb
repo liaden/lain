@@ -105,10 +105,10 @@ module Lain
         end
 
         def not_elementwise(on:, because:)
-          raise Contradiction, "#{self} includes Algebra::Elementwise, so ##{on} is a per-element map by " \
-                               "construction and is_a?(Elementwise) already classifies it; refuting it " \
-                               "(#{because.inspect}) would contradict that. To record the negative, do not " \
-                               "include the module and call Algebra.registry.refute directly"
+          raise Error, "#{self} includes Algebra::Elementwise, so ##{on} is a per-element map by " \
+                       "construction and is_a?(Elementwise) already classifies it; refuting it " \
+                       "(#{because.inspect}) would contradict that. To record the negative, do not " \
+                       "include the module and call Algebra.registry.refute directly"
         end
       end
 

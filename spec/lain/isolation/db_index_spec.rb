@@ -175,11 +175,11 @@ RSpec.describe Lain::Isolation::DbIndex do
   #
   # NOT REACHABLE THROUGH THE DSL, and that is worth stating plainly rather than
   # leaving as a smell. Postgres is the only class answering `#provision` today,
-  # and `Builder#refuse_duplicate_name` REFUSES a second postgres line
-  # (`Builder::Duplicate`), because `Postgres#name` is `:postgres` whatever its
-  # prefix. This block is therefore not a depiction of a configuration a user
-  # can write; it keeps DbIndex's N-service contract honest for the next class
-  # that provisions, since nothing else would fail if that contract broke.
+  # and `Builder#refuse_duplicate_name` REFUSES a second postgres line as a
+  # duplicate, because `Postgres#name` is `:postgres` whatever its prefix. This
+  # block is therefore not a depiction of a configuration a user can write; it
+  # keeps DbIndex's N-service contract honest for the next class that provisions,
+  # since nothing else would fail if that contract broke.
   #
   # One consequence to know before reading the assertions: every surviving
   # `Provisioned` releases through `dropdb`, so both legs here are shell-backed

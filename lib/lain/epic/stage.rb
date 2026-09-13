@@ -16,10 +16,6 @@ module Lain
     # constructs folds onto a partition nothing writes to, and reads as drained.
     class UnknownStage < Error; end
 
-    # Asked what follows the last stage. Answering nil would push the same
-    # question one call on, into a NoMethodError naming nothing.
-    class NoSuccessor < Error; end
-
     # An epic's gates could not open here, because an earlier stage of the SAME
     # epic still has sign-offs parked.
     class StageBlocked < Error; end
@@ -89,9 +85,11 @@ module Lain
 
       def issue_scoped? = ISSUE_STAGES.include?(name)
 
-      # @raise [NoSuccessor] at the terminal stage
+      # @raise [Error] at the terminal stage
       def next
-        raise NoSuccessor, "#{name} is the last epic stage -- nothing follows it" if last?
+        # Asked what follows the last stage. Answering nil would push the same
+        # question one call on, into a NoMethodError naming nothing.
+        raise Error, "#{name} is the last epic stage -- nothing follows it" if last?
 
         self.class.new(STAGES.fetch(index + 1))
       end

@@ -169,7 +169,7 @@ RSpec.describe Lain::Epic::Graph do
 
     it "refuses an id the graph does not hold" do
       expect { chain.split("ghost", into: [issue("y1")]) }
-        .to raise_error(Lain::Epic::UnknownIssue, /"ghost"/)
+        .to raise_error(Lain::Error, /no issue "ghost" in the epic graph/)
     end
 
     # Splitting into nothing would delete the issue and silently drop every edge
@@ -267,12 +267,12 @@ RSpec.describe Lain::Epic::Graph do
 
     it "refuses a first id the graph does not hold" do
       expect { chain.merge("ghost", "y", as: issue("c")) }
-        .to raise_error(Lain::Epic::UnknownIssue, /"ghost"/)
+        .to raise_error(Lain::Error, /no issue "ghost" in the epic graph/)
     end
 
     it "refuses a second id the graph does not hold" do
       expect { chain.merge("y", "ghost", as: issue("c")) }
-        .to raise_error(Lain::Epic::UnknownIssue, /"ghost"/)
+        .to raise_error(Lain::Error, /no issue "ghost" in the epic graph/)
     end
 
     # Merging an issue with itself is a rename wearing a merge's clothes, and

@@ -37,11 +37,12 @@ module Lain
         # rather than in whatever order a Hash happened to yield.
         #
         # @return [Hash{String=>Array<Task>}]
-        # @raise [TooFewTasks] naming a size that cannot fold a distribution
+        # @raise [Error] naming a size that cannot fold a distribution
         def by_size
           grouped = group_by(&:size)
           thin = grouped.find { |_size, tasks| tasks.size < MINIMUM }
-          raise TooFewTasks, too_few(*thin) unless thin.nil?
+          # A size carrying too few tasks to fold a distribution from.
+          raise Error, too_few(*thin) unless thin.nil?
 
           grouped
         end
@@ -98,8 +99,11 @@ module Lain
           path = File.expand_path(declared.fetch(:subject), File.dirname(@path))
           return path if Dir.exist?(path)
 
-          raise MissingSubject, "altitude task #{declared.fetch(:id).inspect} names the subject project " \
-                                "#{declared.fetch(:subject).inspect}, and there is no directory at #{path}"
+          # A task naming a subject project that is not on disk. Refused by name:
+          # an arm with nothing to work in would be graded on an empty directory,
+          # and an empty directory grades as a suite that failed.
+          raise Error, "altitude task #{declared.fetch(:id).inspect} names the subject project " \
+                       "#{declared.fetch(:subject).inspect}, and there is no directory at #{path}"
         end
 
         # Its own guard because a YAML entry that parses to a bare String has no

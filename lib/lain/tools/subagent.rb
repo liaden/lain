@@ -50,10 +50,6 @@ module Lain
 
       input_model Input
 
-      # A spawn whose session posture permits none of its tools. Loud rather
-      # than an empty child -- see {ChildBuilder#permitted}.
-      class NoCapability < Error; end
-
       # Closed and loud: a mode outside this set raises at construction.
       MODES = %i[one_shot actor].freeze
 
@@ -1011,10 +1007,11 @@ module Lain
                     feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
         end
 
-        # A spawn that raises past this point ({NoCapability}, a Context that
-        # will not render) leaves no lifetime for anyone to hang a `deregister`
-        # on, and retention runs from `register` to `deregister` and nothing
-        # else -- so this method is the only place that release can live.
+        # A spawn that raises past this point (a posture that permits none of
+        # the child's tools, a Context that will not render) leaves no lifetime
+        # for anyone to hang a `deregister` on, and retention runs from
+        # `register` to `deregister` and nothing else -- so this method is the
+        # only place that release can live.
         def spawned(enrolled, chain, union, worker_env)
           child = nil
           asker = enrolled.asker
@@ -1089,7 +1086,10 @@ module Lain
         # toolset slot in the child ({CLI::Switchboard::LiveToolset}'s shape).
         def permitted(allowed)
           permitted = allowed.only(*allowed.names.select { |name| @seam.permits.include?(name) })
-          raise NoCapability, no_capability(allowed) if permitted.empty?
+          # A spawn whose session posture permits none of its tools. Loud rather
+          # than an empty child: a child holding no tool cannot do the work its
+          # prompt names, and would report nothing rather than refusing.
+          raise Error, no_capability(allowed) if permitted.empty?
 
           permitted
         end

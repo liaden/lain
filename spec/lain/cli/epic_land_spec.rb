@@ -188,7 +188,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       sha = worker("a", "README" => "a's work\n")
       session(plan_approval("a"), implementation_approval("a", sha))
 
-      expect { command.resume("a", "demo") }.to raise_error(Lain::Forge::LocalLanding::NothingToResume, /a/)
+      expect { command.resume("a", "demo") }.to raise_error(Lain::Error, /does not hold issue a's approved commit/)
     end
   end
 
@@ -206,7 +206,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   describe "which epic, and what to type" do
     it "refuses a bare issue id, naming the command's arguments" do
       expect { command.land(" ", "demo") }
-        .to raise_error(described_class::NeedsArguments, /lain epic land ISSUE_ID \[SLUG\]/)
+        .to raise_error(Lain::Error, /lain epic land ISSUE_ID \[SLUG\]/)
     end
 
     it "refuses an unnamed choice between epics, advising the land spelling" do

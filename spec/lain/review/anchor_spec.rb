@@ -144,15 +144,15 @@ RSpec.describe Lain::Review::Anchor do
 
   describe "field shape" do
     it "refuses a nil path, naming the field" do
-      expect { anchor(path: nil) }.to raise_error(Lain::Review::Anchor::InvalidField, /path/)
+      expect { anchor(path: nil) }.to raise_error(Lain::Error, /path must be a String, got nil/)
     end
 
     it "refuses a non-String path" do
-      expect { anchor(path: 42) }.to raise_error(Lain::Review::Anchor::InvalidField, /path/)
+      expect { anchor(path: 42) }.to raise_error(Lain::Error, /path must be a String, got 42/)
     end
 
     it "refuses a nil anchor_text" do
-      expect { anchor(anchor_text: nil) }.to raise_error(Lain::Review::Anchor::InvalidField, /anchor_text/)
+      expect { anchor(anchor_text: nil) }.to raise_error(Lain::Error, /anchor_text/)
     end
 
     it "accepts an empty anchor_text -- a blank line is a real anchorable position" do
@@ -160,11 +160,11 @@ RSpec.describe Lain::Review::Anchor do
     end
 
     it "refuses a nil revision" do
-      expect { anchor(revision: nil) }.to raise_error(Lain::Review::Anchor::InvalidField, /revision/)
+      expect { anchor(revision: nil) }.to raise_error(Lain::Error, /revision/)
     end
 
     it "refuses an empty revision" do
-      expect { anchor(revision: "") }.to raise_error(Lain::Review::Anchor::InvalidField, /revision/)
+      expect { anchor(revision: "") }.to raise_error(Lain::Error, /revision/)
     end
   end
 

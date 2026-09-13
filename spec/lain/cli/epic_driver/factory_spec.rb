@@ -213,7 +213,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       driver = factory_over(Lain::CLI::EpicMount::NoEpic)
 
       expect(driver).not_to be_mounted
-      expect { driver.run }.to raise_error(Lain::CLI::EpicDriver::NoEpicMounted, /--epic/)
+      expect { driver.run }.to raise_error(Lain::Error, /this chat is in no epic/)
     end
 
     # The Null answers the WHOLE published surface. A caller reaching for the
@@ -223,7 +223,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       driver = factory_over(Lain::CLI::EpicMount::NoEpic)
 
       %i[isolation retirement supervisor attempts].each do |reader|
-        expect { driver.public_send(reader) }.to raise_error(Lain::CLI::EpicDriver::NoEpicMounted, /--epic/)
+        expect { driver.public_send(reader) }.to raise_error(Lain::Error, /this chat is in no epic/)
       end
       expect(driver.slug).to be_nil
     end

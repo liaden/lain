@@ -158,7 +158,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     # around exactly the half that can go stale.
     it "refuses to build the summarizing strategy with no tier: given, naming it" do
       expect { resolve }
-        .to raise_error(Lain::CLI::CompactionStrategy::MissingTier,
+        .to raise_error(Lain::Error,
                         /CompactionStrategy\.resolve needs tier: to build "summarizing"/)
     end
 
@@ -203,13 +203,13 @@ RSpec.describe Lain::CLI::CompactionStrategy do
 
     it "refuses summarize-conversation with no tier:, naming IT and not its parent" do
       expect { resolve("summarize-conversation") }
-        .to raise_error(Lain::CLI::CompactionStrategy::MissingTier,
+        .to raise_error(Lain::Error,
                         /needs tier: to build "summarize-conversation"/)
     end
 
     it "names the oracle-backed part inside a composition, not the composition" do
       expect { resolve("elide-tools+summarize-conversation") }
-        .to raise_error(Lain::CLI::CompactionStrategy::MissingTier,
+        .to raise_error(Lain::Error,
                         /needs tier: to build "summarize-conversation"/)
     end
   end
@@ -309,12 +309,12 @@ RSpec.describe Lain::CLI::CompactionStrategy do
   end
 
   describe "the exhaustiveness guard" do
-    it "raises Unbuilt, not Unknown, for a validated name with no matching branch -- a bug here, not a bad flag" do
+    it "says a validated name has no branch, rather than Unknown, for a bug here and not a bad flag" do
       strategy = described_class.new("summarizing", tier: tier_factory)
       allow(strategy).to receive(:strategy_names).and_return(["plan-step"])
 
       expect { strategy.strategy }
-        .to raise_error(Lain::CLI::CompactionStrategy::Unbuilt, /"plan-step".*no branch here builds it/)
+        .to raise_error(Lain::Error, /"plan-step".*no branch here builds it/)
     end
   end
 end

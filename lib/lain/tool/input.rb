@@ -283,9 +283,9 @@ module Lain
           raise InvalidInput, "#{label}: #{e.message}"
         end
 
-        def cast(_raw) = raise(NotImplemented, "#{self.class} must define #cast")
-        def checked(_raw) = raise(NotImplemented, "#{self.class} must define #checked")
-        def to_json_schema = raise(NotImplemented, "#{self.class} must define #to_json_schema")
+        def cast(_raw) = raise(Error, "#{self.class} must define #cast")
+        def checked(_raw) = raise(Error, "#{self.class} must define #checked")
+        def to_json_schema = raise(Error, "#{self.class} must define #to_json_schema")
 
         # A scalar element, cast exactly as a top-level field of that type is.
         class Scalar < Element

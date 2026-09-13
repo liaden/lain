@@ -73,7 +73,10 @@ module Lain
         end
 
         def existing!
-          raise MissingFixture, "no decider sweep fixture at #{@path}" unless File.file?(@path)
+          # A missing fixture path -- a checkout or packaging mistake, never user
+          # input to refuse. Path-bearing, for the reason {Sweep::MissingCorpus}
+          # states: the path IS the diagnosis.
+          raise Error, "no decider sweep fixture at #{@path}" unless File.file?(@path)
 
           @path
         end

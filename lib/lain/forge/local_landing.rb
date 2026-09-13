@@ -31,7 +31,6 @@ module Lain
 
       class NotInFlight < Error; end
       class MisplacedTests < Error; end
-      class NothingToResume < Error; end
       class Ambiguous < Error; end
       class AlreadyOnBranch < Error; end
 
@@ -113,13 +112,13 @@ module Lain
       # Finish a landing whose merge happened, and was journaled, and whose
       # transition did not. Nothing merges here.
       # @return [Result]
-      # @raise [NothingToResume] when the branch does not hold the commit, or
+      # @raise [Error] when the branch does not hold the commit, or
       #   holds it with no landing of this issue journaled
       def resume(issue_id)
         ready!(issue_id)
         sha, ref = approved_commit(issue_id, @commits.all)
-        raise NothingToResume, never_merged(issue_id, sha) unless @commits.landed?(sha)
-        raise NothingToResume, "#{unjournaled(issue_id, sha)} -- there is no landing to resume" unless
+        raise Error, never_merged(issue_id, sha) unless @commits.landed?(sha)
+        raise Error, "#{unjournaled(issue_id, sha)} -- there is no landing to resume" unless
           @landings.merged?(issue_id)
 
         report = Isolation::WorkerHandoff::Report.new(kind: :nothing_to_do, ref:, detail: "#{@base.name} holds #{sha}")

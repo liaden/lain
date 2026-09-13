@@ -18,9 +18,6 @@ module Lain
     # call time and spelled in full: this unit loads before them, and a bare
     # `Epic` resolves to the sibling {CLI::Epic}.
     class EpicLand
-      # Its own class so "you did not say which" reads apart from a refusal.
-      class NeedsArguments < Error; end
-
       USAGE = "lain epic land ISSUE_ID [SLUG]"
 
       # `root:` defaults to the RESOLVED project's, for {CLI::Epic#initialize}'s
@@ -53,7 +50,7 @@ module Lain
       end
 
       # @return [String]
-      # @raise [Forge::LocalLanding::NothingToResume] when nothing merged
+      # @raise [Error] when nothing merged
       def resume(issue_id, slug = nil)
         epic_slug = @epics.resolve_slug(slug, command: "epic land --resume ISSUE_ID")
         issue = named!(issue_id)
@@ -144,7 +141,9 @@ module Lain
 
       def named!(value)
         named = value.to_s.strip
-        raise NeedsArguments, "lain epic land names one issue -- #{USAGE}" if named.empty?
+        # Said in its own words so "you did not say which" reads apart from a
+        # refusal of an issue that exists.
+        raise Error, "lain epic land names one issue -- #{USAGE}" if named.empty?
 
         named
       end

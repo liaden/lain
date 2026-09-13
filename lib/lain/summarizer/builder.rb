@@ -21,15 +21,6 @@ module Lain
       # Named here so an unknown verb's error can list them.
       VERBS = %i[summarizer].freeze
 
-      # An unrecognized verb in `.lain/summarizers.rb` -- a typo fails LOUDLY
-      # and named rather than as a bare NoMethodError.
-      class Unknown < Error; end
-
-      # A second declaration of a name already declared. The catalog answers with
-      # the FIRST suitable summarizer, so a same-named second one is either a
-      # copy-paste the user meant to edit or an override that will never run.
-      class Duplicate < Error; end
-
       # A file that stopped early. `return if ENV["CI"]` is idiomatic in a config
       # file, but a top-level `return` unwinds the evaluating frame, so every
       # declaration above it is thrown away -- and left alone it surfaces
@@ -106,8 +97,10 @@ module Lain
 
       # A typo'd verb: name it and list what IS known, never a bare NoMethodError.
       def method_missing(name, *, **)
-        raise Unknown, "unknown verb #{name.inspect} in .lain/summarizers.rb; " \
-                       "known verbs: #{VERBS.join(", ")}"
+        # An unrecognized verb in `.lain/summarizers.rb` -- a typo fails LOUDLY,
+        # naming the verb, rather than as a bare NoMethodError.
+        raise Error, "unknown verb #{name.inspect} in .lain/summarizers.rb; " \
+                     "known verbs: #{VERBS.join(", ")}"
       end
 
       def respond_to_missing?(name, include_private = false) = VERBS.include?(name) || super
@@ -130,7 +123,7 @@ module Lain
           declared.class_eval(&block)
           # AFTER class_eval, deliberately: the declared name is the catalog's
           # identity for this summarizer, so a user's own `def name` shadowing it
-          # would make both the NotImplementedError messages and the Duplicate
+          # would make both the NotImplementedError messages and the duplicate
           # check quietly lie about which declaration they mean.
           declared.define_method(:name) { declared_name }
         end
@@ -163,8 +156,11 @@ module Lain
       def refuse_duplicate(declared_name)
         return unless @declared.any? { |summarizer| summarizer.name == declared_name }
 
-        raise Duplicate, "duplicate summarizer #{declared_name.inspect} in .lain/summarizers.rb; " \
-                         "the first suitable summarizer answers, so the second would never run"
+        # A second declaration of a name already declared. The catalog answers with
+        # the FIRST suitable summarizer, so a same-named second one is either a
+        # copy-paste the user meant to edit or an override that will never run.
+        raise Error, "duplicate summarizer #{declared_name.inspect} in .lain/summarizers.rb; " \
+                     "the first suitable summarizer answers, so the second would never run"
       end
     end
   end

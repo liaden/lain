@@ -17,7 +17,6 @@ module Lain
   # with no error anywhere.
   class Toolset
     class UnknownTool < Error; end
-    class DuplicateTool < Error; end
 
     include Enumerable
     include Algebra::Attenuation
@@ -154,7 +153,7 @@ module Lain
     def indexed(tools)
       tools.each_with_object({}) do |tool, by_name|
         key = tool.name.to_s
-        raise DuplicateTool, "two tools are named #{key.inspect}" if by_name.key?(key)
+        raise Error, "two tools are named #{key.inspect}" if by_name.key?(key)
 
         by_name[key] = tool
       end.freeze

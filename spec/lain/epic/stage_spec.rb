@@ -71,7 +71,7 @@ RSpec.describe Lain::Epic::Stage do
 
     it "refuses loudly at the terminal stage rather than answering nil" do
       expect { stage("implementation").next }
-        .to raise_error(Lain::Epic::NoSuccessor, /implementation/)
+        .to raise_error(Lain::Error, /implementation/)
     end
 
     it "answers #last? so a caller can ask before it asks for the successor" do

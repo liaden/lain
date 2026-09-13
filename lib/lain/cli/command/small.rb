@@ -241,7 +241,7 @@ module Lain
         # @param args [String] the line after the verb
         # @param env [Env] the run's collaborators
         # @return [String] what the run came to
-        # @raise [EpicDriver::NoEpicMounted] when this chat is in no epic
+        # @raise [Error] when this chat is in no epic
         # @raise [Lain::Error] when the width is not a positive whole number
         def call(args, env)
           env.epic_driver.run(**width(args.strip)).to_s

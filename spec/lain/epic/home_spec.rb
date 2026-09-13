@@ -455,7 +455,7 @@ RSpec.describe Lain::Epic::Home do
         config = instance_double(Lain::Config, epics_home: :s3)
 
         expect { described_class.container(config:, paths: paths_for(tmp), root: tmp) }
-          .to raise_error(Lain::Epic::Home::UnknownHome, /s3/)
+          .to raise_error(Lain::Error, /epics_home :s3 names no artifact home/)
       end
     end
   end

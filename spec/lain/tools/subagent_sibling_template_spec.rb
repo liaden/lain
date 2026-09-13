@@ -122,7 +122,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
   # FIXED (was the Linus SHOULD-FIX finding): a factory context whose system
   # arrives PRE-MARKED (the role_spec:119-136 probe shape) used to keep its
   # mark when the template demoted it to non-last -- 2 system marks, 5 on the
-  # wire at full message budget -> TooManyCacheMarkers mid-child-run. The
+  # wire at full message budget -> too many cache breakpoints mid-child-run. The
   # strategy now owns ALL mark placement for the child: caller marks are
   # stripped (and the strip journaled), so exactly Context's tail mark -- the
   # template boundary -- reaches the wire.

@@ -42,11 +42,6 @@ module Lain
         # `strategy.rb`'s own `NotAPartition` alias is assigned.
         class Overlap < IntervalPartition::NotAPartition; end
 
-        # A collapse asked about a slice this strategy never proposed, and so
-        # cannot route. Loud, because the alternative is a NoMethodError on nil
-        # from inside the dispatch, naming nobody.
-        class Untagged < Error; end
-
         # A range that remembers which strategy proposed it. Frozen at
         # construction: a Range SUBCLASS is not frozen the way a Range literal
         # is, and an unfrozen one reachable from a partition would cost that
@@ -142,8 +137,11 @@ module Lain
         def refuse_untagged(range)
           return if range.is_a?(Owned) && operands.any? { |operand| operand.equal?(range.owner) }
 
-          raise Untagged, "#{name} is asked to collapse #{range.inspect}, which neither operand proposed; a " \
-                          "composed strategy routes a collapse by the range its proposal tagged"
+          # A collapse asked about a slice this strategy never proposed, and so
+          # cannot route. Loud, because the alternative is a NoMethodError on nil
+          # from inside the dispatch, naming nobody.
+          raise Error, "#{name} is asked to collapse #{range.inspect}, which neither operand proposed; a " \
+                       "composed strategy routes a collapse by the range its proposal tagged"
         end
 
         def listed(ranges) = ranges.map(&:inspect).join(", ")

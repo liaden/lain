@@ -20,8 +20,8 @@ module Lain
       # came from a real {Home}. A Scribe built on " demo" or "Demo" passes the
       # transition's own contract, writes happily, and then partitions as SOMEONE
       # ELSE'S epic -- dropped as foreign rather than refused, so the transition
-      # never folds in, silently, in an append-only file, and {ForeignJournal}
-      # fires only when EVERY record shares the bad slug. `journal` is checked
+      # never folds in, silently, in an append-only file, and the foreign-journal
+      # refusal fires only when EVERY record shares the bad slug. `journal` is checked
       # for {Progress}'s reason: built on `journal: nil` a Scribe used to
       # construct and fail later as a `NoMethodError` naming `nil` rather than
       # the construction site that handed it in.

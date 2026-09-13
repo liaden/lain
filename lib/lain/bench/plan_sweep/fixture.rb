@@ -15,13 +15,6 @@ module Lain
         # A checkout or packaging mistake, never user input to refuse.
         class MissingFixture < Lain::Error; end
 
-        # A fixture that loaded but is structurally broken -- a plan that parsed
-        # no steps, or a scripted run missing a plan-required step. Distinct
-        # from {MissingFixture}, where the file is absent: here it is present
-        # and wrong, and a silent pass would yield a plausible-looking VACUOUS
-        # report with the grader populated, every cost column zero, no signal.
-        class MalformedFixture < Lain::Error; end
-
         # The three seam densities the sweep sweeps. `thinned` is the plan as its
         # author placed the seams; `every` seams after every step (the finest
         # plan-shaped granularity); `none` removes all seams so the whole plan is
@@ -107,7 +100,12 @@ module Lain
           document = Plan::Document.parse_markdown(File.read(existing!(@plan_path)))
           return document if document.steps.any?
 
-          raise MalformedFixture, "plan-sweep plan at #{@plan_path} parsed no steps (an empty or unparseable plan)"
+          # A fixture that loaded but is structurally broken -- a plan that parsed
+          # no steps, or a scripted run missing a plan-required step. Distinct
+          # from {MissingFixture}, where the file is absent: here it is present
+          # and wrong, and a silent pass would yield a plausible-looking VACUOUS
+          # report with the grader populated, every cost column zero, no signal.
+          raise Error, "plan-sweep plan at #{@plan_path} parsed no steps (an empty or unparseable plan)"
         end
 
         # One run, refused loudly if it omits any plan step -- naming the run and
@@ -116,7 +114,7 @@ module Lain
         def checked_run(raw)
           run = ScriptedRun.new(id: -raw.fetch("id").to_s, steps: raw.fetch("steps"))
           missing = required_step_ids.reject { |id| run.covers?(id) }
-          raise MalformedFixture, missing_steps_message(run, missing) unless missing.empty?
+          raise Error, missing_steps_message(run, missing) unless missing.empty?
 
           run
         end

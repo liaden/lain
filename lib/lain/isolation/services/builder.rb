@@ -18,7 +18,7 @@ module Lain
         # so `respond_to?(:redis)` answers true for a verb this list omits. The
         # divergence is the point: the method exists only to refuse, and a
         # retired verb belongs in neither the valid set an error reads back nor
-        # the {Unknown} path that would strand its author.
+        # the unknown-verb path that would strand its author.
         VERBS = %i[postgres compose].freeze
 
         # The declaration that replaces a retired `redis` line. Spelled out once
@@ -30,22 +30,6 @@ module Lain
         # far from this refusal as a failure can land.
         REDIS_REPLACEMENT = 'compose service: "redis", container_port: 6379, ' \
                             'env_var: "REDIS_URL", scheme: "redis"'
-
-        # An unrecognized service verb. The DSL is a stable surface, so a typo
-        # fails LOUDLY and named rather than as a bare NoMethodError.
-        class Unknown < Error; end
-
-        # A verb that WAS real and is not any more. Separate from {Unknown}
-        # because a typo and an upgrade are different operator problems: a typo
-        # wants the valid set read back, while a file that worked yesterday
-        # wants the route that replaced what it declared.
-        class Retired < Error; end
-
-        # A second declaration that would silently clobber a first in the lease
-        # -- the SAME service kind declared twice, or two DIFFERENT services
-        # naming the SAME `env_var`, whose URLs collide when a backend merges
-        # them into one WorkerEnv.
-        class Duplicate < Error; end
 
         # `path` and line 1 give backtraces that point into the user's
         # `.lain/services.rb`, not into this evaluator.
@@ -74,16 +58,22 @@ module Lain
         # colliding index, and redis's own 16 logical DBs capped the fan-out on
         # top of that. A container has neither problem, so that is the route.
         def redis(**)
-          raise Retired, "the `redis` service was retired from .lain/services.rb; a container is the " \
-                         "isolation route for redis now -- put it in your compose file and declare it " \
-                         "here as `#{REDIS_REPLACEMENT}`, which leases a stack per worker with no " \
-                         "shared DB-index and no 16-database ceiling. " \
-                         "Known services: #{VERBS.join(", ")}"
+          # A verb that WAS real and is not any more. Said apart from an unknown
+          # verb because a typo and an upgrade are different operator problems: a typo
+          # wants the valid set read back, while a file that worked yesterday
+          # wants the route that replaced what it declared.
+          raise Error, "the `redis` service was retired from .lain/services.rb; a container is the " \
+                       "isolation route for redis now -- put it in your compose file and declare it " \
+                       "here as `#{REDIS_REPLACEMENT}`, which leases a stack per worker with no " \
+                       "shared DB-index and no 16-database ceiling. " \
+                       "Known services: #{VERBS.join(", ")}"
         end
 
         def method_missing(name, *, **)
-          raise Unknown, "unknown service #{name.inspect} in .lain/services.rb; " \
-                         "known services: #{VERBS.join(", ")}"
+          # An unrecognized service verb. The DSL is a stable surface, so a typo
+          # fails LOUDLY, naming the verb, rather than as a bare NoMethodError.
+          raise Error, "unknown service #{name.inspect} in .lain/services.rb; " \
+                       "known services: #{VERBS.join(", ")}"
         end
 
         def respond_to_missing?(name, include_private = false) = VERBS.include?(name) || super
@@ -100,8 +90,12 @@ module Lain
         def refuse_duplicate_name(service)
           return unless @declarations.any? { |existing| existing.name == service.name }
 
-          raise Duplicate, "duplicate #{service.name} service in .lain/services.rb; " \
-                           "declare each service at most once"
+          # A second declaration that would silently clobber a first in the lease
+          # -- the SAME service kind declared twice, or two DIFFERENT services
+          # naming the SAME `env_var`, whose URLs collide when a backend merges
+          # them into one WorkerEnv.
+          raise Error, "duplicate #{service.name} service in .lain/services.rb; " \
+                       "declare each service at most once"
         end
 
         # Two declarations sharing an `env_var` -- even across DIFFERENT service
@@ -115,9 +109,9 @@ module Lain
           end
           return unless clash
 
-          raise Duplicate, "duplicate env var #{service.env_var.inspect} in .lain/services.rb " \
-                           "(declared by both #{clash.name} and #{service.name}); a second " \
-                           "declaration would silently clobber the first's injected URL"
+          raise Error, "duplicate env var #{service.env_var.inspect} in .lain/services.rb " \
+                       "(declared by both #{clash.name} and #{service.name}); a second " \
+                       "declaration would silently clobber the first's injected URL"
         end
       end
     end

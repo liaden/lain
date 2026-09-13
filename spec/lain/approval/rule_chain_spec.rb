@@ -243,7 +243,7 @@ RSpec.describe Lain::Approval::RuleChain do
     # constructor still refuses anything that is not a Tool::Input.
     it "still refuses a raw Hash at the constructor itself" do
       expect { Lain::Approval::Rule::Call.send(:new, tool: read_file, input: { "path" => "x" }) }
-        .to raise_error(Lain::Approval::Rule::Call::NotValidated, /Hash/)
+        .to raise_error(Lain::Error, /a Call carries a validated Tool::Input, got Hash/)
     end
 
     it "refuses to build a call whose input does not validate" do
@@ -263,7 +263,7 @@ RSpec.describe Lain::Approval::RuleChain do
 
     it "refuses a subject that is not a Call, rather than passing it to a rule" do
       expect { chain(RuleChainSpecSupport::Allower.new).decide("rm -rf /") }
-        .to raise_error(described_class::NotACall, /String/)
+        .to raise_error(Lain::Error, /a rule chain decides a Rule::Call, got String/)
     end
   end
 

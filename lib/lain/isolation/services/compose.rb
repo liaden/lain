@@ -24,7 +24,7 @@ module Lain
         end
 
         # Namespaced per compose service so two declarations (`web`, `db`) are
-        # distinct rather than a {Builder::Duplicate} collision.
+        # distinct rather than the duplicate-name collision {Builder} refuses.
         def name = :"compose_#{service}"
 
         def url(published_port) = "#{scheme}://#{host}:#{published_port}"

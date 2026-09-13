@@ -23,6 +23,8 @@ module Lain
     # chat that never calls a tool never pays for a shadow baseline or touches
     # the state home.
     class SnapshotSlot
+      # A read of a slot no turn has primed. Loud rather than nil: every reader
+      # below answers about a bound snapshot, and nil would be a second meaning.
       class NotBound < Error; end
 
       # One turn whose shadow store failed, and why.

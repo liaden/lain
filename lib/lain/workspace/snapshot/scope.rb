@@ -31,8 +31,6 @@ module Lain
       # `#unchanged?(root:, files:, last:)` -> whether a write should land
       # nothing, since only the scope knows what its file map means.
       module Scope
-        class Unknown < Error; end
-
         # The pair of a scope that stages no trees: nothing moved, and it names
         # no path. The write-set scope's answer, and a shadow scope's for a root
         # it never primed.
@@ -89,7 +87,7 @@ module Lain
         # the set.
         def self.fetch(name, paths: Paths.new, session: SecureRandom.hex(6))
           klass = REGISTRY.fetch(name.to_sym) do
-            raise Unknown, "unknown snapshot scope #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
+            raise Error, "unknown snapshot scope #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
           end
           klass.for(paths:, session:)
         end

@@ -1365,7 +1365,7 @@ RSpec.describe Lain::Supervisor do
         supervisor.retire(row)
         retired = log.dup
 
-        expect { supervisor.retire(row) }.to raise_error(described_class::AlreadyRetired, /already retired/)
+        expect { supervisor.retire(row) }.to raise_error(Lain::Error, /already retired/)
         supervisor.stop
 
         expect(log).to eq(retired)
@@ -1471,7 +1471,7 @@ RSpec.describe Lain::Supervisor do
         row = row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done"))))
         row.release
 
-        expect { supervisor.retire(row) }.to raise_error(described_class::AlreadyReleased, /released/)
+        expect { supervisor.retire(row) }.to raise_error(Lain::Error, /released/)
         expect(supervisor.retired?(row)).to be(false)
         supervisor.stop
       end
@@ -1764,7 +1764,7 @@ RSpec.describe Lain::Supervisor do
               supervisor.adopt(role: "issue") do
                 marker.launch_actor("go", worker_env: Lain::WorkerEnv.default.with(cwd: elsewhere))
               end
-            end.to raise_error(described_class::OutsideLease, /stands in #{Regexp.escape(elsewhere)}/)
+            end.to raise_error(Lain::Error, /stands in #{Regexp.escape(elsewhere)}/)
             expect(supervisor.to_a).to be_empty
             supervisor.stop
           end
@@ -1783,7 +1783,7 @@ RSpec.describe Lain::Supervisor do
           supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
 
           expect { supervisor.adopt(role: "issue") { RetireStandIn.new } }
-            .to raise_error(described_class::OutsideLease, /answers no session/)
+            .to raise_error(Lain::Error, /answers no session/)
           expect(supervisor.to_a).to be_empty
           supervisor.stop
         end

@@ -9,13 +9,9 @@ module Lain
       # an UNREGISTERED `/word` -- falls through to {Middleware::SkillDispatch}
       # unchanged. Commands shadow skills only when registered: precedence is
       # command-first by design, and the namespace stays honest because two
-      # COMMANDS colliding is a loud {Collision} at wiring time.
+      # COMMANDS colliding is a loud refusal at wiring time.
       class Registry
         include Enumerable
-
-        # Two commands claiming one name is a wiring bug, never a quiet
-        # last-write-wins: the second register raises at assembly, not at use.
-        class Collision < Error; end
 
         def initialize(commands = [])
           @commands = {}
@@ -25,7 +21,9 @@ module Lain
         # Later command cards land as exactly one require (cli/command.rb) plus
         # one register call in {Wiring}; returns self so those reads chain.
         def register(command)
-          raise Collision, "command #{command.name.inspect} is already registered" if @commands.key?(command.name)
+          # Two commands claiming one name is a wiring bug, never a quiet
+          # last-write-wins: the second register raises at assembly, not at use.
+          raise Error, "command #{command.name.inspect} is already registered" if @commands.key?(command.name)
 
           @commands[command.name] = command
           self

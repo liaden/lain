@@ -14,7 +14,7 @@ require "stringio"
 # that is not reproducible. The resolution order is pinned: an injected
 # `subject_digest:` callable wins outright; else a subject's own `#digest` is
 # trusted verbatim; else a bare String subject is hashed directly; else a
-# named UndigestableSubject error, loud rather than guessed.
+# refusal naming the subject's class, loud rather than guessed.
 RSpec.describe Lain::Grader::Journaling do
   # A minimal #grade test double: answers whatever Grade it was built with,
   # ignoring the subject -- for the tests that only care about pass-through/
@@ -81,12 +81,12 @@ RSpec.describe Lain::Grader::Journaling do
     end
 
     describe "subject digest resolution" do
-      it "raises a named UndigestableSubject naming the subject's class when nothing can address it" do
+      it "raises naming the subject's class when nothing can address it" do
         grade = Lain::Grader::Grade.new(score: 1.0, why: "all good")
         subject = Object.new
 
         expect { described_class.new(inner: stub_grader(grade), journal: []).grade(subject) }
-          .to raise_error(described_class::UndigestableSubject, /Object/)
+          .to raise_error(Lain::Error, /Object/)
       end
 
       it "hashes a String subject directly, stably across two calls" do

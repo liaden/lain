@@ -11,10 +11,6 @@ module Lain
     # {IssueActor} and {PlanSubject} are files of their own: the actor owns a
     # lifecycle, and the plan's declaration is read from outside this subtree.
     module EpicDriver
-      # A chat that is in no epic was asked to drive one. Its own class, and a
-      # {Lain::Error}, so the Repl renders it loudly rather than as a backtrace.
-      class NoEpicMounted < Error; end
-
       # The conductor arrives as the OBJECT rather than as a thunk over its
       # state, so that what a caller hands this value is the collaborator
       # itself and the question asked of it -- whether the session is closed --
@@ -93,7 +89,9 @@ module Lain
 
           def self.attempts = refuse
 
-          def self.refuse = raise(NoEpicMounted, UNMOUNTED)
+          # A chat that is in no epic was asked to drive one. A {Lain::Error}, so
+          # the Repl renders it loudly rather than as a backtrace.
+          def self.refuse = raise(Error, UNMOUNTED)
           private_class_method :refuse
         end
 
@@ -788,8 +786,8 @@ module Lain
 
         # `--resume` finishes a merge that HAPPENED and was journaled, so it is
         # the way out of exactly one state. A refusal raised before anything
-        # merged has nothing to resume -- the command would answer
-        # NothingToResume -- so sending a human there would cost them a second
+        # merged has nothing to resume -- the command would answer that there is
+        # no landing to resume -- so sending a human there would cost them a second
         # refusal to work out. It reports itself instead.
         def unlanded(entry, report, error)
           return format(REFUSED, why: error.message) if refused_before_merging?(error)
@@ -830,11 +828,6 @@ module Lain
       # change, so the criteria or the generation are wrong, and a human has
       # to look.
       class IssueTests
-        class NoLayout < Error; end
-        class NotGenerated < Error; end
-        class AlreadyGreen < Error; end
-        class Uncommitted < Error; end
-
         # What the step left: the generation's record, the failing run, and the
         # commit holding the tests.
         Red = Data.define(:record, :run, :sha)
@@ -859,7 +852,11 @@ module Lain
         # @param level [String, nil] a level the layout declares; its default
         #   level when nil
         # @return [Red]
-        # @raise [NoLayout, NotGenerated, AlreadyGreen, Uncommitted]
+        # @raise [Error] when the checkout declares no test layout, or declares
+        #   no level whose tests mirror their sources; when the test_engineer
+        #   child leaves no tests the layout accepts; when the subject's tests
+        #   already pass before any work is done; or when git refuses the
+        #   failing tests' commit
         def call(criteria, worker_env, subject:, level: nil)
           guard = Lain::TestLayout::Guard.new(layout: declared(worker_env.cwd), root: worker_env.cwd)
           record = generated(criteria, worker_env, guard, subject:, level: level || default_level(guard.layout))
@@ -872,17 +869,17 @@ module Lain
           layout = Lain::Config.test_layout(root:)
           return layout if layout.in_force?
 
-          raise NoLayout, "#{root} declares no test layout, so the issue's failing tests have nowhere the " \
-                          "layout guard would accept them: add a [tests] table to .lain/config.toml naming " \
-                          "its preset and source roots"
+          raise Error, "#{root} declares no test layout, so the issue's failing tests have nowhere the " \
+                       "layout guard would accept them: add a [tests] table to .lain/config.toml naming " \
+                       "its preset and source roots"
         end
 
         def default_level(layout)
           level = layout.mapping.default_level
           return level.name unless level.nil?
 
-          raise NoLayout, "the [tests] table declares no level whose tests mirror their sources, so there is " \
-                          "no level to generate the issue's tests at"
+          raise Error, "the [tests] table declares no level whose tests mirror their sources, so there is " \
+                       "no level to generate the issue's tests at"
         end
 
         def generated(criteria, worker_env, guard, subject:, level:)
@@ -890,17 +887,17 @@ module Lain
                                                      guard:).call(criteria, subject:, level:)
           return record if record.generated?
 
-          raise NotGenerated, "the test_engineer child left no tests the layout accepts at #{record.target} " \
-                              "(#{record.verdict}), so nothing was committed"
+          raise Error, "the test_engineer child left no tests the layout accepts at #{record.target} " \
+                       "(#{record.verdict}), so nothing was committed"
         end
 
         def failing(record, worker_env)
           run = @harness.call(worker_env.cwd).run(worker_env, paths: [record.target])
           return run unless run.clean?
 
-          raise AlreadyGreen, "#{record.target} ran #{run.total} examples and none failed before any work was " \
-                              "done, so they check nothing the work will change: the criteria or the " \
-                              "generation are wrong, and nothing was committed"
+          raise Error, "#{record.target} ran #{run.total} examples and none failed before any work was " \
+                       "done, so they check nothing the work will change: the criteria or the " \
+                       "generation are wrong, and nothing was committed"
         end
 
         # The target alone, even when the child left other files, so the red
@@ -917,7 +914,7 @@ module Lain
         def committed!(shell)
           return if shell.exitstatus.zero?
 
-          raise Uncommitted, "git refused the failing tests' commit: #{shell.stderr.strip}"
+          raise Error, "git refused the failing tests' commit: #{shell.stderr.strip}"
         end
 
         def message(record) = "test: failing tests at #{record.target}, from criteria #{record.criteria_digest}"

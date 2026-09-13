@@ -240,7 +240,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       git("merge", "-q", "--ff-only", sha)
 
       expect { described_class.new(**wiring, landings:).resume("a") }
-        .to raise_error(described_class::NothingToResume, /no landing of issue a/)
+        .to raise_error(Lain::Error, /no landing of issue a/)
       expect(transitions).to be_empty
     end
 
@@ -248,7 +248,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       sha, = worker("a", "README" => "a's work\n")
       approve("a", sha)
 
-      expect { landing.resume("a") }.to raise_error(described_class::NothingToResume, /a/)
+      expect { landing.resume("a") }.to raise_error(Lain::Error, /does not hold issue a's approved commit/)
       expect(transitions).to be_empty
     end
   end

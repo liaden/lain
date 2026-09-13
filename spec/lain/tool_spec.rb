@@ -43,8 +43,8 @@ RSpec.describe Lain::Tool do
   describe "the abstract surface" do
     it "requires a name and description" do
       bare = Class.new(described_class).new
-      expect { bare.name }.to raise_error(Lain::Tool::NotImplemented, /#name/)
-      expect { bare.description }.to raise_error(Lain::Tool::NotImplemented, /#description/)
+      expect { bare.name }.to raise_error(Lain::Error, /must define #name/)
+      expect { bare.description }.to raise_error(Lain::Error, /#description/)
     end
 
     it "defaults to a no-argument object schema" do
@@ -66,7 +66,7 @@ RSpec.describe Lain::Tool do
         def name = "x"
         def description = "y"
       end.new
-      expect { forgetful.call({}) }.to raise_error(Lain::Tool::NotImplemented, /#perform/)
+      expect { forgetful.call({}) }.to raise_error(Lain::Error, /#perform/)
     end
 
     it "rejects a #perform that returns something other than a Result" do

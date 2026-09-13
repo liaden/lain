@@ -79,7 +79,7 @@ RSpec.describe Lain::Bench::DisclosureSweep do
       missing = fixture_path("does-not-exist")
 
       expect { described_class.new(fixture_path: missing).report }
-        .to raise_error(Lain::Bench::DisclosureSweep::MissingFixture, /#{Regexp.escape(missing)}/)
+        .to raise_error(Lain::Error, /#{Regexp.escape(missing)}/)
     end
   end
 

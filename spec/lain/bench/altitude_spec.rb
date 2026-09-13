@@ -419,7 +419,7 @@ RSpec.describe Lain::Bench::Altitude do
       with_fixture([task("a", "small"), task("b", "small"), task("c", "large")]) do |path|
         bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
 
-        expect { bench.report }.to raise_error(described_class::TooFewTasks, /large/)
+        expect { bench.report }.to raise_error(Lain::Error, /"large" size carries 1 task/)
       end
     end
 
@@ -488,7 +488,7 @@ RSpec.describe Lain::Bench::Altitude do
                                    ]))
         bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
 
-        expect { bench.report }.to raise_error(described_class::MissingSubject, /"b"/)
+        expect { bench.report }.to raise_error(Lain::Error, /altitude task "b" names the subject project/)
         # The shared log carries both the cost warning and every arm run, so an
         # empty one is the whole claim: nothing was said and nothing was spent.
         expect(log).to be_empty

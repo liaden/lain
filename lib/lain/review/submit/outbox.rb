@@ -36,15 +36,8 @@ module Lain
       # raise burns nothing: {Submit} raises before the executor is touched, and
       # {Forge::Gh} itself raises only when there is no `gh` to run.
       class Outbox
-        # A submit with no round held. Named per the error-taxonomy convention:
-        # a refusal subclasses {Lain::Error} next to the owner that raises it.
-        class NotOpen < Error; end
-
         # A round opened on something that is not a pull request.
         class Nowhere < Error; end
-
-        # A second submit of one round.
-        class AlreadySent < Error; end
 
         NOTHING_OPEN = "no changeset review is open in this chat, so there is nothing to post -- " \
                        "open one with `/review <pull-request>` first"
@@ -61,8 +54,8 @@ module Lain
         SENT_ALREADY = "this review was already posted to pull request %<number>s -- GitHub creates a new " \
                        "review for every accepted POST, so this will not send a second one. %<outcome>s"
 
-        # What the first attempt settled, in the words the AlreadySent sentence
-        # ends on. The two are held apart because a refusal is NOT a
+        # What the first attempt settled, in the words {SENT_ALREADY} ends on.
+        # The two are held apart because a refusal is NOT a
         # cancellation: lain sees `gh` exit non-zero and cannot tell a 422 that
         # created nothing from a timeout on a POST the remote accepted.
         RECORDED = "GitHub recorded it."
@@ -165,9 +158,9 @@ module Lain
         # @param body [String] the human's own summary of the review
         # @return [Forge::Gh::Answer] the executor's answer, unchanged --
         #   {Submit#call}'s doctrine, and this tier does not soften it either
-        # @raise [NotOpen] with no round held
+        # @raise [Error] with no round held
         # @raise [Nowhere] for a round opened on a branch
-        # @raise [AlreadySent] for a second submit of one round
+        # @raise [Error] for a second submit of one round
         # @raise [Submit::Refused] for a comment naming an unplaceable range
         # @raise [Submit::Nothing] for a review that would say nothing
         def submit(executor:, body: "")
@@ -188,8 +181,10 @@ module Lain
 
         # Every reason not to send, asked before a payload is built.
         def ready!
-          raise NotOpen, NOTHING_OPEN if @held.nil?
-          raise AlreadySent, format(SENT_ALREADY, number: @held.number, outcome:) unless @sent.nil?
+          # A submit with no round held.
+          raise Error, NOTHING_OPEN if @held.nil?
+          # A second submit of one round.
+          raise Error, format(SENT_ALREADY, number: @held.number, outcome:) unless @sent.nil?
           raise Nowhere, format(NOT_A_PULL_REQUEST, label: @held.label) if @held.number.nil?
 
           @held

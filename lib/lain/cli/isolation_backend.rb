@@ -24,8 +24,8 @@ module Lain
     #
     # A BAD FLAG IS REFUSED HERE, NOT AT THE FIRST ACQUIRE. `worktree` outside a
     # repository ({NotARepository}) and a compose declaration with no compose
-    # file ({NoComposeFile}) are both operator mistakes about the environment
-    # the run was started in, and both are cheap to detect now. Deferring them
+    # file are both operator mistakes about the environment the run was started
+    # in, and both are cheap to detect now. Deferring them
     # to acquire surfaces them mid-run, after workers are dispatched, as a git
     # or docker error that buries what the operator actually got wrong.
     #
@@ -49,11 +49,6 @@ module Lain
       # then a run has started, workers are dispatched, and the operator's
       # actual mistake is buried under a git error.
       class NotARepository < Error; end
-
-      # A `.lain/services.rb` declaring compose services in a project with no
-      # compose file. {NotARepository}'s sibling, and refused for the same
-      # reason at the same moment -- see the class doc.
-      class NoComposeFile < Error; end
 
       # `--isolation worktree` where the repository search cannot be BOUNDED:
       # its walk stops at the refusal set, and the refusal set needs a usable
@@ -227,9 +222,13 @@ module Lain
         names = Isolation::Compose::COMPOSE_FILE_NAMES
         return if names.any? { |name| File.exist?(File.join(@root, name)) }
 
-        raise NoComposeFile, "#{Isolation::Services::DSL_PATH} declares compose services but there is no " \
-                             "compose file in #{@root} (looked for #{names.join(", ")}); add one, or drop " \
-                             "the compose declaration"
+        # A `.lain/services.rb` declaring compose services in a project with no
+        # compose file. Refused here, beside {NotARepository} and for the reason
+        # this class's own doc gives: both are operator mistakes about the
+        # environment the run was started in, and both are cheap to detect now.
+        raise Error, "#{Isolation::Services::DSL_PATH} declares compose services but there is no " \
+                     "compose file in #{@root} (looked for #{names.join(", ")}); add one, or drop " \
+                     "the compose declaration"
       end
 
       def journalled(inner)

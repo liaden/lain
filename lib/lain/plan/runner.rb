@@ -19,15 +19,6 @@ module Lain
     # branch the seam abandons. Every step closes into a deterministic {Closure},
     # and the chunk's final closure drives the seam.
     class Runner
-      # A policy that carries its own mainline root (a {ForkPerStep}) was
-      # constructed from a DIFFERENT Timeline than the one `#run` starts from --
-      # so its forks would descend from `#run`'s root while the policy grew a
-      # parallel mainline off its own, silently, and every continuation head the
-      # policy returned would be unreachable in the run's Store. Caught loudly at
-      # run start rather than surfacing later as a {Store::MissingObject} or a
-      # divergent chain.
-      class MainlineMismatch < Error; end
-
       # The agent's outcome for one step: the advanced timeline, the step's
       # {Grader::Grade}, and the {Workspace::Snapshot} event in force (or nil).
       # A convenience shape an injected +agent_step+ may return; the Runner only
@@ -97,7 +88,14 @@ module Lain
         root = @policy.mainline
         return if root.store.equal?(timeline.store) && root.head_digest == timeline.head_digest
 
-        raise MainlineMismatch,
+        # A policy that carries its own mainline root (a {ForkPerStep}) was
+        # constructed from a DIFFERENT Timeline than the one `#run` starts from --
+        # so its forks would descend from `#run`'s root while the policy grew a
+        # parallel mainline off its own, silently, and every continuation head the
+        # policy returned would be unreachable in the run's Store. Caught loudly at
+        # run start rather than surfacing later as a {Store::MissingObject} or a
+        # divergent chain.
+        raise Error,
               "policy mainline root #{root.head_digest.inspect} does not match run root " \
               "#{timeline.head_digest.inspect} (they must be the same head over the same Store)"
       end

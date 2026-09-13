@@ -153,7 +153,7 @@ module Lain
         def derivation(policy) = Derivation.new(strategy: policy, keep_last: @keep_last, journal: @journal)
 
         # {Derivation::Invalid} and NOTHING wider. `NotAPartition`, `NotBlocks`,
-        # `Blank`, `Sealed` and `Canonical::UnsupportedType` all mean the
+        # `Blank`, a sealed-method refusal and `Canonical::UnsupportedType` all mean the
         # STRATEGY is broken rather than the history awkward, and swallowing
         # them here would turn a defect into a session that quietly stopped
         # compacting. (`rescue StandardError` is wrong for the opposite reason:

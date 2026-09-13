@@ -62,7 +62,7 @@ RSpec.describe Lain::Toolset::Disclosure do
 
     it "the base class refuses to render on its own -- an arm must be chosen" do
       expect { described_class.new.render(toolset) }
-        .to raise_error(Lain::Toolset::Disclosure::NotImplemented, /must define #render/)
+        .to raise_error(Lain::Error, /must define #render/)
     end
   end
 end

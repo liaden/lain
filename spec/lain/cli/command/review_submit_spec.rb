@@ -203,7 +203,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
   describe "what it refuses, and what it never tries twice" do
     it "refuses with nothing open, spawning no gh at all" do
       expect { command.call("", env) }
-        .to raise_error(Lain::Review::Submit::Outbox::NotOpen, /no changeset review is open/)
+        .to raise_error(Lain::Error, /no changeset review is open/)
       expect(gh_calls).to be_empty
     end
 
@@ -229,7 +229,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
       command.call("", env)
 
       expect { command.call("again", env) }
-        .to raise_error(Lain::Review::Submit::Outbox::AlreadySent, /#{GhParity::NUMBER}/o)
+        .to raise_error(Lain::Error, /#{GhParity::NUMBER}/o)
       expect(gh_calls.size).to eq(1)
     end
 
@@ -250,7 +250,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
       expect { command.call("", env) }.to raise_error(described_class::Rejected)
 
       expect { command.call("", env) }
-        .to raise_error(Lain::Review::Submit::Outbox::AlreadySent, /only the pull request itself can answer/)
+        .to raise_error(Lain::Error, /only the pull request itself can answer/)
       expect(gh_calls.size).to eq(1)
     end
 

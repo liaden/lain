@@ -507,7 +507,7 @@ RSpec.describe Lain::Supervisor::Restart do
           Lain::Agent.new(provider: revive_provider, toolset:, context:,
                           timeline: Lain::Timeline.empty(store: Lain::Store.new))
         end
-      end.to raise_error(described_class::Diverged, /replayed head/)
+      end.to raise_error(Lain::Error, /replayed head/)
 
       expect(supervisor.to_a).to be_empty
       supervisor.stop
@@ -579,7 +579,7 @@ RSpec.describe Lain::Supervisor::Restart do
     end
 
     it "refuses tell loudly: it holds no lineage to attribute a message through" do
-      expect { revived.tell("hi") }.to raise_error(described_class::Unaddressed, /agent/)
+      expect { revived.tell("hi") }.to raise_error(Lain::Error, /revived actor holds no lineage to attribute a message/)
     end
   end
 end

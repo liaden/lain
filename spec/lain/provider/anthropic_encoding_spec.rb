@@ -114,14 +114,14 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
     # structured_output marker arrives alongside it, the generic extra merge
     # running last would silently let the raw tool_choice win over the forced
     # one -- a silent clobber, not a reconciliation. Fails loudly instead,
-    # matching the TooManyCacheMarkers precedent in this same file.
+    # matching the cache-breakpoint-cap precedent in this same file.
     it "raises when extra carries both a raw tool_choice and a structured_output marker" do
       tool = { name: "answer", description: "d", input_schema: { type: :object, properties: {}, required: [] } }
       req = request(tools: [tool],
                     extra: { "tool_choice" => { "type" => "any" }, "structured_output" => { "tool" => "answer" } })
 
       expect { encoder.encode(req) }
-        .to raise_error(Lain::Provider::AnthropicEncoding::ConflictingToolChoice, /tool_choice/)
+        .to raise_error(Lain::Error, /tool_choice/)
     end
   end
 
@@ -140,7 +140,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
 
     it "refuses five markers with a named error" do
       expect { encoder.encode(request_with_markers(5)) }
-        .to raise_error(Lain::Provider::AnthropicEncoding::TooManyCacheMarkers, /5 cache breakpoints/)
+        .to raise_error(Lain::Error, /5 cache breakpoints/)
     end
 
     # The count spans all three prefix regions, not just messages: markers on
@@ -155,7 +155,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
       ] }]
 
       expect { encoder.encode(request(tools: [tool], system:, messages:)) }
-        .to raise_error(Lain::Provider::AnthropicEncoding::TooManyCacheMarkers, /5 cache breakpoints/)
+        .to raise_error(Lain::Error, /5 cache breakpoints/)
     end
   end
 end

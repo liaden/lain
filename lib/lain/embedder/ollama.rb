@@ -25,8 +25,9 @@ module Lain
       # Embedder::Error` catches every failure of the round TRIP. That
       # difference in base is why the concern is parameterized.
       #
-      # It does NOT catch every failure of `#embed`: {Transport::UnusableCredential}
-      # is a {Lain::Error} and propagates past it, deliberately. This family means
+      # It does NOT catch every failure of `#embed`: a credential that cannot go
+      # in a header is refused as a {Lain::Error} and propagates past it,
+      # deliberately. This family means
       # the server said no, and a credential that cannot go in a header never
       # reached one -- so wrapping it here would report a round trip that did not
       # happen, and let a caller degrade past a misconfiguration it should hear.

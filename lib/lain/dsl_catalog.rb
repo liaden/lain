@@ -12,7 +12,7 @@ module Lain
     include Enumerable
 
     # Read off the subclass's own `DSL_PATH`, which has to be a public constant
-    # anyway -- {CLI::IsolationBackend}'s NoComposeFile refusal prints one -- so
+    # anyway -- {CLI::IsolationBackend}s missing-compose-file refusal prints one -- so
     # a per-subclass forwarding method would be indirection and nothing else.
     def self.dsl_path
       raise NotImplementedError, "#{name} must name its DSL file in a DSL_PATH constant" \

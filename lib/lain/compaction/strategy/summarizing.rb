@@ -242,8 +242,8 @@ module Lain
         # Filed directly rather than through the concerns, the escape hatch
         # {Algebra::Elementwise}'s own doc names: for a structural property the
         # absence of the module IS the negative, and
-        # `Algebra::Elementwise.not_elementwise` deliberately raises
-        # {Algebra::Contradiction} on an includer.
+        # `Algebra::Elementwise.not_elementwise` deliberately refuses an includer
+        # as a contradiction.
         Algebra.registry.refute(
           subject: self, operation: :blocks, structure: :elementwise,
           reason: "summarizing a concatenation is not the concatenation of summaries -- one span answers ONE " \

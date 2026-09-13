@@ -32,11 +32,6 @@ module Lain
     # the dead registration stays in the registry as the honest history of the
     # first life.
     class Restart
-      # A revival that does not stand at the replayed head would register an
-      # actor whose registry row lies about its checkpoint -- refused INSIDE
-      # the adopted task, before the registration append lands.
-      class Diverged < Error; end
-
       # What one restart did. `snapshot` is nil when the record holds none: a
       # read-only life snapshots nothing, so nil is a value here.
       Result = Data.define(:actor, :timeline, :snapshot, :restored, :notices) do
@@ -71,7 +66,8 @@ module Lain
       # Replay, restore, adopt, record. The block is the revival seam: provider,
       # toolset and context are the CALLER's wiring because none of the three
       # survive a journal. It must return an agent standing at the replayed head
-      # ({Diverged}) -- seed it with `recording.timeline`.
+      # -- an agent standing anywhere else is refused -- so seed it with
+      # `recording.timeline`.
       #
       # A fresh isolation lease is RE-ACQUIRED here, so a restarted worker gets
       # an equivalent isolated environment rather than inheriting the dead
@@ -85,7 +81,7 @@ module Lain
       # @yieldparam worker_env [WorkerEnv] the re-acquired lease's cwd/env
       # @yieldreturn [Agent] an agent seeded with the replayed timeline
       # @return [Result]
-      # @raise [Bench::Session::Corrupt, Diverged, Workspace::Restore::Dirty]
+      # @raise [Bench::Session::Corrupt, Error, Workspace::Restore::Dirty]
       def call(role:, &revive)
         raise ArgumentError, "a revival block is required: it rebuilds the Agent over the replayed timeline" if
           revive.nil?
@@ -203,8 +199,11 @@ module Lain
       def at_head!(agent, head)
         return agent if agent.timeline.head_digest == head
 
-        raise Diverged, "revived agent stands at #{agent.timeline.head_digest.inspect}, not the replayed head " \
-                        "#{head.inspect}; seed it with recording.timeline"
+        # A revival that does not stand at the replayed head would register an
+        # actor whose registry row lies about its checkpoint -- refused INSIDE
+        # the adopted task, before the registration append lands.
+        raise Error, "revived agent stands at #{agent.timeline.head_digest.inspect}, not the replayed head " \
+                     "#{head.inspect}; seed it with recording.timeline"
       end
     end
   end
@@ -322,11 +321,6 @@ module Lain
       # like a :spawn digest, and honest: a revived actor has no :spawn event
       # of its own, so its name is the checkpoint it stands at.
       class Revived
-        # A revived actor holds no {Tools::Subagent::Lineage}, so it cannot
-        # write the attributed :message a tell is -- refused namedly rather
-        # than surfacing as a bare NoMethodError.
-        class Unaddressed < Error; end
-
         attr_reader :agent, :address
 
         def initialize(agent:, address:)
@@ -358,8 +352,11 @@ module Lain
         end
 
         def tell(_text)
-          raise Unaddressed, "a revived actor holds no lineage to attribute a message through; " \
-                             "continue it via its agent (Revived#agent) instead"
+          # A revived actor holds no {Tools::Subagent::Lineage}, so it cannot
+          # write the attributed :message a tell is -- refused explicitly rather
+          # than surfacing as a bare NoMethodError.
+          raise Error, "a revived actor holds no lineage to attribute a message through; " \
+                       "continue it via its agent (Revived#agent) instead"
         end
       end
     end

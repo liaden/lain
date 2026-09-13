@@ -22,10 +22,6 @@ module Lain
 
         SKILL = :"execute-plan"
 
-        class NoCriteria < Error; end
-        class AttemptStands < Error; end
-        class NotCheckedOut < Error; end
-
         # What one launch left standing: the actor, the id its anchor will take,
         # the branch its work is on, and the red step that precedes it.
         Launch = Data.define(:actor, :worker_id, :branch, :tests)
@@ -177,9 +173,12 @@ module Lain
         #   its children's lane, so a retry anchors apart from the attempt
         #   before it.
         # @return [Launch]
-        # @raise [NoCriteria] for an issue that declares none
-        # @raise [AttemptStands] when this attempt's anchor is already written
-        # @raise [NotCheckedOut] when the issue's branch cannot be checked out
+        # @raise [Error] for an issue that declares no acceptance criteria, so
+        #   there are no failing tests to write
+        # @raise [Error] when this attempt's anchor is already written, so the
+        #   attempt already stands and a second run would overwrite its work
+        # @raise [Error] when the issue's branch cannot be checked out in the
+        #   issue's lease
         # @raise [Isolation::WorkingBranch::Refused] when its branch is
         #   unholdable, nested against, or one lain did not create
         def call(issue_id, subject:, level: nil, attempt: 1)
@@ -226,7 +225,7 @@ module Lain
           shell = git.run("switch", "-q", branch.name)
           return branch if shell.exitstatus.zero?
 
-          raise NotCheckedOut, "#{branch.name} could not be checked out in the issue's lease: #{said(shell)}"
+          raise Error, "#{branch.name} could not be checked out in the issue's lease: #{said(shell)}"
         end
 
         def lane_for(issue_id, attempt) = "issue.#{@slug}.#{issue_id}.#{attempt}"
@@ -240,8 +239,8 @@ module Lain
         def criteria_of(issue)
           return Lain::Gherkin::Criteria.parse(issue.criteria) unless issue.criteria.nil?
 
-          raise NoCriteria, "issue #{issue.id} declares no acceptance criteria, so there are no failing tests " \
-                            "to write before its plan runs"
+          raise Error, "issue #{issue.id} declares no acceptance criteria, so there are no failing tests " \
+                       "to write before its plan runs"
         end
 
         # An attempt whose anchor still stands would be refused at retirement,
@@ -252,9 +251,9 @@ module Lain
           held = checkout(@repo_root).target(ref)
           return if held.empty?
 
-          raise AttemptStands, "#{lane} already ran: #{ref} still anchors its work at #{held}, and a " \
-                               "retirement under that id would be refused rather than move it -- launch the " \
-                               "next attempt instead"
+          raise Error, "#{lane} already ran: #{ref} still anchors its work at #{held}, and a " \
+                       "retirement under that id would be refused rather than move it -- launch the " \
+                       "next attempt instead"
         end
 
         def spawner(worker_env, branch, lane)

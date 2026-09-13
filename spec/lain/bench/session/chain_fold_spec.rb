@@ -114,7 +114,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
 
   # `meta` and `content` announce their corruption through the
   # digest they then fail to re-derive, and a bad `role` raises a named
-  # InvalidRole -- but causal_parents cannot get that far, because
+  # by name -- but causal_parents cannot get that far, because
   # Event#normalize_causal maps and sorts it before any digest is computed. So
   # the one field this card added had the worst corrupt-journal message of any,
   # and it escaped the same rescue the dangling-parent case above did. One

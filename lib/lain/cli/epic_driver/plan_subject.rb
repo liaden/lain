@@ -34,10 +34,8 @@ module Lain
         class Refusal < Error; end
 
         class Undeclared < Refusal; end
-        class Ambiguous < Refusal; end
         class NotCanonical < Refusal; end
         class OutsideSourceRoots < Refusal; end
-        class UnknownLevel < Refusal; end
 
         def initialize(subject:, level: nil)
           super(subject: -subject.to_s, level: level&.then { |name| -name.to_s })
@@ -56,7 +54,7 @@ module Lain
         def self.subject_in(text, plan, layout)
           found = declarations(text, SUBJECT)
           raise Undeclared, undeclared(plan) if found.empty?
-          raise Ambiguous, ambiguous(plan, SUBJECT, found) if found.size > 1
+          raise Refusal, ambiguous(plan, SUBJECT, found) if found.size > 1
 
           placed(canonical!(found.first, plan), plan, layout)
         end
@@ -76,7 +74,7 @@ module Lain
 
         def self.level_in(text, plan, layout)
           found = declarations(text, LEVEL)
-          raise Ambiguous, ambiguous(plan, LEVEL, found) if found.size > 1
+          raise Refusal, ambiguous(plan, LEVEL, found) if found.size > 1
 
           found.first&.then { |name| known(name, plan, layout) }
         end
@@ -117,8 +115,8 @@ module Lain
           return level unless layout.in_force?
           return level if layout.mapping.levels.any? { |declared| declared.name == level }
 
-          raise UnknownLevel, "#{plan.path} names the level #{level.inspect}, which this project's [tests] table " \
-                              "does not declare (#{layout.mapping.levels.map(&:name).join(", ")})"
+          raise Refusal, "#{plan.path} names the level #{level.inspect}, which this project's [tests] table " \
+                         "does not declare (#{layout.mapping.levels.map(&:name).join(", ")})"
         end
 
         def self.undeclared(plan)

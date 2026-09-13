@@ -10,11 +10,6 @@ module Lain
     # the report everything else it knows.
     class Unobservable < Error; end
 
-    # An action nothing here knows how to observe. Unreachable while
-    # {Contracts::Intent} closes {ACTIONS} to what {Reconcile::Observer} handles --
-    # it is the canary for a later card widening one of those and not the other.
-    class UnknownAction < Error; end
-
     # What a journal says happened, joined against what the world says is true.
     #
     # == The pairing law
@@ -302,13 +297,16 @@ module Lain
           when PR_MERGE then merged?(intent)
           when REVIEW_SUBMIT then raise Unobservable, unrepeatable(intent)
           when BRANCH_DELETE then deleted?(intent)
-          else raise UnknownAction, "no way to observe a #{intent.action.inspect} intent"
+          # An action nothing here knows how to observe. Unreachable while
+          # {Contracts::Intent} closes {ACTIONS} to what {Reconcile::Observer} handles --
+          # it is the canary for a later card widening one of those and not the other.
+          else raise Error, "no way to observe a #{intent.action.inspect} intent"
           end
         end
 
-        # {Unobservable} rather than {UnknownAction}, and the difference is the
-        # point: an unknown action means this fold has not been taught something,
-        # while this means the question does not EXIST. A batched review POST
+        # {Unobservable} rather than the unknown-action refusal above, and the
+        # difference is the point: an unknown action means this fold has not been
+        # taught something, while this means the question does not EXIST. A batched review POST
         # creates a review each time GitHub accepts it, so nothing the world can
         # be asked distinguishes a submit that landed from one that was lost --
         # and {#ask} turning this into an {Unaddressable} keeps the fold from

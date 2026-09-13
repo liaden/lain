@@ -28,7 +28,7 @@ RSpec.describe Lain::Arm::Ladder do
     end
 
     it "refuses an entry rung outside the ladder, naming it" do
-      expect { described_class.from("qa") }.to raise_error(described_class::UnknownRung, /qa/)
+      expect { described_class.from("qa") }.to raise_error(Lain::Error, /"qa" is not a rung on the ladder/)
     end
   end
 

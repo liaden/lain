@@ -55,7 +55,7 @@ RSpec.describe Lain::Isolation::Null do
     # search from, and every zero-arg call site in `lib/` never asks this
     # question, so there is no cwd-inferring default to fall back on either.
     it "refuses loudly, never nil, when built with no root to search from" do
-      expect { described_class.new.repo_root }.to raise_error(described_class::NoRepository, /no root/)
+      expect { described_class.new.repo_root }.to raise_error(Lain::Error, /no root/)
     end
 
     it "answers the nearest repository at or above the root it was built with" do
@@ -69,7 +69,7 @@ RSpec.describe Lain::Isolation::Null do
     end
 
     it "refuses loudly, never nil, when the search finds no repository" do
-      expect { build(@dir).repo_root }.to raise_error(described_class::NoRepository, /git repository/)
+      expect { build(@dir).repo_root }.to raise_error(Lain::Error, /git repository/)
     end
   end
 

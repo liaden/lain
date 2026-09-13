@@ -37,7 +37,6 @@ module Lain
     class Restore
       include OnDisk
 
-      class NoSnapshot < Error; end
       class Dirty < Error; end
       class EscapesRoot < Error; end
 
@@ -113,7 +112,9 @@ module Lain
       # @param turn [Integer] as {Event::Projection#workspace_at} counts turns
       # @param force [Boolean] waive the dirty check; never the confinement
       # @return [Result]
-      # @raise [NoSnapshot, EscapesRoot, Dirty]
+      # @raise [Error] when no `:snapshot` stands at or before `turn`, so there
+      #   is no workspace to restore
+      # @raise [EscapesRoot, Dirty]
       def restore(turn:, force: false)
         target = files_at(turn)
         doomed = in_force.keys - target.keys
@@ -129,7 +130,7 @@ module Lain
 
       def files_at(turn)
         snapshot = @projection.workspace_at(turn)
-        raise NoSnapshot, "no :snapshot at or before turn #{turn}" if snapshot.nil?
+        raise Error, "no :snapshot at or before turn #{turn}" if snapshot.nil?
 
         snapshot.body.fetch("files")
       end

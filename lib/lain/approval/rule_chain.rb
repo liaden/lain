@@ -48,11 +48,6 @@ module Lain
     # rule hands it back. Nesting then composes for free, and a caller can tell
     # the two nothings apart without keeping its own tally of the fault stream.
     class RuleChain
-      # The chain type-checks exactly here. Normally it would depend on
-      # messages and not types, but "a rule sees the validated input object" is
-      # a claim about what an object IS, and duck typing cannot make one.
-      class NotACall < Error; end
-
       # Raised INSIDE the consult, so a rule answering neither a
       # {Rule::Decision} nor nothing becomes a {Fault} like any other broken
       # rule, rather than a `NoMethodError` far from its cause.
@@ -153,7 +148,10 @@ module Lain
       #   that treats them as the same thing is the laundering bug in the class
       #   comment.
       def decide(call)
-        raise NotACall, "a rule chain decides a Rule::Call, got #{call.class}" unless call.is_a?(Rule::Call)
+        # The chain type-checks exactly here. Normally it would depend on
+        # messages and not types, but "a rule sees the validated input object" is
+        # a claim about what an object IS, and duck typing cannot make one.
+        raise Error, "a rule chain decides a Rule::Call, got #{call.class}" unless call.is_a?(Rule::Call)
 
         # A local rather than instance state: #initialize freezes the chain, so
         # a `@faulted` would be a FrozenError on the first broken rule. The

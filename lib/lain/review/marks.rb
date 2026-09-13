@@ -19,9 +19,6 @@ module Lain
       # A mark whose state is not one of {MARK_STATES}.
       class UnknownState < Error; end
 
-      # A `base_ref` that cannot name a revision: nil, or blank once stripped.
-      class InvalidBaseRef < Error; end
-
       # Reconciling or deriving state against a changeset recorded from a
       # different base revision than this mark set was.
       class BaseMismatch < Error; end
@@ -49,7 +46,7 @@ module Lain
       #   marks were recorded against
       # @param marks [Hash{String => String}] hunk key => a member of
       #   {MARK_STATES}
-      # @raise [InvalidBaseRef] if `base_ref` is nil or blank
+      # @raise [Error] if `base_ref` is nil or blank
       def initialize(base_ref:, marks: {})
         @base_ref = self.class.base_ref!(base_ref)
         @marks = marks.each_with_object({}) do |(hunk_key, state), frozen|
@@ -64,12 +61,13 @@ module Lain
       # class nor the field.
       #
       # @return [String] the normalized base revision
-      # @raise [InvalidBaseRef] naming the value given
+      # @raise [Error] naming the value given
       def self.base_ref!(value)
         token = Wire.token(value)
         return token unless token.nil? || token.empty?
 
-        raise InvalidBaseRef, "base_ref must name the resolved base revision, got #{value.inspect}"
+        # A `base_ref` that cannot name a revision: nil, or blank once stripped.
+        raise Error, "base_ref must name the resolved base revision, got #{value.inspect}"
       end
 
       # @return [String] the normalized state, one of {MARK_STATES}

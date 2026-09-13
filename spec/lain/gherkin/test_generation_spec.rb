@@ -189,11 +189,11 @@ RSpec.describe Lain::Gherkin::TestGeneration do
             record.verdict]).to all(be_deeply_frozen)
   end
 
-  it "raises NothingMechanical naming the digest, spawning nothing, when every scenario is rubric-flagged" do
+  it "refuses naming the digest, spawning nothing, when every scenario is rubric-flagged" do
     provider = mock(text_response("unused"))
 
     expect { generate(role_spawn(provider:), with: all_rubric_criteria) }
-      .to raise_error(Lain::Gherkin::TestGeneration::NothingMechanical, /#{Regexp.escape(all_rubric_criteria.digest)}/)
+      .to raise_error(Lain::Error, /#{Regexp.escape(all_rubric_criteria.digest)}/)
     expect(provider.call_count).to eq(0)
   end
 end

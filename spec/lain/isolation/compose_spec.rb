@@ -119,7 +119,7 @@ RSpec.describe Lain::Isolation::Compose do
           compose service: "db", container_port: 5432, env_var: "DATABASE_URL"
           compose service: "db", container_port: 5433, env_var: "OTHER_URL"
         DSL
-      end.to raise_error(Lain::Isolation::Services::Builder::Duplicate, /compose_db/)
+      end.to raise_error(Lain::Error, /compose_db/)
     end
 
     it "refuses two DISTINCT compose services sharing an env var (they clobber in the lease)" do
@@ -128,7 +128,7 @@ RSpec.describe Lain::Isolation::Compose do
           compose service: "a", container_port: 80, env_var: "URL"
           compose service: "b", container_port: 81, env_var: "URL"
         DSL
-      end.to raise_error(Lain::Isolation::Services::Builder::Duplicate, /URL/)
+      end.to raise_error(Lain::Error, /duplicate env var "URL"/)
     end
 
     it "refuses an env-var collision across DIFFERENT service kinds (postgres vs compose)" do
@@ -137,7 +137,7 @@ RSpec.describe Lain::Isolation::Compose do
           postgres
           compose service: "db", container_port: 5432, env_var: "DATABASE_URL"
         DSL
-      end.to raise_error(Lain::Isolation::Services::Builder::Duplicate, /DATABASE_URL/)
+      end.to raise_error(Lain::Error, /DATABASE_URL/)
     end
   end
 

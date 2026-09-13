@@ -253,8 +253,8 @@ RSpec.describe Lain::Forge::Reconcile do
     # accepted, so "is it already there" has no answer a resume may act on. It
     # therefore lands in `unaddressable` -- named, never folded to needs_retry,
     # because a retry here posts the review a second time. This is also the
-    # canary UnknownAction's own comment names: ACTIONS was widened, and the
-    # Observer was taught in the same edit.
+    # canary the unknown-action refusal's own comment names: ACTIONS was
+    # widened, and the Observer was taught in the same edit.
     it "names a submitted review, because a review POST is not idempotent" do
       review = blind(action: "review_submit", params: { "number" => 7, "review" => { "body" => "b" } })
       fold = reconcile([review], world: ForgeReconcileSpecSupport.world)

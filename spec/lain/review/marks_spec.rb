@@ -375,9 +375,9 @@ RSpec.describe Lain::Review::Marks do
 
     it "refuses a nil or blank base_ref by name, not with a raw NoMethodError" do
       expect { described_class.new(base_ref: nil) }
-        .to raise_error(described_class::InvalidBaseRef, /base_ref/)
+        .to raise_error(Lain::Error, /base_ref/)
       expect { described_class.new(base_ref: "") }
-        .to raise_error(described_class::InvalidBaseRef, /base_ref/)
+        .to raise_error(Lain::Error, /base_ref/)
     end
 
     # Aaron: @marks is already frozen at construction, so a defensive #dup on

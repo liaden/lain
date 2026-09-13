@@ -32,11 +32,6 @@ module Lain
     # The framework is a duck ({Adapter}); detection is loud (no silent guess),
     # and an explicit `adapter:` always wins.
     class TestHarness
-      # The child ran under the detected framework but reported zero examples --
-      # a broken run, not a passing one, so it fails loud rather than dividing by
-      # zero into a meaningless score.
-      class EmptyRun < Lain::Error; end
-
       # The child ran past its bound. Wraps mixlib's own timeout in a
       # Lain-taxonomy error naming the command and the limit, so a caller
       # catches one named type rather than a leaked dependency class.
@@ -129,7 +124,10 @@ module Lain
       end
 
       def to_grade(run)
-        raise EmptyRun, "the suite in #{@root} reported no examples -- nothing to grade" if run.total.zero?
+        # The child ran under the detected framework but reported zero examples --
+        # a broken run, not a passing one, so it fails loud rather than dividing by
+        # zero into a meaningless score.
+        raise Error, "the suite in #{@root} reported no examples -- nothing to grade" if run.total.zero?
 
         Grade.new(score: run.passed.size.fdiv(run.total), pass: run.clean?, why: why(run))
       end

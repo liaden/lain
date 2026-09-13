@@ -355,7 +355,7 @@ RSpec.describe Lain::CLI::Review, :seam do
 
     it "refuses --base against a pull request, because GitHub names that base itself" do
       expect { command.present(number.to_s, base: "main") }
-        .to raise_error(described_class::BaseNotOverridable, /#{number}/)
+        .to raise_error(Lain::Error, /#{number}/)
     end
   end
 

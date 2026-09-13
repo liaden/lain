@@ -193,7 +193,7 @@ RSpec.describe Lain::Bench::ArmSweep do
       missing = recordings_path("does-not-exist")
 
       expect { described_class.new(tasks_path:, recordings_path: missing).report }
-        .to raise_error(described_class::MissingFixture, /#{Regexp.escape(missing)}/)
+        .to raise_error(Lain::Error, /#{Regexp.escape(missing)}/)
     end
   end
 

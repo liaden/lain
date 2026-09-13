@@ -66,7 +66,7 @@ RSpec.describe Lain::Isolation::Services do
 
     it "refuses an unknown service verb loudly, naming the known services" do
       expect { load_services("mongodb\n") }
-        .to raise_error(Lain::Isolation::Services::Builder::Unknown, /mongodb.*postgres.*compose/m)
+        .to raise_error(Lain::Error, /mongodb.*postgres.*compose/m)
     end
 
     # Redis was a real verb once, so a `.lain/services.rb` that worked before an
@@ -74,17 +74,17 @@ RSpec.describe Lain::Isolation::Services do
     # with no route, which is why the retired verb keeps a method of its own.
     it "refuses a retired `redis` line by name rather than as an unknown verb" do
       expect { load_services("redis\n") }
-        .to raise_error(Lain::Isolation::Services::Builder::Retired, /redis/)
+        .to raise_error(Lain::Error, /`redis` service was retired/)
     end
 
     it "names the container route in the refusal, so an upgraded project knows what to declare instead" do
       expect { load_services("redis\n") }
-        .to raise_error(Lain::Isolation::Services::Builder::Retired, /container.*compose|compose.*container/mi)
+        .to raise_error(Lain::Error, /container.*compose|compose.*container/mi)
     end
 
     it "quotes the whole replacement declaration, so the refusal is copy-pasteable rather than a hint" do
       expect { load_services("redis\n") }
-        .to raise_error(Lain::Isolation::Services::Builder::Retired,
+        .to raise_error(Lain::Error,
                         a_string_including(Lain::Isolation::Services::Builder::REDIS_REPLACEMENT))
     end
 
@@ -101,7 +101,7 @@ RSpec.describe Lain::Isolation::Services do
 
     it "refuses a duplicate service declaration loudly (a second one would silently clobber its URL)" do
       expect { load_services("postgres\npostgres\n") }
-        .to raise_error(Lain::Isolation::Services::Builder::Duplicate, /postgres/)
+        .to raise_error(Lain::Error, /postgres/)
     end
   end
 

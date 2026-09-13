@@ -212,7 +212,7 @@ module Lain
       # @return [String] the report; never printed here
       # @raise [Refusal] on an `isolation` with no journal
       # @raise [Altitude::MissingFixture] when the suite path is not there
-      # @raise [Altitude::MalformedTask, Altitude::TooFewTasks] on a suite it cannot fold
+      # @raise [Altitude::MalformedTask, Error] on a suite it cannot fold
       def altitude_report(fixture_path:, backend:, seams:, grader:, sink: Sink::Null.new,
                           isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)
         Altitude.new(fixture_path:, spawn_seam: SpawnSeam.new(backend:, **spawn_options), grader:, sink:,

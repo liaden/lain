@@ -491,7 +491,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # DO NOT SEND A HUMAN TO A COMMAND THAT WILL REFUSE. `--resume` finishes a
   # merge that happened and was journaled; for a refusal raised BEFORE anything
   # merged there is nothing to resume, and `lain epic land --resume` would
-  # answer NothingToResume. So the resume sentence is said only when the work is
+  # answer that there is no landing to resume. So the resume sentence is said only when the work is
   # anchored and unmerged, and a refusal reports itself instead -- its own
   # message already names what would clear it.
   describe "a landing refused before anything merged" do

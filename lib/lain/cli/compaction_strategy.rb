@@ -91,19 +91,6 @@ module Lain
       # make, so the message says which flag was wrong.
       class Unknown < Error; end
 
-      # {STRATEGIES} names a strategy that {#strategy}'s `case` has no branch
-      # for -- an internal inconsistency in THIS class, never an operator's
-      # flag typo, so deliberately not {Unknown}: that would present a bug in
-      # the mapping as a mistake the caller made.
-      class Unbuilt < Error; end
-
-      # The summarizing strategy was resolved with no `tier:` factory to
-      # build its oracle from. Refused HERE, at resolution, rather than at
-      # the first span a strategy is offered -- and addressed to the CALLER
-      # of {.resolve}, since no CLI operator can supply a tier factory; only
-      # code can.
-      class MissingTier < Error; end
-
       # `tier:` built something that does not answer the full live-tier duck
       # (`#ask`, `#model`, `#usage`) -- most likely a REPLAY tier
       # ({Oracle::Recorded}, `#ask` alone). Refused HERE, naming what is
@@ -173,9 +160,9 @@ module Lain
       # @return [Compaction::Strategy::Base] the resolved strategy
       # @raise [Unknown] on any part outside {STRATEGIES}, including an empty
       #   one
-      # @raise [Unbuilt] a name in {STRATEGIES} with no matching branch below
+      # @raise [Error] a name in {STRATEGIES} with no matching branch below
       #   (a bug in this class, not a bad flag)
-      # @raise [MissingTier] resolving an oracle-backed part with no `tier:`
+      # @raise [Error] resolving an oracle-backed part with no `tier:`
       #   given
       # @raise [IncompleteTier] `tier:` built something that does not answer
       #   the full live-tier duck
@@ -246,7 +233,11 @@ module Lain
         when "summarize-conversation"
           Compaction::Strategy::SummarizeConversation.new(oracle: recorded_oracle(name), sink: @sink)
         when "elide-tools" then Compaction::Strategy::ElideToolObservations.new
-        else raise Unbuilt, "#{name.inspect} is in STRATEGIES but no branch here builds it"
+        # {STRATEGIES} names a strategy that {#strategy}'s `case` has no branch
+        # for -- an internal inconsistency in THIS class, never an operator's
+        # flag typo, so deliberately not {Unknown}: that would present a bug in
+        # the mapping as a mistake the caller made.
+        else raise Error, "#{name.inspect} is in STRATEGIES but no branch here builds it"
         end
       end
 
@@ -273,7 +264,12 @@ module Lain
       #   and a message hard-coding `summarizing` is wrong for three of the
       #   four things that can.
       def recorded_oracle(part)
-        raise MissingTier, "CompactionStrategy.resolve needs tier: to build #{part.inspect}" if @tier.nil?
+        # The summarizing strategy was resolved with no `tier:` factory to
+        # build its oracle from. Refused HERE, at resolution, rather than at
+        # the first span a strategy is offered -- and addressed to the CALLER
+        # of {.resolve}, since no CLI operator can supply a tier factory; only
+        # code can.
+        raise Error, "CompactionStrategy.resolve needs tier: to build #{part.inspect}" if @tier.nil?
 
         @recorded_oracle ||= journaling(Compaction::Strategy::Summarizing.definition)
       end

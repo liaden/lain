@@ -225,7 +225,7 @@ RSpec.describe Lain::Algebra do
           def meet(other) = other
           meet_semilattice on: :meet, bottom: "  ", registry: scratch
         end
-      end.to raise_error(Lain::Algebra::Unexplained, /meet/)
+      end.to raise_error(Lain::Error, /declares a meet semilattice on #meet without naming its/)
     end
 
     it "is refused when a value is passed instead of prose" do
@@ -237,7 +237,7 @@ RSpec.describe Lain::Algebra do
           def meet(other) = other
           meet_semilattice on: :meet, bottom: Lain::Timeline.empty, registry: scratch
         end
-      end.to raise_error(Lain::Algebra::Unexplained, /description/)
+      end.to raise_error(Lain::Error, /description/)
     end
   end
 
@@ -268,7 +268,7 @@ RSpec.describe Lain::Algebra do
           def merge(other) = other
           not_a_monoid on: :merge, because: "   ", registry: scratch
         end
-      end.to raise_error(Lain::Algebra::Unexplained, /merge/)
+      end.to raise_error(Lain::Error, /refutes monoid on #merge without saying/)
     end
 
     it "keeps refutations out of the declarations" do
@@ -378,7 +378,7 @@ RSpec.describe Lain::Algebra do
           monoid on: :merge, identity: 0, registry: scratch
           not_a_monoid on: :merge, because: "it drops the left operand", registry: scratch
         end
-      end.to raise_error(Lain::Algebra::Contradiction, /merge/)
+      end.to raise_error(Lain::Error, /both declares and refutes monoid on #merge/)
     end
 
     it "refuses in the other order too" do
@@ -391,7 +391,7 @@ RSpec.describe Lain::Algebra do
           not_a_monoid on: :merge, because: "it drops the left operand", registry: scratch
           monoid on: :merge, identity: 0, registry: scratch
         end
-      end.to raise_error(Lain::Algebra::Contradiction, /merge/)
+      end.to raise_error(Lain::Error, /both declares and refutes monoid on #merge/)
     end
 
     it "leaves a different structure on the same operation alone" do
@@ -421,7 +421,7 @@ RSpec.describe Lain::Algebra do
           not_a_monoid on: :call, because: "it loses the left operand", registry: scratch
           commutative_monoid on: :call, identity: 0, registry: scratch
         end
-      end.to raise_error(Lain::Algebra::Contradiction, /implicitly by commutative_monoid/)
+      end.to raise_error(Lain::Error, /implicitly by commutative_monoid/)
     end
   end
 
@@ -878,7 +878,7 @@ RSpec.describe Lain::Algebra do
           def call(messages) = messages
           not_elementwise on: :call, because: "a summary of a span is not a map over it"
         end
-      end.to raise_error(Lain::Algebra::Contradiction, /is_a\?/)
+      end.to raise_error(Lain::Error, /is_a\?\(Elementwise\) already classifies it/)
     end
 
     it "leaves the registry as the door for a class that wants the negative recorded" do

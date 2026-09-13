@@ -94,12 +94,12 @@ RSpec.describe Lain::Forge::Gh::Recorded do
       recorded = described_class.new(outcomes: {})
 
       expect { recorded.pr_merge(number: 9) }
-        .to raise_error(described_class::Declined, /pr_merge/)
+        .to raise_error(Lain::Error, /pr_merge/)
     end
 
     it "refuses an observation it can never key on, when nothing is behind it" do
       expect { described_class.new(outcomes: {}).merge_state(number: 9) }
-        .to raise_error(described_class::Declined, /merge_state/)
+        .to raise_error(Lain::Error, /merge_state/)
     end
 
     # The Unrecorded null object is the SECOND place the verb set is written
@@ -108,7 +108,7 @@ RSpec.describe Lain::Forge::Gh::Recorded do
     # the same call, reported as a bug in lain rather than as a replay miss.
     it "refuses an unrecorded submit_review by name, when nothing is behind it" do
       expect { described_class.new(outcomes: {}).submit_review(number: 9, review: GhParity::REVIEW) }
-        .to raise_error(described_class::Declined, /submit_review/)
+        .to raise_error(Lain::Error, /submit_review/)
     end
   end
 

@@ -747,7 +747,7 @@ RSpec.describe Lain::SessionRecord::Replay do
         bogus = [{ "type" => "session_read", "path" => "/tmp/old.rb", "complete" => "false" }]
 
         expect { replayed_session(bogus) }
-          .to raise_error(Lain::SessionRecord::Replay::Malformed, /complete true or false/)
+          .to raise_error(Lain::Error, /complete true or false/)
       end
     end
 

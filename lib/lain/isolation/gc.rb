@@ -48,10 +48,6 @@ module Lain
     class Gc
       DAY = 86_400
 
-      # A delete aimed at a ref outside what lain created. Raised, never
-      # rescued: reaching it is a defect in the reaper, not a state to report.
-      class OutOfScope < Error; end
-
       # An expired checkout's work could not be put on an anchor, so the
       # checkout stays.
       class Unanchored < Error; end
@@ -155,7 +151,9 @@ module Lain
         def scoped!(ref)
           return if ref.start_with?("refs/lain/") || owned?(ref)
 
-          raise OutOfScope, "lain's reaper deletes only refs under refs/lain/ and branches lain marked, not #{ref}"
+          # A delete aimed at a ref outside what lain created. Raised, never
+          # rescued: reaching it is a defect in the reaper, not a state to report.
+          raise Error, "lain's reaper deletes only refs under refs/lain/ and branches lain marked, not #{ref}"
         end
 
         def owned?(ref)
@@ -340,7 +338,7 @@ module Lain
         # @return [String] "" once the checkout is gone, or why it was kept
         def remove(entry)
           path = entry.path
-          raise OutOfScope, "lain's reaper removes only checkouts under its own root, not #{path}" unless inside?(path)
+          raise Error, "lain's reaper removes only checkouts under its own root, not #{path}" unless inside?(path)
           return CHANGED unless @registry.claim(entry)
 
           shell = @registry.remove(path)

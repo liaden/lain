@@ -26,12 +26,6 @@ module Lain
       # slug registry, so it takes the option seam without adding a
       # `resolve(:ollama)` entry the vendored code never looks up.
       class Transport < Provider::HTTP::Provider
-        # Rooted at {Lain::Error} so `exe/lain`'s top-level rescue maps it
-        # instead of dumping a trace, and so it cannot escape the way the bare
-        # `ArgumentError` it replaces did. NOT a {Provider::HTTP::Error}: that
-        # family means "the server said no", and nothing was ever sent here.
-        class UnusableCredential < Lain::Error; end
-
         COMPLETION_PATH = "api/chat"
         # The loaded-runner listing. It is the ONLY endpoint that states the
         # window a model is actually being served with -- `/api/show` reports
@@ -224,7 +218,11 @@ module Lain
         # one, and importing that judgement here is exactly the second policy
         # validator that must not exist.
         def wire_safe(key)
-          raise UnusableCredential, UNUSABLE_CREDENTIAL if key.to_s.match?(UNUSABLE_IN_HEADER)
+          # A {Lain::Error} so `exe/lain`'s top-level rescue maps it instead of
+          # dumping a trace, and so it cannot escape the way the bare
+          # `ArgumentError` it replaces did. NOT a {Provider::HTTP::Error}: that
+          # family means "the server said no", and nothing was ever sent here.
+          raise Error, UNUSABLE_CREDENTIAL if key.to_s.match?(UNUSABLE_IN_HEADER)
 
           key
         end

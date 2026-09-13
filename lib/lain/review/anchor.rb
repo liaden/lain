@@ -64,16 +64,14 @@ module Lain
         raise InvalidLine, "line must be a positive Integer, got #{value.inspect}"
       end
 
-      # Shape refusal shared by the String-domain fields below: one class, not
-      # one per field, matching {Lain::Declarative}'s own rule that a per-rule
-      # exception class moves the translation into the wrong object -- the
-      # field name is already in the message.
-      class InvalidField < Error; end
-
       def self.string!(value, field:)
         return value if value.is_a?(String)
 
-        raise InvalidField, "#{field} must be a String, got #{value.inspect}"
+        # Shape refusal shared by the String-domain fields below: one refusal,
+        # not one per field, matching {Lain::Declarative}'s own rule that a
+        # per-rule exception class moves the translation into the wrong object --
+        # the field name is already in the message.
+        raise Error, "#{field} must be a String, got #{value.inspect}"
       end
 
       # `anchor_text` is validated with {.string!} alone, never this: an
@@ -84,7 +82,7 @@ module Lain
         candidate = string!(value, field:)
         return candidate unless candidate.empty?
 
-        raise InvalidField, "#{field} must be a non-empty String, got #{value.inspect}"
+        raise Error, "#{field} must be a non-empty String, got #{value.inspect}"
       end
 
       def initialize(path:, side:, line:, anchor_text:, revision:, id: nil)

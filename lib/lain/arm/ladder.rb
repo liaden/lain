@@ -20,9 +20,6 @@ module Lain
     class Ladder
       RUNGS = (Epic::STAGES + %w[land]).freeze
 
-      # An entry rung named that is not on the ladder at all.
-      class UnknownRung < Error; end
-
       # An arm's rungs are the SUFFIX of the ladder starting at its entry rung
       # -- one-shot enters at `implementation` and never sees a gate, plan-only
       # enters at `issue_plan` and runs no epic, and both epic arms enter at
@@ -30,11 +27,12 @@ module Lain
       #
       # @param entry [#to_s] the rung an arm starts at
       # @return [Array<String>] the suffix from `entry` to `land`, in order
-      # @raise [UnknownRung] naming `entry` when it is not a rung on the ladder
+      # @raise [Error] naming `entry` when it is not a rung on the ladder
       def self.from(entry)
         entry = entry.to_s
         index = RUNGS.index(entry)
-        raise UnknownRung, "#{entry.inspect} is not a rung on the ladder (#{RUNGS.join(" -> ")})" if index.nil?
+        # An entry rung named that is not on the ladder at all.
+        raise Error, "#{entry.inspect} is not a rung on the ladder (#{RUNGS.join(" -> ")})" if index.nil?
 
         RUNGS[index..].freeze
       end

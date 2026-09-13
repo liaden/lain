@@ -28,10 +28,6 @@ module Lain
     # the eval is bound to exactly that gold set, and a `lain bench sweep` run
     # in an installed gem has no spec/ tree.
     class Sweep
-      # A silent stale fixture would measure the wrong model's geometry and lie.
-      # Names both ids (see {Embeddings.load}).
-      class StaleEmbeddings < Lain::Error; end
-
       # A packaging mistake or a deleted fixture, never a normal ArgumentError.
       # Named and path-bearing so the exe presents it without a backtrace
       # instead of an unhelpful Errno::ENOENT.
@@ -69,7 +65,7 @@ module Lain
       # digest so the committed JSON stays addressable and a corpus edit that
       # changes a body misses loudly rather than scoring against a stale vector.
       class Embeddings
-        # @raise [StaleEmbeddings] when the fixture's model id differs from the
+        # @raise [Error] when the fixture's model id differs from the
         #   requested one (named on BOTH sides so the fix is obvious), or when
         #   its recorded content digest no longer matches the vectors -- a
         #   hand-edited float would otherwise shift the headline in silence.
@@ -83,9 +79,11 @@ module Lain
         def self.check_model!(recorded, model, path)
           return if recorded == model
 
-          raise StaleEmbeddings, "fixture embeddings at #{path} were recorded under model " \
-                                 "#{recorded.inspect} but the sweep requested #{model.inspect}; " \
-                                 "regenerate corpus_embeddings.json (the :ollama sweep-fixture spec)"
+          # A silent stale fixture would measure the wrong model's geometry and lie.
+          # Names both ids (see {Embeddings.load}).
+          raise Error, "fixture embeddings at #{path} were recorded under model " \
+                       "#{recorded.inspect} but the sweep requested #{model.inspect}; " \
+                       "regenerate corpus_embeddings.json (the :ollama sweep-fixture spec)"
         end
         private_class_method :check_model!
 
@@ -93,23 +91,23 @@ module Lain
         # corruption detection for the committed vectors, not a security control.
         def self.check_content!(data, path)
           recorded = data.fetch("content_digest") do
-            raise StaleEmbeddings, "fixture embeddings at #{path} carry no content digest; " \
-                                   "regenerate corpus_embeddings.json (the :ollama sweep-fixture spec)"
+            raise Error, "fixture embeddings at #{path} carry no content digest; " \
+                         "regenerate corpus_embeddings.json (the :ollama sweep-fixture spec)"
           end
           computed = Canonical.digest(data.except("content_digest"))
           return if recorded == computed
 
-          raise StaleEmbeddings, "fixture embeddings at #{path} fail their content digest check " \
-                                 "(recorded #{recorded}, computed #{computed}); the vectors were " \
-                                 "edited after recording -- regenerate corpus_embeddings.json"
+          raise Error, "fixture embeddings at #{path} fail their content digest check " \
+                       "(recorded #{recorded}, computed #{computed}); the vectors were " \
+                       "edited after recording -- regenerate corpus_embeddings.json"
         end
         private_class_method :check_content!
 
         def self.item_vectors(by_digest, items)
           items.to_h do |item|
             ["#{item.description}\n#{item.body}", by_digest.fetch(item.digest) do
-              raise StaleEmbeddings, "no committed embedding for item #{item.id.inspect} " \
-                                     "(digest #{item.digest}); regenerate corpus_embeddings.json"
+              raise Error, "no committed embedding for item #{item.id.inspect} " \
+                           "(digest #{item.digest}); regenerate corpus_embeddings.json"
             end]
           end
         end
@@ -125,8 +123,8 @@ module Lain
         def embed(texts)
           texts.map do |text|
             @map.fetch(text) do
-              raise StaleEmbeddings, "no committed embedding for text #{text.inspect}; " \
-                                     "regenerate corpus_embeddings.json"
+              raise Error, "no committed embedding for text #{text.inspect}; " \
+                           "regenerate corpus_embeddings.json"
             end
           end
         end

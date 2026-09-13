@@ -25,12 +25,6 @@ module Lain
     # (no reads, no todo reminder, an empty manifest) -- the tolerant
     # zero-record precedent {Bench::Session::MemoryReplay} itself sets.
     class Replay
-      # A record of ours whose FIELDS are not what the writer's guard promised
-      # -- the shape a salvaged or hand-edited journal reaches us in. Distinct
-      # from a foreign record, which {Journal.records} skips by type, and from
-      # a missing key, which `fetch` already raises KeyError for.
-      class Malformed < Error; end
-
       SESSION_READ_TYPE = "session_read"
       READ_REDACTED_TYPE = "read_redacted"
       SESSION_PIN_TYPE = "session_pin"
@@ -128,8 +122,12 @@ module Lain
       def completeness(record)
         complete = record.fetch("complete", true)
         unless [true, false].include?(complete)
-          raise Malformed, "session_read for #{record.fetch("path").inspect} must carry complete true or false, " \
-                           "got #{complete.inspect}"
+          # A record of ours whose FIELDS are not what the writer's guard promised
+          # -- the shape a salvaged or hand-edited journal reaches us in. Distinct
+          # from a foreign record, which {Journal.records} skips by type, and from
+          # a missing key, which `fetch` already raises KeyError for.
+          raise Error, "session_read for #{record.fetch("path").inspect} must carry complete true or false, " \
+                       "got #{complete.inspect}"
         end
 
         complete
@@ -154,8 +152,8 @@ module Lain
         digest = record.fetch("digest")
         direction = record.fetch("pinned")
         unless [true, false].include?(direction)
-          raise Malformed, "session_pin for #{digest.inspect} must carry pinned true or false, " \
-                           "got #{direction.inspect}"
+          raise Error, "session_pin for #{digest.inspect} must carry pinned true or false, " \
+                       "got #{direction.inspect}"
         end
 
         direction ? fresh.record_pin(digest) : fresh.record_unpin(digest)

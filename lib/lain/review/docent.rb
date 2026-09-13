@@ -82,12 +82,6 @@ module Lain
     # seams are real all the same: not one line of {Threads} knows what an
     # answerer is, and {Brief} is a pure value with one rendering.
     class Docent
-      # No reactor is running, so there is nowhere to compute an answer that is
-      # not the caller's own fiber -- and the caller's own fiber is the one thing
-      # that must not block. Named rather than allowed to surface as a
-      # NoMethodError on nil.
-      class NoReactor < Error; end
-
       # The catalog role a default {Answerer} spawns. Injected at every level, so
       # a bench arm names another without editing this file.
       ROLE = :diff_docent
@@ -243,7 +237,11 @@ module Lain
 
         def self.call(&block)
           task = Async::Task.current?
-          raise NoReactor, NO_REACTOR if task.nil?
+          # No reactor is running, so there is nowhere to compute an answer that is
+          # not the caller's own fiber -- and the caller's own fiber is the one thing
+          # that must not block. Said in words rather than allowed to surface as a
+          # NoMethodError on nil.
+          raise Error, NO_REACTOR if task.nil?
 
           task.async(transient: true, &block)
         end
@@ -417,7 +415,7 @@ module Lain
       # under it, refused the human while leaving the question in the thread -- a
       # permanent `(thinking...)` marker, and every retry refused as a duplicate
       # of a question that was never asked. The question became unaskable
-      # forever, in the case ({NoReactor}) this class explicitly designs for.
+      # forever, in the no-reactor case this class explicitly designs for.
       def take(conversation, question)
         conversation.ask(question)
         notice = render(conversation)

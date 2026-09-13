@@ -61,7 +61,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
 
   it "refuses a plan declaring more than one subject, naming them" do
     expect { declared("Subject: app/models/order.rb\nSubject: app/cli/backend.rb\n") }
-      .to raise_error(described_class::Ambiguous, /order\.rb.*backend\.rb/m)
+      .to raise_error(Lain::Error, /order\.rb.*backend\.rb/m)
   end
 
   it "refuses a subject under none of the declared source roots, naming the roots" do
@@ -71,7 +71,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
 
   it "refuses a level the [tests] table does not declare, naming the ones it does" do
     expect { declared("Subject: app/models/order.rb\nLevel: smoke\n") }
-      .to raise_error(described_class::UnknownLevel, /smoke.*unit.*seam/m)
+      .to raise_error(Lain::Error, /smoke.*unit.*seam/m)
   end
 
   # A subject names one file INSIDE the project. A path that walks out of its

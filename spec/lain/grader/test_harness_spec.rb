@@ -63,7 +63,7 @@ RSpec.describe Lain::Grader::TestHarness do
     it "raises a named error listing every probe when nothing matches" do
       Dir.mktmpdir do |empty|
         expect { described_class.new(empty) }
-          .to raise_error(Lain::Grader::TestHarness::Adapter::Undetectable, /rspec.*jest.*pytest/m)
+          .to raise_error(Lain::Error, /rspec.*jest.*pytest/m)
       end
     end
 
@@ -72,7 +72,7 @@ RSpec.describe Lain::Grader::TestHarness do
         File.write(File.join(dir, "pytest.ini"), "[pytest]\n")
 
         expect { described_class.new(dir) }
-          .to raise_error(Lain::Grader::TestHarness::Adapter::Undetectable, /pytest/)
+          .to raise_error(Lain::Error, /detected pytest in .* adapter is not implemented/)
       end
     end
 
@@ -83,7 +83,7 @@ RSpec.describe Lain::Grader::TestHarness do
         File.write(File.join(dir, "pytest.ini"), "")
 
         expect { described_class.new(dir) }
-          .to raise_error(Lain::Grader::TestHarness::Adapter::Undetectable, /rspec.*pytest|pytest.*rspec/)
+          .to raise_error(Lain::Error, /rspec.*pytest|pytest.*rspec/)
       end
     end
 

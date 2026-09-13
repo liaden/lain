@@ -34,14 +34,6 @@ module Lain
       # task to silently skip, miscategorize or duplicate.
       class MalformedTask < Lain::Error; end
 
-      # A size carrying too few tasks to fold a distribution from.
-      class TooFewTasks < Lain::Error; end
-
-      # A task naming a subject project that is not on disk. Refused by name:
-      # an arm with nothing to work in would be graded on an empty directory,
-      # and an empty directory grades as a suite that failed.
-      class MissingSubject < Lain::Error; end
-
       # An arm that REFUSED to be scored, rather than one that scored badly. It
       # answers none of the metric readers, so every cell in its row reads "not
       # measured" -- which is the whole point: a 0.000 from an arm that never ran
@@ -129,7 +121,7 @@ module Lain
       # that costs real money is never run a second time by a second read.
       #
       # @return [String] never printed here (output discipline)
-      # @raise [MissingFixture, MalformedTask, TooFewTasks] before any arm runs
+      # @raise [MissingFixture, MalformedTask, Error] before any arm runs
       def report = @report ||= render
 
       private

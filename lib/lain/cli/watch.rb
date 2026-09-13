@@ -16,13 +16,6 @@ module Lain
     # ever matching -- a typo'd prefix must be distinguishable from a quiet
     # actor, so it is said on the sink AND in the status, never silent.
     class Watch
-      # A bare selector would anchor on the first spawn in the file -- a guess
-      # wearing a match's clothes -- so it is refused before any read happens.
-      class EmptySelector < Error; end
-
-      # No `path:` and no recorded sessions: nothing to tail, said loudly.
-      class NoSession < Error; end
-
       SESSION_CLOSED_TYPE = "session_closed"
       POLL_SECONDS = 0.2
 
@@ -40,7 +33,9 @@ module Lain
       #   deterministically instead of sleeping
       def initialize(selector:, sink:, path: nil, paths: Paths.new, view: View.new,
                      sleeper: ->(seconds) { sleep(seconds) })
-        raise EmptySelector, "selector must be a spawn-digest prefix, got #{selector.inspect}" if selector.to_s.empty?
+        # A bare selector would anchor on the first spawn in the file -- a guess
+        # wearing a match's clothes -- so it is refused before any read happens.
+        raise Error, "selector must be a spawn-digest prefix, got #{selector.inspect}" if selector.to_s.empty?
 
         @selector = selector
         @sink = sink
@@ -119,7 +114,8 @@ module Lain
       def newest_session
         dir = @paths.sessions_dir
         names = watchable(dir)
-        raise NoSession, "no sessions to watch under #{dir}#{skipped(dir)}" if names.empty?
+        # No `path:` and no recorded sessions: nothing to tail, said loudly.
+        raise Error, "no sessions to watch under #{dir}#{skipped(dir)}" if names.empty?
 
         File.join(dir, names.last)
       end

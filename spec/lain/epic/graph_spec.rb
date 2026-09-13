@@ -177,7 +177,7 @@ RSpec.describe Lain::Epic::Graph do
     end
 
     it "refuses an id the graph does not hold" do
-      expect { diamond.blocked_by("ghost") }.to raise_error(Lain::Epic::UnknownIssue, /"ghost"/)
+      expect { diamond.blocked_by("ghost") }.to raise_error(Lain::Error, /no issue "ghost" in the epic graph/)
     end
   end
 
@@ -187,7 +187,7 @@ RSpec.describe Lain::Epic::Graph do
     end
 
     it "refuses an id the graph does not hold, naming it" do
-      expect { diamond.fetch("ghost") }.to raise_error(Lain::Epic::UnknownIssue, /"ghost"/)
+      expect { diamond.fetch("ghost") }.to raise_error(Lain::Error, /no issue "ghost" in the epic graph/)
     end
   end
 

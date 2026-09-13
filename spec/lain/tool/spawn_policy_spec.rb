@@ -25,7 +25,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
 
       it "raises a loud, named error for an unknown strategy" do
         expect { described_class.fetch(:warm_handoff) }
-          .to raise_error(described_class::Unknown, /warm_handoff/)
+          .to raise_error(Lain::Error, /warm_handoff/)
       end
     end
 
@@ -227,7 +227,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
 
       it "raises a loud, named error for an unknown posture" do
         expect { described_class.fetch(:banana) }
-          .to raise_error(described_class::Unknown, /banana/)
+          .to raise_error(Lain::Error, /banana/)
       end
     end
 

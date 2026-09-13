@@ -55,10 +55,6 @@ module Lain
     # and stop being byte-identical across repeats by construction; this default
     # posture is the byte-identical, zero-network one.
     class DeciderSweep
-      # A missing fixture path -- a checkout or packaging mistake, never user
-      # input to refuse. Named and path-bearing like {Sweep::MissingCorpus}.
-      class MissingFixture < Lain::Error; end
-
       # A fixture case missing a required field -- a malformed fixture is a
       # bug in the fixture to surface loudly, never a case to silently skip.
       class MalformedCase < Lain::Error; end
@@ -148,6 +144,7 @@ module Lain
 end
 
 # After the class body: {Fixture} and {Arms} reopen DeciderSweep and raise its
-# own MissingFixture/MalformedCase, both defined above.
+# own MalformedCase, defined above, or a bare {Lain::Error} for a fixture that
+# is not on disk.
 require_relative "decider_sweep/fixture"
 require_relative "decider_sweep/arms"

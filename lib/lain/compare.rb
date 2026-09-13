@@ -114,7 +114,7 @@ module Lain
     # @param runs [Array<Run>] the runs to compare (n >= 2)
     # @raise [ArgumentError] on fewer than two runs
     # @raise [Capability::Guard::Mismatch] when the runs degraded different sets
-    # @raise [Posture::Mismatch] when the runs ran under different postures
+    # @raise [Error] when the runs ran under different postures
     def initialize(runs)
       @runs = Array(runs).freeze
       self.class.check!(runs: @runs)

@@ -126,7 +126,8 @@ module Lain
         end
 
         def existing!
-          raise MissingFixture, "no arm-sweep recordings fixture at #{@path}" unless File.file?(@path)
+          # A checkout or packaging mistake, never user input to refuse.
+          raise Error, "no arm-sweep recordings fixture at #{@path}" unless File.file?(@path)
 
           @path
         end
