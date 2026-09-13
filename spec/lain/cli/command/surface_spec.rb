@@ -136,6 +136,19 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
+  # `command/small.rb` folds nine of the smallest built-ins into one file;
+  # /help's listing is read off the LIVE registry, so a command's usage line
+  # surviving the fold is what would break first if the merge lost a
+  # `register` call.
+  it "still shows a merged command's usage line through /help, unchanged by the fold" do
+    with_project do |root|
+      surface = build_surface(root)
+
+      listing = surface.commands.dispatch("/help") { raise "fallthrough must not run" }
+      expect(listing.text).to include(Lain::CLI::Command::Model.new.usage)
+    end
+  end
+
   # THE FREE FOLLOW-UP THIS CHUNK KEPT PAYING FOR. `lain review` was written,
   # specced with 28 examples and mounted in NO exe for the whole chunk, because
   # nothing anywhere asserted the command SET -- only that individual commands

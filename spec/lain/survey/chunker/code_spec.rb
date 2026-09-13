@@ -257,9 +257,20 @@ RSpec.describe Lain::Survey::Chunker::Code do
     # is position-independent, so at the identity granularity an insertion above
     # costs the unit it landed in and nothing else. Coalescing merges by
     # POSITION, so one inserted line re-draws which units merge and the loss
-    # spreads. Measured on this repository: `cli/command/sessions.rb` loses
-    # 4 of 4 where the identity loses 1 of 9; `finding.rb` 2 of 14 against
-    # 1 of 32; `session.rb` 1 of 21 against 1 of 29.
+    # spreads. Measured on this repository: `cli/command/goal.rb` loses 2 of 6
+    # where the identity loses 1 of 11; `finding.rb` 2 of 14 against 1 of 32;
+    # `session.rb` 1 of 21 against 1 of 29.
+    #
+    # `cli/command/goal.rb` replaces the file this pinned in originally,
+    # `cli/command/sessions.rb`: a simplify round folded nine small REPL
+    # commands, `sessions.rb` among them, into one `command/small.rb`, and a
+    # file with several OTHER commands' units in it is no longer a clean small
+    # example of this property (some of those commands share identical
+    # one-line bodies, e.g. `def initialize = freeze`, and the `&` this helper
+    # uses to compare key sets collapses duplicate keys, which inflates the
+    # apparent loss for reasons that have nothing to do with the insertion).
+    # `goal.rb` is still a small, single-command, real file with no such
+    # collision, so it demonstrates the same property cleanly.
     def keys_lost(chunker, path, source)
       before = chunker.call(path:, source:)
       after = chunker.call(path:, source: "# a new line\n#{source}")
@@ -267,18 +278,18 @@ RSpec.describe Lain::Survey::Chunker::Code do
     end
 
     it "costs exactly one key to insert a line at the top, before coalescing" do
-      source = File.read(self.class.repo_file("lib/lain/cli/command/sessions.rb"), encoding: Encoding::UTF_8)
+      source = File.read(self.class.repo_file("lib/lain/cli/command/goal.rb"), encoding: Encoding::UTF_8)
       identity = described_class.new(granularity: Lain::Survey::Chunker::Granularity.new(minimum: 1))
 
-      expect(keys_lost(identity, "sessions.rb", source)).to eq(1)
+      expect(keys_lost(identity, "goal.rb", source)).to eq(1)
     end
 
     it "costs more than that once units are merged, because merging is positional" do
-      source = File.read(self.class.repo_file("lib/lain/cli/command/sessions.rb"), encoding: Encoding::UTF_8)
+      source = File.read(self.class.repo_file("lib/lain/cli/command/goal.rb"), encoding: Encoding::UTF_8)
       identity = described_class.new(granularity: Lain::Survey::Chunker::Granularity.new(minimum: 1))
 
-      expect(keys_lost(described_class.new, "sessions.rb", source))
-        .to be > keys_lost(identity, "sessions.rb", source)
+      expect(keys_lost(described_class.new, "goal.rb", source))
+        .to be > keys_lost(identity, "goal.rb", source)
     end
 
     it "can lose every key in a small file to a one-line insertion at the top" do
@@ -358,17 +369,20 @@ RSpec.describe Lain::Survey::Chunker::Code do
   # threshold so the AC and the trigger cannot disagree: more units than
   # lines/5 makes marking useless.
   #
-  # These eleven are files the sweep found ABOVE OR ON the cap with granularity
-  # at its identity -- a sample of the offenders, not the eleven worst, and not
-  # a hand-picked file that passes. (`cli/command/model.rb`,
+  # These nine are files the sweep found ABOVE OR ON the cap with granularity
+  # at its identity -- a sample of the offenders, not the worst of them, and
+  # not a hand-picked file that passes. (`cli/command/model.rb`,
   # `provider/http/chunk.rb` and `isolation/null.rb` all scored above two of
   # them.) A sweep of all 620 `lib/**/*.rb` put 49 above the cap and 23 exactly
   # on it; `compaction/derivation_audit/finding.rb` was the worst at the time
   # of that sweep, 108 lines and 32 units, fourteen of them one line -- since
   # deleted along with the rest of `DerivationAudit`, which is why it no
-  # longer names an entry below. Pinning offenders by name is what stops a
-  # future reader concluding from one comfortable file that the whole tree is
-  # comfortable.
+  # longer names an entry below. `cli/command/sessions.rb` and
+  # `cli/command/quit.rb` are gone from here for the same reason, one round
+  # later: a fold merged both (and seven other small REPL commands) into
+  # `cli/command/small.rb`, which is not one of the sweep's offenders in its
+  # own right. Pinning offenders by name is what stops a future reader
+  # concluding from one comfortable file that the whole tree is comfortable.
   #
   # The cap is `max(1, lines/5)`: under plain integer division a four-line file
   # has a cap of zero, and one unit is the least any chunking can emit.
@@ -377,8 +391,6 @@ RSpec.describe Lain::Survey::Chunker::Code do
       lib/lain/version.rb
       lib/lain/error.rb
       lib/lain/structural.rb
-      lib/lain/cli/command/sessions.rb
-      lib/lain/cli/command/quit.rb
       lib/lain/provider/http/error.rb
       lib/lain/provider/spool/null.rb
       lib/lain/toolset/disclosure/upfront.rb

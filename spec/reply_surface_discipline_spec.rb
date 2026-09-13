@@ -26,16 +26,25 @@ module ReplySurfaceDiscipline
   READERS = %w[read_reply drain_at_prompt drain_inbox].freeze
   RECEIVER_READERS = %w[prompt].freeze
 
-  # A command file that reads the terminal, and where it does it.
-  Read = Struct.new(:path, :line, :name) do
+  # A command file that reads the terminal, and where it does it. `klass` is
+  # the SIMPLE name of the enclosing `class` node the read was found inside
+  # (nil for a read at module level, which no shipped file has) -- carried
+  # explicitly because a fold can put more than one command class in one
+  # file, so "which file" no longer answers "which command".
+  Read = Struct.new(:path, :line, :name, :klass) do
     def to_s = "#{path}:#{line} -> #{name}"
   end
 
-  # Walks a Ripper s-expression collecting terminal reads.
+  # Walks a Ripper s-expression collecting terminal reads, tagging each with
+  # the class it was found inside. A stack, not a single name, because a
+  # nested class (`Pin::Target`) would otherwise un-attribute its parent's
+  # reads; entering one pushes, leaving it pops, and a read between them
+  # belongs to whichever class is innermost.
   class Scanner
     def initialize(path)
       @path = path
       @reads = []
+      @class_stack = []
     end
 
     # @return [Array<Read>]
@@ -52,9 +61,16 @@ module ReplySurfaceDiscipline
     def walk(node)
       return unless node.is_a?(Array)
 
+      entering_class = class_node?(node)
+      @class_stack.push(class_name(node)) if entering_class
       inspect_node(node)
       node.each { |child| walk(child) }
+      @class_stack.pop if entering_class
     end
+
+    def class_node?(node) = node[0] == :class && node[1].is_a?(Array) && node[1][0] == :const_ref
+
+    def class_name(node) = node[1][1][1]
 
     # `:call` is the explicit-receiver form (`tty.prompt`), which is the only one
     # that can mean the terminal for a name as common as `prompt`.
@@ -68,7 +84,7 @@ module ReplySurfaceDiscipline
     def record(token, names)
       return unless token.is_a?(Array) && token[0] == :@ident && names.include?(token[1])
 
-      @reads << Read.new(@path, token[2]&.first, token[1])
+      @reads << Read.new(@path, token[2]&.first, token[1], @class_stack.last)
     end
   end
 
@@ -98,32 +114,52 @@ module ReplySurfaceDiscipline
 
   def command_root = Pathname(__dir__).join("..", "lib", "lain", "cli", "command").expand_path
 
-  # The command a file defines, by this namespace's one naming convention --
-  # or the {Unreachable} that says why the convention did not hold.
+  # The command a FILE defines, by this namespace's one naming convention --
+  # or the {Unreachable} that says why the convention did not hold. This is
+  # the single-class-per-file guess, kept for the one place that is actually
+  # about a file: a brand new command not yet required anywhere ({.subject_for}
+  # the self-test below exercises). It is NOT how a read gets attributed to a
+  # class -- see {.built_for} for that, which is told the class by name rather
+  # than guessing it from a path, because a fold can leave more than one
+  # command class in one file.
   def subject_for(file)
     Built.new(Lain::CLI::Command.const_get(file.basename(".rb").to_s.camelize).new)
   rescue NameError, ArgumentError => e
     Unreachable.new(file.basename.to_s, e.message)
   end
 
-  # Every class this directory defines that answers the command duck, by the
-  # one naming convention {.subject_for} uses -- asked of the CLASS rather than
-  # of an instance, which is what lets it see the whole shipped set. {Built}
-  # cannot serve here: it must CONSTRUCT, and nine of the commands take
-  # collaborators, so an instance-based census silently omits `/help`,
-  # `/approve`, `/review` and six more. Measured while writing this: 15 of 21.
+  # The same construction, told the class NAME directly -- what
+  # {.terminal_readers} uses once the Scanner has already found which class a
+  # read lives in by walking the syntax tree, rather than guessing one name
+  # per file.
+  def built_for(klass_name, file)
+    Built.new(Lain::CLI::Command.const_get(klass_name).new)
+  rescue NameError, ArgumentError => e
+    Unreachable.new(file.basename.to_s, e.message)
+  end
+
+  # Every class this directory defines that answers the command duck --
+  # asked of the CLASS rather than of an instance, which is what lets it see
+  # the whole shipped set. {Built} cannot serve here: it must CONSTRUCT, and
+  # nine of the commands take collaborators, so an instance-based census
+  # silently omits `/help`, `/approve`, `/review` and six more. Measured while
+  # writing this: 15 of 21.
   #
   # The duck is asked rather than a denylist kept, because this directory also
   # holds {Lain::CLI::Command::Registry}, {Lain::CLI::Command::Surface} and
-  # {Lain::CLI::Command::Env}, and a list of their filenames would need editing
-  # every time a fourth arrived. `Registry` is the one that matters: it answers
-  # `serves_replies?` itself, as the object commands are asked THROUGH.
+  # {Lain::CLI::Command::Env}, and a list of their filenames would need
+  # editing every time a fourth arrived. `Registry` is the one that matters:
+  # it answers `serves_replies?` itself, as the object commands are asked
+  # THROUGH.
+  #
+  # Asked of the MODULE's own constants, not of one filename per file: nine of
+  # these classes share one file (`command/small.rb`), and a naming
+  # convention that expects `small.rb` to define `Small` would see none of
+  # them. A class is a class regardless of which file loaded it.
   def command_classes
-    command_root.glob("*.rb").filter_map do |file|
-      klass = Lain::CLI::Command.const_get(file.basename(".rb").to_s.camelize)
+    Lain::CLI::Command.constants.filter_map do |name|
+      klass = Lain::CLI::Command.const_get(name)
       klass if klass.is_a?(Class) && klass.method_defined?(:name) && klass.method_defined?(:call)
-    rescue NameError
-      nil
     end
   end
 
@@ -133,11 +169,22 @@ module ReplySurfaceDiscipline
   # here, deliberately: the point is to notice the second one being written.
   def declarers = command_classes.select { |klass| klass.method_defined?(:serves_replies?) }
 
-  # Every command file that reads the terminal, paired with its reads.
+  # Every command CLASS that reads the terminal, paired with its reads. Scans
+  # per FILE (Ripper needs real source text) but groups the file's reads by
+  # the enclosing class the Scanner recorded on each one, so a file holding
+  # several commands (a fold, `command/small.rb`) attributes each read to the
+  # command that makes it, not to whichever class the filename would guess.
+  # A read with no enclosing class (module-level code) has no shipped example
+  # and is dropped rather than misattributed to a `nil` command.
   def terminal_readers
-    command_root.glob("*.rb").filter_map do |file|
+    command_root.glob("*.rb").flat_map do |file|
       reads = Scanner.new(file.basename.to_s).scan(file.read)
-      [subject_for(file), reads] unless reads.empty?
+      reads.group_by(&:klass).reject { |klass_name, _| klass_name.nil? }
+                             .map do |klass_name, klass_reads|
+        [
+          built_for(klass_name, file), klass_reads
+        ]
+      end
     end
   end
 end
