@@ -1064,3 +1064,22 @@ started until it landed.
 **T2 is held behind simplify-07's T6**, per that plan's contract: T6 strips the jq filter and
 `JQ_MISSING_WARNING` out of `cli/up/hud.rb` before T2 deletes the file, so the fold carries ~30
 fewer lines into `up.rb`. The other order loses T6's work or forces it to be redone.
+
+### Findings escalated for their own cards
+
+**The session record is noisiest on the file masking protects.** Found while folding
+`Session::Journaled`. After a masked read, `ReadSet#complete?` is mask-suppressed, so the
+read/re-read transition never closes and every subsequent complete read of that path journals
+another `session_read` line — four reads, four lines, where an unmasked path journals one.
+Meanwhile `Middleware::RedactSecretReads` dedupes its own `read_redacted` line on that same
+transition rule, so the two halves of one event now disagree about whether it happened once. The
+current behaviour is inherited unchanged from the decorator and is pinned by an example so it
+cannot drift further, with the docstring naming the cause and saying plainly that pinned is not
+blessed. Fixing it is a behaviour change and belongs in its own card.
+
+**A `have_attributes` matcher renders a live credential.** Found while merging the Ollama
+deployment arms. On ruby 4.0.6 super_diff's `Data` builder is inert, so an `eq` failure walks
+instance variables and renders nothing — but `have_attributes(api_key:)` goes through the public
+reader and prints the key into the failure output. Reported as pre-existing rather than introduced
+by the merge, and under verification by the panel. If it stands it is the same class of defect as
+the CI-log leak the redaction triple was written for, and the redaction triple does not cover it.
