@@ -792,3 +792,39 @@ does not own and a rule for how that interacts with the `observed` change-token 
 Worth doing for a reason wider than this marker — `elapsed`, `idle` and `since_compaction` have
 always had the same property, stamped at publish and never refreshed, so one periodic republish
 corrects four fields at once.
+
+
+### Close-out — six of seven, with T3 held for a decision
+
+T2, T4, T5, T6, T7 and T1 landed. **T3 is not done, and it is not blocked on anything I can settle.**
+
+**The simplify-14 question, deferred at the start and resolved only halfway.** 07's contract says 14
+runs before this plan or is declined before it. 14 was not selected for this run and the human was
+away, so rather than guess, the two affected cards were sequenced last and the decision deferred to
+the point where it actually binds. It then bound differently for each:
+
+- **T1 was safe either way.** The card is written to exclude `review_view.rb` — the file 14 would
+  delete — so building the shared ring for exactly two callers is correct whichever way 14 goes. It
+  gains a third caller only if 14 is declined, and that is additive. Landed as written.
+- **T3 is not.** It tables the Lua rails, and 14 deletes **seven of them**. Running it now
+  restructures code 14 removes. Held.
+
+So T3 wants one answer: **is simplify-14 going to run?** If yes, run 14 first and re-ground T3
+against what survives. If no, T3 runs as written and T1 gains `review_view.rb` as a third caller,
+with the `HELD` reconciliation growing from two values to three.
+
+**What T3 inherits either way**, found by T1's card and panel and left deliberately:
+`runtime/45_views.lua:13-22` is stale in both its sentences — it claims `lain://inbox` is the only
+stamped view and that every other view sends nothing, and `62_approval.lua:154` and
+`46_sidebar.lua:82` both write `b:lain_view_generation` directly.
+
+**One defect this plan found and did not fix, recorded above in full:** nothing in lain reports
+cache warmth live any more. The jq filter T6 removed was the only surface re-evaluating a deadline,
+and the terminal prompt composes once per input cycle rather than refreshing. The fix is a periodic
+republish and it is its own card — worth doing for a reason wider than the marker, since `elapsed`,
+`idle` and `since_compaction` have always had the same property.
+
+**One correctness argument corrected rather than shipped.** T1's ring claimed lock-freedom on the
+grounds that its holders are fibers of one reactor thread. There are three callers, not two, and
+`#prime` runs on the drain thread with nothing ordering it against the watch fiber. The race is
+pre-existing and was left; the sentence was not.
