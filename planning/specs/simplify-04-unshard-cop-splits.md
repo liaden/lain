@@ -1,6 +1,6 @@
 # Simplify 04 — fold back the collaborators a counter asked for
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1043,3 +1043,24 @@ After the last wave:
 - **Manual, human:** one epic driven end to end through `/implement-epic`, since T3 and T4 between
   them rewrite the epic command surface and `planning/qa/scenarios/` has scenarios for it.
 - Update `planning/qa/scenarios/` for any changed command name or refusal sentence.
+
+## Execution log
+
+**Base ref:** `main` at `b2f75202`. Every worktree is cut from that HEAD by hand, never by
+`isolation: "worktree"` (which forks from `origin/main`, 270 commits behind).
+
+**Grounding staleness.** The Grounding section was verified at `d2bb133c`; `main` is 270 commits
+ahead of it, almost all of them simplify-01/-02/-03 landings. Line citations in the cards are
+therefore approximate. Each implementer re-verifies its own card's cited `file:line` claims before
+writing anything and reports drift: absorbable if the behavior is unchanged, escalated if the card's
+premise no longer holds.
+
+**Prerequisites checked at start:** simplify-01 `done`, simplify-02 `done` — both required by this
+plan. simplify-03 was `in-progress` with twelve of thirteen cards landed; its last card touches
+`tools/subagent.rb`, `cli/wiring/toolset_build.rb`, `cli/wiring/askers.rb`,
+`tools/request_review.rb` and `cli/epic_submit/adjudication.rb`, so no card touching those was
+started until it landed.
+
+**T2 is held behind simplify-07's T6**, per that plan's contract: T6 strips the jq filter and
+`JQ_MISSING_WARNING` out of `cli/up/hud.rb` before T2 deletes the file, so the fold carries ~30
+fewer lines into `up.rb`. The other order loses T6's work or forces it to be redone.

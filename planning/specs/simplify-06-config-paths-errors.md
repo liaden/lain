@@ -1,6 +1,6 @@
 # Simplify 06 — one config parse, one path authority, one refusal per input source
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -706,3 +706,20 @@ After the last wave:
   the filesystem and a wrong answer deletes directories.
 - Update `planning/qa/scenarios/` for any changed refusal sentence — T5 rewrites 31 classes' worth of
   messages, and several are the first thing a user sees on a typo.
+
+## Execution log
+
+**Base ref:** `main` at `b2f75202`. Every worktree is cut from that HEAD by hand, never by
+`isolation: "worktree"` (which forks from `origin/main`, 270 commits behind).
+
+**Grounding staleness.** The Grounding section was verified at `d2bb133c`; `main` is 270 commits
+ahead of it, almost all of them simplify-01/-02/-03 landings. Line citations in the cards are
+therefore approximate. Each implementer re-verifies its own card's cited `file:line` claims before
+writing anything and reports drift: absorbable if the behavior is unchanged, escalated if the card's
+premise no longer holds.
+
+**Prerequisites checked at start:** simplify-01 `done`, simplify-02 `done` — both required by this
+plan. simplify-03 was `in-progress` with twelve of thirteen cards landed; its last card touches
+`tools/subagent.rb`, `cli/wiring/toolset_build.rb`, `cli/wiring/askers.rb`,
+`tools/request_review.rb` and `cli/epic_submit/adjudication.rb`, so no card touching those was
+started until it landed.

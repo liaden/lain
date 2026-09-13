@@ -1,6 +1,6 @@
 # Simplify 05 — one file-path seam for the file tools, and the secret boundary on the schema
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -433,3 +433,20 @@ After the last wave:
   `planning/qa/scenarios/` has no scenario covering the four-table-to-schema change.
 - Update `planning/qa/scenarios/` if T5 or T6 changes an observable refusal sentence — per the
   project's own rule, closing a chunk includes updating that enumeration.
+
+## Execution log
+
+**Base ref:** `main` at `b2f75202`. Every worktree is cut from that HEAD by hand, never by
+`isolation: "worktree"` (which forks from `origin/main`, 270 commits behind).
+
+**Grounding staleness.** The Grounding section was verified at `d2bb133c`; `main` is 270 commits
+ahead of it, almost all of them simplify-01/-02/-03 landings. Line citations in the cards are
+therefore approximate. Each implementer re-verifies its own card's cited `file:line` claims before
+writing anything and reports drift: absorbable if the behavior is unchanged, escalated if the card's
+premise no longer holds.
+
+**Prerequisites checked at start:** simplify-01 `done`, simplify-02 `done` — both required by this
+plan. simplify-03 was `in-progress` with twelve of thirteen cards landed; its last card touches
+`tools/subagent.rb`, `cli/wiring/toolset_build.rb`, `cli/wiring/askers.rb`,
+`tools/request_review.rb` and `cli/epic_submit/adjudication.rb`, so no card touching those was
+started until it landed.

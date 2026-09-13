@@ -1,6 +1,6 @@
 # Simplify 07 — one row ring, one presenter, one rail, and one reader of the status file
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; TJ DeVries joins for the Lua
@@ -716,3 +716,27 @@ After the last wave:
   same moment. That is T2's headline defect and no spec asserts the two agree today.
 - Update `planning/qa/scenarios/` — `cockpit-surfaces.md` covers exactly this screen, and T5 changes
   the protocol mechanism a scenario may name.
+
+## Execution log
+
+**Base ref:** `main` at `b2f75202`. Every worktree is cut from that HEAD by hand, never by
+`isolation: "worktree"` (which forks from `origin/main`, 270 commits behind).
+
+**Grounding staleness.** The Grounding section was verified at `d2bb133c`; `main` is 270 commits
+ahead of it, almost all of them simplify-01/-02/-03 landings. Line citations in the cards are
+therefore approximate. Each implementer re-verifies its own card's cited `file:line` claims before
+writing anything and reports drift: absorbable if the behavior is unchanged, escalated if the card's
+premise no longer holds.
+
+**Prerequisites checked at start:** simplify-01 `done`, simplify-02 `done` — both required by this
+plan. simplify-03 was `in-progress` with twelve of thirteen cards landed; its last card touches
+`tools/subagent.rb`, `cli/wiring/toolset_build.rb`, `cli/wiring/askers.rb`,
+`tools/request_review.rb` and `cli/epic_submit/adjudication.rb`, so no card touching those was
+started until it landed.
+
+**The simplify-14 ordering, unresolved at start.** The Orchestrator contract requires 14 to run
+before this plan or be declined before it. 14 was not selected for this run, and the human was
+away when the question arose. Rather than guess, T1 and T3 — the only two cards 14 touches — are
+sequenced **last**, so every other card lands either way and the decision is deferred to the point
+where it actually binds. T4, T5, T6, T7 and T2 are unaffected: 14 deletes `review_view.rb` and the
+review rails, not the inbox, the approval queue, the status file or the runtime loader.
