@@ -366,21 +366,21 @@ class LainCLI < Thor
     method_option :discovered_from, type: :string, desc: "The live issue this one grew out of, if any"
     desc "add ID TITLE [SLUG]", "Add a new issue to the epic graph, journaled as a graph_revision"
     def add(id = nil, title = nil, slug = nil)
-      render { Lain::CLI::EpicGraph.new.add(id, title, slug, discovered_from: options[:discovered_from]) }
+      render { Lain::CLI::Epic.new.add(id, title, slug, discovered_from: options[:discovered_from]) }
     end
 
     method_option :into, type: :string, required: true, banner: "ID,ID,...",
                          desc: "Comma-separated ids the issue splits into"
     desc "split ID [SLUG]", "Replace one issue with several, journaled as a graph_revision"
     def split(id = nil, slug = nil)
-      render { Lain::CLI::EpicGraph.new.split(id, options[:into], slug) }
+      render { Lain::CLI::Epic.new.split(id, options[:into], slug) }
     end
 
     method_option :as, type: :string, required: true, desc: "The id the merged issue takes"
     method_option :title, type: :string, desc: "The merged issue's title; defaults to combining both sides'"
     desc "merge LEFT RIGHT [SLUG]", "Replace two issues with one, journaled as a graph_revision"
     def merge(left = nil, right = nil, slug = nil)
-      render { Lain::CLI::EpicGraph.new.merge(left, right, slug, as: options[:as], title: options[:title]) }
+      render { Lain::CLI::Epic.new.merge(left, right, slug, as: options[:as], title: options[:title]) }
     end
 
     desc "queue [SLUG]", "Artifacts parked for sign-off, ready-to-review first (offline, deterministic)"

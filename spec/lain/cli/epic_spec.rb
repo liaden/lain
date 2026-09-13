@@ -670,6 +670,102 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
+  # The structural edits -- `lain epic add|split|merge` -- live on this class
+  # rather than on a sibling that constructed one just to reach
+  # {Lain::CLI::Epic#resolve_slug}. What that costs a reader is checked here:
+  # the resolution a bare invocation makes, and the refusal an ambiguous home
+  # gives, have to be the SAME ones `status` makes, because they are now
+  # literally the same private method.
+  describe "the graph-editing verbs" do
+    def epic_home(slug = "alpha") = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
+
+    def graph_revisions
+      Dir.children(sessions_dir).select { |name| name.end_with?(".ndjson") }.sort
+         .flat_map { |name| Lain::Journal.records(File.foreach(File.join(sessions_dir, name))).to_a }
+         .select { |record| record["type"] == "graph_revision" }
+    end
+
+    # Scenario: an epic's graph renders as mermaid
+    it "renders every issue an edit left behind, through the same fold status reads" do
+      write_epic("alpha", chain)
+
+      command.add("d", "the d issue", "alpha", discovered_from: "c")
+      diagram = command.status("alpha", mermaid: true)
+
+      expect(diagram).to include("n_a", "n_b", "n_c", "n_d")
+      expect(diagram).to include("n_a --> n_b", "n_b --> n_c")
+    end
+
+    it "replaces one issue with its parts and journals one graph_revision" do
+      write_epic("alpha", chain)
+
+      told = command.split("a", "a1,a2", "alpha")
+
+      expect(epic_home.read_epic.ids).to contain_exactly("a1", "a2", "b", "c")
+      expect(told).to include("split applied to epic `alpha`")
+      expect(graph_revisions.map { |record| record["operation"] }).to eq(["split"])
+    end
+
+    it "replaces two issues with one, inheriting both sides' edges" do
+      write_epic("alpha", chain)
+
+      command.merge("a", "b", "alpha", as: "ab", title: "the merged issue")
+
+      expect(epic_home.read_epic.fetch("ab").blocks).to eq(["c"])
+    end
+
+    # Scenario: a slug is resolved once per command
+    #
+    # Counted on the SUCCESS path, which is the only path where a second
+    # resolution is reachable: on the ambiguous path the first one raises, so an
+    # example that counts there is green however many calls the code makes.
+    # What this guards is the reason the three edit verbs moved onto this class
+    # at all -- they used to hold a {Lain::CLI::Epic} and ask it, and the fold
+    # is only worth anything if asking twice cannot creep back in. A
+    # re-resolution would also re-walk the container between the read and the
+    # write, which is where a home that changed mid-edit gets two answers.
+    it "resolves the epic exactly once per edit" do
+      write_epic("alpha", chain)
+      verb = command
+      allow(verb).to receive(:resolve_slug).and_call_original
+
+      verb.add("d", "the d issue")
+
+      expect(verb).to have_received(:resolve_slug).once
+    end
+
+    it "refuses an ambiguous home in the verb the operator actually ran, writing nothing" do
+      write_epic("alpha", chain)
+      write_epic("beta", graph_of(issue("z")))
+
+      refusal = begin
+        command.add("d", "the d issue")
+      rescue Lain::CLI::Epic::Ambiguous => e
+        e
+      end
+
+      expect(refusal.message).to include("name one: lain epic add ID TITLE SLUG")
+      expect(graph_revisions).to be_empty
+    end
+
+    it "resolves the sole epic when no slug is named, exactly as the projection does" do
+      write_epic("alpha", chain)
+
+      command.add("d", "the d issue")
+
+      expect(epic_home.read_epic.ids).to include("d")
+    end
+
+    it "refuses an unknown issue before anything is written" do
+      write_epic("alpha", chain)
+      before_bytes = epic_home.epic.read
+
+      expect { command.split("z", "z1,z2", "alpha") }.to raise_error(Lain::Epic::UnknownIssue, /z/)
+      expect(epic_home.epic.read).to eq(before_bytes)
+      expect(graph_revisions).to be_empty
+    end
+  end
+
   describe Lain::CLI::Epic::GitIgnores do
     # `git check-ignore -v`: exit 0 ignored, 1 not ignored, 128 unanswerable
     # (no repository here). All three are pinned -- 128 is the one a comment
