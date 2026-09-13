@@ -1,6 +1,6 @@
 # Simplify 03 — delete what nothing reaches, and move the test-only collaborators out of lib
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1153,3 +1153,35 @@ After the last wave:
   exists because that path once lost its only consumer silently.
 - Update `planning/qa/scenarios/` for the removed `--desktop` flag and the removed `bedrock` provider
   value — both are user-visible surface, and closing a chunk includes updating that enumeration.
+
+### Close-out
+
+All thirteen cards landed. The last one's panel returned APPROVE-WITH-FIXES with five mechanical
+fixes, applied by the orchestrator because the implementer had already exited: the `askers`
+paragraph was wedged inside the `tool_middleware` docstring and orphaned the sentence after it;
+that paragraph described the default as gating nothing, which is `switchboard:`'s verb rather than
+`askers`'; it recorded a construction-frame count nobody had measured; a YARD link named a
+`::Spawner` constant that does not exist; and the new discipline spec scanned `lib/` only, leaving
+`exe/lain`'s thousand lines of production wiring invisible to it.
+
+**The frame count is now a measured number.** The implementer counted 41 across 8 files, the panel
+re-measured independently with a wider sweep and got 45 across 10, and an enumeration of the spec
+files that construct the seam agrees with 10. The comment records 45/10. A number in a comment that
+nobody measured is exactly the defect the panel raised, so it is not recorded as a range or a
+guess.
+
+**The panel confirmed the card's own correction.** `epic_submit`'s adjudication really does build a
+seam with no askers, and `lain epic submit` really does run out of chat — traced to `exe/lain`'s
+only construction site, with a probe showing the refusal fires, carries the right wording, and
+parks nothing. The source comment claiming this was never a sanctioned state was false, and its
+deletion stands.
+
+**One acceptance criterion did not land as written, and the tree should say so.** The card's second
+scenario asks that a bare `Subagent::Seam` refuse construction without `askers:`. It does not; what
+refuses is `CLI::Wiring::ToolsetBuild`, the only production constructor. That is a real guarantee at
+the production boundary, but it is a different scenario from the one the Gherkin states, and it is
+recorded here as superseded rather than quietly recast as a pass.
+
+**Deferred from this chunk, for a later one:** two spec construction frames carry 164 of the 259
+required-keyword failures, so a `spec/support` spawn factory would make `askers:` requirable far
+more cheaply than the raw frame count suggests. That is the follow-up card.
