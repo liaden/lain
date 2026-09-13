@@ -572,7 +572,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 end
 
-# The read side of Session::Journaled's write side. A journal that never
+# The read side of Session's journaling. A journal that never
 # saw a session_read/todo_snapshot/memory_root record (an older recording, or
 # a run with no reads/writes) replays to the corresponding neutral state --
 # the same tolerant zero-record precedent Bench::Session::MemoryReplay itself
@@ -593,7 +593,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   # Reads and todos round-trip.
   describe "reads and todos round-trip" do
     it "answers read? true for every recorded path and renders the LAST todo list only" do
-      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled = Lain::Session.new(journal:)
       journaled.record_read("/tmp/a.rb")
       journaled.record_read("/tmp/b.rb")
       journaled.write_todos([todo("first pass", "in_progress")])
@@ -608,7 +608,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
 
     it "accepts already-parsed Hash entries, not only raw NDJSON lines (the Journal.parse duck)" do
-      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled = Lain::Session.new(journal:)
       journaled.record_read("/tmp/a.rb")
 
       hashes = journal_io.string.each_line.map { |line| JSON.parse(line) }
@@ -617,7 +617,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
 
     it "skips foreign records the parse duck answers nil for" do
-      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled = Lain::Session.new(journal:)
       journaled.record_read("/tmp/a.rb")
       lines = ["not json at all\n", "[1, 2, 3]\n"] + journal_io.string.each_line.to_a
 
@@ -627,7 +627,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     # Completeness has to survive the round trip, or a resumed run could
     # clobber a file the model only ever saw redacted.
     describe "read completeness round-trips" do
-      def journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      def journaled = Lain::Session.new(journal:)
 
       it "replays a partial read as partial, not as a whole read" do
         journaled.record_read("/tmp/secret.rb", complete: false)

@@ -196,7 +196,7 @@ RSpec.describe Lain::CLI::Command::Unpin do
 
     it "journals nothing for the no-op, so the replay log stays free of empty retractions" do
       journal_io = StringIO.new
-      journaled = Lain::Session::Journaled.new(session:, journal: Lain::Journal.new(io: journal_io))
+      journaled = Lain::Session.new(journal: Lain::Journal.new(io: journal_io))
       wired = build_command_env(agent: instance_double(Lain::Agent, timeline: agent.timeline, session: journaled))
 
       command.call("", wired)

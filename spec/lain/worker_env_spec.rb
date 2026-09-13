@@ -106,9 +106,9 @@ RSpec.describe Lain::WorkerEnv do
       expect(Lain::Session::Null.instance.worker_env.cwd).to eq(Dir.pwd)
     end
 
-    it "forwards worker_env through the Journaled decorator untouched" do
+    it "holds the injected worker_env untouched on a session that journals" do
       injected = described_class.new(cwd: "/sandbox", env: {})
-      journaled = Lain::Session::Journaled.new(session: Lain::Session.new(worker_env: injected), journal: [])
+      journaled = Lain::Session.new(worker_env: injected, journal: [])
       expect(journaled.worker_env).to be(injected)
     end
   end

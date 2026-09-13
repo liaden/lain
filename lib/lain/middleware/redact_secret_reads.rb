@@ -315,11 +315,11 @@ module Lain
         carried
       end
 
-      # Journaled on a STATE TRANSITION, not on a call --
-      # {Session::Journaled#record_read}'s rule, which this has to match or break.
-      # A redaction line per read would mean an unmasked file journals once over
-      # ten iterations and a masked one ten times, so the record would be noisiest
-      # exactly where the loop is most likely. `@declined` already holds "these
+      # Journaled on a STATE TRANSITION, not on a call -- {Session#record_read}'s
+      # rule, which this has to match or break. A redaction line per read would
+      # mean an unmasked file journals once over ten iterations and a masked one
+      # ten times, so the record would be noisiest exactly where the loop is most
+      # likely. `@declined` already holds "these
       # digests at this path have been ruled on", which IS the transition, so the
       # check goes BEFORE it is added to.
       def mask(carried, effect, withheld)

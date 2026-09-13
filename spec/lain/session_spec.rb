@@ -201,21 +201,22 @@ RSpec.describe Lain::Session do
       expect(Lain::Session::Null.instance.masked_read?("/tmp/.env")).to be(false)
     end
 
-    # The decorator forwards and writes NO `session_read` line, deliberately:
-    # that record says only `complete:`, and a replay folds it through
-    # `record_read`, which cannot reach the masked set -- so a line here would
-    # replay to a wholly-read path. `Telemetry::ReadRedacted`, written by
+    # A mask writes NO `session_read` line, deliberately: that record says only
+    # `complete:`, and a replay folds it through `record_read`, which cannot
+    # reach the masked set -- so a line here would replay to a wholly-read
+    # path. `Telemetry::ReadRedacted`, written by
     # `Middleware::RedactSecretReads` into this same journal, is the record, and
     # `SessionRecord::Replay#redactions` is what folds it back.
-    describe "through the journaling decorator" do
-      let(:journal) { [] }
-      let(:journaled) { Lain::Session::Journaled.new(session:, journal:) }
+    describe "with a journal attached" do
+      subject(:journaled) { described_class.new(journal:) }
 
-      it "reaches the wrapped session's masked set" do
+      let(:journal) { [] }
+
+      it "reaches the masked set" do
         journaled.record_masked_read("/tmp/.env")
 
         expect(journaled.masked_read?("/tmp/.env")).to be(true)
-        expect(session.read?("/tmp/.env")).to be(false)
+        expect(journaled.read?("/tmp/.env")).to be(false)
       end
 
       it "writes no session_read line, which would replay as a whole read" do
@@ -587,32 +588,71 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # The decorator that journals a real Session's reads/todos while
-  # leaving Session itself with no journal in sight (every example above this
-  # block constructs a plain Session and never mentions one).
-  describe Lain::Session::Journaled do
+  # Journaling is Session's own, with `journal:` defaulting to the Null
+  # channel -- which is why every example above this block constructs a plain
+  # Session, never mentions a journal, and records nothing.
+  describe "journaling the run-state into the session record" do
     def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
-    subject(:journaled) { described_class.new(session: inner, journal:) }
+    subject(:journaled) { described_class.new(journal:, **env) }
 
-    let(:inner) { Lain::Session.new }
+    let(:env) { {} }
     let(:journal) { [] }
 
     def of_type(type) = journal.select { |record| record.journal_type == type }
 
-    it "forwards record_read/read? to the wrapped Session, unchanged behavior" do
+    # A read is recorded once and journaled once, however many times the model
+    # asks for the same file -- the read/edit loop's whole point.
+    it "records a re-read once and journals it once" do
+      journaled.record_read("/tmp/app.rb")
       journaled.record_read("/tmp/app.rb")
 
       expect(journaled.read?("/tmp/app.rb")).to be(true)
-      expect(inner.read?("/tmp/app.rb")).to be(true)
+      expect(of_type("session_read").size).to eq(1)
     end
 
-    it "forwards the write-set to the wrapped Session, journaling nothing (persistence is a separate ticket)" do
+    # The Null journal is the default, so a Session built with no journal at
+    # all still tracks everything it tracked before journaling was its job.
+    it "tracks reads with no journal at all, writing nowhere" do
+      plain = described_class.new
+
+      plain.record_read("/tmp/app.rb")
+
+      expect(plain.read?("/tmp/app.rb")).to be(true)
+      expect(plain.reads).to eq(["/tmp/app.rb"])
+    end
+
+    it "keeps the write-set journal-free (persistence is the snapshot's, not the record's)" do
       journaled.record_write("/tmp/app.rb")
 
       expect(journaled.written?("/tmp/app.rb")).to be(true)
-      expect(inner.written?("/tmp/app.rb")).to be(true)
       expect(journaled.writes).to eq(["/tmp/app.rb"])
+      expect(journal).to be_empty
+    end
+
+    it "journals a session_pin when a digest is pinned" do
+      journaled.record_pin("blake3:aaaa1111")
+
+      expect(journaled.pinned?("blake3:aaaa1111")).to be(true)
+      expect(of_type("session_pin").map(&:digest)).to eq(["blake3:aaaa1111"])
+    end
+
+    # A journal-less Session takes one -- the resumed path, where replay folds
+    # the old record in before the new journal exists.
+    it "takes a journal after construction, and then records into it" do
+      plain = described_class.new
+
+      expect(plain.journals_into(journal)).to be(plain)
+      plain.record_read("/tmp/app.rb")
+
+      expect(of_type("session_read").map(&:path)).to eq(["/tmp/app.rb"])
+    end
+
+    # Refused rather than documented: a swap mid-run splits one run's record
+    # across two destinations and neither half says so.
+    it "refuses a second journal over one it already holds" do
+      expect { journaled.journals_into([]) }
+        .to raise_error(ArgumentError, /journals into one destination for the whole run/)
     end
 
     it "journals a SessionRead the FIRST time a path is read, with the expand_path-normalized path" do
@@ -626,8 +666,8 @@ RSpec.describe Lain::Session do
     # The wrapped session's cwd is pinned rather than inherited from the
     # process, so "any spelling" can mean what it says: absolute, bare
     # relative and dotted relative all reach the same file.
-    context "when the wrapped session's worker cwd is /tmp" do
-      let(:inner) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/tmp", env: {})) }
+    context "when the session's worker cwd is /tmp" do
+      let(:env) { { worker_env: Lain::WorkerEnv.new(cwd: "/tmp", env: {}) } }
 
       it "journals nothing on a re-read of the same path (any spelling) -- no chatty per-iteration lines" do
         journaled.record_read("/tmp/app.rb")
@@ -638,16 +678,16 @@ RSpec.describe Lain::Session do
       end
     end
 
-    # The decorator must journal the string the READ-SET holds. It has no
-    # cwd of its own, so it takes the wrapped session's -- otherwise the
-    # Journal (the experiment record) names a different file than #read? does.
-    context "when the wrapped session's worker cwd is not the process directory" do
-      let(:cwd) { File.join(Dir.tmpdir, "lain-t7-journal") }
-      let(:inner) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {})) }
+    # The journal line must name the string the READ-SET holds, resolved
+    # against the WORKER's cwd and never the process's -- otherwise the Journal
+    # (the experiment record) names a different file than #read? answers for.
+    context "when the session's worker cwd is not the process directory" do
+      let(:cwd) { File.join(Dir.tmpdir, "lain-session-journal") }
+      let(:env) { { worker_env: Lain::WorkerEnv.new(cwd:, env: {}) } }
 
       # Asserted as BYTE-identity, not as `read?(recorded)`: `read?`
       # re-normalizes its argument, so it would answer true for any spelling
-      # that merely resolves to the same file, and a decorator journaling a
+      # that merely resolves to the same file, and a line journaling a
       # DIFFERENT string than the read-set holds would still pass. The read-set
       # has its own `#reads` window, so this compares against the very set
       # under discussion rather than borrowing the write-set's mirror.
@@ -656,7 +696,7 @@ RSpec.describe Lain::Session do
 
         recorded = of_type("session_read").map(&:path)
         expect(recorded).to eq([File.join(cwd, "notes.md")])
-        expect(recorded).to eq(inner.reads)
+        expect(recorded).to eq(journaled.reads)
       end
     end
 
@@ -694,7 +734,7 @@ RSpec.describe Lain::Session do
       expect(Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", complete: false).complete).to be(false)
     end
 
-    # The decorator journals a read-set STATE TRANSITION, not a call. The
+    # A read-set STATE TRANSITION is journaled, not a call. The
     # dedupe that keeps a read/edit loop from emitting one line per iteration
     # has to survive the completeness bit, and each surviving line has to say
     # WHICH thing the model saw.
@@ -719,6 +759,18 @@ RSpec.describe Lain::Session do
         expect(of_type("session_read").size).to eq(1)
       end
 
+      # The dedupe's one escape, pinned so it cannot drift unnoticed rather
+      # than because it is right: `ReadSet#complete?` is mask-suppressed, so
+      # the complete-read transition never closes and a loop re-reading a
+      # MASKED file journals every iteration -- the very flood the rule above
+      # exists to prevent, on the file it most wants to protect.
+      it "journals EVERY re-read of a masked path, which the dedupe does not cover" do
+        journaled.record_masked_read("/tmp/.env")
+        4.times { journaled.record_read("/tmp/.env") }
+
+        expect(of_type("session_read").size).to eq(4)
+      end
+
       # Two lines is correct here, and is the one case that legitimately emits
       # a second: the model genuinely saw two different things.
       it "journals a second line when a partial read is upgraded to a complete one" do
@@ -738,29 +790,26 @@ RSpec.describe Lain::Session do
       end
     end
 
-    # PANEL FINDING (fix 1), at the layer where it actually bit: the record
-    # guard DID raise, but only after the wrapped Session had already mutated,
-    # leaving a complete read in the set and nothing in the Journal -- live
-    # state strictly more permissive than replayed state. The refusal now
-    # happens inside the wrapped Session, so neither layer moves.
+    # The read-set's strict-boolean guard runs AHEAD of both the mutation and
+    # the journal write, so a rescued caller cannot be left holding live state
+    # more permissive than what replays.
     it "leaves neither the read-set nor the Journal touched when completeness is a non-boolean" do
       expect { journaled.record_read("/tmp/app.rb", complete: "false") }.to raise_error(ArgumentError)
 
-      expect(inner.read?("/tmp/app.rb")).to be(false)
-      expect(inner.partially_read?("/tmp/app.rb")).to be(false)
+      expect(journaled.read?("/tmp/app.rb")).to be(false)
+      expect(journaled.partially_read?("/tmp/app.rb")).to be(false)
       expect(of_type("session_read")).to be_empty
     end
 
-    it "forwards partially_read? and reads to the wrapped Session" do
+    it "answers partially_read? and reads for a partial read" do
       journaled.record_read("/tmp/partial.rb", complete: false)
 
       expect(journaled.partially_read?("/tmp/partial.rb")).to be(true)
       expect(journaled.read?("/tmp/partial.rb")).to be(false)
       expect(journaled.reads).to eq(["/tmp/partial.rb"])
-      expect(inner.partially_read?("/tmp/partial.rb")).to be(true)
     end
 
-    it "journals every write_todos call as a whole-list TodoSnapshot, forwarding to the wrapped Session too" do
+    it "journals every write_todos call as a whole-list TodoSnapshot, and holds the last list" do
       journaled.write_todos([todo("a", "pending")])
       journaled.write_todos([todo("b", "completed")])
 
@@ -768,13 +817,7 @@ RSpec.describe Lain::Session do
       expect(snapshots.size).to eq(2)
       expect(snapshots.first.todos).to eq([{ "content" => "a", "status" => "pending" }])
       expect(snapshots.last.todos).to eq([{ "content" => "b", "status" => "completed" }])
-      expect(inner.reminders).to eq(["Current todo list:\n- [completed] b"])
-    end
-
-    it "reflects the wrapped Session's reminders" do
-      journaled.write_todos([todo("a", "pending")])
-
-      expect(journaled.reminders).to eq(inner.reminders)
+      expect(journaled.reminders).to eq(["Current todo list:\n- [completed] b"])
     end
   end
 end

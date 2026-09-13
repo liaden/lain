@@ -97,22 +97,20 @@ RSpec.describe Lain::Session do
   end
 end
 
-# A pin is journaled with the digest it names -- the Session::Journaled
-# decorator's job, so Session itself stays journal-ignorant.
-RSpec.describe Lain::Session::Journaled do
-  subject(:journaled) { described_class.new(session:, journal:) }
+# A pin is journaled with the digest it names, into the journal the session was
+# built with -- a Session given no journal records the pin and writes nothing.
+RSpec.describe "a pin on a session that journals" do
+  subject(:journaled) { Lain::Session.new(journal:) }
 
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:session) { Lain::Session.new }
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }
 
-  it "journals a session_pin naming the digest, and forwards to the wrapped session" do
+  it "journals a session_pin naming the digest, and holds the pin" do
     journaled.record_pin("blake3:aaaa1111")
 
-    expect(session.pinned?("blake3:aaaa1111")).to be(true)
     expect(journaled.pinned?("blake3:aaaa1111")).to be(true)
     expect(of_type("session_pin"))
       .to contain_exactly(a_hash_including("digest" => "blake3:aaaa1111", "pinned" => true))
@@ -124,14 +122,24 @@ RSpec.describe Lain::Session::Journaled do
     journaled.record_pin("blake3:aaaa1111")
     journaled.record_unpin("blake3:aaaa1111")
 
-    expect(session.pinned?("blake3:aaaa1111")).to be(false)
+    expect(journaled.pinned?("blake3:aaaa1111")).to be(false)
     expect(of_type("session_pin").map { |record| record["pinned"] }).to eq([true, false])
   end
 
-  it "forwards pins unchanged" do
+  it "offers the pin-set unchanged" do
     journaled.record_pin("blake3:aaaa1111")
 
     expect(journaled.pins).to eq(["blake3:aaaa1111"])
+  end
+
+  # The journal is the only thing `journal:` adds: a session built without one
+  # keeps the whole pin-set and writes nowhere.
+  it "keeps the pin-set with no journal at all" do
+    plain = Lain::Session.new
+
+    plain.record_pin("blake3:aaaa1111")
+
+    expect(plain.pinned?("blake3:aaaa1111")).to be(true)
   end
 end
 
@@ -139,7 +147,7 @@ end
 RSpec.describe Lain::SessionRecord::Replay do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:journaled) { Lain::Session::Journaled.new(session: Lain::Session.new, journal:) }
+  let(:journaled) { Lain::Session.new(journal:) }
 
   def replayed = described_class.new(journal_io.string.each_line).session
 

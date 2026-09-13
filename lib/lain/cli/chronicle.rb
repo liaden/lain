@@ -191,10 +191,15 @@ module Lain
 
       # Run-state records go to the session journal itself, never the tee: they
       # are record data like the scribe's turn records, not live-view telemetry.
-      # Usable before {#start}, because the decorator writes through the journal
+      # Usable before {#start}, because the Session writes through the journal
       # directly with no scribe involved.
+      #
+      # The SAME object comes back, which is what a resumed chat needs: its
+      # Session was folded out of the old record by {SessionRecord::Replay}
+      # with no journal attached, and rebuilding it here would lose the
+      # read-set, pin-set and todo list that replay just restored.
       def wrap_session(session)
-        Session::Journaled.new(session:, journal: @journal)
+        session.journals_into(@journal)
       end
 
       # Registers the recorder so each turn_usage is paired with the memory root

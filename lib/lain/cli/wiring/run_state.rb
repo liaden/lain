@@ -10,9 +10,9 @@ module Lain
       # session -- the single mutable holder of the live {Lain::Memory::Index},
       # so each write supersedes the last. A resumed chat inherits the
       # chain-wide recorder instead, so its manifest sees every memory the
-      # resumed sessions wrote. BOTH halves must then be decorated by the
-      # chronicle: reads and todos journal through {Lain::Session::Journaled},
-      # and each turn_usage pairs with the memory root in force, so decorating
+      # resumed sessions wrote. BOTH halves must then be wired to the
+      # chronicle: reads and todos journal through the Session's own journal,
+      # and each turn_usage pairs with the memory root in force, so wiring
       # one and not the other is a run whose usage records name a memory root
       # its reads never wrote. That is why the pair is built in one place and
       # handed back together. Identity under --no-journal.

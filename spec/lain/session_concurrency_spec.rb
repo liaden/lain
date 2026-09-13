@@ -36,12 +36,32 @@ module SessionConcurrencySpecSupport
       Lain::Tool::Result.ok(@tool_name)
     end
   end
+
+  # A journal whose write IS a yield point, which a StringIO-backed one never
+  # is. Half of {Session#record_read}'s ordering claim -- that the journal
+  # write runs AFTER the Set mutation -- is invisible without this: swap those
+  # two lines against a StringIO journal and every other example in this file
+  # still passes, because the write between the check and the mutate cannot
+  # hand the scheduler to the sibling fiber. Against this one it can, and two
+  # fibers then both see "first".
+  class YieldingJournal
+    def initialize = @records = []
+
+    attr_reader :records
+
+    def <<(record)
+      sleep 0
+      @records << record
+      self
+    end
+  end
 end
 
 # Pins the fiber-safety invariant the gathered-tool concurrency rests on.
-# {Session::Journaled#record_read} is a check-then-mutate pair (read? then
-# record_read then a conditional journal write), and its documented claim
-# (session.rb) is that no yield point sits between the check and the mutate --
+# {Session#record_read} is a check-then-mutate pair (the read-set is asked
+# whether this is a transition, then mutated, then a journal line is
+# conditionally written), and its documented claim (session.rb) is that no
+# yield point sits between the check and the mutate --
 # both are pure Ruby, no IO -- so two fibers reading the same path can never
 # both see "first". This spec makes that claim bite: it was proven RED by
 # temporarily inserting a `sleep` (a scheduler yield) between the check and
@@ -54,8 +74,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
   it "records one path once and journals exactly one session_read across two gathered readers" do
     journal_io = StringIO.new
     journal = Lain::Journal.new(io: journal_io)
-    inner = Lain::Session.new
-    session = Lain::Session::Journaled.new(session: inner, journal:)
+    session = Lain::Session.new(journal:)
 
     entered = Async::Queue.new
     release = Async::Queue.new
@@ -85,13 +104,84 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
       run&.stop
     end
 
-    # The read-set holds the path once (a Set, queried through both layers)...
+    # The read-set holds the path once...
     expect(session.read?(path)).to be(true)
-    expect(inner.read?(path)).to be(true)
+    expect(session.reads).to eq([path])
     # ...and the journal holds exactly ONE session_read for it: the second
     # fiber saw "already read", because check-and-mutate ran without a yield.
     reads = Lain::Journal.records(journal_io.string.lines, type: "session_read").to_a
     expect(reads.map { |record| record["path"] }).to eq([path])
+  end
+
+  # The sibling claim, and the one the dedupe could break: two fibers reading
+  # DIFFERENT files must each be recorded and each journaled. A transition
+  # check that consulted "has anything been read" rather than "has THIS path
+  # been read" passes the same-path example above and loses a read here.
+  it "records and journals both paths when two gathered readers read different files" do
+    journal_io = StringIO.new
+    journal = Lain::Journal.new(io: journal_io)
+    session = Lain::Session.new(journal:)
+
+    entered = Async::Queue.new
+    release = Async::Queue.new
+    toolset = Lain::Toolset.new(
+      [SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_a", path: "/tmp/a.rb", entered:, release:),
+       SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_b", path: "/tmp/b.rb", entered:, release:)]
+    )
+    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+    response = tool_response(["tu_1", "reader_a", {}], ["tu_2", "reader_b", {}])
+
+    Sync do |task|
+      run = task.async { runner.run(response, context: session) }
+
+      # Both readers are provably mid-dispatch before either records: the
+      # timeout is a failure bound, not a synchronization.
+      expect(task.with_timeout(1) { [entered.dequeue, entered.dequeue] })
+        .to contain_exactly("reader_a", "reader_b")
+      2.times { release.enqueue(:go) }
+      expect(run.wait).to all(include("is_error" => false))
+    ensure
+      run&.stop
+    end
+
+    expect(session.read?("/tmp/a.rb")).to be(true)
+    expect(session.read?("/tmp/b.rb")).to be(true)
+    reads = Lain::Journal.records(journal_io.string.lines, type: "session_read").to_a
+    expect(reads.map { |record| record["path"] }).to contain_exactly("/tmp/a.rb", "/tmp/b.rb")
+  end
+
+  # The ordering half of the claim, which the two examples above cannot reach:
+  # they pin that nothing yields BETWEEN the check and the mutate, and this
+  # pins that the journal write is not moved ABOVE the mutate. Proven to bite
+  # the same two ways as the rest: swapping those two lines makes both fibers
+  # journal the same path, and no lock is needed to make it pass.
+  it "journals one line for one path even when the journal write yields the fiber" do
+    journal = SessionConcurrencySpecSupport::YieldingJournal.new
+    session = Lain::Session.new(journal:)
+
+    entered = Async::Queue.new
+    release = Async::Queue.new
+    path = "/tmp/shared.rb"
+    toolset = Lain::Toolset.new(
+      [SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_a", path:, entered:, release:),
+       SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_b", path:, entered:, release:)]
+    )
+    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+    response = tool_response(["tu_1", "reader_a", {}], ["tu_2", "reader_b", {}])
+
+    Sync do |task|
+      run = task.async { runner.run(response, context: session) }
+
+      expect(task.with_timeout(1) { [entered.dequeue, entered.dequeue] })
+        .to contain_exactly("reader_a", "reader_b")
+      2.times { release.enqueue(:go) }
+      expect(run.wait).to all(include("is_error" => false))
+    ensure
+      run&.stop
+    end
+
+    expect(session.read?(path)).to be(true)
+    expect(journal.records.grep(Lain::Telemetry::SessionRead).map(&:path)).to eq([path])
   end
 end
 
@@ -110,8 +200,7 @@ end
 RSpec.describe "Session read completeness under concurrent gather" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:inner) { Lain::Session.new }
-  let(:session) { Lain::Session::Journaled.new(session: inner, journal:) }
+  let(:session) { Lain::Session.new(journal:) }
   let(:path) { "/tmp/shared.rb" }
 
   let(:entered) { Async::Queue.new }

@@ -2,12 +2,11 @@
 
 module Lain
   module Isolation
-    # A Journal-duck decorator over any Isolation backend, {Session::Journaled}'s
-    # shape applied to this seam: `acquire` forwards untouched and each lease
-    # transition ADDITIONALLY emits a {Telemetry::IsolationLease} record, so a
-    # supervisor or an {Arm} can wrap ANY backend without the backend knowing a
-    # journal exists -- which is what keeps every backend's own spec
-    # journal-ignorant.
+    # A Journal-duck decorator over any Isolation backend: `acquire` forwards
+    # untouched and each lease transition ADDITIONALLY emits a
+    # {Telemetry::IsolationLease} record, so a supervisor or an {Arm} can wrap
+    # ANY backend without the backend knowing a journal exists -- which is what
+    # keeps every backend's own spec journal-ignorant.
     #
     # `acquire` hands back a FRESH {Lease} rather than the backend's own, so the
     # wrapper's `#release` inherits {Lease}'s idempotent-loud contract: the

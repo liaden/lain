@@ -3,7 +3,10 @@
 module Lain
   module SessionRecord
     # Rebuilds a fresh {Session}'s run-state from a session record -- the read
-    # side of {Session::Journaled} and {Tools::TodoWrite}. A
+    # side of {Session}'s own journaling and {Tools::TodoWrite}. The Session it
+    # builds carries NO journal, or folding the record would re-journal every
+    # line it just read; {CLI::Chronicle#wrap_session} attaches the new run's
+    # journal afterwards. A
     # {Telemetry::SessionRead} folds straight into {Session#record_read} carrying
     # its completeness, so a partial read cannot come back as a whole one (see
     # `#completeness`); the read-set's own add-only monotonicity then folds a

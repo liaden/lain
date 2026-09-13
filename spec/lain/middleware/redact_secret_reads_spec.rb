@@ -359,7 +359,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       )
     end
 
-    # One line per state transition, not per call -- `Session::Journaled`'s own
+    # One line per state transition, not per call -- `Session#record_read`'s own
     # rule, which this seam has to match. A line per read would make a masked
     # file journal ten times over a read/edit loop where an unmasked one
     # journals once, i.e. noisiest exactly where the loop is.

@@ -458,8 +458,10 @@ cooperative scheduling: a fiber yields only at an IO boundary the scheduler cont
 check-then-mutate pair with no yield point between check and mutate is atomic *by construction*,
 not by mutex. Two claims carry the whole design, and each is now a spec:
 
-- `Session::Journaled#record_read` is check-then-mutate (`read?`, then the Set insert, then a
-  conditional journal write). The check and the mutate are pure Ruby with no IO, so two gathered
+- `Session#record_read` is check-then-mutate (the read-set is asked whether this is a
+  transition, then the Set insert, then a conditional journal write). The check and the
+  mutate are pure Ruby with no IO, and the journal write — the one step that *can* yield —
+  runs after the mutate, so two gathered
   fibers reading the same path cannot both see "first" — the read-set holds the path once, and
   the two reads journal **one** `session_read` when they are at the same completeness. What earns
   a second line is a partial→**complete upgrade**, and only that: it is a real state transition,
@@ -471,11 +473,15 @@ not by mutex. Two claims carry the whole design, and each is now a spec:
   outcomes are correct. What no interleaving may produce is a
   *downgrade* — `Session::ReadSet` holds membership and completeness in two **add-only** Sets, so
   a complete read cannot be raced back to partial whatever the order. Pinned by
-  `spec/lain/session_concurrency_spec.rb` at both completeness pairings, proven to bite twice:
-  by temporarily inserting a `sleep` (a scheduler yield) between check and mutate, so both fibers
-  journaled the same path; and by rewriting `ReadSet#record` as a read-yield-write over a single
-  flag per path, the classic lost update, which downgrades a complete read to partial **only**
-  under interleaving — it passes every sequential example in the suite and fails only here.
+  `spec/lain/session_concurrency_spec.rb` at both completeness pairings, proven to bite three
+  ways: by temporarily inserting a `sleep` (a scheduler yield) between check and mutate, so both
+  fibers journaled the same path; by rewriting `ReadSet#record` as a read-yield-write over a
+  single flag per path, the classic lost update, which downgrades a complete read to partial
+  **only** under interleaving — it passes every sequential example in the suite and fails only
+  here; and by swapping the journal write **above** the mutate, which no `StringIO`-backed
+  journal can detect because its write never yields. That last one needs a journal double whose
+  `#<<` hands the scheduler over, and without it half the ordering claim is unpinned: the swap
+  passed every other example in the file.
 - `Approval::Queue`'s `@parked` is a plain Array whose mutations (`<<` on admit, `delete` on
   settle) are straight-line Ruby; every park happens on an Async primitive *between* those
   mutations, never inside one. So N concurrently gated fibers admit N independent pendings, each

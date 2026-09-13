@@ -256,8 +256,8 @@ module ProviderConstruction
     # narrowness is load-bearing rather than lazy: `core/transport/vsock.rb`
     # raises `Unreachable.new(far_end, e)`, which is that transport's own error
     # and not the provider. The same qualifier rule is what keeps
-    # `Forge::Journaled`, `Session::Journaled` and `Epic::Home::Journaled` --
-    # three unrelated classes sharing a name -- out of the decorator rule. The
+    # `Forge::Journaled` and `Epic::Home::Journaled` -- two unrelated classes
+    # sharing a name -- out of the decorator rule. The
     # cost is that a bare `Ollama.new` written outside `lain/provider/` would be
     # missed, which no file does and which the require manifest makes unlikely.
     def provider_constant(receiver)

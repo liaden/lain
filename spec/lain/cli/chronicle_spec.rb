@@ -403,11 +403,12 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
-  # The write-side wiring for Session run-state. The chronicle
-  # owns the decoration so the exe stays a one-line wire and Session itself
-  # stays journal-ignorant (Session::Journaled's whole point).
+  # The write-side wiring for Session run-state. The chronicle owns the attach,
+  # so the exe stays a one-line wire and a resumed Session -- folded out of the
+  # record by SessionRecord::Replay with no journal, or the replay would
+  # re-journal everything it read -- gets the run's journal afterwards.
   describe "#wrap_session" do
-    it "returns a decorated session that journals a session_read on the first read only" do
+    it "attaches the run's journal, which then carries a session_read on the first read only" do
       wrapped = chronicle.wrap_session(Lain::Session.new)
 
       wrapped.record_read("/tmp/app.rb")
@@ -426,6 +427,19 @@ RSpec.describe Lain::CLI::Chronicle do
 
       expect(of_type("todo_snapshot").first)
         .to include("todos" => [{ "content" => "a", "status" => "pending" }])
+    end
+
+    # The SAME object comes back, which is what lets a resumed Session keep the
+    # read-set, pin-set and todo list the replay already folded into it.
+    it "hands back the session it was given, state intact" do
+      resumed = Lain::Session.new
+      resumed.record_read("/tmp/before.rb")
+
+      wrapped = chronicle.wrap_session(resumed)
+
+      expect(wrapped).to be(resumed)
+      expect(wrapped.read?("/tmp/before.rb")).to be(true)
+      expect(of_type("session_read")).to be_empty
     end
   end
 

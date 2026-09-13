@@ -15,6 +15,12 @@ module Lain
   # READ-set rather than the write-set, because only the read-set is journaled
   # and replayed, and a pin that vanished on `--resume` would be worse than no
   # pin at all.
+  #
+  # Writing the run-state into the session record is Session's own job, not a
+  # decorator's: `journal:` defaults to {Channel::Null}, so a Session built
+  # without one behaves exactly as one built before journaling existed, and
+  # {SessionRecord::Replay} folds a record back through a journal-less Session
+  # rather than re-journaling every line it just read.
   class Session
     # Added HERE rather than inside {Memory::Manifest#to_reminder}, which stays
     # bare: naming memory_read as the way to open an id is the session's
@@ -35,7 +41,12 @@ module Lain
     #   {#reminders} whenever its index holds items
     # @param worker_env [WorkerEnv] the host context tools resolve paths and
     #   shell out against
-    def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default)
+    # @param journal [#<<] where {Telemetry::SessionRead} /
+    #   {Telemetry::SessionPin} / {Telemetry::TodoSnapshot} land; the Null
+    #   channel records nothing and is what every non-chat Session uses
+    def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default,
+                   journal: Channel::Null.instance)
+      @journal = journal
       @reads = ReadSet.new
       @writes = Set.new
       @pins = Set.new
@@ -54,11 +65,12 @@ module Lain
     # @return [WorkerEnv]
     attr_reader :worker_env
 
-    # The read-set's path identity, public so {Session::Journaled} can record
-    # exactly the path {#read?} will answer true for afterwards.
+    # The read-set's path identity, public because the two middleware that ask
+    # about a path ({Middleware::RedactSecretReads},
+    # {Middleware::GuardTestLayout}) must name it exactly as {#read?} will.
     #
     # `cwd:` is required, never defaulted: falling back to `Dir.pwd` would let
-    # the decorator journal a process-relative path while the read-set stored a
+    # a caller name a process-relative path while the read-set stored a
     # worker-relative one -- a divergence in the Journal, which is the
     # experiment record.
     #
@@ -81,13 +93,41 @@ module Lain
     # Completeness is recorded HERE rather than un-recorded from the middleware
     # that decides to mask: {Tools::ReadFile} records below the middleware, so
     # the read has already happened by then and the read-set has no retraction.
-    # ADD-ONLY sets are what keep it monotone -- two sibling fibers reading the
-    # same file cannot race a complete read backwards into a partial one, which
-    # a single mutable flag per path would allow.
+    # {ReadSet}'s three add-only sets are what keep it monotone.
+    #
+    # The transition check, the mutation and the journal write are one
+    # fiber-safe sequence: no yield point sits between the check and the Set
+    # mutation (both pure Ruby, no IO), and the journal write -- the only place
+    # a fiber COULD yield -- runs AFTER the mutation, so two fibers reading the
+    # same path cannot both see "first". The claim carries ToolRunner's
+    # gathered dispatch (docs/concurrency.md, "parallel tools") and is pinned
+    # by spec/lain/session_concurrency_spec.rb; if that spec can only pass by
+    # adding a lock here, the claim has failed -- escalate, do not patch.
+    # Moving the journal write above the mutation breaks it silently.
+    #
+    # A line is journaled on a read-set STATE TRANSITION, not on a call, and
+    # completeness gives two: nothing-to-recorded and partial-to-complete. So a
+    # partial read followed by a complete one journals TWICE -- the model
+    # genuinely saw two different things -- while a re-read at the same
+    # completeness journals nothing, and a complete read followed by a partial
+    # one journals nothing further, mirroring the read-set's own refusal to
+    # downgrade. No record stream can replay as a downgrade.
+    #
+    # ONE path escapes that dedupe, and it is {ReadSet#complete?}'s doing
+    # rather than this method's: a MASKED path answers false to it forever, so
+    # the complete-read transition never closes and every re-read journals
+    # another line -- a per-iteration flood on exactly the redacted file the
+    # dedupe most wants to protect. Inherited unchanged from the decorator this
+    # replaced, and pinned by a spec of its own so it cannot drift in silence.
+    # Pinned is not blessed: whether the masked set should suppress the record
+    # too is a real question, and a separate one.
     #
     # @return [self]
     def record_read(path, complete: true)
-      @reads.record(normalize(path), complete:)
+      target = normalize(path)
+      transition = complete ? !@reads.complete?(target) : !@reads.recorded?(target)
+      @reads.record(target, complete:)
+      @journal << Telemetry::SessionRead.new(path: target, complete:) if transition
       self
     end
 
@@ -103,6 +143,15 @@ module Lain
     # facts arrive from different layers and only this one can arrive AFTER a
     # whole read was recorded. See {ReadSet} for why that forces a third set
     # rather than a retraction.
+    #
+    # Journals NO {Telemetry::SessionRead}: that record says only `complete:`,
+    # and {SessionRecord::Replay} folds each one through {#record_read}, which
+    # by construction cannot reach the masked set. A `complete: false` line
+    # here would therefore replay to a wholly-read path -- a record that LOOKS
+    # like the mask was persisted while a resumed session permits the very
+    # write the mask exists to refuse. {Middleware::RedactSecretReads} writes a
+    # {Telemetry::ReadRedacted} into this same journal at the same moment, and
+    # {SessionRecord::Replay#redactions} folds it back.
     #
     # @return [self]
     def record_masked_read(path)
@@ -136,6 +185,11 @@ module Lain
     # answers the edit-before-read contract, the write-set scopes the snapshot,
     # and a tool that did both says both.
     #
+    # Journals nothing. The write's record is the :snapshot event
+    # {Workspace::Snapshot} lands in the Store, which is IN-MEMORY, so a
+    # replayed session rebuilds with an empty write-set. Deliberate: a journal
+    # line here alone would be a half-copy naming blobs no replay can fetch.
+    #
     # @return [self]
     def record_write(path)
       @writes << normalize(path)
@@ -159,9 +213,19 @@ module Lain
     # already a content address, so unlike a path there is nothing to
     # normalize; interning keeps the set's members comparable as pointers.
     #
+    # Journaled in BOTH directions, unconditionally: the record stream is an
+    # ordered LOG, not a set of pin events, because a pin followed by an unpin
+    # has to rebuild as NOT pinned. Hence one record type carrying `pinned:`
+    # rather than two -- a reader folding in file order gets the retraction
+    # free. No first-time dedupe, unlike {#record_read}: a pin arrives from an
+    # operator command or a plan boundary, never from a read/edit loop, so
+    # there is no per-iteration flood to suppress, and suppressing a repeat
+    # would only make the log's order-sensitivity subtler.
+    #
     # @return [self]
     def record_pin(digest)
       @pins << named!(digest)
+      @journal << Telemetry::SessionPin.new(digest:, pinned: true)
       self
     end
 
@@ -172,6 +236,7 @@ module Lain
     # @return [self]
     def record_unpin(digest)
       @pins.delete(named!(digest))
+      @journal << Telemetry::SessionPin.new(digest:, pinned: false)
       self
     end
 
@@ -200,12 +265,16 @@ module Lain
     # list once and takes fifty more turns should not re-join the same strings
     # fifty times.
     #
+    # Journaled on every call, unconditionally and as the WHOLE list, so a
+    # replay folding in recorded order lands on the last list written.
+    #
     # @return [self]
     def write_todos(todos)
       list = todos.to_a
       @plan_step_completed = completed_count(list) > completed_count(@todo_items)
       @todo_items = list
       @todo_reminder = list.empty? ? nil : render_todos(list).freeze
+      @journal << Telemetry::TodoSnapshot.from(list)
       self
     end
 
@@ -230,6 +299,29 @@ module Lain
     # @return [Array<String>]
     def reminders
       (todo_reminders + manifest_reminders).freeze
+    end
+
+    # Attach the run's journal to a Session that already exists. The RESUMED
+    # case needs it: {SessionRecord::Replay} folds a record into a journal-less
+    # Session -- a journaled one would re-journal every line it just read --
+    # and only then does {CLI::Chronicle#wrap_session} hand it the new run's
+    # journal.
+    #
+    # Refused a second time, rather than merely documented as wiring-time-only:
+    # swapping a journal mid-run would split one run's record across two files,
+    # and neither half would say so. A Session already holding the Null channel
+    # has no record to split, which is why that is the one state this accepts.
+    #
+    # @return [self]
+    def journals_into(journal)
+      unless @journal.equal?(Channel::Null.instance)
+        raise ArgumentError,
+              "a session journals into one destination for the whole run, " \
+              "and this one already journals into a #{@journal.class}"
+      end
+
+      @journal = journal
+      self
     end
 
     private
@@ -374,13 +466,20 @@ module Lain
       # @return [Boolean]
       def masked?(path) = @masked.include?(path)
 
+      # "Recorded at all", which is the union {#paths} lists -- the predicate a
+      # PARTIAL read's journal transition tests against, since for it the
+      # transition is out of never-read, not out of not-yet-complete.
+      #
+      # @return [Boolean]
+      def recorded?(path) = @all.include?(path)
+
       # @return [Array<String>] every path recorded, complete or partial, sorted
       def paths = @all.sort.freeze
     end
 
     # The no-op Session, mirroring {Channel::Null} and {Sink::Null}, so no tool
     # ever writes an `if session` guard. A single shared frozen instance: it has
-    # no state to keep.
+    # no state to keep, and nothing to journal either.
     class Null
       # `complete:` is accepted and discarded, but it cannot be renamed to the
       # unused-argument underscore: it is a KEYWORD, so the name is the duck.
@@ -390,83 +489,60 @@ module Lain
         self
       end
 
-      # @return [false]
-      def read?(_path)
-        false
-      end
+      # @return [self]
+      def record_masked_read(_path) = self
 
       # @return [self]
-      def record_masked_read(_path)
-        self
-      end
+      def record_write(_path) = self
+
+      # @return [self]
+      def record_pin(_digest) = self
+
+      # @return [self]
+      def record_unpin(_digest) = self
+
+      # @return [self]
+      def write_todos(_todos) = self
+
+      # Accepted and discarded: {CLI::Chronicle#wrap_session} must be able to
+      # hand a journal to whatever Session the run holds, without asking first.
+      # No refusal on a second call either -- there is nothing here to split.
+      #
+      # @return [self]
+      def journals_into(_journal) = self
+
+      # @return [false]
+      def read?(_path) = false
 
       # False here AND from {#read?} is the "no read at all" answer, so the pair
       # stays mutually exclusive as it is on a real Session.
       #
       # @return [false]
-      def partially_read?(_path)
-        false
-      end
+      def partially_read?(_path) = false
 
       # @return [false]
-      def masked_read?(_path)
-        false
-      end
-
-      # @return [Array]
-      def reads
-        [].freeze
-      end
-
-      # @return [self]
-      def record_write(_path)
-        self
-      end
+      def masked_read?(_path) = false
 
       # @return [false]
-      def written?(_path)
-        false
-      end
-
-      # @return [Array]
-      def writes
-        [].freeze
-      end
-
-      # @return [self]
-      def record_pin(_digest)
-        self
-      end
-
-      # @return [self]
-      def record_unpin(_digest)
-        self
-      end
+      def written?(_path) = false
 
       # @return [false]
-      def pinned?(_digest)
-        false
-      end
-
-      # @return [Array]
-      def pins
-        [].freeze
-      end
-
-      # @return [self]
-      def write_todos(_todos)
-        self
-      end
+      def pinned?(_digest) = false
 
       # @return [false]
-      def plan_step_completed?
-        false
-      end
+      def plan_step_completed? = false
 
       # @return [Array]
-      def reminders
-        [].freeze
-      end
+      def reads = [].freeze
+
+      # @return [Array]
+      def writes = [].freeze
+
+      # @return [Array]
+      def pins = [].freeze
+
+      # @return [Array]
+      def reminders = [].freeze
 
       # Recomputed per call: the one shared frozen instance cannot capture a
       # working directory that may change under it, so a context-less tool still
@@ -478,162 +554,7 @@ module Lain
       INSTANCE = new.freeze
 
       # @return [Null] the shared instance
-      def self.instance
-        INSTANCE
-      end
-    end
-
-    # A Journal-duck decorator over a real Session, so {SessionRecord::Replay}
-    # can fold a fresh Session back to the same run-state. The seam is what
-    # keeps {Session} itself journal-ignorant.
-    #
-    # A read journals only the FIRST time {#read?} would flip false -> true for
-    # a path: a read/edit loop revisiting the same file every iteration must not
-    # become one journal line per iteration. A todo write journals every call,
-    # unconditionally, as the WHOLE list.
-    class Journaled
-      # @param session [Session] the real Session every call forwards to
-      # @param journal [#<<] where {Telemetry::SessionRead} /
-      #   {Telemetry::TodoSnapshot} land
-      def initialize(session:, journal:)
-        @session = session
-        @journal = journal
-      end
-
-      # The check-before-forward pair is fiber-safe: there is no yield point
-      # between the `read?` check and the Set mutation (both pure Ruby, no IO),
-      # and the journal write -- the only place a fiber COULD yield -- runs
-      # AFTER the mutation, so two fibers reading the same path cannot both see
-      # "first". The claim carries ToolRunner's gathered dispatch
-      # (docs/concurrency.md, "parallel tools") and is pinned by
-      # spec/lain/session_concurrency_spec.rb; if that spec can only pass by
-      # adding a lock here, the claim has failed -- escalate, do not patch.
-      # Anything that moves the journal write above the mutation breaks it
-      # silently.
-      #
-      # A line is journaled on a read-set STATE TRANSITION, not on a call, and
-      # with completeness there are two: nothing-to-recorded and
-      # partial-to-complete. So a partial read followed by a complete one
-      # journals TWICE, because the model genuinely saw two different things,
-      # while a re-read at the same completeness journals nothing. A complete
-      # read followed by a partial one journals nothing further, mirroring the
-      # read-set's own refusal to downgrade -- no record stream can ever replay
-      # as a downgrade.
-      #
-      # @return [self]
-      def record_read(path, complete: true)
-        transition = complete ? !@session.read?(path) : !recorded?(path)
-        @session.record_read(path, complete:)
-        @journal << Telemetry::SessionRead.new(path: normalized(path), complete:) if transition
-        self
-      end
-
-      # Forwards WITHOUT journaling a {Telemetry::SessionRead}, and the mask is
-      # still recorded -- as a different record, one layer out.
-      #
-      # `SessionRead` cannot carry it: it says only `complete:`, and
-      # {SessionRecord::Replay} folds each one through `record_read`, which by
-      # construction cannot reach the masked set. A `complete: false` line here
-      # would therefore replay to a wholly-read path -- a record that LOOKS like
-      # the mask was persisted while a resumed session permits the very write
-      # the mask exists to refuse. {Middleware::RedactSecretReads} writes a
-      # {Telemetry::ReadRedacted} into this same journal at the same moment, and
-      # {SessionRecord::Replay#redactions} folds it back.
-      #
-      # @return [self]
-      def record_masked_read(path)
-        @session.record_masked_read(path)
-        self
-      end
-
-      # @return [Boolean]
-      def read?(path) = @session.read?(path)
-
-      # @return [Boolean]
-      def partially_read?(path) = @session.partially_read?(path)
-
-      # @return [Boolean]
-      def masked_read?(path) = @session.masked_read?(path)
-
-      # @return [Array<String>]
-      def reads = @session.reads
-
-      # Forwards without journaling. The write's record is the :snapshot event
-      # {Workspace::Snapshot} lands in the Store, which is IN-MEMORY, so a
-      # replayed session rebuilds with an empty write-set. Deliberate: a journal
-      # line here alone would be a half-copy naming blobs no replay can fetch.
-      #
-      # @return [self]
-      def record_write(path)
-        @session.record_write(path)
-        self
-      end
-
-      # @return [Boolean]
-      def written?(path) = @session.written?(path)
-
-      # @return [Array<String>]
-      def writes = @session.writes
-
-      # BOTH directions, unconditionally: the record stream is an ordered LOG,
-      # not a set of pin events, because a pin followed by an unpin has to
-      # rebuild as NOT pinned. Hence one record type carrying `pinned:` rather
-      # than two -- a reader folding in file order gets the retraction free.
-      #
-      # No first-time dedupe, unlike {#record_read}: a pin arrives from an
-      # operator command or a plan boundary, never from a read/edit loop, so
-      # there is no per-iteration flood to suppress, and suppressing a repeat
-      # would only make the log's order-sensitivity subtler.
-      #
-      # @return [self]
-      def record_pin(digest)
-        @session.record_pin(digest)
-        @journal << Telemetry::SessionPin.new(digest:, pinned: true)
-        self
-      end
-
-      # @return [self]
-      def record_unpin(digest)
-        @session.record_unpin(digest)
-        @journal << Telemetry::SessionPin.new(digest:, pinned: false)
-        self
-      end
-
-      # @return [Boolean]
-      def pinned?(digest) = @session.pinned?(digest)
-
-      # @return [Array<String>]
-      def pins = @session.pins
-
-      # @return [self]
-      def write_todos(todos)
-        @session.write_todos(todos)
-        @journal << Telemetry::TodoSnapshot.from(todos)
-        self
-      end
-
-      # @return [Boolean]
-      def plan_step_completed? = @session.plan_step_completed?
-
-      # @return [Array<String>]
-      def reminders = @session.reminders
-
-      # @return [WorkerEnv] the wrapped session's host context, forwarded
-      #   untouched -- WorkerEnv is sent-not-stored, so there is nothing to
-      #   journal.
-      def worker_env = @session.worker_env
-
-      private
-
-      # The wrapped session's cwd, never the process's: the journaled path has
-      # to be the exact string the read-set now holds, or the Journal names a
-      # different file than {#read?} answers true for.
-      def normalized(path) = Session.normalize_path(path, cwd: @session.worker_env.cwd)
-
-      # "Recorded at all", the union {Session#reads} lists -- the predicate a
-      # PARTIAL read tests against, since for it the transition is out of
-      # never-read, not out of not-yet-complete.
-      def recorded?(path) = @session.read?(path) || @session.partially_read?(path)
+      def self.instance = INSTANCE
     end
   end
 end

@@ -220,7 +220,7 @@ RSpec.describe Lain::Workspace::Snapshot do
   end
 
   describe "the durable-record story stays a gap (accepted and ticketed)" do
-    # Session::Journaled#record_write deliberately writes no journal line, and
+    # Session#record_write deliberately writes no journal line, and
     # the Agent's DEFAULT snapshot writer observes with ChainWriter::Null --
     # nothing in lib/lain/cli wires Workspace::Snapshot to the Chronicle's
     # scribe observer. The Store is an in-memory Hash. Consequences, pinned:
@@ -235,7 +235,7 @@ RSpec.describe Lain::Workspace::Snapshot do
     # from the record as it stands.
     it "pins that record_write journals nothing" do
       journal = []
-      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled = Lain::Session.new(journal:)
 
       journaled.record_write("/tmp/app.rb")
 

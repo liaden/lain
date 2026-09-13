@@ -2,9 +2,8 @@
 
 module Lain
   module Telemetry
-    # The run-state records, all emitted by {Session::Journaled} -- the
-    # decorator that keeps {Session} itself journal-ignorant, so neither the
-    # Agent nor any tool ever constructs one directly.
+    # The run-state records, all emitted by {Session} as it records -- so
+    # neither the Agent nor any tool ever constructs one directly.
 
     module Carriers
       # A read record must name the file read, and say whether the model saw
@@ -62,7 +61,7 @@ module Lain
     SessionRead = Data.define(:path, :complete) do
       include Journalable
 
-      # `settle!` is safe on `path` because {Session::Journaled} normalizes it
+      # `settle!` is safe on `path` because {Session#record_read} normalizes it
       # through `File.expand_path` before it ever gets here, so what arrives is
       # a String; a Pathname would be refused rather than silently stringified.
       def initialize(path:, complete:) = super(**Carriers::SessionRead.settle!(path:, complete:))
@@ -97,8 +96,8 @@ module Lain
         attribute :todos, :lain_canonical
       end
 
-      # Built from the duck {Session#write_todos} itself accepts, so the
-      # decorator forwards its argument unchanged rather than pre-shaping it.
+      # Built from the duck {Session#write_todos} itself accepts, so the caller
+      # hands over the list it already has rather than pre-shaping it.
       def self.from(todos)
         new(todos: todos.map { |todo| { "content" => todo.content, "status" => todo.status } })
       end
