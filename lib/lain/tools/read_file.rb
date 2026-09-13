@@ -43,6 +43,8 @@ module Lain
     # is bounded against spending a context window by ACCIDENT, the window
     # against spending one deliberately without limit.
     class ReadFile < Tool
+      include Tool::FileTarget
+
       # 256 KiB for a whole read, measured against this repository rather than
       # guessed: the largest hand-written file tracked here is 231 KB, so
       # nothing a person authored is refused, while the one tracked file above
@@ -657,17 +659,14 @@ module Lain
       protected
 
       def perform(input, invocation)
-        session = session_of(invocation)
-        # The RESOLVED absolute path is what both the read and the read-set
-        # see, so the edit-before-write contract matches on the same file
-        # regardless of how the model spelled it.
-        path = File.expand_path(input.path, session.worker_env.cwd)
-        problem = problem_with(path)
+        path = target(invocation, input.path)
+        # `:regular_file` and not `:file`: the extra rule is a MEMORY guard,
+        # and this is the only tool that bounds a read by SIZE. See
+        # {Tool::FileTarget::IRREGULAR}.
+        problem = problem_with(path, expecting: :regular_file)
         return Tool::Result.error(problem) if problem
 
-        window_for(input).read(path).deliver(session, path)
-      rescue SystemCallError, IOError => e
-        Tool::Result.error("could not read #{path}: #{e.message}")
+        failing("read", path) { window_for(input).read(path).deliver(session_of(invocation), path) }
       end
 
       private
@@ -680,25 +679,6 @@ module Lain
         return Whole.instance if input.limit.nil? && (input.offset.nil? || input.offset == 1)
 
         Window.new(offset: input.offset, limit: input.limit)
-      end
-
-      # The regular-file check is a MEMORY guard wearing a validation's
-      # clothes, and must answer before the size does. `File.size` is 0 for a
-      # character device and for a fifo, so both sail through {WHOLE_BOUND}:
-      # measured under `ulimit -v`, `read_file /dev/zero` died with
-      # `NoMemoryError`, which is not a StandardError and so escapes both the
-      # rescue below and {Effect::Handler::Live}'s. A fifo does not even fail --
-      # it blocks until somebody writes.
-      #
-      # `File.file?` and not `File.ftype`, which uses `lstat` and would answer
-      # "link" for a symlink to a perfectly ordinary file.
-      def problem_with(path)
-        return "no such file: #{path}" unless File.exist?(path)
-        return "is a directory, not a file: #{path}" if File.directory?(path)
-        return "not a regular file (a device, socket or fifo has no size to bound): #{path}" unless File.file?(path)
-        return "file is not readable: #{path}" unless File.readable?(path)
-
-        nil
       end
     end
   end

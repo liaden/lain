@@ -40,6 +40,8 @@ module Lain
     # the in-process semantics: the daemon can apply .gitignore/.ignore and
     # Dir.glob cannot, so {CoreSearch} sends `respect_ignores: false`.
     class Grep < Tool
+      include Tool::FileTarget
+
       # Capped, not truncated silently -- {#format_matches} says so in the
       # result content.
       MAX_MATCHES = 200
@@ -216,8 +218,13 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = resolved_path(input, invocation)
-        problem = problem_with(path)
+        # The FILESYSTEM locator. The match LABELS keep the model's original
+        # spelling -- see {RubySearch#matching}.
+        path = target(invocation, input.path)
+        # Asked on THIS side whichever arm runs, so a missing or unreadable
+        # target reads identically and costs no round trip. `:either` because
+        # grep takes a file or a directory and says so in one sentence.
+        problem = problem_with(path, expecting: :either)
         return Tool::Result.error(problem) if problem
 
         Tool::Result.ok(format_matches(@search.call(path, input), input))
@@ -232,21 +239,6 @@ module Lain
       end
 
       private
-
-      # The FILESYSTEM locator. The match LABELS keep the model's original
-      # spelling -- see {RubySearch#matching}.
-      def resolved_path(input, invocation)
-        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
-      end
-
-      # Asked on THIS side whichever path runs, so a missing or unreadable
-      # target reads identically and costs no round trip.
-      def problem_with(path)
-        return "no such file or directory: #{path}" unless File.exist?(path)
-        return "not readable: #{path}" unless File.readable?(path)
-
-        nil
-      end
 
       # The daemon refusing a pattern its engine cannot compile is the
       # out-of-process spelling of {RubySearch}'s RegexpError, and the only

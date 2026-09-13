@@ -13,6 +13,8 @@ module Lain
     # brand-new file is unconditionally allowed; overwriting still demands the
     # same discipline, so a model cannot blind-clobber a file it never read.
     class WriteFile < Tool
+      include Tool::FileTarget
+
       # The wire shape: the path to write, and its full new contents.
       class Input < Tool::Input
         field :path, :string, description: "Path to the file to write.", required: true
@@ -26,7 +28,7 @@ module Lain
 
       # Resolved as {#perform} resolves it -- {Tools::EditFile::SUBJECT}'s
       # reason, mirrored.
-      SUBJECT = ->(input, invocation) { resolved_path(input, invocation) }
+      SUBJECT = ->(input, invocation) { target(invocation, input.path) }
       private_constant :SUBJECT
 
       # The masked case FIRST, and for a harder reason than {EditFile}'s: an
@@ -48,7 +50,7 @@ module Lain
                "what you saw, so writing it back would replace them with their placeholders. Nothing in " \
                "this session will lift that: report it and do something else",
                subject: SUBJECT) do |input, invocation|
-        !session_of(invocation).masked_read?(resolved_path(input, invocation))
+        !session_of(invocation).masked_read?(target(invocation, input.path))
       end
 
       # Only an OVERWRITE is guarded: a nonexistent path short-circuits the
@@ -57,7 +59,7 @@ module Lain
       # check-then-act, NOT a lock -- sound for the one-call-at-a-time model
       # this harness runs today, not in general against a concurrent writer.
       requires("%<subject>s exists and was never read this session", subject: SUBJECT) do |input, invocation|
-        path = resolved_path(input, invocation)
+        path = target(invocation, input.path)
         !File.exist?(path) || session_of(invocation).read?(path)
       end
 
@@ -74,24 +76,16 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = resolved_path(input, invocation)
-        File.write(path, input.content)
-        # The session now KNOWS this file's contents, so recording the read
-        # lets a following write_file or edit_file see it as read. The
-        # write-set mirrors edit_file's ({Workspace::Snapshot}: write-set only,
-        # the documented bash gap).
-        session_of(invocation).record_read(path).record_write(path)
-        Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
-      rescue SystemCallError, IOError => e
-        Tool::Result.error("could not write #{path}: #{e.message}")
-      end
-
-      private
-
-      # The RESOLVED path is what the contracts above, the write, the read-set
-      # and the refusals all agree on, whatever spelling the model sent.
-      def resolved_path(input, invocation)
-        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
+        path = target(invocation, input.path)
+        failing("write", path) do
+          File.write(path, input.content)
+          # The session now KNOWS this file's contents, so recording the read
+          # lets a following write_file or edit_file see it as read. The
+          # write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
+          # only, the documented bash gap).
+          session_of(invocation).record_read(path).record_write(path)
+          Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
+        end
       end
     end
   end

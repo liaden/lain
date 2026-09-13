@@ -15,6 +15,8 @@ module Lain
     # comment or a string literal is never reported. Nesting is deliberately
     # flat: each entry carries only its own line, ordered by position.
     class FileSymbols < Tool
+      include Tool::FileTarget
+
       # The only tool here with TWO bounds. DEFINITIONS and REFERENCES are
       # separate sections with separate true counts, so one shared bound taken
       # before the partition would let a definition-heavy file spend the whole
@@ -81,44 +83,23 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = resolved_path(input, invocation)
-        problem = problem_with(path)
+        path = target(invocation, input.path)
+        problem = problem_with(path, expecting: :file)
         return Tool::Result.error(problem) if problem
 
         language = input.language.downcase.to_sym
-        # `encoding:` is not decoration: a bare File.read tags its result with
-        # Encoding.default_external, US-ASCII under a C locale, so every
-        # ordinary UTF-8 file would come back mislabelled and the ext would
-        # refuse it -- truthfully but uselessly.
-        source = File.read(path, encoding: Encoding::UTF_8)
-        Tool::Result.ok(render(occurrences(source, language)))
+        # `EncodingError` rides the unreadable-file arm: the ext refuses a
+        # source it would have to transcode, because the byte offsets this tool
+        # turns into line numbers would then index a copy the caller never
+        # sees. To the model that is the same answer as any other "this file
+        # cannot be read", which is why it is handed to {#failing} rather than
+        # rescued apart.
+        failing("read", path, EncodingError) { Tool::Result.ok(render(occurrences(utf8_source(path), language))) }
       rescue Structural::Queries::Unsupported, Structural::Queries::Missing, Ext::TreeSitter::BadQuery => e
         Tool::Result.error(e.message)
-      # `EncodingError` joins the unreadable-file arm: the ext refuses a source
-      # it would have to transcode, because the byte offsets this tool turns
-      # into line numbers would then index a copy the caller never sees. To the
-      # model that is the same answer as any other "this file cannot be read".
-      rescue SystemCallError, IOError, EncodingError => e
-        Tool::Result.error("could not read #{path}: #{e.message}")
       end
 
       private
-
-      # Same rule, same shape, as {ReadFile} and {Grep#resolved_path}.
-      def resolved_path(input, invocation)
-        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
-      end
-
-      # A missing path, a directory, or an unreadable file is a reasonable
-      # question the model asked, so it earns an error Result rather than a
-      # raise.
-      def problem_with(path)
-        return "no such file: #{path}" unless File.exist?(path)
-        return "is a directory, not a file: #{path}" if File.directory?(path)
-        return "file is not readable: #{path}" unless File.readable?(path)
-
-        nil
-      end
 
       # A 1-based line, its kind, the role within that kind, and the identifier
       # text. Ext::TreeSitter returns a capture name of "<kind>.<role>", which

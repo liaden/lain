@@ -44,7 +44,7 @@ module Lain
         # answer filling the message's `%<subject>s` slot.
         #
         #   requires("%<subject>s was never read this session",
-        #            subject: ->(input, invocation) { resolved_path(input, invocation) }) { ... }
+        #            subject: ->(input, invocation) { target(invocation, input.path) }) { ... }
         def requires(message, subject: nil, &predicate)
           own_preconditions << build_contract(message, predicate, subject)
         end
@@ -167,7 +167,7 @@ module Lain
 
       # A static message is already the sentence; a `subject:`-carrying one is a
       # thunk, asked here so it resolves as the TOOL -- which is what puts a
-      # private resolver like `EditFile#resolved_path` in its reach.
+      # private helper like {Tool::FileTarget}'s `#target` in its reach.
       def sentence(contract, input, context)
         phrasing = contract.message
         return phrasing unless phrasing.respond_to?(:call)

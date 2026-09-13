@@ -40,6 +40,8 @@ module Lain
     # rejected, same as it would be for `read_file` or `list_files`; what a
     # denied path loses is its row in the answer, not the walk that found it.
     class Glob < Tool
+      include Tool::FileTarget
+
       # A glob is an ENUMERATION under {Tool::Bounds}' stated boundary: its
       # rows are independent answers, so the first N ARE a usable partial answer
       # and the model can narrow the pattern itself. It caps and discloses in
@@ -99,8 +101,10 @@ module Lain
 
       def perform(input, invocation)
         # The base resolves against the session's WorkerEnv cwd, which is
-        # `Dir.pwd` under the default, so the rows stay base-relative.
-        base = File.expand_path(input.path || ".", session_of(invocation).worker_env.cwd)
+        # `Dir.pwd` under the default, so the rows stay base-relative. An
+        # absent path IS that cwd -- {Lain::WorkerEnv#resolve}'s nil arm, which
+        # this tool used to respell as `input.path || "."`.
+        base = target(invocation, input.path)
         found = matches(base, input.pattern)
         Tool::Result.ok(found.empty? ? self.class.no_matches_message(input.pattern, base) : found.join("\n"))
       end

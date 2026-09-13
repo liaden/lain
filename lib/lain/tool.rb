@@ -380,6 +380,7 @@ module Lain
   end
 end
 
+require_relative "tool/file_target"
 require_relative "tool/bounds"
 require_relative "tool/bounds/walk_cap"
 require_relative "tool/input"

@@ -15,6 +15,8 @@ module Lain
     # Occurrences are counted with overlap ("aa" occurs twice in "aaa"), so
     # "exactly once" means what the model reads it to mean.
     class EditFile < Tool
+      include Tool::FileTarget
+
       # The wire shape: the path to edit, the exact text to find, and its
       # replacement.
       class Input < Tool::Input
@@ -28,9 +30,9 @@ module Lain
 
       # Resolved exactly as {#perform} resolves it, so a message names the path
       # that would have been written rather than whatever spelling the model
-      # sent. {Tool::Contracts} asks this AS the tool, which is what puts the
-      # private resolver in its reach.
-      SUBJECT = ->(input, invocation) { resolved_path(input, invocation) }
+      # sent. {Tool::Contracts} asks this AS the tool, which is what puts
+      # {Tool::FileTarget}'s private resolver in its reach.
+      SUBJECT = ->(input, invocation) { target(invocation, input.path) }
       private_constant :SUBJECT
 
       # THREE contracts, not one, because {Lain::Session} answers three
@@ -56,7 +58,7 @@ module Lain
                "what you saw, so editing it would clobber bytes you never read. Nothing in this session " \
                "will lift that, and re-reading will not: report it and do something else",
                subject: SUBJECT) do |input, invocation|
-        !session_of(invocation).masked_read?(resolved_path(input, invocation))
+        !session_of(invocation).masked_read?(target(invocation, input.path))
       end
 
       # The mirror image of the one above: here the missing bytes are missing
@@ -73,11 +75,11 @@ module Lain
                "part of the file, so editing it would clobber lines you never saw. Read it again with " \
                "no offset and no limit, or with a window covering the whole file, then edit",
                subject: SUBJECT) do |input, invocation|
-        !session_of(invocation).partially_read?(resolved_path(input, invocation))
+        !session_of(invocation).partially_read?(target(invocation, input.path))
       end
 
       requires("%<subject>s was never read this session", subject: SUBJECT) do |input, invocation|
-        session_of(invocation).read?(resolved_path(input, invocation))
+        session_of(invocation).read?(target(invocation, input.path))
       end
 
       def name = "edit_file"
@@ -95,16 +97,22 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = resolved_path(input, invocation)
+        path = target(invocation, input.path)
+        failing("edit", path) { replacing(input, invocation, path) }
+      end
+
+      private
+
+      # A block-form replacement, not `sub(pattern, new_string)`: the two-arg
+      # form interpolates `\1`-style back-references out of new_string even
+      # though old_string is a literal, so a model-supplied new_string holding
+      # a literal backslash-digit would be silently mangled. The block's return
+      # value is used verbatim.
+      def replacing(input, invocation, path)
         contents = File.read(path)
         occurrences = occurrences_of(input.old_string, contents)
         return Tool::Result.error(ambiguity_message(occurrences, path)) unless occurrences == 1
 
-        # A block-form replacement, not `sub(pattern, new_string)`: the
-        # two-arg form interpolates `\1`-style back-references out of
-        # new_string even though old_string is a literal, so a model-supplied
-        # new_string holding a literal backslash-digit would be silently
-        # mangled. The block's return value is used verbatim.
         File.write(path, contents.sub(input.old_string) { input.new_string })
         # The read-set entry is refreshed so a later edit_file call still sees
         # this path as read, and the write-set records it as this session's
@@ -112,17 +120,6 @@ module Lain
         # bash gap).
         session_of(invocation).record_read(path).record_write(path)
         Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
-      rescue SystemCallError, IOError => e
-        Tool::Result.error("could not edit #{path}: #{e.message}")
-      end
-
-      private
-
-      # The RESOLVED absolute path is what the read-before-write contract, the
-      # read, the write and the read-set all agree on, whatever spelling the
-      # model sent.
-      def resolved_path(input, invocation)
-        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
       end
 
       # `String#scan` counts NON-overlapping matches, which would call "aa" in

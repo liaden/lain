@@ -3377,6 +3377,26 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
       expect(result).to be_ok
       expect(result.content).to include("exit status: 0")
     end
+
+    # {Lain::Tool::FileTarget} is a MIXIN, so nothing constructs it and no spec
+    # of its own can prove the floor's tools really carry it. This drives the
+    # read_file the floor built -- no double anywhere below the assembler --
+    # against a session whose cwd is not the process's, which is the one
+    # observable difference between resolving through the seam and resolving
+    # against Dir.pwd the way these tools each used to.
+    it "gives the floor's file tools the session's cwd to resolve against" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "a.txt"), "inside the session cwd\n")
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: ENV.to_h))
+        read_file = described_class.build(recorder).find { |tool| tool.name == "read_file" }
+
+        result = read_file.call({ path: "a.txt" },
+                                Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session))
+
+        expect(result).to be_ok
+        expect(result.content).to include("inside the session cwd")
+      end
+    end
   end
 end
 

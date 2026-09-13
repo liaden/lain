@@ -16,6 +16,8 @@ module Lain
     # A malformed pattern, an unknown query, or an unsupported language is
     # reported as an error {Tool::Result}, never a raise.
     class AstSearch < Tool
+      include Tool::FileTarget
+
       # Same rationale and same number as {Grep::MAX_MATCHES}: capped, not
       # silently truncated -- {#format_matches} says so in the body.
       MAX_MATCHES = 200
@@ -85,8 +87,14 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = resolved_path(input, invocation)
-        problem = problem_with(input, path)
+        # The FILESYSTEM locator, matching {Grep}: every MODEL-FACING mention
+        # of the path keeps the model's original spelling instead. An ERROR is
+        # the one exception, naming the resolved path, because "where did it
+        # actually look" is the whole content of that message.
+        path = target(invocation, input.path)
+        # The target rules first and the input-shape rules second, which is the
+        # order this tool has always refused in.
+        problem = problem_with(path, expecting: :either) || badly_shaped(input)
         return Tool::Result.error(problem) if problem
 
         language = input.language.downcase.to_sym
@@ -104,14 +112,6 @@ module Lain
 
       private
 
-      # The FILESYSTEM locator, matching {Grep}: every MODEL-FACING mention of
-      # the path keeps the model's original spelling instead. An ERROR is the
-      # one exception, naming the resolved path, because "where did it actually
-      # look" is the whole content of that message.
-      def resolved_path(input, invocation)
-        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
-      end
-
       # {WALK_CAP} owns the one-more-than-the-limit pull, so this stays a
       # single delegation -- the discipline of parsing no file past what the
       # cap needs lives on {Tool::Bounds::WalkCap#apply}, not here.
@@ -119,9 +119,9 @@ module Lain
         WALK_CAP.apply(deduplicate(search(path, display, language, patterns)))
       end
 
-      def problem_with(input, path)
-        return "no such file or directory: #{path}" unless File.exist?(path)
-        return "not readable: #{path}" unless File.readable?(path)
+      # The two rules {Tool::FileTarget} cannot own, because they are about
+      # this tool's INPUT rather than about its target.
+      def badly_shaped(input)
         return "give exactly one of pattern or query, not both" if present?(input.pattern) && present?(input.query)
         unless present?(input.pattern) || present?(input.query)
           return "give one of pattern (a raw ast-grep pattern) or query (a catalog name)"
@@ -199,12 +199,8 @@ module Lain
         entry.split("/").intersect?(%w[. .. .git])
       end
 
-      # `encoding:` is not decoration: a bare File.read tags its result with
-      # Encoding.default_external, US-ASCII under a C locale, so every ordinary
-      # UTF-8 source file would come back mislabelled and the ext would refuse
-      # it. The file is source code; source code is UTF-8; say so at the read.
       def each_structural_match(matcher, file, language, patterns)
-        source = File.read(file, encoding: Encoding::UTF_8)
+        source = utf8_source(file)
         patterns.each do |pattern|
           matcher.match(source:, language:, pattern:).each do |m|
             yield(m.line, line_text(source, m.line), m.captures)

@@ -6,6 +6,8 @@ module Lain
     # Ruby, no subprocess. {Glob} carries the note on why no tier-1 tool checks
     # a path and where the secret boundary actually sits.
     class ListFiles < Tool
+      include Tool::FileTarget
+
       # The wire shape: a required path, plus an optional recursion flag.
       class Input < Tool::Input
         field :path, :string, description: "Directory to list.", required: true
@@ -62,28 +64,19 @@ module Lain
       protected
 
       def perform(input, invocation)
-        # A relative path resolves against the session's WorkerEnv cwd; an
-        # absolute one is honored as given. Entries stay relative to the
-        # resolved root, so the model-visible listing reads the same either way.
-        path = File.expand_path(input.path, session_of(invocation).worker_env.cwd)
-        problem = problem_with(path)
+        # Entries stay relative to the RESOLVED root, so the model-visible
+        # listing reads the same however the model spelled the path.
+        path = target(invocation, input.path)
+        problem = problem_with(path, expecting: :directory)
         return Tool::Result.error(problem) if problem
 
-        listing = entries(path, input.recursive)
-        Tool::Result.ok(listing.empty? ? self.class.empty_message(path) : listing.join("\n"))
-      rescue SystemCallError => e
-        Tool::Result.error("could not list #{path}: #{e.message}")
+        failing("list", path) do
+          listing = entries(path, input.recursive)
+          Tool::Result.ok(listing.empty? ? self.class.empty_message(path) : listing.join("\n"))
+        end
       end
 
       private
-
-      def problem_with(path)
-        return "no such directory: #{path}" unless File.exist?(path)
-        return "not a directory: #{path}" unless File.directory?(path)
-        return "directory is not readable: #{path}" unless File.readable?(path)
-
-        nil
-      end
 
       # `**` with FNM_DOTMATCH visits the directory itself as "." but never
       # loops into "..", so filtering the two dot entries is all that keeps the
