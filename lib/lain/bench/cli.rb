@@ -370,9 +370,16 @@ module Lain
 
       # Variance's construction-time guards (n>=2) speak in recordings; the
       # experimenter typed paths, so restore them to the message.
+      #
+      # Compare's two COMPARABILITY guards are here for the same reason and were
+      # not: each names the runs it refused ("manual → plan vs manual → auto",
+      # "[] vs [:prompt_caching]") and neither names a file, so pointing this at
+      # a directory of a dozen sessions refused with nothing to act on. Both are
+      # Lain::Errors rather than ArgumentErrors, which is how they sailed past
+      # the narrower rescue this widens.
       def build_variance(recordings, paths, price_book)
         Variance.new(recordings:, price_book:)
-      rescue ArgumentError => e
+      rescue ArgumentError, Error => e
         raise Refusal, "#{paths.join(", ")}: #{e.message}"
       end
 

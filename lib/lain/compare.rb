@@ -9,11 +9,19 @@ module Lain
   # cache-hit ratio, cost, grader score -- into a distribution across the runs
   # and reports mean/median/min/max.
   #
-  # It also REFUSES, up front, to compare runs whose {Capability::DegradedSet}s
-  # differ. If one arm silently lost `:thinking` and the other kept it, half the
-  # tactic under study never ran on that arm and the comparison measures the
-  # missing capability, not the variable. {Capability::Guard} raises rather than
-  # reports -- a lie you can read is worse than an error you cannot ignore.
+  # It also REFUSES, up front, on the two axes that decide whether these runs
+  # were comparable at all. {Capability::DegradedSet}: if one arm silently lost
+  # `:thinking` and the other kept it, half the tactic under study never ran on
+  # that arm and the comparison measures the missing capability, not the
+  # variable. {Posture}: a `plan` run never saw the editing tools and an `auto`
+  # run never stopped for a human, so a distribution across the two measures
+  # the ladder rung. Both raise rather than report -- a lie you can read is
+  # worse than an error you cannot ignore.
+  #
+  # Both arrive as arguments a caller must thread, and a caller that forgets
+  # one gets a vacuous pass rather than a failure. {Bench::Variance} reads both
+  # off each recording's own journal ({Bench::Session::Recording}) for exactly
+  # that reason.
   #
   # The report is a DX artifact, not a debug dump: a scannable per-metric table,
   # returned as a String (nothing here touches stdout).

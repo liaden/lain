@@ -73,7 +73,7 @@ module Lain
             context:, context_class: header.fetch("context_class"),
             toolset:, workspace:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
-            degraded:, memory:, open: open?
+            degraded:, posture:, memory:, open: open?
           )
         end
 
@@ -271,6 +271,25 @@ module Lain
           Capability::DegradedSet.new(
             of_type("capability_degraded").map { |record| record.fetch("capability") }
           )
+        end
+
+        # The rung this run walked, off the flips it journaled. {Posture} owns
+        # the discriminator and the chaining refusal; what this adds is the
+        # vocabulary those refusals have to arrive in.
+        #
+        # Every session load comes through here, not just the bench's:
+        # {CLI::Resume} and {Supervisor::Restart} rebuild from this class too,
+        # and all three callers rescue {Corrupt} BY NAME. A damaged flip left to
+        # escape as a bare Lain::Error or ArgumentError would make a chat
+        # session unresumable over one rotten line, with a raw backtrace and no
+        # file named on it -- the exact asymmetry {CLI::Resume#fork}'s own
+        # comment records paying for once already. Interleaved records are
+        # ordinary under fan-out, so this is a real input class, not a
+        # hypothetical one.
+        def posture
+          Compare::Posture.from_journal(of_type(Compare::Posture::RECORD_TYPE))
+        rescue Error, ArgumentError => e
+          raise Corrupt, "damaged #{Compare::Posture::RECORD_TYPE.inspect} record: #{e.message}"
         end
 
         def memory

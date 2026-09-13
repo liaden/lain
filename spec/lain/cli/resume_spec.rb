@@ -860,6 +860,35 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # The Loader folds the run's posture off its own mode_switch records now, so
+    # Posture's chaining and ladder refusals reach EVERY session load rather than
+    # only `bench variance`. This door rescues Corrupt by name; anything else
+    # makes a chat session unresumable over one bad line, with a backtrace and
+    # no file on it -- which is the asymmetry the examples above exist to close.
+    describe "a damaged mode_switch record" do
+      def resume_over(*flips)
+        write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: flips)
+        resume.call
+      end
+
+      it "refuses an unchainable pair namedly, never a raw Lain::Error" do
+        expect do
+          resume_over({ "type" => "mode_switch", "from" => "plan", "to" => "manual" },
+                      { "type" => "mode_switch", "from" => "auto", "to" => "plan" })
+        end.to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*mode_switch/m)
+      end
+
+      it "refuses a posture off the ladder namedly, never a raw ArgumentError" do
+        expect { resume_over({ "type" => "mode_switch", "from" => "manual", "to" => "pIan" }) }
+          .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*pIan/m)
+      end
+
+      it "refuses a flip missing its `from` namedly, never a raw ArgumentError" do
+        expect { resume_over({ "type" => "mode_switch", "to" => "plan" }) }
+          .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
+      end
+    end
+
     it "refuses a pre-scribe (headerless, --nvim-era) journal namedly" do
       write_session("20260101T000000-1.ndjson", [{ "type" => "request_sent", "digest" => "blake3:#{"a" * 64}" }])
 

@@ -204,7 +204,8 @@ RSpec.describe Lain::Bench::Session do
       recording = load_session
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context context_class toolset workspace baseline ledger_index degraded open messages].each do |member|
+      %i[context context_class toolset workspace baseline ledger_index degraded posture open messages]
+        .each do |member|
         expect(recording.public_send(member)).to be_deeply_frozen
       end
     end
@@ -307,6 +308,24 @@ RSpec.describe Lain::Bench::Session do
         capability: :prompt_caching, requirer: "CacheBreakpoints", provider: "Provider::Mock"
       )
       expect(load_session.degraded).to include(:prompt_caching)
+    end
+  end
+
+  # A run's posture is the same kind of fact its degraded set is -- what makes
+  # two recordings comparable at all -- so it loads off the same journal and
+  # rides on the Recording beside it.
+  describe "the recorded posture" do
+    it "folds mode_switch records into the Recording's posture trajectory" do
+      write_session
+      journal << Lain::Telemetry::ModeSwitch.new(from: :manual, to: :plan, from_layers: [], to_layers: [],
+                                                 surface: "tty", toolset_digest: toolset.digest,
+                                                 tool_names: toolset.names)
+      expect(load_session.posture.to_s).to eq("manual → plan")
+    end
+
+    it "answers unrecorded for a session that journaled no mode switch" do
+      write_session
+      expect(load_session.posture).to eq(Lain::Compare::Posture::UNRECORDED)
     end
   end
 

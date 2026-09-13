@@ -190,6 +190,39 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # Compare's two comparability guards speak in the RECORDINGS' vocabulary and
+    # name no file, so an experimenter who pointed this at a directory of twelve
+    # sessions reads "manual → plan vs manual → auto" with no way back to the
+    # two at fault. Only this layer still holds the paths -- the same sentence
+    # the orphan-baseline refusal above is built on.
+    describe "refusing recordings that are not comparable" do
+      # `fixture_dir` is a local of the enclosing block, so these stay inline
+      # rather than becoming `def` helpers, which would not close over it.
+      let(:flip) { { "type" => "mode_switch", "from" => "manual" } }
+
+      it "refuses recordings under different postures as a Refusal naming the sources" do
+        Dir.mktmpdir do |tmp|
+          { "one.ndjson" => "plan", "two.ndjson" => "auto" }.each do |name, to|
+            File.write(File.join(tmp, name),
+                       File.read(File.join(fixture_dir, name)) + "#{JSON.generate(flip.merge("to" => to))}\n")
+          end
+          expect { cli.variance_report([tmp]) }
+            .to raise_error(described_class::Refusal, /one\.ndjson.*two\.ndjson.*manual → plan.*manual → auto/m)
+        end
+      end
+
+      it "refuses recordings whose degraded sets differ as a Refusal naming the sources" do
+        Dir.mktmpdir do |tmp|
+          FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
+          degraded = { "type" => "capability_degraded", "capability" => "prompt_caching" }
+          File.write(File.join(tmp, "two.ndjson"),
+                     File.read(File.join(fixture_dir, "two.ndjson")) + "#{JSON.generate(degraded)}\n")
+          expect { cli.variance_report([tmp]) }
+            .to raise_error(described_class::Refusal, /one\.ndjson.*two\.ndjson/m)
+        end
+      end
+    end
+
     it "refuses a missing session file with a Refusal, not a raw ENOENT" do
       expect do
         cli.variance_report([File.join(fixture_dir, "absent.ndjson"), File.join(fixture_dir, "one.ndjson")])

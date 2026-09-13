@@ -38,16 +38,26 @@ RSpec.describe Lain::Bench::Variance do
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what the driver will hold.
-  def record(responses, degrade: nil)
-    Lain::Bench::Session.load(session_bytes(responses, degrade:).each_line)
+  def record(responses, degrade: nil, flips: [])
+    Lain::Bench::Session.load(session_bytes(responses, degrade:, flips:).each_line)
   end
 
-  def session_bytes(responses, degrade: nil)
+  def session_bytes(responses, degrade: nil, flips: [])
     io = StringIO.new
     journal = Lain::Journal.new(io:)
+    flip!(journal, flips)
     run_and_write(journal, responses)
     degrade!(journal, degrade)
     io.string
+  end
+
+  # `/mode` flips land on the run's own journal as they happen, which is the
+  # only evidence a recording carries of the rung it ran on.
+  def flip!(journal, flips)
+    flips.each do |from, to|
+      journal << Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers: [], to_layers: [], surface: "tty",
+                                                 toolset_digest: toolset.digest, tool_names: toolset.names)
+    end
   end
 
   def run_and_write(journal, responses)
@@ -147,6 +157,31 @@ RSpec.describe Lain::Bench::Variance do
       degraded = record([tool_response("tu_1", "hi"), text_response("done")], degrade: :prompt_caching)
       expect { described_class.new(recordings: [reference, degraded]) }
         .to raise_error(Lain::Capability::Guard::Mismatch)
+    end
+
+    # The posture is the same kind of fact the degraded set is: a `plan` run
+    # never saw the editing tools and an `auto` run never stopped for a human,
+    # so a distribution drawn across the two measures the ladder rung rather
+    # than the variable. Until the Recording carried a posture this guard was
+    # unreachable from every caller in the tree.
+    it "raises when the recordings' journals record different postures" do
+      planned = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual plan]])
+      automatic = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual auto]])
+      expect { described_class.new(recordings: [planned, automatic]) }
+        .to raise_error(Lain::Error, /manual → plan.*manual → auto/m)
+    end
+
+    it "compares recordings that walked the same posture trajectory, and names it" do
+      pair = Array.new(2) do
+        record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual plan]])
+      end
+      expect(described_class.new(recordings: pair).report).to include("posture: manual → plan")
+    end
+
+    # Every fixture in the repo predates modes, so absence has to stay sayable:
+    # the report names it rather than implying the axis was controlled for.
+    it "reports an unrecorded posture for recordings whose journals hold no mode switch" do
+      expect(described_class.new(recordings: [reference, diverging]).report).to include("posture: not recorded")
     end
   end
 

@@ -57,6 +57,51 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.degraded).to include(:prompt_caching)
     end
 
+    # The posture rides on the same journal the degraded set does, and for the
+    # same reason: it is what makes two recordings comparable at all, so a
+    # Recording that could not answer it left Compare's guard unable to fire.
+    it "folds mode_switch records into the recorded posture trajectory" do
+      flips = [{ "type" => "mode_switch", "from" => "manual", "to" => "plan" },
+               { "type" => "mode_switch", "from" => "plan", "to" => "auto" }]
+      lines = entries.to_a + flips.map { |flip| "#{JSON.generate(flip)}\n" }
+      expect(described_class.new(lines).recording.posture.to_s).to eq("manual → plan → auto")
+    end
+
+    it "answers an unrecorded posture for a journal holding no mode_switch record" do
+      expect(recording.posture).to eq(Lain::Compare::Posture::UNRECORDED)
+    end
+
+    # Folding the posture HERE puts Posture's own refusals on every session
+    # load, not just the bench's: `lain chat --resume` (CLI::Resume#rebuild) and
+    # Supervisor::Restart#replay both come through this class, and all three
+    # callers rescue Corrupt BY NAME. A damaged flip escaping as a bare
+    # Lain::Error or ArgumentError makes a chat session unresumable with a raw
+    # backtrace over one bad line -- and Posture's own docstring calls
+    # interleaved records ordinary under fan-out, so this is a real input class.
+    describe "a damaged mode_switch record" do
+      def loaded_with(*flips)
+        lines = entries.to_a + flips.map { |flip| "#{JSON.generate(flip)}\n" }
+        described_class.new(lines).recording
+      end
+
+      it "refuses an unchainable pair as Corrupt, not as a bare Lain::Error" do
+        expect do
+          loaded_with({ "type" => "mode_switch", "from" => "plan", "to" => "manual" },
+                      { "type" => "mode_switch", "from" => "auto", "to" => "plan" })
+        end.to raise_error(Lain::Bench::Session::Corrupt, /mode_switch/)
+      end
+
+      it "refuses a posture name off the ladder as Corrupt, not as a bare ArgumentError" do
+        expect { loaded_with({ "type" => "mode_switch", "from" => "manual", "to" => "pIan" }) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /pIan/)
+      end
+
+      it "refuses a flip missing its `from` as Corrupt, not as a bare ArgumentError" do
+        expect { loaded_with({ "type" => "mode_switch", "to" => "plan" }) }
+          .to raise_error(Lain::Bench::Session::Corrupt)
+      end
+    end
+
     it "accepts already-parsed Hash entries, not only raw lines" do
       hashes = entries.map { |line| JSON.parse(line) }
       expect(described_class.new(hashes).recording.timeline.head_digest).to eq(agent.timeline.head_digest)

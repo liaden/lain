@@ -49,8 +49,8 @@ module Lain
     # recorded digest, and folds its turns and `message` records in BEFORE this
     # file's own, so {Recording#timeline} is one continuous conversation across
     # the chain. Only the Timeline and the `message` events merge that way;
-    # `baseline`, `degraded`, `memory` and `ledger_index` stay scoped to the
-    # file actually loaded, which is this format's current limit.
+    # `baseline`, `degraded`, `posture`, `memory` and `ledger_index` stay scoped
+    # to the file actually loaded, which is this format's current limit.
     class Session
       # A session file whose records no longer cohere: a turn or request_sent
       # whose content re-derives to a different digest than the one recorded
@@ -119,13 +119,22 @@ module Lain
       # unverified-prefix shape; `messages` is the session's re-put
       # :message/:spawn events, root-first like `baseline`, holding the SAME
       # Store {timeline} does.
+      #
+      # `posture` is the rung this run walked, folded off the same journal
+      # `degraded` comes from and carried for the same reason: each is a fact
+      # about what makes two recordings COMPARABLE, not a measurement of one.
+      # Required, exactly as `degraded` is, and deliberately given no default:
+      # {Compare::Posture::UNRECORDED} is a true Null Object, but a DEFAULT of
+      # it would let a future rebuild forget the axis and ship a comparison that
+      # silently agrees with everything -- which is the vacuous-pass shape
+      # {Compare}'s own docstring warns a caller about.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
-                              :timeline, :baseline, :ledger_index, :degraded, :memory,
+                              :timeline, :baseline, :ledger_index, :degraded, :posture, :memory,
                               :open, :messages) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, memory:, open:, messages:)
+                       degraded:, posture:, memory:, open:, messages:)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
-                timeline:, baseline: baseline.freeze, ledger_index:, degraded:, memory:,
+                timeline:, baseline: baseline.freeze, ledger_index:, degraded:, posture:, memory:,
                 open:, messages: messages.freeze)
         end
 
