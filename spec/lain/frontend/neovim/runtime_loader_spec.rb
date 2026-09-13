@@ -16,6 +16,12 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
   # A chunk head and modules under our own roof, so ordering and discovery are
   # asserted against files this example wrote rather than against the real
   # runtime, whose module list changes with every card that adds a capability.
+  # The real {HEAD} always creates `_G.__lain` before a single module runs;
+  # `PUBLISH_LOCATE` assumes that, the way every real module already does.
+  # A fixture head that skipped it would be testing a chunk shape the real
+  # runtime never produces.
+  def lain_namespace_head = "_G.__lain = _G.__lain or {}\n"
+
   def loader_over(files, head: "-- head\n")
     dir = Dir.mktmpdir("lain-runtime-modules")
     head_path = File.join(dir, "head.lua")
@@ -161,40 +167,6 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
     end
   end
 
-  # A broken module reports `[string "<nvim>"]:566` -- no filename, and since the
-  # split that number no longer indexes runtime.lua either. Pre-split it did, so
-  # this is a regression the concatenation introduced and this method repays.
-  describe "#locate" do
-    subject(:loader) { described_class.new }
-
-    it "names the module a chunk line came from, and the line within it" do
-      chunk = loader.source.lines
-      target = chunk.index { |line| line.include?("function _G.__lain.open_review") } + 1
-      name, line = loader.locate(target)
-
-      expect(name).to eq("65_review.lua")
-      expect(File.readlines(File.join(described_class::MODULES, name))[line - 1])
-        .to include("function _G.__lain.open_review")
-    end
-
-    it "attributes the first line to the chunk head" do
-      expect(loader.locate(1)).to eq(["runtime.lua", 1])
-    end
-
-    it "refuses a line past the end of the chunk" do
-      expect { loader.locate(loader.source.lines.size + 1) }.to raise_error(/outside the injected chunk/)
-    end
-
-    # The blank `join("\n")` leaves between two modules is inside the chunk and
-    # inside no module. Calling that "outside the injected chunk" contradicted the
-    # line number in the same sentence.
-    it "names a separator line as a separator, not as outside the chunk" do
-      head_lines = File.readlines(described_class::HEAD).size
-      expect { loader.locate(head_lines + 1) }
-        .to raise_error(/is the blank separator before 00_constants\.lua/)
-    end
-  end
-
   describe "the runtime it assembles" do
     it "holds the real runtime's modules" do
       expect(described_class.new.module_paths).not_to be_empty
@@ -280,6 +252,102 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
         wait_until { inspector.get_var("lain_rpc_version") == Lain::Frontend::Neovim::PROTOCOL }
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
+      end
+    end
+
+    # The offset arithmetic used to be a tool a human had to remember to reach
+    # for: given a bare `[string "<nvim>"]:5600`, call `#locate(5600)` and read
+    # off "97_boom.lua", line 2. A spec that only checked `#locate` returned the
+    # right pair would pass even if the runtime never called it -- this is the
+    # one that proves the runtime says it about itself, unprompted, against a
+    # real editor executing the real chunk.
+    it "names the module and line a deliberate error came from, unprompted" do
+      loader_over({ "10_boom.lua" => <<~LUA }, head: lain_namespace_head) do |loader, _modules|
+        local function deliberate()
+          error("deliberate failure for testing")
+        end
+        deliberate()
+      LUA
+        expect { inspector.exec_lua(loader.source, []) }
+          .to raise_error(/10_boom\.lua:2: deliberate failure for testing/)
+      end
+    end
+
+    # `xpcall`'s handler is the ONLY moment the failing stack is still live --
+    # an identity handler (return the message, unchanged) followed by a bare
+    # `error(msg, 0)` back at the top level reports the RE-RAISE site, not the
+    # fault. `debug.traceback`, called from inside the handler, is what keeps
+    # the real chain: this asserts BOTH frames survive translation, not just
+    # the top one a single-frame fixture could not tell apart from a lucky
+    # re-raise line.
+    it "keeps the real call chain, not the site the re-raise happens to land on" do
+      loader_over({ "10_deep.lua" => <<~LUA }, head: lain_namespace_head) do |loader, _modules|
+        local function inner()
+          error("deep boom")
+        end
+        local function outer()
+          inner()
+        end
+        outer()
+      LUA
+        expect { inspector.exec_lua(loader.source, []) }.to raise_error do |error|
+          expect(error.message).to include("10_deep.lua:2: deep boom")
+          expect(error.message).to include("10_deep.lua:2: in function 'inner'")
+          expect(error.message).to include("10_deep.lua:5: in function 'outer'")
+        end
+      end
+    end
+
+    # Nearly every real error in a live cockpit is this shape: a function a
+    # module DEFINED at load time, called later by nvim (a command, an
+    # autocmd, a rail) once `xpcall` has already returned -- so the `xpcall`
+    # wrapper never sees it, and only `_G.__lain.locate`, called on the raw
+    # message after the fact, can still name the module. A spec asserting only
+    # the load-time shape would pass while this path stayed silently broken.
+    it "still names the module for an error raised after load time, on request" do
+      loader_over({ "10_later.lua" => <<~LUA }, head: lain_namespace_head) do |loader, _modules|
+        _G.__lain.deferred_boom = function()
+          error("deferred boom")
+        end
+      LUA
+        inspector.exec_lua(loader.source, [])
+
+        raw = begin
+          inspector.exec_lua("_G.__lain.deferred_boom()", [])
+          nil
+        rescue StandardError => e
+          e.message.delete_prefix("Lua: ")
+        end
+
+        decoded = inspector.exec_lua("return _G.__lain.locate(...)", [raw])
+        expect(decoded).to start_with("10_later.lua:2: deferred boom")
+      end
+    end
+
+    # `#spans_for`'s running offset is the whole of what makes translation
+    # correct for any module but the first -- a fixture with only one module
+    # cannot tell "the real per-module line count" apart from "a constant
+    # guess", since both agree when there is nothing to accumulate against.
+    # These two put the error in the second and in the last of several.
+    it "names the SECOND of several modules, not the first" do
+      loader_over({
+                    "10_first.lua" => "local first = 1\nlocal also_first = 2\n",
+                    "20_second.lua" => "local function boom()\n  error(\"boom in the second module\")\nend\nboom()\n",
+                    "30_third.lua" => "local third = 3\n"
+                  }, head: lain_namespace_head) do |loader, _modules|
+        expect { inspector.exec_lua(loader.source, []) }
+          .to raise_error(/20_second\.lua:2: boom in the second module/)
+      end
+    end
+
+    it "names the LAST of several modules, not the first" do
+      loader_over({
+                    "10_first.lua" => "local first = 1\n",
+                    "20_second.lua" => "local second = 2\nlocal also_second = 3\n",
+                    "30_third.lua" => "local function boom()\n  error(\"boom in the third module\")\nend\nboom()\n"
+                  }, head: lain_namespace_head) do |loader, _modules|
+        expect { inspector.exec_lua(loader.source, []) }
+          .to raise_error(/30_third\.lua:2: boom in the third module/)
       end
     end
   end
