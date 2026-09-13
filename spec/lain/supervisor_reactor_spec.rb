@@ -5,8 +5,9 @@ require "async/queue"
 require "json"
 require "tmpdir"
 
-# The Supervisor as an actor reactor: adoption, address collisions, the mid-turn message
-# window, the bounded drain, stop. FIXED blocks keep the original finding as the record.
+# The Supervisor as an actor reactor: adoption, address collisions, the bounded drain,
+# stop. FIXED blocks keep the original finding as the record, and each block keeps the
+# letter it was found under, so a gap in the run is a probe whose subject is gone.
 #
 # A still-OPEN gap asserts what SHOULD hold and is `pending`, never the buggy behavior
 # green -- otherwise the fix reads as a regression.
@@ -225,68 +226,6 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
 
       after_one_farewell.each { |record| feed << record }
       expect(JSON.parse(File.read(path))["fleet"]).to eq([twin_b.address])
-    end
-  end
-
-  # ---- (c) TurnMailbox: render/commit agreement across the async window ------
-  #
-  # The one real yield inside a turn is the provider round trip (capture ->
-  # render is a single synchronous stretch on the Agent's fiber). A message
-  # landing THERE -- after render, before commit -- must stay out of both: the
-  # committed causal_parents must equal exactly what the render folded.
-  describe "TurnMailbox under a mid-turn message" do
-    let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
-    let(:seam) { Lain::Supervisor::TurnMailbox.new(source: Lain::Context::Mailbox::Source.new(recipient:, log:)) }
-
-    def note(text)
-      lineage = Lain::Tools::Subagent::Lineage.new(
-        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []), log:
-      )
-      lineage.note(parent_timeline, from: "actor", to: recipient, text:, causal_parents: [])
-    end
-
-    def seam_context
-      klass = Class.new(Lain::Context)
-      stage = seam
-      klass.define_singleton_method(:pipeline) { |workspace| Lain::Context.pipeline(workspace) >> stage }
-      klass.new(model: "parent", max_tokens: 128)
-    end
-
-    def seam_agent(provider)
-      Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
-                      context: seam_context, timeline: parent_timeline, mailbox: seam)
-    end
-
-    def mailbox_text(request)
-      request.messages.last["content"].filter_map { |block| block["text"] }.join("\n")
-    end
-
-    it "a message landing between render and commit enters NEITHER, and the next turn folds it" do
-      mid_note = nil
-      inject = -> { mid_note ||= note("mid-turn arrival") }
-      provider = Class.new(Lain::Provider::Mock) do
-        define_method(:complete) do |request|
-          response = super(request)
-          inject.call
-          response
-        end
-      end.new(responses: [text_response("turn one"), text_response("turn two")])
-      agent = seam_agent(provider)
-
-      pre_note = note("before the turn")
-      agent.ask("first")
-      agent.ask("second")
-
-      first_request, second_request = provider.requests
-      expect(mailbox_text(first_request)).to include("before the turn")
-      expect(mailbox_text(first_request)).not_to include("mid-turn arrival")
-      expect(mailbox_text(second_request)).to include("mid-turn arrival")
-
-      turns = agent.timeline.to_a
-      # Turn 1's commit consumed exactly its render's fold -- never the note
-      # that arrived during the round trip; turn 2 consumed the straggler.
-      expect(turns[3].causal_parents).to eq([pre_note.digest])
-      expect(turns[5].causal_parents).to eq([mid_note.digest])
     end
   end
 

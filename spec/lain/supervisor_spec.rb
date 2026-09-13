@@ -282,67 +282,6 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
-  # ---- Scenario: the render seam receives per-turn snapshots -----------------
-
-  describe Lain::Supervisor::TurnMailbox do
-    let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
-    let(:seam) { described_class.new(source: Lain::Context::Mailbox::Source.new(recipient:, log:)) }
-
-    def note(text)
-      lineage = Lain::Tools::Subagent::Lineage.new(
-        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []), log:
-      )
-      lineage.note(parent_timeline, from: "actor", to: recipient, text:, causal_parents: [])
-    end
-
-    # The wiring the exe's chat will use: the seam rides the Agent's mailbox:
-    # slot AND the tail of its Context pipeline -- one object, both ducks.
-    def seam_context
-      klass = Class.new(Lain::Context)
-      stage = seam
-      klass.define_singleton_method(:pipeline) { |workspace| Lain::Context.pipeline(workspace) >> stage }
-      klass.new(model: "parent", max_tokens: 128)
-    end
-
-    def seam_agent(provider)
-      Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
-                      context: seam_context, timeline: parent_timeline, mailbox: seam)
-    end
-
-    def mailbox_text(request)
-      request.messages.last["content"].filter_map { |block| block["text"] }.join("\n")
-    end
-
-    # The recorded orchestration residual: a Mailbox combinator binds
-    # its snapshot at pipeline construction, so turn 2 would re-fold turn 1's
-    # stale snapshot and never see what arrived in between.
-    it "folds each turn's OWN frozen snapshot -- no stale pipeline-construction binding" do
-      provider = Lain::Provider::Mock.new(responses: [text_response("turn one"), text_response("turn two")])
-      agent = seam_agent(provider)
-
-      first_note = note("before turn one")
-      agent.ask("first")
-      second_note = note("between turns")
-      agent.ask("second")
-
-      first_request, second_request = provider.requests
-      expect(mailbox_text(first_request)).to include("before turn one")
-      expect(mailbox_text(second_request)).to include("between turns")
-      expect(mailbox_text(second_request)).not_to include("before turn one")
-
-      # Render/commit agreement rides the same per-turn snapshot: each
-      # assistant commit consumed exactly the digests its own render folded.
-      turns = agent.timeline.to_a
-      expect(turns[3].causal_parents).to eq([first_note.digest])
-      expect(turns[5].causal_parents).to eq([second_note.digest])
-    end
-
-    it "is the identity stage before any capture -- an empty pending set folds nothing" do
-      messages = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }]
-      expect(seam.call(messages)).to eq(messages)
-    end
-  end
-
   # ---- Scenario: actor lifecycle is journaled in the state-feed shape --------
 
   describe "actor lifecycle journaling" do
@@ -1310,7 +1249,7 @@ RSpec.describe Lain::Supervisor do
         def standing(_lease, worker_id:)
           refusal = Lain::Isolation::Worktree::Handback::Outcome.new(kind: :failed, worker_key: worker_id,
                                                                      detail: "the ref is taken")
-          Lain::Supervisor::Retirement::Standing.new(head: "b" * 40, refusal: (refusal if @taken))
+          Lain::Isolation::Worktree::Handback::Retirement::Standing.new(head: "b" * 40, refusal: (refusal if @taken))
         end
 
         def anchor(lease, worker_id:, from:)
@@ -1339,7 +1278,8 @@ RSpec.describe Lain::Supervisor do
     def row_of(supervisor, actor) = supervisor.find { |row| row.actor.equal?(actor) }
 
     def retirement(log, journal: Lain::Channel::Null.instance, taken: false)
-      Lain::Supervisor::Retirement.new(sync: RetireSync.new(log), anchor: RetireAnchor.new(log, taken:), journal:)
+      Lain::Isolation::Worktree::Handback::Retirement.new(sync: RetireSync.new(log), journal:,
+                                                          anchor: RetireAnchor.new(log, taken:))
     end
 
     def retiring_tool(*responses, tools: [EchoTool.new], journal: Lain::Channel::Null.instance)
@@ -1622,7 +1562,7 @@ RSpec.describe Lain::Supervisor do
         Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees,
                                       base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
       end
-      let(:real_retirement) { Lain::Supervisor::Retirement.over(isolation: backend, journal:) }
+      let(:real_retirement) { Lain::Isolation::Worktree::Handback::Retirement.over(isolation: backend, journal:) }
 
       def git(dir, *args)
         shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
@@ -1773,9 +1713,8 @@ RSpec.describe Lain::Supervisor do
         ahead = Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees, base: epic)
         report = nil
         Sync do |task|
-          supervisor = described_class.new(journal:, isolation: ahead,
-                                           retirement: Lain::Supervisor::Retirement.over(isolation: ahead, journal:))
-                                      .run(task)
+          retirement = Lain::Isolation::Worktree::Handback::Retirement.over(isolation: ahead, journal:)
+          supervisor = described_class.new(journal:, isolation: ahead, retirement:).run(task)
           actor = supervisor.adopt(role: "issue") do |worker_env|
             committing(Lain::Provider::Mock.new(responses: [text_response("nothing to do")]))
               .launch_actor("go", worker_env:)

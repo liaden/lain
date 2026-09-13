@@ -254,7 +254,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     it "retires actors through an anchor-only retirement over that same backend" do
       factory = factory_over(mount)
 
-      expect(factory.retirement).to be_a(Lain::Supervisor::Retirement)
+      expect(factory.retirement).to be_a(Lain::Isolation::Worktree::Handback::Retirement)
       expect(factory.supervisor).to be_a(Lain::Supervisor)
       expect(factory.supervisor).not_to be_running
     end

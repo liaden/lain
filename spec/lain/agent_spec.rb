@@ -45,6 +45,29 @@ module A1PipelineSources
   end
 end
 
+# The `mailbox:` duck, as the only thing that can exercise it: a per-turn
+# snapshot slot that is BOTH the Agent's mailbox ({#capture}) and the tail of
+# its Context pipeline ({#call}). Production wires no non-Null mailbox today --
+# {Lain::Context::Mailbox::Null} captures itself and folds nothing, so with it
+# in the slot every capture/render/commit ordering renders identically and the
+# invariant below is invisible. In a module body for the reason
+# A1PipelineSources is.
+module A1MailboxSeam
+  # Deliberately NOT frozen, unlike every other combinator: the per-turn
+  # snapshot slot is the point, and its single writer is the Agent's own fiber.
+  class Seam < Lain::Context::Combinator
+    def initialize(source:)
+      super()
+      @source = source
+      @snapshot = Lain::Context::Mailbox::Null
+    end
+
+    def capture(timeline) = @snapshot = @source.capture(timeline)
+
+    def call(messages) = Lain::Context::Mailbox.new(snapshot: @snapshot).call(messages)
+  end
+end
+
 # One recorder per {Lain::Agent::Instrumentation} member, so "the value
 # reached its consumer" is asserted from an observable effect rather than from
 # the Agent's own ivars. In a module body for the same reason A1PipelineSources
@@ -885,6 +908,110 @@ RSpec.describe Lain::Agent do
 
       expect(recorder.calls).to be_empty
       expect(texts(provider.last_request)).to include("edited")
+    end
+  end
+
+  # WHAT THE AGENT PROMISES THE MAILBOX, and the one thing `mailbox:` exists
+  # for: the snapshot is captured ONCE at turn start, and the render and the
+  # commit consume that same frozen value. {Lain::Agent#step} says why and
+  # {Lain::Context::Mailbox} records the defect that taught it -- reading the
+  # shared log live at commit "claimed a mid-dispatch arrival as a causal
+  # parent of a turn that never rendered it, marking it consumed and losing it
+  # from every future fold".
+  #
+  # These drive a real Agent over a real Timeline; the seam is the only double,
+  # because production wires no non-Null mailbox and a Null one makes every
+  # ordering of capture, render and commit look the same.
+  describe "the per-turn mailbox snapshot" do
+    let(:store) { Lain::Store.new }
+    let(:log) { Lain::Tools::Subagent::Log.new }
+    let(:parent_timeline) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                    .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    end
+    let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
+    let(:seam) { A1MailboxSeam::Seam.new(source: Lain::Context::Mailbox::Source.new(recipient:, log:)) }
+
+    def note(text)
+      lineage = Lain::Tools::Subagent::Lineage.new(
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []), log:
+      )
+      lineage.note(parent_timeline, from: "actor", to: recipient, text:, causal_parents: [])
+    end
+
+    # The seam rides the Agent's mailbox: slot AND the tail of its Context
+    # pipeline -- one object, both ducks.
+    def seam_context
+      klass = Class.new(Lain::Context)
+      stage = seam
+      klass.define_singleton_method(:pipeline) { |workspace| Lain::Context.pipeline(workspace) >> stage }
+      klass.new(model: "parent", max_tokens: 128)
+    end
+
+    def seam_agent(provider)
+      described_class.new(provider:, toolset: Lain::Toolset.new([]),
+                          context: seam_context, timeline: parent_timeline, mailbox: seam)
+    end
+
+    def mailbox_text(request)
+      request.messages.last["content"].filter_map { |block| block["text"] }.join("\n")
+    end
+
+    # A Mailbox combinator binds its snapshot at construction, so a pipeline
+    # built ONCE would re-fold turn 1's stale snapshot on turn 2 and never see
+    # what arrived in between.
+    it "folds each turn's OWN frozen snapshot -- no stale pipeline-construction binding" do
+      provider = Lain::Provider::Mock.new(responses: [text_response("turn one"), text_response("turn two")])
+      a = seam_agent(provider)
+
+      first_note = note("before turn one")
+      a.ask("first")
+      second_note = note("between turns")
+      a.ask("second")
+
+      first_request, second_request = provider.requests
+      expect(mailbox_text(first_request)).to include("before turn one")
+      expect(mailbox_text(second_request)).to include("between turns")
+      expect(mailbox_text(second_request)).not_to include("before turn one")
+
+      # Render/commit agreement rides the same per-turn snapshot: each
+      # assistant commit consumed exactly the digests its own render folded.
+      turns = a.timeline.to_a
+      expect(turns[3].causal_parents).to eq([first_note.digest])
+      expect(turns[5].causal_parents).to eq([second_note.digest])
+    end
+
+    # The one real yield inside a turn is the provider round trip: capture ->
+    # render is a single synchronous stretch on the Agent's fiber. A message
+    # landing THERE must stay out of both halves of this turn, and be folded by
+    # the next one.
+    it "keeps a message landing between render and commit out of NEITHER half, and folds it next turn" do
+      mid_note = nil
+      inject = -> { mid_note ||= note("mid-turn arrival") }
+      provider = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request|
+          response = super(request)
+          inject.call
+          response
+        end
+      end.new(responses: [text_response("turn one"), text_response("turn two")])
+      a = seam_agent(provider)
+
+      pre_note = note("before the turn")
+      a.ask("first")
+      a.ask("second")
+
+      first_request, second_request = provider.requests
+      expect(mailbox_text(first_request)).to include("before the turn")
+      expect(mailbox_text(first_request)).not_to include("mid-turn arrival")
+      expect(mailbox_text(second_request)).to include("mid-turn arrival")
+
+      turns = a.timeline.to_a
+      # Turn 1's commit consumed exactly its render's fold -- never the note
+      # that arrived during the round trip; turn 2 consumed the straggler.
+      expect(turns[3].causal_parents).to eq([pre_note.digest])
+      expect(turns[5].causal_parents).to eq([mid_note.digest])
     end
   end
 

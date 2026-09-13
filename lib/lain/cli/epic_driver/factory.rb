@@ -277,8 +277,8 @@ module Lain
         # branch. It is also what makes every adopted actor's environment
         # editorless, so a rebase it is asked to finish opens no editor.
         def retirement
-          Lain::Supervisor::Retirement.over(isolation:, journal: @journal, strategy:,
-                                            retries: settings.rebase_retries)
+          Lain::Isolation::Worktree::Handback::Retirement.over(isolation:, journal: @journal, strategy:,
+                                                               retries: settings.rebase_retries)
         end
 
         # FRESH per call: one reactor per Supervisor life, so driving the same
