@@ -169,7 +169,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     # The tool guard is built once per child over the environment that child
     # runs in, so recording it is recording where the child stands.
     def watched(provider:)
-      seam(provider:, isolation: Lain::Tools::Subagent::Leases.new(backend:),
+      seam(provider:, isolation: Lain::Isolation::Leases.new(backend:),
            tool_middleware: ->(worker_env) { Lain::Middleware::Stack.new([]).tap { seen << worker_env } })
     end
 
@@ -203,9 +203,9 @@ RSpec.describe Lain::Skill::RoleSpawn do
     # The lane rides the lineage, so a lent child's spawn says which issue it
     # belonged to rather than reading as the run's own unnamed lane.
     it "keeps the caller's lane, so a lent child's lineage names the issue it served" do
-      lane = Lain::Tools::Subagent::Leases::Lane.named("issue.demo.a.1")
+      lane = Lain::Isolation::Leases::Lane.named("issue.demo.a.1")
       spawn = seam(provider: mock(text_response("unused")),
-                   isolation: Lain::Tools::Subagent::Leases.new(backend:, lane:))
+                   isolation: Lain::Isolation::Leases.new(backend:, lane:))
 
       expect(spawn.within(Lain::WorkerEnv.default).seam.isolation.lane).to eq(lane)
     end
@@ -214,7 +214,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
       spawn = watched(provider: mock(text_response("unused")))
 
       expect(spawn.within(Lain::WorkerEnv.default).seam.isolation).not_to be(spawn.seam.isolation)
-      expect(spawn.seam.isolation).to be_a(Lain::Tools::Subagent::Leases)
+      expect(spawn.seam.isolation).to be_a(Lain::Isolation::Leases)
     end
   end
 

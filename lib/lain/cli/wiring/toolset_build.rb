@@ -271,7 +271,7 @@ module Lain
         #   worktree shares; e.g. `issue.<slug>.<id>`, refused when git would
         #   not accept it in a ref
         # @return [Lain::Tools::Subagent]
-        # @raise [Lain::Tools::Subagent::Leases::Lane::Refused]
+        # @raise [Lain::Isolation::Leases::Lane::Refused]
         def epic_subagent(isolation:, handoff:, lane:)
           raise Lain::Error, "the epic Subagent spawns over the floor #build makes; build the toolset first" if
             @floor.nil?
@@ -315,7 +315,7 @@ module Lain
         # state, so they cannot refuse each other's checkout paths and a service
         # pool without a worker key in it hands one slot out twice; the reason
         # in full is on {Wiring#fleet_isolation}. It is wrapped HERE, and here
-        # only, in the {Lain::Tools::Subagent::Leases} that owns the spawn
+        # only, in the {Lain::Isolation::Leases} that owns the spawn
         # lane's worker-id sequence -- one per seam, which is one per run, which
         # is what makes a nested spawn and a sibling fan-out draw from the same
         # count. The backend arrives already journalled, nearest the concrete,
@@ -328,9 +328,9 @@ module Lain
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           tool_middleware: guard(chronicle, switchboard),
                                           journal:, supervisor:, observer: chronicle.observer, askers:,
-                                          isolation: Lain::Tools::Subagent::Leases.new(backend: isolation,
-                                                                                       handoff: handback.handoff,
-                                                                                       sync: handback.sync),
+                                          isolation: Lain::Isolation::Leases.new(backend: isolation,
+                                                                                 handoff: handback.handoff,
+                                                                                 sync: handback.sync),
                                           gate_policy: LivePolicy.new(board: switchboard),
                                           permits: PosturePermits.new(board: switchboard),
                                           sensitivity: LiveSensitivity.new(board: switchboard),
@@ -413,9 +413,9 @@ module Lain
         # lane, and a self-sync onto the issue's branch, which is the base the
         # children are cut from.
         def issue_leases(isolation, handoff, lane)
-          Lain::Tools::Subagent::Leases.new(backend: isolation, handoff:,
-                                            sync: Lain::Isolation::SelfSync.new(base: isolation.base),
-                                            lane: Lain::Tools::Subagent::Leases::Lane.named(lane))
+          Lain::Isolation::Leases.new(backend: isolation, handoff:,
+                                      sync: Lain::Isolation::SelfSync.new(base: isolation.base),
+                                      lane: Lain::Isolation::Leases::Lane.named(lane))
         end
 
         # The same name one rail over: an approval asks the same "who is

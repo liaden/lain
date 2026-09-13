@@ -2,7 +2,7 @@
 
 RSpec.describe Lain::Isolation::WorkerId do
   # The two allocators cannot see each other -- {Lain::Supervisor} numbers the
-  # actors an operator ADOPTS, {Lain::Tools::Subagent::Leases} numbers the
+  # actors an operator ADOPTS, {Lain::Isolation::Leases} numbers the
   # children a model SPAWNS -- so the disjointness of what they mint is this
   # object's property, proved once here rather than assumed at two call sites.
   describe "the two lanes" do

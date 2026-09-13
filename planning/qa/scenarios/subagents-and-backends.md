@@ -103,7 +103,7 @@ This is the section the scenario exists for, and the question it used to open wi
 **Leasing by a model-dispatched spawn is no longer open** — `--isolation`'s help text and
 `CLI::Wiring` agree: the flag is resolved exactly once per launch (`Wiring#fleet_isolation`) and
 that one backend is shared between the `Supervisor` an actor adopts onto and the
-`Tools::Subagent::Leases` a **one-shot** dispatch holds through too (`Tools::Subagent#run_child`),
+`Isolation::Leases` a **one-shot** dispatch holds through too (`Tools::Subagent#run_child`),
 including a nested spawn (`Subagent#descend` carries the same seam down). So this section is not
 about settling which of two claims is true; it is about **confirming a spawned child actually
 leased**, and the checks below are how a driver does that rather than takes the claim on trust.

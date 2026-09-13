@@ -846,7 +846,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       ["bad lane", "a..b", "issue.lock", ""].each do |lane|
         expect { toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane:) }
-          .to raise_error(Lain::Tools::Subagent::Leases::Lane::Refused, /cannot name a ref/)
+          .to raise_error(Lain::Isolation::Leases::Lane::Refused, /cannot name a ref/)
       end
     end
 

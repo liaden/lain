@@ -9,10 +9,10 @@ module Lain
     #
     # Two allocators mint worker ids in a run and neither can see the other:
     # {Lain::Supervisor} numbers the actors an operator ADOPTS off its own
-    # sequence, and {Tools::Subagent::Leases} numbers the children a model
-    # SPAWNS off its own. A backend keys a resource on the id -- {Worktree} a
-    # checkout path -- so two ids that collide are two workers sharing one
-    # working tree, or a refusal that kills a healthy spawn.
+    # sequence, and {Leases} numbers the children a model SPAWNS off its own. A
+    # backend keys a resource on the id -- {Worktree} a checkout path -- so two
+    # ids that collide are two workers sharing one working tree, or a refusal
+    # that kills a healthy spawn.
     #
     # DISJOINTNESS IS A PROPERTY OF THIS OBJECT, not a convention two call sites
     # happen to share. An adopted id always ends in a hyphen and its ordinal; a

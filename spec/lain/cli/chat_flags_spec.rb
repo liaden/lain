@@ -244,7 +244,7 @@ RSpec.describe "lain chat's flag surface" do
     end
 
     # Model-dispatched spawns now lease too (Tools::Subagent#run_child, via
-    # Tools::Subagent::Leases#hold), not only an adopted actor -- "actor-mode
+    # Isolation::Leases#hold), not only an adopted actor -- "actor-mode
     # subagents" undersold the flag the same way "inert" once did.
     it "says spawned subagents lease from it, not only actor-mode ones" do
       help = LainCLI.commands.fetch("chat").options.fetch(:isolation).description

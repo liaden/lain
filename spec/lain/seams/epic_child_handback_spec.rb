@@ -156,13 +156,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
 
   it "gives a chat child and an epic child, both worker 1, distinct anchors that both survive" do
     chat_branch = Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo)
-    chat = Lain::Tools::Subagent::Leases.new(
+    chat = Lain::Isolation::Leases.new(
       backend: Lain::Isolation::Worktree.new(root: children("chat"), repo_root: @repo, base: chat_branch),
       handoff: Lain::Isolation::WorkerHandoff.over(repo_root: @repo, base: chat_branch)
     )
     lane = issue_lane("a")
-    epic = Lain::Tools::Subagent::Leases.new(backend: lane[:isolation], handoff: lane[:handoff],
-                                             lane: Lain::Tools::Subagent::Leases::Lane.named("issue.demo.a"))
+    epic = Lain::Isolation::Leases.new(backend: lane[:isolation], handoff: lane[:handoff],
+                                       lane: Lain::Isolation::Leases::Lane.named("issue.demo.a"))
 
     commits = [[chat, "chat"], [epic, "epic"]].map do |leases, name|
       leases.hold("subagent", journal: Lain::Channel::Null.instance) { |worker_env, _sync| commit_in(worker_env.cwd, name) }

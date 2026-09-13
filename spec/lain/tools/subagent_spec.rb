@@ -22,10 +22,7 @@ require "timeout"
 # It keeps Worktree's one-live-lease-per-path refusal, so a worker-id allocator
 # that handed two live spawns one id fails as loudly here as it would there.
 class SubagentSpecIsolation
-  # `high_water` is how many leases were live at once at the busiest moment --
-  # the only way an example can tell genuine simultaneity from N dispatches that
-  # merely happened in one reactor, and what arms the already-leased refusal.
-  attr_reader :worker_ids, :leased, :released, :high_water
+  attr_reader :worker_ids, :leased, :released
 
   # `reclaim: :refuse` is {Lain::Isolation::Worktree}'s real teardown failure:
   # `#remove` raises rather than leave a checkout it could not reclaim standing.
@@ -36,7 +33,6 @@ class SubagentSpecIsolation
     @leased = []
     @released = []
     @live = []
-    @high_water = 0
     @monitor = Monitor.new
   end
 
@@ -58,7 +54,6 @@ class SubagentSpecIsolation
     @live << path
     @worker_ids << worker_id.to_s
     @leased << path
-    @high_water = [@high_water, @live.size].max
   end
 
   def give_back(path)
@@ -258,24 +253,6 @@ RSpec.describe Lain::Tools::Subagent do
     expect(tool.name).to eq("subagent")
     expect(tool.description).to be_a(String)
     expect(tool.description).not_to be_empty
-  end
-
-  # A lane names where a Leases' workers are numbered. Every worktree of one
-  # repository shares refs/lain/worker/, so two lanes' worker 1 must not spell
-  # one id.
-  describe "the lane a Leases numbers its workers in" do
-    let(:lane) { Lain::Tools::Subagent::Leases::Lane }
-
-    it "prefixes a named lane's worker ids, and leaves the unnamed lane's bare" do
-      expect(lane.named("issue.demo.a").worker(role: "subagent", ordinal: 1)).to eq("issue.demo.a.subagent-spawn.1")
-      expect(lane::UNNAMED.worker(role: "subagent", ordinal: 1)).to eq("subagent-spawn.1")
-    end
-
-    it "refuses a name git would not accept in a ref, rather than escaping it" do
-      ["bad lane", "a..b", "issue.lock", "", "x~1", ".hidden"].each do |name|
-        expect { lane.named(name) }.to raise_error(lane::Refused, /cannot name a ref/)
-      end
-    end
   end
 
   # Retiring an actor rebases its work first, and a conflict is put to the
@@ -1264,7 +1241,7 @@ RSpec.describe Lain::Tools::Subagent do
     attr_reader :leases_root
 
     let(:backend) { SubagentSpecIsolation.new(leases_root) }
-    let(:leases) { Lain::Tools::Subagent::Leases.new(backend:) }
+    let(:leases) { Lain::Isolation::Leases.new(backend:) }
     let(:seen) { [] }
     let(:cwd_tool) { SubagentSpecCwdTool.new(seen) }
 
@@ -1304,55 +1281,12 @@ RSpec.describe Lain::Tools::Subagent do
     it "runs the child in an environment its caller holds, handing nothing back" do
       held = Lain::WorkerEnv.default.with(cwd: leases_root)
       tool = build_subagent(provider: reports_cwd, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                            isolation: Lain::Tools::Subagent::Leases::InPlace.new(worker_env: held))
+                            isolation: Lain::Isolation::Leases::InPlace.new(worker_env: held))
 
       result = tool.run("go")
 
       expect(seen).to eq([leases_root])
       expect(result.content).to eq("done")
-    end
-
-    # A lent lease admits ONE dispatch at a time: two children writing in one
-    # checkout at once each see the other's half-written tree, and `within` is
-    # public, so call order is not a guarantee anything can rest on.
-    it "admits one dispatch at a time, so two children never hold the checkout together" do
-      place = Lain::Tools::Subagent::Leases::InPlace.new(worker_env: Lain::WorkerEnv.default.with(cwd: leases_root))
-      inside = []
-
-      [0, 1].map do |number|
-        Thread.new do
-          place.hold("dev", journal: Lain::Channel::Null.instance) do |_worker_env, _sync|
-            inside << [number, :enter]
-            sleep(0.02)
-            inside << [number, :leave]
-          end
-        end
-      end.each(&:join)
-
-      expect(inside.map(&:last)).to eq(%i[enter leave enter leave])
-      expect(inside.map(&:first).chunk_while { |a, b| a == b }.map(&:size)).to eq([2, 2])
-    end
-
-    it "numbers a lent lease's children in the lane its caller was numbering in" do
-      lane = Lain::Tools::Subagent::Leases::Lane.named("issue.demo.a.1")
-      lent = Lain::Tools::Subagent::Leases::InPlace.new(worker_env: Lain::WorkerEnv.default, lane:)
-
-      expect(lent.lane).to eq(lane)
-      expect(Lain::Tools::Subagent::Leases::InPlace.new(worker_env: Lain::WorkerEnv.default).lane)
-        .to eq(Lain::Tools::Subagent::Leases::Lane::UNNAMED)
-    end
-
-    it "lends its environment and a sync that does nothing, and reports nothing handed back" do
-      held = Lain::WorkerEnv.default.with(cwd: leases_root)
-      place = Lain::Tools::Subagent::Leases::InPlace.new(worker_env: held)
-
-      lent = place.hold("subagent", journal: Lain::Channel::Null.instance) do |worker_env, sync|
-        [worker_env, sync.call(:the_child)]
-      end
-
-      expect(lent.value).to eq([held, Lain::Isolation::SelfSync::Result::NONE])
-      expect([lent.report.kind, lent.sync, place.lane])
-        .to eq([:nothing_to_do, Lain::Isolation::SelfSync::Result::NONE, Lain::Tools::Subagent::Leases::Lane::UNNAMED])
     end
 
     # The other exit. A context that will not render is {ChildBuilder#spawned}'s
@@ -1412,13 +1346,13 @@ RSpec.describe Lain::Tools::Subagent do
       unreclaimable = SubagentSpecIsolation.new(leases_root, reclaim: :refuse)
       tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
                             policy: spawn_policy(only: %i[cwd]), journal:,
-                            isolation: Lain::Tools::Subagent::Leases.new(backend: unreclaimable))
+                            isolation: Lain::Isolation::Leases.new(backend: unreclaimable))
 
       result = tool.call({ "prompt" => "go" }, invocation)
 
       expect(result).to be_ok
       expect(result.content).to eq("child answer")
-      leaks = journal.drain.grep(Lain::Tools::Subagent::LeaseNotReclaimed)
+      leaks = journal.drain.grep(Lain::Isolation::LeaseNotReclaimed)
       expect(leaks.map(&:worker_key)).to eq(unreclaimable.worker_ids)
       # `error` is the half a human can act on: the worker key is hashed into
       # the path, so what names the directory still standing is the backend's
@@ -1439,35 +1373,6 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(results).to all(be_ok)
       expect(backend.worker_ids.uniq.size).to eq(3)
-      expect(backend.released.sort).to eq(backend.leased.sort)
-    end
-
-    # The allocator under real contention, driven directly rather than through a
-    # spawn: `+= 1` is a read and a write with a suspension point available
-    # between them, and a lost increment is two workers sent to one checkout
-    # path. 64 rather than a handful because a dropped increment under a Monitor
-    # is not a failure a three-way race reproduces.
-    #
-    # The block PARKS until every sibling holds its own lease, and that park is
-    # what makes the example honest: a block with no suspension point runs to
-    # completion before the next task starts, so 64 tasks would be 64 SEQUENTIAL
-    # holds, the live high-water mark would be one, and the backend's
-    # already-leased refusal would never be armed at all.
-    it "keeps every concurrently held lease on a path of its own" do
-      Sync do
-        arrived = 0
-        Array.new(64) do
-          Async do
-            leases.hold("hammer", journal: Lain::Channel::Null.instance) do
-              arrived += 1
-              Async::Task.current.yield while arrived < 64
-            end
-          end
-        end.each(&:wait)
-      end
-
-      expect(backend.high_water).to eq(64)
-      expect(backend.worker_ids.uniq.size).to eq(64)
       expect(backend.released.sort).to eq(backend.leased.sort)
     end
 
@@ -1493,7 +1398,7 @@ RSpec.describe Lain::Tools::Subagent do
     describe "the handoff a child's lease ends in" do
       let(:report) { Lain::Isolation::WorkerHandoff::Report.nothing }
       let(:handoff) { SubagentSpecHandoff.new(report:) }
-      let(:handing) { Lain::Tools::Subagent::Leases.new(backend:, handoff:) }
+      let(:handing) { Lain::Isolation::Leases.new(backend:, handoff:) }
       let(:spawned_id) { Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal: 1).to_s }
 
       it "reclaims a returning child's lease through the handoff while it is still live, naming the worker" do
@@ -1553,7 +1458,7 @@ RSpec.describe Lain::Tools::Subagent do
       let(:calls) { [] }
       let(:handoff) { SubagentSpecHandoff.new(report: Lain::Isolation::WorkerHandoff::Report.nothing, calls:) }
       let(:sync) { SubagentSpecSync.new(calls) }
-      let(:syncing) { Lain::Tools::Subagent::Leases.new(backend:, handoff:, sync:) }
+      let(:syncing) { Lain::Isolation::Leases.new(backend:, handoff:, sync:) }
       let(:spawned_id) { Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal: 1).to_s }
 
       it "syncs a returning child on its live lease, before the lease is reclaimed" do
@@ -1615,41 +1520,6 @@ RSpec.describe Lain::Tools::Subagent do
 
         expect(calls.last.first).to eq(:surrender)
         expect(handoff.synced).to eq([sync.result])
-      end
-    end
-
-    # What the parent is given: the child's own answer, untouched, and after it
-    # one block per thing a human has to act on.
-    describe "the lease a dispatch held" do
-      let(:thinking) { { "type" => "thinking", "thinking" => "weighing it" } }
-      let(:answer) do
-        Lain::Response.new(content: [thinking, { "type" => "text", "text" => "child answer" }], stop_reason: :end_turn)
-      end
-      let(:merged) { Lain::Isolation::WorkerHandoff::Report.new(kind: :merged, ref: "refs/lain/worker/w-1") }
-      let(:dirty) do
-        Lain::Isolation::SelfSync::Result.new(outcome: :dirty, dirty: true, path: "/state/worktrees/w-1")
-      end
-
-      def held(report: Lain::Isolation::WorkerHandoff::Report.nothing,
-               sync: Lain::Isolation::SelfSync::Result::NONE)
-        Lain::Tools::Subagent::Leases::Held.new(value: nil, report:, sync:)
-      end
-
-      it "appends each note as a block of its own, leaving every block the child answered with in place" do
-        delivered = held(report: merged, sync: dirty).delivered(answer)
-
-        expect(delivered.content.take(2)).to eq(answer.content)
-        expect(delivered.content.drop(2).map { |block| block["text"] })
-          .to eq(["\n\n[#{merged.summary}]", "\n\n[#{dirty.note}]"])
-      end
-
-      it "tells the parent uncommitted work was not handed back" do
-        expect(held(sync: dirty).delivered(answer).text)
-          .to include("the worker left uncommitted changes at /state/worktrees/w-1; they were not handed back")
-      end
-
-      it "hands the answer back as it was when there is nothing to say" do
-        expect(held.delivered(answer)).to be(answer)
       end
     end
   end
@@ -3082,7 +2952,7 @@ RSpec.describe Lain::Tools::Subagent do
       Dir.mktmpdir do |dir|
         cwds = []
         tool = build_subagent(provider: mock(text_response("done")),
-                              isolation: Lain::Tools::Subagent::Leases.new(backend: SubagentSpecIsolation.new(dir)),
+                              isolation: Lain::Isolation::Leases.new(backend: SubagentSpecIsolation.new(dir)),
                               tool_middleware: ->(env) { (cwds << env.cwd) && Lain::Middleware::Stack.new })
 
         tool.call({ "prompt" => "go" }, invocation)

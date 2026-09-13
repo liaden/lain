@@ -67,7 +67,7 @@ module Lain
       # child's spawn says which issue it served rather than reading as the
       # run's own unnamed lane.
       def lent(worker_env)
-        Tools::Subagent::Leases::InPlace.new(worker_env:, lane: @seam.isolation.lane)
+        Isolation::Leases::InPlace.new(worker_env:, lane: @seam.isolation.lane)
       end
 
       # Everything role-derived, and nothing else: the policy, the persona, and
