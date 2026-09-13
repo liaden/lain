@@ -260,8 +260,19 @@ Fold the six whose only production caller is `wiring.rb`: `agent_build` (`:303`,
 (`:165`), and `board_build`'s eight module functions (`:419`, `:438`).
 
 **Keep as files:** `toolset_build.rb` (three external callers in `epic_driver/factory.rb`) and
-`askers.rb` (live `Async::Queue` state). **Keep `BoardBuild::Classifiers` and
-`Handback`'s `Data`** — fold only `Handback.for`.
+`askers.rb` (live `Async::Queue` state). **Keep `Handback`'s `Data`** — fold only `Handback.for`.
+
+**`board_build.rb` does not fold, and the instruction to fold "its eight module functions" while
+keeping `BoardBuild::Classifiers` was incoherent.** `Classifiers` is nested *inside* `module
+BoardBuild` and is named from outside as `Lain::CLI::Wiring::BoardBuild::Classifiers` at three
+sites, so obeying that instruction yields a file called `board_build.rb` holding a module called
+`BoardBuild` that builds no board. Three further reasons it stays, found while executing: the file
+names no `Metrics/*` cop, so the plan's Intent — fold back only extractions whose stated
+justification was a counter — does not reach it; its class comment states a real second
+responsibility (consent rules GRANT, sensitivity rules RESTRICT, and *"the resemblance is a
+trap"*); and `.for`/`.rules`/`.policy` have four callers in two unrelated spec files outside
+`lib/`, which private methods on `Wiring` cannot serve. This card's own fourth escalation trigger
+already said to leave it alone for a different reason. 8 files → 3 is reached without it.
 
 Two stale claims to delete while here: `wiring.rb:22` and `agent_build.rb:135` both cite a "110-line
 budget" that `.rubocop.yml:161` has said 125 since 2026-08-28, and simplify-01 raises again.
@@ -1101,3 +1112,14 @@ instance variables and renders nothing — but `have_attributes(api_key:)` goes 
 reader and prints the key into the failure output. Reported as pre-existing rather than introduced
 by the merge, and under verification by the panel. If it stands it is the same class of defect as
 the CI-log leak the redaction triple was written for, and the redaction triple does not cover it.
+
+**An injected `paths:` never reaches the sensitivity classifier.** Found while folding the wiring
+shards, proven with an executable red: a `Wiring` built with `paths:` anchored at a temporary home
+produces a board that does not see `~/.kube/config` under that home and does see it under the
+process's real `$HOME`, because `Wiring#switchboard` never threads `@paths` into `BoardBuild`.
+Pre-existing — the call is byte-identical at the chunk's base — and inert in production, since
+`CLI::ChatLaunch` is the only construction path and never passes `paths:`. What it costs is spec
+fidelity at the secret boundary: a path-boundary spec has to swap `$HOME` through the environment
+rather than through the keyword the constructor advertises, which is the shape a future
+green-but-wrong secret-boundary spec grows in. One-line thread plus a spec, **sequenced with
+simplify-02's T1**, which owns that method. Medium urgency, its own card.
