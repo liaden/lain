@@ -204,6 +204,32 @@ module Lain
       present(@env["HOME"]) || present(Dir.home) || raise(NonAbsoluteHome, @env["HOME"] || Dir.home)
     end
 
+    # {#home}'s tolerant twin, for the callers that already own a downstream
+    # refusal of their own: {Isolation::Null}, {CLI::GcSchedule},
+    # {CLI::Worktrees} and {CLI::IsolationBackend} each hand a possibly-nil
+    # home on to {Project::Resolver}, which names an unusable value by
+    # itself -- raising here would only pre-empt a refusal that already has
+    # a home to name. Both of {#home}'s arms stay: dropping the `Dir.home`
+    # fallback would answer nil somewhere {#home} would have found a good
+    # value. `Dir.home` itself can raise with no passwd entry for the
+    # running uid -- the container case none of this class's callers ask it
+    # to survive -- and this reader's entire promise is that it never does,
+    # so that counts as "no home" too.
+    #
+    # NOT for resolving a project ROOT. {Project::Resolver.default_project}
+    # deliberately keeps its own raw `ENV.fetch("HOME", nil)` rather than
+    # this method, because the same `Dir.home` fallback that makes this
+    # reader forgiving would turn its refusal on a genuinely-unset `$HOME`
+    # into a silent success against whatever passwd happens to say -- an
+    # authority decision, not a "no home" one.
+    #
+    # @return [String, nil]
+    def home_or_nil
+      present(@env["HOME"]) || present(Dir.home)
+    rescue ArgumentError
+      nil
+    end
+
     def config_home = xdg_dir("XDG_CONFIG_HOME", ".config")
     def cache_home = xdg_dir("XDG_CACHE_HOME", ".cache")
     def state_home = xdg_dir("XDG_STATE_HOME", ".local/state")

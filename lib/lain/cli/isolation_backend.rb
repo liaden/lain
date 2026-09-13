@@ -110,18 +110,19 @@ module Lain
       #   the Null channel (the default) earns no journal decorator
       # @param paths [Paths] supplies the worktree root, the per-worker keys,
       #   and the three XDG bases {#repo_root}'s stop rule names
-      # @param home [String, nil] the user's home directory, read from `ENV` by
-      #   the CALLER and injected here; consulted only by {#repo_root}, so
+      # @param home [String, nil] the user's home directory; defaults through
+      #   {Paths#home_or_nil}, consulted only by {#repo_root}, so
       #   `--isolation none` neither needs it nor refuses a run that has none.
-      #   NOT `Dir.home`, which the cop disabled below asks for: with `HOME`
-      #   unset it falls through to getpwuid and raises a bare ArgumentError,
-      #   where `nil` reaches {Project::Resolver::Home} and is refused there by
-      #   name -- renamed once more, to {UnboundedSearch}, so the message says
-      #   which flag to drop.
+      #   NOT `Dir.home` directly, which falls through to getpwuid with `HOME`
+      #   unset and can raise a bare ArgumentError -- {Paths#home_or_nil} tries
+      #   it too but swallows that, so `nil` reaches
+      #   {Project::Resolver::Home} and is refused there by name -- renamed
+      #   once more, to {UnboundedSearch}, so the message says which flag to
+      #   drop.
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as a factory so a spec substitutes it
       def initialize(name = nil, root: Dir.pwd, journal: Channel::Null.instance, paths: Paths.new,
-                     home: ENV.fetch("HOME", nil), # rubocop:disable Style/EnvHome -- see the `home:` tag
+                     home: paths.home_or_nil,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @name = name || DEFAULT
         @root = Project::Resolver.resolved(File.expand_path(root), File)

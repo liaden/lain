@@ -110,6 +110,20 @@ RSpec.describe Lain::CLI::Worktrees do
     end
   end
 
+  # Through the DEFAULT, not an injected override: `home:` is left unpassed,
+  # so `initialize`'s own `home: paths.home_or_nil` runs, against a `paths`
+  # double standing in for a box with no home available at all -- neither
+  # env nor `Dir.home` resolving is exactly what {Paths#home_or_nil} answers
+  # nil for. Doubled rather than driven through real `Dir.home`/`$HOME`
+  # because whether the real box has a passwd entry for its uid is
+  # nondeterministic and not what this scenario is about.
+  it "reports that no home is available, rather than an unnamed refusal" do
+    allow(paths).to receive(:home_or_nil).and_return(nil)
+
+    expect { described_class.new(root: @repo, paths:, gc_factory: reaper([]), clock: -> { at }).gc }
+      .to raise_error(Lain::Error, /lain worktrees gc stops its repository search at \$HOME/)
+  end
+
   # The reaper and the chat backend must agree on where a repository's
   # worktrees live, or the reaper would sweep an empty directory forever.
   it "reaps under the very root a chat leases its workers from", :seam do

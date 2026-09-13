@@ -154,6 +154,40 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  # {#home}'s tolerant twin, for the four callers that hand a possibly-nil
+  # home on to {Lain::Project::Resolver} and let IT name the refusal.
+  describe "#home_or_nil" do
+    def with_hostile_home(value, &)
+      with_env({ "HOME" => value, "XDG_CONFIG_HOME" => nil, "XDG_CACHE_HOME" => nil, "XDG_STATE_HOME" => nil }, &)
+    end
+
+    it "answers nothing, and raises nothing, when HOME is unusable" do
+      with_hostile_home("rel") do
+        expect { expect(described_class.new.home_or_nil).to be_nil }.not_to raise_error
+      end
+    end
+
+    it "answers the injected env's HOME when it is absolute, never the process HOME" do
+      with_hostile_home("rel") do
+        expect(described_class.new(env: { "HOME" => "/home/nobody" }).home_or_nil).to eq("/home/nobody")
+      end
+    end
+
+    it "reads the same absolute value #home would, for a healthy env" do
+      expect(paths.home_or_nil).to eq(paths.home)
+    end
+
+    # The container case: no passwd entry for the running uid, so `Dir.home`
+    # itself raises rather than answering. This is what actually
+    # distinguishes this method from `present(env) || present(Dir.home)` --
+    # without the rescue, this example is the one that catches it.
+    it "answers nothing when Dir.home itself raises, rather than leaking the ArgumentError" do
+      allow(Dir).to receive(:home).and_raise(ArgumentError, "user 1000 doesn't exist")
+
+      expect(described_class.new(env: {}).home_or_nil).to be_nil
+    end
+  end
+
   describe "#project_hash" do
     it "is a stable 12-hex-char digest of the expanded cwd" do
       first = paths.project_hash("/some/project")

@@ -27,13 +27,14 @@ module Lain
       # @param paths [Paths] supplies the worktree root, the journal's home and
       #   the XDG bases the repository search stops at
       # @param home [String, nil] the user's home directory, where the
-      #   repository search stops. NOT `Dir.home`, which raises a bare
-      #   ArgumentError with HOME unset, where nil is refused here by name.
+      #   repository search stops. Defaults through {Paths#home_or_nil}, which
+      #   tries `Dir.home` too but never raises -- a nil here is refused
+      #   downstream, by name, once the search needs it.
       # @param gc_factory [#call] builds the reaper
       # @param config [#call] loads the project's `.lain/config.toml`
       # @param clock [#call] answers now, for the run's header
       def initialize(root:, paths: Paths.new,
-                     home: ENV.fetch("HOME", nil), # rubocop:disable Style/EnvHome -- see the `home:` tag
+                     home: paths.home_or_nil,
                      gc_factory: Isolation::Gc.public_method(:new), config: Config.public_method(:load),
                      clock: -> { Time.now })
         @root = Project::Resolver.resolved(File.expand_path(root), File)

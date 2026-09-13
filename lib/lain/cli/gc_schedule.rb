@@ -54,7 +54,7 @@ module Lain
       # @param paths [Paths]
       # @param home [String, nil] the user's home directory, where resolution stops
       # @return [GcSchedule, NONE]
-      def self.for(cwd:, paths: Paths.new, home: ENV.fetch("HOME", nil)) # rubocop:disable Style/EnvHome
+      def self.for(cwd:, paths: Paths.new, home: paths.home_or_nil)
         new(root: Project::Resolver.new(home:, paths:).call(cwd:).project.root, paths:)
       rescue Error
         NONE

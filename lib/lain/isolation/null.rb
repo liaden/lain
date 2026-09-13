@@ -24,7 +24,7 @@ module Lain
       #   means this backend was built with no root to search from
       # @param paths [Paths] supplies the XDG bases {#repo_root}'s search stops at
       # @param home [String, nil] the user's home directory, bounding that search
-      def initialize(root: nil, paths: Paths.new, home: ENV.fetch("HOME", nil)) # rubocop:disable Style/EnvHome -- see CLI::IsolationBackend#initialize's `home:` tag
+      def initialize(root: nil, paths: Paths.new, home: paths.home_or_nil)
         @root = root
         @paths = paths
         @home = home
