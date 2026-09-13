@@ -320,11 +320,15 @@ module Lain
         end
 
         # WHAT a verdict does, as two objects rather than a branch at the call
-        # site. This class IS the terminal outcome: it settles the address and
-        # parks nothing; {Deferral} inverts both. Splitting them rather than
-        # testing a symbol keeps "a deferral never settles" and "a terminal
-        # verdict never parks" single statements instead of two conditionals
-        # that could disagree.
+        # site. {#park} is the WHOLE difference: this class is the terminal
+        # outcome and parks nothing, {Deferral} parks. Splitting them rather
+        # than testing a symbol keeps "a terminal verdict never parks" a single
+        # statement instead of two conditionals that could disagree.
+        #
+        # It does NOT own the ratchet. Whether a second adjudication over one
+        # address is refused is {Decided#ensure_undecided!}'s answer, read off
+        # the journal -- the guard has to hold across Adjudicators and across
+        # sessions, which an object built per verdict cannot do.
         class Outcome
           attr_reader :policy, :reason
 
@@ -341,9 +345,6 @@ module Lain
           # A terminal verdict has nothing awaiting sign-off, so the caller
           # never asks whether to enqueue.
           def park(_queue, **) = nil
-
-          # Remembered, so a second adjudication over this address is refused.
-          def remember(terminal, digest, approved) = terminal[digest] = approved
         end
 
         # Doubt, in every form it arrives in. It parks and settles NOTHING: a
@@ -352,8 +353,6 @@ module Lain
         # catch.
         class Deferral < Outcome
           def park(queue, **attributes) = queue.park(**attributes)
-
-          def remember(_terminal, _digest, _approved) = nil
         end
 
         # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
