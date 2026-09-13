@@ -828,3 +828,14 @@ republish and it is its own card — worth doing for a reason wider than the mar
 grounds that its holders are fibers of one reactor thread. There are three callers, not two, and
 `#prime` runs on the drain thread with nothing ordering it against the watch fiber. The race is
 pre-existing and was left; the sentence was not.
+
+
+### The simplify-14 question, answered
+
+**2026-09-13, by the human: 14 is unlikely to run, so T3 goes ahead as written.** The rails it tables
+include the seven the review surface uses; if 14 is ever revived it will delete a table rather than
+a scatter, which is the cheaper direction to discover.
+
+The other half of the declined-14 path is **not** taken here and stays available: 07's T1 shipped
+for two callers, and the plan says a decline lets it gain `review_view.rb` as a third, growing the
+`HELD` reconciliation from two values to three. That is purely additive and was not asked for.
