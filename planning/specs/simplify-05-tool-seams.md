@@ -1,6 +1,6 @@
 # Simplify 05 — one file-path seam for the file tools, and the secret boundary on the schema
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -471,3 +471,26 @@ was right to: a refusal is a prompt the model reads, so changing one is a behavi
 specs pin exact bytes. But the drift is now visible in one ordered table instead of hidden across
 five methods, which makes unifying it a small, reviewable card rather than an archaeology exercise.
 Its own card, because the diff is user-visible and belongs where a human can weigh the wording.
+
+
+### Close-out
+
+All four cards landed, and the plan's own sequencing decision paid off: deleting `code_outline`
+first meant the path seam converted eight tools rather than nine, and removed a byte-identical pair
+that would otherwise have had to be reconciled twice.
+
+**The constraint that outranked the cards held.** T1 gave eight file tools one path-resolution seam
+without that seam becoming a fourth place the secret boundary lives. Verified three ways rather than
+read: no reference to `Sensitivity` anywhere in the mixin, a 54-case before/after behavioural probe
+that diffs empty, and reflectively that all eight tools include it and none overrides it. The
+no-allowlist `PATH_FIELDS` spec still reddens **by name** for a shipped path-taking tool that is not
+listed — reproduced by planting one.
+
+**Not one refusal string changed**, and that was checked across 54 failure paths in two processes,
+one loading the pre-card tree. A refusal is a prompt the model reads, so the wordings were carried
+verbatim — drift included. The drift is now visible in one ordered table instead of five methods,
+which is what makes fixing it a reviewable card rather than archaeology.
+
+**Two follow-ups recorded above**: the three dialects of one unreadable-target refusal, and the
+`file_symbols` tiebreak that the deleted `code_outline_spec` turned out to be the only cover for
+anywhere in the suite.
