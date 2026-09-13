@@ -26,8 +26,19 @@ module ApprovalViewSpecSupport
       @refusal = refusal
     end
 
+    # Runs ONCE, from inside a post, and is how a render landing between
+    # minting a stamp and storing the rendering it names becomes a thing a
+    # single-threaded example can state. Production reaches that interleave
+    # across threads -- `#prime` is on the drain thread while the sweeps are on
+    # the reactor -- which is exactly what cannot be made to happen on demand.
+    # One-shot, so the render it triggers does not trigger itself.
+    attr_accessor :interleave
+
     def set_approval(lines, generation, rows, calls, call_index)
       @posts << { lines:, generation:, rows:, calls:, call_index: }
+      landing = @interleave
+      @interleave = nil
+      landing&.call
       @refusal
     end
 
@@ -262,6 +273,35 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:verdicts]).to eq([false])
     end
 
+    # How deep the shared ring is, checked HERE rather than only on
+    # {Lain::Frontend::Neovim::ListView}: the depth is this view's own number,
+    # handed over at construction, so a wrong one is invisible to the ring's
+    # own spec and shows only as a live row refused on a real surface. Eight,
+    # and lain://inbox's sixteen, are deliberately not reconciled -- nothing
+    # known says why this surface remembers half as many.
+    it "still answers the oldest rendering its own depth keeps" do
+      result = gated(timeout: 0.4) do |_queue|
+        oldest = generation
+        (described_class::HELD - 1).times { view.prime }
+        view.decide(1, "approve", generation: oldest)
+      end
+
+      expect(result[:outcome]).to be_decided
+      expect(result[:verdicts]).to eq([true])
+    end
+
+    it "refuses that same rendering one render later, when it has fallen out" do
+      result = gated(timeout: 0.4) do |_queue|
+        oldest = generation
+        described_class::HELD.times { view.prime }
+        view.decide(1, "approve", generation: oldest)
+      end
+
+      expect(result[:outcome]).not_to be_decided
+      expect(result[:outcome].report).to include("re-rendered")
+      expect(result[:verdicts]).to eq([false])
+    end
+
     it "refuses a line that names no row" do
       result = gated do |_queue|
         [view.decide(0, "approve", generation:), view.decide(9, "approve", generation:)]
@@ -408,6 +448,35 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
       expect(result[:outcome]).not_to be_decided
       expect(result[:verdicts]).to eq([false])
+    end
+
+    # THE STAMP IS MINTED AND STORED IN ONE STEP, and a collision on the wire
+    # is the only way to say so from here. Reading the counter, adding one,
+    # posting, and remembering afterwards passes every other example in this
+    # file and the whole of {Lain::Frontend::Neovim::ListView}'s own spec,
+    # because nothing else renders between the read and the store.
+    #
+    # Here something does, and under that shape both posts read the SAME
+    # unchanged counter and go out carrying the SAME number -- two renderings,
+    # one stamp, which is precisely the aliasing the stamp exists to make
+    # impossible. It is reachable in production because `#prime` renders from
+    # the drain thread while the sweeps are on the reactor.
+    #
+    # What this CANNOT state is which rendering the editor ends up displaying:
+    # the buffer's contents are settled by the render queue on the RPC thread,
+    # not by the order these posts were made, so the resolution half of the
+    # defect is only visible across threads. The uniqueness of the stamps is
+    # the half that is visible here, and it is the half that has to hold.
+    it "gives two renderings two stamps even when one lands mid-post" do
+      gated(timeout: 0.4, calls: [effect("bash", { "command" => "one" }, "tu_1"),
+                                  effect("write", { "path" => "two" }, "tu_2")]) do |queue|
+        queue.first.approve(surface: "elsewhere")
+        rpc.interleave = -> { view.prime }
+        view.sweep(queue)
+      end
+
+      stamps = rpc.posts.map { |post| post[:generation] }
+      expect(stamps.uniq).to eq(stamps)
     end
   end
 

@@ -144,8 +144,8 @@ end)
 -- ⚠️ `{ answer, line, generation }` is a table CONSTRUCTOR, so a buffer with no
 -- `b:lain_view_generation` (never stamped by set_view) builds a two-element
 -- array -- msgpack carries the border, not the nil. Ruby then reads the stamp
--- as nil, `Renderings#holds?(nil)` is false, and the human is told to press
--- again: a refusal, never a wrongly-resolved row.
+-- as nil, no rendering is stamped nil, and the human is told to press again: a
+-- refusal, never a wrongly-resolved row.
 local function submit_reply(answer)
   if answer == "" then
     return

@@ -304,6 +304,25 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect([at_rest, one_item, two_items].uniq.size).to eq(3)
       expect([at_rest, one_item, two_items].sort).to eq([at_rest, one_item, two_items])
     end
+
+    # How deep the shared ring is, checked HERE rather than only on
+    # {Lain::Frontend::Neovim::ListView}: the depth is this view's own number
+    # handed over at construction, so a wrong one is invisible to the ring's
+    # own spec and shows only as a live row refused on the surface. Sixteen and
+    # lain://approval's eight are deliberately not reconciled.
+    it "answers the oldest rendering its own depth still keeps, and refuses the one that falls out" do
+      question = asked(one_question("db", "which db?"))
+      view.update(record(question))
+      oldest = view.generation
+      (described_class::HELD - 1).times { view.initial }
+
+      expect(view.digest_at(1, generation: oldest)).to eq(question.digest)
+
+      view.initial
+
+      expect(view.digest_at(1, generation: oldest)).to be_nil
+      expect(view.open(1, generation: oldest).report).to include("re-rendered")
+    end
   end
 
   # The whole reason this exists: the index addresses by IDENTITY -- one
@@ -801,7 +820,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   end
 
   # A question is PROSE, and this row folded it onto one line for a reason
-  # that has since been removed: {Renderings} indexed digests by POSITION, so a
+  # that has since been removed: the ring indexed digests by POSITION, so a
   # two-line row would have sent `<CR>` to a set the human did not choose. The
   # index is a line -> digest map now, one entry per LINE, so the row may grow
   # -- and the point of growing it is that a human reads the question in the

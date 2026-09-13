@@ -463,6 +463,7 @@ module Lain
 end
 
 require_relative "neovim/fold"
+require_relative "neovim/list_view"
 require_relative "neovim/command_inbox"
 require_relative "neovim/unbridged"
 require_relative "neovim/compose"

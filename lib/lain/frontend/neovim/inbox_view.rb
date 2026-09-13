@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-# {Renderings} and {Row} must exist before this file's body runs
-# `private_constant` on them, so they load FIRST. Neither reads a constant of
-# this file's at LOAD time, which is what keeps that order legal.
-require_relative "inbox_view/renderings"
+# {Row} must exist before this file's body runs `private_constant` on it, so it
+# loads FIRST. It reads no constant of this file's at LOAD time, which is what
+# keeps that order legal.
 require_relative "inbox_view/row"
 
 module Lain
@@ -33,6 +32,12 @@ module Lain
       # never lists a retired item. Like {Buffers}, this never touches nvim:
       # it turns records into plain lines; {RpcThread} does the rendering.
       #
+      # THE RING IS {ListView}'s, shared with lain://approval: "keep the last N
+      # stamped renderings and resolve a cursor line to its owner" is one rule,
+      # and both surfaces need it. What stays here is this view's own -- which
+      # records list, when a row retires, and the sentences a refused keypress
+      # gets ({Gestures}).
+      #
       # THREAD CONTRACT, AND THE LOCK. {#update} runs on the frontend's drain
       # thread; the gestures run on whichever thread serves the editor's
       # commands; and {#answered} is reached from the TTY's reply fibers too,
@@ -41,7 +46,7 @@ module Lain
       # retirement, ITERATED by the render that indexes it -- and the rendering
       # index a gesture resolves through, so every one of them takes one
       # `Mutex`: a check-then-act across this seam does not fail loudly, it opens
-      # the wrong thing. Holding it is also what lets {Renderings} and {Gestures}
+      # the wrong thing. Holding it is also what lets {ListView} and {Gestures}
       # be lock-free.
       #
       # NOTHING UNDER THIS LOCK MAY WAIT ON THE EDITOR, and that is the
@@ -124,11 +129,21 @@ module Lain
         Item = Data.define(:from, :question, :asked_at, :body)
         private_constant :Item
 
-        # Its own file: reconciling "what I drew" with "what you are looking at"
-        # is a rule of its own.
-        private_constant :Renderings
+        # How many renderings stay resolvable, handed to {ListView} rather than
+        # spelled inside it: a MEMORY bound, not a rule about correctness, which
+        # is the difference the stamp makes. "The render queue drains everything
+        # in one tick, so the screen is the newest rendering or the one before
+        # it" is FALSE -- {RenderQueue} drains once per RPC tick, so a burst
+        # posts arbitrarily many renderings between drains and the screen can be
+        # k of them behind. So this number only says how far behind the screen
+        # may be before a keypress must be pressed again.
+        #
+        # lain://approval holds EIGHT, and the two are deliberately not
+        # reconciled: nothing known says why that surface remembers half as
+        # many, and inventing a reason is worse than carrying a parameter.
+        HELD = 16
 
-        # Its own file, for the same reason: once an item could span lines, "what
+        # Its own file: once an item could span lines, "what
         # a listed set looks like on screen" stopped being one interpolation and
         # became a rule -- summary, cut, wrap, and the invariant that ties them.
         private_constant :Row
@@ -166,7 +181,7 @@ module Lain
           @pending = {}
           @consumed = Set.new
           @answered = Set.new
-          @renderings = Renderings.new
+          @renderings = ListView.new(held: HELD)
           @gestures = Gestures.new(pending: @pending, answered: @answered, renderings: @renderings, questions:)
           @slot = Mutex.new
         end
@@ -201,7 +216,7 @@ module Lain
         # @return [String, nil] that set's Q digest; nil when the line names no
         #   set (line 0, past the end, or the empty-state placeholder) or when
         #   the rendering it names is not one still held here
-        def digest_at(line, generation:) = @slot.synchronize { @renderings.digest_at(line, generation) }
+        def digest_at(line, generation:) = @slot.synchronize { @renderings.at(line, generation:).owner }
 
         # The `<CR>`/`r` gesture from lain://inbox (the runtime's 70_inbox.lua):
         # open the question set the cursor sits on. The LINE rides -- :LainPin's
@@ -374,7 +389,7 @@ module Lain
 
         # The lines and the line -> digest index are ONE pass' two outputs, off
         # one walk of the ordered map: an index built by a SECOND walk would
-        # disagree with the rendering the first time either changed. {Renderings}
+        # disagree with the rendering the first time either changed. {ListView}
         # holds one entry per LINE, so an item may draw as many lines as its
         # question needs and every one of them names the set that drew it.
         def render
@@ -416,7 +431,7 @@ module Lain
         # nothing below this line can read a clock of its own -- and so every
         # row of one render ages against one moment.
         #
-        # A ROW MAY SPAN LINES, which only holds because {Renderings} addresses
+        # A ROW MAY SPAN LINES, which only holds because {ListView} addresses
         # by IDENTITY -- one entry per line, built by {#render}'s own pass. An
         # index that addressed by POSITION would send `<CR>` to a set the human
         # did not choose the moment a row grew.
@@ -434,5 +449,5 @@ end
 
 # LAST, and the twin of the require at the top: {Gestures} names {InboxView}'s
 # own NAME and {Opened} in its body, so it can only be read once that body has
-# run -- where {Renderings} had to be read BEFORE it, to be made private there.
+# run -- where {Row} had to be read BEFORE it, to be made private there.
 require_relative "inbox_view/gestures"

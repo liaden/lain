@@ -17,7 +17,7 @@ module Lain
         #
         # THREAD CONTRACT. Every method runs UNDER {InboxView}'s `@slot` --
         # that is what makes reading a Hash another thread mutates safe, and it
-        # is the same invariant that lets {Renderings} be lock-free. Nothing
+        # is the same invariant that lets {ListView} be lock-free. Nothing
         # here may park: `@questions.open` is the editor's NON-BLOCKING path
         # ({RenderQueue#post_question} refuses a full queue rather than waiting
         # on it), and nothing on the far side of it calls back into the view.
@@ -60,7 +60,7 @@ module Lain
           # @param answered [Set<String>] the listed sets a human has already
           #   answered -- {InboxView}'s too, and live for `pending`'s reason:
           #   it is emptied by the same retirement that clears the row
-          # @param renderings [Renderings] what this view has handed out
+          # @param renderings [ListView] what this view has handed out
           # @param questions [#open] where a chosen set is opened for answering
           def initialize(pending:, answered:, renderings:, questions:)
             @pending = pending
@@ -84,10 +84,10 @@ module Lain
           # what belongs here is that it applies to THIS gesture too.
           # @return [Opened]
           def open(line, generation)
-            return unopened(format(UNSHOWN, generation: generation.inspect)) unless
-              @renderings.holds?(generation)
+            resolved = @renderings.at(line, generation:)
+            return unopened(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
 
-            listed(@renderings.digest_at(line, generation), line)
+            listed(resolved.owner, line)
           end
 
           # {#open}'s question asked for an ANSWER: the same checks against the
@@ -104,10 +104,10 @@ module Lain
           # "the inbox line offering it is stale", about a LIVE row.
           # @return [Opened]
           def answering(line, generation)
-            return unopened(format(UNSHOWN, generation: generation.inspect)) unless
-              @renderings.holds?(generation)
+            resolved = @renderings.at(line, generation:)
+            return unopened(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
 
-            named(@renderings.digest_at(line, generation), line)
+            named(resolved.owner, line)
           end
 
           # The advance: the first listed set the human has NOT answered. A Hash

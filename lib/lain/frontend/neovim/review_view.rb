@@ -167,7 +167,7 @@ module Lain
         # direction that cannot let an oversized view through.
         UNREAD_SIZE = "~%d lines"
 
-        # {InboxView::Renderings::HELD}'s number and reasoning: a MEMORY bound,
+        # {InboxView::HELD}'s number and reasoning: a MEMORY bound,
         # not a correctness one, because the STAMP identifies a rendering. A
         # forgotten one is refused BY NAME and never aliases onto a later one of
         # equal height.

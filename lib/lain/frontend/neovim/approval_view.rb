@@ -46,6 +46,13 @@ module Lain
       # than parking on it. {Approval::Queue}'s own argument for its lock-free
       # `@parked`, with the same warning -- a caller reaching this from the RPC
       # thread would break it, which is precisely why the gesture is acked.
+      #
+      # THE RING IS {ListView}'s, shared with lain://inbox, and sharing it takes
+      # NO lock from here and gives none: {ListView} is lock-free and says so,
+      # serialized by whatever its holder already does. lain://inbox holds a
+      # `Mutex` because it has a listing two threads mutate; this view has the
+      # fiber-ownership argument above and keeps it. What the two surfaces
+      # genuinely share is the stamping rule, not a concurrency posture.
       class ApprovalView
         # Absent from the runtime's BUFFERS set (00_constants.lua) like
         # {Compose::BUFFER} and {QuestionView::BUFFER}, because that set is what
@@ -124,10 +131,15 @@ module Lain
         # than a wall-clock stall.
         DEFAULT_POLL_INTERVAL = 0.05
 
-        # How many renderings stay resolvable: a memory bound, not a correctness
-        # one. A rendering still held resolves exactly and one forgotten is
-        # refused BY NAME, so this only says how far behind the screen may be
-        # before a keypress has to be pressed again.
+        # How many renderings stay resolvable, handed to {ListView} rather than
+        # spelled inside it: a memory bound, not a correctness one. A rendering
+        # still held resolves exactly and one forgotten is refused BY NAME, so
+        # this only says how far behind the screen may be before a keypress has
+        # to be pressed again.
+        #
+        # lain://inbox holds SIXTEEN, and the two are deliberately not
+        # reconciled: nothing known says why this surface remembers half as
+        # many, and inventing a reason is worse than carrying a parameter.
         HELD = 8
 
         # The Null editor, and the default: an unwired view refuses the render
@@ -146,17 +158,17 @@ module Lain
           def decided? = !pending.nil?
         end
 
-        # One rendering of the parked set: the lines the editor took, and WHICH
-        # parked call each of the LEADING lines belongs to -- one entry per
-        # LINE, never one per call.
+        # One rendering of the parked set, ON ITS WAY TO THE EDITOR: everything
+        # {#posted} hands the rail in one value, and nothing that is read back
+        # afterwards. What survives the post is `owners` alone, kept by
+        # {ListView} under the stamp the editor took -- so this is a render
+        # payload and the ring is not asked to know what a tool call is.
         #
-        # THE MAP IS THE ADDRESS, replacing position addressing. `rendering[line
-        # - 1]` is the same answer only while every item is exactly one line;
-        # the moment one is not it broke in two places at once -- Ruby answered
-        # the NEIGHBOURING call, and the editor's own inert test
-        # (`line <= b:lain_approval_rows`) made every continuation line a
-        # keypress about nothing. One value fixes both, because {#rows} is
-        # `owners.size`.
+        # `owners` is WHICH parked call each of the LEADING lines belongs to --
+        # one entry per LINE, never one per call, which is the addressing
+        # {ListView} resolves a cursor through and its own doc argues for. The
+        # editor's inert test (`line <= b:lain_approval_rows`) is the same value
+        # seen from the far side, because {#rows} is `owners.size`.
         #
         # BUILT IN ONE PASS with the lines it maps, so an index built by a
         # second walk cannot disagree with the rendering the first one drew.
@@ -183,16 +195,6 @@ module Lain
         # at the cost of one small integer per line instead of the string
         # itself.
         Rendering = Data.define(:lines, :owners, :calls, :call_index) do
-          # The 1-based/0-based seam is guarded here rather than at the call
-          # site: line 0 would index -1, the LAST answerable line, so a cursor
-          # nvim never reports would silently answer the wrong call. An
-          # unreadable line answers no call rather than raising on the
-          # consumer's fiber.
-          def at(line)
-            index = Integer(line, exception: false)
-            index&.positive? ? owners[index - 1] : nil
-          end
-
           # How many of the leading lines answer a call, which is what
           # `b:lain_approval_rows` means -- not how many calls there are.
           def rows = owners.size
@@ -229,8 +231,7 @@ module Lain
         def initialize(rpc: Detached, poll_interval: DEFAULT_POLL_INTERVAL)
           @rpc = rpc
           @poll_interval = poll_interval
-          @renderings = {}
-          @generation = 0
+          @renderings = ListView.new(held: HELD)
           # Deliberately nil rather than []: the FIRST sweep must render, even
           # of an empty queue, so `:buffer lain://approval` is somewhere to
           # look from the moment a session can be gated at all.
@@ -320,19 +321,18 @@ module Lain
         #   at (b:lain_view_generation)
         # @return [Decided]
         def decide(line, verdict, generation:)
+          resolved = @renderings.at(line, generation:)
           # It does not guess: the list has moved since that rendering was
           # drawn, so this line could name two different calls and both values
           # are legal. "Press again" is the whole of what the human has to do --
           # the rows under their cursor now are a rendering this view holds.
-          return undecided(format(UNSHOWN, generation: generation.inspect)) unless @renderings.key?(generation)
-
-          pending = @renderings.fetch(generation).at(line)
-          return undecided(format(NO_ROW, line.inspect)) if pending.nil?
+          return undecided(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
+          return undecided(format(NO_ROW, line.inspect)) unless resolved.owned?
 
           answer = VERDICTS[token(verdict)]
           return undecided(unknown(verdict)) if answer.nil?
 
-          settled(pending, answer, line)
+          settled(resolved.owner, answer, line)
         end
 
         private
@@ -376,9 +376,17 @@ module Lain
 
         # The ONE rule that keeping a rendering needs: a stamp is handed out
         # only once the editor has TAKEN the lines it names. A refused post is a
-        # rendering nobody can see, so remembering one would let a gesture citing
-        # a number nothing ever wrote resolve against rows the human is not
-        # looking at.
+        # rendering nobody can see, so a burst of refusals that stayed in the
+        # ring would push out every rendering a human IS looking at -- hence the
+        # {ListView#forget}, which drops the entry WITHOUT rewinding the counter
+        # so no stamp is ever minted twice.
+        #
+        # ONE CALL MINTS AND STORES, so the number these lines go out with is
+        # the number they are kept under. Reading the counter first and storing
+        # afterwards leaves a gap in which another render takes the same number,
+        # and {#prime} on the drain thread against a sweep on the reactor is a
+        # real way to be inside it -- the spec forces that interleave and holds
+        # two renderings to two stamps.
         #
         # Separate from {#render} because {#prime} needs exactly this half and
         # must not have the other.
@@ -386,14 +394,17 @@ module Lain
         #   refused the post
         def posted(parked)
           rendering = rendering_of(parked)
-          generation = @generation + 1
-          return nil unless @rpc.set_approval(rendering.lines, generation, rendering.rows, rendering.calls,
-                                              rendering.call_index).nil?
+          generation = @renderings.remember(owners: rendering.owners)
+          return @renderings.forget(generation) unless taken?(rendering, generation)
 
-          @generation = generation
-          @renderings[generation] = rendering
-          @renderings.shift if @renderings.size > HELD
           generation
+        end
+
+        # The rail answers the sentence saying why the rendering did not land,
+        # or nothing at all when it did.
+        # @return [Boolean] whether the editor took the lines
+        def taken?(rendering, generation)
+          @rpc.set_approval(rendering.lines, generation, rendering.rows, rendering.calls, rendering.call_index).nil?
         end
 
         # Rows FIRST and nothing above them, which is what lets the editor's
@@ -415,8 +426,8 @@ module Lain
                         calls:, call_index: call_index_for(items))
         end
 
-        # One entry per LINE, the pending it belongs to -- {Rendering#at}'s
-        # own lookup, and never sent across the wire itself.
+        # One entry per LINE, the pending it belongs to -- what {ListView}
+        # resolves a cursor through, and never sent across the wire itself.
         def owners_for(items, parked)
           items.zip(parked).flat_map { |lines, pending| Array.new(lines.size, pending) }
         end
