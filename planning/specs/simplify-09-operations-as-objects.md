@@ -1,9 +1,59 @@
 # Simplify 09 — verbs terminate, adverbs decorate, and an operation gets a name
 
-status: draft
+status: draft — **dropped, not run**; see Execution log
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; Edward Kmett and Philip Wadler join for T3 and T4
+
+## Execution log
+
+**2026-09-13, by the human: this plan does not run. Dropped whole, not deferred card by card.**
+
+It was queued alongside simplify-08 and simplify-10 and pulled before any card was spawned. The
+reason is the algebra half, and the finding is recorded in full at
+[`research-algebra-registry-vs-operations.md`](research-algebra-registry-vs-operations.md).
+
+**What the research found.** The plan's thesis — that `Algebra::Registry` is a workaround for
+operations not being first-class objects, and that reifying them would encode the same claim in the
+type system the way a Rust zero-sized type does — **does not survive contact with the code.** The
+registry does five jobs, and the load-bearing one is five **load-time refusals**
+(`algebra.rb:232`, `:243`, `:251`, `:258`, `:273`, plus `meet_semilattice.rb:55` and
+`attenuation.rb:68`) — Ruby's re-implementation of Rust's impl-completeness check. Ruby's `include`
+checks nothing, so module inclusion is a strictly **weaker** claim than a registry entry, and
+reification would *lose* the guarantee it was supposed to strengthen. The law sweep also cannot
+enumerate operation objects without `ObjectSpace` (rejected at `spec/algebra_laws_spec.rb:9-10`), a
+hand-maintained list, or an `included` hook — and an `included` hook is a registry.
+
+**Both algebra cards rested on false premises.**
+
+- **T3** is dead in both halves. Its AC 1 ("the registry has no production reader") cannot pass:
+  `Algebra::Pure#pure?` (`algebra/pure.rb:59`) reads `declares?`, with 12 spec sites behind it. And
+  dropping the negative verbs contradicts `spec/spec_discipline_spec.rb:964-969`, which rules that
+  *"the negative verbs exist to be called by a spec; that is their whole job"* — 20 spec sites. The
+  card's counts were also wrong: three `not_a_*` verbs, not six; ~18 declarations and ~6 refutations,
+  not "24 claims and 5 refutations".
+- **T4**'s four justifications are each false. Its `Reachable from` claim is false — `#meet`,
+  `#causal_meets` and `#dominator_meet` have **zero callers in `lib/` or `exe/`**. It does **not**
+  gate simplify-13: 13's trait takes `ctx` as a *parameter* and `Ctx` is an associated *type*, so the
+  Rust design does not bind the store, and 13 lists the Ruby change as a *should* at wave 9. "A line
+  in a catalog" is false because the Rust meet needs `Ext::Store`, making the seam the store
+  constructor. And `CrossStore` is a **rename**, not a deletion — 8 spec assertions, 0 rescues, 2
+  `lib/` prose sites. T4 would additionally orphan the `Ext::Timeline` "must not drift" mirror that
+  simplify-02's T5 added at `lib/lain.rb:141-162`.
+
+**T1, T2 and T5 were independently sound** — none touches `algebra/`, `timeline.rb` or the registry —
+and they are dropped only because the plan is dropped, not because anything is wrong with them. If
+they are revived, they need `staleness-09.md`'s corrections applied first (notably: `agent_build.rb`
+does not exist, `Effect::Handler::Summarizing` has zero production construction sites, and the
+meeting line has moved to `agent/tool_runner.rb:455`), and the honest remaining thesis is **"an
+operation with no name can be neither selected nor recorded."**
+
+**The standing direction, from the human, 2026-09-13:** *move away from the `Registry` in general,
+as a future rearchitecture consideration.* That is a larger question than this plan, and the
+research above is the constraint list any such rearchitecture has to answer — the five load-time
+refusals and the sweep's enumeration problem are the obstacles, and neither is solved by reification
+alone. See `research-algebra-registry-vs-operations.md` §1, §2 and §7.
+
 
 ## Intent
 
