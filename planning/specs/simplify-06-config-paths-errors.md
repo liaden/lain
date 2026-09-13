@@ -639,10 +639,20 @@ why
 **Reachable from:** `Paths#home` is reached from `ProjectDir#state_dir` and from every XDG path;
 AC 3 drives a command that needs `$HOME` with it unset
 
-Add a non-raising `Paths#home_or_nil` for the four sites that legitimately want a nil, and route all
-five raw `ENV.fetch("HOME", nil)` reads through `Paths`. That retires five `rubocop:disable Style/EnvHome`
-comments and five copies of the same justification — one of which (`gc_schedule.rb:57`) has **no
-reason at all** and one (`resolver.rb:387`) has **no disable comment at all**.
+Add a non-raising `Paths#home_or_nil` for the four sites that legitimately want a nil, and route
+**four** of the five raw `ENV.fetch("HOME", nil)` reads through `Paths`. That retires four
+`rubocop:disable Style/EnvHome` comments, one of which (`gc_schedule.rb:57`) has **no reason at
+all**.
+
+**Two corrections to the above, both found while executing.** `resolver.rb:387` does NOT lack a
+disable comment — it carries a substantive `Style/EnvHome` disable/enable pair with real reasoning
+that predates this plan. And that site **must not be routed**: `Dir.home` answers from the passwd
+entry when `$HOME` is merely unset, so sending `default_project` through either `Paths` reader turns
+its deliberate, spec-pinned `UnresolvableProject` refusal into a silent success on any normal box.
+Proven, not argued — the routing was applied and `resolver_spec.rb:591` reported `Expected
+exception-free block to raise UnresolvableProject`. `$HOME` inferred as a project root is the exact
+failure the authority-boundary rule exists to prevent, so the fifth read stays as it is and its
+disable stays with it.
 
 **Acceptance criteria**
 
@@ -688,8 +698,9 @@ After the last wave:
 
 - `bundle exec rake pspec` green, **with the example count recorded**. T5 and T6 rewrite a large number
   of `raise_error` assertions in place and T6 deletes some — write the arithmetic out.
-- `bundle exec rubocop` clean, and **five fewer `Style/EnvHome` disables** than before T7. If the count
-  did not drop, the reads were not routed.
+- `bundle exec rubocop` clean, and **four fewer `Style/EnvHome` disables** than before T7 — not five.
+  The fifth is `resolver.rb`'s and it stays, for the reason recorded on T7. If the count did not drop
+  to exactly one remaining, the reads were not routed.
 - `bundle exec rspec spec/lain/project_dir_spec.rb` — T2's guard extension is the card's deliverable
   and this is where it lives.
 - `bundle exec rspec spec/lain/project/root_defaults_spec.rb` — T1, T2 and T3 each touch a constructor
