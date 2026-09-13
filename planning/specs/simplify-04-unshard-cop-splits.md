@@ -179,9 +179,24 @@ unrelated classes inheriting `Object#==`.
 - **Every card here deletes require lines and several delete an index file entirely.** T3 removes
   `lib/lain/cli/epic_driver.rb`; T7 removes `provider/ollama/deployment.rb`. Those are index removals,
   handed back as wiring diffs, and each must land in the same commit as the files it stopped loading.
-- **This plan requires simplify-01 to have landed.** Every card produces a class larger than
-  `Metrics/ClassLength: 125` permits, and several produce methods over `MethodLength: 10`. Starting
-  before 01 means every card fights the cop it exists to satisfy.
+- **This plan requires simplify-01 to have landed** for the cards that genuinely need it — but the
+  claim as first written, that *every* card produces a class larger than `Metrics/ClassLength: 125`
+  permits, is **false and was never measured**. Measured with the cop's own counter, the merged
+  `CLI::Epic` is **115** and `CLI::EpicSubmit` is **99**: neither trips even the old limit, so that
+  card never depended on 01 at all. Re-check per card rather than assuming.
+
+  **And the cop cannot see the shape these folds produce.** `Metrics/ClassLength` subtracts nested
+  class bodies entirely: a class of 750 body lines, 600 of them in three nested classes, reports
+  **zero offenses at `Max: 300`**. The four-way epic merge this plan asked for measures 242 against
+  428 source lines and would have passed in silence. The plan's own Grounding already quotes the
+  mechanism from `cli/wiring/agent_build.rb` — *"a NESTED class or module costs the enclosing class
+  only ONE line toward the cop… the in-file escape hatch"* — it simply never carried the consequence
+  into this contract.
+
+  The consequence binds every card here: **a card's "stop if the fold exceeds the raised limit"
+  trigger is not a reliable detector.** A fold that produces a god class out of nested classes trips
+  nothing. `Lint/DuplicateMethods` is the cop that actually caught the epic merge, by finding two
+  private methods wanting one name. Judge the result by reading it, not by whether rubocop is quiet.
 - **T2 runs after simplify-07's T6.** T2 deletes `lib/lain/cli/up/hud.rb`; 07's T6 first strips its
   7-line `JQ_FILTER` and `JQ_MISSING_WARNING` by publishing a pre-rendered `hud` field. Running T2
   first does not break 07 — it relocates its target mid-plan, which is worse, because the jq filter is
@@ -439,7 +454,9 @@ Scenario: a driver is mountable from the command surface
 `spec/lain/cli/epic_submit_spec.rb`
 **Reuse:** `CLI::Epic#resolve_slug` is what three of the four build an `Epic` **just to reach** —
 after the merge it is a private method call
-**Shared-file wiring:** remove four `require_relative` lines from `lib/lain/cli.rb`
+**Shared-file wiring:** remove three `require_relative` lines from `lib/lain/cli.rb` (`epic_graph`
+at `:34`, `epic_land` at `:37`, `epic_finish` at `:39`). **The fourth is not in `cli.rb`** — it is
+the last line of `lib/lain/cli/epic_submit.rb`, which requires its own `epic_submit/adjudication`.
 **Reachable from:** each merged command keeps its `exe/lain` entry point — `:369`/`:376`/`:383`
 (graph), `:416` (land), `:424` (finish); AC 1-3 each drive one through `exe/lain`
 
@@ -480,8 +497,9 @@ Scenario: a slug is resolved once per command
   Then the ambiguity is reported
   And it is reported once
 ```
-→ spec files: `spec/lain/cli/epic_spec.rb` (AC 1, AC 4), `spec/lain/cli/epic_submit_spec.rb`
-(AC 2, AC 3)
+→ spec files: `spec/lain/cli/epic_spec.rb` (AC 1, AC 4). **AC 2 and AC 3 are routed wrongly here**:
+`epic_submit_spec.rb` contains zero references to land or finish and could not cover them. They
+belong to `spec/lain/cli/epic_land_spec.rb` and `spec/lain/cli/epic_finish_spec.rb`.
 
 **Escalation triggers**
 - `CLI::Epic` is constructed at **nine** sites. Four are the siblings this card merges; the other five
