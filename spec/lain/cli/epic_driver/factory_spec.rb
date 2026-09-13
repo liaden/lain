@@ -357,6 +357,25 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(graded.map { |row| row[:work] }).to all(be(true))
     end
 
+    # NOTHING IS LEASED FOR AN ISSUE THAT CANNOT HAVE FAILING TESTS. The red
+    # step writes tests for the ONE source file the plan names, so a plan that
+    # names none is refused where the plan is read -- before an actor, a
+    # checkout or a branch exists. The refusal is the issue's, and the run goes
+    # on carrying whatever else it can.
+    it "refuses an issue whose plan declares no subject, and spawns no actor for it" do
+      write_epic([issue("a")])
+      home.plan("a").write("the plan for a, with no subject line\n")
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+
+      result = driven(width: 1)
+
+      expect(result.landed).to be_empty
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to include("declares no test subject")
+      expect(log).to be_empty
+    end
+
     # One writer for pending -> in_flight, and it is the plan approval. An
     # issue the fold still calls pending is reported, never launched -- the
     # landing would refuse it anyway.

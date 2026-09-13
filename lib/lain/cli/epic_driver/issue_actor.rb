@@ -3,7 +3,21 @@
 module Lain
   module CLI
     module EpicDriver
-      class IssueActor # rubocop:disable Style/Documentation -- doc lives on the reopen below
+      # One issue, launched as an actor running the `execute-plan` skill in a
+      # checkout of its own.
+      #
+      # The ORDER is the whole of it. A plan that is not approved stops the
+      # issue before anything is leased. Then the epic's supervisor cuts the
+      # checkout at `epic/<slug>`'s tip, the checkout is switched onto the
+      # issue's own lain-owned branch, and the failing tests are generated and
+      # committed there -- so by the actor's first turn, the plan it is handed
+      # already has its red step in the history behind it.
+      #
+      # Nothing the actor or its children commit reaches `epic/<slug>`: the
+      # children lease from the issue's branch and hand back into the actor's
+      # checkout, and retirement anchors that branch's tip for the issue's
+      # implementation gate to stand in front of.
+      class IssueActor
         ROLE = "issue_orchestrator"
 
         SKILL = :"execute-plan"
@@ -15,6 +29,114 @@ module Lain
         # What one launch left standing: the actor, the id its anchor will take,
         # the branch its work is on, and the red step that precedes it.
         Launch = Data.define(:actor, :worker_id, :branch, :tests)
+
+        # Where the actor's children work: each leasing a checkout cut from the
+        # ISSUE's branch, and handing its work back into the actor's own
+        # checkout. Nothing here reaches the chat's tree or the epic's branch,
+        # which the issue's implementation gate stands in front of.
+        class Lanes
+          # @param root [String] where the children's checkouts live
+          # @param role_spawn [Skill::RoleSpawn] spawns the resolver a conflicted
+          #   handback needs, inside the actor's own checkout, which is where
+          #   the conflict is
+          # @param journal [#<<] where the handback records land
+          # @param strategy [Isolation::MergeStrategy] how a handback merges
+          # @param shell_out_factory [#call] builds the git subprocess runner
+          def initialize(root:, role_spawn:, journal: Lain::Channel::Null.instance,
+                         strategy: Lain::Isolation::MergeStrategy::DEFAULT,
+                         shell_out_factory: Lain::Shell::Out.public_method(:new))
+            @root = root
+            @role_spawn = role_spawn
+            @journal = journal
+            @strategy = strategy
+            @shell_out_factory = shell_out_factory
+          end
+
+          # @param worker_env [WorkerEnv] the actor's lease
+          # @param branch [String] the issue's branch, which its children are
+          #   cut from and hand back onto
+          # @return [Hash{Symbol=>Object}] the `isolation:` and `handoff:` the
+          #   issue's own epic Subagent is built over
+          def over(worker_env, branch)
+            checkout = worker_env.cwd
+            base = working_branch(checkout, branch)
+            { isolation: Lain::Isolation::Worktree.new(root: @root, repo_root: checkout, base:,
+                                                       shell_out_factory: @shell_out_factory),
+              handoff: Lain::Isolation::WorkerHandoff.over(repo_root: checkout, base:, journal: @journal,
+                                                           strategy: @strategy,
+                                                           resolver: @role_spawn.within(worker_env)) }
+          end
+
+          private
+
+          def working_branch(checkout, branch)
+            Lain::Isolation::WorkingBranch.new(branch, repo_root: checkout,
+                                                       git: Lain::Isolation::Checkout.new(
+                                                         checkout, shell_out_factory: @shell_out_factory
+                                                       ))
+          end
+        end
+
+        # What the actor is seeded with: the skill that runs a plan, then this
+        # issue's own contract -- where its approved plan is, what it must
+        # satisfy, the failing tests it must turn green, and where its work has
+        # to end up.
+        Brief = Data.define(:renderer, :home, :slug, :issue, :branch, :tests) do
+          def to_s = [renderer.render(SKILL), carrying, planned, satisfying, failing, settling].join("\n\n")
+
+          def working_branch = Lain::Isolation::WorkingBranch.epic_name(slug)
+
+          private
+
+          def carrying
+            <<~SECTION.strip
+              ## The issue you are carrying
+
+              Issue `#{issue.id}` of epic `#{slug}`: #{issue.title}. Your checkout stands on `#{branch}`,
+              cut from the tip of `#{working_branch}`.
+            SECTION
+          end
+
+          def planned
+            <<~SECTION.strip
+              ## Its plan
+
+              Read `#{home.plan(issue.id).path}` before anything else. It is approved, and it is this
+              run's contract: follow its steps, its scope and its escalation triggers.
+            SECTION
+          end
+
+          def satisfying
+            <<~SECTION.strip
+              ## What it must satisfy
+
+              #{issue.criteria}
+            SECTION
+          end
+
+          def failing
+            <<~SECTION.strip
+              ## The failing tests
+
+              Generated from those criteria and committed on your branch before your first turn:
+
+              - `#{tests.record.target}`
+
+              Make them pass. Never weaken or delete one -- if a test is wrong, say so in your answer
+              instead of editing it away.
+            SECTION
+          end
+
+          def settling
+            <<~SECTION.strip
+              ## Before you settle
+
+              Commit your work on `#{branch}`, rebase it onto `#{working_branch}`, resolve any conflict
+              yourself, and leave the tree clean. Your last answer says what landed and what did not:
+              it is reviewed, and the harness merges the work, never you.
+            SECTION
+          end
+        end
 
         # @param slug [String] the epic
         # @param issue_id [String] the issue
@@ -141,133 +263,6 @@ module Lain
 
         def brief(issue, branch, red)
           Brief.new(renderer: @renderer, home: @home, slug: @slug, issue:, branch: branch.name, tests: red).to_s
-        end
-      end
-
-      # One issue, launched as an actor running the `execute-plan` skill in a
-      # checkout of its own.
-      #
-      # The ORDER is the whole of it. A plan that is not approved stops the
-      # issue before anything is leased. Then the epic's supervisor cuts the
-      # checkout at `epic/<slug>`'s tip, the checkout is switched onto the
-      # issue's own lain-owned branch, and the failing tests are generated and
-      # committed there -- so by the actor's first turn, the plan it is handed
-      # already has its red step in the history behind it.
-      #
-      # Nothing the actor or its children commit reaches `epic/<slug>`: the
-      # children lease from the issue's branch and hand back into the actor's
-      # checkout, and retirement anchors that branch's tip for the issue's
-      # implementation gate to stand in front of.
-      class IssueActor
-        # Reopened rather than nested mid-body: the split keeps each class body
-        # within Metrics/ClassLength instead of loosening it.
-
-        # Where the actor's children work: each leasing a checkout cut from the
-        # ISSUE's branch, and handing its work back into the actor's own
-        # checkout. Nothing here reaches the chat's tree or the epic's branch,
-        # which the issue's implementation gate stands in front of.
-        class Lanes
-          # @param root [String] where the children's checkouts live
-          # @param role_spawn [Skill::RoleSpawn] spawns the resolver a conflicted
-          #   handback needs, inside the actor's own checkout, which is where
-          #   the conflict is
-          # @param journal [#<<] where the handback records land
-          # @param strategy [Isolation::MergeStrategy] how a handback merges
-          # @param shell_out_factory [#call] builds the git subprocess runner
-          def initialize(root:, role_spawn:, journal: Lain::Channel::Null.instance,
-                         strategy: Lain::Isolation::MergeStrategy::DEFAULT,
-                         shell_out_factory: Lain::Shell::Out.public_method(:new))
-            @root = root
-            @role_spawn = role_spawn
-            @journal = journal
-            @strategy = strategy
-            @shell_out_factory = shell_out_factory
-          end
-
-          # @param worker_env [WorkerEnv] the actor's lease
-          # @param branch [String] the issue's branch, which its children are
-          #   cut from and hand back onto
-          # @return [Hash{Symbol=>Object}] the `isolation:` and `handoff:` the
-          #   issue's own epic Subagent is built over
-          def over(worker_env, branch)
-            checkout = worker_env.cwd
-            base = working_branch(checkout, branch)
-            { isolation: Lain::Isolation::Worktree.new(root: @root, repo_root: checkout, base:,
-                                                       shell_out_factory: @shell_out_factory),
-              handoff: Lain::Isolation::WorkerHandoff.over(repo_root: checkout, base:, journal: @journal,
-                                                           strategy: @strategy,
-                                                           resolver: @role_spawn.within(worker_env)) }
-          end
-
-          private
-
-          def working_branch(checkout, branch)
-            Lain::Isolation::WorkingBranch.new(branch, repo_root: checkout,
-                                                       git: Lain::Isolation::Checkout.new(
-                                                         checkout, shell_out_factory: @shell_out_factory
-                                                       ))
-          end
-        end
-
-        # What the actor is seeded with: the skill that runs a plan, then this
-        # issue's own contract -- where its approved plan is, what it must
-        # satisfy, the failing tests it must turn green, and where its work has
-        # to end up.
-        Brief = Data.define(:renderer, :home, :slug, :issue, :branch, :tests) do
-          def to_s = [renderer.render(SKILL), carrying, planned, satisfying, failing, settling].join("\n\n")
-
-          def working_branch = Lain::Isolation::WorkingBranch.epic_name(slug)
-
-          private
-
-          def carrying
-            <<~SECTION.strip
-              ## The issue you are carrying
-
-              Issue `#{issue.id}` of epic `#{slug}`: #{issue.title}. Your checkout stands on `#{branch}`,
-              cut from the tip of `#{working_branch}`.
-            SECTION
-          end
-
-          def planned
-            <<~SECTION.strip
-              ## Its plan
-
-              Read `#{home.plan(issue.id).path}` before anything else. It is approved, and it is this
-              run's contract: follow its steps, its scope and its escalation triggers.
-            SECTION
-          end
-
-          def satisfying
-            <<~SECTION.strip
-              ## What it must satisfy
-
-              #{issue.criteria}
-            SECTION
-          end
-
-          def failing
-            <<~SECTION.strip
-              ## The failing tests
-
-              Generated from those criteria and committed on your branch before your first turn:
-
-              - `#{tests.record.target}`
-
-              Make them pass. Never weaken or delete one -- if a test is wrong, say so in your answer
-              instead of editing it away.
-            SECTION
-          end
-
-          def settling
-            <<~SECTION.strip
-              ## Before you settle
-
-              Commit your work on `#{branch}`, rebase it onto `#{working_branch}`, resolve any conflict
-              yourself, and leave the tree clean. Your last answer says what landed and what did not:
-              it is reviewed, and the harness merges the work, never you.
-            SECTION
-          end
         end
       end
     end
