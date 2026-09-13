@@ -20,6 +20,12 @@ module Lain
       # silently truncated -- {#format_matches} says so in the body.
       MAX_MATCHES = 200
 
+      # The same walk-cap {Grep} shares: one row past the limit is all
+      # {#capped_matches} ever pulls, and {ResultFormatter} renders its
+      # trailer from this instance so the wording stays byte-identical to
+      # {Grep}'s without either file re-deriving the other's number.
+      WALK_CAP = Tool::Bounds::WalkCap.new(limit: MAX_MATCHES)
+
       # So a directory walk parses only the files that could plausibly be that
       # language, rather than feeding a `.py` file to the Ruby grammar.
       EXTENSIONS = {
@@ -85,8 +91,8 @@ module Lain
 
         language = input.language.downcase.to_sym
         patterns = resolve_patterns(input, language)
-        matches = capped_matches(path, input.path, language, patterns)
-        Tool::Result.ok(RESULT_FORMATTER.call(matches, patterns:, path: input.path))
+        found = capped_matches(path, input.path, language, patterns)
+        Tool::Result.ok(RESULT_FORMATTER.call(found, patterns:, path: input.path))
       # `EncodingError` rides with the rest despite NOT being a Lain::Error:
       # the ext refuses a source it would have to transcode, and Ruby's own
       # class is what comes back. {#each_structural_match} has already named the
@@ -106,11 +112,11 @@ module Lain
         File.expand_path(input.path, session_of(invocation).worker_env.cwd)
       end
 
-      # One more than the cap is all that is ever pulled off the lazy walk --
-      # enough for {ResultFormatter} to know the result WAS capped, without
-      # parsing a single file past what the cap needs.
+      # {WALK_CAP} owns the one-more-than-the-limit pull, so this stays a
+      # single delegation -- the discipline of parsing no file past what the
+      # cap needs lives on {Tool::Bounds::WalkCap#apply}, not here.
       def capped_matches(path, display, language, patterns)
-        deduplicate(search(path, display, language, patterns)).first(MAX_MATCHES + 1)
+        WALK_CAP.apply(deduplicate(search(path, display, language, patterns)))
       end
 
       def problem_with(input, path)
@@ -225,24 +231,25 @@ module Lain
         source.lines[line_no - 1]&.chomp.to_s
       end
 
-      # Renders a lazily-capped match list into the tool's result body: the
+      # Renders an already-capped match list into the tool's result body: the
       # truncation disclosure and the capture rendering are one cohesive
       # responsibility, pulled out so {AstSearch} itself stays under
       # Metrics/ClassLength (CLAUDE.md: extract a collaborator, never loosen a
-      # Metrics cop). Stateless past its one `max_matches` policy value, so a
+      # Metrics cop). Stateless past its one `walk_cap` policy value, so a
       # single frozen instance is shared rather than built per call.
       class ResultFormatter
-        def initialize(max_matches:)
-          @max_matches = max_matches
+        def initialize(walk_cap:)
+          @walk_cap = walk_cap
           freeze
         end
 
-        def call(matches, patterns:, path:)
-          return "no matches for #{patterns.join(" / ").inspect} under #{path}" if matches.empty?
+        # `found` is {#capped_matches}'s already-capped {Tool::Bounds::Found}
+        # -- the cap itself is `@walk_cap`'s job, not this method's.
+        def call(found, patterns:, path:)
+          return "no matches for #{patterns.join(" / ").inspect} under #{path}" if found.rows.empty?
 
-          capped = matches.size > @max_matches
-          lines = matches.first(@max_matches).map { |match| format_line(*match) }
-          lines << "... capped at #{@max_matches} matches" if capped
+          lines = found.rows.map { |match| format_line(*match) }
+          lines << @walk_cap.notice("matches") if found.capped
           lines.join("\n")
         end
 
@@ -256,7 +263,7 @@ module Lain
         end
       end
 
-      RESULT_FORMATTER = ResultFormatter.new(max_matches: MAX_MATCHES).freeze
+      RESULT_FORMATTER = ResultFormatter.new(walk_cap: WALK_CAP).freeze
       private_constant :ResultFormatter, :RESULT_FORMATTER
     end
   end

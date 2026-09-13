@@ -381,6 +381,7 @@ module Lain
 end
 
 require_relative "tool/bounds"
+require_relative "tool/bounds/walk_cap"
 require_relative "tool/input"
 require_relative "tool/invocation"
 require_relative "tool/result_block"

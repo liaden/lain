@@ -99,6 +99,20 @@ RSpec.describe Lain::Tools::Grep do
     expect(result.content).to include("capped at #{Lain::Tools::Grep::MAX_MATCHES}")
   end
 
+  # Through the floor CLI::Wiring::BaseTools really builds, because the seam
+  # that matters is the one a session assembles rather than the one a bare
+  # `described_class.new` does -- matches bash_spec.rb's own use of the same
+  # floor. Proves {Tools::Grep::WALK_CAP} reaches the model-visible content
+  # through production wiring, not just through this file's own subject.
+  it "still caps its output and says so when run through the production floor" do
+    write("many.rb", (["x"] * 5000).join("\n"))
+    floor = Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new)
+
+    result = floor.find { |candidate| candidate.name == "grep" }.call({ pattern: "x", path: tmpdir })
+
+    expect(result.content.lines.last).to eq("... capped at #{Lain::Tools::Grep::MAX_MATCHES} matches")
+  end
+
   it "skips .git directories while walking a directory tree" do
     write(".git/objects/pack-junk", "needle\n")
     write("real.rb", "needle\n")

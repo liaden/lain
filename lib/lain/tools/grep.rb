@@ -44,10 +44,14 @@ module Lain
       # result content.
       MAX_MATCHES = 200
 
-      # Both paths answer this, so {#format_matches} never learns which one
-      # ran, and the collect-one-past-the-cap discipline stays inside the path
-      # that needs it rather than being re-derived from the rows downstream.
-      Found = Data.define(:rows, :capped)
+      # Both paths hand back the same {Tool::Bounds::Found}, so
+      # {#format_matches} never learns which one ran, and the collect-one-
+      # past-the-cap discipline stays inside the path that needs it (see
+      # {RubySearch#call}) rather than being re-derived from the rows
+      # downstream. Shared with {Tools::AstSearch}, the other tool that caps
+      # mid-walk and cannot use {Tool::Bounds::Enumeration} for the reason
+      # {Tool::Bounds} itself records.
+      WALK_CAP = Tool::Bounds::WalkCap.new(limit: MAX_MATCHES)
 
       # The wire shape: a required pattern, a required path (a file OR a
       # directory -- a directory is walked recursively), and an optional
@@ -69,8 +73,7 @@ module Lain
       # before throwing most of the result away.
       class RubySearch
         def call(path, input)
-          rows = matching(path, input.path, build_regex(input)).lazy.first(MAX_MATCHES + 1)
-          Found.new(rows: rows.first(MAX_MATCHES), capped: rows.size > MAX_MATCHES)
+          WALK_CAP.apply(matching(path, input.path, build_regex(input)).lazy)
         end
 
         private
@@ -146,7 +149,7 @@ module Lain
           rows = reply.fetch("matches").map do |match|
             [under_root ? match.fetch("path") : input.path, match.fetch("line_number"), match.fetch("line")]
           end
-          Found.new(rows:, capped: reply.fetch("capped"))
+          Tool::Bounds::Found.new(rows:, capped: reply.fetch("capped"))
         end
 
         private
@@ -260,7 +263,7 @@ module Lain
         return self.class.no_matches_message(input.pattern, input.path) if found.rows.empty?
 
         lines = found.rows.map { |file, line_no, line| "#{file}:#{line_no}:#{line}" }
-        lines << "... capped at #{MAX_MATCHES} matches" if found.capped
+        lines << WALK_CAP.notice("matches") if found.capped
         lines.join("\n")
       end
     end
