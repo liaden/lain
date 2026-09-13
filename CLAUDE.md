@@ -183,6 +183,13 @@ defects have lived:
 Specs require nothing internal: `spec/spec_helper.rb` does `require "lain"`. The corollary is the
 commit-grouping rule below.
 
+`bin/spec-census` is the spec tree's worklist, the sibling of `bin/comment-census`: it reports
+assertion shapes that structurally cannot fail (`sole_raise_error`, `nested_expect`) and public `lib/`
+methods only `spec/` ever names. Run it on demand. `--check` is a ratchet — `count <= ceiling`, seeded
+at 184 and 76 — and exits non-zero, but **nothing gates on it**, deliberately: one pass costs ~5s and
+106MB and parses `spec/` twice, which is not a per-commit price. Raising a ceiling goes in its own
+commit, saying why.
+
 ## Committing
 
 Commit directly on `main`, in logical chunks, with terse high-signal messages. No trailers.

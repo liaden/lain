@@ -95,8 +95,8 @@ require "pathname"
 # the shape of a construction, and nothing whatever about which ones are
 # allowed -- that is {ProviderConstructionDiscipline}'s job below. The split
 # is what lets the policy be exercised against literal fixtures without a
-# parser in the way, and it follows `spec_discipline_spec.rb`, which carries
-# five cooperating modules for the same reason.
+# parser in the way, and it follows `bin/spec-census`, which carries five
+# cooperating modules for the same reason.
 module ProviderConstruction
   ENDPOINT_PROVIDERS = %w[Anthropic Ollama].freeze
 

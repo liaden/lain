@@ -1,0 +1,1128 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "prism"
+require "pathname"
+
+# Two mechanical censuses of this repository's own spec/ and lib/ trees, and
+# the worklists they produce. `bin/comment-census` is the shape this follows:
+# a report that a human reads and acts on, plus one `--check` mode that can
+# actually fail.
+#
+#   census  (default)   both listings in full, each behind its own banner
+#   --counts            the summary lines only
+#   --check             the RATCHET: non-zero when either count has grown past
+#                       its seeded ceiling
+#
+# WHY THIS IS NOT A SPEC. It used to be `spec/spec_discipline_spec.rb`, whose
+# own comment recorded that it "prints the report and passes" -- a guard that
+# could not fail, costing ~5.9s of a parallel suite's wall, 99.7% of it in the
+# two whole-tree examples. It also wrote its summary lines through
+# `RSpec.configuration.reporter.message`, which `Rakefile`'s `--out` redirects
+# into `tmp/parallel_runtime_rspec.log`: prose in a file a packer reads. The
+# lines were harmless there by luck rather than by design (parallel_tests
+# discards a runtime entry whose key is not a known spec file), and relying on
+# that luck is the stray-line-breaks-a-parser hazard CLAUDE.md's Output
+# Discipline section names for the Journal.
+#
+# So the two whole-tree scans moved here, where a listing goes to stdout and
+# the caller decides whether to redirect it. What STAYED a spec is everything
+# that can go red: the scanners' own behaviour
+# (`spec/lain/spec_census_spec.rb`) and the one real tree guard that lived
+# alongside them (`spec/fixture_discipline_spec.rb`).
+#
+# Pure stdlib plus Prism, like `bin/comment-census` and for the same reason: it
+# reads source as TEXT and never needs the gem, Bundler, or the compiled
+# extension.
+module SpecCensus
+  REPO_ROOT = Pathname(__dir__).join("..").expand_path
+
+  # Mechanical, REPORT-ONLY guard against assertion shapes that structurally
+  # cannot fail. The suite is largely LLM-written and keeps growing that way, so
+  # a one-time prune only fixes today's instances -- this census is what
+  # makes tomorrow's mechanically visible, the way `output_discipline_spec.rb`
+  # makes a stray `puts` visible.
+  #
+  # Two shapes, both drawn from a manual audit during planning:
+  #
+  #   1. An example whose only assertions are `expect { ... }.not_to raise_error`
+  #      (or `.to_not`) -- "no non-vacuous assertion", not literally "exactly
+  #      one call": TWO such calls and nothing else is still 100% vacuous (see
+  #      `sole_raise_error_shape?`/`record_example_result`). "Nothing raised" is
+  #      true of almost any program state, so a lone instance of this cannot
+  #      fail for the reason the example claims to cover -- but that is a claim
+  #      about the ASSERTION, not a verdict on the example. This IS flagged
+  #      when it is genuinely the example's only assertion, including the one
+  #      instance judged a deliberate keep,
+  #      spec/support/shared_examples/review_surface.rb:242-250 (one call of
+  #      each port message inside a single `expect do ... end.not_to
+  #      raise_error`, no second assertion beside it -- it does NOT escape this
+  #      rule by having a real assertion next to it). That one was judged worth
+  #      keeping anyway -- cheap coverage that the whole port survives one
+  #      pass -- so it is flagged AND kept, not evidence the rule mis-fired. That
+  #      judgment lives in prose because this guard builds no allowlist to encode
+  #      it in code. The report
+  #      also finds this shape's precision to be well under 100% generally (see
+  #      its own banner) -- FLAGGED is a claim about the assertion, never a
+  #      verdict on the check it wraps.
+  #      KNOWN LIMITATION: only `expect(...)`/`is_expected`/
+  #      `expect_any_instance_of` receivers are recognised as assertions.
+  #      Project helpers that wrap `expect` internally (e.g. `expect_journaled`)
+  #      are statically invisible to this scan and can produce a false "sole"
+  #      flag -- not fixable without evaluating the helper's body, so it stays
+  #      a documented gap rather than a guess. Also unaddressed on purpose:
+  #      `not_to raise_error(SpecificError)` (a class-filtered negative) is
+  #      flagged identically to the bare form today; it is arguably a
+  #      different, slightly less vacuous shape, but affects zero currently
+  #      flagged instances (the one occurrence in the suite,
+  #      `spec/lain/rust/prompt_spec.rb:110`, sits beside a second real
+  #      assertion and was never flagged to begin with), so it is left as a
+  #      noted distinction rather than a special case with nothing to test it.
+  #   2. A nested `expect` inside an `expect { ... }` block, flagged regardless
+  #      of what else the example asserts. The mechanism is NOT "raise_error
+  #      swallows the inner exception" -- `spec/spec_helper.rb:57-58` turns on
+  #      `aggregate_failures` for every example by default (opt out with
+  #      `aggregate_failures: false`), and aggregation replaces the failure
+  #      NOTIFIER: a failing inner `expect` never raises at all, it is
+  #      collected and reported separately, at its own line, once the example
+  #      ends. So the outer `expect { }.not_to raise_error` sees nothing rise
+  #      and passes on its own terms -- the example still fails overall (via
+  #      the aggregated failure, verified empirically against this repo's
+  #      actual RSpec + gems), but the outer construct is misleading about what
+  #      it is testing, and the inner check's identity is invisible to a reader
+  #      of the failure it "guards". The shape that WOULD produce a true
+  #      silent green -- a bare `expect { }.to raise_error` (positive, no
+  #      class filter) wrapping a nested `expect` -- has zero occurrences in
+  #      this suite today; a future ratchet should watch for that one
+  #      specifically, not just any nesting.
+  #      The dominant source of `nested_expect` flags is a DIFFERENT, legitimate
+  #      idiom that happens to share this shape: `spec/support_matchers_spec.rb`
+  #      tests the custom matchers under `spec/support/matchers/` via
+  #      `expect { expect(x).to my_matcher }.to raise_error(RSpec::Expectations::ExpectationNotMetError, /msg/)`
+  #      -- RSpec's own recommended way to assert a matcher's failure message,
+  #      where the nesting is required, not a bug. That file carries its own
+  #      `aggregate_failures: false` (see its header comment) precisely because
+  #      aggregation would swallow the message this pattern needs to inspect --
+  #      which is a better mechanical discriminator than the shape of the outer
+  #      matcher, for whoever builds the next refinement.
+  #
+  # A WORKLIST, not a delete list. A planning-time crude grep found 352 raw
+  # `not_to raise_error` occurrences across 183 files, of which roughly 127
+  # looked like sole assertions -- this AST scan lands close to that (see the
+  # report's calibration line). A prune consumes the report and fixes, deletes,
+  # or documents-with-a-reason each entry -- NOT "delete everything on the
+  # list" (see the report's own banner: a 25-entry manual spot-check found most
+  # `sole_raise_error` instances assert something real). The gate this census
+  # DOES offer is the ratchet at {CLI}: `count <= <ceiling>`, so a new instance
+  # costs an old one. A hard zero would need an allowlist sized to the count,
+  # which is a disabled guard wearing a gate's name.
+  module Assertions
+    # A single flagged example, with enough context to find and judge it.
+    # `bang_call` and `raise_sibling` are only meaningful for `:sole_raise_error`
+    # (nil for `:nested_expect`) -- see the Scanner doc for what each measures.
+    # Neither is a verdict: both are cheap, imperfect READING signals, not a
+    # replacement for opening the file. See this script's own report banner
+    # for the measured precision against a manual read.
+    Violation = Struct.new(:path, :line, :shape, :description, :bang_call, :raise_sibling) do
+      def to_s
+        "#{path}:#{line} [#{shape}]#{" #{description.inspect}" if description}"
+      end
+    end
+
+    # Pure AST predicates: "does this node look like shape X". Kept separate
+    # from Scanner on purpose -- Scanner owns traversal and the group/example
+    # scope stacks, a genuinely different responsibility from "what does this
+    # one node mean", and the split is what keeps either half readable.
+    module Shapes
+      # `it` and `specify` are RSpec's two example-defining aliases actually
+      # reachable at the top level; `example` is not used anywhere in this
+      # suite as of this scan (verified: no `example do`/`example {` in spec/),
+      # so it is left out rather than guessed at.
+      EXAMPLE_METHODS = %i[it specify].freeze
+      # `describe`/`context` bound the group a "raise_error sibling" is read
+      # against. The outermost one is `RSpec.describe`; every nested one is
+      # receiverless (DSL methods instance_eval'd into the block).
+      GROUP_METHODS = %i[describe context].freeze
+      # The matcher-invocation methods RSpec dispatches on an assertion receiver.
+      MATCHER_METHODS = %i[to not_to to_not].freeze
+      # The two of those three that assert absence -- "and did NOT happen" is
+      # the shape `.not_to raise_error` needs to match.
+      NEGATIVE_METHODS = %i[not_to to_not].freeze
+      # `expect(...)`/`expect { }` is the common case; `is_expected` and
+      # `expect_any_instance_of` are the other two receiver shapes a real
+      # assertion in this suite is written against. Without these, a SECOND,
+      # real assertion spelled either way is invisible to the "sole" count and
+      # produces a false positive.
+      ASSERTION_RECEIVERS = %i[expect is_expected expect_any_instance_of].freeze
+
+      module_function
+
+      def example?(node)
+        EXAMPLE_METHODS.include?(node.name) && node.receiver.nil? && !node.block.nil?
+      end
+
+      def group?(node)
+        return false unless GROUP_METHODS.include?(node.name) && node.block
+
+        node.receiver.nil? || rspec_const?(node.receiver)
+      end
+
+      def rspec_const?(node)
+        node.is_a?(Prism::ConstantReadNode) && node.name == :RSpec
+      end
+
+      def matcher_call?(node)
+        MATCHER_METHODS.include?(node.name) &&
+          node.receiver.is_a?(Prism::CallNode) && ASSERTION_RECEIVERS.include?(node.receiver.name)
+      end
+
+      def sole_raise_error_shape?(node)
+        return false unless NEGATIVE_METHODS.include?(node.name)
+        return false unless node.receiver.name == :expect && node.receiver.block
+
+        raise_error_matcher?(node)
+      end
+
+      # The signal a SIBLING reads: this example (anywhere in its body, not
+      # just its top-level assertion) asserts that something DOES raise.
+      def raise_positive_call?(node)
+        return false unless node.name == :to && node.receiver.name == :expect
+
+        raise_error_matcher?(node)
+      end
+
+      def raise_error_matcher?(node)
+        matcher = node.arguments&.arguments&.first
+        matcher.is_a?(Prism::CallNode) && matcher.name == :raise_error
+      end
+
+      # A cheap, imperfect proxy for "this wraps a method whose job is to
+      # raise": this codebase's own convention marks such methods with a `!`
+      # (`check!`, `admit!`, `ensure_open!`). Scans the whole wrapped block,
+      # not just its first call, since the checked method is often reached via
+      # a local built earlier in the block.
+      def bang_call?(assertions)
+        assertions.any? { |node| node.is_a?(Prism::CallNode) && any_bang_call?(node.receiver.block) }
+      end
+
+      def any_bang_call?(node)
+        return false unless node.is_a?(Prism::Node)
+        return true if node.is_a?(Prism::CallNode) && node.name.to_s.end_with?("!")
+
+        node.compact_child_nodes.any? { |child| any_bang_call?(child) }
+      end
+
+      def expect_call?(node)
+        node.name == :expect && node.receiver.nil?
+      end
+
+      def description(node)
+        first = node.arguments&.arguments&.first
+        first.is_a?(Prism::StringNode) ? first.unescaped : nil
+      end
+    end
+
+    # Walks one file's syntax tree collecting violations. A violation is always
+    # reported at its EXAMPLE's line (the `it`/`specify` line), never a
+    # containing `describe`'s -- that is the line a reader needs.
+    class Scanner
+      # One example-group's (`describe`/`context`) direct children, collected
+      # so a vacuous example's report can name whether a SIBLING in the SAME
+      # group asserts that something raises at all -- context a flat,
+      # single-pass violation list cannot carry on its own. This is a
+      # CORRELATE, not proof of an accept/refuse pair: it is set when ANY
+      # sibling raises about ANYTHING, so a well-tested `describe "#method"`
+      # with an unrelated raising example nearby will set it for every vacuous
+      # sibling in the group, whether or not the two are actually paired (see
+      # the module doc's caveat on `raise_sibling`).
+      # `children` holds one Hash per direct child example (named `children`,
+      # not `entries`, so it does not shadow `Struct#entries`):
+      #   node:    the `it` call node (line + description)
+      #   vacuous: true when every assertion in it is the sole_raise_error shape
+      #   bang:    vacuous AND the wrapped block calls a `!`-suffixed method
+      #   raises:  this example asserts `expect { }.to raise_error(...)` ANYWHERE
+      Group = Struct.new(:children)
+
+      # One example while its subtree is walked: the `it`/`specify` node
+      # itself, one entry per matcher call found (`false`, or the matcher's
+      # CallNode when it is the vacuous `not_to raise_error` shape -- kept
+      # rather than a bare boolean so a bang-call scan can run on it once the
+      # example turns out to be all-vacuous), and whether ANY assertion in the
+      # example is a positive `raise_error` check (what a SIBLING reads).
+      Example = Struct.new(:node, :assertions, :raises)
+
+      def initialize(path)
+        @path = path
+        @violations = []
+        @example_stack = []
+        @group_stack = []
+        @expect_depth = 0
+      end
+
+      # @return [Array<Violation>]
+      def scan(source)
+        @group_stack = [Group.new([])]
+        walk(Prism.parse(source).value)
+        finish_group(@group_stack.pop)
+        @violations
+      end
+
+      private
+
+      def walk(node)
+        return unless node.is_a?(Prism::Node)
+        return walk_call(node) if node.is_a?(Prism::CallNode)
+
+        node.compact_child_nodes.each { |child| walk(child) }
+      end
+
+      def walk_call(node)
+        return walk_group(node) if Shapes.group?(node)
+        return walk_example(node) if Shapes.example?(node)
+
+        record_sole_assertion_candidate(node)
+        record_nested_expect(node)
+        walk_expect_children(node)
+      end
+
+      # A nested group is fully self-contained: its own direct-child examples
+      # are ITS siblings, computed and turned into violations before this
+      # method returns, and it never becomes an entry in the group around it --
+      # only `it`s do. That is what keeps "sibling" meaning "same immediate
+      # describe", not "anywhere in the file".
+      def walk_group(node)
+        @group_stack.push(Group.new([]))
+        node.compact_child_nodes.each { |child| walk(child) }
+        finish_group(@group_stack.pop)
+      end
+
+      # An example is its own scope for the vacuous-assertion count: assertions
+      # found while this example is on top of the stack -- INCLUDING ones
+      # nested inside an `expect { }` block, which is what stops a
+      # nested-expect example (shape 2) from also being miscounted as
+      # all-vacuous (its real count is two: the outer `not_to raise_error` and
+      # the inner matcher RSpec never gets to report on its own).
+      def walk_example(node)
+        @example_stack.push(Example.new(node, [], false))
+        node.compact_child_nodes.each { |child| walk(child) }
+        record_example_result(@example_stack.pop)
+      end
+
+      def record_example_result(example)
+        vacuous = example.assertions.any? && example.assertions.all?
+        @group_stack.last.children << {
+          node: example.node,
+          vacuous:,
+          bang: vacuous && Shapes.bang_call?(example.assertions),
+          raises: example.raises
+        }
+      end
+
+      # Flushes one group: every vacuous direct child becomes a Violation, with
+      # `raise_sibling` true when ANY other direct child of this SAME group
+      # asserts a positive `raise_error` -- SOME sibling in this describe
+      # raises, often but not always the refuse half of an accept/refuse pair
+      # with THIS example (see the module doc: this over-promotes for any
+      # well-tested `describe` that happens to carry an unrelated raising
+      # example). A vacuous entry can never itself carry `raises: true` (that
+      # would require a non-vacuous assertion, which fails the `.all?` vacuous
+      # check above), so there is no need to exclude the entry from its own
+      # sibling check.
+      def finish_group(group)
+        raises_present = group.children.any? { |child| child[:raises] }
+        group.children.each do |child|
+          next_violation(child, raises_present) if child[:vacuous]
+        end
+      end
+
+      def next_violation(child, raise_sibling)
+        @violations << violation(child[:node], :sole_raise_error, bang_call: child[:bang], raise_sibling:)
+      end
+
+      def record_sole_assertion_candidate(node)
+        return unless Shapes.matcher_call?(node)
+
+        current = @example_stack.last
+        return unless current
+
+        current.assertions << (Shapes.sole_raise_error_shape?(node) ? node : false)
+        current.raises = true if Shapes.raise_positive_call?(node)
+      end
+
+      def record_nested_expect(node)
+        return unless Shapes.expect_call?(node) && @expect_depth.positive?
+
+        context = @example_stack.last&.node || node
+        @violations << violation(context, :nested_expect)
+      end
+
+      # `expect { }` (block form) is the only shape that can swallow a nested
+      # failure, so depth only tracks block-form expects. `expect(value)` opens
+      # no scope for anything to hide inside.
+      def walk_expect_children(node)
+        opens_scope = Shapes.expect_call?(node) && node.block
+        @expect_depth += 1 if opens_scope
+        node.compact_child_nodes.each { |child| walk(child) }
+        @expect_depth -= 1 if opens_scope
+      end
+
+      def violation(node, shape, bang_call: nil, raise_sibling: nil)
+        Violation.new(@path, node.location.start_line, shape, Shapes.description(node), bang_call, raise_sibling)
+      end
+    end
+
+    module_function
+
+    def spec_root
+      SpecCensus::REPO_ROOT.join("spec")
+    end
+
+    def source_files
+      spec_root.glob("**/*.rb").sort
+    end
+
+    # @return [Array<Violation>] every violation across the whole spec/ tree.
+    # NOT memoized on a module ivar (ThreadSafety/ClassInstanceVariable, and
+    # this codebase's own posture on shared mutable state) -- rescanning ~620
+    # files was measured at ~1s, so a caller that needs the result more than
+    # once in one flow (the listing and its counts) computes it ONCE and
+    # threads the Array through, rather than this method hiding a cache.
+    def violations
+      source_files.flat_map do |file|
+        relative = file.relative_path_from(SpecCensus::REPO_ROOT).to_s
+        Scanner.new(relative).scan(file.read)
+      end
+    end
+  end
+
+  # Turns a violation list into the human-readable report a prune consumes. A
+  # module separate from Assertions on purpose: scanning/detection and
+  # report FORMATTING are different responsibilities -- folding the second
+  # into the first is what pushed Assertions over Metrics/ModuleLength.
+  module AssertionReport
+    # Splits one violation list into the buckets {.text} prints: the
+    # `sole_raise_error`/`nested_expect` shapes, and each shape's own
+    # read-this-first split. A named collaborator rather than six local
+    # variables, so the methods that print from it take one argument, not six.
+    Buckets = Struct.new(:sole, :nested, :likely, :unclear, :idiom, :buggy) do
+      def self.from(list)
+        sole, nested = list.partition { |v| v.shape == :sole_raise_error }
+        likely, unclear = sole.partition { |v| v.bang_call || v.raise_sibling }
+        idiom, buggy = nested.partition { |v| v.path.end_with?("support_matchers_spec.rb") }
+        new(sole, nested, likely, unclear, idiom, buggy)
+      end
+    end
+
+    BANNER = <<~TEXT
+      ASSERTION SHAPES -- bin/spec-census
+
+      ======================================================================
+      THIS IS A READING LIST, NOT A DELETE LIST.
+      A 25-entry manual spot-check of `sole_raise_error` (panel review) found
+      roughly 88% assert something real -- most are the accepts half of an
+      accept/refuse pair against a method whose job is to raise (`Surface.check!`,
+      `policy.admit!`, `bounds.check_presentation!`, ...), often sitting directly
+      above a "refuses ..." sibling. Measured precision against this shape's
+      "structurally cannot fail" intent was ~12%, not "most of the list is dead".
+      The standing instruction for a prune is "fixed, deleted, or
+      documented-with-a-reason" per entry -- not "delete what is flagged".
+      ======================================================================
+    TEXT
+
+    module_function
+
+    # A `sole_raise_error` violation's assertion cannot fail for the reason its
+    # `it` claims to cover -- that much is structural. Whether the CHECK it
+    # wraps is itself meaningless is a different question this scan cannot
+    # answer by itself, so it is not asked to: `bang_call`/`raise_sibling` are
+    # cheap correlates (does the wrapped call look like a validator, does SOME
+    # sibling in the same describe assert that something raises at all -- often,
+    # not always, the refuse half of the same pair; any well-tested `describe`
+    # can carry an unrelated raising example and over-promote every vacuous one
+    # beside it), printed as a READING order, never as a verdict.
+    def text(list)
+      buckets = Buckets.from(list)
+      ([header(list, buckets)] + sections(buckets)).join("\n")
+    end
+
+    def sections(buckets)
+      [
+        section("sole_raise_error -- bang_call or raise_sibling detected: READ THESE FIRST", buckets.likely),
+        section("sole_raise_error -- neither signal detected (still read before deleting)", buckets.unclear),
+        section(
+          "nested_expect -- spec/support_matchers_spec.rb (legitimate matcher-testing idiom, see module doc)",
+          buckets.idiom
+        ),
+        section("nested_expect -- elsewhere (misleading, not swallowed -- see module doc)", buckets.buggy)
+      ]
+    end
+
+    # "occurrences / distinct examples", the shape every counts row prints.
+    def pair(collection)
+      "#{collection.size} / #{distinct(collection)}"
+    end
+
+    def header(list, buckets)
+      notes = [CuratedNotes::FALSE_UNCLEARS_NOTE, CuratedNotes::CARD_NAMED_KEEPS_NOTE]
+      [BANNER, counts_block(list, buckets), calibration_block(buckets), *notes].join("\n")
+    end
+
+    def counts_block(list, buckets)
+      [total_line(list), sole_counts_block(buckets), nested_counts_block(buckets)].join("\n")
+    end
+
+    def total_line(list)
+      <<~TEXT
+        Counts (occurrences / distinct examples -- a duplicate path:line means one
+        example contains more than one flagged call):
+          total: #{pair(list)}
+      TEXT
+    end
+
+    def sole_counts_block(buckets)
+      <<~TEXT
+        sole_raise_error:  #{pair(buckets.sole)}
+          bang_call or raise_sibling detected (read first): #{buckets.likely.size}
+          neither signal detected:                          #{buckets.unclear.size}
+      TEXT
+    end
+
+    def nested_counts_block(buckets)
+      <<~TEXT
+        nested_expect:     #{pair(buckets.nested)}
+          spec/support_matchers_spec.rb (legitimate idiom):  #{pair(buckets.idiom)}
+          elsewhere (misleading, not swallowed):             #{pair(buckets.buggy)}
+      TEXT
+    end
+
+    def calibration_block(buckets)
+      <<~TEXT
+        Calibration: sole_raise_error landed at #{buckets.sole.size} (planning-time
+        crude grep estimated ~127; the band judged worth escalating on is ~2x,
+        63-254). The ratchet lives behind `--check`, against the seeded ceiling
+        printed beside it -- this listing itself never fails.
+      TEXT
+    end
+
+    def section(title, list)
+      body = list.sort_by { |v| [v.path, v.line] }.map { |v| "  #{v}#{flags(v)}" }.join("\n")
+      "--- #{title} (#{list.size}) ---\n#{body}\n\n"
+    end
+
+    def flags(violation)
+      return "" unless violation.shape == :sole_raise_error
+
+      tags = [("bang!" if violation.bang_call), ("raise-sibling" if violation.raise_sibling)].compact
+      tags.empty? ? "" : " (#{tags.join(", ")})"
+    end
+
+    def distinct(list)
+      list.map { |v| [v.path, v.line] }.uniq.size
+    end
+  end
+
+  # Hand-curated annotations that do NOT derive from the AST -- a manual
+  # spot-check's findings, and the one instance judged a deliberate
+  # keep. A separate module from AssertionReport on purpose: everything
+  # else in that module is MECHANICALLY computed from a violation list; this
+  # is knowledge that only exists because a human read the code and wrote it
+  # down, and folding it into the mechanical report is what pushed
+  # AssertionReport over Metrics/ModuleLength.
+  module CuratedNotes
+    # Read-first/unclear is an ENRICHMENT of the mechanical signals, not a
+    # filter on truth -- a manual 26-entry read of "unclear" found roughly
+    # 25-30% genuinely vacuous, against ~12% for the flat list. Better odds,
+    # not proof. These specific entries were read and confirmed NOT vacuous;
+    # A prune must not delete them on the "neither signal detected" label alone.
+    FALSE_UNCLEARS_NOTE = <<~TEXT
+      "Neither signal detected" means less pre-sorted, not "safe to delete"
+      (keep reading each one before deleting -- see the label above, which
+      stays exactly as worded on purpose). Verified NOT vacuous on a manual
+      read, despite landing in "unclear":
+        spec/lain/structural/queries_spec.rb:33,93,142,198
+        spec/lain/mode/posture_spec.rb:113,117
+        spec/lain/skill/shipped_skills_spec.rb:85
+        spec/lain/sensitivity/regions_spec.rb:384,388,397,537
+        spec/lain/core/child_spec.rb:103
+        spec/lain/frontend/completion_spec.rb:191
+        spec/lain/review/keying_spec.rb:86
+        spec/lain/tools/write_file_spec.rb:38
+        spec/lain/review/session_spec.rb:777
+    TEXT
+
+    # ONE `sole_raise_error` instance was judged a deliberate KEEP despite
+    # being genuinely, correctly flagged (see Assertions's module doc for why
+    # it does not escape the rule by having a nearby real assertion -- it
+    # doesn't have one). No allowlist file exists to encode that judgment in
+    # code, deliberately, so it is recorded here instead.
+    CARD_NAMED_KEEPS_NOTE = <<~TEXT
+      Judged keeps (flagged below; keep, do not delete -- the
+      "documented-with-a-reason" branch of a prune covers these):
+        spec/support/shared_examples/review_surface.rb:242 -- one call of each
+          port message inside a single expect block, kept as cheap coverage
+          that the whole port survives one pass in the documented order.
+    TEXT
+  end
+
+  # Mechanical, REPORT-ONLY guard against a SECOND shape: a public
+  # method in `lib/` that no other `lib/` code ever names, and that `spec/` does.
+  #
+  # CLAUDE.md says a spec drives design and that a tripped `Metrics/*` cop means
+  # an object is missing. It does not yet say that a method made public SO A TEST
+  # CAN REACH IT is a design smell rather than a testing convenience, and most of
+  # this suite is LLM-written -- the circumstance that produces that shape at
+  # scale.
+  #
+  # == What this shape is, and the one it is NOT
+  #
+  # FLAGGED: `lib/` names it nowhere, `spec/` names it somewhere. That is a fact
+  # about REACH and it is all this scan measures.
+  #
+  # NOT FLAGGED, and this is the important half: a method with a real `lib/`
+  # caller INSIDE ITS OWN CLASS, public only so the spec can reach it directly.
+  # That is the likeliest spelling of "public only for a test" -- and it is
+  # invisible here, because a caller in `lib/` is a `lib/` reference whatever
+  # object it sits on. Measured on this tree at the time of writing: 145 whole-
+  # tree / 7 under `lib/lain/review/**` carry that shape, against 70 / 9 for the
+  # shape below. Reading "0 lib_public_spec_only" as "no methods are public only
+  # for a test" is therefore wrong, and `repo_as_fixture_spec.rb` paid for
+  # that lesson first (its first cut missed the likeliest spelling of its own
+  # motivating case). Seeing that second shape needs class-scoped name
+  # resolution, not the flat file-scoped index below; it is deliberately left
+  # unbuilt rather than approximated, because the file-scoped approximation was
+  # measured at 4 false positives in 7 (`Delta#identical`/`#changed` and
+  # `Docent#conversation` resolve to a Hash-value symbol and a keyword-argument
+  # label, `GithubPr#refs` to a second class living in the same file).
+  #
+  # == Why report-only, and why the finding is never "make it private"
+  #
+  # An audit of `lib/lain/review/**` narrowed NOTHING, and the reason is
+  # structural rather than local: a method with zero `lib/` callers that is made
+  # private becomes unreachable, so `private` here is a deletion wearing a
+  # smaller word. What the shape actually finds is four different things with
+  # four different fixes -- an unwired capability landed ahead of its consumer
+  # (`Review::Prefill`, whose CLASS has no `lib/` consumer either), a documented
+  # convenience nobody took up (`Marks#state_for`), API answered by a duck the
+  # scan cannot see, and genuine dead code. Only the last is a deletion, and
+  # CLAUDE.md puts that call with whoever owns the capability. So this prints a
+  # reading list, the way the shapes above it do.
+  #
+  # `unwired_owner` is the one cheap discriminator worth carrying: when the
+  # owning constant itself is named nowhere else in `lib/`, every flag on it is
+  # ONE fact about the class rather than N facts about its methods.
+  #
+  # == Known blind spots, demonstrated rather than assumed
+  #
+  #   * Dynamic dispatch. `public_send(key)` (`cache_profile.rb:51`,
+  #     `compare.rb:121`) reaches a method this scan will swear nothing calls.
+  #     A name that arrives from a Hash, a constant or the wire is not visible
+  #     to any static index.
+  #   * Non-Ruby callers. The nvim plugin and `crates/lain-core` speak over RPC;
+  #     a method they call is spelled in Lua or Rust, not here. Verified for
+  #     the nine review-subtree flags (none is), NOT in general.
+  #   * A method NAME is the key, so two methods sharing a name share their
+  #     references: any reference to either suppresses the flag on both. That is
+  #     deliberate -- it under-reports, and `repo_as_fixture_spec.rb`'s rule
+  #     states the same preference, since a false positive is a permanent tax
+  #     on every contributor while a miss costs one line of a report.
+  #   * {IMPLICIT} is a hand-written list of names Ruby, RSpec or a gem invokes
+  #     without ever spelling them. It is certainly incomplete.
+  #   * `attr_reader`/`Data.define` members are not `def`s and are not scanned.
+  #   * String-spelled references (`define_method("foo")`) are not counted.
+  #   * Visibility is read per statement list, with `private :sym` overrides
+  #     applied per FILE. A `send(:private, ...)`, or a visibility change made
+  #     from another file, is not seen.
+  module LibReach
+    LIB_ROOT = SpecCensus::REPO_ROOT.join("lib")
+    SPEC_ROOT = SpecCensus::REPO_ROOT.join("spec")
+
+    # Names whose caller never spells them: Ruby's own conversion and comparison
+    # protocols, the hooks `Enumerable`/`Comparable` reach through, the ones a
+    # gem calls by convention (`call`, `perform`, `to_journal`), and `initialize`
+    # -- `.new` is what a caller writes. Without these, every `to_s` in `lib/`
+    # reads as public-only-for-a-test the moment a spec asserts on one.
+    IMPLICIT = %i[
+      initialize initialize_copy inspect to_s to_str to_sym to_a to_h to_i to_f to_proc to_json
+      coerce hash eql? == != <=> < <= > >= === =~ + - * / % ** << >> [] []= ! ~ & | ^ each
+      method_missing respond_to_missing? included extended inherited prepended
+    ].freeze
+
+    # Owners that exist BECAUSE the specs needed them, and that CLAUDE.md names
+    # approvingly: `Sink::Null`, `Provider::Mock`, `Effect::Handler::Mock`,
+    # `Surface::Null`. An inspection method on one of these is reached from
+    # `spec/` and nowhere else BY DESIGN, so a flag on it would be this rule's
+    # error rather than a finding -- that is exactly the intent, and
+    # `Provider::Mock#last_request`/`#call_count` were the two it caught.
+    # Matched on the owner's last constant segment, which is a convention this
+    # codebase keeps rather than a path allowlist. The cost is not hypothetical
+    # and is worth writing down: measured on this tree, this shields 105 public
+    # defs across 29 owners -- 26 named `Null`, 3 named `Mock`, and none at all
+    # for `Fake`/`Stub`/`Double`, which are here for the convention rather than
+    # for anything they match today. A real class someone names `Null` is skipped
+    # in silence, and 105 is how much room that hole has.
+    DOUBLE_OWNERS = %w[Mock Null Fake Stub Double].freeze
+
+    # One public `def` in `lib/`, with the lexical constant it was written under.
+    Definition = Struct.new(:path, :line, :name, :owner, :singleton) do
+      def to_s = "#{owner}#{singleton ? "." : "#"}#{name}"
+    end
+
+    # One flagged definition, with the spec sites that reach it.
+    Violation = Struct.new(:definition, :spec_sites, :unwired_owner) do
+      def path = definition.path
+      def line = definition.line
+      def to_s = "#{path}:#{line} #{definition} <- #{spec_sites.first(3).join(", ")}"
+    end
+
+    # Depth-first over a Prism tree. Its own module because three objects below
+    # walk one and none of them is about walking.
+    module Walk
+      module_function
+
+      def each_node(node, &block)
+        return to_enum(:each_node, node) unless block_given?
+        return unless node.is_a?(Prism::Node)
+
+        yield node
+        node.compact_child_nodes.each { |child| each_node(child, &block) }
+      end
+    end
+
+    # ONE question, asked of one file: which `def`s in it are PUBLIC?
+    #
+    # Visibility in Ruby is per statement list and mutable at runtime, so this is
+    # a reading of the common written forms and not an evaluation: a bare
+    # `private`/`protected`/`public` sets the default for the statements after it
+    # in the SAME list, `private def x` and `private :x` name one method, and
+    # `private_class_method` does the same for a singleton. `module_function`
+    # counts as PUBLIC -- the instance copy goes private but `Mod.name` stays
+    # reachable, which is the reach this scan is about.
+    class Visibility
+      # Receiverless calls that change what the REST of a statement list means.
+      BARE = %i[public private protected module_function].freeze
+
+      # The two facts a statement list carries forward to the next `def` in it.
+      # `singleton` is not redundant with `def self.x`: a `class << self` body and
+      # a bare `module_function` both move a plainly-spelled `def` onto the
+      # singleton, and without tracking it the report renders `Owner#name` for a
+      # method every caller writes as `Owner.name` -- 3 of 70 entries, one of them
+      # `Review::Prefill::Sidecar.beside`.
+      State = Struct.new(:visibility, :singleton)
+
+      def self.public_defs(path, source)
+        new(path).run(Prism.parse(source).value)
+      end
+
+      def initialize(path)
+        @path = path
+        @defs = []
+        @overrides = {}
+      end
+
+      # @return [Array<Definition>]
+      def run(root)
+        scope(root, "", false)
+        @defs.select { |defn, vis| (@overrides[defn.name] || vis) == :public }.map(&:first)
+      end
+
+      private
+
+      # Walks ONE statement list under `owner`. Every list starts public --
+      # visibility does not inherit -- while `singleton` is a property of the list
+      # its caller opened.
+      def scope(node, owner, singleton)
+        state = State.new(:public, singleton)
+        statements(node).each { |stmt| state = statement(stmt, owner, state) }
+      end
+
+      # A `ProgramNode` keeps its list under `statements`; every other node that
+      # opens one -- class, module, `class << self`, a block -- keeps it under
+      # `body`. Anything else has no list of its own and is walked by {#descend}.
+      def statements(node)
+        body = node.is_a?(Prism::ProgramNode) ? node.statements : node.body
+        body.is_a?(Prism::StatementsNode) ? body.body : []
+      end
+
+      def statement(stmt, owner, state)
+        case stmt
+        when Prism::DefNode then record(stmt, owner, state)
+        when Prism::ClassNode, Prism::ModuleNode then scope(stmt, join(owner, const_name(stmt.constant_path)), false)
+        when Prism::SingletonClassNode then scope(stmt, owner, true)
+        when Prism::CallNode then return call(stmt, owner, state)
+        when Prism::ConstantWriteNode then constant(stmt, owner, state)
+        else descend(stmt, owner, state)
+        end
+        state
+      end
+
+      # `Widget = Data.define(...) do ... end` is how this codebase writes a value
+      # object: the block IS Widget's class body, and the constant on the left is
+      # the name a reader looks the method up under.
+      def constant(stmt, owner, state)
+        statement(stmt.value, join(owner, stmt.name.to_s), state)
+      end
+
+      # An `if`/`begin`/`case` does not open a visibility scope, so its branches
+      # keep reading the list they are written in.
+      def descend(stmt, owner, state)
+        Walk.each_node(stmt) do |node|
+          case node
+          when Prism::DefNode then record(node, owner, state)
+          when Prism::ClassNode, Prism::ModuleNode then scope(node, join(owner, const_name(node.constant_path)), false)
+          end
+        end
+      end
+
+      # `Data.define(...) do ... end` and `Struct.new do ... end` open a class
+      # body written as a block, and this codebase's value objects all take that
+      # shape -- so a block body is walked as its own statement list.
+      def call(stmt, owner, state)
+        return bare(stmt, owner, state) if stmt.receiver.nil? && BARE.include?(stmt.name)
+
+        class_methods(stmt, owner) if stmt.receiver.nil? && stmt.name == :private_class_method
+        scope(stmt.block, owner, state.singleton) if stmt.block.is_a?(Prism::BlockNode)
+        state
+      end
+
+      # `private`/`protected`/`public` with no argument set the list's visibility;
+      # a bare `module_function` moves the rest of the list onto the singleton,
+      # where `Mod.name` is the reach this scan is about. With arguments, all four
+      # name specific methods instead and the list's own state is unchanged --
+      # `module_function :x` is deliberately not followed, since the instance copy
+      # it also makes private is not what a `spec/` caller reaches.
+      def bare(stmt, owner, state)
+        args = stmt.arguments&.arguments || []
+        return named(stmt, owner, state, args) unless args.empty?
+
+        stmt.name == :module_function ? State.new(state.visibility, true) : State.new(stmt.name, state.singleton)
+      end
+
+      def named(stmt, owner, state, args)
+        args.each { |arg| name(arg, owner, stmt.name) } unless stmt.name == :module_function
+        state
+      end
+
+      def class_methods(stmt, owner)
+        (stmt.arguments&.arguments || []).each { |arg| name(arg, owner, :private) }
+      end
+
+      # An override is keyed by NAME alone, so `private_class_method :x` also
+      # silences an instance method spelled `x` in the same file. Harmless here
+      # (it can only under-report, which is this rule's chosen direction) and
+      # cheaper than a second key nothing else needs.
+      def name(arg, owner, visibility)
+        case arg
+        when Prism::DefNode then record(arg, owner, State.new(visibility, false))
+        when Prism::SymbolNode then @overrides[arg.unescaped.to_sym] = visibility
+        end
+      end
+
+      def record(defn, owner, state)
+        return if IMPLICIT.include?(defn.name)
+
+        singleton = state.singleton || !defn.receiver.nil?
+        @defs << [Definition.new(@path, defn.location.start_line, defn.name, owner, singleton), state.visibility]
+      end
+
+      def join(outer, inner) = outer.empty? ? inner : "#{outer}::#{inner}"
+
+      def const_name(node)
+        case node
+        when Prism::ConstantReadNode then node.name.to_s
+        when Prism::ConstantPathNode then [const_name(node.parent), node.name].compact.join("::")
+        else "?"
+        end
+      end
+    end
+
+    # Every NAME one tree spells, and where. A method name is spelled by a call
+    # (`foo`, `x.foo`) or by a Symbol (`send(:foo)`, `def_delegators ... :foo`,
+    # `method(:foo)`) -- both count, generously, because an over-counted
+    # reference costs a missing report line while an under-counted one costs a
+    # false positive, and `repo_as_fixture_spec.rb`'s rule made the same trade.
+    class Index
+      METHOD_NAME = /\A[A-Za-z_][A-Za-z0-9_]*[?!=]?\z/
+
+      def self.build(sources)
+        sources.each_with_object(new) { |(path, source), index| index.add(path, source) }
+      end
+
+      def initialize
+        @methods = Hash.new { |hash, key| hash[key] = [] }
+        @constants = Hash.new { |hash, key| hash[key] = [] }
+        @homes = Hash.new { |hash, key| hash[key] = [] }
+      end
+
+      attr_reader :methods, :constants, :homes
+
+      def add(path, source)
+        Walk.each_node(Prism.parse(source).value) do |node|
+          named(node, "#{path}:#{node.location.start_line}")
+          home(node, path)
+        end
+      end
+
+      private
+
+      # What this node SPELLS, which is the question the flag is about.
+      def named(node, site)
+        case node
+        when Prism::CallNode then @methods[node.name] << site
+        when Prism::SymbolNode then symbol(node, site)
+        when Prism::ConstantReadNode then @constants[node.name] << site
+        when Prism::ConstantPathNode then @constants[node.name] << site if node.name
+        end
+      end
+
+      def symbol(node, site)
+        value = node.unescaped
+        @methods[value.to_sym] << site if value.match?(METHOD_NAME)
+      end
+
+      # Where a constant is OPENED, as opposed to merely named. A namespace with
+      # its own directory is opened in every file under it (`Review::Prefill` in
+      # `prefill.rb`, `prefill/finding.rb`, `prefill/sidecar.rb`), and counting
+      # only the file that happens to define a flagged method left every such
+      # class reading as wired.
+      def home(node, path)
+        case node
+        when Prism::ClassNode, Prism::ModuleNode then @homes[node.constant_path.name] << path
+        when Prism::ConstantWriteNode then @homes[node.name] << path
+        end
+      end
+    end
+
+    # Combines the three indexes into the verdict. Its own object so the rule can
+    # be exercised against in-memory fixtures -- reading the real tree is what
+    # {LibReach.violations} does, and it is not a precondition for testing this.
+    class Scanner
+      def initialize(lib_sources, spec_sources)
+        @definitions = lib_sources.flat_map { |path, source| Visibility.public_defs(path, source) }
+        @lib = Index.build(lib_sources)
+        @spec = Index.build(spec_sources)
+      end
+
+      # @return [Array<Violation>]
+      def violations
+        @definitions.reject { |defn| @lib.methods.key?(defn.name) || double?(defn) }
+                    .filter_map { |defn| violation(defn) if @spec.methods.key?(defn.name) }
+                    .sort_by { |flagged| [flagged.path, flagged.line] }
+      end
+
+      private
+
+      def violation(defn)
+        Violation.new(defn, @spec.methods.fetch(defn.name), unwired?(defn))
+      end
+
+      def double?(defn) = DOUBLE_OWNERS.include?(defn.owner.split("::").last)
+
+      # The owning constant's own last segment, named nowhere in `lib/` outside
+      # the files that OPEN it. `Review::Prefill` is the motivating case: the
+      # class has no `lib/` consumer at all, so each of its flagged methods is
+      # one consequence of that and not an independent finding.
+      #
+      # File-granular, so a nested helper used only by the class it is written
+      # under (`Timeline::Dominators`) reads as unwired too -- true as stated,
+      # and still the wrong word for what it is. Asking this per CLASS rather
+      # than per file needs the scoped resolution LibReach's doc declines to
+      # approximate.
+      def unwired?(defn)
+        owner = defn.owner.split("::").last
+        return false if owner.nil? || owner.empty?
+
+        homes = @lib.homes.fetch(owner.to_sym, [])
+        @lib.constants.fetch(owner.to_sym, []).all? { |site| homes.include?(site.split(":").first) }
+      end
+    end
+
+    module_function
+
+    def sources(root)
+      root.glob("**/*.rb").sort.to_h { |file| [file.relative_path_from(SpecCensus::REPO_ROOT).to_s, file.read] }
+    end
+
+    # @return [Array<Violation>] every flagged definition across the real tree.
+    # Not memoized, for the reason {Assertions.violations} is not.
+    def violations
+      Scanner.new(sources(LIB_ROOT), sources(SPEC_ROOT)).violations
+    end
+  end
+
+  # Turns a {LibReach} violation list into the reading list a follow-up consumes.
+  # Separate from the scan for the reason {AssertionReport} is separate from
+  # {Assertions}: detection and formatting are different responsibilities,
+  # and folding the second into the first is what pushes either over
+  # `Metrics/ModuleLength`.
+  module LibReachReport
+    BANNER = <<~TEXT
+      LIB REACH -- bin/spec-census
+
+      ======================================================================
+      THIS IS A READING LIST, NOT A DELETE LIST, AND NOT A `private` LIST.
+      A flagged method has NO caller in lib/ at all, so making it private makes
+      it unreachable -- `private` here is a deletion wearing a smaller word.
+      An audit of lib/lain/review/** applied ZERO narrowings for that reason;
+      see LibReach's own doc for the four different things this shape finds and
+      the four different fixes they need.
+
+      It also CANNOT see the likeliest spelling of "public only for a test" --
+      a method with a real caller inside its own class. Read "0 flagged" as
+      "nothing has zero lib callers", never as "nothing is public only for a
+      test".
+
+      THREE FAMILIES BELOW ARE LEGITIMATE AND DOMINATE THE LIST. Narrowing any
+      of them is a defect, not a cleanup, and all three were named up front:
+        * property-test law counterexamples -- `Algebra::Monoid#not_a_monoid`,
+          `Algebra::Pure#not_pure` and their siblings exist to be called by a
+          spec; that is their whole job.
+        * alternative constructors -- `Question::Answer.from_body`,
+          `Approval::Gate.from_journal`, `CLI::Up.from_options`: public API by
+          intent even when only a spec exercises them today.
+        * documented algebra predicates -- `Timeline#ancestor_of?`,
+          `Timeline::Dominators#dominates?` are the DAG's public vocabulary.
+      Injected collaborators and Null Objects are EXCLUDED rather than listed,
+      since a flag on one is the rule's error -- see LibReach::DOUBLE_OWNERS.
+
+      MEASURED PRECISION, stated the way the sibling shape states its own:
+      A reader took all 9 flags under lib/lain/review/** and narrowed ZERO.
+      Against this shape's intent -- "a method public only for a test, which
+      should be private" -- that is 0/9. The flags were not noise: each named a real fact
+      (an unwired class, a convenience nobody took up, editor-facing API), but
+      ONE FLAG CAN STAND FOR SEVERAL DIFFERENT FINDINGS with different fixes,
+      which is the same conflation the sole_raise_error report carries at ~12%.
+      Read a flag as "go look", never as "narrow this".
+      ======================================================================
+    TEXT
+
+    module_function
+
+    def text(list)
+      unwired, standalone = list.partition(&:unwired_owner)
+      ([BANNER, counts(list, unwired, standalone)] + sections(unwired, standalone)).join("\n")
+    end
+
+    def counts(list, unwired, standalone)
+      <<~TEXT
+        Counts:
+          total flagged: #{list.size}
+          owner has no lib/ consumer either (ONE fact about the class): #{unwired.size}
+          owner IS used from lib/, this method is not:                  #{standalone.size}
+      TEXT
+    end
+
+    def sections(unwired, standalone)
+      [
+        section("owner IS wired into lib/, but this method has no lib/ caller: READ THESE FIRST", standalone),
+        section("owner has no lib/ consumer either -- read the CLASS, not the method", unwired)
+      ]
+    end
+
+    def section(title, list)
+      body = list.map { |flagged| "  #{flagged}" }.join("\n")
+      "--- #{title} (#{list.size}) ---\n#{body}\n\n"
+    end
+  end
+
+  # The two censuses' entry points, and the only place either one can FAIL.
+  #
+  # The ratchet is `count <= ceiling`, not `count.zero?`: at 184 and 76 a hard
+  # zero would need an allowlist sized to the count, which is the disabled
+  # guard this whole script exists instead of. A ceiling makes a new instance
+  # cost an old one, and nothing gates on it yet -- `--check` is here so that
+  # WHEN something does, the gate already works and has been exercised.
+  module CLI
+    # Seeded at the counts measured on 2026-09-13. LOWER one when a prune
+    # brings its census down -- that is the whole mechanism. Raising one is a
+    # commit that says why, in the commit message, the way a `.rubocop.yml`
+    # limit is raised.
+    CEILINGS = { assertions: 184, lib_reach: 76 }.freeze
+
+    # One census's name, everything it found, and the ceiling it is held to.
+    # The violations travel WITH the count because a failing ratchet that
+    # prints only a number tells a reader nothing they can act on -- see
+    # {CLI.over}. Passing these in is also what lets the ratchet be specced
+    # against real data instead of a partial double of its own module.
+    Census = Struct.new(:name, :violations, :ceiling) do
+      def size = violations.size
+
+      def over? = size > ceiling
+    end
+
+    USAGE = <<~TEXT.freeze
+      usage: bin/spec-census [--counts | --check]
+
+        (no flag)   both listings in full, each behind its own banner
+        --counts    the summary lines only
+        --check     exit non-zero if either census has grown past its ceiling
+                    (#{CEILINGS.map { |name, max| "#{name} <= #{max}" }.join(", ")})
+
+      Takes no file arguments: both censuses are whole-tree by definition.
+    TEXT
+
+    MODES = { nil => :census, "--counts" => :counts, "--check" => :check }.freeze
+
+    module_function
+
+    # Exactly one argument, and it must be a known flag. `comment-census` reads
+    # a trailing `[FILE...]` and so looks past anything that is not a flag;
+    # this script has no such argument, and silently ignoring one would spend
+    # five seconds scanning the whole tree and print a 42 KB report the caller
+    # did not ask for.
+    def run(argv)
+      mode = MODES[argv.first] if argv.size <= 1
+      return warn(USAGE) || exit(2) unless mode
+
+      public_send(mode)
+    end
+
+    def census
+      puts AssertionReport.text(Assertions.violations)
+      puts LibReachReport.text(LibReach.violations)
+    end
+
+    def counts(found = censuses)
+      found.each { |census| puts "#{census.name}: #{census.size}" }
+    end
+
+    # Reports EVERY census before exiting -- a gate that stops at the first
+    # failure hides the second, and a reader who fixes one only to meet the
+    # next has been told half the truth.
+    def check(found = censuses)
+      puts report(found)
+      exit 1 if found.any?(&:over?)
+    end
+
+    def report(found) = found.map { |census| verdict(census) }.join("\n")
+
+    def verdict(census)
+      return over(census) if census.over?
+      return "ok   #{census.name}: #{census.size} (ceiling #{census.ceiling} -- lower it)" if
+        census.size < census.ceiling
+
+      "ok   #{census.name}: #{census.size} (at the ceiling)"
+    end
+
+    # A ratchet failure prints the whole census, the way `rubocop` prints every
+    # offense and `comment-census --check-tickets` prints every site. The count
+    # alone gives a developer nothing: no baseline to diff the new entry out
+    # of, and no statement of what they are allowed to do about it. Both legal
+    # answers are spelled out here because this is the only place the person
+    # who tripped the gate is actually reading.
+    def over(census)
+      ["FAIL #{census.name}: #{census.size} > #{census.ceiling}",
+       *census.violations.map { |violation| "       #{violation}" },
+       "     Fix, delete or document-with-a-reason an entry above -- or raise the",
+       "     ceiling in bin/spec-census, in its own commit, saying why there.",
+       "     `bin/spec-census` with no flag prints the same entries in the reading",
+       "     order each shape is meant to be read in."].join("\n")
+    end
+
+    def censuses
+      [Census.new(:assertions, Assertions.violations, CEILINGS.fetch(:assertions)),
+       Census.new(:lib_reach, LibReach.violations, CEILINGS.fetch(:lib_reach))]
+    end
+  end
+end
+
+SpecCensus::CLI.run(ARGV) if $PROGRAM_NAME == __FILE__

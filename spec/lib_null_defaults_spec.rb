@@ -58,7 +58,7 @@ end
 RSpec.describe "test-only Nulls" do
   # The vacuity guard. Every assertion below is over this list, so an empty one
   # would make the whole file pass while checking nothing -- which is exactly
-  # the shape spec/spec_discipline_spec.rb exists to report.
+  # the shape `bin/spec-census` exists to report.
   it "are enumerated from spec/support/nulls rather than from a list kept here" do
     expect(LibNullDefaults.relocated).not_to be_empty
   end
