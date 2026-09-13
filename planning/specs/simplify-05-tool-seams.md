@@ -462,3 +462,12 @@ without removing the mechanism. Both the old comment and the new one say honestl
 cannot force the flip; this card is simply the moment that became a suite-wide gap rather than a
 local one. The fix is small — stub the tree-sitter query to hand back an out-of-order capture list —
 and belongs in a card of its own rather than grown onto a deletion.
+
+**Three dialects of one refusal survived the path seam.** Giving the eight file tools one
+resolution seam put their refusal table in one place, and it now shows that an unreadable target is
+described three different ways for the identical predicate: *"file is not readable"*, *"directory
+is not readable"*, and bare *"not readable"*. The seam preserved each tool's wording verbatim and
+was right to: a refusal is a prompt the model reads, so changing one is a behaviour change, and two
+specs pin exact bytes. But the drift is now visible in one ordered table instead of hidden across
+five methods, which makes unifying it a small, reviewable card rather than an archaeology exercise.
+Its own card, because the diff is user-visible and belongs where a human can weigh the wording.
