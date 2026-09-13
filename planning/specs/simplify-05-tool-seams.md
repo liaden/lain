@@ -450,3 +450,15 @@ plan. simplify-03 was `in-progress` with twelve of thirteen cards landed; its la
 `tools/subagent.rb`, `cli/wiring/toolset_build.rb`, `cli/wiring/askers.rb`,
 `tools/request_review.rb` and `cli/epic_submit/adjudication.rb`, so no card touching those was
 started until it landed.
+
+### Findings escalated for their own cards
+
+**A defensive tiebreak is now untested anywhere.** `file_symbols.rb`'s `ordered` breaks ties by
+collection index, defending against qsort's instability. Its own spec's fixture never produces an
+out-of-order tie on real source, so that branch was already vacuously covered — but the deleted
+`code_outline_spec.rb` had a class-block/method-block fixture whose ties were far enough apart to
+hit it, and it was the only place in the suite that did. Deleting the tool removed the coverage
+without removing the mechanism. Both the old comment and the new one say honestly that the suite
+cannot force the flip; this card is simply the moment that became a suite-wide gap rather than a
+local one. The fix is small — stub the tree-sitter query to hand back an out-of-order capture list —
+and belongs in a card of its own rather than grown onto a deletion.
