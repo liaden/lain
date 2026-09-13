@@ -2344,9 +2344,9 @@ RSpec.describe Lain::Tools::Subagent do
       expect(provider.last_request.tools.map { |tool| tool["name"] }).to include("ask_human")
     end
 
-    # THE acceptance criterion of this card: announcement lives in
-    # {AskHuman::Notifying}, so a child wired to a bare asker satisfies every
-    # other example here while its questions reach nobody.
+    # THE acceptance criterion of this card: announcement lives in `#ask`'s
+    # `notify:` seam, so a child wired to a bare asker (no notify: at all)
+    # satisfies every other example here while its questions reach nobody.
     it "lands a child's question on the arrival queue a parent's goes to, under the child's own name" do
       tool = asking_subagent(mock(asks, text_response("done")), name: "researcher")
 

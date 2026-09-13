@@ -682,8 +682,8 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
   actor's fiber must outlive any single ask) and nests an optional `Frontend::Neovim`
   (`lib/lain/frontend/neovim.rb`) inside the `Frontend::TTY` (`lib/lain/frontend/tty.rb`) run.
 - **`HumanReplies`** is the `ask_human` reply surface: a TTY drain loop plus, when `--nvim` is
-  attached, an `:LainReply` consumer reading the editor's command inbox. `AskHuman::Notifying`
-  (`lib/lain/tools/ask_human.rb`) is the tool both surfaces resolve.
+  attached, an `:LainReply` consumer reading the editor's command inbox. `AskHuman`
+  (`lib/lain/tools/ask_human.rb`), built with a `notify:` seam, is the tool both surfaces resolve.
 - **`LiveViews`** builds the `--nvim` and `--journal` tee: a `Channel::DropOldest`
   (`lib/lain/channel/drop_oldest.rb`) for the editor and a `StatusFeed`
   (`lib/lain/status_feed.rb`) for the tmux HUD, fanned through one `CLI::JournalTee`

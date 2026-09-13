@@ -74,7 +74,7 @@ module Lain
         def asker_over(parent, agent:, &notify)
           return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @attended
 
-          Lain::Tools::AskHuman::Notifying.new(parent:, observer: @observer, agent:, notify:)
+          Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:)
         end
 
         # ONE arrival, and what rides the queue is the inbox item

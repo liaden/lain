@@ -15,10 +15,10 @@ require "tmpdir"
 # human typed 65 KB, pressed Enter and got a bare `human> ` back.
 #
 # So every example here drives the REAL assembly with no double between the
-# parts under test -- {CLI::Wiring::Askers}, the {Tools::AskHuman::Notifying}
-# it enrols, the real {CLI::HumanReplies} and its real fibers, and a real
-# {Frontend::TTY} writing into a StringIO. Only the conductor is doubled,
-# because it is a terminal; nothing between the tool and the screen is.
+# parts under test -- {CLI::Wiring::Askers}, the {Tools::AskHuman} it enrols,
+# the real {CLI::HumanReplies} and its real fibers, and a real {Frontend::TTY}
+# writing into a StringIO. Only the conductor is doubled, because it is a
+# terminal; nothing between the tool and the screen is.
 RSpec.describe "a human's reply handed back", :seam do
   around do |example|
     Dir.mktmpdir do |dir|

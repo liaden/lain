@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-# The asker's own body includes {Holding}, so that module has to exist before
-# this class body runs -- the one place in this subtree where load order
-# dictates a require at the top rather than at the foot.
-require_relative "ask_human/holding"
-
 module Lain
   module Tools
     # Puts a question to the human and returns their answer -- the human as a
@@ -148,9 +143,9 @@ module Lain
       end
 
       # Where an arrival goes when nobody wired one. The seam is outbound-only
-      # and String-shaped, exactly as {Notifying}'s is, so a tool built without
-      # a queue announces to nothing rather than guarding at the one call site
-      # that reaches it.
+      # and String-shaped, exactly as `notify:`'s real callables are, so a tool
+      # built without a queue announces to nothing rather than guarding at the
+      # one call site that reaches it.
       module NoArrival
         def self.call(_text) = nil
       end
@@ -299,9 +294,10 @@ module Lain
         # handback puts an unbounded payload on that seam: an argv too long for
         # `execve` raises there.
         #
-        # {Notifying#ask} has the same shape and is not fixed here, being a
-        # different file and a pre-existing one -- but it is the same hazard,
-        # and whoever closes it should close it through this.
+        # {AskHuman#ask}'s own notify call has the same shape and is not
+        # fixed here either, being a pre-existing hazard this method does not
+        # reach -- but it is the same hazard, and whoever closes it should
+        # close it through this.
         def opened(digest)
           pending = open { digest }
           yield pending
@@ -652,11 +648,18 @@ module Lain
       # Absent, the envelope's correlation stands in.
       #
       # `notify` is where an arrival goes -- the run's own question queue, or
-      # {NoArrival}. It is declared HERE rather than only on {Notifying}
-      # because {Notifying} announces every ASK and a handback is not one: the
-      # set is already in the record, and re-announcing it is how the human is
-      # re-prompted for a reply they were just shown the measurement of.
-      # {Notifying} still overwrites it, so an enrolled asker is unchanged.
+      # {NoArrival} when nobody wired one. {#ask} calls it on every question;
+      # {#reopened} calls it again on a handback, which is NOT a second ask --
+      # the set is already in the record, and re-announcing it is how the
+      # human is re-prompted for a reply they were just shown the measurement
+      # of. One seam, two distinct events on it.
+      #
+      # `key`, not `keyreq`, unlike {Wiring::ToolsetBuild}'s `askers:`: an
+      # attended asker built with no `notify:` announces to nobody rather than
+      # raising, because an unattended run's own asker ({Unattended}) shares
+      # this same `initialize` and has nothing to notify by construction --
+      # forcing the keyword there would be a caller passing {NoArrival}
+      # explicitly to say what the default already says.
       #
       # `to` is who the Q is addressed to and who the eventual A is
       # attributed FROM -- one value for both ends, so a reader walks Q to A
@@ -707,6 +710,13 @@ module Lain
       # The model-facing path converts them instead, in {#requested_set},
       # because a model can act on a legible refusal.
       #
+      # `@notify` fires AFTER the open, on the ORIGINAL `question` argument --
+      # never on `announcement`, which for the free-text arm is a fresh object
+      # {#announcement_for} built and not the value the caller passed.
+      # {#reopened} reuses this same seam for a handback, through
+      # {Outstanding#opened} rather than here, since a handback re-announces a
+      # set already in the record rather than asking a new one.
+      #
       # @param question [Announcement, String] a set wearing the text a human
       #   is shown, or one free-text question -- a bare String is the set of
       #   one, which is what every `#ask`-shaped duck sends.
@@ -716,7 +726,9 @@ module Lain
       # @raise [QuestionOutstanding] when a set is already awaiting a reply
       def ask(question)
         announcement = announcement_for(question)
-        @outstanding.open { emit_question(announcement) }
+        pending = @outstanding.open { emit_question(announcement) }
+        @notify.call(question)
+        pending
       end
 
       # Write A back to the asker AND resolve that set's promise.
@@ -752,10 +764,33 @@ module Lain
         recorded
       end
 
-      # What a frontend polls to decide it must prompt the human, and how a
-      # caller that stopped waiting lets its set go. Both are {Holding}'s, which
-      # is where the reasons are.
-      include Holding
+      # What a frontend polls to decide it must prompt the human.
+      #
+      # @return [Boolean] whether a set is awaiting a reply on this asker
+      def pending? = @outstanding.pending?
+
+      # A caller that stopped waiting says so, and the set stops being
+      # outstanding so this asker can ask again.
+      #
+      # An asker admits ONE outstanding set at a time, so a caller that gave up
+      # -- {Approval::Gate} when its window closes -- has to withdraw, or every
+      # later ask on this asker is refused for the rest of its life while a
+      # stale inbox line still offers a question whose answer nobody reads.
+      # That is the difference between a human pause costing one gate and
+      # costing everything after it.
+      #
+      # The Q :message STAYS in the record: a withdrawn question was genuinely
+      # asked, and the append-only store never loses that. What changes is only
+      # that nobody is waiting for its answer any more -- the posture
+      # {#awaited} already takes when a stop is raised at its park.
+      #
+      # NAMED, never inferred, exactly as {#reply} names the set it answers: a
+      # stale handle must not release a set asked after it. A set that was
+      # already answered is not pending, so withdrawing it does nothing.
+      #
+      # @param pending [Pending] the set this caller asked for
+      # @return [void]
+      def withdraw(pending) = @outstanding.abandon(pending)
 
       # The digests of every question whose answer has passed the sync gate
       # since the last hand-over, then cleared. The Agent's tool_result commit
@@ -830,8 +865,8 @@ module Lain
       # second park the same treatment: a stop raised while parked here
       # withdraws the set rather than leaving a question outstanding forever.
       #
-      # Opened BEFORE the arrival goes out, the ordering {Notifying#ask} keeps
-      # for the same reason: a human who could answer faster than the set was
+      # Opened BEFORE the arrival goes out, the ordering {#ask} keeps for the
+      # same reason: a human who could answer faster than the set was
       # re-opened would be refused as naming nothing -- and through
       # {Outstanding#opened}, so an arrival that RAISES does not leave the set
       # claimed with no park to release it.
@@ -985,8 +1020,7 @@ module Lain
   end
 end
 
-# Both reopen AskHuman -- Notifying subclasses it -- so they load after the
-# class body.
+# Directory reopens AskHuman; Unattended subclasses it -- either way, both
+# load after the class body.
 require_relative "ask_human/directory"
-require_relative "ask_human/notifying"
 require_relative "ask_human/unattended"

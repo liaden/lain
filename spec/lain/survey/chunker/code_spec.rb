@@ -369,7 +369,7 @@ RSpec.describe Lain::Survey::Chunker::Code do
   # threshold so the AC and the trigger cannot disagree: more units than
   # lines/5 makes marking useless.
   #
-  # These nine are files the sweep found ABOVE OR ON the cap with granularity
+  # These eight are files the sweep found ABOVE OR ON the cap with granularity
   # at its identity -- a sample of the offenders, not the worst of them, and
   # not a hand-picked file that passes. (`cli/command/model.rb`,
   # `provider/http/chunk.rb` and `isolation/null.rb` all scored above two of
@@ -381,7 +381,8 @@ RSpec.describe Lain::Survey::Chunker::Code do
   # `cli/command/quit.rb` are gone from here for the same reason, one round
   # later: a fold merged both (and seven other small REPL commands) into
   # `cli/command/small.rb`, which is not one of the sweep's offenders in its
-  # own right. Pinning offenders by name is what stops a future reader
+  # own right. `tools/ask_human/notifying.rb` went the same way in the same
+  # round, folded into the class it subclassed. Pinning offenders by name is what stops a future reader
   # concluding from one comfortable file that the whole tree is comfortable.
   #
   # The cap is `max(1, lines/5)`: under plain integer division a four-line file
@@ -394,7 +395,6 @@ RSpec.describe Lain::Survey::Chunker::Code do
       lib/lain/provider/http/error.rb
       lib/lain/provider/spool/null.rb
       lib/lain/toolset/disclosure/upfront.rb
-      lib/lain/tools/ask_human/notifying.rb
       lib/lain/review/session.rb
       lib/lain/review/hunk.rb
     ]
@@ -408,7 +408,7 @@ RSpec.describe Lain::Survey::Chunker::Code do
           expect(units.size).to be <= [Lain::Survey::Unit.lines_of(source).size / 5, 1].max
         end
 
-        # The example carrying the general claim, so it runs over all eleven:
+        # The example carrying the general claim, so it runs over all eight:
         # the cap holds because every unit clears the minimum, not by
         # arithmetic luck. A file shorter than the minimum is the documented
         # exception -- it has one unit, the least any chunking can emit.

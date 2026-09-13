@@ -315,10 +315,18 @@ RSpec.describe Lain::Tools::AskHuman do
     # resolves the confirm before the gate parks on it. That ordering is the
     # contract -- a human who answers faster than the re-open would be refused
     # as naming nothing.
+    #
+    # `#ask` fires this same seam too, for the ORIGINAL "which file?" -- these
+    # examples are about the handback specifically, so the thunk ignores that
+    # firing rather than an example having to subtract it out of every count.
+    # {AskHuman::Handback} is the type that says which firing this is: nothing
+    # else on this seam is one.
     let(:tool) do
       described_class.new(parent:, notify: lambda { |text|
-        announced << text
-        tool.reply(confirmations.shift, tool.last_question.digest) if confirmations.any?
+        if text.is_a?(described_class::Handback)
+          announced << text
+          tool.reply(confirmations.shift, tool.last_question.digest) if confirmations.any?
+        end
       })
     end
 
@@ -496,8 +504,10 @@ RSpec.describe Lain::Tools::AskHuman do
       confirmations << described_class::Ceiling::CONFIRMATION
       asker = nil
       asker = described_class.new(parent:, observer: seen.method(:push),
-                                  notify: lambda { |_text|
-                                    asker.reply(confirmations.shift, asker.last_question.digest)
+                                  notify: lambda { |text|
+                                    if text.is_a?(described_class::Handback)
+                                      asker.reply(confirmations.shift, asker.last_question.digest)
+                                    end
                                   })
 
       Sync do |task|
@@ -565,7 +575,9 @@ RSpec.describe Lain::Tools::AskHuman do
     # asker holding a question nobody could answer for the rest of its life:
     # every later ask refused as outstanding.
     it "lets go of the re-opened set when the arrival raises" do
-      exploding = described_class.new(parent:, notify: ->(_text) { raise Errno::E2BIG })
+      exploding = described_class.new(parent:, notify: lambda { |text|
+        raise Errno::E2BIG if text.is_a?(described_class::Handback)
+      })
 
       expect do
         Sync do |task|
@@ -611,8 +623,11 @@ RSpec.describe Lain::Tools::AskHuman do
         asker = nil
         asker = described_class.new(parent: relaying, observer: seen.method(:push),
                                     notify: lambda { |text|
-                                      announced << text
-                                      asker.reply(described_class::Ceiling::CONFIRMATION, asker.last_question.digest)
+                                      if text.is_a?(described_class::Handback)
+                                        announced << text
+                                        asker.reply(described_class::Ceiling::CONFIRMATION,
+                                                    asker.last_question.digest)
+                                      end
                                     })
       end
 
@@ -712,19 +727,6 @@ RSpec.describe Lain::Tools::AskHuman do
 
       expect(seen).to eq([tool.last_question, tool.last_answer])
       expect(seen.map(&:kind)).to eq(%i[message message])
-    end
-
-    it "flows through Notifying's kwarg forwarding unchanged" do
-      seen = []
-      notifying = Lain::Tools::AskHuman::Notifying.new(notify: ->(_q) {}, parent:,
-                                                       observer: seen.method(:push))
-
-      Sync do
-        notifying.ask("which file?")
-        answered(notifying, "config.rb")
-      end
-
-      expect(seen.size).to eq(2)
     end
 
     it "defaults to no observer, every existing path byte-identical" do
@@ -887,28 +889,46 @@ RSpec.describe Lain::Tools::AskHuman do
         .to raise_error(Lain::Tool::InvalidInput, /"db"/)
     end
 
-    # The arrival seam. AskHuman::Notifying hands its thunk ITS OWN #ask
-    # argument verbatim, and that value reaches Wiring#announce, which enqueues
-    # it for the TTY arrival line ("? #{question}") and for the nvim inbox row.
+    # The arrival seam. #ask hands `notify` its OWN #ask argument verbatim, and
+    # that value reaches Wiring#announce, which enqueues it for the TTY
+    # arrival line ("? #{question}") and for the nvim inbox row.
     # It was String-shaped before sets existed: a Question::Set there renders as
     # a Data inspect. Widening the queue is a later card's, which owns both ends
     # -- until then this seam stays a String, and it stays one BY CONSTRUCTION.
     it "announces a String at the notify seam when the model asks a set" do
       announced = []
-      notifying = Lain::Tools::AskHuman::Notifying.new(notify: announced.method(:push), parent:)
+      asker = described_class.new(notify: announced.method(:push), parent:)
 
       Sync do |task|
-        run = task.async { notifying.call(set_input, invocation) }
-        answered(notifying, "sqlite")
+        run = task.async { asker.call(set_input, invocation) }
+        answered(asker, "sqlite")
         run.wait
       end
 
       expect(announced.size).to eq(1)
       expect(announced.first).to be_a(String)
-      expect(announced.first).to eq(notifying.last_question.body.fetch("question"))
+      expect(announced.first).to eq(asker.last_question.body.fetch("question"))
       # And the set is still reachable off it -- what that later card reads when
       # it widens the queue to carry the set and its asker.
       expect(announced.first.set).to eq(set)
+    end
+
+    # The seam fires AFTER the open, never before: a listener wired to a queue
+    # a human is already watching must never be told about a question the Q
+    # event has not yet recorded, or a reply typed the instant it lands would
+    # name a set {Outstanding} has not yet claimed.
+    it "announces only once the question is already outstanding, never before" do
+      seen_pending = nil
+      seen_question = nil
+      asker = described_class.new(notify: lambda { |_q|
+        seen_pending = asker.pending?
+        seen_question = asker.last_question
+      }, parent:)
+
+      asker.ask("Ready?")
+
+      expect(seen_pending).to be(true)
+      expect(seen_question).not_to be_nil
     end
 
     it "refuses a bare set, so no caller can put a non-String on the arrival seam" do
@@ -923,11 +943,11 @@ RSpec.describe Lain::Tools::AskHuman do
     # never to the announcement.
     it "announces a long question verbatim, and clamps only the inbox line" do
       seen = []
-      notifying = Lain::Tools::AskHuman::Notifying.new(notify: seen.method(:push), parent:)
+      asker = described_class.new(notify: seen.method(:push), parent:)
 
       Sync do |task|
-        run = task.async { notifying.call({ "question" => long_body }, invocation) }
-        answered(notifying, "approve")
+        run = task.async { asker.call({ "question" => long_body }, invocation) }
+        answered(asker, "approve")
         run.wait
       end
 
@@ -935,21 +955,21 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(seen.first).to be_a(String)
       expect(seen.first).to eq(long_body)
       # What nvim's inbox row shows, where the line shape is pinned:
-      summary = notifying.last_question.body.fetch("question")
+      summary = asker.last_question.body.fetch("question")
       expect(summary).not_to match(/[\r\n]/)
       expect(summary.length).to be <= described_class::Announcement::WIDTH
       # ... and the whole body is on the event either way.
-      expect(notifying.last_question.body.dig("questions", 0, "body")).to eq(long_body)
+      expect(asker.last_question.body.dig("questions", 0, "body")).to eq(long_body)
     end
 
     it "announces a long question verbatim through the #ask duck too" do
       seen = []
-      notifying = Lain::Tools::AskHuman::Notifying.new(notify: seen.method(:push), parent:)
+      asker = described_class.new(notify: seen.method(:push), parent:)
 
-      Sync { notifying.ask(long_body) }
+      Sync { asker.ask(long_body) }
 
       expect(seen.first).to eq(long_body)
-      expect(notifying.last_question.body.fetch("question")).not_to match(/[\r\n]/)
+      expect(asker.last_question.body.fetch("question")).not_to match(/[\r\n]/)
     end
 
     # The verbatim arm is `set.size == 1`, NOT "the question has no options" --
@@ -959,19 +979,19 @@ RSpec.describe Lain::Tools::AskHuman do
     # gives the /inbox drain the whole question now rather than later.
     it "announces a lone question with options verbatim too, not only a free-text one" do
       seen = []
-      notifying = Lain::Tools::AskHuman::Notifying.new(notify: seen.method(:push), parent:)
+      asker = described_class.new(notify: seen.method(:push), parent:)
       one = { "questions" => [{ "id" => "ship", "body" => long_body, "arity" => "single",
                                 "options" => [{ "id" => "yes", "label" => "Ship it" },
                                               { "id" => "no", "label" => "Hold" }] }] }
 
       Sync do |task|
-        run = task.async { notifying.call(one, invocation) }
-        answered(notifying, "approve")
+        run = task.async { asker.call(one, invocation) }
+        answered(asker, "approve")
         run.wait
       end
 
       expect(seen.first).to eq(long_body)
-      expect(notifying.last_question.body.fetch("question")).not_to match(/[\r\n]/)
+      expect(asker.last_question.body.fetch("question")).not_to match(/[\r\n]/)
     end
 
     it "derives the inbox line once, on the announcement itself" do

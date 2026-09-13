@@ -53,14 +53,13 @@
 # guessed. {Lain::Tools::RunSkill} looks like a second one and is not: its
 # `Ceiling` is a `Data.define(:bound)` whose default is the direct class
 # constant `EXPANSION_BOUND`, so the sweep finds that tool at the top level and
-# never descends for it. Delete the descent and only `ask_human` and its two
-# delivery variants go unbounded.
+# never descends for it. Delete the descent and only `ask_human` and its
+# delivery variant go unbounded.
 #
-# Inherited declarations count, which is what covers
-# {Lain::Tools::AskHuman::Notifying} and `::Unattended` -- neither declares a
-# bound and both are the same tool with a different delivery, reaching
-# `Ceiling::BOUND` through their superclass exactly as their own `#perform`
-# does.
+# Inherited declarations count, which is what covers `::Unattended` -- the
+# same tool with a different delivery, declaring no bound of its own and
+# reaching `Ceiling::BOUND` through its superclass exactly as its own
+# `#perform` does.
 #
 # == What this sweep cannot see
 #

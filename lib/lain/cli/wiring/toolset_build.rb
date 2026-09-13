@@ -237,7 +237,7 @@ module Lain
         #
         # @param recorder [Lain::Memory::Recorder] the ONE recorder backing
         #   the memory tools for the whole session
-        # @param ask_human [Lain::Tools::AskHuman::Notifying] the reply seam
+        # @param ask_human [Lain::Tools::AskHuman] the reply seam
         #   {Wiring} wired, appended here rather than built here -- the Repl's
         #   replier fiber parks on the same object
         # @return [Lain::Toolset]

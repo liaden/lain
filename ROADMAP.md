@@ -1790,9 +1790,6 @@ XDG path relative, which put machine state back inside the user's repository)
    - **Coordinating `/undo` across two chats on one project.** Chat A can write between chat B's
      prime and settle, so B's `/undo` may delete A's file. Documented limit today; the undo reply
      lists every deletion.
-   - **`Wiring` sits at 124/125 and `AskHuman` at 125/125**, and `Tools::Holding` is a module
-     coupled to its host's ivar, extracted to buy one line. The next card to touch either class
-     has no headroom.
    - **`Run#refused_before_merging?` lists refusal classes by hand**, so a refusal class added
      later would wrongly advise `--resume`.
    - **An unjournaled merge has no adoption path.** A merge whose handback record never reached

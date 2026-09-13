@@ -227,7 +227,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(mock_provider.call_count).to eq(1)
     end
 
-    # The parent handle is ONE Proc, equal?-shared by AskHuman::Notifying and
+    # The parent handle is ONE Proc, equal?-shared by AskHuman and
     # Subagent::Seam, and it is read at CALL time -- so nothing observes it until
     # the first question is asked or the first child is spawned, which is why it
     # was dead in production for as long as it was. Every other spec in the suite
@@ -335,7 +335,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     it "exposes the reply seam and fleet supervisor it wired, as its own accessors" do
       wire_agent
-      expect(wiring.ask_human).to be_a(Lain::Tools::AskHuman::Notifying)
+      expect(wiring.ask_human).to be_a(Lain::Tools::AskHuman)
       expect(wiring.questions).to be_a(Async::Queue)
       expect(wiring.supervisor).to be_a(Lain::Supervisor)
       expect(wiring.approvals).to be_a(Lain::Approval::Queue)

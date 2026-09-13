@@ -221,7 +221,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # event the ask just wrote.
   #
   # It announces an {Announcement} -- a whole set wearing its one-line summary
-  # -- because that is what `Notifying#ask` hands its thunk on every model-path
+  # -- because that is what `#ask` hands the notify thunk on every model-path
   # ask, and therefore what every item in a real run carries. It used to
   # forward the bare String it was handed, and that is not a small difference:
   # the two arms take different code paths through the drain, so a file whose
@@ -234,9 +234,9 @@ RSpec.describe Lain::CLI::HumanReplies do
   end
 
   # The bare-String arm, which is production too: the approval gate asks
-  # through an `#ask`-shaped duck, and `Notifying` hands the thunk the String
-  # it passed rather than the set `#ask` wraps it in. Named so an example that
-  # means this arm says so.
+  # through an `#ask`-shaped duck, and `#ask` hands the notify thunk the
+  # String it passed rather than the set `#ask` wraps it in. Named so an
+  # example that means this arm says so.
   def announced_text(asker, question)
     asker.ask(question)
     Lain::CLI::HumanReplies::InboxItem.asked(question, asker.last_question)
@@ -325,7 +325,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
 
     # The other arm, and it is not a legacy one: an `#ask`-shaped duck (the
-    # approval gate) hands `Notifying`'s thunk a String, so there is no set to
+    # approval gate) hands the notify thunk a String, so there is no set to
     # render an answer against and the line the human typed IS the answer.
     it "delivers the typed line verbatim for a question asked as a bare String" do
       Sync do
