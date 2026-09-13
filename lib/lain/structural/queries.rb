@@ -82,10 +82,11 @@ module Lain
           "expected one of #{languages_for(query_name).inspect}"
       end
 
-      # The on-disk location of an authored query, resolved relative to this
-      # file so it works from any working directory.
+      # The on-disk location of an authored query. {Paths::Shipped.query_path}
+      # keeps this a per-call join rather than a directory constant -- see its
+      # own comment for why eager is wrong here.
       def path_for(language, query_name)
-        File.join(__dir__, "queries", language.to_s, "#{query_name}.scm")
+        Paths::Shipped.query_path(language, query_name)
       end
     end
   end

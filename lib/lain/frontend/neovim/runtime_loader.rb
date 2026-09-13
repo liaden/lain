@@ -31,10 +31,10 @@ module Lain
       class RuntimeLoader
         # The chunk head: the injected args, the protocol handshake, and the
         # `_G.__lain` namespace the modules publish through.
-        HEAD = File.expand_path("runtime.lua", __dir__)
+        HEAD = Paths::Shipped::NEOVIM_RUNTIME_HEAD
 
         # Everything else, one file per capability.
-        MODULES = File.expand_path("runtime", __dir__)
+        MODULES = Paths::Shipped::NEOVIM_RUNTIME_MODULES_DIR
 
         # Two digits, an underscore, then a lowercase name. Anchored at both ends,
         # which is what keeps `20_buffers.lua.orig` and `20_buffers.lua~` out

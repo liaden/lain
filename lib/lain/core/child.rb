@@ -18,10 +18,10 @@ module Lain
         end
       end
 
-      # Where `cargo build` writes when nothing redirects it. Three levels up
-      # from `__dir__` is the repo/gem root -- {Paths::NVIM_PLUGIN_ROOT} is
-      # located the same way.
-      WORKSPACE_TARGET = File.expand_path("../../../target", __dir__)
+      # Where `cargo build` writes when nothing redirects it. {Paths::Shipped}
+      # owns the gem-root arithmetic this and {Paths::NVIM_PLUGIN_ROOT} both
+      # used to rederive independently, each at its own file's depth.
+      WORKSPACE_TARGET = Paths::Shipped::CARGO_WORKSPACE_TARGET
 
       # Pinned, not derived: `rake core:build` builds debug and the :core-tagged
       # specs read what it wrote.

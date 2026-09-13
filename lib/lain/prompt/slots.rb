@@ -23,7 +23,7 @@ module Lain
       # anything else is a typo surfaced loudly rather than silently ignored.
       KNOWN = %w[system].freeze
 
-      TEMPLATE_DIR = File.expand_path("templates", __dir__)
+      TEMPLATE_DIR = Paths::Shipped::PROMPT_TEMPLATES_DIR
       private_constant :TEMPLATE_DIR
 
       # Each shipped built-in role ships a default framing template here, so the

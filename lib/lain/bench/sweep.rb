@@ -50,8 +50,8 @@ module Lain
       RECALL_TAG = "<recall>"
       private_constant :RECALL_TAG
 
-      CORPUS_PATH = File.expand_path("corpus/retrieval_corpus.yml", __dir__)
-      EMBEDDINGS_PATH = File.expand_path("corpus/corpus_embeddings.json", __dir__)
+      CORPUS_PATH = Paths::Shipped::BENCH_CORPUS_PATH
+      EMBEDDINGS_PATH = Paths::Shipped::BENCH_EMBEDDINGS_PATH
 
       # ArmFold's six, plus this sweep's own seventh. Extended, never restated,
       # so a column added to the shared fold cannot silently skip this report.

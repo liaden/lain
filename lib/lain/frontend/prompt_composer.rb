@@ -151,7 +151,7 @@ module Lain
       # under `lib/lain/prompt/`. `lain.gemspec` builds `spec.files` from `git
       # ls-files` with a reject list that spares `lib/`, so a committed TOML
       # ships with the gem and needs no manifest line of its own.
-      DEFAULT_CONFIG = File.expand_path("../prompt/default.toml", __dir__)
+      DEFAULT_CONFIG = Paths::Shipped::DEFAULT_PROMPT_CONFIG
 
       # Room a composed line has when the config names no `max_width`. Read ONCE
       # per chat -- {Formatted#resolve_room} has the fork/exec reason.

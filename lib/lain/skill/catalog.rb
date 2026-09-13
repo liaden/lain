@@ -22,7 +22,7 @@ module Lain
 
       # The shipped skills tree, a sibling of the prompt templates. Empty today
       # (just a `.keep`); skills land here as `<name>/skill.md` directories.
-      SHIPPED_DIR = File.expand_path("../prompt/templates/skill", __dir__)
+      SHIPPED_DIR = Paths::Shipped::SKILL_SHIPPED_DIR
       private_constant :SHIPPED_DIR
 
       # Where a project's own skills live, on the `.lain/` convention (like `.git/`).

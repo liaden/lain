@@ -3,6 +3,13 @@
 require "digest"
 require "fileutils"
 
+# {Paths::Shipped} first: {Paths}'s own class body below composes
+# {Paths::NVIM_PLUGIN_ROOT} from it, so the child must be loaded before the
+# parent's body runs rather than after, which is where a sibling-subtree
+# require usually goes (see {Prompt}'s own index for that usual shape) --
+# here load order runs the other way.
+require_relative "paths/shipped"
+
 module Lain
   # Paths come off a subprocess's stdout, `Dir.children` and `File.realpath` as
   # bytes; the filesystem's own encoding is what they have to be tagged with to
@@ -160,12 +167,12 @@ module Lain
       end
     end
 
-    # Where the gem ships its own nvim plugin, located the same way
-    # {Core::Child::WORKSPACE_TARGET} is -- {Core::Child::BINARY} starts there
-    # but lets CARGO_TARGET_DIR move it, and a shipped asset has no such knob.
-    # This file sits at `lib/lain/paths.rb`, so two levels up from `__dir__` is
-    # the repo/gem root.
-    NVIM_PLUGIN_ROOT = File.expand_path("../../plugin/nvim", __dir__)
+    # Where the gem ships its own nvim plugin. Kept as a constant here (rather
+    # than only on {Shipped}) because it is part of this class's PUBLIC shape --
+    # `spec/lain/cli/up_spec.rb` names `Lain::Paths::NVIM_PLUGIN_ROOT` directly --
+    # so this stays the one spelling and {Shipped} is where the value now comes
+    # from, not a second copy of it.
+    NVIM_PLUGIN_ROOT = Shipped::NVIM_PLUGIN_ROOT
 
     # `nvim_plugin_root:` is injectable, mirroring {Core::Child}'s `binary:`, so
     # a spec can point at a path that does not exist without disturbing the real
