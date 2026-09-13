@@ -1,6 +1,6 @@
 # Simplify 07 — one row ring, one presenter, one rail, and one reader of the status file
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; TJ DeVries joins for the Lua
@@ -839,3 +839,34 @@ a scatter, which is the cheaper direction to discover.
 The other half of the declined-14 path is **not** taken here and stays available: 07's T1 shipped
 for two callers, and the plan says a decline lets it gain `review_view.rb` as a third, growing the
 `HELD` reconciliation from two values to three. That is purely additive and was not asked for.
+
+
+### Close-out — all seven landed
+
+T3 ran after the human declined simplify-14 on 2026-09-13, and it closed the chunk.
+
+**Three cards refused part of what they were asked, and every refusal was upheld on measurement.**
+T3 kept the view rail a method (a sanitize column true for 2 of 13 and an arity column that is a
+range for 1 is worse than the method), T1 built its ring for two callers rather than three, and T4's
+prescribed mechanism turned out unavailable at this card's size.
+
+**One refusal was upheld while its ARGUMENT was disproved, and that distinction is the chunk's most
+useful lesson.** T3 kept the refusal sentences at their doors partly on the grounds that tabling
+them would silently blind the width gate. The panel moved one in and **the gate reddened** — it
+follows the keyword wherever it appears, not the call site. The outcome stands on manifest order
+(three of ten views load after `rpc_thread.rb`, so naming them there raises at boot) and per-surface
+naming. The bad reason was struck rather than left, because *"never put a sentence in a data table"*
+is a false constraint that would deter a correct refactor later.
+
+**The failure this chunk kept finding.** Four separate times, a change left the suite green while
+removing the thing that was checking: a discipline scan that stopped seeing nine commands, a
+deleted spec that was the only cover for a live `Agent` invariant, a `not_to include` over names
+that no longer exist, and a live editor example that *created* whatever its table named. Green is
+not evidence that nothing was lost, and on this chunk it was wrong about that four times.
+
+**A packaging gap this chunk surfaced and did not close.** `lain.gemspec` builds `spec.files` from
+`git ls-files`, while the runtime loader globs the directory — so an untracked runtime module passes
+every spec, passes the hook (the pre-commit stash does not remove untracked files), and ships a
+runtime whose `dispatch` does not exist. The `if _G.__lain` guard still passes and every render
+becomes a silent no-op. One example comparing `git ls-files -C <runtime dir>` against
+`RuntimeLoader#module_names` would close it. Its own card.
