@@ -67,6 +67,18 @@ YARD/MismatchName:
 # on the LATER half: YARD does read a trailing comment as a docstring, and last one wins, so
 # moving the documentation back above the first half would publish the directive text as the
 # class's documentation. If you move it, delete the directive in the same edit.
+#
+# A fourth same-line disable exists, not listed above: `lib/lain/live.rb`'s `module Lain #
+# rubocop:disable Style/Documentation`. `Lain` cannot go in AllowedConstants itself -- it is the
+# single most-recurring bare name in lib/, exactly the case two paragraphs up rules out ("would
+# blind the cop repo-wide"). Its shape differs from the three above, too: those three carry the
+# real doc on a LATER reopen in the SAME file, so the cop's own node-at-a-time view eventually
+# sees it. `Lain`'s one canonical docstring lives in `lib/lain.rb`, a DIFFERENT file, on the
+# reopen this codebase treats as THE module's documentation (the compiled-extension mount and
+# the algebra seal both live there, after it). `live.rb`'s reopen carries no docstring of its
+# own for the same "exactly one, and it goes on the reopen" reason CLAUDE.md gives elsewhere --
+# it is simply never going to be the file that reopen is in, so there was never a later-half to
+# wait for.
 Style/Documentation:
   AllowedConstants:
     - CacheProfile

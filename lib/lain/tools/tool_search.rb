@@ -85,11 +85,10 @@ module Lain
         matches.map { |candidate| "#{candidate.name}: #{candidate.one_line_description}" }.join("\n")
       end
 
-      # A Toolset passes through, a thunk is called -- late-bound because this
-      # tool is itself a member of the Toolset it searches.
-      def toolset
-        @toolset.respond_to?(:call) ? @toolset.call : @toolset
-      end
+      # Late-bound because this tool is itself a member of the Toolset it
+      # searches -- {Lain.live} resolves the thunk the wiring hands for that
+      # reason.
+      def toolset = Lain.live(@toolset)
     end
   end
 end

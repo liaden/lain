@@ -320,10 +320,10 @@ module Lain
           .compact.join(" ")
       end
 
-      # The wiring builds the toolset BEFORE some of these exist --
-      # `CLI::HumanReplies` is constructed after it -- so a collaborator may
-      # arrive as a thunk read at call time, which is {AskHuman}'s `parent:`
-      # idiom and its reason.
+      # `CLI::HumanReplies` is constructed after this toolset, so a
+      # collaborator may arrive as a thunk read at call time rather than a
+      # live value -- {Lain.live} resolves either shape, which is
+      # {Tools::AskHuman}'s `parent:` idiom and its reason.
       #
       # nil coalesces to the Null Object HERE, which is the whole point: the
       # wiring passes `views:` straight through whether or not an editor is
@@ -334,12 +334,10 @@ module Lain
       # `home` and `review` have no null: which epic this is cannot be
       # defaulted, and a tool wired to neither is a wiring bug that must not
       # quietly review nothing.
-      def home = live(@home)
-      def review = live(@review)
-      def editor = live(@editor) || NoEditor
-      def bindings = live(@bindings) || NoBindings
-
-      def live(collaborator) = collaborator.respond_to?(:call) ? collaborator.call : collaborator
+      def home = Lain.live(@home)
+      def review = Lain.live(@review)
+      def editor = Lain.live(@editor) || NoEditor
+      def bindings = Lain.live(@bindings) || NoBindings
     end
 
     class RequestReview

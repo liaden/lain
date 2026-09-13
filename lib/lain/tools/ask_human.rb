@@ -432,8 +432,9 @@ module Lain
           freeze
         end
 
-        # The live Timeline: a Timeline passes through, a thunk is called.
-        def timeline = @read.respond_to?(:call) ? @read.call : @read
+        # The live Timeline: {Lain.live} resolves the thunk-or-Timeline @read
+        # was handed.
+        def timeline = Lain.live(@read)
 
         # The same Timeline, with the record caught up to it first.
         #

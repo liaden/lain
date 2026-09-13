@@ -329,13 +329,10 @@ module Lain
                            "the OM-6 supervisor reactor; launch it programmatically via #launch_actor")
       end
 
-      # The parent Timeline, live: a Timeline passes through, a thunk is called
-      # (the toolset is built before the Agent, so the exe wiring hands a
-      # `-> { agent.timeline }` that reads the head at the instant of the call).
-      def parent_timeline
-        handle = @seam.parent
-        handle.respond_to?(:call) ? handle.call : handle
-      end
+      # The parent Timeline, live: the toolset is built before the Agent, so
+      # the exe wiring hands a `-> { agent.timeline }` that {Lain.live} calls
+      # at the instant of this read rather than at construction.
+      def parent_timeline = Lain.live(@seam.parent)
 
       # The seam's collaborators, passed through untouched -- only
       # {#parent_timeline} needs the thunk-or-value reading above.
