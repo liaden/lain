@@ -770,3 +770,25 @@ callback, an autocmd or a rail, and `xpcall` has returned long before those run.
 the one tool that could decode a deferred line on request, and replaced a real traceback with the
 error handler's own line number. For the common shape it was **worse than no change at all**: an
 opaque location became a confident and wrong one.
+
+### Findings escalated for their own cards
+
+**Nothing in lain reports cache warmth live any more, and three files said otherwise.** Publishing
+the HUD pre-rendered removed the jq filter that re-evaluated `now` on every 5-second tmux tick.
+That filter was, it turns out, the only live warmth indicator in the product: the TTY prompt
+composes its string once per input cycle and hands it to Reline, so its own marker is stamped at
+the turn boundary and does not refresh while a human sits idle. The card's own comments, the
+README and the shipped tmux script all claimed the prompt stayed live; all three were corrected.
+
+The staleness is unbounded and always optimistic — a publish fires only when the observed state
+changes, so an idle session keeps the 🔥 its last turn earned, and it is guaranteed wrong from 300
+seconds after the last cache-touching turn. A reader concludes the cached prefix is still warm,
+sends, and pays for a full uncached prefix. That is the decision the marker exists to inform.
+
+It ships anyway, because keeping jq to preserve freshness reinstates the two-spellings-of-one-HUD
+duplication this card exists to remove, and nothing is corrupted. **The fix is a periodic
+republish, and it is its own card**: a write-and-rename every N seconds needs a timer `StatusFeed`
+does not own and a rule for how that interacts with the `observed` change-token discipline.
+Worth doing for a reason wider than this marker — `elapsed`, `idle` and `since_compaction` have
+always had the same property, stamped at publish and never refreshed, so one periodic republish
+corrects four fields at once.
