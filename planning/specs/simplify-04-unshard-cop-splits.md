@@ -1170,3 +1170,35 @@ them. Proven rather than assumed: reintroducing the historical defect the code's
 describe, capturing the mailbox *after* the provider round trip instead of before, leaves 17,730
 examples passing and not one spec notices. They were `Agent` tests wearing a `TurnMailbox`
 describe-block; they are rehomed onto `Lain::Agent` in T11's own commit rather than deferred.
+
+### What the length cop can actually be trusted for: nothing, in either direction
+
+This plan is built on folding back extractions a `Metrics/*` counter caused, so the counter's
+accuracy is load-bearing for every card in it. Four cards measured it directly, and the result is
+that `Metrics/ClassLength` cannot be trusted to report whether a fold made a file bigger or smaller.
+
+| what happened | code lines | the cop moved |
+|---|---|---|
+| a class merge built and rejected | +428 source | 310, correctly over 300 |
+| 75 lines absorbed into an adjudicator | +75 | +27 |
+| a retirement moved out of the supervisor | −139 of 349 | −3 |
+| leases moved out of a subagent tool | −226 raw | **0** |
+| four error one-liners replaced by one class | **+17** | **−15** |
+
+**The blind spot is `class`-shaped.** The cop subtracts nested `class` bodies entirely and counts
+everything else — a `Data.define` block counts in full, which is why the adjudicator's +75 showed as
++27 (the one `Data.define` was visible, the four nested classes were not). The last row is the one
+worth remembering: replacing four `class X < Error; end` one-liners with a single nested `Refusal`
+class **grew the file by 17 code lines and improved the cop's number by 20%**, because the
+one-liners had no body to subtract and the replacement does.
+
+So a card's "stop if the fold exceeds the raised limit" trigger is not a detector, and a quiet
+rubocop is not evidence that a fold left a class coherent. `Lint/DuplicateMethods` is the cop with
+teeth here — it is what caught the rejected merge, by finding three collisions on public methods.
+Everything else is a read.
+
+**And two files assert a constraint that does not bind them.** `supervisor.rb` and
+`tools/subagent.rb` both carry a comment saying their mid-body reopen "keeps each class body within
+Metrics/ClassLength instead of loosening it". Measured after their folds: 171 and 101, against a
+limit of 300. Both claims were already false before the cards that found them. Worth a sweep of its
+own — the sentence is quoted in thirteen files.
