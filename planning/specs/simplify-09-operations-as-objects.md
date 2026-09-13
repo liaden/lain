@@ -131,8 +131,9 @@ laws without reference to those inner classes.
 
 `Backend#context` (`cli/backend.rb:236`) passes no `pipeline:`. Construction sites for the advertised
 combinators: **`Prune` 0, `DedupeToolCalls` 0, `PurgeFailedInputs` 0**; `Recall` 2 (both
-`bench/sweep.rb:192`); `Mailbox` 1 (inside `Supervisor::TurnMailbox`, itself constructed only in
-specs); `Compact` 2 (`plan/linear_rewrite.rb`, `bench/plan_sweep`). Of `context/`'s 714 code lines,
+`bench/sweep.rb:192`); **`Mailbox` 0 as of 2026-09-13** — it was 1, inside `Supervisor::TurnMailbox`,
+itself constructed only in specs, and simplify-04's T11 deleted that class, so re-ground this line
+before acting on it; `Compact` 2 (`plan/linear_rewrite.rb`, `bench/plan_sweep`). Of `context/`'s 714 code lines,
 roughly **107 are reachable and always on**.
 
 **And a swapped pipeline is silently dropped at every spawn boundary** — `Role#child_context`
