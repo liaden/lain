@@ -1,6 +1,6 @@
 # Simplify 04 — fold back the collaborators a counter asked for
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1211,3 +1211,29 @@ end — it counted sixty-one comments naming a `Metrics/*` cop as the reason cod
 and the cards that folded two of those files found the sentence false in both. A sweep belongs to
 this plan's successor: the sentence is a load-bearing claim about why a file is shaped the way it
 is, repeated ten times, true nowhere.
+
+
+### Close-out
+
+**All twelve cards landed.** Three refused part of what they were asked, each on measurement rather
+than judgment, and each refusal was upheld by its panel: the four-way epic merge (310 against a
+limit of 300, three duplicate-method collisions on public methods, and a `supervisor` name covering
+two different objects); `board_build` (names no cop, states a second responsibility, and has callers
+outside `lib/` that private methods cannot serve); and three of the six approval folds (a second
+production caller, a documented composable abstraction with a parallel loop already in its
+destination, and one of only two `Rule` subclasses assembled beside its sibling).
+
+**What the plan got wrong, and it is worth reading before writing the next one of these.** The
+contract asserted that every card produces a class over the length limit — false, and never
+measured. One card's "Reachable from" named a constructor that does not exist, making its first
+acceptance criterion undrivable. Another card asked for an incoherent artifact: fold a module's
+functions but keep its nested class, which yields a file named for a module that builds nothing. And
+the quarantine that isolated the riskiest card existed for a file collision that was not real.
+
+None of that made the plan a bad one. Every card still found the thing it was pointed at. But the
+grounding was a reachability audit over a constant graph, and five of its claims did not survive
+someone opening the file.
+
+**The measurement that outlives this plan** is in the length-cop section above: the counter this
+entire plan exists to unwind cannot report whether a fold made a file bigger or smaller, and ten
+files explain their shape with a limit none of them approach. That sweep is the successor's.
