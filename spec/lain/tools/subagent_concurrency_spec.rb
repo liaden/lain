@@ -242,7 +242,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
 
       # Each :message names a distinct child final turn, and that turn's own text
       # matches the result the message carries -- the check that would fail if the
-      # concurrent spawn path raced @last_child against a sibling's.
+      # concurrent spawn path attributed one child's final turn to a sibling.
       finals = messages.map { |message| message.body.fetch("final") }
       expect(finals.uniq.size).to eq(3)
 

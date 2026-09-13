@@ -200,6 +200,12 @@ RSpec.describe Lain::Tools::Subagent do
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
+  # What a spawn left behind, watched through the seam's own `observer:` --
+  # the outward slot the live session scribe attaches to, so an example reads
+  # exactly what production reads. One per example unless an example builds
+  # two tools and must tell their records apart.
+  let(:record) { SpawnRecord.new }
+
   def spawn_policy(prefix: :fresh, posture: :schema, only: %i[read_file], unattended: false)
     Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:, unattended:)
   end
@@ -209,10 +215,10 @@ RSpec.describe Lain::Tools::Subagent do
   # six collaborators every other example shares.
   def build_subagent(provider:, policy: spawn_policy, parent: self.parent,
                      journal: Lain::Channel::Null.instance, max_depth: 3, toolset: union,
-                     tool_middleware: ToolRegistry::UNGUARDED, **seam)
+                     tool_middleware: ToolRegistry::UNGUARDED, observer: record, **seam)
     described_class.new(
       provider:, context_factory: -> { child_context }, toolset:, policy:,
-      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:, tool_middleware:, **seam
+      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:, tool_middleware:, observer:, **seam
     )
   end
 
@@ -311,11 +317,11 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result).to be_ok
 
-      child = tool.last_child
+      child = record.child(store)
       expect(child.include?(parent.head_digest)).to be(false)
       expect(child.meet(parent)).to be_empty
 
-      spawn = tool.last_spawn
+      spawn = record.spawn
       expect(spawn.kind).to eq(:spawn)
       expect(spawn.causal_parents).to include(parent.head_digest)
     end
@@ -326,16 +332,18 @@ RSpec.describe Lain::Tools::Subagent do
     # shape, so every attended spawn's bytes and every digest already derived
     # from them are unchanged.
     it "journals the unattended declaration, and omits the key entirely when attended" do
-      attended = build_subagent(provider: mock(text_response("done")))
-      attended.call({ "prompt" => "go" }, invocation)
+      # A record each, since the claim is that two spawns wrote DIFFERENT
+      # bytes: one shared observer would leave only the second's.
+      attended_record = SpawnRecord.new
+      build_subagent(provider: mock(text_response("done")), observer: attended_record)
+        .call({ "prompt" => "go" }, invocation)
 
-      unattended = build_subagent(provider: mock(text_response("done")),
-                                  policy: spawn_policy(unattended: true))
-      unattended.call({ "prompt" => "go" }, invocation)
+      build_subagent(provider: mock(text_response("done")),
+                     policy: spawn_policy(unattended: true)).call({ "prompt" => "go" }, invocation)
 
-      expect(attended.last_spawn.body).not_to have_key("unattended")
-      expect(unattended.last_spawn.body).to include("unattended" => true)
-      expect(unattended.last_spawn.body.fetch("only")).to eq(%w[read_file])
+      expect(attended_record.spawn.body).not_to have_key("unattended")
+      expect(record.spawn.body).to include("unattended" => true)
+      expect(record.spawn.body.fetch("only")).to eq(%w[read_file])
     end
   end
 
@@ -353,11 +361,11 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result).to be_ok
       expect(result.content).to eq("child answer")
 
-      final = tool.last_child.head_digest
-      message = tool.last_message
+      final = record.child(store).head_digest
+      message = record.message
       expect(message.kind).to eq(:message)
       expect(message.body.fetch("lifecycle")).to eq(Lain::StatusFeed::SpawnLifecycle::STOPPED)
-      expect(message.causal_parents).to include(tool.last_spawn.digest)
+      expect(message.causal_parents).to include(record.spawn.digest)
       expect(message.causal_parents).to include(final)
     end
 
@@ -411,7 +419,7 @@ RSpec.describe Lain::Tools::Subagent do
       # `ask` is a whole agentic run, and a child with tools spends as many
       # calls as its loop takes. What the tool guarantees is one further ASK.
       expect(provider.call_count).to eq(2)
-      expect(tool.last_child.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+      expect(record.child(store).to_a.map(&:role)).to eq(%w[user assistant user assistant])
     end
 
     it "tells the parent it is reading a summary, naming the size and the ceiling" do
@@ -504,8 +512,8 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result).to be_ok
       expect(result.content).to include("529 overloaded")
       expect(result.content).to include(ceiling.to_s)
-      expect(tool.last_message.kind).to eq(:message)
-      expect(tool.last_message.body.fetch("result")).to eq(result.content)
+      expect(record.message.kind).to eq(:message)
+      expect(record.message.body.fetch("result")).to eq(result.content)
     end
 
     # The same failure on the actor path used to end the fiber with nothing
@@ -664,19 +672,19 @@ RSpec.describe Lain::Tools::Subagent do
     # descends from there to the :spawn and the child's final turn F. The
     # edge-grain gap is recorded in the plan for a later tail.
     it "finds :spawn, :message, and F from the parent's settled state by correlation" do
-      tool, parent_agent = loop_driven(child_provider: mock(text_response("child answer")))
+      _tool, parent_agent = loop_driven(child_provider: mock(text_response("child answer")))
 
       correlation = parent_agent.timeline.to_a.first.digest
-      message = tool.last_message
+      message = record.message
       expect(message.to).to eq(correlation)
       expect(message.correlation).to eq(correlation)
 
-      spawn = tool.last_spawn
+      spawn = record.spawn
       expect(spawn.correlation).to eq(correlation)
       expect(message.causal_parents).to include(spawn.digest)
 
       final = store.fetch(message.body.fetch("final"))
-      expect(final.digest).to eq(tool.last_child.head_digest)
+      expect(final.digest).to eq(record.child(store).head_digest)
 
       # The rendered tool_result turn itself carries no causal edge (ruling).
       expect(parent_agent.timeline.to_a[2].causal_parents).to eq([])
@@ -712,7 +720,7 @@ RSpec.describe Lain::Tools::Subagent do
       rendered = provider.requests.first.tools.map { |t| t["name"] }
       expect(rendered).to eq(with_asker(union.names))
 
-      refusal_turn = tool.last_child.to_a.find do |turn|
+      refusal_turn = record.child(store).to_a.find do |turn|
         turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" }
       end
       expect(refusal_turn.content.first["is_error"]).to be(true)
@@ -729,7 +737,7 @@ RSpec.describe Lain::Tools::Subagent do
       tool = build_subagent(provider: mock(text_response("done")), policy: spawn_policy(prefix: :inherit))
       tool.call({ "prompt" => "go" }, invocation)
 
-      expect(tool.last_child.include?(parent.head_digest)).to be(true)
+      expect(record.child(store).include?(parent.head_digest)).to be(true)
     end
   end
 
@@ -832,7 +840,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(provider.requests.first.tools.map { |t| t["name"] }).to eq(with_asker(union.names))
 
       # ...and the second child's disallowed echo was refused at the Handler.
-      refusal = tool.last_child.to_a.find do |turn|
+      refusal = record.child(store).to_a.find do |turn|
         turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" }
       end
       expect(refusal.content.first["is_error"]).to be(true)
@@ -960,8 +968,8 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result).to be_ok
       expect(result.content).to eq("child answer")
-      expect(tool.last_child).not_to be_nil
-      expect(tool.last_message.kind).to eq(:message)
+      expect(record.child(store)).not_to be_nil
+      expect(record.message.kind).to eq(:message)
     end
 
     it "honors the depth ceiling exactly as #perform does: refuses at 0, spawning nothing" do
@@ -972,7 +980,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result).to be_error
       expect(result.content).to include("depth")
-      expect(tool.last_spawn).to be_nil
+      expect(record.spawn).to be_nil
       expect(store.size).to eq(before)
     end
   end
@@ -1045,7 +1053,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result).to be_error
       expect(result.content).to include("depth")
       expect(store.size).to eq(before)
-      expect(tool.last_spawn).to be_nil
+      expect(record.spawn).to be_nil
     end
 
     # The ceiling must be TRANSITIVE (review panel, substantive): a Subagent
@@ -1192,7 +1200,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = tool.call({ "prompt" => "read then edit" }, invocation)
 
       expect(result).to be_ok
-      expect(tool_result_blocks(tool.last_child)).to all(include("is_error" => false))
+      expect(tool_result_blocks(record.child(store))).to all(include("is_error" => false))
       expect(File.read(path)).to eq("goodbye world")
     end
 
@@ -1208,7 +1216,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = tool.call({ "prompt" => "edit blind" }, Lain::Tool::Invocation.new(context: parent_session))
 
       expect(result).to be_ok
-      results = tool_result_blocks(tool.last_child)
+      results = tool_result_blocks(record.child(store))
       expect(results).not_to be_empty
       expect(results.first["is_error"]).to be(true)
       expect(File.read(path)).to eq("hello world")
@@ -1231,7 +1239,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       second = tool.call({ "prompt" => "edit blind" }, invocation)
       expect(second).to be_ok
-      second_results = tool_result_blocks(tool.last_child)
+      second_results = tool_result_blocks(record.child(store))
       expect(second_results.first["is_error"]).to be(true)
       expect(File.read(path)).to eq("goodbye world")
     end
@@ -1526,7 +1534,7 @@ RSpec.describe Lain::Tools::Subagent do
 
           expect(result.content).to start_with("child answer")
           expect(result.content).to include(report.summary)
-          expect(tool.last_message.body["result"]).to eq(result.content)
+          expect(record.message.body["result"]).to eq(result.content)
         end
       end
 
@@ -1682,10 +1690,10 @@ RSpec.describe Lain::Tools::Subagent do
                                            text_response("done")),
                             **seam)
       tool.call({ "prompt" => "read it" }, invocation)
-      tool.last_child.to_a
-          .select { |turn| turn.role == "user" }
-          .flat_map(&:content)
-          .find { |block| block["type"] == "tool_result" }
+      record.child(store).to_a
+            .select { |turn| turn.role == "user" }
+            .flat_map(&:content)
+            .find { |block| block["type"] == "tool_result" }
     end
 
     it "sends the child's read of .env through the same approval policy its parent asks" do
@@ -1726,7 +1734,7 @@ RSpec.describe Lain::Tools::Subagent do
     # -- the only one able to read the file.
     #
     # The grandchild's tool_result is read off the request that FOLLOWS it,
-    # because `last_child` is the outer spawn's timeline and the grandchild's
+    # because the record's child is the outer spawn's timeline and the grandchild's
     # own is nested one further down.
     def nesting_provider
       mock(tool_response(["c1", "subagent", { "prompt" => "go deeper" }]),
@@ -1922,25 +1930,49 @@ RSpec.describe Lain::Tools::Subagent do
     # reach them any other way -- a Timeline walk sees ONE chain, and the
     # scribe's is the parent's. `@log` is unmoved: it is {Lineage}'s
     # append-only read side, and a child turn is not lineage.
+    # The middle of the sequence is independent evidence, not a restatement:
+    # the child's turns are walked from the Store using the digest the
+    # :message recorded, so an observer that dropped them, reordered the pair
+    # around them, or emitted either twice fails this `eq`.
     it "sees the :spawn, the child's own turns, and the :message, with @log still receiving the two" do
-      seen = []
       log = Lain::Tools::Subagent::Log.new
       tool = described_class.new(
         tool_middleware: ToolRegistry::UNGUARDED,
         provider: mock(text_response("did the thing")), context_factory: -> { child_context },
         toolset: union, policy: spawn_policy, parent:,
-        log:, observer: seen.method(:push)
+        log:, observer: record
       )
 
       result = tool.call({ "prompt" => "go" }, invocation)
+      child = record.child(store)
 
       expect(result).to be_ok
-      expect(seen).to eq([tool.last_spawn, *tool.last_child.ancestors.to_a.reverse, tool.last_message])
-      expect(log.to_a).to eq([tool.last_spawn, tool.last_message])
+      expect(record.events).to eq([record.spawn, *child.ancestors.to_a.reverse, record.message])
+      expect(log.to_a).to eq([record.spawn, record.message])
+    end
+
+    # What replaced the tool's own `@last_*` record. A spec asks the EVENTS:
+    # the :spawn says what the child was granted and where it forked from, the
+    # :message names the child's final turn, and the shared Store turns that
+    # digest back into the child's own Timeline -- so the identity is verified
+    # against the record rather than against an ivar the tool kept.
+    it "is how a spec reads a spawn's record: the spawn, the child's identity, and its answer" do
+      tool = build_subagent(provider: mock(text_response("child answer")))
+
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+      expect(record.spawn.kind).to eq(:spawn)
+      expect(record.spawn.body.fetch("spawned_from")).to eq(parent.head_digest)
+      expect(record.message.body.fetch("result")).to eq("child answer")
+      expect(record.child(store).head.content.find { |block| block["type"] == "text" }["text"])
+        .to eq("child answer")
     end
 
     it "defaults to no observer, every existing path byte-identical" do
-      tool = build_subagent(provider: mock(text_response("done")))
+      tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
+        provider: mock(text_response("done")), context_factory: -> { child_context },
+        toolset: union, policy: spawn_policy, parent:
+      )
       expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
     end
   end
@@ -1967,7 +1999,7 @@ RSpec.describe Lain::Tools::Subagent do
       # turn -- nothing about the escalation being unreachable stops the spawn
       # itself from completing.
       expect(result).to be_ok
-      refusal = tool.last_child.to_a.flat_map(&:content).find { |block| block["type"] == "tool_result" }
+      refusal = record.child(store).to_a.flat_map(&:content).find { |block| block["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to include("no human mailbox is reachable")
       expect(refusal["content"]).not_to include("--non-interactive")
@@ -2000,7 +2032,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     def asking_seam(provider)
       Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, askers:,
-                                      tool_middleware: ToolRegistry::UNGUARDED)
+                                      tool_middleware: ToolRegistry::UNGUARDED, observer: record)
     end
 
     def asking_subagent(provider, toolset: union, max_depth: 1, name: "subagent",
@@ -2421,7 +2453,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       answered(tool, answer: "postgres, it is already provisioned")
 
-      delivered = tool.last_child.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
+      delivered = record.child(store).to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
       expect(delivered.map { |block| block["content"] }).to eq(["postgres, it is already provisioned"])
     end
 
@@ -2540,7 +2572,7 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       expect(dispatched.content).to eq("done")
-      delivered = tool.last_child.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
+      delivered = record.child(store).to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
       expect(delivered.map { |block| block["content"] }).to eq(["kubernetes"])
     end
 

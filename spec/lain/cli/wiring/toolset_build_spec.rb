@@ -106,9 +106,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
                                toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }))
   end
 
+  # `switchboard:` and `askers:` are required of every caller, so the seams
+  # these examples drive name what they are wired to -- the ungated board and
+  # the queue nobody drains both live in spec/support for that reason.
   def build_with(options, **over)
     described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                        root:, **over)
+                        root:, switchboard: -> { SpecNulls::NoSwitchboard },
+                        askers: SpecNulls::UnwiredAskers.build, **over)
   end
 
   describe "#build" do
@@ -614,13 +618,31 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         expect(build.role_spawn.seam.askers).to be(build.build(recorder, ask_human:).fetch("subagent").seam.askers)
       end
 
-      # Defaulted for `switchboard:`'s exact reason and with the same warning:
-      # the direct-construction seam the specs drive, where a child's question
-      # would reach no queue at all. The exe always passes the run's.
-      it "falls back to the seam wired to nothing when a build is handed none" do
-        toolset_build.build(recorder, ask_human:)
+      # A child built the way the exe builds one holds the RUN's askers, wired
+      # to the queue a human really drains -- not a stand-in that answers the
+      # duck. `enrol` is asserted rather than the class, because what a child
+      # needs from this object is an asker it can actually be answered through.
+      it "gives a child an asker over the run's own live queue" do
+        build = build_with(options, askers:)
+        build.build(recorder, ask_human:)
 
-        expect(toolset_build.role_spawn.seam.askers).to be_a(Lain::CLI::Wiring::Askers)
+        seam_askers = build.role_spawn.seam.askers
+        expect(seam_askers).to be(askers)
+        Sync do
+          asked = seam_askers.enrol(Lain::Timeline.empty, agent: "researcher").asker.ask("which db?")
+          expect(seam_askers.questions.dequeue(timeout: 0).digest).to eq(asked.digest)
+        end
+      end
+
+      # The keyword is REQUIRED: there is no longer a stand-in behind it, so a
+      # build assembled without one refuses at construction instead of handing
+      # every child a queue nobody drains. Named for both halves, because
+      # `switchboard:` went the same way for the same reason.
+      it "refuses to build at all when it is handed no askers and no board" do
+        shared = { backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:, root: }
+
+        expect { described_class.new(**shared) }.to raise_error(ArgumentError, /askers/)
+        expect { described_class.new(**shared, askers:) }.to raise_error(ArgumentError, /switchboard/)
       end
 
       # The one child path that ships today, driven end to end: the chat's own
@@ -694,14 +716,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
 
     # The live thunk reads nil until {Wiring#build_agent} has run. That must
-    # raise rather than fall back to {NoSwitchboard}: a fallback would silently
-    # ungate a real session if the assembly order ever changed, which is the
-    # one failure this card exists to remove.
+    # raise rather than fall back to an ungated board: a fallback would
+    # silently ungate a real session if the assembly order ever changed.
     #
     # ALL THREE axes, because they fail differently and the gating pair are the
-    # sharper ones: a `|| NoSwitchboard` on `permits` alone hands a child the
-    # capabilities the session no longer holds, but the same fallback on
-    # `gate_policy` resolves to {NoSwitchboard#policy_switch} -- which is
+    # sharper ones: a `|| SpecNulls::NoSwitchboard` on `permits` alone hands a
+    # child the capabilities the session no longer holds, but the same fallback
+    # on `gate_policy` resolves to that board's `policy_switch` -- which is
     # `UNGATED`, an `ApproveAll` -- and silently ungates every child in the run,
     # while the same fallback on `sensitivity` resolves to a Null and ungates
     # every sensitive PATH for children only. Pinning one axis leaves the worse

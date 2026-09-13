@@ -27,12 +27,14 @@ RSpec.describe "Subagent posture equivalence" do
     Lain::Tool::SpawnPolicy.new(posture:, only:)
   end
 
-  def build_subagent(provider:, posture:, journal: Lain::Channel::Null.instance)
+  # A record PER TOOL, because the whole file compares two spawns: one shared
+  # observer would leave only whichever ran second.
+  def build_subagent(provider:, posture:, journal: Lain::Channel::Null.instance, observer: SpawnRecord.new)
     Lain::Tools::Subagent.new(
       tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { child_context }, toolset: union,
       policy: spawn_policy(posture:), parent:, journal:,
-      budget: Lain::Agent::Budget.new, max_depth: 3
+      budget: Lain::Agent::Budget.new, max_depth: 3, observer:
     )
   end
 
@@ -65,29 +67,33 @@ RSpec.describe "Subagent posture equivalence" do
   end
 
   it "delivers extensionally equal tool_result blocks across postures for allowed calls" do
-    schema_tool = build_subagent(provider: mock(*allowed_calls), posture: :schema)
-    schema_tool.call({ "prompt" => "go" }, invocation)
+    schema = SpawnRecord.new
+    build_subagent(provider: mock(*allowed_calls), posture: :schema, observer: schema)
+      .call({ "prompt" => "go" }, invocation)
 
-    union_tool = build_subagent(provider: mock(*allowed_calls), posture: :handler_union)
-    union_tool.call({ "prompt" => "go" }, invocation)
+    union = SpawnRecord.new
+    build_subagent(provider: mock(*allowed_calls), posture: :handler_union, observer: union)
+      .call({ "prompt" => "go" }, invocation)
 
     # Deliberately NOT asserted: the child's final text under Provider::Mock is
     # script-determined either way, so it carries no information about the
     # postures and would only couple this spec to an incidental value.
-    expect(tool_result_blocks(schema_tool.last_child)).to eq(tool_result_blocks(union_tool.last_child))
+    expect(tool_result_blocks(schema.child(store))).to eq(tool_result_blocks(union.child(store)))
   end
 
   it "diverges on a disallowed call in exactly the refusal shape" do
     schema_journal = Lain::Channel.new
-    schema_tool = build_subagent(provider: mock(*disallowed_call), posture: :schema, journal: schema_journal)
-    schema_tool.call({ "prompt" => "go" }, invocation)
+    schema = SpawnRecord.new
+    build_subagent(provider: mock(*disallowed_call), posture: :schema, journal: schema_journal, observer: schema)
+      .call({ "prompt" => "go" }, invocation)
 
     union_journal = Lain::Channel.new
-    union_tool = build_subagent(provider: mock(*disallowed_call), posture: :handler_union, journal: union_journal)
-    union_tool.call({ "prompt" => "go" }, invocation)
+    union = SpawnRecord.new
+    build_subagent(provider: mock(*disallowed_call), posture: :handler_union, journal: union_journal,
+                   observer: union).call({ "prompt" => "go" }, invocation)
 
-    schema_result = tool_result_blocks(schema_tool.last_child).first
-    union_result = tool_result_blocks(union_tool.last_child).first
+    schema_result = tool_result_blocks(schema.child(store)).first
+    union_result = tool_result_blocks(union.child(store)).first
 
     # Both answer is_error -- the disallowed call fails under either posture...
     expect(schema_result["is_error"]).to be(true)

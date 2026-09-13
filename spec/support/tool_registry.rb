@@ -69,9 +69,10 @@ module ToolRegistry
     "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
     # Construction-only: every property this spec asks of the instance is a
     # declaration, never #perform, and nil collaborators fail loudly if that
-    # ever stops being true. `told:` is required and undefaulted in production,
-    # so it is passed here rather than left to a default that does not exist.
-    "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil, told: SILENT) },
+    # ever stops being true. `told:` and `notes:` are required and undefaulted
+    # in production, so they are passed here rather than left to a default that
+    # does not exist.
+    "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil, told: SILENT, notes: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },

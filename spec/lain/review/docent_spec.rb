@@ -1089,7 +1089,7 @@ RSpec.describe Lain::Review::Docent do
 
     # {Skill::RoleSpawn#build_subagent}'s own construction, minus the persona
     # (which needs a project's slots and says nothing about capability).
-    def spawn_docent(provider, union, posture: :schema, askers: Lain::CLI::Wiring::Askers.unwired)
+    def spawn_docent(provider, union, posture: :schema, askers: SpecNulls::UnwiredAskers.build)
       role = Lain::Role::Catalog.fetch(described_class::ROLE)
       seam = Lain::Tools::Subagent::Seam.new(
         tool_middleware: ToolRegistry::UNGUARDED,

@@ -2346,22 +2346,22 @@ RSpec.describe Lain::CLI::Wiring::Askers do
   end
 
   # The seam a child spawn reaches, and the ONLY thing it needs: `enrol` is
-  # both halves at once. The keyword is pinned because the card that gives a
-  # child its own asker cannot edit `wiring.rb` to add it -- if this keyword
-  # goes, that card silently gets {described_class.unwired} and every child
-  # question parks where nobody can see it.
-  it "reaches the child construction path as ToolsetBuild's askers: keyword" do
+  # both halves at once. `keyreq` and not `key`: there is no longer a default
+  # behind this keyword, so a build assembled without one raises instead of
+  # handing every child a queue nobody drains.
+  it "reaches the child construction path as ToolsetBuild's required askers: keyword" do
     accepted = Lain::CLI::Wiring::ToolsetBuild.instance_method(:initialize).parameters
 
-    expect(accepted).to include(%i[key askers])
+    expect(accepted).to include(%i[keyreq askers])
   end
 
-  # {ToolsetBuild::NoSwitchboard}'s precedent: a build nobody wired still
-  # answers, and answers honestly -- the arrival goes nowhere, rather than the
-  # construction raising in a spec that never asks anything.
+  # A build nobody wired still answers, and answers honestly -- the arrival
+  # goes nowhere, rather than the construction raising in a spec that never
+  # asks anything. The wired-to-nothing Askers lives in spec/support, because
+  # no production wiring may mean "nobody is listening".
   it "answers the whole duck unwired, routing an arrival to nobody" do
     Sync do
-      unwired = described_class.unwired
+      unwired = SpecNulls::UnwiredAskers.build
       asked = unwired.enrol(parent).asker.ask("which db?")
 
       expect(unwired.questions.dequeue(timeout: 0).digest).to eq(asked.digest)

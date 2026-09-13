@@ -25,7 +25,6 @@ end
 # tmux's OWN `#{...}` format-string syntax, not Ruby interpolation -- see
 # TmuxSurface::COMMAND_LIST_NAME_FORMAT's comment for the identical trap.
 WINDOW_NAME_FORMAT = '#{window_name}' # rubocop:disable Lint/InterpolationCheck
-SESSION_NAME_FORMAT = '#{session_name}' # rubocop:disable Lint/InterpolationCheck
 
 RSpec.describe Lain::CLI::TmuxSurface do
   def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
@@ -93,16 +92,6 @@ RSpec.describe Lain::CLI::TmuxSurface do
         .to raise_error(described_class::TmuxUnavailable, /rename-window failed/)
     end
 
-    it "opens a real detached session" do
-      placement = surface.session(name: "forked", command: "sleep 60")
-
-      expect(placement).to eq(described_class::Placement.new(kind: :session, target: "forked", degraded: false,
-                                                             reason: nil))
-      sessions = Open3.capture2("tmux", "-L", socket, "list-sessions", "-F",
-                                SESSION_NAME_FORMAT).first.lines.map(&:strip)
-      expect(sessions).to include("forked")
-    end
-
     it "does NOT degrade a popup on this real (modern, no client attached) tmux -- it genuinely " \
        "attempts display-popup and hits tmux's own client-less refusal, proving the non-degraded " \
        "path really talks to display-popup rather than silently falling back to a window" do
@@ -139,9 +128,7 @@ RSpec.describe Lain::CLI::TmuxSurface do
       surface.window(command: "exit 42", name: "corpse", target_session: "lain", keep_failed: true)
       settle
 
-      state = surface.window_state(target: "lain:=corpse")
-      expect(state.survived).to be(false)
-      expect(state.status).to eq(42)
+      expect(surface.window_state(target: "lain:=corpse").status).to eq(42)
     end
 
     it "wins that race every time over a burst, so a status is never a coin flip" do
@@ -152,23 +139,23 @@ RSpec.describe Lain::CLI::TmuxSurface do
       expect(statuses).to all(eq(42))
     end
 
-    it "reports a window whose command keeps running as survived, carrying no status" do
+    it "claims no death for a window whose command is still running" do
       surface.window(command: "sleep 60", name: "alive", target_session: "lain", keep_failed: true)
 
       expect(surface.window_state(target: "lain:=alive"))
-        .to eq(described_class::WindowState.new(target: "lain:=alive", survived: true, status: nil))
+        .to eq(described_class::WindowState.new(target: "lain:=alive", status: nil))
     end
 
-    it "reports a window that is not there as not survived, rather than answering for some other pane" do
+    it "reports a window that is not there as no death, rather than answering for some other pane" do
       # Verified against this tmux: `display-message -p` resolves an
       # unfindable target to the CURRENT pane and still exits 0, so it would
-      # have reported the session's healthy first window as this one's state.
-      # `list-panes` refuses the target instead, which is why the query is
-      # built on it.
-      state = surface.window_state(target: "lain:=never-opened")
-
-      expect(state.survived).to be(false)
-      expect(state.status).to be_nil
+      # have reported the session's healthy first window as this one's state
+      # -- and that window's own corpse status if it had one. `list-panes`
+      # refuses the target instead, which is why the query is built on it.
+      # The corpse example above is what makes this one non-vacuous: a status
+      # IS readable on this server, so answering nil here is a refusal rather
+      # than a surface that can never report anything.
+      expect(surface.window_state(target: "lain:=never-opened").status).to be_nil
     end
 
     it "keeps a cleanly exiting window's pane out of the way -- `failed`, not `on`" do
@@ -251,16 +238,16 @@ RSpec.describe Lain::CLI::TmuxSurface do
       signalled = ->(*_args) { FakeTmuxShellOut.new(nil, "", "") }
       surface = described_class.new(shell_out_factory: signalled)
 
-      expect(surface.window_state(target: "lain:=probe").survived).to be(false)
+      expect(surface.window_state(target: "lain:=probe").status).to be_nil
       expect { surface.window(command: "echo hi", name: "probe", keep_failed: true) }
         .to raise_error(described_class::TmuxUnavailable)
     end
 
-    it "fails CLOSED on an answer it cannot read -- an unreadable pane is not a healthy one" do
+    it "claims no death from an answer it cannot read, rather than inventing a status" do
       surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "\n", "")))
 
       expect(surface.window_state(target: "lain:=probe"))
-        .to eq(described_class::WindowState.new(target: "lain:=probe", survived: false, status: nil))
+        .to eq(described_class::WindowState.new(target: "lain:=probe", status: nil))
     end
 
     it "is still loud when the OPEN itself failed -- nothing printed, so nothing opened" do
@@ -271,26 +258,28 @@ RSpec.describe Lain::CLI::TmuxSurface do
         .to raise_error(described_class::TmuxUnavailable, /error connecting to socket/)
     end
 
-    it "reads the pane's death flag and status off list-panes" do
+    it "reads the dead pane's status out of the second half of the format string" do
       surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "1:127\n", "")))
 
       expect(surface.window_state(target: "lain:=probe"))
-        .to eq(described_class::WindowState.new(target: "lain:=probe", survived: false, status: 127))
+        .to eq(described_class::WindowState.new(target: "lain:=probe", status: 127))
     end
 
-    it "reads a live pane as survived" do
+    # The live pane's half of the pair above: tmux writes the death flag and
+    # an EMPTY status, and the empty half must not become a zero -- a status
+    # of 0 is a death that exited cleanly, which is a different journal record
+    # from no death at all.
+    it "reads a live pane's empty status as no death, never as an exit status of zero" do
       surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "0:\n", "")))
 
-      expect(surface.window_state(target: "lain:=probe").survived).to be(true)
+      expect(surface.window_state(target: "lain:=probe").status).to be_nil
     end
 
-    it "reads a refused target as a window that did not survive, with no status to report" do
+    it "reads a refused target as no death, with no status to report" do
       gone = ->(*_args) { FakeTmuxShellOut.new(1, "", "can't find window: probe") }
       surface = described_class.new(shell_out_factory: gone)
 
-      state = surface.window_state(target: "lain:=probe")
-      expect(state.survived).to be(false)
-      expect(state.status).to be_nil
+      expect(surface.window_state(target: "lain:=probe").status).to be_nil
     end
 
     it "reads only the first pane's line -- a window split by hand still answers for the command's pane" do
@@ -451,13 +440,6 @@ RSpec.describe Lain::CLI::TmuxSurface do
       surface = described_class.new(shell_out_factory: no_tmux_factory)
 
       expect { surface.popup(command: "echo hi") }
-        .to raise_error(described_class::TmuxUnavailable, /tmux not found on PATH/)
-    end
-
-    it "raises TmuxUnavailable with the remedy, and executes nothing, for #session" do
-      surface = described_class.new(shell_out_factory: no_tmux_factory)
-
-      expect { surface.session(name: "forked") }
         .to raise_error(described_class::TmuxUnavailable, /tmux not found on PATH/)
     end
 

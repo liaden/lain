@@ -484,15 +484,14 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     def child_gate_policy = wiring.role_spawn.seam.gate_policy
 
     # Driving `.board.call` IS driving the thunk: that is the call
-    # {LivePolicy#call} makes on every child tier-3 dispatch. The alternative
-    # it must not resolve is named, because {ToolsetBuild}'s own default is a
-    # thunk over {ToolsetBuild::NoSwitchboard} -- an ungated board that is
-    # explicitly "not a sanctioned production state".
-    it "is what a subagent's gate policy thunk resolves, not the ungated default" do
+    # {LivePolicy#call} makes on every child tier-3 dispatch. The ungated
+    # stand-in this once also named is gone from lib/ and {ToolsetBuild} now
+    # requires a `switchboard:`, so "it did not resolve the ungated default"
+    # has no default to be about -- an assertion that could no longer fail.
+    it "is what a subagent's gate policy thunk resolves" do
       wire
 
       expect(child_gate_policy.board.call).to be_a(Lain::CLI::Switchboard)
-      expect(child_gate_policy.board.call).not_to be(Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard)
     end
 
     # The privilege-inversion guard, stated as the thing a child's dispatch
@@ -507,10 +506,10 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     # `x.approvals == x.approvals` and passes for any board at all, including
     # the ungated one.
     #
-    # What then adjudicates is the run's escalation ladder. Against
-    # {NoSwitchboard} it is {Tools::Subagent::UNGATED}, an unconditional
-    # approver: a child could do what its parent must ask to do, which is a
-    # privilege inversion and not a wiring omission.
+    # What then adjudicates is the run's escalation ladder. Against an ungated
+    # board it would be {Tools::Subagent::UNGATED}, an unconditional approver:
+    # a child could do what its parent must ask to do, which is a privilege
+    # inversion and not a wiring omission.
     it "gates a child through the run's own queue, the one its parent is gated by" do
       wire
       resolved = child_gate_policy.board.call
@@ -526,11 +525,10 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     # behavioural check would still agree while nothing was configured.
     def child_sensitivity = wiring.role_spawn.seam.sensitivity
 
-    it "resolves a child's sensitivity through the run's own board, not the ungated default" do
+    it "resolves a child's sensitivity through the run's own board" do
       wire
 
       expect(child_sensitivity.board.call).to be_a(Lain::CLI::Switchboard)
-      expect(child_sensitivity.board.call).not_to be(Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard)
     end
 
     # The identity that makes the privilege inversion unrepresentable: ONE

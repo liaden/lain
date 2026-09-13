@@ -21,8 +21,8 @@ module Lain
                   "ask_human has nobody to put this to and no answer will ever come back. Decide with " \
                   "what you have, or stop and say what you needed."
 
-        # {Tools::Subagent::NoAskers} enrols this class for a SEAM that was
-        # simply never wired to a queue -- which has nothing to do with
+        # {Tools::Subagent::NoAskers} enrols this class for a spawn seam with
+        # no queue anywhere to reach -- which has nothing to do with
         # `--non-interactive`, so {REFUSAL}'s parenthetical would be a false
         # statement about that agent's own configuration there, and a human
         # chasing down an escalation that never arrived would be pointed at

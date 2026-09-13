@@ -18,15 +18,20 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
   let(:template) { "Shared sibling brief, the bulk every worker reads first. " * 40 }
   let(:sibling_template) { Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate }
 
+  # A spawn's record, read off the events it wrote through the seam's own
+  # `observer:` rather than off the tool.
+  let(:record) { SpawnRecord.new }
+
   def policy(prefix:, posture: :handler_union, only: %i[read_file])
     Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:)
   end
 
-  def build_tool(provider:, policy:, journal: Lain::Channel::Null.instance, context: child_context)
+  def build_tool(provider:, policy:, journal: Lain::Channel::Null.instance, context: child_context,
+                 observer: record)
     Lain::Tools::Subagent.new(
       tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { context }, toolset: union, policy:,
-      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth: 3
+      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth: 3, observer:
     )
   end
 
@@ -162,7 +167,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
     encoded_tools = provider.requests.map { |r| JSON.dump(encoder.encode(r)[:tools]) }
     expect(encoded_tools.uniq.size).to eq(1)
 
-    refusal = tool.last_child.to_a.find do |turn|
+    refusal = record.child(store).to_a.find do |turn|
       turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" }
     end
     expect(refusal.content.first["is_error"]).to be(true)
@@ -245,9 +250,9 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
     provider = mock(text_response("a"), text_response("b"))
     tool = build_tool(provider:, policy: policy(prefix: sibling_template.new(template:)))
     tool.call({ "prompt" => "one" }, invocation)
-    first_child = tool.last_child
+    first_child = record.child(store)
     tool.call({ "prompt" => "two" }, invocation)
-    second_child = tool.last_child
+    second_child = record.child(store)
 
     expect(first_child.meet(parent)).to be_empty
     expect(first_child.meet(second_child)).to be_empty

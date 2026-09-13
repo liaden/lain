@@ -36,7 +36,9 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
       Lain::CLI::Wiring::ToolsetBuild.new(backend:, provider: backend.provider(spool: chronicle.spool),
                                           chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
                                           parent:, journal:, library: backend.library,
-                                          epic: Lain::CLI::EpicMount::NoEpic, root: Dir.pwd)
+                                          epic: Lain::CLI::EpicMount::NoEpic, root: Dir.pwd,
+                                          switchboard: -> { SpecNulls::NoSwitchboard },
+                                          askers: SpecNulls::UnwiredAskers.build)
     end
 
     def live_bash = assembler.build(recorder, ask_human: Lain::Tools::AskHuman.new(parent:)).fetch("bash")

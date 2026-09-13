@@ -90,7 +90,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
       parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal: Lain::Channel::Null.instance,
-      library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: repo
+      library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: repo,
+      switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
     ).tap do |toolset|
       toolset.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
     end

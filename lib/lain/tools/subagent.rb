@@ -58,17 +58,7 @@ module Lain
       # Closed and loud: a mode outside this set raises at construction.
       MODES = %i[one_shot actor].freeze
 
-      # The most recent spawn's records, for observability. `nil` until a spawn
-      # happens, and after a depth refusal, which emits nothing.
-      #
-      # ONE-SHOT ONLY. These ivars are safe only because a Subagent belongs to
-      # exactly one agent's toolset and a one-shot spawn runs synchronously
-      # inside a single tool dispatch, so no interleaving writer can exist.
-      # Returning the records along the call path instead is not available:
-      # {Tool::Result} content is pinned to String/Array wire blocks. Actor mode
-      # must NOT inherit this shape -- concurrent children would race these
-      # ivars, so an actor's record rides its events instead.
-      attr_reader :name, :last_spawn, :last_message, :last_child
+      attr_reader :name
 
       # The {Seam} this tool spawns over, and the union a child attenuates FROM.
       # Exposed so the bench asks the capability layering directly rather than
@@ -237,14 +227,14 @@ module Lain
         Tool::Result.ok("actor launched: #{actor.address}")
       end
 
-      # Re-entrant by construction: the records ride LOCALS, never the `@last_*`
-      # ivars, across `run_child`'s IO yield -- so a sibling fan-out task
-      # resuming mid-flight cannot make `message` name the wrong spawn or child.
-      # The ivars are written once at the end, together, with no yield between
-      # the three.
+      # Re-entrant by construction: the records ride LOCALS and nothing else
+      # across `run_child`'s IO yield, so a sibling fan-out task resuming
+      # mid-flight cannot make `message` name the wrong spawn or child. There
+      # is nowhere for one to be left behind either -- the record IS the pair
+      # of events, and a reader watches them through the seam's `observer:`.
       #
       # WHAT THE RECORD MEANS ON A BOUNDED SPAWN, since two fields change sense
-      # and nothing else says so: `last_message.body["result"]` holds what the
+      # and nothing else says so: the :message's `body["result"]` holds what the
       # parent was GIVEN, which is the child's own summary or the floor sentence
       # rather than the answer it first produced; and `"final"` names the head
       # AFTER the summarizing ask, because that ask is a real turn on the
@@ -257,17 +247,8 @@ module Lain
         parent = parent_timeline
         spawn = lineage.spawn(parent)
         child, response = run_child(prompt, parent, on_stream_started:)
-        message = lineage.message(parent, spawn, child, response)
-        remember(spawn, child, message)
+        lineage.message(parent, spawn, child, response)
         Tool::Result.ok(response.text)
-      end
-
-      # The ONE place the `@last_*` ivars are set, all at once with no yield
-      # between, so a reader never sees a half-updated record.
-      def remember(spawn, child, message)
-        @last_spawn = spawn
-        @last_child = child
-        @last_message = message
       end
 
       # `ask` seeds the prompt as the child's first user turn: fresh starts it
@@ -442,11 +423,19 @@ module Lain
       # {AskHuman::Directory::Unheld}: nothing is ever outstanding to route an
       # answer back to.
       #
-      # NOT a sanctioned production state -- the exe always passes the run's
-      # own askers, wired to a real queue. It duplicates
-      # {CLI::Wiring::Askers.unwired} because `lain.rb` loads `lain/cli` before
-      # `lain/tools`, so this file cannot name that class -- and neither should
-      # it: a spawn asks for an enrolment, not for the CLI's way of making one.
+      # A chat wires the run's own askers, and this is what a spawn seam built
+      # outside one gets. {CLI::EpicSubmit::Adjudication} NAMES it
+      # rather than taking it from the {Seam} default, because there it is the
+      # honest configuration: that command runs out of chat, so its children
+      # really do have no queue and no directory anywhere -- which is what
+      # {AskHuman::Unattended::NO_MAILBOX} states and why that wording exists.
+      # A chat seam getting it by default is the case {Seam#initialize} says is
+      # still open.
+      #
+      # It duplicates what {CLI::Wiring::Askers} would enrol because `lain.rb`
+      # loads `lain/cli` before `lain/tools`, so this file cannot name that
+      # class -- and neither should it: a spawn asks for an enrolment, not for
+      # the CLI's way of making one.
       #
       # A module rather than an instance, for {NO_OBSERVER}'s equality reason.
       module NoAskers
@@ -560,9 +549,10 @@ module Lain
         #
         # `StandardError` and not the budget alone: a 429, a 529 or a socket
         # reset from the second ask would otherwise escape and destroy an answer
-        # the run has already paid for -- on the one-shot path past `remember`,
-        # so no :message is written at all, and on the actor path into `@failure`,
-        # so no settled note ever reaches the parent's mailbox. {Agent}'s own
+        # the run has already paid for -- on the one-shot path it escapes ahead
+        # of `lineage.message`, so no :message is written at all, and on the
+        # actor path into `@failure`, so no settled note ever reaches the
+        # parent's mailbox. {Agent}'s own
         # torn-turn rule is the governing one: work that was paid for stays in
         # the record rather than vanishing with the raise. `Async::Stop` is not
         # a StandardError, so cancellation still flows past this untouched.
@@ -1006,12 +996,22 @@ module Lain
         # tools run behind the guard this names, and a defaulted guard is how a
         # production spawn would run with none while nothing said so. A caller
         # that wants none builds an empty {Middleware::Stack} and says so.
+        #
         # It is a thunk over the child's {WorkerEnv}, called once per child as
         # that child is built, on `denial`'s reason -- a chat's guard reads a
         # board that does not exist yet when this seam does -- and because a
         # stack is mutable, so one shared between children would let a `#use`
         # on one reach them all. The environment is what tells a guard where a
         # child leased into a checkout of its own writes.
+        #
+        # `askers` wants the same treatment and does not yet have it: its
+        # default is {NoAskers}, so a chat seam assembled with no askers takes
+        # a human question it can never park and never route an answer back
+        # to, and says nothing about it. Requiring the keyword was tried and
+        # reverted: 45 spec construction frames across 10 files build this
+        # Data with the loose members, so it cannot be required until they
+        # build it through one factory; {CLI::Wiring::ToolsetBuild} -- the
+        # only production constructor -- requires its own.
         #
         # `escalation` defaults to `[AskHuman::HUMAN]`: absent a spawn, `parent`
         # IS the run's own chat, so a question asked FROM it need go no further

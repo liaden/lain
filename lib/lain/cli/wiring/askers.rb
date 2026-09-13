@@ -17,13 +17,6 @@ module Lain
 
         attr_reader :questions, :directory
 
-        # The seam wired to nothing: its arrivals reach a queue nobody drains.
-        # For the direct-construction seams the specs drive
-        # ({ToolsetBuild::NoSwitchboard}'s precedent), and NOT a sanctioned
-        # production state -- a child enrolled here parks a human question
-        # nobody can see. The exe always passes the run's own.
-        def self.unwired = new(observer: Lain::Event::ChainWriter::Null.new)
-
         # @param observer [#call] the chronicle's -- Q and A are exactly the
         #   events a Timeline walk can never find, so a missing observer is
         #   silent record loss; required for that reason, not defaulted.

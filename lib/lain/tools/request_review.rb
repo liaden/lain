@@ -160,16 +160,12 @@ module Lain
         def self.source(base:, head:) = nil # rubocop:disable Lint/UnusedMethodArgument
       end
 
-      # No tee between the Review and the journal, so the notes went only to the
-      # journal and this call has none to quote. A review still opens, settles
-      # and reports its delta.
-      module NoNotes
-        def self.take(**) = []
-      end
-
       # @param home [Epic::Home::Journaled, #call] the epic's artifacts
       # @param review [Epic::Review, #call] the baton for this epic
-      # @param notes [Notes] the journal tee this review's annotations land in
+      # @param notes [Notes] the journal tee this review's annotations land in.
+      #   REQUIRED and undefaulted: every caller has always passed one, and the
+      #   Null that stood here promised a review whose annotations were quoted
+      #   back from nowhere.
       # @param editor [#open_review] the surface that shows the human the file
       # @param bindings [#bind_review] where the editor's `done` is routed
       # @param told [#call] the run's one line to the human -- the ONLY thing
@@ -197,7 +193,7 @@ module Lain
       #   gate, which cannot mark a hunk and so can never satisfy
       #   {Review::Verdict::Policy::EveryHunk} -- reaches the session only
       #   through this tool.
-      def initialize(home:, review:, told:, notes: NoNotes, editor: NoEditor,
+      def initialize(home:, review:, told:, notes:, editor: NoEditor,
                      bindings: NoBindings,
                      changesets: NoChangesets, surface: nil, view: nil, policy: nil)
         super()

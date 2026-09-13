@@ -5,10 +5,8 @@ require "mixlib/shellout"
 module Lain
   module CLI
     # One object for every tmux surface a command reaches for: a `window`
-    # (a new tab in an existing session), a `popup` (a transient floating
-    # pane -- `display-popup`), and a detached `session` (a wholly separate
-    # tmux session, e.g. forking the whole lain session rather than adding a
-    # window to one). Callers (/fork, /btw, fleet windows) never
+    # (a new tab in an existing session) and a `popup` (a transient floating
+    # pane -- `display-popup`). Callers (/fork, /btw, fleet windows) never
     # shell out to tmux directly; they ask this object for a Placement.
     #
     # `display-popup` does not render everywhere: under `tmux -CC` (iTerm2's
@@ -53,18 +51,15 @@ module Lain
       # the server refused to hold a failed pane.
       Placement = Data.define(:kind, :target, :degraded, :reason)
 
-      # What the server says about a window somebody opened earlier. Both
-      # halves are part of the answer even where a caller reads only one:
-      # {FleetWindows} keys on `status` because a corpse's exit code is the
-      # only unambiguous evidence of a death, while `survived` is what a
-      # caller asking the plainer question -- is this window still working --
-      # would read, and neither is derivable from the other.
-      # `survived` is false both for a pane `keep_failed:` held after a
-      # non-zero exit -- `status` is then what it died with -- and for a
-      # window tmux can no longer find at all, where there is nothing left to
-      # ask and `status` is nil.
-      WindowState = Data.define(:target, :survived, :status) do
-        def initialize(target:, survived:, status:) = super(target: -target, survived:, status:)
+      # What the server says about a window somebody opened earlier. The
+      # exit code a corpse left behind is the whole of the answer, because it
+      # is the only unambiguous evidence of a death: `status` is what a pane
+      # `keep_failed:` held died with, and nil for every other reading --
+      # a live pane, a window tmux can no longer find, an answer that would
+      # not parse. {FleetWindows::Pump::Check} says why presence must not
+      # stand in for it.
+      WindowState = Data.define(:target, :status) do
+        def initialize(target:, status:) = super(target: -target, status:)
       end
 
       # tmux's OWN `#{...}` format-string syntax (`man tmux` FORMATS), not
@@ -113,35 +108,40 @@ module Lain
         Placement.new(kind: :window, target: name, degraded: !reason.nil?, reason:)
       end
 
-      # Whether the command a window was opened for is still there. {#window}
-      # cannot answer this: `new-window` exits 0 the moment the SERVER accepts
-      # the request, so a command that never ran looks exactly like one that
-      # did.
+      # What the command a window was opened for exited with, if it died.
+      # {#window} cannot answer this: `new-window` exits 0 the moment the
+      # SERVER accepts the request, so a command that never ran looks exactly
+      # like one that did.
       #
       # `list-panes`, NOT `display-message -p`: verified against tmux 3.7, an
       # unfindable target makes display-message answer for the CURRENT pane
       # and still exit 0, so a window that is gone would report a healthy
       # one's state. list-panes refuses the target instead, and that refusal
-      # is itself the answer -- a window nobody can find did not survive, and
-      # there is no status left to report for it.
+      # is itself the answer -- a window nobody can find has no status left to
+      # report.
       #
       # The first line only. A window the human splits by hand grows panes
       # after the fact; the pane tmux made for the command is the first.
       #
-      # Fails CLOSED, twice over. `survived` is true only for a pane that
-      # positively read alive, so an answer this cannot parse is never
-      # mistaken for a healthy window; and `exitstatus` is asked with `&.`
+      # Every reading it cannot make sense of answers "no status", which is
+      # the sense its one caller needs: a window merely gone is a clean exit
+      # or a human who closed it, and journalling either as a death would put
+      # a lie in the experiment record. `exitstatus` is asked with `&.`
       # because Mixlib::ShellOut answers nil for a client killed by a signal,
       # where `.zero?` would raise out of whatever queued work is asking.
+      #
+      # The death flag is destructured and dropped rather than sliced past:
+      # tmux emits both halves of PANE_DEATH_FORMAT always, and naming the one
+      # that is discarded is what keeps the wire format readable here.
       #
       # @param target [String] a tmux target-window
       # @return [WindowState]
       def window_state(target:)
         reply = run("list-panes", "-t", target, "-F", PANE_DEATH_FORMAT)
-        return WindowState.new(target:, survived: false, status: nil) unless reply.exitstatus&.zero?
+        return WindowState.new(target:, status: nil) unless reply.exitstatus&.zero?
 
-        dead, status = reply.stdout.lines.first.to_s.strip.split(":", 2)
-        WindowState.new(target:, survived: dead == "0", status: Integer(status.to_s, exception: false))
+        _pane_dead, status = reply.stdout.lines.first.to_s.strip.split(":", 2)
+        WindowState.new(target:, status: Integer(status.to_s, exception: false))
       end
 
       # `-EE`, not `-E`: the popup runs a `lain chat` REPL that can exit
@@ -188,16 +188,6 @@ module Lain
       def rename_window(target:, name:)
         act("rename-window", "-t", target, name)
         self
-      end
-
-      # @param name [String] the new session's name
-      # @param command [String, nil] shell command for its initial window
-      # @return [Placement]
-      def session(name:, command: nil)
-        args = ["new-session", "-d", "-s", name]
-        args << command if command
-        act(*args)
-        Placement.new(kind: :session, target: name, degraded: false, reason: nil)
       end
 
       private

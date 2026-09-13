@@ -69,8 +69,12 @@ module Lain
         end
 
         def initialize(provider:, context_factory:, slots:, tool_middleware:)
+          # {Tools::Subagent::NoAskers} is NAMED here, not inherited from a
+          # default: this command runs out of chat, so there is no queue a
+          # child's escalation could reach and no directory an answer could
+          # come back through. The refusal its asker gives says exactly that.
           @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, parent: Lain::Timeline.empty,
-                                                  tool_middleware:)
+                                                  tool_middleware:, askers: Lain::Tools::Subagent::NoAskers)
           @slots = slots
         end
 

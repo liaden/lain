@@ -193,18 +193,6 @@ module Lain
         # spec watches to see that growth is bounded by REGISTRATION lifetime.
         def size = @registrations.sum(&:size)
 
-        # The wired-nothing default, so no caller writes `if directory`. It
-        # refuses every answer in the same words a withdrawn set earns, because
-        # with nothing registered every name is one nobody holds -- a silent
-        # success would be a lie about a promise nothing resolved.
-        module Null
-          def self.register(_asker) = Unheld
-          def self.reply(answer, digest) = Unheld.reply(answer, digest)
-          def self.forget(registration) = registration
-          def self.size = 0
-          def self.unanswerable(digest) = Directory.unanswerable(digest)
-        end
-
         private
 
         def holder_of(digest) = @registrations.find(NOBODY) { |registration| registration.holds?(digest) }

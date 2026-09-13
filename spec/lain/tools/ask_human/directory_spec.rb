@@ -202,8 +202,12 @@ RSpec.describe Lain::Tools::AskHuman::Directory do
   end
 
   # ---- Scenario: the null directory satisfies the same duck -----------------
+  #
+  # The stand-in lives in spec/support because no production wiring may mean
+  # "nobody registered"; the duck it has to satisfy is still THIS object's, so
+  # the check that keeps the two in step belongs here.
 
-  describe Lain::Tools::AskHuman::Directory::Null do
+  describe SpecNulls::NoDirectory do
     it "answers the same messages and routes nothing" do
       Sync do
         asker = build_asker

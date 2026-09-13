@@ -31,7 +31,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
     described_class.new(backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {},
                         supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
                         journal: Lain::Channel::Null.instance, library: backend.library,
-                        epic: Lain::CLI::EpicMount::NoEpic, root: @repo)
+                        epic: Lain::CLI::EpicMount::NoEpic, root: @repo,
+                        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build)
   end
 
   def git(dir, *args)
@@ -109,7 +110,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
     fleet = described_class.new(backend:, provider: replies,
                                 chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
                                 parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal:,
-                                library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: @repo)
+                                library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: @repo,
+                                switchboard: -> { SpecNulls::NoSwitchboard },
+                                askers: SpecNulls::UnwiredAskers.build)
     fleet.build(recorder, ask_human:)
     epics = %w[a b].map { |id| fleet.epic_subagent(**issue_lane(id), lane: "issue.demo.#{id}") }
 

@@ -91,56 +91,6 @@ module Lain
           def denial(effect) = board.call.sensitivity.denial(effect)
         end
 
-        # A frozen {Lain::Mode} answers `#posture` exactly as {Mode::Switch}
-        # does, which is the whole of what {PosturePermits} asks -- so the Null
-        # below stands in with a real value rather than a fake duck.
-        # `accept_edits` because its {Mode::Posture::Permits} is `All`: a build
-        # with no live board attenuates nothing, which is what "no posture was
-        # ever bound here" has to mean.
-        UNSWITCHED = Lain::Mode.new(posture: :accept_edits)
-        private_constant :UNSWITCHED
-
-        # The board a directly-constructed build runs under: children ungated
-        # and unattenuated, byte-for-byte what every spawn did before children
-        # were first gated. For the direct-construction seams the specs drive,
-        # and NOT a sanctioned production state -- the exe always passes a
-        # thunk over the run's real {Switchboard}.
-        #
-        # `policy_switch` resolves inside the method body on purpose: `lain.rb`
-        # requires `lain/cli` fifteen entries BEFORE `lain/tools`, so an eager
-        # `Tools::Subagent::UNGATED` in this class body is a hard NameError at
-        # load -- the same debt `mode/resolution.rb` records and defers the
-        # same way.
-        NoSwitchboard = Class.new do
-          # The one value {ToolGuard} reads. One ledger, for {Switchboard}'s
-          # reason; no queue, which the guard reads as a run nobody attends --
-          # every region is released, byte-for-byte what a child read before
-          # children were guarded; and no test layout, so nothing is refused.
-          # `lain/cli` loads `cli/tool_guard` before `cli/wiring`, so this may
-          # be built with the class.
-          attr_reader :guard_inputs
-
-          def initialize
-            super
-            @guard_inputs = ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil,
-                                                  sensitivity: Lain::Sensitivity::Policy::Null.instance,
-                                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
-          end
-
-          def approvals = nil
-          def policy_switch = Lain::Tools::Subagent::UNGATED
-          def mode_switch = UNSWITCHED
-          def sensitivity = Lain::Sensitivity::Policy::Null.instance
-          # A board that was never wired knows nothing about who is attached,
-          # so a child gated by {UNGATED} reads the sentence
-          # {Effect::Handler::Gate} produces on its own. Resolved in the body
-          # for `policy_switch`'s load-order reason.
-          def denial = Lain::Effect::Handler::Gate::DENIAL
-
-          def inspect = "Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard"
-          alias_method :to_s, :inspect
-        end.new.freeze
-
         # The role the chat's own subagent spawns, named ONCE: what it may do
         # (its `only`-set, through {Backend#spawn_policy}) and what a human is
         # told it is (its arrival note) are two readings of one fact, and two
@@ -209,14 +159,16 @@ module Lain
         #   the comment above explains). The live thunk reads nil until
         #   {Wiring#build_agent} has run and is left to raise `NoMethodError`
         #   rather than falling back: a fallback would silently ungate a real
-        #   session if the assembly order ever changed. Defaults to a thunk over
-        #   {NoSwitchboard} for the direct-construction seams the specs drive.
+        #   session if the assembly order ever changed. REQUIRED and undefaulted:
+        #   the ungated stand-in it once defaulted to would have let a build
+        #   assembled without a board gate nothing and say nothing about it.
         # @param askers [Wiring::Askers] the run's ONE {Wiring::Askers} -- who may ask
         #   the human, where an arrival goes, and the directory an answer routes back
         #   through; rides the spawn seam so a child can enrol its own asker
         #   ({Wiring::Askers#enrol}, which also hands back the registration whoever
-        #   owns that child's lifetime must `deregister`). Defaults to
-        #   {Wiring::Askers.unwired} for the direct-construction seams the specs drive.
+        #   owns that child's lifetime must `deregister`). REQUIRED and
+        #   undefaulted, for `switchboard:`'s reason: a build wired to no queue
+        #   parks every human question a child asks.
         # @param isolation [#acquire] the run's ONE {Lain::Isolation} backend, the
         #   same instance {Wiring} hands the {Lain::Supervisor}. Injected rather
         #   than resolved here: a second resolution of one `--isolation` flag is
@@ -264,7 +216,7 @@ module Lain
         #   default reads. Last, after every `@param`, because yard-lint fixes
         #   that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired, usage: nil,
+                       root:, switchboard:, askers:, usage: nil,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))

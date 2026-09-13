@@ -103,11 +103,14 @@ RSpec.describe "Subagent gating" do
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:journal) { Lain::Channel::Null.instance }
 
+  # What a spawn left behind, watched through the seam's own `observer:`.
+  let(:record) { SpawnRecord.new }
+
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
-  def seam(provider:, **over)
+  def seam(provider:, observer: record, **over)
     Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, journal:,
-                                    tool_middleware: ToolRegistry::UNGUARDED, **over)
+                                    tool_middleware: ToolRegistry::UNGUARDED, observer:, **over)
   end
 
   def build_subagent(provider:, role: :dev, posture: :schema, **over)
@@ -286,7 +289,7 @@ RSpec.describe "Subagent gating" do
       result = tool.call({ "prompt" => "go" }, invocation)
 
       expect(result.is_error).to be(false)
-      refusal = tool_results(tool.last_child).first
+      refusal = tool_results(record.child(store)).first
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to include("approval denied")
       expect(tools[:bash].runs).to be_empty
@@ -306,7 +309,7 @@ RSpec.describe "Subagent gating" do
       tool.call({ "prompt" => "go" }, invocation)
 
       expect(policy.asked).to be_empty
-      expect(tool_results(tool.last_child).first["is_error"]).to be(true)
+      expect(tool_results(record.child(store)).first["is_error"]).to be(true)
     end
 
     it "still gates a call the child WAS attenuated to" do
