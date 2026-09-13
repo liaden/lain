@@ -76,16 +76,21 @@ module Lain
         # the other end on purpose -- {Approval::Queue::Outstanding#preamble}
         # runs to ~84 columns on its own, and a bar cutting into that would hide
         # the one sentence a `y` on this row is most about.
-        WIDTH = 96
+        #
+        # {Fold}'s own, not a second measurement of the same pane: {InboxView}
+        # draws the same width and both used to spell it out independently,
+        # which is the duplication {Fold}'s doc explains.
+        WIDTH = Fold::WIDTH
 
         # The whole of the runtime's boundary test: `05_records.lua`'s
         # CONTINUATION pattern is this string anchored, so "does this line start
         # a record" is answerable there without parsing the call's own text.
-        INDENT = "  "
+        # {Fold}'s own, pinned against the Lua there.
+        INDENT = Fold::INDENT
 
         # ASCII, `65_review.lua`'s SENTINEL spelling, so a font with no ellipsis
-        # glyph shows a cut rather than a replacement box.
-        ELISION = "..."
+        # glyph shows a cut rather than a replacement box. {Fold}'s own.
+        ELISION = Fold::ELISION
 
         # An item's body: the row, hard-wrapped, NEVER at a word boundary. What
         # the human is asked to approve is a COMMAND, and a wrap that moved bytes
@@ -102,8 +107,8 @@ module Lain
         # the opened fold has the whole sentence either way -- and two modes
         # would be two code paths over one buffer whose seam falls exactly at
         # the elision point. One mode keeps {#lines_for}'s summary a cut PREFIX
-        # of the body, a property checkable by reading.
-        BODY = /.{1,#{WIDTH - INDENT.length}}/m
+        # of the body, a property checkable by reading. {Fold}'s own regex.
+        BODY = Fold::BODY
 
         # None attached, dead, or no longer draining -- one sentence for all
         # three, because they are one fact from the human's side.
@@ -427,10 +432,7 @@ module Lain
         # beneath it, foldable away, so the ordinary list is still one line per
         # call and stays quiet at rest.
         def lines_for(pending, call)
-          summary = summary_for(pending, call)
-          return [summary] if summary.length <= WIDTH
-
-          [summary[0, WIDTH - ELISION.length] + ELISION] + body_for(summary)
+          Fold.lines(summary_for(pending, call))
         end
 
         # THE WHOLE ROW, never just the call. A body carrying only `call_of`
@@ -440,7 +442,7 @@ module Lain
         # buffer NOWHERE, on the one surface whose premise is that a human reads
         # what they approve. Wrapping the summary makes the fold's first line a
         # cut PREFIX of what is underneath it.
-        def body_for(summary) = summary.scan(BODY).map { |part| INDENT + part }
+        def body_for(summary) = Fold.wrap(summary)
 
         def call_of(pending) = "#{pending.tool}(#{pending.input.inspect})"
 

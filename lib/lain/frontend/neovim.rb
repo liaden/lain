@@ -525,6 +525,7 @@ module Lain
   end
 end
 
+require_relative "neovim/fold"
 require_relative "neovim/command_inbox"
 require_relative "neovim/unbridged"
 require_relative "neovim/compose"

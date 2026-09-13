@@ -603,25 +603,14 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
     end
 
-    # ONE convention, spelled in two languages, and nothing but this makes them
-    # meet: Ruby marks a continuation with {ApprovalView::INDENT}, the runtime
-    # tests for it with `05_records.lua`'s CONTINUATION, and a silent
-    # disagreement would leave every item's fold boundary in the wrong place.
-    #
-    # A DRIFT GUARD, and deliberately not evidence that anything folds -- that
-    # claim is behavioural and is made where behaviour can be observed, in "the
-    # fold surface, in a real editor" below. This block reads source on purpose,
-    # because "the two spellings are the same string" is a property of the
-    # source and of nothing else.
-    describe "the indent both languages have to agree on" do
-      def runtime_source(file)
-        File.read(File.join(Lain::Frontend::Neovim::RuntimeLoader::MODULES, file))
-      end
-
-      it "marks its continuation lines with exactly the prefix the runtime's pattern tests for" do
-        pattern = runtime_source("05_records.lua")[/^local CONTINUATION = "\^([^"]*)"$/, 1]
-
-        expect(pattern).to eq(described_class::INDENT)
+    # {Fold::INDENT} is what `05_records.lua`'s CONTINUATION is pinned against
+    # -- see `fold_spec.rb`, the ONE place that reads the Lua source. Reading
+    # it again here would be a second pin to the same fact rather than a
+    # second fact, so this only checks that this view draws by that same
+    # constant and not a spelling of its own.
+    describe "the indent this view marks continuations with" do
+      it "is Fold's, not a spelling of its own" do
+        expect(described_class::INDENT).to equal(Lain::Frontend::Neovim::Fold::INDENT)
       end
     end
   end

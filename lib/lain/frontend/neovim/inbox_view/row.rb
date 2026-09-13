@@ -6,9 +6,10 @@ module Lain
       class InboxView
         # One listed set, drawn. It draws and nothing else: no clock (the age
         # arrives resolved, so this object cannot race one), no store, no lock.
-        # Every constant it reads is the enclosing view's, because they are the
-        # BUFFER's conventions rather than one row's, and the runtime is pinned
-        # against that one spelling of them.
+        # The width it fits a whole item against is the enclosing view's
+        # {InboxView::WIDTH}, the buffer's own convention; the cut and the wrap
+        # themselves are {Fold}'s, shared with {ApprovalView} rather than one
+        # row's own.
         class Row
           # @param item [InboxView::Item] the listed set
           # @param age [String] how long it has sat here, already rendered
@@ -126,9 +127,9 @@ module Lain
           # a keys line for the whole list, out of whitespace no human can see.
           def prose(text) = text.to_s.gsub(NEWLINES, " ").strip
 
-          def elided = summary.length <= WIDTH ? summary : summary[0, WIDTH - ELISION.length] + ELISION
+          def elided = Fold.cut(summary)
 
-          def body = whole.scan(BODY).map { |part| INDENT + part }
+          def body = Fold.wrap(whole)
         end
       end
     end

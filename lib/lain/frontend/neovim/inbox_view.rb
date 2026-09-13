@@ -77,20 +77,20 @@ module Lain
         # so a CLOSED item still sits on one screen line. It is also
         # {Tools::AskHuman::Announcement::WIDTH} by coincidence rather than by
         # dependency -- that one clamps the summary the record carries, this one
-        # clamps the row drawn around it.
-        WIDTH = 96
+        # clamps the row drawn around it. {Fold}'s own, not a second measurement.
+        WIDTH = Fold::WIDTH
 
         # The ONE spelling the runtime tests for (`05_records.lua`'s
-        # CONTINUATION). Spelled here rather than read off {ApprovalView::INDENT}
-        # because `neovim.rb`'s manifest loads this file FIRST, so a constant
-        # reference would resolve before that class exists. inbox_view_spec pins
-        # the two spellings and the lua pattern to each other.
-        INDENT = "  "
+        # CONTINUATION), now read off {Fold::INDENT} rather than spelled a
+        # second time: `neovim.rb`'s manifest loads {Fold} before this file, so
+        # the load-order reason the two spellings used to be independent no
+        # longer holds.
+        INDENT = Fold::INDENT
 
         # What says a summary was cut. ASCII, {ApprovalView::ELISION}'s
         # spelling, so a font with no ellipsis glyph shows a cut rather than a
-        # replacement box.
-        ELISION = "..."
+        # replacement box. {Fold}'s own.
+        ELISION = Fold::ELISION
 
         # An item's body: the whole row, hard-wrapped, never at a word boundary
         # ({ApprovalView::BODY}'s ruling -- ONE wrapping mode, so what is under
@@ -100,8 +100,8 @@ module Lain
         # `/m` so a newline would be CARRIED rather than dropped, which is the
         # safe direction: {Row#prose} scrubs the question, and a newline that
         # reached a line would be refused downstream rather than silently
-        # halving it.
-        BODY = /.{1,#{WIDTH - INDENT.length}}/m
+        # halving it. {Fold}'s own regex.
+        BODY = Fold::BODY
 
         # The keys, under the list, and their FIRST job is structural: see
         # {#trailer_for}. That they also tell a human what to press is the
