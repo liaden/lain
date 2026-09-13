@@ -80,6 +80,17 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
       expect(Lain::Approval::Escalation::Triage::COMMAND_TOOLS - names).to be_empty
     end
 
+    # `code_outline` was `ast_search` with its arguments fixed, and
+    # `file_symbols` answers the same question with a richer result (named
+    # roles plus references) -- so the floor drops the dominated tool rather
+    # than offering both.
+    it "no longer offers code_outline, which file_symbols answers instead" do
+      names = described_class.build(recorder).map(&:name)
+
+      expect(names).not_to include("code_outline")
+      expect(names).to include("file_symbols")
+    end
+
     # The floor is what a subagent role attenuates FROM, so the ONE bash the
     # floor holds is the one a child inherits -- there is no second tool to
     # wire, and no way for a child's verdict to differ from its parent's.

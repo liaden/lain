@@ -39,11 +39,11 @@ module ParallelSafetySpecSupport
   end
 
   # Every tool this card opts in. `subagent` was already true before this card
-  # (Tool#parallel_safe?'s prior only opt-in); the other ten are this card's
+  # (Tool#parallel_safe?'s prior only opt-in); the other nine are this card's
   # audit -- reads only, no Session write-set mutation, no process-global
   # state (see each tool file's own WHY comment).
   TRUE_TOOLS = %w[read_file list_files glob grep memory_read
-                  ast_search ast_dump test_pattern code_outline file_symbols
+                  ast_search ast_dump test_pattern file_symbols
                   subagent session_usage].freeze
 
   # Every OTHER tool the toolset actually ships (exe/lain's `base_tools` plus

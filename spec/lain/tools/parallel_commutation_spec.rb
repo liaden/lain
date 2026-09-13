@@ -92,7 +92,6 @@ module ParallelCommutationSpecSupport
     "glob" => { "pattern" => "**/*.rb" },
     "grep" => { "pattern" => "def ", "path" => "." },
     "ast_search" => { "language" => "ruby", "path" => ".", "query" => "method_def" },
-    "code_outline" => { "path" => "alpha.rb", "language" => "ruby" },
     "file_symbols" => { "path" => "alpha.rb", "language" => "ruby" },
     "ast_dump" => { "code" => SNIPPET, "language" => "ruby" },
     "test_pattern" => { "pattern" => "def $NAME($$$A)", "code" => SNIPPET, "language" => "ruby" },

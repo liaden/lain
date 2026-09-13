@@ -81,7 +81,7 @@ module Lain
            Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
            Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
            Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new,
-           Lain::Tools::CodeOutline.new, Lain::Tools::FileSymbols.new]
+           Lain::Tools::FileSymbols.new]
         end
       end
     end

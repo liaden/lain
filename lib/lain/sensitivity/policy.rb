@@ -76,7 +76,6 @@ module Lain
         # The AST readers. Each opens the file its `path` names and returns
         # what it found there, so each is a `read_file` with a query attached.
         "ast_search" => "path",
-        "code_outline" => "path",
         "file_symbols" => "path",
         "bash" => "cwd"
       }.freeze

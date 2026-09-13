@@ -344,8 +344,8 @@ $QA/peek.sh 6
 
 Expected `[262144, 1048576, 131072, 500]` — 256 KiB for a whole read, 1 MiB through a window, 128 KiB
 of command output, 500 rows for a listing. `memory_read`/`memory_write` share the 256 KiB artifact
-ceiling; `glob` shares 500; `code_outline`, `file_symbols` (definitions) and `test_pattern` cap at
-200; `file_symbols` references at 500; `web_search` at 20.
+ceiling; `glob` shares 500; `file_symbols` (definitions) and `test_pattern` cap at 200;
+`file_symbols` references at 500; `web_search` at 20.
 
 ### The refusing shape
 
@@ -359,13 +359,21 @@ ruby -e 'File.open("big.txt","w"){ |f| 50_000.times { f.write("x"*59 + "\n") } }
 ruby -e 'File.open("mid.rb","w"){  |f|  5_000.times { f.write("# " + "x"*57 + "\n") } }'   # 300,000 bytes
 ```
 
-Verified 2026-08-18 against the built library — these are the exact strings, and **the size, the
-ceiling and at least one narrower action must all be present**:
+Re-verified 2026-09-12 against the built library — these are the exact strings, and **the size, the
+ceiling and at least one narrower action must all be present**. The narrower-action clause
+(`"outline it with ... or grep it for the lines you actually need"`) is
+`Lain::Tools::ReadFile::STRUCTURAL` rendered inline rather than typed by hand here — check that
+constant, not this file, when a tool is added to or removed from the structural-read set:
+
+```bash
+$QA/drive.sh '/ruby Lain::Tools::ReadFile::STRUCTURAL' 6 30 >/dev/null
+$QA/peek.sh 6
+```
 
 ```
-./big.txt is 3000000 bytes, over the ceiling of 262144 -- instead, read part of it with read_file's offset and limit, or outline it with code_outline, file_symbols or ast_search, or grep it for the lines you actually need
+./big.txt is 3000000 bytes, over the ceiling of 262144 -- instead, read part of it with read_file's offset and limit, or outline it with file_symbols or ast_search, or grep it for the lines you actually need
 
-./mid.rb is 300000 bytes, over the ceiling of 262144 -- instead, read it with read_file's offset and limit (a window covering the whole file counts as a complete read, so edit_file still accepts it), or outline it with code_outline, file_symbols or ast_search, or grep it for the lines you actually need
+./mid.rb is 300000 bytes, over the ceiling of 262144 -- instead, read it with read_file's offset and limit (a window covering the whole file counts as a complete read, so edit_file still accepts it), or outline it with file_symbols or ast_search, or grep it for the lines you actually need
 
 the command's output (exit status: 1) is 200000 bytes, over the ceiling of 131072 -- instead, re-run it with the output narrowed through head, tail or grep, or redirect it to a file and read one window of that with read_file
 ```

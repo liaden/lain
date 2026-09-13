@@ -98,7 +98,7 @@ module Lain
       # set and no smaller one.
       READ_ONLY = %i[
         read_file list_files glob grep
-        ast_search ast_dump code_outline file_symbols test_pattern
+        ast_search ast_dump file_symbols test_pattern
         memory_read web_fetch web_search ask_human session_usage
       ].freeze
       private_constant :READ_ONLY

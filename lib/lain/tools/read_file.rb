@@ -65,7 +65,7 @@ module Lain
       # this code" would be one more thing to drift, and these tools already
       # refuse what they cannot parse.
       STRUCTURAL = [
-        "outline it with code_outline, file_symbols or ast_search",
+        "outline it with file_symbols or ast_search",
         "grep it for the lines you actually need"
       ].freeze
 

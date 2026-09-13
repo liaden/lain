@@ -519,7 +519,7 @@ RSpec.describe Lain::Tools::ReadFile do
     # US-ASCII -- and `Canonical`'s question then refuses an ordinary UTF-8
     # file, so the model would be handed a true-sounding lie about a file it
     # can read. This pins the mechanism the tool controls (the read names its
-    # own encoding) rather than the locale, exactly as `code_outline_spec.rb`
+    # own encoding) rather than the locale, exactly as `file_symbols_spec.rb`
     # pins it for the sibling tools.
     it "still reads an ordinary UTF-8 file when the default external encoding is US-ASCII" do
       path = write("accented.txt", "héllo wörld\n")
@@ -756,8 +756,8 @@ RSpec.describe Lain::Tools::ReadFile do
 
       content = tool.call(path:).content
 
-      expect(content).to include("offset", "limit")
-      expect(content).to match(/code_outline|file_symbols|ast_search/)
+      expect(content).to include("offset", "limit", "file_symbols", "ast_search")
+      expect(content).not_to include("code_outline")
     end
 
     # `offset` and `limit` count LINES, so advising them for a file that
@@ -779,7 +779,10 @@ RSpec.describe Lain::Tools::ReadFile do
       it "still names the structural tools alongside the byte range" do
         path = sparse("one.json", window_ceiling + 3)
 
-        expect(tool.call(path:).content).to match(/code_outline|file_symbols|ast_search/)
+        content = tool.call(path:).content
+
+        expect(content).to include("file_symbols", "ast_search")
+        expect(content).not_to include("code_outline")
       end
 
       # The boundary is LongLine's own, and it is one byte off the obvious

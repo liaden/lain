@@ -54,7 +54,6 @@ module ToolRegistry
     "ast_search" => -> { Lain::Tools::AstSearch.new },
     "ast_dump" => -> { Lain::Tools::AstDump.new },
     "test_pattern" => -> { Lain::Tools::TestPattern.new },
-    "code_outline" => -> { Lain::Tools::CodeOutline.new },
     "file_symbols" => -> { Lain::Tools::FileSymbols.new },
     "subagent" => -> { build_subagent },
     "bash" => -> { Lain::Tools::Bash.new },

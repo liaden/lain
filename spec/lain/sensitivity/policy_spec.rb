@@ -7,17 +7,17 @@ module SensitivityPolicySpecSupport
   # subject: an assertion that iterates `described_class::PATH_FIELDS` passes
   # whatever that table says, including an empty one.
   #
-  # `ast_search`, `code_outline` and `file_symbols` are here because the panel
-  # drove them against a real `.env` and got the secret's own bytes back --
+  # `ast_search` and `file_symbols` are here because the panel drove them
+  # against a real `.env` and got the secret's own bytes back --
   # `ast_search path=.env pattern="$A = $B"` returns the captured VALUES, which
   # is byte-for-byte what `read_file` returns and what this boundary exists to
-  # gate. An earlier edition of this file allowlisted the three as deliberately
-  # outside; that made a green suite state three known bypasses as intended.
+  # gate. An earlier edition of this file allowlisted them as deliberately
+  # outside; that made a green suite state known bypasses as intended.
   # There is no allowlist now, which is the point: EVERY shipped tool that takes
   # a path is in this table.
   DECLARED = { "read_file" => "path", "glob" => "path", "grep" => "path", "list_files" => "path",
                "edit_file" => "path", "write_file" => "path",
-               "ast_search" => "path", "code_outline" => "path", "file_symbols" => "path",
+               "ast_search" => "path", "file_symbols" => "path",
                "bash" => "cwd" }.freeze
 
   # The field spellings a path can arrive under, asked of the tool's own
@@ -217,7 +217,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
-  # The three tools an earlier edition of this table left out, kept as the
+  # The two tools an earlier edition of this table left out, kept as the
   # regression guard the panel's probe became. The assertions are in PAIRS on
   # purpose: each drives the real tool against a real `.env` to show what it
   # would return ungated, then asserts the policy gates it. The first half is
@@ -260,22 +260,10 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(policy.gates?(call("file_symbols", { "path" => secret }))).to be(true)
     end
 
-    # The mild one: its pattern catalog finds no ruby definitions in a KEY=value
-    # file, so this fixture leaks nothing through it. It still OPENS the file,
-    # and the argument for gating it is about what it MAY read rather than what
-    # this fixture happens to produce -- which is why the leak assertion here is
-    # about the read succeeding rather than about bytes.
-    it "gates code_outline, which otherwise opens the file regardless of what it finds" do
-      result = Lain::Tools::CodeOutline.new.call({ "path" => secret, "language" => "ruby" }, invocation)
-
-      expect(result.is_error).to be(false)
-      expect(policy.gates?(call("code_outline", { "path" => secret }))).to be(true)
-    end
-
-    it "leaves all three alone for an ordinary path, so the boundary is still the path" do
+    it "leaves both alone for an ordinary path, so the boundary is still the path" do
       ordinary = File.join(tmpdir, "notes.rb")
 
-      %w[ast_search file_symbols code_outline].each do |name|
+      %w[ast_search file_symbols].each do |name|
         expect(policy.gates?(call(name, { "path" => ordinary }))).to be(false), "#{name} was gated for notes.rb"
       end
     end

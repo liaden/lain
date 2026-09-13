@@ -6,10 +6,10 @@ module Lain
     # (namespace/class/method/function/interface/type) and reference occurrences
     # -- read structurally from the parsed syntax tree.
     #
-    # The raw-tree-sitter counterpart to {CodeOutline}'s ast-grep pattern
-    # catalog: it runs lain's own role query through Ext::TreeSitter, whose
-    # captures bind the identifier node DIRECTLY to a role. That buys named
-    # ROLES and REFERENCES, which the pattern catalog does not model.
+    # A raw tree-sitter query, run through Ext::TreeSitter, whose captures bind
+    # the identifier node DIRECTLY to a role -- unlike an ast-grep pattern
+    # catalog matched shape-only, this buys named ROLES and REFERENCES that a
+    # plain structural match does not model.
     #
     # Because matching is STRUCTURAL, an identifier that only appears inside a
     # comment or a string literal is never reported. Nesting is deliberately
@@ -21,10 +21,11 @@ module Lain
       # budget and return an empty REFERENCES heading -- a partial answer that
       # reads like a complete one.
       #
-      # Definitions take {CodeOutline::BOUND}'s 200, the same question with
-      # roles attached, though the measurement is this tool's own: a role query
-      # finds more, so the densest DEFINITIONS section over the repo's 647
-      # `lib/**/*.rb` is 135 where the same file outlines at 80.
+      # Definitions are capped at 200, measured over this tool's own output: a
+      # role query finds MORE than shape-matching alone would, so the densest
+      # DEFINITIONS section over the repo's 647 `lib/**/*.rb` is 135, where a
+      # plain structural pattern match (matching shape only, no role capture)
+      # over the same file tops out at 80. 200 sits well above either.
       #
       # References get 500 because call sites outnumber definitions, and the
       # MULTIPLE is the number: over the 182 `lib/` files with more than 20
@@ -163,8 +164,13 @@ module Lain
       # every chained call puts several references on one line. Under a bound an
       # unstable tie stops being cosmetic and decides which occurrences exist at
       # all, so collection order (which is the query's, which is the document's)
-      # is made the tiebreak explicitly. {CodeOutline#render} carries the
-      # measurement that shows the instability is real and not theoretical.
+      # is made the tiebreak explicitly. The instability is real and not
+      # theoretical: measured over 300 lines of `class K#{i}; def m#{i}; end;
+      # end`, a plain structural pattern match's own within-line order FLIPS
+      # partway down the file (`{["def","class"] => 66, ["class","def"] => 34}`
+      # at that fixture's tie width) -- this tool's own `occurrences` happens
+      # not to produce that flip on real source (see the spec's own note), but
+      # the mechanism defends against the same instability regardless.
       def ordered(occurrences)
         occurrences.each_with_index.sort_by { |occurrence, index| [occurrence.line, index] }.map(&:first)
       end

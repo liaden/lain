@@ -49,6 +49,28 @@ RSpec.describe Lain::Tools::FileSymbols do
     expect(content).to match(/L1\b.*Geometry/)
   end
 
+  # The outline question `code_outline` used to answer alone, on the tool that
+  # answers it now: every definition in a file with more than one of each kind,
+  # named rather than merely counted.
+  it "names every class and every method in a file with two classes and four methods" do
+    path = write("pair.rb", <<~RUBY)
+      class Alpha
+        def one; end
+        def two; end
+      end
+
+      class Beta
+        def three; end
+        def four; end
+      end
+    RUBY
+
+    content = tool.call(path:, language: "ruby").content
+
+    expect(content).to include("class  Alpha", "class  Beta", "method  one", "method  two", "method  three",
+                               "method  four")
+  end
+
   it "supports rust: a fn and a struct as definitions, a call as a reference (owner priority)" do
     path = write("geo.rs", <<~RUST)
       struct Point { x: i32 }
@@ -279,21 +301,27 @@ RSpec.describe Lain::Tools::FileSymbols do
                                             "m#{format("%05d", definitions.limit - 1)}")
     end
 
-    # The same instability {Lain::Tools::CodeOutline}'s tie example pins, on the
-    # tool where ties are the COMMON case rather than the odd one: several
+    # The same instability a deleted sibling tool's tie example used to pin, on
+    # the tool where ties are the COMMON case rather than the odd one: several
     # references share a line whenever a method chains calls. `sort_by` is not
     # stable in CRuby, so under a cap an unstable tie decides which occurrences
     # exist at all.
     #
-    # Recorded honestly: unlike the outline's, these two fixtures came out in
-    # source order BEFORE the tiebreak as well, so they went green in the red
-    # run -- and a review sweep of 23,988 collections (12 tie widths x 1999 line
-    # counts, up to 24,000 rows) found ZERO flips. That is structural, not a
-    # fixture nobody looked hard enough for: `ruby_qsort` leaves an
-    # already-ordered partition undisturbed, and `occurrences` cannot hand it a
-    # disordered one, since `line_for` is monotone in the byte offset and
-    # tree-sitter emits captures in byte order. The outline's shape, whose ties
-    # sit ~300 apart across the class/method blocks, flips at 592 of 599 sizes.
+    # Recorded honestly: these two fixtures come out in source order BEFORE the
+    # tiebreak as well, so they went green in the red run -- and a review sweep
+    # of 23,988 collections (12 tie widths x 1999 line counts, up to 24,000
+    # rows) found ZERO flips. That is structural, not a fixture nobody looked
+    # hard enough for: `ruby_qsort` leaves an already-ordered partition
+    # undisturbed, and `occurrences` cannot hand it a disordered one, since
+    # `line_for` is monotone in the byte offset and tree-sitter emits captures
+    # in byte order. The pattern-catalog outline this tool replaced had ties
+    # sitting ~300 apart across its class/method blocks -- far enough that
+    # `sort_by`'s internals, not the source, decided the order -- and flipped at
+    # 592 of 599 sizes measured over a fixture of `class K#{i}; def m#{i}; end;
+    # end` repeated 300 times (`{["def","class"] => 66, ["class","def"] => 34}`
+    # within-line order at that one size). That shape is what the index
+    # tiebreak in `ordered` defends against, even though nothing here can
+    # exercise it.
     #
     # So be exact about what these two guard, or the next reader will assume the
     # tiebreak is covered on both tools and delete it from one. They do NOT
@@ -301,8 +329,9 @@ RSpec.describe Lain::Tools::FileSymbols do
     # guard `occurrences`' DOCUMENT ORDER: they fail if a second query is merged
     # in, if a partition by role lands before the sort, or if the capture walk
     # stops being byte-ordered -- which is precisely the change that would make
-    # the tiebreak start mattering here. The tiebreak's own guard is
-    # {Lain::Tools::CodeOutline}'s tie example, which does red without it.
+    # the tiebreak start mattering here. Nothing in the current suite forces
+    # that flip the way the deleted tool's fixture did; the tiebreak stands on
+    # the argument above rather than on a red example.
     it "breaks a within-line tie among definitions by collection order" do
       path = write("tied.rb", (1..300).map { |i| "class K#{i}; def m#{i}; end; end\n" }.join)
 
