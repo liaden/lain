@@ -1197,8 +1197,17 @@ rubocop is not evidence that a fold left a class coherent. `Lint/DuplicateMethod
 teeth here — it is what caught the rejected merge, by finding three collisions on public methods.
 Everything else is a read.
 
-**And two files assert a constraint that does not bind them.** `supervisor.rb` and
-`tools/subagent.rb` both carry a comment saying their mid-body reopen "keeps each class body within
-Metrics/ClassLength instead of loosening it". Measured after their folds: 171 and 101, against a
-limit of 300. Both claims were already false before the cards that found them. Worth a sweep of its
-own — the sentence is quoted in thirteen files.
+**And ten files assert a constraint that binds none of them.** The sentence "keeps each class body
+within Metrics/ClassLength instead of loosening it" appears in ten `lib/` files. Every one was
+measured against the limit of 300:
+
+| supervisor | restart | subagent | reline | tty | prompt_composer | completion | conductor | human_replies | shutdown |
+|---|---|---|---|---|---|---|---|---|---|
+| 151 | 97 | 185 | 125 | 120 | 49 | 57 | 124 | 116 | 118 |
+
+**Not one binds.** Several were already false before simplify-01 raised the limit; the rest became
+false when it did, and nothing re-read them. This is the plan's own Intent arriving at its logical
+end — it counted sixty-one comments naming a `Metrics/*` cop as the reason code is shaped as it is,
+and the cards that folded two of those files found the sentence false in both. A sweep belongs to
+this plan's successor: the sentence is a load-bearing claim about why a file is shaped the way it
+is, repeated ten times, true nowhere.
