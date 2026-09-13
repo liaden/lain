@@ -1123,3 +1123,17 @@ fidelity at the secret boundary: a path-boundary spec has to swap `$HOME` throug
 rather than through the keyword the constructor advertises, which is the shape a future
 green-but-wrong secret-boundary spec grows in. One-line thread plus a spec, **sequenced with
 simplify-02's T1**, which owns that method. Medium urgency, its own card.
+
+**The epic-driver spec mirror is broken, and simplify-01's relaxation does not cover it.** Folding
+`run.rb` and `issue_tests.rb` into `factory.rb` leaves `spec/lain/cli/epic_driver/run_spec.rb` and
+`issue_tests_spec.rb` at paths whose source files no longer exist. They stay there by orchestrator
+ruling: merging them would make one 1,160-line spec, and the argument first offered for keeping them
+apart — that a merged file would hurt the parallel packer — is measurably false, because the packer
+groups by **runtime** and the three files total 13.2 seconds against a 60.3-second floor. The merge
+is invisible to the wall either way, so the packer is not the reason.
+
+The honest statement is the one worth recording: 01 relaxed "one spec per code file" to "one spec
+per public entry point", which licenses one spec covering several subjects. It does not license a
+spec whose mirrored path has no file. This is a real breakage of a stated rule, accepted knowingly
+for readability, and it should be revisited by whoever next moves this subtree rather than
+inherited as though the rule had covered it.
