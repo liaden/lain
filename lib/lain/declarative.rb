@@ -15,7 +15,7 @@ module Lain
   #   Epics = Data.define(:home) do
   #     include Declarative
   #
-  #     declare raising: InvalidHome do
+  #     declare raising: BadHome do
   #       attribute :home, :string
   #       attribute :depth, default: 1
   #       validates :home, inclusion: { in: ->(_) { HOMES } }
@@ -42,6 +42,15 @@ module Lain
   # `raising:` is per-DECLARATION, not per-rule: a namespace needing a different
   # exception class per broken rule computes that where the rule lives, rather
   # than putting the translation in this object.
+  #
+  # And `raising:` names a CLASS, not a refusal: the raise is `raise refusal,
+  # <string>`, one positional, so nothing here can thread a value the CALL knows
+  # and the declaration does not. A refusal that has to name, say, the config
+  # file a bad value came from cannot be expressed through this mechanism at
+  # all -- see {Lain::Config::Refusal}, which is that shape and is built by hand
+  # for exactly this reason. The example above is illustrative only; do not read
+  # it as advice for a validation whose message depends on where the value came
+  # from.
   #
   # Like {Lain::Tool::Input}, these validations check SHAPE, not safety.
   module Declarative

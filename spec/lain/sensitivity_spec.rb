@@ -465,7 +465,7 @@ RSpec.describe Lain::Sensitivity do
     ["*", "**", "~", "~/"].each do |pattern|
       it "refuses #{pattern.inspect} as an exemption" do
         expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }) }
-          .to raise_error(Lain::Sensitivity::Rules::MalformedPattern, /matches everything/)
+          .to raise_error(Lain::Config::Refusal, /matches everything/)
       end
     end
 
@@ -480,27 +480,35 @@ RSpec.describe Lain::Sensitivity do
 
   describe Lain::Sensitivity::Rules do
     it "refuses a table that is not a table" do
-      expect { described_class.from("yes") }.to raise_error(described_class::NotATable, /must be a table/)
+      expect { described_class.from("yes") }.to raise_error(Lain::Config::Refusal, /must be a table/)
+    end
+
+    # One refusal class across every config table, so a reader that degrades a
+    # bad file names one class rather than seven.
+    it "refuses a string entry as a config refusal, naming the file and the table" do
+      expect { described_class.from("strict", path: "/p/.lain/config.toml") }
+        .to raise_error(Lain::Config::Refusal,
+                        %r{\A/p/\.lain/config\.toml: \[sensitivity\] must be a table})
     end
 
     it "refuses a key it does not have, rather than dropping it silently" do
       expect { described_class.from({ "deneid" => ["x"] }) }
-        .to raise_error(described_class::UnknownKeys, /deneid/)
+        .to raise_error(Lain::Config::Refusal, /deneid/)
     end
 
     it "refuses a strength given as one value instead of a list" do
       expect { described_class.from({ "denied" => "*.secret" }) }
-        .to raise_error(described_class::NotAList, /denied/)
+        .to raise_error(Lain::Config::Refusal, /denied/)
     end
 
     it "refuses a pattern that is not a string" do
       expect { described_class.from({ "denied" => [42] }) }
-        .to raise_error(described_class::MalformedPattern, /string/)
+        .to raise_error(Lain::Config::Refusal, /string/)
     end
 
     it "refuses a blank pattern, which would match nothing and read as an entry" do
       expect { described_class.from({ "gated" => ["  "] }) }
-        .to raise_error(described_class::MalformedPattern, /blank/)
+        .to raise_error(Lain::Config::Refusal, /blank/)
     end
 
     # A path-shaped pattern that is not home-anchored has no defined meaning
@@ -508,12 +516,12 @@ RSpec.describe Lain::Sensitivity do
     # refuse. Loud now, widenable later.
     it "refuses a path-shaped pattern that is not home-anchored" do
       expect { described_class.from({ "denied" => ["config/secrets/prod.key"] }) }
-        .to raise_error(described_class::MalformedPattern, /home-anchored/)
+        .to raise_error(Lain::Config::Refusal, /home-anchored/)
     end
 
     it "names the config file in a refusal when it was given one" do
       expect { described_class.from({ "denied" => "x" }, path: "/etc/lain.toml") }
-        .to raise_error(described_class::NotAList, %r{\A/etc/lain\.toml: })
+        .to raise_error(Lain::Config::Refusal, %r{\A/etc/lain\.toml: })
     end
 
     it "reads an absent table as an empty one" do
@@ -697,21 +705,21 @@ RSpec.describe Lain::Sensitivity do
   describe "a config pattern it cannot read lexically" do
     it "refuses a pattern holding a NUL byte, at compile time" do
       expect { Lain::Sensitivity::Rules.from({ "denied" => ["a\0b"] }) }
-        .to raise_error(Lain::Sensitivity::Rules::MalformedPattern)
+        .to raise_error(Lain::Config::Refusal, /denied must be matchable text/)
     end
 
     it "refuses a pattern in an encoding it could never match against" do
       pattern = (+"\xFF\xFE").force_encoding("UTF-16LE")
 
       expect { Lain::Sensitivity::Rules.from({ "gated" => [pattern] }) }
-        .to raise_error(Lain::Sensitivity::Rules::MalformedPattern)
+        .to raise_error(Lain::Config::Refusal, /gated must be matchable text/)
     end
 
     # The regression itself: one poisoned pattern used to take out every path
     # classified after it, including the ones the config never mentioned.
     it "so an ordinary path still classifies when a config tried to smuggle one in" do
       expect { Lain::Sensitivity::Rules.from({ "denied" => ["*.secret", "a\0b"] }) }
-        .to raise_error(Lain::Sensitivity::Rules::MalformedPattern)
+        .to raise_error(Lain::Config::Refusal, /denied must be matchable text/)
     end
   end
 

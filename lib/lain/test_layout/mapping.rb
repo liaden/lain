@@ -52,7 +52,7 @@ module Lain
       # ever naming it: the guard judges every untagged test against it, and
       # the epic driver WRITES an issue's failing tests there. So re-ordering
       # two lines of TOML silently moved both. A table that leaves the choice
-      # open is refused at load instead ({TestLayout::AmbiguousDefaultLevel}),
+      # open is refused at load instead ({TestLayout.settled!}),
       # which is why callers reached from a loaded table never see the nil.
       # @return [Level, nil] nil when no level mirrors at all -- cargo, whose
       #   unit tests are inline and whose `tests/` is answerable for no source

@@ -42,71 +42,21 @@ module Lain
       # {Sensitivity::Rules} matches with, so the config speaks one glob dialect.
       GLOB = File::FNM_DOTMATCH
 
-      # {Sensitivity::Rules::Refusal}'s posture: a path that may be absent -- a
-      # value built by hand rather than loaded -- in front of a detail naming
-      # the table it came from.
-      class Refusal < Error
-        attr_reader :path
-
-        def initialize(path, detail)
-          @path = path
-          prefix = path ? "#{path}: " : ""
-          super("#{prefix}#{detail}")
-        end
-      end
-
-      # `shell = "off"` -- a scalar where the table belongs.
-      class NotATable < Refusal
-        attr_reader :value
-
-        def initialize(value, path: nil)
-          @value = value
-          super(path, "[shell] must be a table, got #{value.class}: #{value.inspect}")
-        end
-      end
-
-      # A typo for a key this class reads. Loud rather than dropped: a silently
-      # ignored `excluded` reads as an exclusion that is in force and is not.
-      class UnknownKeys < Refusal
-        attr_reader :keys
-
-        def initialize(keys, path: nil)
-          @keys = keys
-          super(path, "[shell] has no keys #{keys.map(&:inspect).join(", ")}; known keys: #{KEYS.join(", ")}")
-        end
-      end
-
-      # `exclude = "curl"` -- a single value where the shape is a list.
-      class NotAList < Refusal
-        attr_reader :value
-
-        def initialize(value, path: nil)
-          @value = value
-          super(path, "[shell] #{EXCLUDE} is a list of program names, got #{value.class}")
-        end
-      end
-
-      # An entry that can never match anything is indistinguishable from one
-      # nobody wrote, which for a table of refusals is the worst outcome
-      # available.
-      class MalformedPattern < Refusal
-        attr_reader :pattern
-
-        def initialize(pattern, detail, path: nil)
-          @pattern = pattern
-          super(path, "[shell] #{EXCLUDE} #{detail}: #{pattern.inspect}")
-        end
-      end
+      # The table as `config.toml` spells it, which is how every refusal here
+      # names it.
+      TABLE = "[shell]"
 
       # @param table [Object] whatever `raw["shell"]` parsed to; nil when absent
       # @param path [String, nil] the config file, named in every refusal
       # @return [Exclusions]
       def self.from(table, path: nil)
         table = {} if table.nil?
-        raise NotATable.new(table, path:) unless table.is_a?(Hash)
+        raise Config::Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
         unknown = table.keys - KEYS
-        raise UnknownKeys.new(unknown, path:) unless unknown.empty?
+        # A silently ignored `excluded` reads as an exclusion that is in force
+        # and is not.
+        raise Config::Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
 
         new(patterns: compile(table.fetch(EXCLUDE, []), path:))
       end
@@ -115,9 +65,9 @@ module Lain
       #   restricts nothing
       def self.empty = EMPTY
 
-      # @raise [NotAList, MalformedPattern]
+      # @raise [Config::Refusal]
       def self.compile(patterns, path: nil)
-        raise NotAList.new(patterns, path:) unless patterns.is_a?(Array)
+        raise not_a_list(patterns, path:) unless patterns.is_a?(Array)
 
         patterns.map { |pattern| settled(pattern, path:) }
       end
@@ -137,13 +87,31 @@ module Lain
       # line in a committed config would take the gate down for good. Refused
       # here, where the refusal names the file.
       def self.check!(pattern, path: nil)
-        raise MalformedPattern.new(pattern, "must be a string", path:) unless pattern.is_a?(String)
-        raise MalformedPattern.new(pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
-        raise MalformedPattern.new(pattern, "must not be blank", path:) if pattern.strip.empty?
-        raise MalformedPattern.new(pattern, "must be a program name, not a path", path:) if pattern.include?("/")
+        raise malformed(pattern, "must be a string", path:) unless pattern.is_a?(String)
+        raise malformed(pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
+        raise malformed(pattern, "must not be blank", path:) if pattern.strip.empty?
+        raise malformed(pattern, "must be a program name, not a path", path:) if pattern.include?("/")
       end
 
-      private_class_method :compile, :settled, :check!
+      # `exclude = "curl"` -- a single value where the shape is a list.
+      #
+      # @return [Config::Refusal]
+      def self.not_a_list(patterns, path: nil)
+        Config::Refusal.new("#{EXCLUDE} is a list of program names, got #{patterns.class}",
+                            path:, table: TABLE, key: EXCLUDE, value: patterns)
+      end
+
+      # An entry that can never match anything is indistinguishable from one
+      # nobody wrote, which for a table of refusals is the worst outcome
+      # available.
+      #
+      # @return [Config::Refusal]
+      def self.malformed(pattern, detail, path: nil)
+        Config::Refusal.new("#{EXCLUDE} #{detail}: #{pattern.inspect}",
+                            path:, table: TABLE, key: EXCLUDE, value: pattern)
+      end
+
+      private_class_method :compile, :settled, :check!, :not_a_list, :malformed
 
       # Validated here too, {Sensitivity::Rules}' precedent: a value built by
       # hand carries entries that never came through {.from}.

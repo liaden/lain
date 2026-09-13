@@ -42,7 +42,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[isolation]\nretain_days = -1\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Isolation::InvalidValue, /#{Regexp.escape(config_path(root))}.*retain_days/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*retain_days/)
       end
     end
 
@@ -51,9 +51,9 @@ RSpec.describe Lain::Config do
 
       expect(described_class.new(epics:, isolation: { "retain_days" => 3 }).isolation.retain_days).to eq(3)
       expect { described_class.new(epics:, isolation: { "retian_days" => 3 }) }
-        .to raise_error(Lain::Config::Isolation::UnknownKeys, /retian_days/)
+        .to raise_error(Lain::Config::Refusal, /retian_days/)
       expect { described_class.new(epics:, isolation: 3) }
-        .to raise_error(Lain::Config::Isolation::NotATable)
+        .to raise_error(Lain::Config::Refusal, /\[isolation\] must be a table/)
     end
 
     it "refuses a misspelt key, naming the key and the file" do
@@ -61,7 +61,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[isolation]\nretian_days = 7\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Isolation::UnknownKeys, /#{Regexp.escape(config_path(root))}.*retian_days/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*retian_days/)
       end
     end
   end
@@ -202,7 +202,7 @@ RSpec.describe Lain::Config do
         write_config(root, %(epics = "x"\n))
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::NotATable, /must be a table/)
+          .to raise_error(Lain::Config::Refusal, /must be a table/)
       end
     end
   end
@@ -312,7 +312,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n))
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::NotATable)
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /\[epics\]/)
         expect(described_class.sensitivity(root:).denied.size).to eq(1)
       end
     end
@@ -322,7 +322,7 @@ RSpec.describe Lain::Config do
         write_config(root, %(sensitivity = "strict"\n\n[epics]\nhome = "repo"\n))
 
         expect { described_class.load(root:) }.not_to raise_error
-        expect { described_class.sensitivity(root:) }.to raise_error(Lain::Sensitivity::Rules::NotATable)
+        expect { described_class.sensitivity(root:) }.to raise_error(Lain::Config::Refusal, /\[sensitivity\]/)
       end
     end
 
@@ -331,7 +331,7 @@ RSpec.describe Lain::Config do
         write_config(root, %(sensitivity = "strict"\n))
 
         expect { described_class.sensitivity(root:) }
-          .to raise_error(Lain::Sensitivity::Rules::NotATable, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
 
@@ -340,7 +340,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[sensitivity]\ndenied = [\"config/secrets/prod.key\"]\n")
 
         expect { described_class.sensitivity(root:) }
-          .to raise_error(Lain::Sensitivity::Rules::MalformedPattern, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
 
@@ -404,7 +404,7 @@ RSpec.describe Lain::Config do
         write_config(root, %(shell = "off"\n))
 
         expect { described_class.shell_exclusions(root:) }
-          .to raise_error(Lain::Shell::Exclusions::NotATable, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
 
@@ -413,7 +413,7 @@ RSpec.describe Lain::Config do
         write_config(root, %([shell]\nexcluded = ["curl"]\n))
 
         expect { described_class.shell_exclusions(root:) }
-          .to raise_error(Lain::Shell::Exclusions::UnknownKeys, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
 
@@ -422,7 +422,7 @@ RSpec.describe Lain::Config do
         write_config(root, %([shell]\nexclude = ["/usr/bin/curl"]\n))
 
         expect { described_class.shell_exclusions(root:) }
-          .to raise_error(Lain::Shell::Exclusions::MalformedPattern, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
 
@@ -431,7 +431,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, %(epics = "not a table"\n\n[shell]\nexclude = ["curl"]\n))
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::NotATable)
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /\[epics\]/)
         expect(described_class.shell_exclusions(root:).permits?("curl")).to be(false)
       end
     end
@@ -442,7 +442,7 @@ RSpec.describe Lain::Config do
 
         expect { described_class.load(root:) }.not_to raise_error
         expect { described_class.shell_exclusions(root:) }
-          .to raise_error(Lain::Shell::Exclusions::NotATable)
+          .to raise_error(Lain::Config::Refusal, /\[shell\]/)
       end
     end
 
@@ -491,7 +491,7 @@ RSpec.describe Lain::Config do
         write_config(root, %([tests]\nprest = "rspec"\n))
 
         expect { described_class.test_layout(root:) }
-          .to raise_error(Lain::TestLayout::UnknownKeys, /#{Regexp.escape(config_path(root))}.*prest/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*prest/)
       end
     end
 
@@ -499,7 +499,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, %(epics = "not a table"\n\n[tests]\npreset = "pytest"\n))
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::NotATable)
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /\[epics\]/)
         expect(described_class.test_layout(root:).preset.name).to eq("pytest")
       end
     end
@@ -509,7 +509,7 @@ RSpec.describe Lain::Config do
         write_config(root, %(tests = "rspec"\n\n[epics]\nhome = "repo"\n))
 
         expect { described_class.load(root:) }.not_to raise_error
-        expect { described_class.test_layout(root:) }.to raise_error(Lain::TestLayout::NotATable)
+        expect { described_class.test_layout(root:) }.to raise_error(Lain::Config::Refusal, /\[tests\]/)
       end
     end
 

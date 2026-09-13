@@ -82,39 +82,46 @@ RSpec.describe Lain::Shell::Exclusions do
   describe ".from" do
     it "refuses a scalar where the table belongs, naming the file" do
       expect { described_class.from("curl", path: "/p/.lain/config.toml") }
-        .to raise_error(described_class::NotATable, %r{/p/\.lain/config\.toml})
+        .to raise_error(Lain::Config::Refusal, %r{/p/\.lain/config\.toml})
     end
 
     it "refuses a key it does not read rather than ignoring it" do
       expect { described_class.from({ "excluded" => ["curl"] }) }
-        .to raise_error(described_class::UnknownKeys, /excluded/)
+        .to raise_error(Lain::Config::Refusal, /excluded/)
+    end
+
+    # One refusal class across every config table; the correction the message
+    # offers back is what makes a single class as useful as seven.
+    it "refuses an unknown key as a config refusal, naming the key and the keys that exist" do
+      expect { described_class.from({ "excluded" => ["curl"] }) }
+        .to raise_error(Lain::Config::Refusal, /"excluded".*known keys: exclude/)
     end
 
     it "refuses a single value where the shape is a list" do
       expect { described_class.from({ "exclude" => "curl" }) }
-        .to raise_error(described_class::NotAList)
+        .to raise_error(Lain::Config::Refusal, /exclude is a list of program names/)
     end
 
     it "refuses a pattern that is not a string" do
       expect { described_class.from({ "exclude" => [42] }) }
-        .to raise_error(described_class::MalformedPattern, /must be a string/)
+        .to raise_error(Lain::Config::Refusal, /must be a string/)
     end
 
     it "refuses a blank pattern" do
       expect { described_class.from({ "exclude" => ["  "] }) }
-        .to raise_error(described_class::MalformedPattern, /must not be blank/)
+        .to raise_error(Lain::Config::Refusal, /must not be blank/)
     end
 
     it "refuses a pattern carrying a NUL byte" do
       expect { described_class.from({ "exclude" => ["cu\0rl"] }) }
-        .to raise_error(described_class::MalformedPattern, /matchable text/)
+        .to raise_error(Lain::Config::Refusal, /matchable text/)
     end
 
     # A pattern with a path separator could never match what this object is
     # asked about, which is the same failure as an entry nobody wrote.
     it "refuses a path-shaped pattern" do
       expect { described_class.from({ "exclude" => ["/usr/bin/curl"] }) }
-        .to raise_error(described_class::MalformedPattern, /program name/)
+        .to raise_error(Lain::Config::Refusal, /program name/)
     end
   end
 
@@ -136,7 +143,7 @@ RSpec.describe Lain::Shell::Exclusions do
 
     it "validates a table built by hand as closely as one read from a file" do
       expect { described_class.new(patterns: ["/usr/bin/curl"]) }
-        .to raise_error(described_class::MalformedPattern)
+        .to raise_error(Lain::Config::Refusal, /must be a program name, not a path/)
     end
   end
 end

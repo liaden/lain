@@ -188,73 +188,20 @@ module Lain
       # Patterns that match every path there is. Legal where a key can only add.
       UNBOUNDED = ["*", "**", "~", HOME].freeze
 
-      # {Config::Answers::Refusal}'s posture: a path that may be absent in front
-      # of a detail naming the table it came from.
-      class Refusal < Error
-        attr_reader :path
-
-        def initialize(path, detail)
-          @path = path
-          prefix = path ? "#{path}: " : ""
-          super("#{prefix}#{detail}")
-        end
-      end
-
-      # `sensitivity = "strict"` -- the sibling of {Config::Answers::NotATable}.
-      class NotATable < Refusal
-        attr_reader :value
-
-        def initialize(value, path: nil)
-          @value = value
-          super(path, "[sensitivity] must be a table, got #{value.class}: #{value.inspect}")
-        end
-      end
-
-      # A typo for one of the three strengths. Loud rather than dropped: a
-      # silently ignored `denide` reads as a rule that is in force and is not.
-      class UnknownKeys < Refusal
-        attr_reader :keys
-
-        def initialize(keys, path: nil)
-          @keys = keys
-          super(path, "[sensitivity] has no keys #{keys.map(&:inspect).join(", ")}; known keys: #{KEYS.join(", ")}")
-        end
-      end
-
-      # `denied = "*.secret"` -- a single value where the shape is a list.
-      class NotAList < Refusal
-        attr_reader :key, :value
-
-        def initialize(key, value, path: nil)
-          @key = key
-          @value = value
-          super(path, "[sensitivity] #{key} is a list of patterns, got #{value.class}")
-        end
-      end
-
-      # A pattern that can never match anything, which is the same failure as an
-      # entry nobody wrote. `config/secrets/prod.key` lands here on purpose: a
-      # path-shaped pattern with no anchor has no defined meaning yet, and
-      # refusing it now is what leaves room to define one later.
-      class MalformedPattern < Refusal
-        attr_reader :key, :pattern
-
-        def initialize(key, pattern, detail, path: nil)
-          @key = key
-          @pattern = pattern
-          super(path, "[sensitivity] #{key} #{detail}: #{pattern.inspect}")
-        end
-      end
+      # The table as `config.toml` spells it, which is how every refusal here
+      # names it.
+      TABLE = "[sensitivity]"
 
       # @param table [Object] whatever `raw["sensitivity"]` parsed to; nil when absent
       # @param path [String, nil] the config file, named in every refusal
       # @return [Rules]
       def self.from(table, path: nil)
         table = {} if table.nil?
-        raise NotATable.new(table, path:) unless table.is_a?(Hash)
+        raise Config::Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
         unknown = table.keys - KEYS
-        raise UnknownKeys.new(unknown, path:) unless unknown.empty?
+        # A silently ignored `denide` reads as a rule that is in force and is not.
+        raise Config::Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
 
         new(**KEYS.to_h { |key| [key.to_sym, compile(key, table.fetch(key, []), path:)] })
       end
@@ -262,9 +209,9 @@ module Lain
       # @return [Rules] the value an absent table yields
       def self.empty = EMPTY
 
-      # @raise [NotAList, MalformedPattern]
+      # @raise [Config::Refusal]
       def self.compile(key, patterns, path: nil)
-        raise NotAList.new(key, patterns, path:) unless patterns.is_a?(Array)
+        raise not_a_list(key, patterns, path:) unless patterns.is_a?(Array)
 
         patterns.map { |pattern| rule(key, pattern, path:) }
       end
@@ -278,7 +225,7 @@ module Lain
         check!(key, pattern, path:)
         level, reason = VERDICTS.fetch(key)
         return Rule.homed(pattern.delete_prefix(HOME).freeze, level:, reason:) if pattern.start_with?(HOME)
-        raise MalformedPattern.new(key, pattern, "is #{SHAPES}", path:) if pattern.include?("/")
+        raise malformed(key, pattern, "is #{SHAPES}", path:) if pattern.include?("/")
 
         Rule.named(pattern.dup.freeze, level:, reason:)
       end
@@ -288,10 +235,28 @@ module Lain
       # in a committed config would crash the gate for good. Refused here, where
       # the refusal names the file.
       def self.check!(key, pattern, path: nil)
-        raise MalformedPattern.new(key, pattern, "must be a string", path:) unless pattern.is_a?(String)
-        raise MalformedPattern.new(key, pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
-        raise MalformedPattern.new(key, pattern, "must not be blank", path:) if pattern.strip.empty?
-        raise MalformedPattern.new(key, pattern, "matches everything", path:) if unbounded?(key, pattern)
+        raise malformed(key, pattern, "must be a string", path:) unless pattern.is_a?(String)
+        raise malformed(key, pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
+        raise malformed(key, pattern, "must not be blank", path:) if pattern.strip.empty?
+        raise malformed(key, pattern, "matches everything", path:) if unbounded?(key, pattern)
+      end
+
+      # `denied = "*.secret"` -- a single value where the shape is a list.
+      #
+      # @return [Config::Refusal]
+      def self.not_a_list(key, patterns, path: nil)
+        Config::Refusal.new("#{key} is a list of patterns, got #{patterns.class}",
+                            path:, table: TABLE, key:, value: patterns)
+      end
+
+      # A pattern that can never match anything, which is the same failure as an
+      # entry nobody wrote. `config/secrets/prod.key` lands here on purpose: a
+      # path-shaped pattern with no anchor has no defined meaning yet, and
+      # refusing it now is what leaves room to define one later.
+      #
+      # @return [Config::Refusal]
+      def self.malformed(key, pattern, detail, path: nil)
+        Config::Refusal.new("#{key} #{detail}: #{pattern.inspect}", path:, table: TABLE, key:, value: pattern)
       end
 
       # `exempt` is the one key that SUBTRACTS, so a wildcard there is not a
@@ -300,7 +265,7 @@ module Lain
       # under `denied` or `gated` can only ever add, so they stay legal.
       def self.unbounded?(key, pattern) = key == EXEMPT && UNBOUNDED.include?(pattern)
 
-      private_class_method :compile, :rule, :check!, :unbounded?
+      private_class_method :compile, :rule, :check!, :unbounded?, :not_a_list, :malformed
 
       # Validated in the constructor too, {Config::Answers}' precedent: a value
       # built by hand carries rules that never came through {.from}.

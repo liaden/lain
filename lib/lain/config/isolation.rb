@@ -38,43 +38,9 @@ module Lain
         "conflict_style" => OneOf.new(values: %w[zdiff3 diff3 merge].freeze)
       }.freeze
 
-      # `[isolation]` present but not a table: `.keys` on a scalar would be an
-      # unnamed NoMethodError instead.
-      class NotATable < Error
-        attr_reader :path, :value
-
-        def initialize(value, path:)
-          @path = path
-          @value = value
-          super("#{Isolation.located(path)}[isolation] must be a table, got #{value.class}: #{value.inspect}")
-        end
-      end
-
-      # A typo inside the table: refused rather than ignored, because a
-      # misspelt `retain_days` would otherwise run silently on the default.
-      class UnknownKeys < Error
-        attr_reader :path, :keys
-
-        def initialize(keys, path:)
-          @path = path
-          @keys = keys
-          super("#{Isolation.located(path)}[isolation] has no keys #{keys.map(&:inspect).join(", ")}; " \
-                "known keys: #{KEYS.join(", ")}")
-        end
-      end
-
-      # Its path defaults to nil because {#initialize} raises this too, and a
-      # value built directly names no config file.
-      class InvalidValue < Error
-        attr_reader :path, :key, :value
-
-        def initialize(key, value, path: nil)
-          @path = path
-          @key = key
-          @value = value
-          super("#{Isolation.located(path)}[isolation] #{key} = #{value.inspect} is not #{RULES.fetch(key)}")
-        end
-      end
+      # The table as `config.toml` spells it, which is how every refusal here
+      # names it.
+      TABLE = "[isolation]"
 
       # A hand-built table goes through the same rules as a file's rather than
       # being held as a Hash nothing validated.
@@ -82,18 +48,16 @@ module Lain
       # @return [Isolation]
       def self.coerce(value) = value.is_a?(self) ? value : from(value, path: nil)
 
-      # @return [String] the refusal's prefix: the file, when there is one
-      def self.located(path) = path ? "#{path}: " : ""
-
       # @param table [Object] whatever `raw["isolation"]` parsed to
       # @param path [String, nil] the config file, named by every refusal
       # @return [Isolation]
       def self.from(table, path:)
         table = {} if table.nil?
-        raise NotATable.new(table, path:) unless table.is_a?(Hash)
+        raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
         unknown = table.keys - KEYS
-        raise UnknownKeys.new(unknown, path:) unless unknown.empty?
+        # A misspelt `retain_days` would otherwise run silently on the default.
+        raise Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
 
         settings = DEFAULTS.merge(table)
         check!(settings, path:)
@@ -102,12 +66,22 @@ module Lain
 
       # @param settings [Hash{String=>Object}] every key in {KEYS}
       # @param path [String, nil] the config file to name, nil for a value built directly
-      # @raise [InvalidValue] naming the first key whose value its rule refuses
+      # @raise [Config::Refusal] naming the first key whose value its rule refuses
       def self.check!(settings, path: nil)
         settings.each do |key, value|
-          raise InvalidValue.new(key, value, path:) unless RULES.fetch(key).admits?(value)
+          raise invalid_value(key, value, path:) unless RULES.fetch(key).admits?(value)
         end
       end
+
+      # Its path is optional because {#initialize} raises this too, and a value
+      # built directly names no config file.
+      #
+      # @return [Config::Refusal]
+      def self.invalid_value(key, value, path: nil)
+        Refusal.new("#{key} = #{value.inspect} is not #{RULES.fetch(key)}", path:, table: TABLE, key:, value:)
+      end
+
+      private_class_method :invalid_value
 
       def self.empty = EMPTY
 

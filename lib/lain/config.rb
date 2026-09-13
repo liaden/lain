@@ -4,7 +4,9 @@ require "tomlrb"
 
 # The tables load before this file's body, which builds {Config::EMPTY} -- and so an
 # {Epics} -- while it loads. `config/gates` REOPENS `Epics` to hang the sub-table on
-# it, so it follows the file that defines it.
+# it, so it follows the file that defines it. {Config::Refusal} is first: every
+# table raises it, so it has to exist before any of them is read.
+require_relative "config/refusal"
 require_relative "config/epics"
 require_relative "config/gates"
 require_relative "config/answers"
@@ -69,19 +71,10 @@ module Lain
     # @return [Config]
     # @raise [Malformed] when the file exists but cannot be read as TOML (bad
     #   syntax, invalid encoding, or an unreadable/directory path)
-    # @raise [Epics::NotATable] when `[epics]` is present but not a table
-    # @raise [Epics::UnknownKeys] when `[epics]` carries a key this class does not know
-    # @raise [Epics::InvalidHome] when `home` is set to anything but xdg/repo
-    # @raise [Epics::Gates::NotATable] when `[epics.gates]` is present but not a table
-    # @raise [Epics::Gates::UnknownStages] when it keys a stage outside {Epic::STAGES}
-    # @raise [Epics::Gates::UnknownPolicies] when it names a policy no recipe builds
-    # @raise [Answers::NotATable] when `[approval]` is present but not a table
-    # @raise [Answers::UnknownKeys] when it names a strength this class does not know
-    # @raise [Answers::NotAList] when a strength is not a list of tables
-    # @raise [Answers::MalformedEntry] when a remembered entry could never match a call
-    # @raise [Isolation::NotATable] when `[isolation]` is present but not a table
-    # @raise [Isolation::UnknownKeys] when it carries a key this class does not know
-    # @raise [Isolation::InvalidValue] when a key's value is outside its rule
+    # @raise [Refusal] when `[epics]`, `[epics.gates]`, `[approval]` or `[isolation]`
+    #   is not a table, carries a key that table does not know, holds a value
+    #   outside that key's rule, or -- under `[approval]` -- carries a remembered
+    #   entry that could never match a call
     def self.load(root: Dir.pwd)
       path = path_for(root)
       return empty unless File.exist?(path)
@@ -115,10 +108,9 @@ module Lain
     # @param root [String] a project root; `.lain/config.toml` is resolved under it
     # @return [Sensitivity::Rules] empty when the file or the table is absent
     # @raise [Malformed] when the file exists but cannot be read as TOML
-    # @raise [Sensitivity::Rules::NotATable] when `sensitivity` is not a table
-    # @raise [Sensitivity::Rules::UnknownKeys] when it names a strength this class does not know
-    # @raise [Sensitivity::Rules::NotAList] when a strength is not a list of patterns
-    # @raise [Sensitivity::Rules::MalformedPattern] when a pattern could never match anything
+    # @raise [Refusal] when `[sensitivity]` is not a table, names a strength this
+    #   class does not know, gives one as a single value rather than a list, or
+    #   carries a pattern that could never match anything
     def self.sensitivity(root:)
       path = path_for(root)
       return Sensitivity::Rules.empty unless File.exist?(path)
@@ -143,10 +135,9 @@ module Lain
     # @return [Shell::Exclusions] empty -- restricting nothing -- when the file
     #   or the table is absent
     # @raise [Malformed] when the file exists but cannot be read as TOML
-    # @raise [Shell::Exclusions::NotATable] when `shell` is not a table
-    # @raise [Shell::Exclusions::UnknownKeys] when it names a key this class does not read
-    # @raise [Shell::Exclusions::NotAList] when `exclude` is not a list of program names
-    # @raise [Shell::Exclusions::MalformedPattern] when an entry could never match a program
+    # @raise [Refusal] when `[shell]` is not a table, names a key this class does
+    #   not read, gives `exclude` as a single value rather than a list, or
+    #   carries an entry that could never match a program
     def self.shell_exclusions(root:)
       path = path_for(root)
       return Shell::Exclusions.empty unless File.exist?(path)
@@ -173,10 +164,8 @@ module Lain
     #   would refuse its existing flat specs as strays.
     # @return [TestLayout] {TestLayout::None} when neither says what the layout is
     # @raise [Malformed] when the file exists but cannot be read as TOML
-    # @raise [TestLayout::NotATable] when `tests` is not a table
-    # @raise [TestLayout::UnknownKeys] when it names a key the layout does not read
-    # @raise [TestLayout::MissingPreset] when it names no preset
-    # @raise [TestLayout::InvalidValue] when a key's value is outside its rule
+    # @raise [Refusal] when `[tests]` is not a table, names a key the layout does
+    #   not read, names no preset, or holds a value outside its key's rule
     def self.test_layout(root:, framework: nil)
       path = path_for(root)
       table = File.exist?(path) ? read(path)["tests"] : nil

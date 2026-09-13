@@ -127,7 +127,7 @@ module Lain
         #
         # @param project [Lain::Project]
         # @param notice [#call, nil]
-        # @raise [Lain::Shell::Exclusions::Refusal] when the table itself is malformed
+        # @raise [Lain::Config::Refusal] when the table itself is malformed
         # @return [Lain::Shell::Verdict]
         def shell_verdict(project:, notice: nil)
           Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
@@ -153,7 +153,7 @@ module Lain
         # @return [Lain::Middleware::GuardTestLayout::Run]
         def test_layout(project:, notice: nil)
           layout_run(Config.test_layout(root: project.root), project)
-        rescue Lain::TestLayout::Refusal, Config::Malformed => e
+        rescue Config::Refusal, Config::Malformed => e
           (notice || SILENT).call(format(IGNORED_LAYOUT, reason: e.message))
           layout_run(Lain::TestLayout::None, project)
         end

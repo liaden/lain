@@ -21,56 +21,9 @@ module Lain
         # Reopened for {Epics}'s reason: constants and nested classes inside a
         # `Data.define do ... end` block are scoped to the enclosing module.
 
-        # The shape of every refusal here: a path that may be absent (a value
-        # built directly rather than loaded) in front of a detail naming the
-        # sub-table.
-        class Refusal < Error
-          attr_reader :path
-
-          def initialize(path, detail)
-            @path = path
-            prefix = path ? "#{path}: " : ""
-            super("#{prefix}[epics.gates] #{detail}")
-          end
-        end
-
-        # `gates` present but not a table (`gates = "deferred"`), for
-        # {Epics::NotATable}'s reason: `.keys` on a String is an unnamed
-        # NoMethodError three frames from the file that caused it.
-        class NotATable < Refusal
-          attr_reader :value
-
-          def initialize(value, path: nil)
-            @value = value
-            super(path, "must be a table, got #{value.class}: #{value.inspect}")
-          end
-        end
-
-        # A stage name outside {Epic::STAGES}. Loud rather than ignored: a
-        # silently dropped `reserch = "deferred"` leaves that stage interactive,
-        # so an unattended run wedges on a gate nobody is there to answer.
-        class UnknownStages < Refusal
-          attr_reader :keys
-
-          def initialize(keys, path: nil)
-            @keys = keys
-            super(path, "has no stages #{keys.map(&:inspect).join(", ")}; " \
-                        "the pipeline is #{Epic::STAGES.join(" -> ")}")
-          end
-        end
-
-        # A policy name no recipe answers to -- including a value of the wrong
-        # TYPE, which fails the membership test rather than being coerced first
-        # ({Epics::InvalidHome}'s posture).
-        class UnknownPolicies < Refusal
-          attr_reader :policies
-
-          def initialize(policies, path: nil)
-            @policies = policies
-            super(path, "names unknown gate policies #{policies.map(&:inspect).join(", ")}; " \
-                        "known policies: #{Approval::Gate::Policies.names.join(", ")}")
-          end
-        end
+        # The sub-table as `config.toml` spells it, which is how every refusal
+        # here names it.
+        TABLE = "[epics.gates]"
 
         # @param table [Object] whatever `[epics] gates` parsed to; nil when absent
         # @param path [String, nil] the config file, named in every refusal
@@ -94,9 +47,9 @@ module Lain
         # Shared by {.from}, which names the config file, and by {#initialize},
         # which cannot and passes nil.
         #
-        # @raise [NotATable, UnknownStages, UnknownPolicies]
+        # @raise [Config::Refusal]
         def self.check!(table, path: nil)
-          raise NotATable.new(table, path:) unless table.is_a?(Hash)
+          raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
           # An empty table has nothing to judge, and answering HERE -- before
           # either closed set is read -- is what lets {EMPTY} be built while this
           # file loads (see the note at {Config::EMPTY}). Every non-empty table
@@ -104,11 +57,38 @@ module Lain
           return if table.empty?
 
           unknown = table.keys - Epic::STAGES
-          raise UnknownStages.new(unknown, path:) unless unknown.empty?
+          # Loud rather than ignored: a silently dropped `reserch = "deferred"`
+          # leaves that stage interactive, so an unattended run wedges on a gate
+          # nobody is there to answer.
+          raise unknown_stages(unknown, path:) unless unknown.empty?
 
+          # A value of the wrong TYPE fails the membership test rather than
+          # being coerced first, {Epics.invalid_home}'s posture.
           unnamed = table.values.reject { |policy| Approval::Gate::Policies.known?(policy) }
-          raise UnknownPolicies.new(unnamed, path:) unless unnamed.empty?
+          raise unknown_policies(unnamed, path:) unless unnamed.empty?
         end
+
+        # The pipeline itself is the correction, rather than a key list: a stage
+        # name is only wrong relative to the order it sits in.
+        #
+        # @return [Config::Refusal]
+        def self.unknown_stages(keys, path: nil)
+          Refusal.new("has no stages #{keys.map(&:inspect).join(", ")}; " \
+                      "the pipeline is #{Epic::STAGES.join(" -> ")}",
+                      path:, table: TABLE, key: keys)
+        end
+
+        # The known set is read from {Approval::Gate::Policies} at CALL time, so
+        # widening the policy family is one edit in the factory.
+        #
+        # @return [Config::Refusal]
+        def self.unknown_policies(policies, path: nil)
+          Refusal.new("names unknown gate policies #{policies.map(&:inspect).join(", ")}; " \
+                      "known policies: #{Approval::Gate::Policies.names.join(", ")}",
+                      path:, table: TABLE, value: policies)
+        end
+
+        private_class_method :unknown_stages, :unknown_policies
 
         # Validated in the value's own constructor as well as in {.from}, the
         # {Epics#initialize} precedent: a typo that CONSTRUCTS would reach

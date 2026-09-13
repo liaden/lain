@@ -127,7 +127,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "refuses a malformed table by name, and names the file" do
       in_tree(config: "sensitivity = \"strict\"\n") do |root, home|
         expect { classifier_at(root, home) }
-          .to raise_error(Lain::Sensitivity::Rules::NotATable, /config\.toml.*must be a table/)
+          .to raise_error(Lain::Config::Refusal, /config\.toml.*must be a table/)
       end
     end
 
@@ -283,7 +283,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "refuses a malformed [shell] table by name, and names the file" do
       in_tree(config: %([shell]\nexclude = "curl"\n)) do |root, _home|
         expect { verdict_at(root) }
-          .to raise_error(Lain::Shell::Exclusions::NotAList, /config\.toml.*list of program names/)
+          .to raise_error(Lain::Config::Refusal, /config\.toml.*list of program names/)
       end
     end
 

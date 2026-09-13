@@ -51,7 +51,7 @@ RSpec.describe Lain::Isolation::MergeStrategy do
 
   it "refuses a style git does not know, naming it" do
     expect { described_class.new(conflict_style: "zdiff4", diff_algorithm: "histogram") }
-      .to raise_error(Lain::Config::Isolation::InvalidValue, /conflict_style = "zdiff4"/)
+      .to raise_error(Lain::Config::Refusal, /conflict_style = "zdiff4"/)
   end
 
   it "is deeply frozen" do

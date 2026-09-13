@@ -4,9 +4,9 @@ module Lain
   class Config
     # The `[epics]` table, its own collaborator rather than a private method on
     # {Config}: other top-level tables are coming, and each one earns exactly
-    # this shape -- one small class that knows its own keys, its own allowed
-    # values, and its own named errors -- rather than {Config} accreting another
-    # `*_from` method and two more error classes per table it learns to read.
+    # this shape -- one small class that knows its own keys and its own allowed
+    # values, refusing through {Config::Refusal} -- rather than {Config}
+    # accreting another `*_from` method per table it learns to read.
     #
     # The TOML key is `home` (`[epics]` / `home = "repo"`); the Ruby reader stays
     # `#epics_home`. `[epics] epics_home` would stutter (`epics.epics_home`).
@@ -23,62 +23,25 @@ module Lain
       HOME_VALUES = %w[xdg repo].freeze
 
       # An unknown key is refused rather than ignored, so this list is also the
-      # correction {UnknownKeys} offers back.
+      # correction the refusal offers back.
       KEYS = %w[home gates].freeze
 
-      # `[epics]` present but not a table -- TOML permits a scalar or an array
-      # there (`epics = "x"`), and `.keys` on one is an unnamed NoMethodError.
-      class NotATable < Error
-        attr_reader :path, :value
-
-        def initialize(value, path:)
-          @path = path
-          @value = value
-          super("#{path}: [epics] must be a table, got #{value.class}: #{value.inspect}")
-        end
-      end
-
-      # A typo inside `[epics]`: that table is this class's whole surface, so an
-      # unrecognized key is loud rather than ignored the way an unknown
-      # top-level table is. Plural -- `.from` reports every one in a single pass.
-      class UnknownKeys < Error
-        attr_reader :path, :keys
-
-        def initialize(keys, path:)
-          @path = path
-          @keys = keys
-          super("#{path}: [epics] has no keys #{keys.map(&:inspect).join(", ")}; known keys: #{KEYS.join(", ")}")
-        end
-      end
-
-      # `home` set to anything but "xdg" or "repo", including a value of the
-      # wrong TYPE: membership is checked against the two allowed STRINGS, so a
-      # foreign type fails the `include?` rather than being coerced first and
-      # crashing inside `#to_sym`. Its path defaults to nil because
-      # {Epics#initialize} raises this too, and a value built directly
-      # (not through `.from`) names no config file.
-      class InvalidHome < Error
-        attr_reader :path, :value
-
-        def initialize(value, path: nil)
-          @path = path
-          @value = value
-          prefix = path ? "#{path}: " : ""
-          super("#{prefix}epics_home #{value.inspect} is not one of #{HOME_VALUES.join(", ")}")
-        end
-      end
+      # The table as `config.toml` spells it, which is how every refusal here
+      # names it.
+      TABLE = "[epics]"
 
       # @param table [Object] whatever `raw["epics"]` parsed to: a Hash, nil when
       #   the table is absent, or anything a project wrote in its place
-      # @param path [String] the config file, threaded into every error raised
-      #   here so a refusal names the file to open
+      # @param path [String] the config file, threaded into every refusal raised
+      #   here so it names the file to open
+      # @raise [Refusal] naming what is wrong with the table
       # @return [Epics]
       def self.from(table, path:)
         table = {} if table.nil?
-        raise NotATable.new(table, path:) unless table.is_a?(Hash)
+        raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
         unknown = table.keys - KEYS
-        raise UnknownKeys.new(unknown, path:) unless unknown.empty?
+        raise Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
 
         new(home: home_from(table, path:), gates: Gates.from(table["gates"], path:))
       end
@@ -88,9 +51,18 @@ module Lain
       # Metrics/AbcSize when `gates` arrived, and the next key would do it again.
       def self.home_from(table, path:)
         home = table.fetch("home", "xdg")
-        raise InvalidHome.new(home, path:) unless HOME_VALUES.include?(home)
+        raise invalid_home(home, path:) unless HOME_VALUES.include?(home)
 
         home.to_sym
+      end
+
+      # Named `epics_home` rather than `[epics] home`, because that is the Ruby
+      # reader a caller who built this value by hand has in front of them --
+      # which is also why this refusal names no table.
+      #
+      # @return [Refusal]
+      def self.invalid_home(value, path: nil)
+        Refusal.new("epics_home #{value.inspect} is not one of #{HOME_VALUES.join(", ")}", path:, value:)
       end
       private_class_method :home_from
 
@@ -104,7 +76,7 @@ module Lain
       # `gates: {"research" => "yolo"}` used to construct here and fail later as
       # an unnamed NoMethodError from {Config#gate_policy_for}.
       def initialize(home:, gates: Gates.empty)
-        raise InvalidHome.new(home, path: nil) unless HOME_VALUES.map(&:to_sym).include?(home)
+        raise self.class.invalid_home(home) unless HOME_VALUES.map(&:to_sym).include?(home)
 
         super(home:, gates: Gates.coerce(gates))
       end

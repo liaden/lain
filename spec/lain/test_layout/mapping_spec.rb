@@ -102,7 +102,7 @@ RSpec.describe Lain::TestLayout::Mapping do
   end
 
   # The order the author typed the keys in must not decide this: see
-  # {Lain::TestLayout::AmbiguousDefaultLevel} for what rides the answer.
+  # {Lain::TestLayout.settled!} for what rides the answer.
   it "answers unit wherever the table declares it, whichever key was typed first" do
     seam_first = mapping({ "preset" => "rspec", "level_roots" => { "seam" => "spec/seam", "unit" => "spec/unit" } })
 

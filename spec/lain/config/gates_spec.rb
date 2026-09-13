@@ -18,17 +18,17 @@ RSpec.describe Lain::Config::Epics::Gates do
   # `.from` must refuse just as loudly, or a typo could reach the factory.
   it "refuses an unknown stage at construction, not just through .from" do
     expect { described_class.new(table: { "reserch" => "deferred" }) }
-      .to raise_error(Lain::Config::Epics::Gates::UnknownStages, /reserch/)
+      .to raise_error(Lain::Config::Refusal, /reserch/)
   end
 
   it "refuses an unknown policy at construction, not just through .from" do
     expect { described_class.new(table: { "research" => "yolo" }) }
-      .to raise_error(Lain::Config::Epics::Gates::UnknownPolicies, /yolo/)
+      .to raise_error(Lain::Config::Refusal, /yolo/)
   end
 
   it "refuses a non-table at construction" do
     expect { described_class.new(table: "deferred") }
-      .to raise_error(Lain::Config::Epics::Gates::NotATable)
+      .to raise_error(Lain::Config::Refusal, /\[epics\.gates\] must be a table/)
   end
 
   it "is deeply frozen, so it rides inside a Ractor-shareable Config" do
@@ -64,7 +64,7 @@ RSpec.describe Lain::Config::Epics::Gates do
     # this example exists to avoid.
     it "names the unknown stages and the pipeline they were measured against" do
       expect { described_class.new(table: { "reserch" => "deferred" }) }
-        .to raise_error(Lain::Config::Epics::Gates::UnknownStages,
+        .to raise_error(Lain::Config::Refusal,
                         "[epics.gates] has no stages \"reserch\"; " \
                         "the pipeline is research -> epic_plan -> issue_plan -> implementation")
     end
@@ -73,14 +73,14 @@ RSpec.describe Lain::Config::Epics::Gates do
     # and the red you are reading is this pin doing its job, not a broken factory.
     it "names the unknown policies and every policy the factory does build" do
       expect { described_class.new(table: { "research" => "yolo" }) }
-        .to raise_error(Lain::Config::Epics::Gates::UnknownPolicies,
+        .to raise_error(Lain::Config::Refusal,
                         "[epics.gates] names unknown gate policies \"yolo\"; " \
                         "known policies: interactive, hands_off, deferred, adjudicated")
     end
 
     it "names the type it got where the sub-table is not a table" do
       expect { described_class.new(table: "deferred") }
-        .to raise_error(Lain::Config::Epics::Gates::NotATable,
+        .to raise_error(Lain::Config::Refusal,
                         "[epics.gates] must be a table, got String: \"deferred\"")
     end
   end
@@ -121,7 +121,7 @@ end
 RSpec.describe Lain::Config do
   # `[epics.gates]` maps an epic stage to the gate policy it runs under. Both
   # sides of the mapping are closed sets, so both are refused at load with the
-  # same UnknownKeys posture the parent table already carries.
+  # same unknown-key posture the parent table already carries.
   describe "[epics.gates]" do
     it "reads a policy per stage" do
       Dir.mktmpdir do |root|
@@ -184,7 +184,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::Gates::UnknownStages, /reserch/)
+          .to raise_error(Lain::Config::Refusal, /reserch/)
       end
     end
 
@@ -201,7 +201,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics.gates]\nzzz = \"deferred\"\naaa = \"deferred\"\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.keys).to contain_exactly("zzz", "aaa")
+          expect(error.key).to contain_exactly("zzz", "aaa")
         end
       end
     end
@@ -211,7 +211,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics.gates]\nresearch = \"yolo\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::Gates::UnknownPolicies, /yolo/) do |error|
+          .to raise_error(Lain::Config::Refusal, /yolo/) do |error|
             expect(error.message).to include("hands_off")
             expect(error.message).to include("deferred")
           end
@@ -222,7 +222,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "[epics.gates]\nresearch = 3\n")
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::Gates::UnknownPolicies)
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /names unknown gate policies 3/)
       end
     end
 
@@ -231,7 +232,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics]\ngates = \"deferred\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::Gates::NotATable, /must be a table/)
+          .to raise_error(Lain::Config::Refusal, /must be a table/)
       end
     end
 
@@ -241,7 +242,7 @@ RSpec.describe Lain::Config do
 
         expect { described_class.load(root:) }.to raise_error do |error|
           expect(error.path).to eq(config_path(root))
-          expect(error.keys).to eq(["reserch"])
+          expect(error.key).to eq(["reserch"])
         end
       end
     end
@@ -253,7 +254,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::Gates::UnknownStages,
+          .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}: [epics.gates] has no stages \"reserch\"; " \
                           "the pipeline is research -> epic_plan -> issue_plan -> implementation")
       end

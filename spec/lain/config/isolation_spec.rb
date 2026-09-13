@@ -28,12 +28,12 @@ RSpec.describe Lain::Config::Isolation do
 
     it "refuses a scalar where the table belongs, naming the file" do
       expect { described_class.from("fast", path:) }
-        .to raise_error(described_class::NotATable, /#{Regexp.escape(path)}.*\[isolation\] must be a table/)
+        .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(path)}.*\[isolation\] must be a table/)
     end
 
     it "refuses an unknown key, naming the key and the file" do
       expect { described_class.from({ "retian_days" => 7 }, path:) }
-        .to raise_error(described_class::UnknownKeys, /#{Regexp.escape(path)}.*"retian_days".*retain_days/)
+        .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(path)}.*"retian_days".*retain_days/)
     end
 
     {
@@ -46,7 +46,7 @@ RSpec.describe Lain::Config::Isolation do
         it "refuses #{key} = #{value.inspect}, naming the key and the file" do
           named = /#{Regexp.escape(path)}.*#{key} = #{Regexp.escape(value.inspect)}/
 
-          expect { described_class.from({ key => value }, path:) }.to raise_error(described_class::InvalidValue, named)
+          expect { described_class.from({ key => value }, path:) }.to raise_error(Lain::Config::Refusal, named)
         end
       end
     end
@@ -57,7 +57,7 @@ RSpec.describe Lain::Config::Isolation do
   describe ".new" do
     it "refuses a bad value built directly, naming the key" do
       expect { described_class.new(**described_class.empty.to_h, conflict_style: "zdiff4") }
-        .to raise_error(described_class::InvalidValue, /conflict_style = "zdiff4"/)
+        .to raise_error(Lain::Config::Refusal, /conflict_style = "zdiff4"/)
     end
   end
 

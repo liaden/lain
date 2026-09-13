@@ -90,7 +90,7 @@ module Lain
     #   fallback when there is no table; this class never detects one itself
     # @return [TestLayout] {None} when neither a table nor a known framework
     #   says what the layout is
-    # @raise [Refusal] naming what is wrong with the table
+    # @raise [Config::Refusal] naming what is wrong with the table
     def self.from(table, path:, framework: nil)
       return detected(framework) if table.nil?
 
@@ -110,17 +110,35 @@ module Lain
 
     def self.detected(framework) = PRESETS.key?(framework) ? preset(framework) : None
 
+    # The table as `config.toml` spells it, which is how every refusal here
+    # names it.
+    TABLE = "[tests]"
+
     def self.shaped!(table, path:)
-      raise NotATable.new(table, path:) unless table.is_a?(Hash)
+      raise Config::Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
       unknown = table.keys - KEYS
-      raise UnknownKeys.new(unknown, path:) unless unknown.empty?
+      # A misspelt `source_roots` would otherwise guard the preset's roots while
+      # the author believes their own are in force.
+      raise Config::Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
+    end
+
+    # A key's value outside its rule, named with the rule it broke.
+    #
+    # @return [Config::Refusal]
+    def self.invalid_value(key, value, rule, path:)
+      Config::Refusal.new("#{key} = #{value.inspect} is not #{rule}", path:, table: TABLE, key:, value:)
     end
 
     def self.preset_named(table, path:)
-      name = table.fetch(PRESET) { raise MissingPreset.new(path:) }
+      # Every other key defaults from the preset, so without one the table
+      # cannot say what it overrides.
+      name = table.fetch(PRESET) do
+        raise Config::Refusal.new("names no preset; set preset to one of #{PRESETS.keys.sort.join(", ")}",
+                                  path:, table: TABLE, key: PRESET)
+      end
       presets = Shapes::OneOf.new(values: PRESETS.keys.sort.freeze)
-      raise InvalidValue.new(PRESET, name, presets.describe(name), path:) unless presets.admits?(name)
+      raise invalid_value(PRESET, name, presets.describe(name), path:) unless presets.admits?(name)
 
       name
     end
@@ -131,7 +149,7 @@ module Lain
                 "exempt" => Shapes::Paths.new(minimum: 0, disjoint: false) }
       overrides.except("default_level").each do |key, value|
         rule = rules.fetch(key)
-        raise InvalidValue.new(key, value, rule.describe(value), path:) unless rule.admits?(value)
+        raise invalid_value(key, value, rule.describe(value), path:) unless rule.admits?(value)
       end
       declared!(overrides, preset, path:)
     end
@@ -145,22 +163,32 @@ module Lain
 
       value = overrides.fetch("default_level")
       rule = Shapes::OneOf.new(values: (overrides["level_roots"] || preset.level_roots).keys)
-      raise InvalidValue.new("default_level", value, rule.describe(value), path:) unless rule.admits?(value)
+      raise invalid_value("default_level", value, rule.describe(value), path:) unless rule.admits?(value)
     end
 
-    # The table is read eagerly so it can be REFUSED; an undeterminable
-    # default level belongs in that refusal rather than at the first untagged
-    # test. See {AmbiguousDefaultLevel}.
+    # The table is read eagerly so it can be REFUSED; an undeterminable default
+    # level belongs in that refusal rather than at the first untagged test.
+    #
+    # Mirrored levels the table leaves a choice between, with nothing naming
+    # which one an untagged test belongs to, are refused at LOAD because the two
+    # things that ride the answer both act on it silently: the guard judges
+    # every untagged test against that level, and the epic driver WRITES an
+    # issue's failing tests there. The previous answer was "whichever mirrored
+    # level the author happened to type first", so re-ordering two lines of TOML
+    # moved both.
     def self.settled!(layout, path:)
       return layout if layout.default_level || layout.mapping.default_level
 
       mirrored = layout.mapping.levels.select(&:mirrored?).map(&:name)
       return layout if mirrored.size < 2
 
-      raise AmbiguousDefaultLevel.new(mirrored, path:)
+      raise Config::Refusal.new("declares no #{DEFAULT_LEVEL.inspect} level and mirrors more than one " \
+                                "(#{mirrored.join(", ")}), so nothing says where a test that names no " \
+                                "level belongs; add default_level = \"<one of them>\"",
+                                path:, table: TABLE, key: DEFAULT_LEVEL, value: mirrored)
     end
 
-    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!
+    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!, :invalid_value
 
     # Never the caller's own strings: the table arrives from a TOML parse the
     # caller still holds, and this value has to stay `Ractor.shareable?`.
@@ -192,7 +220,6 @@ end
 
 # The parts reopen the class, so they load once `Data.define` has made it.
 require_relative "test_layout/shapes"
-require_relative "test_layout/refusals"
 require_relative "test_layout/mapping"
 require_relative "test_layout/constant_index"
 require_relative "test_layout/guard"

@@ -26,12 +26,12 @@ RSpec.describe Lain::Config::Answers do
 
   it "refuses a table that is not a table, naming the file" do
     expect { described_class.from("yes please", path: "/p/.lain/config.toml") }
-      .to raise_error(described_class::NotATable, %r{/p/\.lain/config\.toml})
+      .to raise_error(Lain::Config::Refusal, %r{/p/\.lain/config\.toml})
   end
 
   it "refuses a key it does not know" do
     expect { described_class.from({ "alow" => [] }, path: "/irrelevant") }
-      .to raise_error(described_class::UnknownKeys, /alow/)
+      .to raise_error(Lain::Config::Refusal, /alow/)
   end
 
   # The three refusals below pin their message as a STRING, not a regex: this
@@ -41,13 +41,13 @@ RSpec.describe Lain::Config::Answers do
   # message that had lost the shape it is telling the human to write.
   it "refuses an answer list that is not a list of tables" do
     expect { described_class.from({ "allow" => "read_file" }, path: "/irrelevant") }
-      .to raise_error(described_class::NotAList,
+      .to raise_error(Lain::Config::Refusal,
                       "/irrelevant: [approval] allow is a list of tables ([[approval.allow]]), got String")
   end
 
   it "refuses an entry with no tool" do
     expect { described_class.from({ "allow" => [{ "input" => { "path" => "a.md" } }] }, path: "/irrelevant") }
-      .to raise_error(described_class::MalformedEntry,
+      .to raise_error(Lain::Config::Refusal,
                       '/irrelevant: [[approval.allow]] needs a tool name: {"input" => {"path" => "a.md"}}')
   end
 
@@ -56,7 +56,7 @@ RSpec.describe Lain::Config::Answers do
       described_class.from({ "allow" => [{ "tool" => "read_file", "input" => { "path" => ["a"] } }] },
                            path: "/irrelevant")
     end
-      .to raise_error(described_class::MalformedEntry,
+      .to raise_error(Lain::Config::Refusal,
                       '/irrelevant: [[approval.allow]] input "path" is not a scalar: ' \
                       '{"tool" => "read_file", "input" => {"path" => ["a"]}}')
   end
@@ -67,7 +67,7 @@ RSpec.describe Lain::Config::Answers do
   # thinks they granted and one they did.
   it "refuses a shaped entry with no input table" do
     expect { described_class.from({ "allow" => [{ "tool" => "bash" }] }, path: "/irrelevant") }
-      .to raise_error(described_class::MalformedEntry, /input/)
+      .to raise_error(Lain::Config::Refusal, /input/)
   end
 
   # A tool-wide denial has no call shape by definition, so an `input` beside
@@ -77,21 +77,21 @@ RSpec.describe Lain::Config::Answers do
       described_class.from({ "deny_tool" => [{ "tool" => "bash", "input" => { "command" => "ls" } }] },
                            path: "/irrelevant")
     end
-      .to raise_error(described_class::MalformedEntry, /input/)
+      .to raise_error(Lain::Config::Refusal, /input/)
   end
 
   # A hollow entry -- `tool = ""` -- names no tool and can never match a
-  # call, which is the one thing MalformedEntry exists to refuse.
+  # call, which is the one thing a malformed-entry refusal exists to refuse.
   it "refuses an entry whose tool name is blank" do
     expect { described_class.from({ "deny_tool" => [{ "tool" => "  " }] }, path: "/irrelevant") }
-      .to raise_error(described_class::MalformedEntry, /tool/)
+      .to raise_error(Lain::Config::Refusal, /tool/)
   end
 
   # {Lain::Config::Epics::Gates}'s posture: the closed-set check belongs to
   # the VALUE, so a hand-built one cannot carry a shape `.from` would refuse.
   it "refuses a hand-built entry the parser would have refused" do
     expect { described_class.new(allow: [{ "tool" => 42 }]) }
-      .to raise_error(described_class::MalformedEntry)
+      .to raise_error(Lain::Config::Refusal, /\[\[approval\.allow\]\] needs a tool name/)
   end
 
   # The third member used to skip the constructor check entirely: `[42]`
@@ -100,7 +100,7 @@ RSpec.describe Lain::Config::Answers do
   it "refuses hand-built tool-wide denials the parser would have refused" do
     [42, nil, ["bash"], ""].each do |name|
       expect { described_class.new(deny_tools: [name]) }
-        .to raise_error(described_class::MalformedEntry)
+        .to raise_error(Lain::Config::Refusal, /\[\[approval\.deny_tool\]\] needs a tool name/)
     end
   end
 
@@ -129,9 +129,9 @@ RSpec.describe Lain::Config::Answers do
         parsed = refusal { described_class.from({ key => shape }, path: "/cfg.toml") }
         built = refusal { described_class.new(**{ member => shape }) }
 
-        expect(parsed).to eq([described_class::NotAList, "/cfg.toml: [approval] #{key} is a list of tables " \
-                                                         "([[approval.#{key}]]), got #{shape.class}"])
-        expect(built).to eq([described_class::NotAList, parsed.last.delete_prefix("/cfg.toml: ")])
+        expect(parsed).to eq([Lain::Config::Refusal, "/cfg.toml: [approval] #{key} is a list of tables " \
+                                                     "([[approval.#{key}]]), got #{shape.class}"])
+        expect(built).to eq([Lain::Config::Refusal, parsed.last.delete_prefix("/cfg.toml: ")])
       end
     end
   end
@@ -162,7 +162,7 @@ RSpec.describe Lain::Config do
         write_config(root, "approval = \"yes please\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Answers::NotATable, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
 

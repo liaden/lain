@@ -2561,7 +2561,7 @@ RSpec.describe Lain::CLI::Wiring do
     it "refuses a malformed [sensitivity] table at construction, naming the file" do
       in_tree(config: "sensitivity = \"strict\"\n") do |root|
         expect { wired(root:) }
-          .to raise_error(Lain::Sensitivity::Rules::NotATable,
+          .to raise_error(Lain::Config::Refusal,
                           /#{Regexp.escape(File.join(root, ".lain", "config.toml"))}.*must be a table/)
       end
     end
@@ -2575,7 +2575,8 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree(config: "sensitivity = \"strict\"\n") do |root|
         spy = WiringSpecStartSpy.new(Lain::CLI::Chronicle::Null.new)
 
-        expect { wired(root:, chronicle: spy) }.to raise_error(Lain::Sensitivity::Rules::NotATable)
+        expect { wired(root:, chronicle: spy) }
+          .to raise_error(Lain::Config::Refusal, /\[sensitivity\] must be a table/)
         expect(spy.starts).to eq(0)
       end
     end

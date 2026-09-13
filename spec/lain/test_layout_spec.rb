@@ -22,7 +22,7 @@ RSpec.describe Lain::TestLayout do
 
     it "refuses a misspelt key, naming the key and the file" do
       expect { described_class.from({ "prest" => "rspec" }, path: config) }
-        .to raise_error(described_class::UnknownKeys, /#{Regexp.escape(config)}.*"prest"/)
+        .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config)}.*"prest"/)
     end
 
     # Exemption is always the project's own declaration: support and fixture
@@ -92,11 +92,11 @@ RSpec.describe Lain::TestLayout do
 
   describe "a malformed table is refused by name" do
     it "refuses a scalar where the table belongs" do
-      expect(refusal("rspec")).to be_a(described_class::NotATable).and(have_attributes(message: /#{config}.*\[tests\]/))
+      expect(refusal("rspec")).to be_a(Lain::Config::Refusal).and(have_attributes(message: /#{config}.*\[tests\]/))
     end
 
     it "refuses a table that names no preset" do
-      expect(refusal({ "source_roots" => ["app"] })).to be_a(described_class::MissingPreset)
+      expect(refusal({ "source_roots" => ["app"] })).to be_a(Lain::Config::Refusal)
     end
 
     it "refuses a preset it does not ship, naming the ones it does" do
@@ -110,7 +110,7 @@ RSpec.describe Lain::TestLayout do
              { "source_roots" => [] }]
 
       expect(bad.map { |extra| refusal(rspec.merge(extra)) })
-        .to all(be_a(described_class::InvalidValue).and(have_attributes(key: "source_roots")))
+        .to all(be_a(Lain::Config::Refusal).and(have_attributes(key: "source_roots")))
     end
 
     it "refuses level roots that are not a table of level names to relative paths" do
@@ -119,18 +119,18 @@ RSpec.describe Lain::TestLayout do
              { "level_roots" => { "unit" => "/spec" } }, { "level_roots" => {} }]
 
       expect(bad.map { |extra| refusal(rspec.merge(extra)) })
-        .to all(be_a(described_class::InvalidValue).and(have_attributes(key: "level_roots")))
+        .to all(be_a(Lain::Config::Refusal).and(have_attributes(key: "level_roots")))
     end
 
     it "refuses exemptions that are not a list of relative paths" do
       expect(refusal({ "preset" => "rspec", "exempt" => "spec/support" }))
-        .to be_a(described_class::InvalidValue).and(have_attributes(key: "exempt"))
+        .to be_a(Lain::Config::Refusal).and(have_attributes(key: "exempt"))
     end
 
     it "is one family, so a caller can rescue every refusal at once" do
       refusals = [refusal("rspec"), refusal({ "prest" => 1 }), refusal({}), refusal({ "preset" => "jest" })]
 
-      expect(refusals).to all(be_a(described_class::Refusal))
+      expect(refusals).to all(be_a(Lain::Config::Refusal))
     end
   end
 
@@ -141,19 +141,19 @@ RSpec.describe Lain::TestLayout do
       bad = [["."], ["./app"], ["app//models"], ["app/"]]
 
       expect(bad.map { |roots| refusal({ "preset" => "rspec", "source_roots" => roots }) })
-        .to all(be_a(described_class::InvalidValue).and(have_attributes(key: "source_roots")))
+        .to all(be_a(Lain::Config::Refusal).and(have_attributes(key: "source_roots")))
     end
 
     it "refuses two levels sharing a root, or one level's root inside another's" do
       bad = [{ "unit" => "spec", "seam" => "spec" }, { "unit" => "spec", "seam" => "spec/seam" }]
 
       expect(bad.map { |levels| refusal({ "preset" => "rspec", "level_roots" => levels }) })
-        .to all(be_a(described_class::InvalidValue).and(have_attributes(key: "level_roots")))
+        .to all(be_a(Lain::Config::Refusal).and(have_attributes(key: "level_roots")))
     end
 
     it "refuses one source root inside another, which would mirror one source to two test paths" do
       expect(refusal({ "preset" => "rspec", "source_roots" => %w[app app/models] }))
-        .to be_a(described_class::InvalidValue).and(have_attributes(key: "source_roots"))
+        .to be_a(Lain::Config::Refusal).and(have_attributes(key: "source_roots"))
     end
 
     it "names the overlapping pair" do
@@ -164,7 +164,7 @@ RSpec.describe Lain::TestLayout do
 
     it "refuses a non-canonical exemption" do
       expect(refusal({ "preset" => "rspec", "exempt" => ["./spec/support/**"] }))
-        .to be_a(described_class::InvalidValue).and(have_attributes(key: "exempt"))
+        .to be_a(Lain::Config::Refusal).and(have_attributes(key: "exempt"))
     end
   end
 
@@ -176,8 +176,8 @@ RSpec.describe Lain::TestLayout do
     it "refuses a table that mirrors two levels and names no unit, listing the candidates" do
       table = { "preset" => "rspec", "level_roots" => { "seam" => "spec/seam", "e2e" => "spec/e2e" } }
 
-      expect(refusal(table)).to be_a(described_class::AmbiguousDefaultLevel)
-        .and(have_attributes(candidates: %w[seam e2e], message: /default_level/))
+      expect(refusal(table)).to be_a(Lain::Config::Refusal)
+        .and(have_attributes(value: %w[seam e2e], message: /default_level/))
     end
 
     it "accepts that same table once it declares which one" do
@@ -190,7 +190,7 @@ RSpec.describe Lain::TestLayout do
     it "refuses a default_level naming a level the table does not declare" do
       table = { "preset" => "rspec", "default_level" => "e2e" }
 
-      expect(refusal(table)).to be_a(described_class::InvalidValue).and(have_attributes(key: "default_level"))
+      expect(refusal(table)).to be_a(Lain::Config::Refusal).and(have_attributes(key: "default_level"))
     end
   end
 
@@ -198,7 +198,7 @@ RSpec.describe Lain::TestLayout do
     it "is refused for a preset whose levels mirror, since its tests would have nowhere to go" do
       table = { "preset" => "rspec", "level_roots" => { "unit" => "spec/unit", "integration" => "inline" } }
 
-      expect(refusal(table)).to be_a(described_class::InvalidValue).and(have_attributes(message: /inline/))
+      expect(refusal(table)).to be_a(Lain::Config::Refusal).and(have_attributes(message: /inline/))
     end
 
     it "is accepted for cargo" do

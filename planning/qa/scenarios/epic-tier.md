@@ -136,9 +136,9 @@ dropping `reserch = "deferred"` leaves that stage `interactive`, and an unattend
 on a gate nobody is there to answer.
 
 ```bash
-printf '[epics.gates]\nreserch = "deferred"\n'        # UnknownStages, naming the pipeline
-printf '[epics.gates]\nresearch = "defered"\n'        # UnknownPolicies, naming the known set
-printf '[epics]\ngates = "deferred"\n'                # NotATable -- note [epics], NOT [epics.gates]
+printf '[epics.gates]\nreserch = "deferred"\n'        # "has no stages", naming the pipeline
+printf '[epics.gates]\nresearch = "defered"\n'        # "unknown gate policies", naming the known set
+printf '[epics]\ngates = "deferred"\n'                # "must be a table" -- note [epics], NOT [epics.gates]
 ```
 
 Expected: `[epics.gates] has no stages "reserch"; the pipeline is research -> epic_plan ->

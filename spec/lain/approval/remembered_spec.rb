@@ -153,7 +153,7 @@ RSpec.describe Lain::Approval::Remembered do
       Dir.mktmpdir do |root|
         write_config(root, "approval = \"yes please\"\n")
 
-        expect { remembered_at(root) }.to raise_error(Lain::Config::Answers::NotATable) do |error|
+        expect { remembered_at(root) }.to raise_error(Lain::Config::Refusal) do |error|
           expect(error.path).to eq(config_path(root))
         end
       end

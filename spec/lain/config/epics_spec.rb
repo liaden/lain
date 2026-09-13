@@ -28,12 +28,12 @@ RSpec.describe Lain::Config::Epics do
   # from Config#gate_policy_for. Same ground as the `home` guard above.
   it "refuses a hand-built gates table naming a policy nothing builds" do
     expect { described_class.new(home: :xdg, gates: { "research" => "yolo" }) }
-      .to raise_error(Lain::Config::Epics::Gates::UnknownPolicies, /yolo/)
+      .to raise_error(Lain::Config::Refusal, /yolo/)
   end
 
   it "refuses a hand-built gates table keyed on a stage that does not exist" do
     expect { described_class.new(home: :xdg, gates: { "reserch" => "deferred" }) }
-      .to raise_error(Lain::Config::Epics::Gates::UnknownStages, /reserch/)
+      .to raise_error(Lain::Config::Refusal, /reserch/)
   end
 
   it "coerces a well-formed hand-built table rather than storing the Hash" do
@@ -48,13 +48,13 @@ RSpec.describe Lain::Config::Epics do
 
   it "refuses a gates value of the wrong shape entirely" do
     expect { described_class.new(home: :xdg, gates: "deferred") }
-      .to raise_error(Lain::Config::Epics::Gates::NotATable)
+      .to raise_error(Lain::Config::Refusal, /\[epics\.gates\] must be a table/)
   end
 
   # Data#with re-runs #initialize, so the guard has to hold on the copy too.
   it "re-checks gates through #with" do
     expect { described_class.new(home: :xdg).with(gates: { "research" => "yolo" }) }
-      .to raise_error(Lain::Config::Epics::Gates::UnknownPolicies)
+      .to raise_error(Lain::Config::Refusal, /unknown gate policies "yolo"/)
   end
 
   it "leaves Config#gate_policy_for total for any value that constructs" do
@@ -69,7 +69,7 @@ RSpec.describe Lain::Config::Epics do
   # "constructs fine, fails later" (a downstream consumer is specified to `case`
   # on epics_home, so a value that skipped this check would reach it live).
   it "refuses a value outside the closed set at construction, not just through .from" do
-    expect { described_class.new(home: :bogus) }.to raise_error(Lain::Config::Epics::InvalidHome, /bogus/)
+    expect { described_class.new(home: :bogus) }.to raise_error(Lain::Config::Refusal, /bogus/)
   end
 
   # Pinned literally, not by a regex that would survive a rewording. Each of
@@ -80,12 +80,12 @@ RSpec.describe Lain::Config::Epics do
   describe "the message a refusal carries" do
     it "names the offending home and both permitted values" do
       expect { described_class.new(home: :bogus) }
-        .to raise_error(Lain::Config::Epics::InvalidHome, "epics_home :bogus is not one of xdg, repo")
+        .to raise_error(Lain::Config::Refusal, "epics_home :bogus is not one of xdg, repo")
     end
 
     it "renders a wrong-typed home as the value it was, not as its attribute" do
       expect { described_class.new(home: 3) }
-        .to raise_error(Lain::Config::Epics::InvalidHome, "epics_home 3 is not one of xdg, repo")
+        .to raise_error(Lain::Config::Refusal, "epics_home 3 is not one of xdg, repo")
     end
   end
 end
@@ -103,7 +103,7 @@ RSpec.describe Lain::Config do
         TOML
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::UnknownKeys, /hoem/)
+          .to raise_error(Lain::Config::Refusal, /hoem/)
       end
     end
 
@@ -116,7 +116,7 @@ RSpec.describe Lain::Config do
 
         expect { described_class.load(root:) }.to raise_error do |error|
           expect(error.path).to eq(config_path(root))
-          expect(error.keys).to eq(["hoem"])
+          expect(error.key).to eq(["hoem"])
         end
       end
     end
@@ -132,7 +132,7 @@ RSpec.describe Lain::Config do
         TOML
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.keys).to contain_exactly("zzz", "aaa")
+          expect(error.key).to contain_exactly("zzz", "aaa")
         end
       end
     end
@@ -159,7 +159,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics.sub]\nk = 1\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::UnknownKeys, /sub/)
+          .to raise_error(Lain::Config::Refusal, /sub/)
       end
     end
   end
@@ -202,7 +202,7 @@ RSpec.describe Lain::Config do
         TOML
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::InvalidHome, /somewhere_else/) do |error|
+          .to raise_error(Lain::Config::Refusal, /somewhere_else/) do |error|
             expect(error.message).to include("xdg")
             expect(error.message).to include("repo")
           end
@@ -213,7 +213,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "[epics]\nhome = \"\"\n")
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::InvalidHome)
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /epics_home "" is not one of xdg, repo/)
       end
     end
 
@@ -226,7 +227,7 @@ RSpec.describe Lain::Config do
           write_config(root, "[epics]\nhome = #{literal}\n")
 
           expect { described_class.load(root:) }
-            .to raise_error(Lain::Config::Epics::InvalidHome) do |error|
+            .to raise_error(Lain::Config::Refusal) do |error|
               expect(error.message).to include("xdg")
               expect(error.message).to include("repo")
             end
@@ -238,7 +239,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "[epics]\nhome = [\"repo\"]\n")
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::InvalidHome)
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /epics_home \["repo"\] is not one of/)
       end
     end
 
@@ -263,7 +265,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics]\nhoem = \"repo\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::UnknownKeys,
+          .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}: [epics] has no keys \"hoem\"; known keys: home, gates")
       end
     end
@@ -273,7 +275,7 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics]\nhome = \"somewhere_else\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::InvalidHome,
+          .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}: epics_home \"somewhere_else\" is not one of xdg, repo")
       end
     end
@@ -283,7 +285,7 @@ RSpec.describe Lain::Config do
         write_config(root, "epics = \"x\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Epics::NotATable,
+          .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}: [epics] must be a table, got String: \"x\"")
       end
     end

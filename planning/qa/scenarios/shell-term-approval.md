@@ -509,7 +509,7 @@ pass. Claim 5 has no counterpart there and is this section's real contribution:
    precedent**, and should be filed with that citation rather than as a preference.
 4. **A typo is loud.** `Config.sensitivity`'s posture is the model — an unknown key refuses at load,
    naming the file, rather than being silently dropped. A silently ignored exclusion reads as a rule
-   in force that is not, which is the same failure mode `Rules::UnknownKeys` exists to prevent.
+   in force that is not, which is the same failure mode `[sensitivity]`'s unknown-key refusal prevents.
 5. **One verdict, not two — the one claim only this file makes.** T6's whole point was ending a
    double parse: `escalation.rb:482` and `bash.rb:162` each **used to** default-construct their own
    `Shell::Verdict.new`. Both are landed now — `toolset_build.rb:276` threads one `@verdict` to
