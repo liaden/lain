@@ -419,13 +419,66 @@ RSpec.describe Lain::Tools::ReadFile do
   # them: there was an empty-file example, it passed offset/limit, and the
   # default path had no coverage at all.
   describe "the tier-1 read contract, over pathological file shapes" do
-    def read_at(path) = tool.call(path:)
-
-    def scratch = tmpdir
-
     def file_of(bytes) = File.join(tmpdir, "shape.bin").tap { |path| File.binwrite(path, bytes) }
 
-    it_behaves_like "a tier-1 read of any path that never raises"
+    # The half of the contract only a FILESYSTEM can pose, and the reason it is
+    # not folded into "a tier-1 read that never raises" below: `Memory::Item`
+    # cannot hold non-UTF-8 bytes at all -- `Canonical` refuses them at
+    # construction -- so "invalid UTF-8" is a file shape and not a shared one,
+    # and a per-host row filter would be exactly the maintenance tax that the
+    # deliberately weak assertion -- argued in the shared group's own header in
+    # spec/support/shared_examples/tier_one_read_contract.rb -- exists to avoid.
+    # These rows live here rather than beside that group because this file is
+    # their only host.
+    context "when the path itself is the pathology, whichever reader answers" do
+      def read_at(path) = tool.call(path:)
+
+      # `[path, should_refuse]`. A device and a fifo have no size to bound and must
+      # be refused; a symlink to an ordinary file is an ordinary file and must not
+      # be -- that row is what reddens if `File.file?` is ever "tidied" to
+      # `File.ftype`, which is lstat-based and answers "link".
+      #
+      # Invalid UTF-8 refuses (QA round 10). This row read `false` until then, on
+      # the reasoning that a tool which does not decode has nothing to object to
+      # -- but the bytes it handed back could not become an `Event`, so
+      # `Canonical.normalize` killed the whole ask on `Timeline#commit`, naming no
+      # file. A read whose result cannot be recorded is a failed read, and saying
+      # so here is what keeps it one.
+      def path_shapes
+        {
+          "a file of invalid UTF-8" => [binary_file("\xFF\xFE alpha\n".b), true],
+          "a symlink to an ordinary file" => [symlink_to_file, false],
+          "a missing path" => [File.join(tmpdir, "absent.txt"), true],
+          "a directory" => [tmpdir, true],
+          "a character device" => ["/dev/null", true],
+          "a fifo" => [fifo, true]
+        }
+      end
+
+      def binary_file(bytes)
+        File.join(tmpdir, "binary.bin").tap { |path| File.binwrite(path, bytes) }
+      end
+
+      def symlink_to_file
+        target = File.join(tmpdir, "target.txt")
+        File.write(target, "through a link\n")
+        File.join(tmpdir, "link.txt").tap { |link| File.symlink(target, link) }
+      end
+
+      def fifo
+        File.join(tmpdir, "pipe").tap { |path| File.mkfifo(path) }
+      end
+
+      it "answers every path shape with a Tool::Result and no raise" do
+        path_shapes.each do |shape, (path, refuses)|
+          result = nil
+
+          expect { result = read_at(path) }.not_to raise_error, shape
+          expect(result).to be_a(Lain::Tool::Result), shape
+          expect(result.is_error).to be(refuses), shape
+        end
+      end
+    end
 
     context "when read unwindowed, which is what every other caller in the repo does" do
       def read_ceiling = Lain::Tools::ReadFile::WHOLE_BOUND.limit
