@@ -740,3 +740,33 @@ away when the question arose. Rather than guess, T1 and T3 — the only two card
 sequenced **last**, so every other card lands either way and the decision is deferred to the point
 where it actually binds. T4, T5, T6, T7 and T2 are unaffected: 14 deletes `review_view.rb` and the
 review rails, not the inbox, the approval queue, the status file or the runtime loader.
+
+### A card premise that did not survive contact
+
+**The chunk-naming card's mechanism is unachievable at this card's size, and the disproof is worth
+keeping.** The card proposed replacing the loader's offset arithmetic with Lua's own
+`load(chunk, chunkname)`, which reports a real filename and line. On the shipped 22-module runtime
+that dies at the second module — `05_records.lua:82: table index is nil` — because the modules
+deliberately share top-level Lua `local`s across files, a rule `runtime.lua`'s own header states,
+and separate `load()` chunks cannot see each other's locals. `_ENV` joining does not reach them.
+Two agents reproduced this independently.
+
+Making the card's mechanism work therefore requires converting all 22 modules to communicate
+through an explicit shared table, and only then naming the chunks. That is a real card and
+probably a good one — it is the only route to Lua naming every error, at any time, with a full
+traceback, and to deleting the arithmetic for good — but it is a 22-file Lua change and it is not
+this one.
+
+What landed instead wraps the module bodies in one `xpcall` that preserves the shared lexical
+scope, and carries the same offset arithmetic into the runtime so the translation happens
+automatically rather than on request. **The arithmetic did not go away; it changed address**, and
+the plan should not pretend otherwise: the file grew from 182 to 234 lines, non-comment code from
+78 to 102.
+
+The panel's finding that forced a second round is worth recording separately, because it is the
+kind a green suite cannot show. The first draft translated only **load-time** errors, which are
+the rare shape — in a live cockpit nearly every runtime error is deferred through a command
+callback, an autocmd or a rail, and `xpcall` has returned long before those run. It also deleted
+the one tool that could decode a deferred line on request, and replaced a real traceback with the
+error handler's own line number. For the common shape it was **worse than no change at all**: an
+opaque location became a confident and wrong one.
