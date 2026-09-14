@@ -39,7 +39,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
     end
 
     it "routes to the new policy after a switch, and the old one is never consulted again" do
-      approve_all = Lain::Effect::Handler::Gate::ApproveAll.new
+      approve_all = Lain::Middleware::Gate::ApproveAll.new
       switch.switch(approve_all, surface: "tty")
 
       expect(switch.call("effect", nil)).to be(true)
@@ -47,7 +47,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
     end
 
     it "restores a previously held policy on a second switch" do
-      switch.switch(Lain::Effect::Handler::Gate::ApproveAll.new, surface: "tty")
+      switch.switch(Lain::Middleware::Gate::ApproveAll.new, surface: "tty")
       switch.switch(queue, surface: "tty")
 
       expect(switch.call("effect", nil)).to be(false)
@@ -61,7 +61,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
 
   describe "the journaled flip (attributed evidence, not incident detail)" do
     it "journals each flip from/to (the model_switch symmetry) with the deciding surface" do
-      switch.switch(Lain::Effect::Handler::Gate::ApproveAll.new, surface: "tty")
+      switch.switch(Lain::Middleware::Gate::ApproveAll.new, surface: "tty")
       switch.switch(queue, surface: "tty")
 
       expect(flips.map { |record| record.values_at("from", "to") })

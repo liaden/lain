@@ -175,8 +175,8 @@ module Lain
         def layout_run(layout, project) = Lain::Middleware::GuardTestLayout::Run.new(layout:, root: project.root)
 
         # The run's path boundary, wrapped in the policy both gates read
-        # through -- {Effect::Handler::Sensitivity} for what may not be touched
-        # at all, {Effect::Handler::Gate} for what is merely worth asking about.
+        # through -- {Middleware::Sensitivity} for what may not be touched
+        # at all, {Middleware::Gate} for what is merely worth asking about.
         #
         # @param project [Lain::Project]
         # @param paths [Paths]

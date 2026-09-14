@@ -61,6 +61,13 @@ RSpec.describe Lain::Tool do
       expect(echo.parallel_safe?).to be(false)
     end
 
+    # The one thing {Lain::Toolset::Unheld} answers differently, so the gate can
+    # tell a call that will run from one that cannot.
+    it "is a held tool, which a stand-in for a missing name is not" do
+      expect(echo.held?).to be(true)
+      expect(Lain::Toolset::Unheld.new("ghost").held?).to be(false)
+    end
+
     it "raises if a concrete tool forgot to define #perform" do
       forgetful = Class.new(described_class) do
         def name = "x"

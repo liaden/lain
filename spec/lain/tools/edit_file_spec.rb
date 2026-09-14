@@ -39,14 +39,8 @@ RSpec.describe Lain::Tools::EditFile do
     it "runs through Handler::Live and the model receives an error result naming the unmet contract" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      toolset = Lain::Toolset.new([tool])
-      live = Lain::Effect::Handler::Live.new(toolset:)
-      effect = Lain::Effect::ToolCall.new(
-        tool_use_id: "tu_1", name: "edit_file",
-        input: { path:, old_string: "hello", new_string: "goodbye" }
-      )
-
-      result = live.call(effect, session)
+      result = dispatch_call("edit_file", { path:, old_string: "hello", new_string: "goodbye" },
+                             toolset: Lain::Toolset.new([tool]), context: session)
 
       expect(result).to have_attributes(is_error: true)
       expect(result.content).to include("never read")

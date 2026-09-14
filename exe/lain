@@ -36,7 +36,7 @@ require "lain"
 
 # The executable. Deliberately thin: parse flags, wire the real collaborators
 # together, hand off to Frontend::TTY. Nothing here is unit-tested the way
-# lib/ is (see CLAUDE.md), so nothing here decides anything -- Effect::Handler::Gate,
+# lib/ is (see CLAUDE.md), so nothing here decides anything -- Middleware::Gate,
 # Tool, and TTY already carry the logic and already carry the specs.
 class LainCLI < Thor
   # The Thor-boundary conventions every command shares: map the lib's own

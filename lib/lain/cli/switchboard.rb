@@ -148,7 +148,7 @@ module Lain
       #   Which posture a session is in decides whether any of that is
       #   consulted, and all three answer differently. An attended board asks
       #   this ladder. `/mode auto` resolves the Gate's policy to
-      #   {Effect::Handler::Gate::ApproveAll}, which never reaches a rung -- so
+      #   {Middleware::Gate::ApproveAll}, which never reaches a rung -- so
       #   the exclusion table denies NOTHING there, while the tool still holds
       #   the same verdict and still picks its arm. An unattended session gets
       #   the one-rung {Unattended} ladder below, which refuses without asking
@@ -199,22 +199,24 @@ module Lain
       # context that gets it; a subagent renders its role's own.
       def graft(context) = context.with_model(@model_switch)
 
-      # The session's approval gate over `inner`: the Gate holds this board's
-      # ONE policy switch, so every posture flip reaches it while the Gate
-      # itself stays construction-fixed.
+      # The session's approval gate, as the two tool-phase layers a call passes
+      # before it is interpreted: the {Middleware::Gate} holds this board's ONE
+      # policy switch, so every posture flip reaches it while the gate itself
+      # stays construction-fixed.
       #
-      # {Effect::Handler::Sensitivity} sits AHEAD of it, over the SAME one
-      # policy: a denied path is not approvable, and a Gate policy answer is a
-      # Boolean, so every Boolean is approvable by construction. Two axes in
-      # the order that leaves the human a move on the axis that has one -- the
-      # gated path reaches the queue, the denied one never does. Nothing here
-      # reads the session's posture, so a session approving everything refuses
-      # a denied path exactly as an asking one does.
-      def gate(inner:)
-        Effect::Handler::Sensitivity.new(
-          sensitivity:, journal: @journal,
-          inner: Effect::Handler::Gate.new(policy: policy_switch, inner:, sensitivity:, denial:)
-        )
+      # {Middleware::Sensitivity} sits AHEAD of it, over the SAME one policy: a
+      # denied path is not approvable, and a gate policy answer is a Boolean, so
+      # every Boolean is approvable by construction. Two axes in the order that
+      # leaves the human a move on the axis that has one -- the gated path
+      # reaches the queue, the denied one never does. Nothing here reads the
+      # session's posture, so a session approving everything refuses a denied
+      # path exactly as an asking one does.
+      #
+      # @return [Array<Middleware::Base>] outermost first, to append after the
+      #   tool guard's layers
+      def gate
+        [Middleware::Sensitivity.new(sensitivity:, journal: @journal),
+         Middleware::Gate.new(policy: policy_switch, sensitivity:, denial:)]
       end
 
       # What a refused call is REPORTED as, which is a different question from
@@ -233,7 +235,7 @@ module Lain
       # {Tools::AskHuman::Unattended}'s rule: a refusal that only says "no"
       # invites the same call again.
       def denial
-        return Effect::Handler::Gate::DENIAL if @attended
+        return Middleware::Gate::DENIAL if @attended
 
         "no approval is possible for tool %<name>s: this session was started with --non-interactive, " \
           "so no human is attached and nothing can approve a gated call. This is not somebody answering " \
@@ -323,7 +325,7 @@ module Lain
       # no surface drains until the fail-closed timeout denies it anyway, so
       # the outcome is identical and the run spends the wait first.
       #
-      # A rung rather than the flat {Effect::Handler::Gate::DenyAll} that stood
+      # A rung rather than the flat {Middleware::Gate::DenyAll} that stood
       # here before, for two reasons. {Mode::Resolution} refuses a nil `queue:`
       # outright, and a `|| DenyAll` here made that guard unreachable on the
       # only production path -- worse than never having written it, because a
@@ -365,7 +367,7 @@ module Lain
         Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(tty, question) })
       end
 
-      # The capability set the Agent and {Effect::Handler::Live} are BUILT with,
+      # The capability set the Agent and its {Agent::ToolRunner} are BUILT with,
       # so a posture flip can change what the model is shown without rebuilding
       # either. Exactly {Approval::PolicySwitch}'s shape one axis over, and for
       # the same seam reality: both holders are construction-fixed, so the live

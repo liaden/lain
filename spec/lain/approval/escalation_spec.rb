@@ -192,17 +192,16 @@ RSpec.describe Lain::Approval::Escalation do
   end
 
   describe "the seam it presents" do
-    it "answers a Boolean, so Effect::Handler::Gate's two-valued policy duck is unchanged" do
+    it "answers a Boolean, so Middleware::Gate's two-valued policy duck is unchanged" do
       expect(ladder(EscalationSpecSupport::Fixed.new("rule", :allow)).call(effect, nil)).to be(true)
       expect(ladder(EscalationSpecSupport::Fixed.new("rule", :deny)).call(effect, nil)).to be(false)
     end
 
     it "drops straight into a Gate as its policy" do
-      live = Lain::Effect::Handler::Live.new(toolset: tools)
-      gate = Lain::Effect::Handler::Gate.new(policy: ladder(EscalationSpecSupport::Fixed.new("rule", :deny)),
-                                             inner: live)
+      gate = Lain::Middleware::Gate.new(policy: ladder(EscalationSpecSupport::Fixed.new("rule", :deny)))
 
-      expect(gate.call(effect, nil)).to have_attributes(is_error: true, content: /denied/)
+      expect(dispatch_call(effect.name, effect.input, toolset: tools, layers: [gate]))
+        .to have_attributes(is_error: true, content: /denied/)
     end
 
     it "reads as the value it is: its rungs, in order" do

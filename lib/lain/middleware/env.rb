@@ -16,7 +16,7 @@ module Lain
     # == Per-phase key contract (pinned by the phase specs)
     #
     #   model phase (ModelCaller):  :request in  -> :response out
-    #   tool  phase (ToolRunner):   :effect, :context in -> :result out
+    #   tool  phase (ToolRunner):   :effect, :context, :tool in -> :result out
     #   turn  phase (Agent#run):    :iteration, :timeline in -> :response, :settled out
     #   repl  phase (exe/lain):     :text, :agent in -> :response out
     #

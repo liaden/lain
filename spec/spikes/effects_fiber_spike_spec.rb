@@ -9,7 +9,7 @@
 # for the recorded backtraces and the recommendation this spike produced.
 #
 # Both prototypes below are adapted into the IDENTICAL public shape
-# Lain::Effect::Handler#to_app already exposes -- an env -> env lambda writing :result
+# Lain::Agent::ToolRunner#dispatch terminates a stack with -- an env -> env lambda writing :result
 # -- and are driven through the actual Lain::Middleware::Stack#call(env, &app) boundary,
 # so "the same Middleware#call(env) surface" (5-0.2's acceptance criterion) is not
 # asserted by analogy; it is the literal call both prototypes go through.
@@ -20,8 +20,8 @@
 # could be compared -- that conversion is doing its own job, not answering this
 # spike's question. Mock lets a raise reach the caller unconverted, on both sides.
 module Spikes
-  # The fiber-based prototype under comparison: the SAME public shape as
-  # Lain::Effect::Handler#to_app (an env -> env lambda writing :result), but the
+  # The fiber-based prototype under comparison: the SAME public shape as the
+  # runner's terminating app (an env -> env lambda writing :result), but the
   # resolver runs INSIDE a Fiber's own call stack rather than as a nested Ruby call
   # -- the shape a tool's own code will actually have once 5-0.3 hosts tool dispatch
   # on Async::Task fibers for the reason 5-0.1 measured (cooperative IO), not a fake
@@ -54,7 +54,10 @@ RSpec.describe "Effects via Fiber vs handler objects", :spike do
     end
   end
 
-  let(:handler_object_app) { Lain::Effect::Handler::Mock.new(&resolver).to_app }
+  let(:handler_object_app) do
+    handler = Lain::Effect::Handler::Mock.new(&resolver)
+    ->(env) { env.merge(result: handler.call(env)) }
+  end
   let(:fiber_app) { Spikes::FiberEffectInterpreter.new(&resolver).to_app }
 
   # One real pass-through member ({Middleware::Identity}, an instance of

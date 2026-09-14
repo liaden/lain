@@ -6,7 +6,7 @@ module Lain
     # subprocess -- so there is no command string for the model to control and
     # no approval gate. This is the tool that keeps "grep for X" off the tier-3
     # `bash` path, where a free-form `grep -r ...` would sit behind
-    # {Effect::Handler::Gate}. An invalid pattern is reported as an error
+    # {Middleware::Gate}. An invalid pattern is reported as an error
     # {Result}, never a raise.
     #
     # TWO SEARCH PATHS, one result shape: the walk runs in this process by

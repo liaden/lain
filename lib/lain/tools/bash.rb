@@ -49,7 +49,7 @@ module Lain
     # capture, attribution, timeout and reaping -- it calls `setsid`, so a
     # timeout kills the whole process group and not just the shell. Real safety
     # is {#requires_approval?} plus a human or policy on the other end of
-    # {Effect::Handler::Gate}, and eventually OS confinement in the
+    # {Middleware::Gate}, and eventually OS confinement in the
     # out-of-process Rust exec boundary. NEVER this tool's input validation,
     # which checks only that `timeout` is a sane number.
     class Bash < Tool
@@ -225,7 +225,7 @@ module Lain
       # The Journal's only account of arm selection when no ladder ran: the
       # approval gate journals a `shell verdict` line from inside its escalation
       # record, but `/mode auto` resolves the gate to
-      # {Effect::Handler::Gate::ApproveAll}, which consults no rung and writes
+      # {Middleware::Gate::ApproveAll}, which consults no rung and writes
       # nothing -- so before this record an `auto` session recorded nothing at
       # all about which arm its commands ran on.
       #

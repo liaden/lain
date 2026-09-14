@@ -102,7 +102,7 @@ RSpec.describe "Subagent posture equivalence" do
     # ...but the DESIGNED divergence is how each posture reaches that answer:
     # schema never rendered read_file, so Live's Toolset#fetch raises
     # UnknownTool and no refusal is journaled; handler_union rendered the
-    # union (read_file visible) and RefusingHandler journals the refusal.
+    # union (read_file visible) and Middleware::RefuseUnpermitted journals the refusal.
     expect(schema_journal.drain.map { |event| event.to_journal["type"] }).not_to include("refused")
     expect(union_journal.drain.map { |event| event.to_journal["type"] }).to include("refused")
   end

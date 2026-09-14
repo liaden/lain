@@ -793,16 +793,14 @@ RSpec.describe Lain::Tools::Bash do
       tool = described_class.new(journal:)
       resolution = Lain::Mode::Resolution.for(mode: Lain::Mode.new(posture: :auto),
                                               base: Lain::Toolset.new([tool]),
-                                              queue: Lain::Effect::Handler::Gate::DenyAll.new)
-      gate = Lain::Effect::Handler::Gate.new(
-        policy: resolution.gate_policy,
-        inner: Lain::Effect::Handler::Live.new(toolset: resolution.toolset, channel:)
-      )
+                                              queue: Lain::Middleware::Gate::DenyAll.new)
+      gate = Lain::Middleware::Gate.new(policy: resolution.gate_policy)
 
-      result = gate.call(Lain::Effect::ToolCall.new(tool_use_id: "tu_auto", name: "bash",
-                                                    input: { "command" => "ls -la" }))
+      result = dispatch_call("bash", { "command" => "ls -la" }, id: "tu_auto", toolset: resolution.toolset,
+                                                                layers: [gate],
+                                                                handler: Lain::Effect::Handler::Live.new(channel:))
 
-      expect(resolution.gate_policy).to be_a(Lain::Effect::Handler::Gate::ApproveAll)
+      expect(resolution.gate_policy).to be_a(Lain::Middleware::Gate::ApproveAll)
       expect(result).to be_ok
       expect(arms.map { |arm| [arm.tool_use_id, arm.verdict] }).to eq([["tu_auto", :allow]])
     end

@@ -1141,13 +1141,14 @@ RSpec.describe Lain::Agent do
       expect(a.send(:model_caller).provider).to be_a(Lain::Provider::Mock)
     end
 
-    # The default-built runner's handler is LIVE over the Agent's own toolset,
-    # which is what makes `handler:` an ingredient rather than a requirement.
-    it "builds a ToolRunner whose handler is Live over the Agent's own toolset" do
-      handler = described_class.new(toolset:, context:, provider: wiring_value(:provider)).send(:tool_runner).handler
+    # The default-built runner's handler is LIVE, resolving calls against the
+    # Agent's own toolset, which is what makes `handler:` an ingredient rather
+    # than a requirement.
+    it "builds a ToolRunner whose Live handler runs what the Agent's own toolset resolves" do
+      runner = described_class.new(toolset:, context:, provider: wiring_value(:provider)).send(:tool_runner)
 
-      expect(handler).to be_a(Lain::Effect::Handler::Live)
-      expect(handler.tool_named("echo")).to be(toolset.to_a.find { |tool| tool.name == "echo" })
+      expect(runner.handler).to be_a(Lain::Effect::Handler::Live)
+      expect(runner.toolset).to be(toolset)
     end
 
     # The vocabulary the constructor polices, named once and read by

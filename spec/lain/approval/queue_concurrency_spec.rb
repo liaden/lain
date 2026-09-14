@@ -62,8 +62,8 @@ RSpec.describe "Approval::Queue pendings under concurrent gather" do
       [QueueConcurrencySpecSupport::GatedApprovalTool.new(name: "gated_a"),
        QueueConcurrencySpecSupport::GatedApprovalTool.new(name: "gated_b")]
     )
-    live = Lain::Effect::Handler::Live.new(toolset:)
-    Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Gate.new(policy: queue, inner: live))
+    Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:,
+                                middleware: Lain::Middleware::Stack.new([Lain::Middleware::Gate.new(policy: queue)]))
   end
 
   it "parks two independent pendings; one approved resolves ok, one timed out errors, both journal" do

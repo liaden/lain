@@ -338,8 +338,7 @@ module Lain
     # A finding's refutation verdict ({Grader::Verified}'s second pass).
     # `digest` is the finding's OWN content address rather than an id it does
     # not carry the way a tool call carries a `tool_use_id` -- it is the join
-    # key {Grader::Refuter::Recorded.from_journal} looks the verdict back up by,
-    # the same content-addressed replay {Effect::Handler::Recorded} does.
+    # key {Grader::Refuter::Recorded.from_journal} looks the verdict back up by.
     # `survived` is the refuter's thresholded pass/fail, since a continuous
     # Rubric score alone is not a verdict; `score` keeps the raw 0..1
     # confidence alongside.

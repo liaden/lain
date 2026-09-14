@@ -9,7 +9,7 @@ module Lain
     #   Shell::Verdict / RuleChain  ->  surfaces (AutoSurface, the human)  ->  timeout
     #        deterministic                        asking                     fail-closed
     #
-    # It presents to {Effect::Handler::Gate} as Gate's existing two-valued policy
+    # It presents to {Middleware::Gate} as Gate's existing two-valued policy
     # duck, `#call(effect, context) -> Boolean`, so Gate is untouched. Three
     # values live INSIDE -- allow, deny, and the abstention that is the absence
     # of either -- and collapse at the seam, exactly as {Approval::Queue} keeps
@@ -159,7 +159,7 @@ module Lain
         @rungs.each(&block)
       end
 
-      # {Effect::Handler::Gate}'s policy seam.
+      # {Middleware::Gate}'s policy seam.
       #
       # @param effect [Effect::ToolCall] the call to judge, already unwrapped
       # @param context [Object, nil] whatever {Effect::Handler} threads through

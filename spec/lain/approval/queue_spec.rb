@@ -26,7 +26,7 @@ module ApprovalSpecSupport
   end
 end
 
-# The approval queue behind Handler::Gate: a gated tool call enqueues a
+# The approval queue behind Middleware::Gate: a gated tool call enqueues a
 # Pending approval and parks its fiber on Gate's synchronous policy seam; a
 # surface fiber answers, first answer wins, every decision journals, and an
 # unanswered window denies (the fail-closed doctrine gate.rb pins).
@@ -70,14 +70,17 @@ RSpec.describe Lain::Approval::Queue do
       def input_schema = { type: :object, properties: { text: { type: :string } }, required: [] }
       define_method(:perform) do |input, _invocation|
         runs << input
-        Lain::Tool::Result.ok(input.fetch(:text, "ran"))
+        Lain::Tool::Result.ok(input.fetch("text", "ran"))
       end
     end.new
   end
 
+  # The queue as a gate's policy, in front of the one gated tool, driven the
+  # way a turn drives a call: through the runner, into a real Live.
   def gate_over(runs)
-    live = Lain::Effect::Handler::Live.new(toolset: Lain::Toolset.new([gated_tool(runs)]))
-    Lain::Effect::Handler::Gate.new(policy: queue, inner: live)
+    toolset = Lain::Toolset.new([gated_tool(runs)])
+    gate = Lain::Middleware::Gate.new(policy: queue)
+    ->(effect) { dispatch_call(effect.name, effect.input, id: effect.tool_use_id, toolset:, layers: [gate]) }
   end
 
   describe "a gated call parks on the queue" do
@@ -86,7 +89,7 @@ RSpec.describe Lain::Approval::Queue do
       gate = gate_over(runs)
 
       Sync do |task|
-        run = task.async { gate.call(tool_call("dangerous", { text: "went through" })) }
+        run = task.async { gate.call(tool_call("dangerous", { "text" => "went through" })) }
 
         # The gated fiber ran up to its await: the effect is enqueued, parked,
         # and the tool has NOT run.
@@ -406,8 +409,7 @@ RSpec.describe Lain::Approval::Queue do
 
     it "returns the refusal Result through the gate" do
       runs = []
-      live = Lain::Effect::Handler::Live.new(toolset: Lain::Toolset.new([gated_tool(runs)]))
-      gate = Lain::Effect::Handler::Gate.new(policy: queue, inner: live)
+      gate = gate_over(runs)
 
       result = Sync { gate.call(tool_call) }
 

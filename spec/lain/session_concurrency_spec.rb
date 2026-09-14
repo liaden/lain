@@ -83,7 +83,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
       [SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_a", path:, entered:, release:),
        SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_b", path:, entered:, release:)]
     )
-    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:)
     response = tool_response(["tu_1", "reader_a", {}], ["tu_2", "reader_b", {}])
 
     Sync do |task|
@@ -128,7 +128,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
       [SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_a", path: "/tmp/a.rb", entered:, release:),
        SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_b", path: "/tmp/b.rb", entered:, release:)]
     )
-    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:)
     response = tool_response(["tu_1", "reader_a", {}], ["tu_2", "reader_b", {}])
 
     Sync do |task|
@@ -166,7 +166,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
       [SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_a", path:, entered:, release:),
        SessionConcurrencySpecSupport::GatedReadTool.new(name: "reader_b", path:, entered:, release:)]
     )
-    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:)
     response = tool_response(["tu_1", "reader_a", {}], ["tu_2", "reader_b", {}])
 
     Sync do |task|
@@ -215,7 +215,7 @@ RSpec.describe "Session read completeness under concurrent gather" do
 
   def gather(complete_a:, complete_b:)
     toolset = Lain::Toolset.new([reader("reader_a", complete_a), reader("reader_b", complete_b)])
-    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+    runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:)
     response = tool_response(["tu_1", "reader_a", {}], ["tu_2", "reader_b", {}])
 
     Sync { |task| both_land(task, runner, response) }

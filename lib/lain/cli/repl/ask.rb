@@ -28,7 +28,7 @@ module Lain
       # raises inside the task and still leaves the conversation.
       #
       # A TOOL CANNOT REACH THAT SECOND DIRECTION, which is worth knowing before
-      # writing a spec for it: `Effect::Handler::Live#dispatch` contains every
+      # writing a spec for it: `Effect::Handler::Live` contains every
       # tool raise as a `Tool::Result.error`. The nearest real bug that reaches
       # an ask is a PROVIDER that raises, which is what those specs use.
       class Ask

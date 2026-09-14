@@ -382,7 +382,7 @@ module Lain
         def initialize(content)
           @content = content
           @pieces = content.is_a?(String) ? [Piece.new(text: content, key: nil)] : content.map { piece_of(_1) }
-          @detected = @pieces.map { |piece| piece && Sensitivity::Regions.detect(piece.text) }
+          @detected = @pieces.map { |piece| piece && ::Lain::Sensitivity::Regions.detect(piece.text) }
           freeze
         end
 
@@ -438,7 +438,7 @@ module Lain
         # path and a survey would drift on what a masked file looks like.
         # `ordinals` is threaded through so the numbering stays consecutive ACROSS
         # the pieces of one result.
-        def redact(piece, hidden, ordinals) = Sensitivity::Masking.render(piece, hidden, ordinals:)
+        def redact(piece, hidden, ordinals) = ::Lain::Sensitivity::Masking.render(piece, hidden, ordinals:)
 
         # Written back under the key it was READ from, never a hardcoded one --
         # see {#piece_of}. A nil key means the element WAS the String, so the

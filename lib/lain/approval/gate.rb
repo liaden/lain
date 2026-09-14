@@ -134,7 +134,7 @@ module Lain
     #   a whole stage of work. An issue's acceptance criteria are gated HERE
     #   too, composed into that issue's plan, rather than by a gate of their
     #   own that could approve criteria no plan was written to.
-    # * {Effect::Handler::Gate} gates one TOOL CALL at interpretation time,
+    # * {Middleware::Gate} gates one TOOL CALL at interpretation time,
     #   through a `#call(effect, context) -> Boolean` policy seam. It knows
     #   nothing about artifacts or digests.
     #

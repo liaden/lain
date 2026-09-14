@@ -8,7 +8,7 @@ module Lain
     # The terminal surface of {Lain::Approval::Queue}: prompts a human y/N for
     # each {Approval::Queue::Pending} it draws from the queue and decides it.
     #
-    # One watcher among several, first answer winning: {Effect::Handler::Gate}
+    # One watcher among several, first answer winning: {Middleware::Gate}
     # holds the queue and the gated fiber parks there, which is what lets a
     # Neovim view coexist. It lives in Frontend because asking the question IS
     # the terminal write; the queue, which touches no IO, lives in lib proper.

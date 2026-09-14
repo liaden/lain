@@ -252,7 +252,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
   # {Lain::Compaction::Strategy::Summarizing#question} is `Canonical.dump`
   # of the span, a bare String, while the router routes on `#tool_name` --
   # which only {Lain::Summarizer::Result} carries, and which only
-  # {Lain::Effect::Handler::Summarizing::Observer} ever builds, per tool
+  # {Lain::Compaction::SummaryObserver} ever builds, per tool
   # result. So a router wrapped around this tier falls straight through on
   # every span and changes nothing.
   #

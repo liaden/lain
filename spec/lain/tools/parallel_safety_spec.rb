@@ -90,7 +90,7 @@ RSpec.describe "Tool#parallel_safe? across the shipped toolset" do
         [ParallelSafetySpecSupport::GatedFakeTool.new(name: "fake_a", entered:, release:),
          ParallelSafetySpecSupport::GatedFakeTool.new(name: "fake_b", entered:, release:)]
       )
-      runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+      runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:)
       response = tool_response(["tu_1", "fake_a", {}], ["tu_2", "fake_b", {}])
 
       Sync do |_task|

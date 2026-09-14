@@ -243,9 +243,7 @@ RSpec.describe Lain::Toolset do
     # The reason this is a security defect and not a curiosity: these two
     # messages are the production authorization path, and a dropped tool runs.
     it "still dispatches the dropped tool through the live handler" do
-      handler = Lain::Effect::Handler::Live.new(toolset: child)
-      effect = Lain::Effect::ToolCall.new(name: "bash", input: {}, tool_use_id: "tu_1")
-      result = handler.call(effect, Lain::Session::Null.instance)
+      result = dispatch_call("bash", {}, toolset: child, context: Lain::Session::Null.instance)
 
       aggregate_failures do
         expect(child.include?("bash")).to be(true)

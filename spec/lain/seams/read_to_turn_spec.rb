@@ -16,7 +16,7 @@ require "tmpdir"
 # deliberately absent: it is a witness to this defect, not a participant.
 RSpec.describe "a tier-1 read reaching the Timeline", :seam do
   let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
-  let(:handler) { Lain::Effect::Handler::Live.new(toolset:) }
+  let(:handler) { Lain::Effect::Handler::Live.new }
   let(:runner) { Lain::Agent::ToolRunner.new(handler:, toolset:) }
   let(:session) { Lain::Session.new }
   let(:path) { binary_file }

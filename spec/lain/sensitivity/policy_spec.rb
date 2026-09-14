@@ -152,7 +152,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     # Not ordinary, rather than `gated?`: a DENIED path answers false to
     # Verdict#gated?, so a policy asking that question would wave `~/.ssh/id_rsa`
     # straight through -- ungating the most sensitive class of path there is.
-    # {Effect::Handler::Sensitivity} refuses a denial outright and is a
+    # {Middleware::Sensitivity} refuses a denial outright and is a
     # different card; until it lands this is all there is, and after it lands a
     # gate on a denied path costs at most one prompt for a file already refused.
     it "gates a denied path too, since a denial is not ordinary either" do
@@ -186,7 +186,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     # SYNCHRONOUS dispatch path BEFORE {Tool::Input} validation -- so whatever
     # the provider sent arrives here first. Indexing a non-Hash with a String is
     # `Array#[]("path")`, a TypeError, and `nil["path"]` is a NoMethodError:
-    # both escape {Effect::Handler::Gate#gated_tool_call?}, where nothing raised
+    # both escape {Middleware::Gate#call}, where nothing raised
     # before this card, because the earlier gate read only `effect.name`.
     #
     # A raise here fails the turn, and the repair somebody reaches for under

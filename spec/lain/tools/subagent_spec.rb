@@ -1567,7 +1567,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     it "sends the child's read of .env through the same approval policy its parent asks" do
-      result = child_reads(secret, gate_policy: Lain::Effect::Handler::Gate::DenyAll.new, sensitivity:)
+      result = child_reads(secret, gate_policy: Lain::Middleware::Gate::DenyAll.new, sensitivity:)
 
       expect(result["is_error"]).to be(true)
       expect(result["content"]).to include("approval denied")
@@ -1579,7 +1579,7 @@ RSpec.describe Lain::Tools::Subagent do
     # assertion that only pinned the refusal would pass against a gate that
     # refused every read there is.
     it "leaves the same read ungated when no sensitivity policy travelled the seam" do
-      result = child_reads(secret, gate_policy: Lain::Effect::Handler::Gate::DenyAll.new)
+      result = child_reads(secret, gate_policy: Lain::Middleware::Gate::DenyAll.new)
 
       expect(result["is_error"]).to be(false)
       expect(result["content"]).to include("TOKEN=shhh")
@@ -1589,7 +1589,7 @@ RSpec.describe Lain::Tools::Subagent do
       ordinary = File.join(tmpdir, "notes.md")
       File.write(ordinary, "nothing secret")
 
-      result = child_reads(ordinary, gate_policy: Lain::Effect::Handler::Gate::DenyAll.new, sensitivity:)
+      result = child_reads(ordinary, gate_policy: Lain::Middleware::Gate::DenyAll.new, sensitivity:)
 
       expect(result["is_error"]).to be(false)
       expect(result["content"]).to include("nothing secret")
@@ -1629,7 +1629,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     it "gates a GRANDCHILD's read of .env, two spawns deep" do
-      refusal = grandchild_result(gate_policy: Lain::Effect::Handler::Gate::DenyAll.new, sensitivity:)
+      refusal = grandchild_result(gate_policy: Lain::Middleware::Gate::DenyAll.new, sensitivity:)
 
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to include("approval denied")
@@ -1638,7 +1638,7 @@ RSpec.describe Lain::Tools::Subagent do
     # The control, without which a probe that gated every read there is would
     # score as a pass at this depth too.
     it "hands the grandchild the bytes when no policy travelled the seam" do
-      leaked = grandchild_result(gate_policy: Lain::Effect::Handler::Gate::DenyAll.new)
+      leaked = grandchild_result(gate_policy: Lain::Middleware::Gate::DenyAll.new)
 
       expect(leaked["is_error"]).to be(false)
       expect(leaked["content"]).to include("TOKEN=shhh")
@@ -1647,8 +1647,8 @@ RSpec.describe Lain::Tools::Subagent do
     # ---- A DENIED path, which no approval lifts at any depth ----------------
     #
     # The examples above prove a child's gate ASKS. This proves the child's
-    # chain also REFUSES outright, which is a different handler
-    # ({Effect::Handler::Sensitivity}) composed by the same {ChildBuilder#gated}
+    # stack also REFUSES outright, which is a different layer
+    # ({Middleware::Sensitivity}) built by the same {ChildBuilder#gated}
     # from the same seam. Wired into `Switchboard#gate` alone it would reach
     # every parent and no child, so a subagent could read what its parent may
     # not -- the same inversion closed above, one axis over.
@@ -1665,72 +1665,16 @@ RSpec.describe Lain::Tools::Subagent do
         path
       end
 
-      def builder(sensitivity:, gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new)
-        Lain::Tools::Subagent::ChildBuilder.new(
-          seam: Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context },
-                                                parent: -> { parent }, gate_policy:, sensitivity:,
-                                                tool_middleware: ToolRegistry::UNGUARDED),
-          toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]),
-          policy: spawn_policy, budget: Lain::Agent::Budget.new
-        )
-      end
-
-      def handler_of(agent) = agent.send(:tool_runner).instance_variable_get(:@handler)
-
-      # LEVEL 1 -- the composition itself.
-      it "composes the denial handler OUTSIDE the child's gate, over one policy object" do
-        chain = builder(sensitivity:).send(:gated, Lain::Effect::Handler::Mock.new)
-
-        expect(chain).to be_a(Lain::Effect::Handler::Sensitivity)
-        expect(chain.instance_variable_get(:@inner)).to be_a(Lain::Effect::Handler::Gate)
-        expect(chain.instance_variable_get(:@sensitivity)).to equal(sensitivity)
-        expect(chain.instance_variable_get(:@inner).instance_variable_get(:@sensitivity)).to equal(sensitivity)
-      end
-
-      # LEVEL 2 -- the handler a really built child Agent holds, and the same
-      # under the refusing posture, where the gated chain is WRAPPED.
-      it "is the handler a built child Agent actually runs behind" do
-        child = builder(sensitivity:).build(parent, ceiling: 1).agent
-
-        expect(handler_of(child)).to be_a(Lain::Effect::Handler::Sensitivity)
-        expect(handler_of(child).call(Lain::Effect::ToolCall.new(tool_use_id: "r1", name: "read_file",
-                                                                 input: { "path" => secret }), invocation))
-          .to have_attributes(is_error: true)
-      end
-
-      it "stays INSIDE RefusingHandler on the union posture, where the chain is wrapped" do
-        child = Lain::Tools::Subagent::ChildBuilder.new(
-          seam: Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context },
-                                                parent: -> { parent }, sensitivity:,
-                                                tool_middleware: ToolRegistry::UNGUARDED),
-          toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]),
-          policy: spawn_policy(posture: :handler_union), budget: Lain::Agent::Budget.new
-        ).build(parent, ceiling: 1).agent
-
-        expect(handler_of(child)).to be_a(Lain::Tools::Subagent::RefusingHandler)
-        expect(handler_of(child).instance_variable_get(:@inner)).to be_a(Lain::Effect::Handler::Sensitivity)
-      end
-
-      # LEVEL 3 -- through the LIVE delegator, which is what production wires:
-      # the child's chain and the parent's must resolve the SAME policy object,
-      # or the two can be told different things about which paths are denied.
-      it "resolves, through the board delegator, the very policy the parent's chain holds" do
-        board = Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new),
-                                           model: "m", sensitivity:,
-                                           toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]))
-        live = Lain::CLI::Wiring::ToolsetBuild::LiveSensitivity.new(board: -> { board })
-        child_chain = builder(sensitivity: live).send(:gated, Lain::Effect::Handler::Mock.new)
-
-        expect(board.gate(inner: Lain::Effect::Handler::Mock.new)
-                    .instance_variable_get(:@sensitivity)).to equal(sensitivity)
-        expect(child_chain.instance_variable_get(:@sensitivity).board.call.sensitivity).to equal(sensitivity)
-      end
-
+      # The layer composition itself -- which layer sits outside which, over
+      # one policy object, on both postures and through the board delegator --
+      # is pinned in spec/lain/tools/subagent_gate_spec.rb against the stack a
+      # built child really holds. What stays here is the behaviour at depth.
+      #
       # LEVEL 4 -- a real spawn, a real ReadFile, and the bytes really on disk.
       # ApproveAll on purpose: the point is that approving everything does not
       # lift this, so the gate axis cannot be what produced the refusal.
       it "refuses a CHILD's read of a denied path though its gate approves everything" do
-        result = child_reads(secret, gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new, sensitivity:)
+        result = child_reads(secret, gate_policy: Lain::Middleware::Gate::ApproveAll.new, sensitivity:)
 
         expect(result["is_error"]).to be(true)
         expect(result["content"]).to include("protected path", secret)
@@ -1740,7 +1684,7 @@ RSpec.describe Lain::Tools::Subagent do
       # The control. Without it an assertion that only pinned the refusal would
       # pass against a chain that refused every read there is.
       it "hands the child the bytes when no policy travelled the seam" do
-        leaked = child_reads(secret, gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new)
+        leaked = child_reads(secret, gate_policy: Lain::Middleware::Gate::ApproveAll.new)
 
         expect(leaked["is_error"]).to be(false)
         expect(leaked["content"]).to include("hunter2")
@@ -1750,7 +1694,7 @@ RSpec.describe Lain::Tools::Subagent do
         ordinary = File.join(tmpdir, "notes.md")
         File.write(ordinary, "nothing secret")
 
-        result = child_reads(ordinary, gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new, sensitivity:)
+        result = child_reads(ordinary, gate_policy: Lain::Middleware::Gate::ApproveAll.new, sensitivity:)
 
         expect(result["is_error"]).to be(false)
         expect(result["content"]).to include("nothing secret")
@@ -1759,7 +1703,7 @@ RSpec.describe Lain::Tools::Subagent do
       # THE inversion test: the DEEPEST agent in the run, the least supervised
       # one, reached through a seam COPY that `descend` rebuilt.
       it "refuses a GRANDCHILD's read of a denied path, two spawns deep" do
-        refusal = grandchild_result(gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new, sensitivity:)
+        refusal = grandchild_result(gate_policy: Lain::Middleware::Gate::ApproveAll.new, sensitivity:)
 
         expect(refusal["is_error"]).to be(true)
         expect(refusal["content"]).to include("protected path", secret)
@@ -1767,7 +1711,7 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       it "hands the grandchild the bytes when no policy travelled the seam" do
-        leaked = grandchild_result(gate_policy: Lain::Effect::Handler::Gate::ApproveAll.new)
+        leaked = grandchild_result(gate_policy: Lain::Middleware::Gate::ApproveAll.new)
 
         expect(leaked["is_error"]).to be(false)
         expect(leaked["content"]).to include("hunter2")
@@ -2487,7 +2431,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     # The muted path must not leave the PARENT's asker standing. Under
     # `handler_union` the union is what the child is SHOWN and what
-    # {Effect::Handler::Live} dispatches against, so an `ask_human` surviving
+    # {Agent::ToolRunner} resolves calls against, so an `ask_human` surviving
     # there is the parent's own -- reachable by the very child the posture
     # just muted, and resolving into the parent's {AskHuman::Outstanding}.
     it "strips the parent's asker from the dispatch union too when the posture mutes it" do

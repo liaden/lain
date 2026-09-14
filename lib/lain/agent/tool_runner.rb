@@ -27,11 +27,7 @@ module Lain
       # {#result_block} emits the four keys gate 4 pins, and that block is the
       # `tool_result` the provider receives.
       #
-      # {Effect::Handler::Summarizing::Observer} is the mount production should
-      # use. It and the {Effect::Handler::Summarizing} decorator are
-      # ALTERNATIVES, never both against one {Oracle::Eager}: the decorator fires
-      # from inside the handler chain, i.e. inside {#gather}, and would consume
-      # each digest before this seam is ever offered the result.
+      # {Compaction::SummaryObserver} is the mount production uses.
       module Observer
         # Observes nothing, so a ToolRunner built without one behaves exactly as
         # it did before the seam existed.
@@ -213,8 +209,9 @@ module Lain
       end
       private_class_method :refuse_mute_runner
 
-      # `toolset:` exists for {#answered_questions}' harvest alone -- dispatch
-      # still routes through `handler`, never a direct tool lookup.
+      # `toolset:` is what a call's name resolves against -- ONCE per call, in
+      # {#dispatch} -- and what {#answered_questions} harvests from. `handler`
+      # interprets the tool that resolution found; it holds no toolset itself.
       def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new,
                      observer: Observer::Null.new)
         @handler = handler
@@ -375,19 +372,18 @@ module Lain
                 .flat_map(&:take_answered_questions)
       end
 
-      # The safety decision's single owner: one handler-chain lookup per distinct
+      # The safety decision's single owner: one toolset lookup per distinct
       # tool name per turn, consulted via `fetch` (so an unlisted name fails
       # loudly) by BOTH {#contiguous_runs} and {#gatherable?} -- no second
       # derivation that could disagree with the partition and downgrade a safe
-      # run to sequential. Names the chain does not hold map to false: never
-      # parallel-safe. Per-TURN on purpose, never per-runner: deferred disclosure
-      # can add tools mid-session, so a name's answer is only stable within one
-      # turn.
+      # run to sequential. A name the set does not hold resolves to
+      # {Toolset::Unheld}, never parallel-safe. Per-TURN on purpose, never
+      # per-runner: deferred disclosure can add tools mid-session, so a name's
+      # answer is only stable within one turn.
       #
       # @return [Hash{String => Boolean}]
       def safety_by_name(uses)
-        uses.map(&:name).uniq
-            .to_h { |name| [name, @handler.tool_named(name)&.parallel_safe? || false] }
+        uses.map(&:name).uniq.to_h { |name| [name, resolved(name).parallel_safe?] }
       end
 
       # `chunk_while` is exactly this partition: a chunk extends only while both
@@ -443,6 +439,15 @@ module Lain
         answers.answered(tool_use, Tool::ResultBlock.of(dispatch(tool_use, context), tool_use_id: tool_use.id).to_h)
       end
 
+      # The tool is resolved HERE and rides the env as `tool:`, so every layer
+      # that judges the call reads the object the interpreter would run. That
+      # holds by POSITION, not by construction: a layer sitting between the
+      # gate and the interpreter could rewrite `:effect` or `:tool` after
+      # approval, so the gate must be the last layer before the interpreter.
+      #
+      # This is also the one place the stack meets its interpreter -- the
+      # innermost app writes the handler's answer to `:result`, which the
+      # layers on the way out can observe.
       def dispatch(tool_use, context)
         effect = Effect::ToolCall.new(
           tool_use_id: tool_use.id,
@@ -452,7 +457,38 @@ module Lain
           # `input` as a raw String.
           input: tool_use.input
         )
-        @middleware.call({ effect:, context: }, &@handler.to_app).result
+        @middleware.call({ effect:, context:, tool: resolved(effect.name) }) do |env|
+          env.merge(result: interpreted(effect.name, env))
+        end.result
+      end
+
+      # Approval can take as long as a human takes, and a `/mode` flip in that
+      # window may withdraw the capability being asked about. So the set is
+      # read once more at the interpreter end, and the call reaches the handler
+      # only if the name still resolves to the VERY object the stack judged;
+      # otherwise it is refused exactly as a name the set never held. The same
+      # identity test refuses a `:tool` some layer swapped in, since the name
+      # is the call's own and not the env's.
+      #
+      # A name held at neither read is unchanged too, and goes to the handler:
+      # `Live` refuses it by that same sentence, and a `Mock` answers it canned.
+      # "Held at neither" means the env still carries the {Toolset::Unheld}
+      # VALUE for this name -- equal by name, since each read mints its own --
+      # and not merely some object that answers `held?` false.
+      def interpreted(name, env)
+        return @handler.call(env) if unchanged?(resolved(name), env.fetch(:tool))
+
+        Toolset::Unheld.new(name).call(nil)
+      end
+
+      def unchanged?(fresh, judged) = fresh.equal?(judged) || (!fresh.held? && fresh == judged)
+
+      # One read of the set, so a live toolset moving under a `/mode` flip
+      # cannot answer "held" to one question and raise on the next.
+      def resolved(name)
+        @toolset.fetch(name)
+      rescue Toolset::UnknownTool
+        Toolset::Unheld.new(name)
       end
     end
   end

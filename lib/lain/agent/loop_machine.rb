@@ -19,7 +19,7 @@ module Lain
     # test rather than a run.
     #
     # `:awaiting_approval` has no incoming event yet; it is where
-    # `Effect::Handler::Gate` will land, declared now so the state set is
+    # `Middleware::Gate` will land, declared now so the state set is
     # complete and the generated diagram is honest about it.
     #
     # Why `state_machines` and not ActiveModel validations: validations gate

@@ -17,7 +17,7 @@ module Lain
     # landing mid-turn cannot change the bytes this turn's prompt is built from.
     #
     # It is keyed exactly as the Eager is -- by the SOURCE digest
-    # {Effect::Handler::Summarizing} fires under -- so there is one key notion
+    # {SummaryObserver} fires under -- so there is one key notion
     # here and no translation layer to drift.
     #
     # ALWAYS BUILD ONE WITH {.take}. `.new(summaries:)` is public only so that
@@ -30,8 +30,8 @@ module Lain
     #
     # THE INVARIANT: nothing disappears unattested. Every tool_result of one
     # assistant turn is committed into ONE user message, so the ordinary
-    # parallel-tools turn is a message whose blocks did not all cross
-    # Summarizing's byte threshold. Rendering such a message as a single body
+    # parallel-tools turn is a message whose blocks were not all summarized.
+    # Rendering such a message as a single body
     # would let the un-summarized blocks vanish behind a line reading as a
     # complete summary of the turn. So the rendering is per BLOCK, and a reader
     # can always tell what was there and fetch the original by address.
@@ -62,7 +62,7 @@ module Lain
       # The EXACT shape `Canonical.digest` emits, measured from a real digest
       # rather than hardcoded, so it tracks the algorithm. Length and case are
       # both load-bearing: `blake3:a` and an uppercased digest satisfy a looser
-      # `\h+` pattern yet can never equal a key Summarizing fired.
+      # `\h+` pattern yet can never equal a key {SummaryObserver} fired.
       #
       # Measured on FIRST USE, not in the class body: `Canonical.digest` reaches
       # into the Rust extension, which `lain.rb` requires AFTER this unit, so
@@ -89,7 +89,7 @@ module Lain
           content.is_a?(Array) ? content : []
         end
 
-        # Byte-for-byte the key {Effect::Handler::Summarizing} fires under: the
+        # Byte-for-byte the key {SummaryObserver} fires under: the
         # digest of the Tool::Result's String, which the committed message
         # carries verbatim inside its tool_result block. A spec proves the round
         # trip end to end; if it broke, every lookup would miss in silence.

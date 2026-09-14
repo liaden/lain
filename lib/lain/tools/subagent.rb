@@ -374,12 +374,12 @@ module Lain
       # for {NO_OBSERVER}'s reason.
       #
       # APPROVING rather than denying, deliberately against
-      # {Effect::Handler::Gate}'s own fail-closed default: a child spawned by a
+      # {Middleware::Gate}'s own fail-closed default: a child spawned by a
       # harness that never wired a queue has no surface to answer a question, so
       # the roles the harness spawns UNATTENDED would park or refuse forever.
       # Absence means "this seam was never taught about a gate", not "deny"; a
       # caller that wants the session's gate passes it.
-      UNGATED = Effect::Handler::Gate::ApproveAll.new.freeze
+      UNGATED = Middleware::Gate::ApproveAll.new.freeze
 
       # The path axis a seam was never taught about: nothing is sensitive, which
       # is byte-for-byte what a child did before the path boundary existed.
@@ -391,7 +391,7 @@ module Lain
       UNJUDGED = Sensitivity::Policy::Null.instance
 
       # The refusal SENTENCE a seam was never taught about: whatever
-      # {Effect::Handler::Gate} says on its own.
+      # {Middleware::Gate} says on its own.
       #
       # A THUNK, like `context_factory` and unlike the Null objects above, for
       # that member's reason: the live one reads a {CLI::Switchboard} that does
@@ -404,7 +404,7 @@ module Lain
       # axis: that one answers for a path that may not be touched at all, this
       # one for a call that COULD have been approved by a human who is not
       # there. The word is taken twice; read which object is being asked.
-      GENERIC_DENIAL = -> { Effect::Handler::Gate::DENIAL }
+      GENERIC_DENIAL = -> { Middleware::Gate::DENIAL }
 
       # The ask-the-human seam a spawn was never taught about: there is no
       # queue and no desktop for a question to reach, at ANY depth an
@@ -1127,17 +1127,28 @@ module Lain
         # parent's Session, so the child's read-set starts empty by
         # construction.
         #
-        # Its tool phase is whatever guard the seam names, built for THIS child:
-        # a chat's is the parent's own stack over the parent's board, so a
-        # child's read is masked, parked and released exactly as the parent's.
+        # Its tool phase is whatever guard the seam names, built for THIS child,
+        # with the child's gating layers appended: a chat's guard is the
+        # parent's own stack over the parent's board, so a child's read is
+        # masked, parked and released exactly as the parent's. A NEW stack
+        # rather than a `#use` on the guard's, which the seam's thunk may share.
+        #
+        # The interpreter is a bare {Effect::Handler::Live}: the runner resolves
+        # each call against the RENDERED toolset -- the attenuated set under
+        # `schema`, the descended union under `handler_union` -- so a permitted
+        # nested subagent runs at its decremented ceiling.
         def spawn_agent(chain, union, allowed, worker_env)
           Agent.new(
             provider: @seam.provider, context: child_context,
-            toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
+            toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain),
-            tool_middleware: @seam.tool_middleware.call(worker_env),
+            tool_middleware: child_stack(worker_env, allowed),
             session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
           )
+        end
+
+        def child_stack(worker_env, allowed)
+          Middleware::Stack.new([*@seam.tool_middleware.call(worker_env).to_a, *child_gate(allowed)])
         end
 
         # The child's turns, into the session record, per ITERATION rather than
@@ -1163,11 +1174,9 @@ module Lain
           @policy.prefix.child_context(@persona.child_context(@seam.context_factory.call), journal: @seam.journal)
         end
 
-        # `schema` renders the attenuated set, so a plain executor suffices;
-        # `handler_union` renders the shared union, so the RefusingHandler
-        # enforces the `only`-set the model can see but must not use. Both
-        # dispatch against the DESCENDED union, never the injected toolset, so a
-        # permitted nested subagent runs at its decremented ceiling. Both run
+        # `schema` renders the attenuated set, so the gate alone suffices;
+        # `handler_union` renders the shared union, so {Middleware::RefuseUnpermitted}
+        # enforces the `only`-set the model can see but must not use. Both run
         # behind {#gated}.
         #
         # Under `handler_union` a `plan`-mode child is SHOWN tools the posture
@@ -1177,11 +1186,10 @@ module Lain
         # the guarantee. What plan promises is that the child cannot DISPATCH a
         # mutating tool: `schema` withholds the name, `handler_union` shows it
         # and refuses it, and neither can dispatch it.
-        def child_handler(union, allowed)
-          return gated(Effect::Handler::Live.new(toolset: allowed)) unless @policy.posture.refuses_over_union?
+        def child_gate(allowed)
+          return gated unless @policy.posture.refuses_over_union?
 
-          RefusingHandler.new(allowed: allowed.names, journal: @seam.journal,
-                              inner: gated(Effect::Handler::Live.new(toolset: union)))
+          [Middleware::RefuseUnpermitted.new(allowed: allowed.names, journal: @seam.journal), *gated]
         end
 
         # The session's approval gate in front of the child's executor: a child
@@ -1190,12 +1198,12 @@ module Lain
         # denial arrives as an is_error {Tool::Result}, never a raise, which is
         # what keeps the child's loop running rather than wedging on a refusal.
         #
-        # Composed INSIDE the RefusingHandler above, not around it, and the
-        # order is the point: a call the child was never attenuated to must be
-        # refused outright, not parked for a human who would then watch it be
+        # Layered INSIDE the unpermitted-call refusal above, not around it, and
+        # the order is the point: a call the child was never attenuated to must
+        # be refused outright, not parked for a human who would then watch it be
         # refused anyway. Under `schema` there is no refusal layer to sit behind
-        # -- a name outside the rendered set resolves to no tool, so the gate
-        # declines and {Effect::Handler::Live} reports the unknown tool.
+        # -- a name outside the rendered set resolves to {Toolset::Unheld}, so
+        # the gate lets it pass and the interpreter reports the unknown tool.
         #
         # BOTH gating axes ride the seam, and the sensitivity half is not
         # optional: a child gate built without the session's sensitivity policy
@@ -1210,12 +1218,12 @@ module Lain
         # reads that as a human's no, invites a retry, and retries for the life
         # of a run where nobody can ever answer. Resolved HERE, once per child
         # chain, because the board exists by spawn time and cannot change after.
-        def gated(inner)
-          Effect::Handler::Sensitivity.new(
-            sensitivity: @seam.sensitivity, journal: @seam.journal,
-            inner: Effect::Handler::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity, inner:,
-                                             denial: @seam.denial.call)
-          )
+        #
+        # @return [Array<Middleware::Base>] the path refusal, then the gate
+        def gated
+          [Middleware::Sensitivity.new(sensitivity: @seam.sensitivity, journal: @seam.journal),
+           Middleware::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity,
+                                denial: @seam.denial.call)]
         end
       end
     end
@@ -1227,6 +1235,5 @@ end
 require_relative "subagent/log"
 require_relative "subagent/lineage"
 require_relative "subagent/turn_feed"
-require_relative "subagent/refusing_handler"
 require_relative "subagent/actor"
 require_relative "subagent/stagger"

@@ -282,9 +282,9 @@ class WiringAgentSpecBoard
     )
   end
 
-  def gate(inner:)
-    @gate_calls << inner
-    Lain::Effect::Handler::Gate.new(policy: Lain::Tools::Subagent::UNGATED, inner:)
+  def gate
+    [Lain::Middleware::Sensitivity.new(sensitivity:),
+     Lain::Middleware::Gate.new(policy: Lain::Tools::Subagent::UNGATED, sensitivity:)].tap { |layers| @gate_calls << layers }
   end
 
   def graft(context)
@@ -1145,7 +1145,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(decisions.map(&:compacted)).to include(true)
     end
 
-    # End to end: the tool result crosses Summarizing's threshold, the
+    # End to end: a tool result is offered to the summarizer, the
     # post-dispatch observer fires a summary into the run's Eager, and the next
     # render -- which compacts, because the cache is cold -- carries the FIRED
     # TEXT where an unwired run would carry an elision line.
@@ -2968,10 +2968,13 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # an unreleased region is masked out of a read in the same phase, before its
     # bytes can reach an Event or the prompt-cache prefix, and a sensitive path
     # is dropped out of a listing before the enumeration is believed.
-    it "puts all three secret guards, then the test layout guard, in the tool phase" do
+    # ...and then the board's two gating layers, innermost, so a secret write
+    # is refused before a human is ever asked about it.
+    it "puts all three secret guards, then the test layout guard, then the board's gate, in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     # An unattended run leaves {Lain::CLI::Switchboard#approvals} nil, and the
@@ -3049,10 +3052,17 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       expect(agent.context).to be(board.grafted.first)
     end
 
-    it "wraps a Live executor over the board's toolset in the board's own gate" do
-      build
+    # The stack's order is inspectable end to end: the four guards, the path
+    # refusal, the approval gate, and the interpreter last -- a bare Live,
+    # because everything that may refuse a call is a layer in front of it.
+    it "runs the guards, then the board's own gate layers, then a bare Live interpreter" do
+      runner = build.send(:tool_runner)
 
-      expect(board.gate_calls.map(&:class)).to eq([Lain::Effect::Handler::Live])
+      expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+      expect(runner.middleware.to_a.last(2)).to eq(board.gate_calls.last)
     end
 
     it "seeds the Agent with a resumed Timeline when one is passed" do
@@ -3222,7 +3232,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
 
       expect(resolved.approvals).to be(wiring.approvals)
       expect(resolved.policy_switch.current).to be_a(Lain::Approval::Escalation)
-      expect(resolved.policy_switch.current).not_to be_a(Lain::Effect::Handler::Gate::ApproveAll)
+      expect(resolved.policy_switch.current).not_to be_a(Lain::Middleware::Gate::ApproveAll)
     end
 
     # The third axis, over the SAME seam and the SAME thunk. It matters that

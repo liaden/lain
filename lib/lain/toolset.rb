@@ -107,7 +107,7 @@ module Lain
     # parent already holds.
     #
     # The boundary covers the MODEL-FACING surface: the rendered schema and the
-    # `#include?`/`#fetch` pair {Effect::Handler::Live} authorizes with. It is
+    # `#include?`/`#fetch` pair {Agent::ToolRunner} resolves a call with. It is
     # NOT a claim about the Ruby object graph -- `only(:subagent)
     # .fetch("subagent").attenuates_from` hands back the whole un-attenuated
     # union. Reaching a tool's own constructor arguments in-process is not the
@@ -166,3 +166,4 @@ module Lain
 end
 
 require_relative "toolset/disclosure"
+require_relative "toolset/unheld"

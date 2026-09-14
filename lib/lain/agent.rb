@@ -396,7 +396,7 @@ module Lain
     end
 
     def built_tool_runner(given)
-      ToolRunner.new(handler: given.fetch(:handler) { Effect::Handler::Live.new(toolset: @toolset) },
+      ToolRunner.new(handler: given.fetch(:handler) { Effect::Handler::Live.new },
                      middleware: given.fetch(:tool_middleware) { @instrumentation.tool_middleware },
                      toolset: @toolset,
                      observer: given.fetch(:tool_observer) { @instrumentation.tool_observer })

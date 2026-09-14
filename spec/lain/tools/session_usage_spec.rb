@@ -199,10 +199,8 @@ RSpec.describe Lain::Tools::SessionUsage do
     # reason: asserting on the exception alone would pass for a refusal the
     # model reads as `undefined method 'usage' for nil`.
     it "reaches the model as an error result that says why, not as a bare NoMethodError" do
-      toolset = Lain::Toolset.new([described_class.new(usage: nil)])
-      handler = Lain::Effect::Handler::Live.new(toolset:)
-
-      result = handler.call(Lain::Effect::ToolCall.new(name: "session_usage", input: {}, tool_use_id: "t1"))
+      result = dispatch_call("session_usage", {}, id: "t1",
+                                                  toolset: Lain::Toolset.new([described_class.new(usage: nil)]))
 
       expect(result).not_to be_ok
       expect(result.content).to match(/not wired to a running agent/i)

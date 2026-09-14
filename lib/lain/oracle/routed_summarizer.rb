@@ -48,8 +48,8 @@ module Lain
       #
       # == It gates a ROUTED source alone, and #ask can therefore answer nil
       #
-      # A source carrying a tool name is what {Effect::Handler::Summarizing::
-      # Observer} fires unbidden, and it reaches {Oracle::Eager}, whose `#held`
+      # A source carrying a tool name is what {Compaction::SummaryObserver}
+      # fires unbidden, and it reaches {Oracle::Eager}, whose `#held`
       # ALREADY means "no summary" by nil -- so a decline there renders as the
       # attested elision line a miss always rendered.
       #
@@ -169,8 +169,8 @@ module Lain
         # so bare text goes straight to the model tier, question untouched --
         # where it went before this tier existed, and where a caller reading
         # `.summary` still finds one. A mount that FORGOT the name fails loudly
-        # where the name is: {Effect::Handler::Summarizing::Observer#observe}
-        # requires it as an argument.
+        # where the name is: {Compaction::SummaryObserver#observe} requires it
+        # as an argument.
         #
         # `inputs` UNTOUCHED, deliberately: a source answering `#text` but not
         # `#tool_name` cannot be routed, so it reaches {Definition#render}'s named

@@ -2,7 +2,7 @@
 
 # Forge::Gh::Recorded is the replay half of the pair: the same four verbs,
 # answered out of journaled `forge_outcome` records instead of out of a
-# subprocess. It is Effect::Handler::Recorded's doctrine applied to the forge
+# subprocess. It is exact replay applied to the forge
 # tier -- a call it has no recording for is DECLINED, never invented, so a replay
 # miss falls through to whatever is behind it or refuses loudly.
 #

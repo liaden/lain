@@ -28,7 +28,7 @@ module Lain
       module ClassMethods
         # Something that must hold *before* the tool runs, checked against
         # `(input, invocation)` -- the SAME {Tool::Invocation} the tool's
-        # `#perform` receives (see {Effect::Handler::Live#dispatch}), so the
+        # `#perform` receives (see {Effect::Handler::Live}), so the
         # caller-threaded context (e.g. a session read-set) is reached through
         # `invocation.context`, not off the Invocation directly. A false predicate
         # raises {Tool::ContractViolation}, so the model learns of the violation

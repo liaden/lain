@@ -73,7 +73,7 @@ module Lain
     # Which arm a gated shell call ran on, and why -- the Journal's only account
     # of arm selection when no ladder ran. The gate journals a `shell verdict`
     # line from inside its escalation record, but `/mode auto` resolves the gate
-    # to {Effect::Handler::Gate::ApproveAll}, which consults no rung and writes
+    # to {Middleware::Gate::ApproveAll}, which consults no rung and writes
     # no escalation record, so without this one an `auto` session records nothing
     # about the choice at all.
     #

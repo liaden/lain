@@ -51,7 +51,7 @@ module Lain
   # boundary adds no confinement of its own -- the child runs on our uid, and
   # {WorkerEnv}'s posture carries over verbatim: the env map is an ADDITIVE
   # override with one removal lever, an explicit nil value. Real safety is the
-  # tool's `#requires_approval?` plus Effect::Handler::Gate.
+  # tool's `#requires_approval?` plus Middleware::Gate.
   module Exec
     # What ran, in the shape {Tools::Bash.render_output} reads. Both backends
     # return this rather than their transport's own object (mixlib's ShellOut,

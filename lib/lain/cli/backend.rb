@@ -338,14 +338,11 @@ module Lain
       end
 
       # The post-dispatch observer {Agent::ToolRunner} fires eager summaries
-      # through. {Effect::Handler::Summarizing::Observer} is the PRODUCTION
-      # mount and the {Effect::Handler::Summarizing} decorator its alternative
-      # -- never both against one {Oracle::Eager}, since `#fire` consumes a
-      # digest before spawning, so whichever fires first spends it and the other
-      # misses that content forever.
+      # through, over the run's ONE {Oracle::Eager} -- the store
+      # {#pipeline_source} snapshots.
       def tool_observer
         @tool_observer ||= if compaction?
-                             Effect::Handler::Summarizing::Observer.new(eager:)
+                             Compaction::SummaryObserver.new(eager:)
                            else
                              Agent::ToolRunner::Observer::Null.new
                            end

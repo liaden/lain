@@ -6,7 +6,7 @@ require "stringio"
 # {Oracle::Recorded.from_journal} substitutes the recorded answer on replay --
 # keyed by `(oracle_digest, question)`, with a MISS raising rather than silently
 # re-asking the model. The same "recorded is a replay of a real interpretation"
-# discipline as {Effect::Handler::Recorded} and {Grader::Refuter::Recorded}, one
+# discipline as {Grader::Refuter::Recorded}, one
 # tier over: keyed on the oracle's own content digest, so a changed schema (a
 # different digest) misses loudly instead of matching a stale answer.
 RSpec.describe Lain::Oracle::Recorded do
@@ -45,7 +45,7 @@ RSpec.describe Lain::Oracle::Recorded do
 
   # The {Journal.records} duck is an Enumerable of entries (lines or Hashes),
   # the `File.foreach(path)` shape every reader takes -- so split the StringIO's
-  # bytes into lines the way Handler::Recorded/Refuter::Recorded callers do.
+  # bytes into lines the way Refuter::Recorded callers do.
   def replay(definition: self.definition)
     described_class.from_journal(journal_io.string.each_line, definition:)
   end

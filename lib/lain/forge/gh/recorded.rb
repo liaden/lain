@@ -6,7 +6,7 @@ module Lain
       # Replays journaled {Outcome}s instead of shelling out. The same five verbs
       # as {Gh}, so a landing holds one or the other and never asks which.
       #
-      # {Effect::Handler::Recorded}'s doctrine at the forge tier: outcomes are
+      # Exact replay at the forge tier: outcomes are
       # keyed by `intent_id`, {#recorded?} is true only for addresses it holds,
       # and a MISS is declined -- passed to the inner executor, or refused loudly
       # when a caller supplied none. A replay miss is never turned into a made-up
@@ -114,9 +114,7 @@ module Lain
 
         def merge_state(number:) = @inner.merge_state(number:)
 
-        # @return [Boolean] whether this holds a recording for that address --
-        #   {Effect::Handler::Recorded#handles?}'s question, asked the way this
-        #   tier addresses things.
+        # @return [Boolean] whether this holds a recording for that address
         def recorded?(action:, params:) = @outcomes.key?(Intent.id_for(action:, params:))
 
         private

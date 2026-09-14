@@ -3,69 +3,47 @@
 module Lain
   module Effect
     class Handler
-      # Interprets effects by actually doing them: dispatches a {Effect::ToolCall}
-      # to the tool the {Lain::Toolset} holds under that name and runs it.
+      # Interprets a {Effect::ToolCall} by actually running the tool the env
+      # carries.
+      #
+      # It holds no {Lain::Toolset} and resolves no name: {Agent::ToolRunner}
+      # resolves the tool and hands that object to every layer of the stack and
+      # then to this, calling it only if the name still resolves to that same
+      # object. What a gate authorized is what runs here as long as the gate is
+      # the LAST layer before the interpreter -- a guarantee of position, since
+      # a layer after it could rewrite the call it approved. A name the toolset
+      # does not hold arrives as {Toolset::Unheld}, which refuses by name.
       #
       # This is where correctness gate 3 is enforced. A tool that raises must
-      # never propagate past the loop, so every dispatch is wrapped: any
+      # never propagate past the loop, so every run is wrapped: any
       # `StandardError` becomes a {Tool::Result} with `is_error: true`. The
       # raising happens honestly inside the tool (contracts stay Eiffel-strict);
       # the *conversion* happens here, once, at the boundary the loop trusts.
       #
-      # Live is the executor of last resort and does not itself gate on approval
-      # -- a deployment composes a {Gate} in front of it. So an
-      # {Effect::Approval} reaching Live is treated as already-approved,
-      # otherwise a stack with no approver would wedge on every gated call.
-      #
       # A tool's second argument is a {Tool::Invocation}, built here from the
-      # effect plus the injected `channel` -- never the bare context a caller
-      # threads through {#call}. That is what lets Tools::Bash attribute its
+      # effect plus the injected `channel` -- never the bare context the env
+      # threads through. That is what lets Tools::Bash attribute its
       # `live_stdout` bytes to the exact `tool_use_id` that asked for them.
       class Live < Handler
-        # @param toolset [Lain::Toolset] the capabilities this handler can dispatch
         # @param channel [Lain::Channel] where tool output is attributed; defaults
         #   to a Null Object so a deployment with no live consumer needs no guard
-        # @param inner [Lain::Effect::Handler, nil] fallback for other effect kinds
-        def initialize(toolset:, channel: Channel::Null.instance, inner: nil)
-          super(inner:)
-          @toolset = toolset
+        def initialize(channel: Channel::Null.instance)
+          super()
           @channel = channel
-        end
-
-        def handles?(effect) = effect.tool_call? || effect.approval?
-
-        # Dispatch and this lookup read the same `@toolset`, so a decorator that
-        # gates via {Handler#tool_named} is guaranteed to consult the map this
-        # handler will actually run against.
-        def tool_named(name)
-          return @toolset.fetch(name) if @toolset.include?(name)
-
-          super
-        end
-
-        protected
-
-        # The `case` over class is genuine dispatch on a CLOSED set -- the effect
-        # vocabulary is the algebra, and each arm is a distinct interpretation.
-        # A `rescue NoMethodError` else-arm was rejected: it would turn an effect
-        # this executor genuinely cannot perform into a silent swallow instead of
-        # the loud {UnhandledEffect}.
-        def perform(effect, context)
-          case effect
-          when Effect::Approval then call(effect.effect, context)
-          when Effect::ToolCall then dispatch(effect, context)
-          else raise UnhandledEffect, "#{self.class} cannot perform #{effect.class}"
-          end
         end
 
         private
 
-        def dispatch(effect, context)
-          invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context:, channel: @channel)
-          @toolset.fetch(effect.name).call(effect.input, invocation)
-        rescue Toolset::UnknownTool
-          # A tool this set does not hold is a failed call, not a crash.
-          Tool::Result.error("no tool named #{effect.name.inspect} is available")
+        # The tool is fetched OUTSIDE the rescue below: an env with no `:tool`
+        # is a wiring defect, and converting its KeyError into a tool_result
+        # would hand the model a sentence about our plumbing.
+        def interpret(effect, env)
+          invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context: env[:context], channel: @channel)
+          run(env.fetch(:tool), effect.input, invocation)
+        end
+
+        def run(tool, input, invocation)
+          tool.call(input, invocation)
         rescue StandardError => e
           # Correctness gate 3: a failing tool returns a tool_result with
           # is_error: true; it is never dropped and never raised past the loop.

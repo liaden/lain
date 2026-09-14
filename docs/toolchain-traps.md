@@ -171,8 +171,12 @@ the cop.
 - **A class named for a top-level constant SHADOWS it for everything lexically inside the
   enclosing namespace.** Defining `Effect::Handler::Sensitivity` made `gate.rb`'s bare
   `Sensitivity::Policy` resolve to `Handler::Sensitivity::Policy` and die — for every caller
-  omitting the keyword, i.e. most of them. `Module.nesting` order is not something anyone reasons
-  about until it bites; root-qualify (`::Lain::Sensitivity`) at such a site.
+  omitting the keyword, i.e. most of them. It fired again when that layer moved to
+  `Middleware::Sensitivity`: every bare `Sensitivity::…` in the sibling secret middlewares
+  (`redact_secret_reads.rb`, `withhold_secret_paths.rb`) silently became a reference to the new
+  class. `Module.nesting` order is not something anyone reasons about until it bites; before
+  naming a class after a top-level constant, grep its namespace for the bare name, and
+  root-qualify (`::Lain::Sensitivity`) at every such site.
 - **`pre-commit` exports `GIT_INDEX_FILE` into every hook**, so a spec fixture that shells to
   `git` without scrubbing builds against *lain's* index. It passes in every normal run and fails
   only at commit time. Thirteen examples in one card were exposed; only the one that *commits*

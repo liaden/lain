@@ -189,8 +189,10 @@ module Lain
       #   a run that withholds nothing says so on purpose.
       # @raise [ArgumentError] on a nil filter
       def initialize(filter:)
-        raise ArgumentError, "a filter is required: pass #{Sensitivity::Filter::Null.name} to withhold nothing" \
-          unless filter
+        unless filter
+          raise ArgumentError,
+                "a filter is required: pass #{::Lain::Sensitivity::Filter::Null.name} to withhold nothing"
+        end
 
         @filter = filter
         super()
@@ -287,7 +289,7 @@ module Lain
       # order and none can, since a reading is a slice of content this class
       # already split on a UTF-8 newline.
       def reading(path, base)
-        return path unless Sensitivity.readable?(path)
+        return path unless ::Lain::Sensitivity.readable?(path)
         return path if path.start_with?(File::SEPARATOR)
 
         File.join(base, path)
@@ -309,7 +311,7 @@ module Lain
       # IO in the middle of a middleware to buy nothing.
       def base(effect, session)
         cwd = session.worker_env.cwd
-        File.expand_path(at(effect.input, Sensitivity::Policy::PATH_FIELDS[effect.name]) || CWD, cwd)
+        File.expand_path(at(effect.input, ::Lain::Sensitivity::Policy::PATH_FIELDS[effect.name]) || CWD, cwd)
       end
 
       # Both spellings, {Sensitivity::Policy#at}'s rule: a parsed provider

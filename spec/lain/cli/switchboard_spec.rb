@@ -305,7 +305,7 @@ RSpec.describe Lain::CLI::Switchboard do
     # `--non-interactive`, and the choice the card that added it had to make in
     # the open. A gated call asks a human; a headless run has none, so the
     # honest answer is no.
-    # DenyAll is what Effect::Handler::Gate already calls "correct when no
+    # DenyAll is what Middleware::Gate already calls "correct when no
     # interactive frontend is attached", and the alternative -- a queue nobody
     # drains -- parks the call until a fail-closed timeout denies it anyway,
     # after a wait no one is there to end.
@@ -371,14 +371,13 @@ RSpec.describe Lain::CLI::Switchboard do
       # for the whole run, against a gate nobody can open. The refusal has to
       # say that nobody was asked and nobody can be.
       describe "what the model is told when the gate refuses" do
-        # The REAL chain a session dispatches through -- Sensitivity over Gate
-        # over Live -- because the sentence under test is produced by the Gate
-        # and read by the model off a tool_result, and a double anywhere in
-        # that chain would be asserting on the double.
+        # The REAL layers a session dispatches through, over the real runner
+        # and a real Live, because the sentence under test is produced by the
+        # gate and read by the model off a tool_result, and a double anywhere
+        # in that path would be asserting on the double.
         def refusal(board)
-          call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
-          board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset.current))
-               .call(call, Lain::Session.new).content
+          dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: board.gate,
+                                                       context: Lain::Session.new).content
         end
 
         it "says no approval is possible, rather than that approval was denied" do
@@ -509,6 +508,92 @@ RSpec.describe Lain::CLI::Switchboard do
 
   # The snapshot slot is born in the agent build and bound here, because the
   # board is the one object a `/mode` flip goes through.
+  # The two layers every tool call of a session passes before it is
+  # interpreted, driven through the real runner. The interpreter is a Mock that
+  # records, so "it did not run" is an observation rather than an inference
+  # from a refusal's wording -- and `bash` never really runs.
+  describe "#gate, the layers a session's tool calls pass" do
+    def recording(ran)
+      Lain::Effect::Handler::Mock.new do |effect, _context|
+        ran << effect.name
+        Lain::Tool::Result.ok("the interpreter ran")
+      end
+    end
+
+    it "refuses an effect its policy denies before the interpreter runs" do
+      ran = []
+      board = switchboard(attended: false)
+
+      result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: board.gate,
+                                                            handler: recording(ran))
+
+      expect(result).to have_attributes(is_error: true, content: /no approval is possible for tool "bash"/)
+      expect(ran).to be_empty
+    end
+
+    it "hands an effect its policy allows to the interpreter, whose result comes back" do
+      ran = []
+      board = switchboard
+      board.mode_switch.switch(mode(:auto), surface: "tty")
+
+      result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: board.gate,
+                                                            handler: recording(ran))
+
+      expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
+      expect(ran).to eq(%w[bash])
+    end
+
+    # Approval can take as long as a human takes, and a `/mode` flip in that
+    # window may withdraw the very capability being asked about. Plan's promise
+    # is that a mutating tool cannot be run, so the call that comes back from
+    # the queue approved must still find the tool it was judged as -- driven
+    # through the real board, whose flip re-binds the live toolset the runner
+    # resolves against.
+    describe "a flip while the call waits on a human" do
+      def parked_then(board, flip)
+        ran = []
+        board.mode_switch.switch(mode(:manual), surface: "tty")
+        result = Sync do |task|
+          call = task.async do
+            dispatch_call("bash", { "command" => "rm -rf build" }, toolset: board.toolset, layers: board.gate,
+                                                                   handler: recording(ran))
+          end
+          pending = task.with_timeout(1) { board.approvals.dequeue }
+          board.mode_switch.switch(mode(flip), surface: "tty")
+          pending.approve(surface: "spec")
+          task.with_timeout(1) { call.wait }
+        end
+        [result, ran]
+      end
+
+      it "refuses a call whose tool the flip withdrew, and the interpreter never runs" do
+        result, ran = parked_then(switchboard, :plan)
+
+        expect(result).to eq(Lain::Tool::Result.error('no tool named "bash" is available'))
+        expect(ran).to be_empty
+      end
+
+      it "runs the approved call when the flip left its tool in place" do
+        result, ran = parked_then(switchboard, :auto)
+
+        expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
+        expect(ran).to eq(%w[bash])
+      end
+    end
+
+    # The order is a security posture: a denied path is not approvable, so the
+    # refusal that no answer lifts sits outside the gate that asks.
+    it "lists the path refusal ahead of the approval gate" do
+      expect(switchboard.gate.map(&:class)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+    end
+
+    it "judges both layers against the board's one path policy" do
+      board = switchboard
+
+      expect(board.gate.map { |layer| layer.instance_variable_get(:@sensitivity) }).to all(be(board.sensitivity))
+    end
+  end
+
   describe "the snapshot slot" do
     let(:slot) { instance_spy(Lain::Agent::SnapshotSlot) }
 

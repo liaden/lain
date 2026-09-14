@@ -11,7 +11,7 @@ module Lain
   # and a region detector cannot until it has the bytes.
   #
   # Several callers need the answer BEFORE the file is opened:
-  # {Effect::Handler::Sensitivity} refuses a denied read before any approval,
+  # {Middleware::Sensitivity} refuses a denied read before any approval,
   # {Sensitivity::Policy} decides whether a tool call reaches a human, and
   # {Approval::Escalation::Triage} reads it off a parsed argv. So the classifier
   # does no IO at all -- no `stat`, no `realpath`, no entropy over the bytes --

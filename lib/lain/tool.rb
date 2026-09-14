@@ -110,7 +110,7 @@ module Lain
     end
 
     # Whether a call to this tool must pass through an approval gate
-    # (Effect::Handler::Gate) before it runs. Defaults to false: tier 1 (direct
+    # (Middleware::Gate) before it runs. Defaults to false: tier 1 (direct
     # Ruby, no subprocess) and tier 2 (an argv Array through Mixlib::ShellOut)
     # tools have no model-controlled command string to approve. Tier 3 tools --
     # a String command through `sh -c` -- override this to true. The axis that
@@ -119,6 +119,13 @@ module Lain
     # rather than a list maintained by the gate (see the plan's "Tool tiers").
     def requires_approval?
       false
+    end
+
+    # Whether this is a tool a {Toolset} holds: always, for a real one.
+    # {Toolset::Unheld} is the stand-in that answers no, so the approval gate
+    # can decline to ask a human about a call that will run nothing.
+    def held?
+      true
     end
 
     # The public entry point: validate, check preconditions, dispatch.

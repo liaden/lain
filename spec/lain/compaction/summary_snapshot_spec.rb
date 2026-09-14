@@ -48,34 +48,29 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
 
   # ---- The key round trip, proved before anything rests on it --------------
   #
-  # Handler::Summarizing fires on `Canonical.digest(result.content)` where
-  # content is the Tool::Result's String. The COMMITTED message carries those
-  # same bytes nested inside a tool_result block, through Canonical.normalize
-  # on the way into the Timeline. If the digest recomputed from the committed
+  # {Compaction::SummaryObserver} fires on `Canonical.digest(content)` where
+  # content is the tool_result block's String. The COMMITTED message carries
+  # those same bytes nested inside that block, through Canonical.normalize on
+  # the way into the Timeline. If the digest recomputed from the committed
   # message did not equal the fired key, every lookup would miss SILENTLY.
   describe "the fired key and the committed message's digest agree" do
     it "recomputes the fired digest from the message a real dispatch commits" do
       eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "a fox"))
-      handler = Lain::Effect::Handler::Summarizing.new(
-        eager:, inner: Lain::Effect::Handler::Mock.new(default: source)
-      )
-      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu-1", name: "read_file", input: {})
+      runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new(default: source),
+                                           observer: Lain::Compaction::SummaryObserver.new(eager:))
 
-      result = Sync do
-        handler.call(effect).tap { Async::Task.current.children&.each(&:wait) }
+      block = Sync do
+        runner.run(tool_response(["tu-1", "read_file", {}]), context: nil).first
+              .tap { Async::Task.current.children&.each(&:wait) }
       end
 
       # The Timeline commit is where normalization happens; the projection is
       # exactly Context#render's (`context.rb:138`).
-      timeline = Lain::Timeline.empty.commit(
-        role: :user,
-        content: [{ "type" => "tool_result", "tool_use_id" => "tu-1",
-                    "content" => result.content, "is_error" => false }]
-      )
+      timeline = Lain::Timeline.empty.commit(role: :user, content: [block])
       message = timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }.last
       recomputed = Lain::Canonical.digest(message.fetch("content").first.fetch("content"))
 
-      expect(recomputed).to eq(Lain::Canonical.digest(result.content))
+      expect(recomputed).to eq(Lain::Canonical.digest(source))
       expect(eager.held(recomputed)&.summary).to eq("a fox")
 
       # And the snapshot, taken over that committed message, finds it.
@@ -225,7 +220,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
   #
   # Agent correctness gate 2 (`agent.rb:291`) commits every tool_result of one
   # assistant turn into ONE user message, so the common live shape is a message
-  # whose blocks did not all cross Summarizing's 4096-byte threshold. Folded
+  # whose blocks were not all summarized. Folded
   # from the review panel's probe 5 (5b/5d), which caught a whole `grep` result
   # vanishing while the line still read as a complete summary of the turn.
 
@@ -330,7 +325,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
         .to raise_error(described_class::NotADigest, /deadbeef/)
     end
 
-    it "accepts the source digest Summarizing fires under" do
+    it "accepts the source digest the SummaryObserver fires under" do
       digest = Lain::Canonical.digest(source)
 
       snapshot = described_class.new(summaries: { digest => "known" })
@@ -339,7 +334,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
     end
 
     # Both are well-formed to a loose `\h+` pattern and neither can ever equal
-    # a key Summarizing fired -- so accepting them is exactly the permanent,
+    # a key the SummaryObserver fired -- so accepting them is exactly the permanent,
     # total, silent miss the validator exists to prevent.
     it "rejects a digest of the wrong length" do
       prefix = Lain::Canonical.digest(source).split(":").first

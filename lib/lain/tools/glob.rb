@@ -19,8 +19,8 @@ module Lain
     #
     # 1. GATE ON THE EFFECT, before a tool runs. {Lain::Sensitivity::Policy}
     #    classifies the path an effect names, and two handlers read that one
-    #    table: {Effect::Handler::Sensitivity} refuses a DENIED path outright,
-    #    where no approval can lift it, and {Effect::Handler::Gate} sends a
+    #    table: {Middleware::Sensitivity} refuses a DENIED path outright,
+    #    where no approval can lift it, and {Middleware::Gate} sends a
     #    GATED one to a human. It cannot be a property a tool declares about
     #    itself -- `read_file` is tier 1 for `README.md` and worth asking about
     #    for `.env`, and the difference is in the argument.

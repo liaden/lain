@@ -4,8 +4,8 @@ module Lain
   module Oracle
     # Deterministic replay for the oracle tier: substitutes a journaled answer
     # instead of asking a model. The "recorded is a replay of a real
-    # interpretation" shape {Effect::Handler::Recorded} and
-    # {Grader::Refuter::Recorded} take, keyed here on `(oracle_digest, question)`
+    # interpretation" shape {Grader::Refuter::Recorded} takes, keyed here on
+    # `(oracle_digest, question)`
     # so a substituted answer is exactly the one THIS oracle gave THIS question.
     #
     # It is a tier bound to one {Definition}, which renders the question, owns the

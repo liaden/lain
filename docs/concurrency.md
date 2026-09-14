@@ -223,8 +223,9 @@ objects. Fibers make multi-shot resumption (speculative branching) natural but w
 traces when a tool raises. The `Middleware` API is identical either way. Prototype both.") —
 both halves of that claim are measured below, not assumed.
 
-**Method:** two effect interpreters, both adapted into the exact shape
-`Lain::Effect::Handler#to_app` already exposes (an `env -> env` lambda writing `:result`), driven
+**Method:** two effect interpreters, both adapted into the exact shape of the app that terminates
+the tool stack (an `env -> env` lambda writing `:result`; at the time `Lain::Effect::Handler#to_app`,
+now the block `Agent::ToolRunner#dispatch` passes, around a handler's one `#call(env)`), driven
 through the real `Lain::Middleware::Stack#call(env, &app)` boundary — not a lookalike API, the
 literal one — with one real pass-through member (`Middleware::Identity`) composed into the
 Stack, so the equivalence is proven through an actual composed chain link rather than the
@@ -241,7 +242,7 @@ this spike.
 **Result 1 — equivalence holds.** Both interpreters, given the identical resolver and the
 identical `Effect::ToolCall`, produce the identical `Tool::Result` through the identical
 `Middleware::Stack#call(env, &app)` call. No API divergence was needed to make the fiber
-prototype fit — `Middleware`'s monoid group is untouched by this question, because `to_app`'s
+prototype fit — `Middleware`'s monoid group is untouched by this question, because the adapter's
 output is the *terminal app* a `Stack` calls, not a `Composable` member of the stack itself; the
 escalation trigger for a broken monoid law did not fire.
 
@@ -266,10 +267,15 @@ FIBER (FiberEffectInterpreter) backtrace:
   capture_traces.rb:16:in 'block in Spikes::FiberEffectInterpreter#run'
 ```
 
+The handler-object trace is verbatim from when it was recorded, and its `#perform`, `#call` and
+`#to_app` frames name the handler API of that time: a handler now has one `#call(env)` that
+reaches `Mock#interpret`, and the adapter lives in `Agent::ToolRunner#dispatch`. The frame count
+between the raise and `Middleware::Stack#call` is the same, so the comparison below still holds.
+
 The handler-object trace is one continuous Ruby call stack, so it reaches all the way out to
 `<main>` — every frame between the raise and the top of the process is visible, including
 `Middleware::Stack#call` and the driving code. The fiber trace stops at two frames: the raise
-site and the `Fiber.new` block itself. `Middleware::Stack#call`, `to_app`, and everything that
+site and the `Fiber.new` block itself. `Middleware::Stack#call`, the adapter, and everything that
 called `.resume` are invisible — not because `resume` fails to re-raise (it does, correctly, at
 the call site), but because `Exception#backtrace` is captured once, at raise time, by walking
 *only* the stack the currently-running fiber owns. A `Fiber` has an independent call stack by

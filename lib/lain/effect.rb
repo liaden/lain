@@ -5,7 +5,7 @@ module Lain
   #
   # Effects separate "decide what to do" from "do it": the loop builds an Effect
   # (pure data, no IO) and a {Lain::Effect::Handler} is the only thing that
-  # touches the world. That split makes deterministic replay a *recorded
+  # touches the world. That split makes deterministic replay a *canned
   # handler* rather than a second code path, and lets an approval or a timeout
   # wrap an intention before it is ever carried out.
   module Effect
@@ -37,11 +37,11 @@ module Lain
       include Kind
     end
 
-    # The SECOND route into {Lain::Effect::Handler::Gate}. Most gating is
+    # The SECOND route into {Lain::Middleware::Gate}. Most gating is
     # tier-based and needs no wrapper -- a tool answers
     # {Lain::Tool#requires_approval?} for itself. This marks ONE call for
     # approval regardless of the tool's own tier, keeping that per-call decision
-    # in the data, where Gate pattern-matches it rather than infers it.
+    # in the data, where the gate pattern-matches it rather than infers it.
     Approval = Data.define(:effect) do
       include Kind
 

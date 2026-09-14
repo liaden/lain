@@ -25,7 +25,7 @@ RSpec.describe Lain::Ledger::Index do
       expect(index.entries_for("tu_1")).to be_empty
     end
 
-    it "accepts already-parsed Hashes, symbol keys included -- the same duck Handler::Recorded takes" do
+    it "accepts already-parsed Hashes, symbol keys included -- the same duck every Journal reader takes" do
       index = described_class.from_journal([
                                              record(digest: "blake3:aa"),
                                              { type: "turn_usage", digest: "blake3:bb", model: "claude-haiku-3-5",

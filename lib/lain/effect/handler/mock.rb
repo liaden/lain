@@ -14,26 +14,17 @@ module Lain
       class Mock < Handler
         # @param results [Hash{String=>Tool::Result,String,Array}] name/id => canned answer
         # @param default [Tool::Result, String, Array, nil] used when nothing matches
-        # @param inner [Lain::Effect::Handler, nil] fallback for other effect kinds
         # @yield [effect, context] optional resolver taking precedence over `results`
-        def initialize(results: {}, default: nil, inner: nil, &block)
-          super(inner:)
+        def initialize(results: {}, default: nil, &block)
+          super()
           @results = stringify(results)
           @default = default
           @block = block
         end
 
-        def handles?(effect) = effect.tool_call? || effect.approval?
-
-        protected
-
-        def perform(effect, context)
-          return call(effect.effect, context) if effect.is_a?(Effect::Approval)
-
-          coerce(canned_for(effect, context))
-        end
-
         private
+
+        def interpret(effect, env) = coerce(canned_for(effect, env[:context]))
 
         def canned_for(effect, context)
           return @block.call(effect, context) if @block

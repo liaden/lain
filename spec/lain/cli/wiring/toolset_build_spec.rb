@@ -361,8 +361,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # twice: the parent's comes out of {Switchboard#gate}, the child's travels
       # its delegator's thunk. Two paths, one object.
       it "hands a child the very sensitivity policy the parent's gate consults" do
-        parent_gate = switchboard.gate(inner: Lain::Effect::Handler::Live.new(toolset: switchboard.toolset.current))
-        parent_policy = parent_gate.instance_variable_get(:@sensitivity)
+        parent_policy = switchboard.gate.last.instance_variable_get(:@sensitivity)
 
         expect(parent_policy).to be(sensitivity)
         expect(child_sensitivity.board.call).to be(switchboard)
@@ -402,20 +401,24 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # And that the delegator really delegates: a child's gate asking
       # `gates?` must reach that policy, not a Null it was quietly built with.
       # The parent's own gate is driven beside it, over the same effect, so the
-      # claim is a comparison rather than two separate readings.
-      # `#gate` returns the path-denial handler with the Gate one step in, so the
-      # GATING axis is read off that Gate: the outer handler answers the
-      # denial question, and `.env` is gated rather than denied.
+      # claim is a comparison rather than two separate readings. `#gate` is the
+      # path-denial layer then the gate, so the GATING axis is read off the
+      # last: `.env` is gated rather than denied. Under DenyAll a gated call is
+      # refused and an ungated one passes on, which is the question asked.
       it "gates a child's read of .env exactly as the parent's own gate does" do
-        parent_gate = switchboard
-                      .gate(inner: Lain::Effect::Handler::Live.new(toolset: switchboard.toolset.current))
-                      .instance_variable_get(:@inner)
+        switchboard.policy_switch.switch(Lain::Middleware::Gate::DenyAll.new, surface: "spec")
+        parent_refuses = lambda do |effect|
+          env = switchboard.gate.last.call({ effect:, tool: Lain::Tools::ReadFile.new, context: nil }) do |passed|
+            passed.merge(result: Lain::Tool::Result.ok("passed on"))
+          end
+          env.fetch(:result).error?
+        end
 
         expect(child_sensitivity.gates?(reads(".env"))).to be(true)
-        expect(parent_gate.handles?(reads(".env"))).to be(true)
+        expect(parent_refuses.call(reads(".env"))).to be(true)
 
         expect(child_sensitivity.gates?(reads("README.md"))).to be(false)
-        expect(parent_gate.handles?(reads("README.md"))).to be(false)
+        expect(parent_refuses.call(reads("README.md"))).to be(false)
       end
 
       # The sentence a refused call is REPORTED as travels the same thunk, for
@@ -425,25 +428,21 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # started with --non-interactive, where nobody can ever answer. It would
       # retry for the life of the run.
       describe "what a child is told when its gate refuses" do
-        # The sentence a child's OWN seam carries, read the way its chain reads
-        # it. A REAL inner, because Gate reads the tier off whatever its inner
-        # resolves the name to -- over a Mock, `bash` resolves to nothing and
-        # the call is never gated at all. DenyAll means it is never run.
+        # The sentence a child's OWN seam carries, read the way its gate reads
+        # it, through the real runner over the board's own toolset -- the gate
+        # reads the tier off the tool that resolves, and an empty set would
+        # resolve `bash` to nothing and never gate it. DenyAll means it never runs.
         def child_refusal(board)
-          Lain::Effect::Handler::Gate.new(policy: Lain::Effect::Handler::Gate::DenyAll.new,
-                                          denial: child_seam(board).denial.call,
-                                          inner: Lain::Effect::Handler::Live.new(toolset: board.toolset.current))
-                                     .call(runs_ls, Lain::Session.new).content
+          gate = Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::DenyAll.new,
+                                            denial: child_seam(board).denial.call)
+          dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: [gate],
+                                                       context: Lain::Session.new).content
         end
 
         def child_seam(board)
           build = build_with(options, switchboard: -> { board })
           build.build(recorder, ask_human:)
           build.role_spawn.seam
-        end
-
-        def runs_ls
-          Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
         end
 
         let(:headless) do
@@ -514,10 +513,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         gate = child_gate
         effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {})
 
-        switchboard.policy_switch.switch(Lain::Effect::Handler::Gate::ApproveAll.new, surface: "spec")
+        switchboard.policy_switch.switch(Lain::Middleware::Gate::ApproveAll.new, surface: "spec")
         expect(gate.call(effect, nil)).to be(true)
 
-        switchboard.policy_switch.switch(Lain::Effect::Handler::Gate::DenyAll.new, surface: "spec")
+        switchboard.policy_switch.switch(Lain::Middleware::Gate::DenyAll.new, surface: "spec")
         expect(gate.call(effect, nil)).to be(false)
       end
 

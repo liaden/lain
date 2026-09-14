@@ -95,16 +95,16 @@ module Lain
       # through untouched: it is the session's one parking place, and a copy
       # would park fibers nobody is watching.
       #
-      # The arms are lambdas because `lain.rb` requires `lain/mode` ten entries
-      # before `lain/effect`, so `Effect::Handler::Gate::DenyAll` does not exist
-      # when this table is built -- mapping each name straight to its policy
-      # class or to a shared frozen instance is a hard NameError at load, not a
-      # style preference. Deferring the lookup to call time is the only reason
-      # the manifest may keep `mode` above `effect`.
+      # The arms are lambdas because `lain.rb` requires `lain/mode` well before
+      # `lain/middleware`, so `Middleware::Gate::DenyAll` does not exist when
+      # this table is built -- mapping each name straight to its policy class or
+      # to a shared frozen instance is a hard NameError at load, not a style
+      # preference. Deferring the lookup to call time is the only reason the
+      # manifest may keep `mode` above `middleware`.
       GATE_POLICIES = {
-        deny_all: ->(_queue) { Effect::Handler::Gate::DenyAll.new },
+        deny_all: ->(_queue) { Middleware::Gate::DenyAll.new },
         queue: ->(queue) { queue },
-        approve_all: ->(_queue) { Effect::Handler::Gate::ApproveAll.new }
+        approve_all: ->(_queue) { Middleware::Gate::ApproveAll.new }
       }.freeze
       private_constant :GATE_POLICIES
     end

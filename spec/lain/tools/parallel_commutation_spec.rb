@@ -247,7 +247,7 @@ RSpec.describe "Tool#parallel_safe?: the exchange law, i.e. pairwise commutation
 
     def build_runner(names)
       toolset = Lain::Toolset.new(names.map { |name| ParallelCommutationSpecSupport.build_tool(name) })
-      Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new(toolset:))
+      Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new, toolset:)
     end
 
     def answer(runner, session, name)

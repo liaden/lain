@@ -10,7 +10,7 @@ module Lain
     # A CONTAINER IS NOT A SANDBOX. The project is mounted READ-WRITE on the
     # operator's own daemon, as the calling user; what changes is WHERE the
     # command's toolchain comes from. The tier-3 approval gate
-    # ({Tools::Bash#requires_approval?} plus Effect::Handler::Gate) is still the
+    # ({Tools::Bash#requires_approval?} plus Middleware::Gate) is still the
     # security boundary, and the mount is why that holds: every write a
     # container makes is a write the approved command asked for, in the tree
     # that command would have written on the host. The mount set is the cwd and

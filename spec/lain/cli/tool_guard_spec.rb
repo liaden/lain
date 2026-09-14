@@ -391,10 +391,8 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
 
     it "DENIES every gated call, because nobody is there to ask" do
-      told = board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset.current))
-                  .call(Lain::Effect::ToolCall.new(tool_use_id: "tu_gate", name: "bash",
-                                                   input: { "command" => "ls" }),
-                        Lain::Session.new)
+      told = dispatch_call("bash", { "command" => "ls" }, id: "tu_gate", toolset: board.toolset,
+                                                          layers: board.gate, context: Lain::Session.new)
 
       expect(told.is_error).to be(true)
       expect(told.content).to include("no approval is possible")

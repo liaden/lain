@@ -50,7 +50,7 @@ end
 # `include_journal_record(type, **attrs)` -- true when the journal (StringIO,
 # its underlying String, or a raw NDJSON String) holds at least one record of
 # `type` whose fields include `attrs`. Foreign/unparseable lines are skipped,
-# same as every real reader (Handler::Recorded, Ledger::Index) via
+# same as every real reader (Oracle::Recorded, Ledger::Index) via
 # Lain::Journal.records.
 RSpec::Matchers.define :include_journal_record do |type, **attrs|
   match do |journal|

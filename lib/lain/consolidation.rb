@@ -92,7 +92,7 @@ module Lain
       allowed = role.attenuate(clerk_union)
       Agent.new(
         provider: @provider, context: clerk_context, toolset: allowed,
-        handler: Effect::Handler::Live.new(toolset: allowed),
+        handler: Effect::Handler::Live.new,
         timeline: fresh_root, session: clerk_session, journal: clerk_journal, tool_middleware: guard_stack
       )
     end

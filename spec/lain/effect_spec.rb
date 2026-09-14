@@ -6,7 +6,7 @@ RSpec.describe Lain::Effect do
   let(:model_call) { Lain::Effect::ModelCall.new(request: :some_request) }
 
   describe "kind predicates" do
-    # The reading sites (Handler#handles?) ask an effect what it is rather than
+    # The reading sites (the handlers and the gate) ask an effect what it is rather than
     # matching its class, so the predicate must be TOTAL over the vocabulary --
     # every effect answers both questions, defaulting to false, with no
     # respond_to? guard and no rescue anywhere in the call path.

@@ -38,9 +38,8 @@ module Lain
     # collaborator check callers run where a surface is handed in, the same shape
     # {CLI::CompactionStrategy#live_tier} runs against its `tier:` collaborator.
     # {Effect::Handler} was checked and does NOT already own this convention:
-    # `#handles?`/`#perform` is internal dispatch on a CLOSED effect algebra a
-    # handler chooses to interpret, never a check that an externally supplied
-    # collaborator answers a full duck.
+    # its one `#call` interprets a CLOSED effect algebra, never a check that an
+    # externally supplied collaborator answers a full duck.
     #
     # {check!} was widened past a bare `respond_to?` reject after a review-panel
     # probe showed the original blessed a candidate with every message present

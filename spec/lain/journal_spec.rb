@@ -493,7 +493,7 @@ RSpec.describe Lain::Journal do
     end
   end
 
-  # The ONE duck every Journal reader speaks (Handler::Recorded, Ledger::Index):
+  # The ONE duck every Journal reader speaks (Oracle::Recorded, Ledger::Index):
   # a record is a Hash or one NDJSON line, and anything else answers nil so the
   # reader can skip lines that belong to other writers on a shared fd.
   describe ".parse" do

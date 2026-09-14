@@ -161,11 +161,14 @@ module Lain
 end
 
 require_relative "middleware/env"
+require_relative "middleware/gate"
 require_relative "middleware/guard_test_layout"
 require_relative "middleware/journal_requests"
 require_relative "middleware/journal_turns"
 require_relative "middleware/redact_secret_reads"
 require_relative "middleware/refuse_secret_writes"
+require_relative "middleware/refuse_unpermitted"
 require_relative "middleware/resolve_window"
+require_relative "middleware/sensitivity"
 require_relative "middleware/skill_dispatch"
 require_relative "middleware/withhold_secret_paths"

@@ -5,9 +5,8 @@ require "stringio"
 # Eager unit summaries on their own fibers. {Oracle::Eager} holds tool-result
 # summaries keyed by the result's SOURCE DIGEST (an immutable source can never go
 # stale) and fires each on its own transient task, so a slow local oracle never
-# blocks the turn that produced the source. {Effect::Handler::Summarizing} is the
-# decorator that observes a large tool result and fires its summary while
-# interpreting no effect itself. Journaling rides the existing {Telemetry::
+# blocks the turn that produced the source. {Compaction::SummaryObserver} is what
+# offers each completed tool result to it. Journaling rides the existing {Telemetry::
 # OracleAnswer} path, so a {Oracle::Recorded} tier replays a summary with no live
 # call -- the same record/replay discipline the rest of the oracle tier speaks.
 RSpec.describe Lain::Oracle::Eager do
@@ -150,6 +149,44 @@ RSpec.describe Lain::Oracle::Eager do
       end
     end
 
+    # A ScriptError, not a StandardError: {Summarizer::Base} raises exactly this
+    # for a declaration whose `compact` is not written yet, and it travels up
+    # through the tier into the fire's task. The task boundary is the
+    # containment for EVERY way a fire can fail, so it has to cover this one.
+    it "contains a fire that raises a ScriptError, holding nothing and killing no turn" do
+      raising = Class.new do
+        def ask(_inputs) = raise(NotImplementedError, "summarizer \"wip\" must implement #compact")
+        def model = nil
+        def usage = {}
+      end.new
+
+      Sync do
+        eager = described_class.new(oracle: raising)
+        expect { eager.fire("src-1", "a large tool result").wait }.not_to raise_error
+        expect(eager.held("src-1")).to be_nil
+      end
+    end
+
+    # SystemStackError descends straight from Exception, so it is neither of the
+    # two the rescue above names. A user `suitable?` that recurses without bound
+    # raises it, and every tool result now runs those predicates -- so the
+    # task boundary has to cover this one too, or an ordinary `bash` result can
+    # kill the turn that produced it.
+    it "contains a fire that overflows the stack, holding nothing and killing no turn" do
+      recursing = Class.new do
+        def ask(_inputs) = spin
+        def spin = spin
+        def model = nil
+        def usage = {}
+      end.new
+
+      Sync do
+        eager = described_class.new(oracle: recursing)
+        expect { eager.fire("src-1", "a large tool result").wait }.not_to raise_error
+        expect(eager.held("src-1")).to be_nil
+      end
+    end
+
     it "lets a stop cancel an in-flight fire without surfacing at the reactor" do
       eager = described_class.new(oracle: pending_oracle)
 
@@ -192,225 +229,6 @@ RSpec.describe Lain::Oracle::Eager do
 
       expect(replay.held(digest).summary).to eq("a fox")
       expect(provider.call_count).to eq(1) # the replay added no further provider round trip
-    end
-  end
-
-  # ---- Handler::Summarizing: the decorator that observes and fires ----------
-
-  describe Lain::Effect::Handler::Summarizing do
-    let(:big) { "x" * 100 }
-    let(:small) { "tiny" }
-    let(:digest) { Lain::Canonical.digest(big) }
-    let(:eager) { Lain::Oracle::Eager.new(oracle: pending_oracle) }
-
-    def with_inner(result)
-      Lain::Effect::Handler::Mock.new(default: result)
-    end
-
-    def tool_call(id: "tu_1", name: "read_file", input: {})
-      Lain::Effect::ToolCall.new(tool_use_id: id, name:, input:)
-    end
-
-    it "returns the tool result unchanged while firing the summary" do
-      Sync do
-        handler = described_class.new(eager:, inner: with_inner(big))
-        result = handler.call(tool_call, nil)
-
-        expect(result).to be_ok
-        expect(result.content).to eq(big) # a summary is a side value, never a rewrite
-        expect(pending_oracle.calls).to eq(1)
-        expect(eager.held(digest)).to be_nil
-      end
-    end
-
-    it "fires once for repeated result content, keyed by its source digest" do
-      Sync do
-        handler = described_class.new(eager:, inner: with_inner(big))
-        handler.call(tool_call(id: "tu_1"), nil)
-        handler.call(tool_call(id: "tu_2"), nil) # same content, different call id
-
-        expect(pending_oracle.calls).to eq(1)
-      end
-    end
-
-    it "completes and returns the result unchanged when called with NO surrounding reactor" do
-      # The 5-0.2 invariant: the handler chain stays runnable as plain synchronous
-      # Ruby. With no ambient reactor the fire degrades to a miss; the dispatch
-      # still returns the tool result untouched.
-      handler = described_class.new(eager:, inner: with_inner(big))
-      result = handler.call(tool_call, nil)
-
-      expect(result).to be_ok
-      expect(result.content).to eq(big)
-      expect(pending_oracle.calls).to eq(0)
-      expect(eager.held(digest)).to be_nil
-    end
-
-    # The decorator holds no size policy any more, so a SMALL result is
-    # offered to the oracle instead of being skipped -- that offer is the only
-    # way a declared, free summarizer ever sees an ordinary tool result. The
-    # byte rule itself did not disappear; it moved down to
-    # {Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}, where the
-    # at-threshold and multibyte cases are pinned, because that is the object
-    # that knows which tier pays.
-    it "fires a small result too, so the free tier is consulted for it" do
-      Sync do
-        handler = described_class.new(eager:, inner: with_inner(small))
-        handler.call(tool_call, nil)
-
-        expect(pending_oracle.calls).to eq(1)
-      end
-    end
-
-    # WHICH tier the fire lands on, through the real routing tier over a real
-    # declared catalog -- no double between the decorator and the decision.
-    # That gap is where the dead free tier hid: every unit was individually
-    # right and the composition consulted the catalog for nothing an ordinary
-    # session produced.
-    describe "the tier a fired result actually reaches" do
-      let(:model_tier) { model_tier_class.new(Lain::Oracle::Summarize.definition(tier: :heuristic)) }
-
-      # The model-backed tier, reduced to what {RoutedSummarizer} asks of it,
-      # plus a count of the calls these examples exist to prove did not happen.
-      let(:model_tier_class) do
-        Class.new do
-          attr_reader :calls
-
-          def initialize(definition)
-            @definition = definition
-            @calls = 0
-          end
-
-          def ask(_inputs)
-            @calls += 1
-            @definition.answer(summary: "the model's summary")
-          end
-
-          def model = "test-summarizer-model"
-          def usage = {}
-        end
-      end
-
-      def declaration
-        <<~RUBY
-          summarizer "bash-only" do
-            def suitable?(result) = result.tool_name == "bash"
-            def compact(result) = "a bash result"
-          end
-        RUBY
-      end
-
-      def routed
-        Lain::Oracle::RoutedSummarizer.new(
-          inner: model_tier,
-          catalog: Lain::Summarizer::Catalog.new(Lain::Summarizer::Builder.build(declaration, ".lain/summarizers.rb"))
-        )
-      end
-
-      def fire(content, tool_name)
-        eager = Lain::Oracle::Eager.new(oracle: routed)
-        described_class.new(eager:, inner: with_inner(content)).call(tool_call(name: tool_name), nil)
-        eager.held(Lain::Canonical.digest(content))
-      end
-
-      it "answers a small declared result from the free tier, with no model call" do
-        Sync do
-          expect(fire(small, "bash").summary).to eq("a bash result")
-          expect(model_tier.calls).to eq(0)
-        end
-      end
-
-      it "spends no model call on a small result no declaration handles" do
-        Sync do
-          expect(fire(small, "read_file")).to be_nil
-          expect(model_tier.calls).to eq(0)
-        end
-      end
-
-      # The half of the policy that survives: over the cost threshold an
-      # unhandled result is still worth asking a model about.
-      it "still spends a model call on an unhandled result over the cost threshold" do
-        Sync do
-          bulky = "x" * (Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES + 1)
-
-          expect(fire(bulky, "read_file").summary).to eq("the model's summary")
-          expect(model_tier.calls).to eq(1)
-        end
-      end
-    end
-
-    it "does not summarize (or crash on) structured Array content, however large" do
-      Sync do
-        blocks = [{ "type" => "text", "text" => "x" * 5000 }]
-        handler = described_class.new(eager:, inner: with_inner(blocks))
-        result = handler.call(tool_call, nil)
-
-        expect(result.content).to eq(blocks)
-        expect(pending_oracle.calls).to eq(0)
-      end
-    end
-
-    it "does not summarize a failed tool result" do
-      Sync do
-        errored = Lain::Effect::Handler::Mock.new(default: Lain::Tool::Result.error(big))
-        handler = described_class.new(eager:, inner: errored)
-        handler.call(tool_call, nil)
-
-        expect(pending_oracle.calls).to eq(0)
-      end
-    end
-
-    # A ScriptError, not a StandardError: {Summarizer::Base} raises exactly this
-    # for a declaration whose `compact` is not written yet, and it travels up
-    # through the tier into the fire's task. The task boundary is the
-    # containment for EVERY way a fire can fail, so it has to cover this one.
-    it "contains a fire that raises a ScriptError, holding nothing and killing no turn" do
-      raising = Class.new do
-        def ask(_inputs) = raise(NotImplementedError, "summarizer \"wip\" must implement #compact")
-        def model = nil
-        def usage = {}
-      end.new
-
-      Sync do
-        eager = Lain::Oracle::Eager.new(oracle: raising)
-        expect { eager.fire(digest, big).wait }.not_to raise_error
-        expect(eager.held(digest)).to be_nil
-      end
-    end
-
-    # SystemStackError descends straight from Exception, so it is neither of the
-    # two the rescue above names. A user `suitable?` that recurses without bound
-    # raises it, and every tool result now runs those predicates -- so the
-    # task boundary has to cover this one too, or an ordinary `bash` result can
-    # kill the turn that produced it.
-    it "contains a fire that overflows the stack, holding nothing and killing no turn" do
-      recursing = Class.new do
-        def ask(_inputs) = spin
-        def spin = spin
-        def model = nil
-        def usage = {}
-      end.new
-
-      Sync do
-        eager = Lain::Oracle::Eager.new(oracle: recursing)
-        expect { eager.fire(digest, big).wait }.not_to raise_error
-        expect(eager.held(digest)).to be_nil
-      end
-    end
-
-    it "does not break the dispatch when its fire will fail" do
-      raising = Class.new do
-        def ask(_inputs) = raise "oracle unavailable"
-        def model = nil
-        def usage = {}
-      end.new
-
-      Sync do
-        handler = described_class.new(eager: Lain::Oracle::Eager.new(oracle: raising), inner: with_inner(big))
-        result = handler.call(tool_call, nil)
-
-        expect(result.content).to eq(big)
-      end
     end
   end
 end

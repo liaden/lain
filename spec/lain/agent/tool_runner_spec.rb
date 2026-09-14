@@ -84,21 +84,6 @@ module ToolRunnerSpecSupport
     end
   end
 
-  # Records what it was asked to summarize, so the observer's POLICY can be
-  # pinned without a reactor -- whether a fire survives is {Oracle::Eager}'s
-  # own question, answered by the examples above and by eager_spec.
-  class RecordingEager
-    attr_reader :fired
-
-    def initialize
-      @fired = []
-    end
-
-    def fire(digest, text)
-      @fired << [digest, text]
-    end
-  end
-
   # An oracle tier whose Promise stays pending until the spec resolves it, so a
   # fire can be watched outliving the turn that spawned it. eager_spec's idiom.
   class PendingOracle
@@ -234,6 +219,8 @@ RSpec.describe Lain::Agent::ToolRunner do
       fake.define_singleton_method(:to_schema) do
         { "name" => name, "description" => "probe", "input_schema" => { "type" => "object" } }
       end
+      # The runner reads a turn's concurrency off the tools its toolset holds.
+      fake.define_singleton_method(:parallel_safe?) { false }
       fake
     end
 
@@ -442,7 +429,7 @@ RSpec.describe Lain::Agent::ToolRunner do
     end
 
     def runner_for(*tools)
-      described_class.new(handler: Lain::Effect::Handler::Live.new(toolset: Lain::Toolset.new(tools)))
+      described_class.new(handler: Lain::Effect::Handler::Live.new, toolset: Lain::Toolset.new(tools))
     end
 
     it "overlaps a leading safe run, runs the barrier alone after it, then the trailing safe tool" do
@@ -557,8 +544,7 @@ RSpec.describe Lain::Agent::ToolRunner do
   # digest BEFORE it spawns, so a reaped fire poisons that content's key for
   # the rest of the session.
   describe "post-dispatch observation" do
-    # Big enough to clear Summarizing's real byte threshold, and distinct per
-    # tool so the two fires do not collapse into one digest.
+    # Distinct per tool, so the two fires do not collapse into one digest.
     def big(name) = "#{name}:#{"x" * 5000}"
 
     def probe(name, log:) = ToolRunnerSpecSupport::ProbeTool.new(name:, safe: true, log:, body: -> { big(name) })
@@ -567,8 +553,8 @@ RSpec.describe Lain::Agent::ToolRunner do
     # back through the very scope the observation must outlive.
     def gathering_runner(log:, **options)
       described_class.new(
-        handler: Lain::Effect::Handler::Live.new(toolset: Lain::Toolset.new([probe("safe_a", log:),
-                                                                             probe("safe_b", log:)])),
+        handler: Lain::Effect::Handler::Live.new,
+        toolset: Lain::Toolset.new([probe("safe_a", log:), probe("safe_b", log:)]),
         **options
       )
     end
@@ -606,7 +592,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       oracle = ToolRunnerSpecSupport::PendingOracle.new
       eager = Lain::Oracle::Eager.new(oracle:)
       digest = Lain::Canonical.digest(big("safe_a"))
-      observer = Lain::Effect::Handler::Summarizing::Observer.new(eager:)
+      observer = Lain::Compaction::SummaryObserver.new(eager:)
 
       Sync do |task|
         blocks = gathering_runner(log: [], observer:).run(gathered_response, context: nil)
@@ -630,7 +616,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       eager = Lain::Oracle::Eager.new(oracle:)
       text = big("safe_a")
       digest = Lain::Canonical.digest(text)
-      observer = Lain::Effect::Handler::Summarizing::Observer.new(eager:)
+      observer = Lain::Compaction::SummaryObserver.new(eager:)
 
       gathering_runner(log: [], observer:).run(gathered_response, context: nil)
       expect(eager.held(digest)).to be_nil
@@ -678,75 +664,6 @@ RSpec.describe Lain::Agent::ToolRunner do
       expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
       expect(blocks.map { |block| block["content"] }).to eq(["ran tu_1", "ran tu_2"])
       expect(observer.seen).to eq(%w[tu_1 tu_2])
-    end
-
-    # The production observer this seam is built for, pinned at its own
-    # boundary: which results earn a summary is policy, and it lives with
-    # {Effect::Handler::Summarizing}, the decorator that shares the rule.
-    # These examples are here rather than beside that class because the
-    # post-dispatch seam owns the observer; the chain-mount decorator's own
-    # examples are in spec/lain/oracle/eager_spec.rb.
-    describe Lain::Effect::Handler::Summarizing::Observer do
-      let(:eager) { ToolRunnerSpecSupport::RecordingEager.new }
-
-      def block_for(content, is_error: false)
-        { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => content, "is_error" => is_error }
-      end
-
-      def observing(content, is_error: false, tool_name: "bash", **options)
-        described_class.new(eager:, **options).observe(block_for(content, is_error:), tool_name)
-        eager.fired
-      end
-
-      def fired_for(content, tool_name: "bash")
-        [Lain::Canonical.digest(content), Lain::Summarizer::Result.new(tool_name:, text: content)]
-      end
-
-      # The digest stays the content address of the tool's own bytes -- what
-      # {Compaction::SummarySnapshot} looks a summary up by -- while the fired
-      # VALUE gains the tool name a custom summarizer routes on.
-      it "fires a successful String result over the threshold, keyed by its content address" do
-        content = "x" * 5000
-
-        expect(observing(content)).to eq([fired_for(content)])
-      end
-
-      it "carries the producing tool's name into the fired result" do
-        content = "x" * 5000
-
-        expect(observing(content, tool_name: "read_file")).to eq([fired_for(content, tool_name: "read_file")])
-      end
-
-      # An escalation trigger: this method already no-ops silently on a
-      # Symbol-keyed block (a named follow-up). An observation that cannot say
-      # WHICH tool ran must not widen that -- routing every result as nameless
-      # would silently disable every tool-keyed summarizer -- so the name is a
-      # required argument and its absence is an ArgumentError, not a miss.
-      it "refuses an observation with no tool name" do
-        observer = described_class.new(eager:)
-
-        expect { observer.observe(block_for("x" * 5000)) }.to raise_error(ArgumentError)
-      end
-
-      it "declines an error result however large -- a failure is not worth compressing" do
-        expect(observing("x" * 5000, is_error: true)).to be_empty
-      end
-
-      # This seam holds no SIZE policy. It once declined below 4096 bytes,
-      # which gated the project's own declared (free, token-less) summarizers
-      # behind the MODEL tier's cost threshold and made them dead for every
-      # ordinary tool result. The byte rule still exists, one layer down at
-      # {Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}, where the tier
-      # that pays for a fallthrough can apply it to the fallthrough alone.
-      it "fires a small result, so the free tier is consulted for it" do
-        expect(observing("small")).to eq([fired_for("small")])
-      end
-
-      # Array content is structured blocks, not free text: there is nothing for
-      # a prose summarizer to compress.
-      it "declines structured block (Array) content" do
-        expect(observing([{ "type" => "text", "text" => "x" * 5000 }])).to be_empty
-      end
     end
   end
 end

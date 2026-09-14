@@ -285,7 +285,7 @@ RSpec.describe "Subagent gating" do
 
   describe "a denied call" do
     it "reaches the child as a tool_result marked is_error, and the spawn still returns" do
-      tool = build_subagent(provider: mock(*calls("bash")), gate_policy: Lain::Effect::Handler::Gate::DenyAll.new)
+      tool = build_subagent(provider: mock(*calls("bash")), gate_policy: Lain::Middleware::Gate::DenyAll.new)
       result = tool.call({ "prompt" => "go" }, invocation)
 
       expect(result.is_error).to be(false)
@@ -319,6 +319,77 @@ RSpec.describe "Subagent gating" do
 
       expect(policy.asked).to eq(%w[bash])
       expect(tools[:bash].runs).to be_empty
+    end
+  end
+
+  # ---- The stack a built child really runs behind ---------------------------
+  #
+  # Read off a child Agent the builder really built, because what is asserted
+  # is the order of a security posture: a call the child was never attenuated
+  # to is refused first, a denied path next, and only then may a human be
+  # asked -- and the interpreter, last, is a bare Live that refuses nothing.
+  describe "the child's tool stack" do
+    let(:path_policy) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester",
+                                                                       cwd: "/home/tester/project"))
+    end
+
+    def child(posture: :schema, sensitivity: path_policy, role: :dev)
+      Lain::Tools::Subagent::ChildBuilder.new(
+        seam: seam(provider: mock, gate_policy: SubagentGateSupport::SpyPolicy.new(verdict: false), sensitivity:),
+        toolset: union, policy: Lain::Role::Catalog[role].spawn_policy(posture:), budget: Lain::Agent::Budget.new
+      ).build(parent, ceiling: 1).agent
+    end
+
+    def runner_of(agent) = agent.send(:tool_runner)
+
+    def listed(agent) = [*runner_of(agent).middleware.to_a.map(&:class), runner_of(agent).handler.class]
+
+    it "puts the path refusal outside the gate, both over the seam's one policy, and a bare Live last" do
+      built = child
+
+      expect(listed(built)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+      expect(runner_of(built).middleware.to_a.map { |layer| layer.instance_variable_get(:@sensitivity) })
+        .to all(be(path_policy))
+    end
+
+    it "refuses a denied path through the stack a built child really holds" do
+      runner = runner_of(child)
+      response = tool_response(["c1", "read_file", { "path" => "/home/tester/.ssh/id_rsa" }])
+
+      refusal = runner.run(response, context: nil).first
+
+      expect(refusal).to include("is_error" => true)
+      expect(refusal["content"]).to include("protected path")
+    end
+
+    it "puts the unpermitted-call refusal outermost under the handler_union posture" do
+      expect(listed(child(posture: :handler_union, role: :merge_resolver)))
+        .to eq([Lain::Middleware::RefuseUnpermitted, Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
+                Lain::Effect::Handler::Live])
+    end
+
+    # The gate judges what the runner resolves, and under `handler_union` the
+    # runner resolves against the UNION the child renders, as the gate always
+    # has; the refusal layer is what holds the child to its `only`-set.
+    it "resolves a union child's calls against the union it renders" do
+      built = child(posture: :handler_union, role: :merge_resolver)
+
+      expect(runner_of(built).toolset.names).to eq(built.toolset.names)
+      expect(built.toolset.names).to include("bash")
+    end
+
+    # Through the live delegator, which is what production wires: the child's
+    # layers and the parent's must resolve the SAME policy object, or the two
+    # can be told different things about which paths are denied.
+    it "resolves, through the board delegator, the very policy the parent's layers hold" do
+      board = Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "m",
+                                         sensitivity: path_policy, toolset: union)
+      live = Lain::CLI::Wiring::ToolsetBuild::LiveSensitivity.new(board: -> { board })
+      child_layer = runner_of(child(sensitivity: live)).middleware.to_a.first
+
+      expect(board.gate.first.instance_variable_get(:@sensitivity)).to equal(path_policy)
+      expect(child_layer.instance_variable_get(:@sensitivity).board.call.sensitivity).to equal(path_policy)
     end
   end
 

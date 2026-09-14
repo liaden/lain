@@ -19,7 +19,7 @@ module Lain
     #
     # `tool_use_id` and `tool` ride along rather than being read back off the
     # effect, which is what keeps the {Effect::Approval} unwrapping in ONE
-    # place: {Effect::Handler::Sensitivity} sits ahead of the Gate, so it sees
+    # place: {Middleware::Sensitivity} sits ahead of the Gate, so it sees
     # wrappers, which carry neither field.
     #
     # Frozen but deliberately NOT deeply so: `path` is whatever the model's
@@ -34,7 +34,7 @@ module Lain
     # ({#denial}), which rows may a listing keep ({#filter}), and what is this
     # one path ({#classify}) -- four phrasings of one question over one table.
     #
-    # {#gates?} is the one {Effect::Handler::Gate} asks, so a `read_file` on
+    # {#gates?} is the one {Middleware::Gate} asks, so a `read_file` on
     # `.env` reaches a human although `read_file` declares itself tier 1. The
     # whole three-place boundary, and the measured detector behind it, is in
     # ARCHITECTURE.md's "The secret boundary".
@@ -142,7 +142,7 @@ module Lain
         !path.nil? && !@sensitivity.classify(path).ordinary?
       end
 
-      # The DENIAL half of the same question, for {Effect::Handler::Sensitivity},
+      # The DENIAL half of the same question, for {Middleware::Sensitivity},
       # which refuses a denied path outright rather than gating it. It reads the
       # SAME table {#gates?} does -- one extraction, so the two axes cannot drift
       # about which field names a path -- and hands back the whole verdict,
@@ -153,13 +153,13 @@ module Lain
       #
       # The asymmetry is real and is not an oversight, so do not "fix" it by
       # adding an unwrap to {#gates?} -- that would change WHEN the gate fires.
-      # {Effect::Handler::Gate#perform} unwraps before it evaluates its own axis,
+      # {Middleware::Gate#call} unwraps before it evaluates its own axis,
       # so `gates?` only ever sees the inner call.
-      # {Effect::Handler::Sensitivity} sits AHEAD of the gate and sees the
+      # {Middleware::Sensitivity} sits AHEAD of the gate and sees the
       # wrapper, and without this an {Effect::Approval} around a denied
-      # `read_file` would be declined here, unwrapped by Gate, and approved --
+      # `read_file` would pass there, be unwrapped by the gate, and approved --
       # wrapping would lift a denial nothing is supposed to lift. It belongs
-      # HERE, not in that handler, because this class already owns "which
+      # HERE, not in that layer, because this class already owns "which
       # effects name paths".
       #
       # @param effect [Lain::Effect] any effect at all; the question is total
@@ -215,7 +215,7 @@ module Lain
       # The Hash check is not defensive habit. {Effect::ToolCall} does not
       # constrain `input`, and this runs on the SYNCHRONOUS dispatch path BEFORE
       # {Tool::Input} validation, so an Array reaches `Array#[]("path")` -- a
-      # TypeError out of {Effect::Handler::Gate#handles?}, where nothing raised
+      # TypeError out of {Middleware::Gate#call}, where nothing raised
       # before this class existed. The repair a raise on a security path invites
       # is a `rescue` answering false, and that is this boundary failing OPEN. A
       # shape carrying no readable field is declined instead. It also stops

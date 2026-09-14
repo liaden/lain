@@ -42,7 +42,7 @@
 # with the names the receiver held -- the DROPPED ones especially, since those
 # are the inputs an escape answers wrongly. It is a knob because only the
 # generator knows the subject's surface, and the surface that matters is not the
-# readable one: {Lain::Effect::Handler::Live} authorizes with `#include?` and
+# readable one: a caller asks `#include?` and {Lain::Agent::ToolRunner}
 # dispatches with `#fetch`, so a set honest in `#names`, `#each`, `#to_schema`
 # and `#digest` and lying in those two passes every other law here while a
 # dropped tool executes end to end. spec/lain/toolset_spec.rb holds that set and

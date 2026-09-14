@@ -1,0 +1,105 @@
+# frozen_string_literal: true
+
+module Lain
+  module Middleware
+    # Gates dangerous tool calls behind an approval decision before anything
+    # downstream may run them. A tool-phase middleware: it passes a call on, or
+    # answers it with a refusal and stops.
+    #
+    # What gets gated is TIER, not effect kind. The axis that predicts danger
+    # is not read-versus-write, it is whether the model controls the command
+    # string. A tool reports this about itself via {Tool#requires_approval?},
+    # so "what needs a human" stays a property of the tool rather than a list
+    # here that could drift out of sync with it. An explicit {Effect::Approval}
+    # wrapper is gated regardless of the tool's own tier: wrapping is how
+    # something upstream says "this one, specifically" without the gate
+    # needing to know why.
+    #
+    # The gate holds NO Toolset of its own. It judges the tool the env
+    # carries, which {Agent::ToolRunner#dispatch} resolved and hands on to the
+    # interpreter only while the name still resolves to it -- so authorization
+    # is decided against the object that runs, or nothing runs. That holds by
+    # POSITION: the gate must be the last layer before the interpreter, because
+    # a layer after it could rewrite the effect or the tool it approved.
+    #
+    # The approval decision is an injected policy answering
+    # `#call(effect, context) -> Boolean`, never a hardcoded terminal prompt:
+    # `lib/` may not touch the terminal (spec/output_discipline_spec.rb), so a
+    # real interactive policy belongs to the frontend and is handed in.
+    # {ApproveAll} is what the `auto` posture resolves to; {DenyAll} is its
+    # Null-Object opposite and the default -- safer to refuse an unattended
+    # gate than to silently run it.
+    class Gate < Base
+      # What {Mode::Posture}'s `auto` rung selects: an explicit, named opt-out
+      # rather than a magic nil policy.
+      class ApproveAll
+        def call(_effect, _context) = true
+      end
+
+      # Correct when no interactive frontend is attached to answer for a
+      # human, and the safe default.
+      class DenyAll
+        def call(_effect, _context) = false
+      end
+
+      # What a refused call is reported as when nothing more specific was
+      # wired.
+      DENIAL = "approval denied for tool %<name>s"
+
+      # @param policy [#call] `(effect, context) -> Boolean`, the approval
+      #   decision; receives the inner ToolCall even when wrapped in an Approval
+      # @param sensitivity [#gates?] the second gating axis, `(effect) ->
+      #   Boolean`, over the PATH a call names rather than the tool's tier.
+      #   ROOT-QUALIFIED because {Middleware::Sensitivity} is a sibling under
+      #   this very namespace, and a bare `Sensitivity` resolves to it.
+      # @param denial [String] the sentence a refused call is reported as,
+      #   with `%<name>s` standing in for the tool. Injected because the
+      #   DEFAULT one is only honest when a human was actually asked and said
+      #   no -- which reads to a model as a decision that could go the other
+      #   way, so it tries again. A session where nobody was asked, and nobody
+      #   can be, has to say so or it invites exactly that retry. The reason
+      #   cannot travel on the policy: that duck answers a Boolean, and a
+      #   Boolean has no room for a why.
+      def initialize(policy: DenyAll.new, sensitivity: ::Lain::Sensitivity::Policy::Null.instance, denial: DENIAL)
+        @policy = policy
+        @sensitivity = sensitivity
+        @denial = denial
+        super()
+        freeze
+      end
+
+      # Approved, the call goes downstream UNWRAPPED, so the interpreter sees
+      # the tool call itself. A denial is reported, never raised, so the loop
+      # continues instead of wedging on a refused call.
+      def call(env, &app)
+        return downstream(env, &app) unless gated?(env)
+
+        asked = unwrapped(env.fetch(:effect))
+        return downstream(env.merge(effect: asked), &app) if @policy.call(asked, env[:context])
+
+        env.merge(result: Tool::Result.error(format(@denial, name: asked.name.inspect)))
+      end
+
+      private
+
+      def unwrapped(effect) = effect.approval? ? effect.effect : effect
+
+      def gated?(env)
+        effect = env.fetch(:effect)
+        effect.approval? || (effect.tool_call? && judged?(effect, env.fetch(:tool)))
+      end
+
+      # Two axes, OR'd: the TIER the tool declares about itself, and the PATH
+      # this particular call names. Neither can ungate the other -- a policy
+      # that gates nothing leaves `bash` gated, and a tier-1 tool still reaches
+      # a human for `.env`.
+      #
+      # Both stay behind `held?`: a name the toolset does not hold passes on to
+      # the interpreter, which reports it by name, rather than being gated on a
+      # path in an input nothing will read.
+      def judged?(effect, tool)
+        tool.held? && (tool.requires_approval? || @sensitivity.gates?(effect))
+      end
+    end
+  end
+end

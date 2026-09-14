@@ -39,9 +39,9 @@ module SpecNulls
     def mode_switch = UNSWITCHED
     def sensitivity = Lain::Sensitivity::Policy::Null.instance
     # A board that was never wired knows nothing about who is attached, so a
-    # child gated by UNGATED reads the sentence {Lain::Effect::Handler::Gate}
+    # child gated by UNGATED reads the sentence {Lain::Middleware::Gate}
     # produces on its own.
-    def denial = Lain::Effect::Handler::Gate::DENIAL
+    def denial = Lain::Middleware::Gate::DENIAL
 
     def inspect = "SpecNulls::NoSwitchboard"
     alias_method :to_s, :inspect

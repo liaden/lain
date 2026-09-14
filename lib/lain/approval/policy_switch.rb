@@ -6,7 +6,7 @@ require "delegate"
 
 module Lain
   module Approval
-    # The delegating slot a posture flip writes: {Effect::Handler::Gate}'s
+    # The delegating slot a posture flip writes: {Middleware::Gate}'s
     # policy duck, answering through whichever policy is current. Gate stays
     # construction-fixed -- it holds this ONE object for the session and the
     # flip swaps the delegate inside it, never a setter on Gate. Deliberately

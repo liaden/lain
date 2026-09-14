@@ -1149,14 +1149,12 @@ RSpec.describe Lain::CLI::Backend do
         .to eq(Lain::Canonical.dump(base.render(timeline:, toolset:).cache_payload))
     end
 
-    # The Observer is the PRODUCTION mount (summarizing.rb:38-45): it and the
-    # Summarizing decorator are alternatives, never both against one Eager --
-    # #fire consumes the digest before spawning, so whichever fires first spends
-    # it and the other misses forever.
-    it "wires the Summarizing::Observer over the one Eager the source reads" do
+    # The observer fires into the SAME Eager the pipeline source snapshots, or
+    # every summary it fires is one no compaction can ever read.
+    it "wires the SummaryObserver over the one Eager the source reads" do
       backend = compacting_backend
 
-      expect(backend.tool_observer).to be_a(Lain::Effect::Handler::Summarizing::Observer)
+      expect(backend.tool_observer).to be_a(Lain::Compaction::SummaryObserver)
       expect(backend.tool_observer.eager).to be(backend.eager)
       expect(backend.pipeline_source(cache_profile: profile, journal:)
                     .eager).to be(backend.eager)

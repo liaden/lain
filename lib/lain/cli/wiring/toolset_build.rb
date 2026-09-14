@@ -58,7 +58,7 @@ module Lain
         # spawn never took.
         SPAWN_REQUESTER = "subagent"
 
-        # The gate half of the same late binding: {Effect::Handler::Gate}'s
+        # The gate half of the same late binding: {Middleware::Gate}'s
         # policy duck, answering through whichever policy the board's ONE
         # {Approval::PolicySwitch} currently holds, so a `/mode` posture flip
         # reaches a child's next tier-3 call.

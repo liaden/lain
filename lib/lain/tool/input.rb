@@ -229,10 +229,10 @@ module Lain
     #      has no string to interpolate. Prefer it to shelling out. A pre-canned
     #      command tool passes an argv *Array* to Mixlib::ShellOut, which execs with
     #      no shell at all -- only a String command goes through `sh -c`.
-    #   2. `Effect::Handler::Gate`, which gates the invocation before it happens --
+    #   2. `Middleware::Gate`, which gates the invocation before it happens --
     #      on the TIER axis (does the model control the command string?) and on the
     #      ARGUMENT axis beside it: `Sensitivity::Policy` classifies the path an
-    #      effect names, and `Effect::Handler::Sensitivity` refuses a denied one
+    #      effect names, and `Middleware::Sensitivity` refuses a denied one
     #      ahead of the gate, where no approval lifts it.
     #   3. The READ side, which the two above cannot cover, because a read that has
     #      already happened cannot be un-approved. `Middleware::RedactSecretReads`

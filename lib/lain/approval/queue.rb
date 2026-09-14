@@ -6,7 +6,7 @@ require "async/queue"
 
 module Lain
   module Approval
-    # {Effect::Handler::Gate}'s policy seam, backed by a queue instead of a
+    # {Middleware::Gate}'s policy seam, backed by a queue instead of a
     # terminal prompt: {#call} enqueues a {Pending} and PARKS the calling FIBER,
     # never the reactor, until a surface fiber decides it or the window expires.
     # Decoupling ask from answer is what lets any number of surfaces watch one
@@ -222,7 +222,7 @@ module Lain
       # that made it -- {Approval::Escalation} treats a human's approval and an
       # {AutoSurface}'s as different kinds of authority -- and a Boolean cannot
       # carry that. {#call} stays the two-valued duck
-      # {Effect::Handler::Gate} wants.
+      # {Middleware::Gate} wants.
       #
       # `outstanding:` is how the one arm holding a file's bytes tells the
       # surfaces what a yes would release. Answering the settled {Pending} is

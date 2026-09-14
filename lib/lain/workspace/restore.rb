@@ -16,7 +16,7 @@ module Lain
     # plus {Timeline#rewind}; they compose because they share only the turn
     # number.
     #
-    # A bare class, not an Effect behind {Effect::Handler::Gate}: the Gate tiers
+    # A bare class, not an Effect behind {Middleware::Gate}: the Gate tiers
     # MODEL-initiated tool calls (the danger axis is "does the model control the
     # string"), and Restore is operator-initiated bench machinery in the same
     # trust domain as {Timeline#rewind}'s pointer movement.
