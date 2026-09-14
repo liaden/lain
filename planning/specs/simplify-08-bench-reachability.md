@@ -369,6 +369,73 @@ else's.
   `Bench::CLI#arm_isolation` and retires two `cli_spec.rb` examples, so it needs its own
   red-before-green. Both the implementer and the panel reached this conclusion independently.
 
+- **Grade the tool calls, not the prose. Ruled by the human 2026-09-13; needs its own card.** Once
+  the bench has real tools, the gold graders stop working — and the panel confirmed the mechanism with
+  a probe rather than by reading. `ArmSweep.trajectory` (`arm_sweep.rb:83-87`) does
+  `.filter_map { |block| block["text"] }` over assistant turns; a `tool_use` block carries no `"text"`
+  key and is dropped:
+
+      trajectory from FILE/END prose         ["greet.rb"]
+      trajectory from a write_file tool_use  []
+      a gold grader given an EMPTY trajectory  0.000
+
+  So a live arm that uses the `write_file` T2 just gave it writes the file instead of printing it and
+  **scores 0.000 on every gold task**. The suite cannot see this: `grep -rn tool_use spec/lain/arm/`
+  returns nothing — no arm spec anywhere drives a `tool_use` response, and every bench-arm spec answers
+  text through `Provider::Mock`. Only a live run reveals it.
+
+  **The ruling: grade what the agent did, not what it narrated.** `Grader::ToolCallIndex` already
+  exists. This also retires the reason `exe/lain`'s `--system` help and `SpawnSeam#taught` exist at all
+  — the FILE/END format was only ever taught because nothing else could be graded.
+
+  **The card must also make the ruling operable, which today it is not.** Neither `bench arms` nor
+  `bench record` exposes `tools:` — it is a library keyword only. Combined with the above, the *only*
+  `bench arms` configuration reachable from argv is the one that scores 0.000 on every gold task, and
+  `Harness::NO_TOOLS`'s own comment says the toolless arm is what makes "does the harness set the
+  score" answerable. A `--tools floor|none` flag is the shape that makes either grading path
+  selectable, and it turns the toolset into a declared axis of the experiment rather than a default.
+
+  Scope: `bench/arm_sweep.rb`, the graders, and `exe/lain`. **Not T2's** — outside its Files list and
+  wanting its own red-before-green.
+
+- **`bench record` now writes O(n^2) session bytes, ~15.6 KB per turn. Filed 2026-09-13.** Measured
+  over five prompts with text-only answers: **11,856 to 96,828 bytes**, 8.2x for the same run. The
+  driver is `Telemetry::RequestSent` embedding `request.cache_payload`, which now carries the full
+  14,570-byte tools block on every turn; with four parallel `read_file` calls over 25 turns the
+  serialized volume reaches 116 MB. `RequestSent`'s own doc books the cost as *"accepted while sessions
+  are short"* — with tools, sessions are no longer short. A recorded bench corpus is this project's
+  deliverable artifact, so this wants a content-addressed dedupe rather than a bigger disk.
+
+  **Note the shape this is NOT.** T2's hand-back raised an O(n^2) worry about `Arm::Instrument#price`
+  draining and discarding; the panel measured it and the bytes are never realised — `RequestSent`
+  stores the frozen, structure-shared payload, `to_journal` is shallow, and nothing serializes before
+  `Ledger.from_journal` throws it away. The arm path is fine. Only the path that *writes* records pays.
+
+- **No argv reaches `router:`, so an ollama operator meets a refusal with no flag to answer it.
+  Filed 2026-09-14.** T3's roster refuses at assembly when the resolved model is not one the built-in
+  tier can route, and names two ways out: give `bench arms` an Anthropic `--model`, or supply a
+  router. The first is a real flag. **The second is a library door only** — `Bench::CLI#arms_report`
+  now takes and forwards `router:`, but nothing in `exe/lain` passes one. So a terminal operator on
+  `--provider ollama` is correctly stopped and cannot proceed. A `--router` flag, or a per-provider
+  sibling table, is the card. Fold in the panel's wording note: the refusal's Anthropic-model remedy
+  is sound for the `--model claude-haiku-4-5` collapse and nonsense for the ollama case, so the
+  sentence wants an "on an Anthropic provider" clause.
+
+- **A tierless router raises `NoMethodError` rather than a refusal — file against T6.** `paired`'s
+  first line is `return router.definition if definition.nil?`, and the YARD promises a tier exposing
+  no `definition` "says so by raising here rather than at the report". It does raise, but with Ruby's
+  error, so `exe/lain`'s render shows a trace instead of a sentence — while `AdaptiveRouter`'s own
+  `MismatchedDefinition` (a `Lain::Error`) sits one method above, unused for that case. **T6's
+  `Arm::Catalog` is precisely the caller that will pass a foreign tier**, so it belongs there. One
+  `respond_to?` guard.
+
+- **`Oracle::Router.heuristic` is now spec-only, and the machine record of that went with the row.**
+  T3 declined to delete it on the merits — the length baseline is what the file-count split had to
+  beat, and a study bench keeps the thing it beat. The in-place doc paragraph is the honest way to
+  hold that. But the `adaptive_router` deletability row was the only machine-checked record that part
+  of `oracle/router.rb` was unreferenced, and removing the row whole — correct for `.definition` —
+  drops the tracking for `.heuristic`. Worth a line in T6's card rather than a code change.
+
 ## Waves
 
 Wave 1: T1, T3, T4
