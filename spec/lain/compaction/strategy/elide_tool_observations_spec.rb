@@ -3,11 +3,6 @@
 # Built by a module rather than by `let`s, for the reason
 # spec/lain/compaction/strategy/elide_spec.rb records: the law-shaped groups
 # below run in a GROUP BODY, where no `let` exists yet.
-#
-# This module declares no algebra of its own. {Lain::Algebra.registry} is
-# process-wide and spec/algebra_laws_spec.rb asserts every declaration owns a
-# generator, so a fixture declaring against the global registry would go red
-# there rather than here (ComposedFixtures carries the same note).
 module ElideToolObservationsFixtures
   module_function
 
@@ -157,35 +152,15 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
     end
   end
 
-  # The escalation trigger the card names, and the answer is not the same for
-  # both claims: #blocks is inherited byte-for-byte, but only ONE of the two
-  # structures declared over it (`elide.rb:97-98`) survives that inheritance.
-  # Elementwise is structural -- `is_a?` is the classification -- while purity
-  # is registry-keyed on the EXACT class, which a re-derivation audit both
-  # states and depends on. So elementwise is inherited and purity is restated,
-  # and these examples are what stops either being SILENT.
-  describe "the attestation it inherits, and the one claim it restates" do
-    it "leaves #blocks owned by Elide, so the generated map is the parent's" do
+  # #blocks is inherited byte-for-byte, so the concatenation its parent is held
+  # to is the one this strategy answers; only the selection moves.
+  describe "the attestation it inherits" do
+    it "leaves #blocks owned by Elide, so the per-message map is the parent's" do
       expect(described_class.instance_method(:blocks).owner).to be(Lain::Compaction::Strategy::Elide)
     end
 
     it "overrides the selection and nothing else" do
       expect(described_class.instance_methods(false)).to contain_exactly(:propose_ranges)
-    end
-
-    it "still carries the parent's elementwise and purity claims" do
-      expect(strategy).to be_a(Lain::Algebra::Elementwise)
-      expect(strategy.pure?(:blocks)).to be(true)
-    end
-
-    # Exactly one, and it is the purity claim: the elementwise one is NOT
-    # restated, because re-declaring would regenerate an identical #blocks onto
-    # this class and file a second registry entry needing a second generator,
-    # for no behavioural difference at all.
-    it "restates the purity claim only, leaving elementwise to `is_a?`" do
-      declared = Lain::Algebra.registry.declarations.select { |entry| entry.subject == described_class }
-
-      expect(declared.map { |entry| [entry.operation, entry.structure] }).to contain_exactly(%i[blocks pure])
     end
 
     it "attests every claimed message by role, content address and byte count" do
@@ -214,10 +189,11 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
       strategy.ranges(mixed, span: 0...8).each do |range|
         claimed = mixed[range]
         cuttings = (0..claimed.size).map do |at|
-          strategy.collapse(claimed.take(at)) + strategy.collapse(claimed.drop(at))
+          halves = [claimed.take(at), claimed.drop(at)]
+          Lain::Canonical.dump(halves.flat_map { |half| strategy.collapse(half).content })
         end
 
-        expect(cuttings.map { |cut| bytes(cut) }.uniq).to eq([bytes(strategy.collapse(claimed))])
+        expect(cuttings.uniq).to eq([bytes(strategy.collapse(claimed))])
       end
     end
 
@@ -229,5 +205,18 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
     it "answers the unit for an empty claim, so no blank block is ever built" do
       expect(strategy.collapse([])).to be(Lain::Compaction::Strategy::DROP)
     end
+  end
+
+  # Its own instance, over the parent's population shape, drawn fresh per law for
+  # the reason spec/support/shared_examples/pure.rb documents.
+  describe "held to the purity laws on #blocks" do
+    strategy = described_class.new
+    plain = ElideToolObservationsFixtures.conversational_blocks
+    spans = -> { [[], *(1..3).map { |size| ElideToolObservationsFixtures.messages(plain.first(size)) }] }
+
+    include_examples "a pure operation",
+                     instance: -> { strategy },
+                     operation: :blocks,
+                     population: spans
   end
 end

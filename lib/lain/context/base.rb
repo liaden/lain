@@ -11,17 +11,11 @@ module Lain
     # stages it fused. A module has no instance to be the unit and no place to
     # hold that pair.
     #
-    # A SEPARATE algebra from Middleware::Composable despite the shared `>>` and
-    # monoid shape. A Middleware wraps a downstream call (`#call(env, &app)`); a
-    # Context combinator has no downstream to invoke -- it feeds the next
-    # stage's input directly, Proc#>>'s shape. Reusing Composable would force
-    # every combinator to accept a block it can never meaningfully call, and
-    # would let a combinator and a Middleware compose with each other into
-    # nonsense. The laws are still shared, through the "a monoid" property
-    # group; only the shape differs.
+    # A different composition from {Middleware}'s, which is a {Middleware::Stack}
+    # of members each wrapping a downstream call (`#call(env, &app)`). A Context
+    # combinator has no downstream to invoke -- it feeds the next stage's input
+    # directly, Proc#>>'s shape -- so the two never compose with each other.
     class Combinator
-      include Algebra::Monoid
-
       # @param messages [Array<Hash>]
       # @return [Array<Hash>] the identity: unchanged
       def call(messages)
@@ -58,10 +52,6 @@ module Lain
       def >>(other)
         Composed.new(self, other)
       end
-
-      # {Identity} is an instance built after this class body closes, so the
-      # unit can only be named lazily.
-      monoid on: :>>, identity: Algebra.later { Context::Identity }
     end
 
     # The monoid unit: composing it changes nothing, so a fold over an empty

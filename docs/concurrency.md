@@ -227,8 +227,8 @@ both halves of that claim are measured below, not assumed.
 the tool stack (an `env -> env` lambda writing `:result`; at the time `Lain::Effect::Handler#to_app`,
 now the block `Agent::ToolRunner#dispatch` passes, around a handler's one `#call(env)`), driven
 through the real `Lain::Middleware::Stack#call(env, &app)` boundary — not a lookalike API, the
-literal one — with one real pass-through member (`Middleware::Identity`) composed into the
-Stack, so the equivalence is proven through an actual composed chain link rather than the
+literal one — with one real pass-through member (a bare `Middleware::Base`; at the time
+`Middleware::Identity`, since deleted with the `>>` operator) composed into the Stack, so the equivalence is proven through an actual composed chain link rather than the
 zero-middleware fold. `Effect::Handler::Mock` stands in for "the existing handler-object interpreter"
 rather than `Live`, because `Live`'s correctness-gate-3 rescue (`StandardError` →
 `Tool::Result.error`) converts a raise into a message-only `Result` before either interpreter's
@@ -242,9 +242,8 @@ this spike.
 **Result 1 — equivalence holds.** Both interpreters, given the identical resolver and the
 identical `Effect::ToolCall`, produce the identical `Tool::Result` through the identical
 `Middleware::Stack#call(env, &app)` call. No API divergence was needed to make the fiber
-prototype fit — `Middleware`'s monoid group is untouched by this question, because the adapter's
-output is the *terminal app* a `Stack` calls, not a `Composable` member of the stack itself; the
-escalation trigger for a broken monoid law did not fire.
+prototype fit, because the adapter's output is the *terminal app* a `Stack` calls, not a member of
+the stack itself; the escalation trigger for a broken monoid law did not fire.
 
 **Result 2 — the fiber trace is measurably wrecked.** Both traces below are recorded verbatim
 from the same resolver raising `"kaboom from tool"`, run through each interpreter's real

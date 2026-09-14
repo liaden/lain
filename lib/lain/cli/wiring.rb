@@ -543,9 +543,8 @@ module Lain
       # The turn stack, with the window refresh OUTERMOST -- ahead of the
       # chronicle's own members, because re-resolving a denominator is not part
       # of the turn a journal records, and everything downstream that reads a
-      # window must see the refreshed one. A {Middleware::Stack} rather than a
-      # `>>` composition because the ordering is the footgun, and a Stack is
-      # the shape that stays inspectable.
+      # window must see the refreshed one. A {Middleware::Stack}, because the
+      # ordering is the footgun and a Stack is the shape that stays inspectable.
       def turn_phase(timeline, window)
         Middleware::Stack.new([Middleware::ResolveWindow.new(book: window),
                                *chronicle.turn_middleware(timeline).to_a])

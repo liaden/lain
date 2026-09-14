@@ -63,35 +63,6 @@ RSpec.describe "Agent turn_middleware" do
     expect(seen[:settled]).to be(true)
   end
 
-  describe "the monoid law (property-tested)" do
-    def tag(symbol)
-      Class.new(Lain::Middleware::Base) do
-        define_method(:call) do |env, &downstream|
-          entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
-          exited = downstream.call(entered)
-          exited.merge(trace: exited.fetch(:trace) + [[symbol, :out]])
-        end
-      end.new
-    end
-
-    def observe(middleware)
-      env = Lain::Middleware::Env.wrap({ iteration: 0, timeline: nil, trace: [] })
-      middleware.call(env) { |inner| inner }.fetch(:trace)
-    end
-
-    let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }
-
-    def compose(sequence)
-      sequence.map { |symbol| pool.fetch(symbol) }.reduce(Lain::Middleware::Identity, :>>)
-    end
-
-    include_examples "a monoid",
-                     operation: ->(a, b) { a >> b },
-                     identity: Lain::Middleware::Identity,
-                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b c d].sample }) },
-                     equal: ->(a, b) { observe(a) == observe(b) }
-  end
-
   describe "gate 7 through the turn phase" do
     it "still raises once max_iterations is reached, with a real turn phase wired" do
       calls = []
@@ -109,7 +80,7 @@ RSpec.describe "Agent turn_middleware" do
     end
 
     it "does not conflate a budget stop with a refusal, through the turn phase" do
-      stack = Lain::Middleware::Stack.new.use(Lain::Middleware::Identity)
+      stack = Lain::Middleware::Stack.new.use(Lain::Middleware::Base.new)
       a = agent(text_response("", stop_reason: :refusal), turn_middleware: stack)
 
       expect { a.ask("hi") }.not_to raise_error

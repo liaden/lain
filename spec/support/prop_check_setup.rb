@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# prop_check is the property-testing engine for the algebra specs.
+# prop_check is the property-testing engine for the law specs.
 #
 # What it gives that the previous engine could not: SHRINKING. A failing law
 # reports a MINIMAL counterexample. The previous engine's every call site here
@@ -37,7 +37,7 @@ module PropCheckSetup
     PropCheck.forall(**generators).with_config(n_runs: DEFAULT_RUNS, verbose: false, &block)
   end
 
-  # `generator` config values across the algebra specs are usually a real
+  # `generator` config values across the law specs are usually a real
   # `PropCheck::Generator` -- used as-is, this is what buys shrinking. A
   # handful of consumers still pass a plain callable instead (the shape every
   # consumer used before this engine): an arity-0 Proc built from the

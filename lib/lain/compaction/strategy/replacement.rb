@@ -23,41 +23,6 @@ module Lain
       NO_CONTENT = [].freeze
       private_constant :NO_CONTENT
 
-      # Blocks that have already been through {Replacement}'s vetting, wrapped so
-      # that a second opinion costs an `is_a?` rather than another walk. It is
-      # not unforgeable -- `private_constant` has never stopped `const_get` --
-      # which is why the fast path still asserts the invariant it skips.
-      #
-      # This is what makes the fold `#+` invites cheap AND still checked: both
-      # properties {Replacement} enforces are preserved by concatenation, since
-      # every block of `a ++ b` is a block of `a` or of `b`. Re-deriving that at
-      # every step is what turned `inject(:+)` quadratic.
-      Vetted = Data.define(:blocks)
-      private_constant :Vetted
-
-      # Concatenation, shared by the two shapes a collapse can answer. One
-      # method in one place because {Replacement} and DROP are different classes
-      # by necessity -- DROP carries no content and a {Replacement} refuses to
-      # -- while `++` on the free monoid has to be ONE operation or the monoid
-      # laws are being asserted about two.
-      #
-      # Both units short-circuit to the other operand ITSELF, so `DROP + a` and
-      # `a + DROP` return `a` rather than an equal copy: the unit law read
-      # strictly, and also the fold that actually happens, since most ranges in
-      # a span collapse to nothing.
-      module Concatenation
-        def +(other)
-          return other if content.empty?
-          return self if other.content.empty?
-
-          # Frozen, so the shareability step sees an already-shareable graph and
-          # copies nothing: both operands' blocks were made shareable when they
-          # were built.
-          Replacement.of(Vetted.new(blocks: (content + other.content).freeze))
-        end
-      end
-      private_constant :Concatenation
-
       # What replaces one collapsed range: CONTENT BLOCKS, and nothing else.
       #
       # There is no role here and no way to add one. The Messages API requires
@@ -72,8 +37,7 @@ module Lain
       # every shape a hand-written `#blocks` actually produces by mistake: a
       # bare Hash where an Array was meant, a `nil` among good blocks, a bare
       # String, an empty Hash, and a whole MESSAGE posing as a block. Any of
-      # them would render as garbage on the wire, and a bare Hash would
-      # additionally die inside `#+` on `Hash#+`.
+      # them would render as garbage on the wire.
       #
       # == Blankness is per block, not per body
       #
@@ -94,9 +58,6 @@ module Lain
       # idiom, so a caller's own blocks are neither frozen underneath it nor
       # reachable from here.
       Replacement = Data.define(:content) do
-        include Concatenation
-        include Algebra::Monoid
-
         # The free monoid's map: blocks in, a replacement or the unit out.
         def self.of(blocks) = blocks.is_a?(Array) && blocks.empty? ? DROP : new(content: blocks)
 
@@ -112,31 +73,15 @@ module Lain
         private
 
         def vetted(content)
-          return pre_vetted(content.blocks) if content.is_a?(Vetted)
-
           refuse_foreign(content)
           refuse_blank(content)
-          # Already-shareable content is kept as it is. Copying it would buy
-          # nothing, and this is the path a concatenation takes.
+          # Already-shareable content is kept as it is; copying it would buy
+          # nothing.
           Ractor.shareable?(content) ? content : Ractor.make_shareable(content, copy: true)
         end
 
-        # The deep-freeze invariant, kept by the VALUE rather than by the caller
-        # of the fast path. Skipping the walk is sound because concatenation
-        # preserves both refusals; skipping the shareability step would move the
-        # invariant into `#+`, and an O(1) flag read is a cheap price for
-        # keeping it here.
-        def pre_vetted(blocks)
-          return blocks if Ractor.shareable?(blocks)
-
-          raise NotBlocks, "pre-vetted content #{blocks.inspect} is not shareable; a replacement's " \
-                           "content is deeply frozen, and the fast path may not be the exception"
-        end
-
-        # Both refusals walk the content without allocating: `#+` invites a fold,
-        # so a scan that built a String (or an Array) per block would be
-        # quadratic in garbage for a value that is checked on every step. The
-        # offenders are collected only once there is something to name.
+        # Both refusals walk the content without allocating, and the offenders
+        # are collected only once there is something to name.
         def refuse_foreign(content)
           raise NotBlocks, not_an_array(content) unless content.is_a?(Array)
           return if content.all? { |block| block?(block) }
@@ -167,18 +112,12 @@ module Lain
         # `blank?` and not `strip.empty?`: ActiveSupport's reads a regex and
         # allocates nothing, where `strip` mints a String per block.
         def blank_text?(block) = block["type"] == "text" && block["text"].blank?
-
-        # Below the methods it names, and lazily, because the unit is an
-        # INSTANCE built after this class body closes.
-        monoid on: :+, identity: Algebra.later { DROP }
       end
 
       # The unit of that monoid: a collapsed range that vanishes, leaving no
       # replacement event at all. A distinct class rather than a {Replacement}
       # holding no content, because that is the thing this file refuses to build.
       Drop = Data.define do
-        include Concatenation
-
         def content = NO_CONTENT
 
         def drop? = true

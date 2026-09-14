@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Context::Combinator do
-  # A "tag" combinator appends a marker text block to the message list,
-  # purely -- mirroring middleware_spec.rb's `tag` helper. Two composed
-  # combinators are OBSERVATIONALLY EQUAL exactly when they produce the same
-  # tagged output for the same input, which is how "monoid law" is made
+  # A "tag" combinator appends marker text blocks to the message list, purely.
+  # Two composed combinators are OBSERVATIONALLY EQUAL exactly when they produce
+  # the same tagged output for the same input, which is how "monoid law" is made
   # concrete here without depending on Prune/Compact/etc internals.
-  def tag(symbol)
+  def tag(*symbols)
     Class.new(described_class) do
       define_method(:call) do |messages|
-        messages + [{ "role" => "tag", "content" => [{ "type" => "text", "text" => symbol.to_s }] }]
+        tags = symbols.map { |symbol| { "role" => "tag", "content" => [{ "type" => "text", "text" => symbol.to_s }] } }
+        messages + tags
       end
     end.new
   end
@@ -24,36 +24,16 @@ RSpec.describe Lain::Context::Combinator do
     combinator.call([]).map { |m| m["content"].first["text"] }
   end
 
+  # Each draw is ONE leaf appending up to three tags, never a chain folded with
+  # `>>`: a population built by the operation under test bends along with it,
+  # and an operator that is wrong only when an operand is already composed then
+  # passes the laws over draws that are all composed the same way.
   describe "the monoid law (property-tested)" do
     include_examples "a monoid",
                      operation: ->(a, b) { a >> b },
                      identity: Lain::Context::Identity,
-                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b c d].sample }) },
+                     generator: -> { tag(*Array.new(rand(0..3)) { %i[a b c d].sample }) },
                      equal: ->(a, b) { observe(a) == observe(b) }
-  end
-
-  # The same monoid the group above property-tests, now said in `lib/` beside
-  # the operator: a reader of base.rb is told what `>>` is, and the registry
-  # walk can hold it to these laws without knowing this spec file exists.
-  describe "the declared algebra" do
-    # Declarations only: a Refutation answers #structure but carries no
-    # identity, so an unfiltered `about` would select a future `not_a_monoid`
-    # entry here and then blow up on #identity instead of showing a diff.
-    subject(:declaration) do
-      Lain::Algebra.registry.about(described_class)
-                   .grep(Lain::Algebra::Declaration)
-                   .find { |entry| entry.structure == :monoid }
-    end
-
-    it "declares a monoid on #>>" do
-      expect(declaration.operation).to eq(:>>)
-    end
-
-    # The very object the law group above composes with, so the declaration
-    # cannot drift from what the suite already proved.
-    it "names Context::Identity as the unit" do
-      expect(declaration.identity).to be(Lain::Context::Identity)
-    end
   end
 
   describe "#>>" do

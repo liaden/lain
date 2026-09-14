@@ -8,12 +8,15 @@ module Lain
       #
       # == It is NOT elementwise, and that is the whole design
       #
-      # Summarizing a concatenation is not the concatenation of summaries, so
-      # this cannot include {Algebra::Elementwise}; the two refutations at the
-      # foot of this file record the negative where a walk of the registry can
-      # read it. Everything else follows: a non-homomorphic collapse cannot be
-      # re-derived from its parts, so its answer has to be addressable (the
-      # content address below) and recoverable (the recorded oracle above it).
+      # Summarizing a concatenation is not the concatenation of summaries: one
+      # span answers ONE block where its halves answer two, so no per-message
+      # map concatenates to {#blocks}. Nor is it pure -- it holds an oracle, so
+      # it reaches mutable state and is not Ractor.shareable?, which is why
+      # re-derivation needs the journalled answer rather than the edge alone.
+      # Its spec exhibits both. Everything else follows: a non-homomorphic
+      # collapse cannot be re-derived from its parts, so its answer has to be
+      # addressable (the content address below) and recoverable (the recorded
+      # oracle above it).
       #
       # == "Only summarize what is new" is a property of the ORACLE
       #
@@ -238,23 +241,6 @@ module Lain
           end
         end
         private_constant :Answers
-
-        # Filed directly rather than through the concerns, the escape hatch
-        # {Algebra::Elementwise}'s own doc names: for a structural property the
-        # absence of the module IS the negative, and
-        # `Algebra::Elementwise.not_elementwise` deliberately refuses an includer
-        # as a contradiction.
-        Algebra.registry.refute(
-          subject: self, operation: :blocks, structure: :elementwise,
-          reason: "summarizing a concatenation is not the concatenation of summaries -- one span answers ONE " \
-                  "block where its halves answer two, so no per-message map concatenates to #blocks"
-        )
-
-        Algebra.registry.refute(
-          subject: self, operation: :blocks, structure: :pure,
-          reason: "it holds an oracle, so it reaches mutable state and is not Ractor.shareable? -- which is why " \
-                  "re-derivation needs the journalled answer rather than the edge alone"
-        )
       end
     end
   end

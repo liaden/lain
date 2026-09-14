@@ -2,16 +2,14 @@
 
 # Associativity and a pass-through identity, property-tested via prop_check
 # (see spec/support/prop_check_setup.rb). `Usage` (a commutative monoid over
-# `Data.define`) and `Middleware` (a monoid over composed procs, compared by
-# observed behavior rather than `==`) satisfy the SAME two laws -- this file
-# is what proves the shared group is reusable rather than merely written:
-# usage_spec.rb and middleware_spec.rb both consume it instead of duplicating
-# the property-testing machinery. So do seven further consumers elsewhere in
-# the suite (repl_middleware_spec.rb, agent_turn_middleware_spec.rb,
+# `Data.define`) and `Context::Combinator` (a monoid over composed stages,
+# compared by observed behavior rather than `==`) satisfy the SAME two laws, and
+# so do the compaction strategies' `|` and `Mode::Layer`: usage_spec.rb,
 # context/base_spec.rb, context/dedupe_tool_calls_spec.rb,
-# context/purge_failed_inputs_spec.rb, middleware/skill_dispatch_spec.rb,
-# mode/layer_spec.rb) -- see the generator note below for what that means for
-# this file's contract.
+# context/purge_failed_inputs_spec.rb, compaction/strategy_spec.rb and
+# mode/layer_spec.rb all consume this group instead of duplicating the
+# property-testing machinery -- see the generator note below for what that
+# means for this file's contract.
 #
 # Include with a Hash:
 #
@@ -21,8 +19,8 @@
 #              #monoid_call]             a VALUE the engine owns, drawing one
 #                                        fresh element per call, is what
 #                                        gets shrinking on a broken law.
-#                                        usage_spec.rb and middleware_spec.rb
-#                                        pass one. Every OTHER consumer still
+#                                        usage_spec.rb passes one. Every
+#                                        OTHER consumer still
 #                                        passes an arity-0 Proc built from
 #                                        its own group's helpers -- the shape
 #                                        this file itself used before
@@ -33,8 +31,8 @@
 #                                        to change engines.
 #   equal      [#call(a, b) -> bool]     defaults to `==`. Override when
 #                                        equality must be OBSERVATIONAL: two
-#                                        composed Middlewares are never `==`
-#                                        as objects, so middleware_spec.rb
+#                                        composed combinators are never `==`
+#                                        as objects, so context/base_spec.rb
 #                                        passes a comparator that runs both
 #                                        through the same probe.
 #
@@ -63,11 +61,11 @@
 # nothing left to close over and nothing for a second `include_examples` to
 # clobber.
 #
-# Converting the seven plain-callable consumers into real generators (so
-# they gain shrinking too) is real, per-file work -- each needs a generator
-# built the way middleware_spec.rb's `build_tag` local is, without depending
-# on `self`. That conversion is deliberately deferred, not done piecemeal
-# here, and is tracked as a follow-up rather than left open-ended.
+# Converting the plain-callable consumers into real generators (so they gain
+# shrinking too) is real, per-file work -- each needs a generator built the way
+# usage_spec.rb's is, without depending on `self`. That conversion is
+# deliberately deferred, not done piecemeal here, and is tracked as a follow-up
+# rather than left open-ended.
 #
 # == Every example carries `aggregate_failures: false`
 #
@@ -103,10 +101,10 @@ RSpec.shared_examples "a monoid" do |config|
 end
 
 # Opt-in, and deliberately separate from "a monoid" above: not every monoid
-# here is commutative. Middleware composition is order-sensitive BY DESIGN --
-# that is the entire reason Stack exposes insert_before/insert_after -- so
-# middleware_spec.rb must never be asked to satisfy this law. Usage includes
-# both; Middleware includes only "a monoid".
+# here is commutative. Context combinator composition is order-sensitive BY
+# DESIGN -- a stage feeds the next one -- so context/base_spec.rb must never be
+# asked to satisfy this law. Usage and the compaction strategies' `|` include
+# both; Context::Combinator includes only "a monoid".
 RSpec.shared_examples "a commutative monoid" do |config|
   operation = config.fetch(:operation)
   raw_generator = config.fetch(:generator)

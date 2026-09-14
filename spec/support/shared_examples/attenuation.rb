@@ -1,16 +1,12 @@
 # frozen_string_literal: true
 
-# The laws of {Lain::Algebra::Attenuation} -- an operation that only ever takes
-# capability away, and its dual, which says the same restriction from the other
-# side.
+# The laws of an attenuation -- an operation that only ever takes capability
+# away, and its dual, which says the same restriction from the other side.
 #
-# There is no battery here, and that is deliberate rather than unfinished:
-# nothing in the tree refutes attenuation, and a battery exists only so a
-# REFUTATION can be confirmed by a named law failing. `:monoid` has shipped
-# without one for the same reason and is the precedent. Should a refutation
-# arrive, this Data is already the shape spec/algebra_laws_spec.rb's BATTERIES
-# takes -- `.from(config)` and `#to_h` of named predicates, as in
-# elementwise.rb and pure.rb.
+# The laws are a Data of named predicates, `.from(config)` and `#to_h`, as in
+# elementwise.rb and pure.rb, so a spec can read one law alone:
+# spec/lain/toolset_spec.rb does, to show a capability escape is refused by
+# monotonicity and by nothing else.
 #
 # == Why partiality is a law and not an edge case
 #
@@ -62,9 +58,9 @@
 # merely raised (the chained call asks an empty set for names it no longer
 # holds, which is the operation working). It genuinely falsifies two.
 #
-# spec/algebra_laws_spec.rb keeps `:holds`, `:fails` and an Exception apart for
-# exactly this reason, but only on the battery path, which attenuation does not
-# take. Until it has a refutation, reading the failure text is the check.
+# A spec that classifies laws rather than asserting them keeps `:holds`,
+# `:fails` and an Exception apart for exactly this reason; through this group,
+# reading the failure text is the check.
 #
 # == The depth this group reaches, which is not everything
 #
@@ -83,16 +79,9 @@
 #
 #   population  [#call -> Array<[subject, names]>]  the draws: a subject paired
 #                                                   with the names some caller
-#                                                   might request of it. Named
-#                                                   `population` because that is
-#                                                   one of the two knobs
-#                                                   spec/algebra_laws_spec.rb's
-#                                                   barren check reads.
-#   operation   [Symbol]                            the attenuation; folded in
-#                                                   from the registry by the
-#                                                   sweep, stated by hand at a
-#                                                   direct call site.
-#   dual        [Symbol]                            its dual, same provenance.
+#                                                   might request of it.
+#   operation   [Symbol]                            the attenuation.
+#   dual        [Symbol]                            its dual.
 #   refusal     [Class]                             the error a request outside
 #                                                   the subject raises.
 #   names       [#call(subject) -> Array]            the capability list, which
@@ -165,9 +154,9 @@ module AlgebraLaws
       end
     end
 
-    # SENT rather than public_sent, like every other group here:
-    # {Lain::Algebra.answers?} admits a private operation, so "does this class
-    # answer it?" stays a different question from "is it public?".
+    # SENT rather than public_sent, like every other group here, so a private
+    # operation is judged too: "does this class answer it?" stays a different
+    # question from "is it public?".
     def attenuate(subject, request) = subject.send(operation, *request)
 
     def drop(subject, request) = subject.send(dual, *request)
@@ -177,8 +166,8 @@ module AlgebraLaws
     # An expected raise, read as a predicate so every law stays a plain boolean.
     # Narrow on purpose: any OTHER exception propagates rather than being
     # counted as a refusal, because a partiality law confirmed by a NoMethodError
-    # would confirm nothing -- the same trap spec/algebra_laws_spec.rb's battery
-    # keeps :fails and an Exception apart for.
+    # would confirm nothing -- the same trap a classifying battery keeps :fails
+    # and an Exception apart for.
     def refused?
       yield
       false
@@ -244,9 +233,8 @@ RSpec.shared_examples "an attenuation" do |config|
 
   laws.to_h.each { |law, holds| it(law) { expect(holds.call).to be(true) } }
 
-  # Nested, so the including group's own `examples` are exactly the seven laws
-  # above -- the shape spec/algebra_laws_spec.rb's battery/group pin reads, kept
-  # even though attenuation has no battery to be pinned against yet.
+  # Nested, so the including group's own examples are exactly the seven laws
+  # above and the guards on the draws read as guards.
   context "when reading those laws over these draws" do
     it "includes a draw the operation genuinely attenuates" do
       expect(laws.attenuating).not_to be_empty

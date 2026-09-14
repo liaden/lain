@@ -61,8 +61,6 @@ module Lain
   end
 
   class Usage
-    include Algebra::CommutativeMonoid
-
     # A constant, not a memoized class ivar, so there is no first-call race --
     # and defined by REOPENING the class, because a constant set inside the
     # `Data.define` block above would scope to `Lain`, not `Usage` (CLAUDE.md).
@@ -95,10 +93,5 @@ module Lain
           cache_creation_input_tokens: wire["cache_creation_input_tokens"],
           cache_read_input_tokens: wire["cache_read_input_tokens"])
     end
-
-    # The claim above, made enumerable: one line files both the monoid and the
-    # commutative-monoid law group, so a walk holds `#+` to identity,
-    # associativity and commutativity without knowing which contains which.
-    commutative_monoid on: :+, identity: ZERO
   end
 end

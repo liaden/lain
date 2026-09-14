@@ -213,23 +213,35 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
     end
   end
 
+  # Two negatives, each EXHIBITED by a witness rather than stated: a failing law
+  # says the structure is absent, and only the witness says the reason is WHY.
+  # Both batteries classify rather than assert, so a law that raised stays apart
+  # from one that failed -- a negative confirmed by an error proves nothing.
   describe "the two structures it deliberately is not" do
-    def refutation(structure)
-      Lain::Algebra.registry.refutations.find do |entry|
-        entry.subject == described_class && entry.structure == structure
-      end
+    let(:deterministic) { fixtures.deterministic }
+    let(:halves) { [[fixtures.message("a")], [fixtures.message("b")]] }
+
+    # Read against `#per_message` and `#whole_span`, the per-element map and the
+    # analysis an elementwise reading of `#blocks` would have to be.
+    it "is not elementwise: summarizing a concatenation is not the concatenation of summaries" do
+      battery = AlgebraLaws::Elementwise.from(instance: -> { deterministic }, spans: -> { [halves.flatten] },
+                                              operation: :blocks, each: :per_message, analysis: :whole_span)
+      outcomes = AlgebraLaws.outcomes(battery)
+
+      expect(outcomes).to include("concatenates its per-element map against the whole-span analysis" => :fails)
+      expect(outcomes.values.grep(Exception)).to be_empty
+      expect(deterministic.blocks(halves.flatten).size).to eq(1)
+      expect(halves.sum { |half| deterministic.blocks(half).size }).to eq(2)
     end
 
-    it "refutes elementwise on the block operation, without including the concern" do
-      expect(strategy).not_to be_a(Lain::Algebra::Elementwise)
-      expect(refutation(:elementwise)&.operation).to eq(:blocks)
-      expect(refutation(:elementwise).reason).not_to be_empty
-    end
+    it "is not pure: it holds an oracle, so it reaches mutable state and is not Ractor.shareable?" do
+      battery = AlgebraLaws::Pure.from(instance: -> { deterministic }, operation: :blocks,
+                                       population: -> { fixtures.spans })
+      outcomes = AlgebraLaws.outcomes(battery)
 
-    it "refutes purity on the same operation, and holds an oracle rather than answering pure?" do
-      expect(strategy).not_to be_a(Lain::Algebra::Pure)
-      expect(strategy).not_to be_deeply_frozen
-      expect(refutation(:pure)&.operation).to eq(:blocks)
+      expect(outcomes).to include("reaches no mutable state" => :fails)
+      expect(outcomes.values.grep(Exception)).to be_empty
+      expect(Ractor.shareable?(deterministic)).to be(false)
     end
 
     it "leaves both of Base's questions owned by Base" do

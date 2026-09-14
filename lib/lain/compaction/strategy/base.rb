@@ -44,49 +44,23 @@ module Lain
       # == The two questions are SEALED
       #
       # {#ranges} and {#collapse} cannot be redefined by a subclass;
-      # `method_added` refuses both doors at load. Not defensiveness:
-      # {Algebra::Elementwise} checks `instance_methods(false)` before
-      # generating, so it happily generates over an INHERITED method -- which
-      # meant `elementwise on: :collapse` was accepted in silence and left
-      # {#collapse} answering an Array where every consumer expects a
-      # {Replacement}.
+      # `method_added` refuses both doors at load. Not defensiveness: a
+      # subclass whose {#collapse} answered an Array would hand every consumer
+      # expecting a {Replacement} the wrong thing, and {Replacement} could not
+      # name whose fault it was.
       #
-      # == Where the algebra attaches, and what an includer writes
+      # == Where the algebra attaches
       #
       # {#collapse} answers a {Replacement}, which is not a monoid element, so
-      # the algebra declares over {#blocks}: content blocks in the free monoid,
-      # whose unit is DROP. An unconditionally elementwise strategy therefore
-      # writes only its per-message map and lets {Algebra::Elementwise}
-      # generate the span map over it:
-      #
-      #   class Elide < Strategy::Base
-      #     include Algebra::Elementwise
-      #     def propose_ranges(_messages, span:) = [span]
-      #
-      #     private
-      #
-      #     def attested(message) = [{ "type" => "text", "text" => "..." }]
-      #
-      #     elementwise on: :blocks, each: :attested   # BELOW the helper it names
-      #   end
-      #
-      # By the universal property of the free monoid such an includer is a
-      # monoid homomorphism by construction, so `is_a?(Algebra::Elementwise)`
-      # IS the classification and there is no second declaration to fall out of
-      # sync with it. Generating over the INHERITED {#blocks} is ordinary
-      # subclassing and stays silent; a class that wrote its own {#blocks} and
-      # then declared over it is refused ({Algebra::Occupied}).
-      #
-      # Purity is the orthogonal axis, declared separately per operation. This
-      # class does NOT include {Algebra::Pure}: a strategy holding an oracle
-      # must be able to answer that it is not pure by not carrying the
-      # vocabulary at all.
+      # the laws are read over {#blocks}: content blocks in the free monoid,
+      # whose unit is DROP. An elementwise strategy writes {#blocks} as the
+      # concatenation of a per-message map -- {Elide} is the shape -- and by the
+      # universal property of the free monoid that is a monoid homomorphism.
+      # Purity is the orthogonal axis. Each strategy's spec holds it to the laws
+      # it obeys and exhibits the ones it does not.
       class Base
-        include Algebra::CommutativeMonoid
-
         # What a subclass may not redefine, and what to write instead.
-        SEALED = { ranges: "#propose_ranges, which #ranges validates",
-                   collapse: "#blocks, or `elementwise on: :blocks`" }.freeze
+        SEALED = { ranges: "#propose_ranges, which #ranges validates", collapse: "#blocks" }.freeze
 
         # What a refusal cites as the source of the ranges it refused. Supplied
         # here because THIS is the caller that called the hook: a partition
@@ -135,10 +109,10 @@ module Lain
           raise NotImplementedError, "strategy #{name} must implement #blocks(messages) -> Array<Hash>"
         end
 
-        # Two strategies claiming disjoint stretches of one span, run as one.
-        # Spelled `|` because it takes the UNION of two range-sets, and because
-        # the partiality reads as a set operation: an overlap refuses rather
-        # than picking a winner.
+        # Two strategies claiming disjoint stretches of one span, run as one: a
+        # commutative monoid with {Identity} as its unit. Spelled `|` because it
+        # takes the UNION of two range-sets, and because the partiality reads as
+        # a set operation: an overlap refuses rather than picking a winner.
         def |(other) = Composed.new(self, other)
 
         # @param messages [Array<Hash>] one range's worth of messages
@@ -152,9 +126,8 @@ module Lain
 
         # The blocks for ONE proposed range, which is where composition enters.
         # It is separate from {#blocks} so that {#blocks} keeps its one-argument
-        # shape, which it has to: {Algebra::Elementwise} GENERATES {Elide}'s
-        # from a per-message map, and the generated method takes exactly one
-        # positional argument.
+        # shape: an elementwise strategy's is a concatenation over messages, and
+        # a range is a parameter no per-message map can use.
         #
         # {Composed} is the one strategy that overrides it, because a range it
         # answers was proposed by one of its two operands and only that operand
@@ -170,8 +143,7 @@ module Lain
 
         # Defined LAST, so Base's own definitions above are not refused by it,
         # and on the singleton so it fires for every subclass -- including one
-        # written by `define_method`, which is the door `elementwise on: :collapse`
-        # comes through.
+        # written by `define_method`.
         def self.method_added(name)
           super
           instead = SEALED[name]
@@ -193,14 +165,6 @@ module Lain
           raise NotBlocks, "strategy #{name} answered #{answered.inspect} from #blocks; " \
                            "expected an Array of content blocks"
         end
-
-        # BELOW `#|`, which it names, and outside `private`, which a declaration
-        # is not. `.method_added` never sees it: that hook fires for a `def`,
-        # and this is a class-level verb call.
-        #
-        # The unit is an INSTANCE of a subclass built after this class body
-        # closes, which is what {Algebra.later} exists for.
-        commutative_monoid on: :|, identity: Algebra.later { Identity.new }
       end
     end
   end

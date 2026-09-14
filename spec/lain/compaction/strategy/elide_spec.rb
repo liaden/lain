@@ -3,8 +3,7 @@
 # Spans built by a module rather than by `let`s, because the law group below is
 # included in a GROUP BODY: `include_examples` runs there, and a config Hash
 # written there closes over `self` = the example group, where no `let` exists
-# yet. spec/support/algebra_generators.rb documents the same rule and answers it
-# the same way.
+# yet.
 module ElideFixtures
   module_function
 
@@ -17,6 +16,15 @@ module ElideFixtures
   # and a random SIZE could draw five empty spans and certify nothing. The empty
   # span is IN the draw, since the unit law is read over it.
   def spans = [0, 1, 2, 3, 5].map { |size| span(size) }
+
+  # `[m, other, m]`: attested per message, so the image preserves length and
+  # repeats an element, and no message survives untouched -- the three
+  # conditions spec/support/shared_examples/elementwise.rb's `judged` guard
+  # reads. Without them that law is read over nothing and certifies nothing.
+  def repeating
+    repeated = message("a")
+    [repeated, message("b", role: "assistant"), repeated]
+  end
 end
 
 RSpec.describe Lain::Compaction::Strategy::Elide do
@@ -74,9 +82,11 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
     # moved with the boundary could not be the control arm any comparison of
     # compaction policies is measured against.
     it "answers the same bytes wherever the boundary between two ranges falls" do
-      cuttings = (0..span.size).map { |at| elide.collapse(span.take(at)) + elide.collapse(span.drop(at)) }
+      cuttings = (0..span.size).map do |at|
+        Lain::Canonical.dump([span.take(at), span.drop(at)].flat_map { |half| elide.collapse(half).content })
+      end
 
-      expect(cuttings.map { |cut| bytes(cut) }.uniq).to eq([bytes(elide.collapse(span))])
+      expect(cuttings.uniq).to eq([bytes(elide.collapse(span))])
     end
 
     # Stated by REFUSAL rather than by `initialize`'s arity: the freeze now comes
@@ -108,12 +118,6 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
       expect(elide.collapse([])).to be(Lain::Compaction::Strategy::DROP)
       expect(elide.blocks([])).to be_empty
     end
-
-    it "leaves a span it is folded into exactly as it found it" do
-      collapsed = elide.collapse(span)
-
-      expect(elide.collapse([]) + collapsed).to be(collapsed)
-    end
   end
 
   describe "the ranges it proposes" do
@@ -122,25 +126,39 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
     end
   end
 
-  describe "the algebra it declares" do
-    it "is elementwise by construction and pure on the operation it declares" do
-      expect(elide).to be_a(Lain::Algebra::Elementwise)
-      expect(elide.pure?(:blocks)).to be(true)
-    end
+  # Unconditionally elementwise: the per-message map knows only its own message,
+  # so the analysis is nil. The `repeating` span rides beside the plain ones
+  # because the `judged` guard needs it, while `concatenates?` reads every span
+  # it is given and the EMPTY one is the shape a `flat_map` is likeliest to break
+  # on.
+  describe "held to the elementwise laws on #blocks" do
+    elide = described_class.new
+    drawn = [ElideFixtures.repeating, *ElideFixtures.spans]
 
-    it "declares both structures on #blocks, never on the sealed #collapse" do
-      declared = Lain::Algebra.registry.declarations.select { |entry| entry.subject == described_class }
+    include_examples "an elementwise map",
+                     instance: -> { elide },
+                     spans: -> { drawn },
+                     operation: :blocks,
+                     each: :attested,
+                     analysis: nil
+  end
 
-      expect(declared.map { |entry| [entry.operation, entry.structure] })
-        .to contain_exactly(%i[blocks elementwise], %i[blocks pure])
-    end
+  # Drawn FRESH per law, for the reason spec/support/shared_examples/pure.rb
+  # documents: three laws over one materialized population is an ordering bug
+  # the seed decides.
+  describe "held to the purity laws on #blocks" do
+    elide = described_class.new
+
+    include_examples "a pure operation",
+                     instance: -> { elide },
+                     operation: :blocks,
+                     population: -> { ElideFixtures.spans }
   end
 
   # The plain law `collapse(A ++ B) == collapse(A) ++ collapse(B)`, which holds
-  # for an unconditional (Alone) strategy and is exactly what makes this one the
-  # honest floor under a model-backed strategy. The registry sweep judges the
-  # elementwise and purity declarations; this group judges the homomorphism
-  # itself, which no structure in the registry names.
+  # for an unconditional strategy and is exactly what makes this one the honest
+  # floor under a model-backed strategy. The groups above judge #blocks; this
+  # one judges the collapse itself.
   describe "held to the homomorphism law over generated spans" do
     strategy = described_class.new
     drawn = ElideFixtures.spans

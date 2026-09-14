@@ -31,12 +31,11 @@ module Lain
       # message and not others. Here every block is elided identically, so
       # there is no per-block fact to state.
       #
-      # == Why the algebra is declared and not asserted
+      # == Why it is a homomorphism, and why that matters
       #
-      # It writes only its per-message map, and {Algebra::Elementwise} generates
-      # the whole-span {Base#blocks} as the concatenation of it -- so by the
-      # universal property of the free monoid this is a monoid homomorphism BY
-      # CONSTRUCTION. That is what makes it the control arm rather than merely a
+      # {#blocks} is the concatenation of a per-message map, so by the
+      # universal property of the free monoid this is a monoid homomorphism.
+      # That is what makes it the control arm rather than merely a
       # cheap strategy: where the boundary between two collapsed ranges falls
       # cannot change the bytes it answers, so a derivation over it measures the
       # policy under test and never the cut points.
@@ -53,9 +52,6 @@ module Lain
         # every strategy is the one thing that would break.
         prepend Freezable
 
-        include Algebra::Elementwise
-        include Algebra::Pure
-
         # Its own prose rather than {SummarySnapshot::ELIDED}'s, because the
         # reason differs: there was never a summary to hold, by design.
         ELIDED = "(elided -- no summary was taken)"
@@ -63,6 +59,10 @@ module Lain
         # The whole span, in one range. There is no cut this strategy could
         # prefer: it answers the same bytes under every partition of the span.
         def propose_ranges(_messages, span:) = [span]
+
+        # The concatenation of the per-message map, written out: that shape is
+        # the homomorphism, and its spec holds it to the elementwise laws.
+        def blocks(messages) = messages.flat_map { |message| attested(message) }
 
         private
 
@@ -74,14 +74,6 @@ module Lain
         def attest(message)
           "#{message.fetch("role")} #{Canonical.digest(message)} #{Canonical.dump(message).bytesize} bytes"
         end
-
-        # BELOW the helpers they name, which is load-bearing: both are checked
-        # when the declaration runs. The `private` above does NOT reach the
-        # generated {Base#blocks} -- `define_method` runs inside the macro,
-        # where the class body's default visibility is not in scope -- and it
-        # must stay public, since `#collapse` and the registry sweep read it.
-        elementwise on: :blocks, each: :attested
-        pure on: :blocks
       end
     end
   end

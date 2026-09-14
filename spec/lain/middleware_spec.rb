@@ -3,18 +3,9 @@
 RSpec.describe Lain::Middleware do
   # A "tag" middleware records its entry and exit around the downstream in a
   # purely functional way -- it appends to `env[:trace]` on the way in and to the
-  # returned env's trace on the way out, never mutating shared state. That makes
-  # two composed stacks OBSERVATIONALLY EQUAL exactly when they produce the same
-  # trace for the same input, which is how we make "monoid law" concrete.
-  #
-  # Held as a local, not written straight into an instance method, because the
-  # property-test generator below builds middlewares from inside a
-  # PropCheck::Generator#map block. That block runs at group-definition time
-  # with no example instance to call an instance method against -- unlike
-  # `operation`/`equal` in shared_examples/monoid.rb, it is never
-  # `instance_exec`'d per draw. `tag` stays as a thin delegate purely so the
-  # Stack examples below keep reading as `tag(:a)`.
-  build_tag = lambda do |symbol|
+  # returned env's trace on the way out, never mutating shared state, so a
+  # stack's nesting order reads straight off the trace it produces.
+  def tag(symbol)
     Class.new(Lain::Middleware::Base) do
       define_method(:call) do |env, &downstream|
         entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
@@ -23,44 +14,23 @@ RSpec.describe Lain::Middleware do
       end
     end.new
   end
-  define_method(:tag) { |symbol| build_tag.call(symbol) }
 
   # The observation: run a middleware over an empty-trace env, terminating in the
   # identity app, and read the trace it produced. The env is wrapped so the trace
-  # threads through Env#merge -- the laws are asserted over the whole value.
+  # threads through Env#merge.
   def observe(middleware)
     middleware.call(Lain::Middleware::Env.wrap({ trace: [] })) { |env| env }.fetch(:trace)
   end
 
-  let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }
-
-  # Fold a sequence of tag symbols into a single composed middleware; an empty
-  # sequence folds to the identity, which is exactly why the identity has to
-  # exist as a real value.
-  def compose(sequence)
-    sequence.map { |symbol| pool.fetch(symbol) }.reduce(Lain::Middleware::Identity, :>>)
-  end
-
-  # Not commutative BY DESIGN -- Stack's insert_before/insert_after exist
-  # precisely because middleware order is meaningful -- so only "a monoid" is
-  # included, never "a commutative monoid".
-  describe "the monoid law (property-tested)" do
-    # Draws a short sequence of tag symbols and folds it into a composed
-    # middleware the same way `compose` does -- through `build_tag` directly,
-    # since (per the note above) this generator has no example instance to
-    # call `compose`/`pool` against.
-    symbol_generator = PropCheck::Generators.one_of(
-      *%i[a b c d].map { |symbol| PropCheck::Generators.constant(symbol) }
-    )
-    composed_generator = PropCheck::Generators.array(symbol_generator, min: 0, max: 3).map do |symbols|
-      symbols.map { |symbol| build_tag.call(symbol) }.reduce(Lain::Middleware::Identity, :>>)
+  # Every production chain is a Stack, whose order is readable and adjustable;
+  # a binary operator nesting two middlewares into an opaque pair had no caller
+  # in lib/, so it and its unit are gone rather than held to laws.
+  describe "composition" do
+    it "is a Stack's job: no middleware answers the composition operator" do
+      expect(described_class::Base.new).not_to respond_to(:>>)
+      expect(described_class::Stack.new).not_to respond_to(:>>)
+      expect(described_class.constants).not_to include(:Composable, :Composed, :Identity)
     end
-
-    include_examples "a monoid",
-                     operation: ->(a, b) { a >> b },
-                     identity: Lain::Middleware::Identity,
-                     generator: composed_generator,
-                     equal: ->(a, b) { observe(a) == observe(b) }
   end
 
   describe described_class::Stack do
@@ -97,10 +67,9 @@ RSpec.describe Lain::Middleware do
         .to raise_error(ArgumentError, /no middleware matching/)
     end
 
-    it "is itself composable -- a Stack is a middleware" do
-      inner = described_class.new([b])
-      composed = a >> inner >> c
-      expect(observe(composed)).to eq([%i[a in], %i[b in], %i[c in], %i[c out], %i[b out], %i[a out]])
+    it "nests as a member of another Stack -- a Stack is a middleware" do
+      nested = described_class.new([a, described_class.new([b]), c])
+      expect(observe(nested)).to eq([%i[a in], %i[b in], %i[c in], %i[c out], %i[b out], %i[a out]])
     end
   end
 
@@ -113,15 +82,6 @@ RSpec.describe Lain::Middleware do
 
     it "passes env through for Base" do
       expect(described_class::Base.new.call(env)).to eq(env)
-    end
-
-    it "passes env through for Identity" do
-      expect(described_class::Identity.call(env)).to eq(env)
-    end
-
-    it "passes env through for a Composed pair" do
-      composed = described_class::Identity >> described_class::Identity
-      expect(composed.call(env)).to eq(env)
     end
 
     it "passes env through for an empty Stack" do

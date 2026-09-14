@@ -48,25 +48,6 @@ module Lain
       # call per turn; here it is one per claimed run. The alternative is a
       # single unanswerable stretch taking the whole span down with it, but a
       # caller wiring this onto the live chat path should know the multiplier.
-      #
-      # == The one claim it has to say again
-      #
-      # {Summarizing} refutes BOTH `elementwise` and `pure` on {#blocks}, and
-      # this class inherits that operation unoverridden. Only one refutation
-      # survives inheritance: elementwise is structural, classified by `is_a?`,
-      # so the absence IS the negative; purity is registry-keyed on the EXACT
-      # class, so a subclass drops a refutation exactly as it drops a claim.
-      # Left unsaid, this class would read as unclassified on `#blocks` rather
-      # than impure -- indistinguishable from a strategy nobody has ever asked
-      # about -- which understates exactly what is true of it: like its
-      # parent, it answers from outside the source, because it is
-      # oracle-backed.
-      #
-      # Restating costs a generator in spec/support/algebra_generators.rb,
-      # because `spec/algebra_laws_spec.rb` builds its claim list from
-      # `registry.map` -- which yields refutations too -- so a new refutation is
-      # a new claim needing the means to prove it. It fails as MISSING until
-      # that entry exists, never as an orphan.
       class SummarizeConversation < Summarizing
         # @param messages [Array<Hash>] the rendered messages
         # @param span [Range] the droppable span, as message indices
@@ -77,21 +58,6 @@ module Lain
           ToolMessages.conversational_runs(messages, span:, owner: name)
                       .flat_map { |run| super(messages, span: run) }
         end
-
-        # Said again rather than inherited, for the reason in the class doc. The
-        # reason string is the parent's own because the fact is the parent's own
-        # -- it holds an oracle and a mutable memo, and this class adds neither.
-        # Filed directly rather than through {Algebra::Pure}, which {Summarizing}
-        # does not include, so `not_pure` is not in scope here.
-        #
-        # The elementwise refutation is deliberately NOT restated beside it:
-        # that structure is classified by `is_a?`, so a second filing would be a
-        # duplicate the registry would demand a second proof of.
-        Algebra.registry.refute(
-          subject: self, operation: :blocks, structure: :pure,
-          reason: "it holds an oracle, so it reaches mutable state and is not Ractor.shareable? -- which is why " \
-                  "re-derivation needs the journalled answer rather than the edge alone"
-        )
       end
     end
   end

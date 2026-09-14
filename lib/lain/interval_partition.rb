@@ -21,8 +21,6 @@ module Lain
   # deliberately no part of identity, which is what lets the refinement meet state
   # its laws over partitions rather than over askers.
   class IntervalPartition
-    include Algebra::MeetSemilattice
-
     # Named for what it is not: the conditions it enforces are well-formedness,
     # not style.
     class NotAPartition < Error; end
@@ -241,9 +239,9 @@ module Lain
     # exactly "their meet is empty".
     #
     # It is the GREATEST lower bound under the refinement order {#refines?} names,
-    # which is why it is declared a semilattice at the foot of this class. Its
-    # partiality -- two different spans refuse -- is {Dag::RenderAncestry.meet}'s
-    # with span substituted for store.
+    # and its spec holds it to the four semilattice laws. Its partiality -- two
+    # different spans refuse -- is {Dag::RenderAncestry.meet}'s with span
+    # substituted for store.
     def meet(other)
       refuse_mismatched(other)
       IntervalPartition.new(owner: "#{owner} meet #{other.owner}", span:, ranges: intersections(other),
@@ -304,10 +302,5 @@ module Lain
       range.is_a?(Range) && range.exclude_end? &&
         range.begin.is_a?(Integer) && range.end.is_a?(Integer) && range.begin < range.end
     end
-
-    # BELOW #meet, which it names. The bottom is prose and not a value because a
-    # partition carries its span: "the partition claiming nothing" is a different
-    # value for every span, a fact about the structure rather than a member of it.
-    meet_semilattice on: :meet, bottom: "the empty partition, per span"
   end
 end

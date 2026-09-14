@@ -178,9 +178,9 @@ end
 # The law {Lain::Tool#parallel_safe?} claims and nothing tested: for tools that
 # opt in, the result is independent of the order they ran in -- pairwise
 # COMMUTATION of tool results, the same word this repo already uses for
-# {Lain::Algebra::CommutativeMonoid} and spec/support/shared_examples/monoid.rb,
-# spelled here over a relation rather than an operation (there is no binary
-# combine to register a structure for; the claim is that running a then b and
+# spec/support/shared_examples/monoid.rb's "a commutative monoid", spelled here
+# over a relation rather than an operation (there is no binary combine to hold
+# to that group; the claim is that running a then b and
 # running b then a land in the same state). That commutativity is the licence
 # {Lain::Agent::ToolRunner#gather} takes when it fans a contiguous run of
 # opted-in tools out as sibling tasks: concurrency is only sound if every

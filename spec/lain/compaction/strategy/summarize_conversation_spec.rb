@@ -290,8 +290,9 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       expect(eliding.ranges(mixed, span: 0..10)).to eq([1..2, 5..6])
     end
 
-    # `|` is a declared COMMUTATIVE monoid (`strategy/base.rb:235`), so the
-    # order an operator spells the pair in must not decide what it claims.
+    # `|` is a COMMUTATIVE monoid, held to its laws in
+    # spec/lain/compaction/strategy_spec.rb, so the order an operator spells
+    # the pair in must not decide what it claims.
     it "claims the same ranges whichever way round the pair is composed" do
       eliding = fixtures.eliding_tools
 
@@ -300,37 +301,17 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     end
   end
 
-  describe "the structures it inherits the refutation of" do
-    it "is neither elementwise nor pure, exactly as its parent refutes" do
-      expect(strategy).not_to be_a(Lain::Algebra::Elementwise)
-      expect(strategy).not_to be_a(Lain::Algebra::Pure)
-      expect(strategy).not_to be_deeply_frozen
-    end
+  # Its parent's purity negative, exhibited again on this class: it adds no
+  # state, but it holds the same oracle and memo, so the same law fails.
+  describe "the purity it inherits the absence of" do
+    it "is not pure: it holds an oracle, so it reaches mutable state and is not Ractor.shareable?" do
+      spans = -> { [fixtures.messages([[fixtures.text("so")], [fixtures.text("then")]])] }
+      battery = AlgebraLaws::Pure.from(instance: -> { strategy }, operation: :blocks, population: spans)
+      outcomes = AlgebraLaws.outcomes(battery)
 
-    # An EXACT-subject scan of {Lain::Algebra.registry.refutations}: the
-    # registry keys a refutation on the exact class the same way it keys a
-    # claim, so the parent's refutation does not reach this class. Left
-    # unrestated, this class would read as unclassified on `#blocks` rather
-    # than impure, understating exactly what is true of it -- it is the half
-    # of the pair that answers from outside the source, so it is the worst
-    # place to lose the claim.
-    it "restates the purity refutation on its own exact class" do
-      refuted = Lain::Algebra.registry.refutations.any? do |entry|
-        entry.subject == described_class && entry.operation == :blocks && entry.structure == :pure
-      end
-
-      expect(refuted).to be(true)
-    end
-
-    # Purity and elementwise part company here: one is registry-keyed and had to
-    # be said again, the other is classified by `is_a?` and survives inheritance
-    # as the absence it already is. Restating it would regenerate nothing and
-    # oblige a second proof.
-    it "restates nothing else, and claims nothing" do
-      mine = Lain::Algebra.registry.select { |entry| entry.subject == described_class }
-
-      expect(mine.map { |entry| [entry.operation, entry.structure] }).to eq([%i[blocks pure]])
-      expect(Lain::Algebra.registry.declarations.map(&:subject)).not_to include(described_class)
+      expect(outcomes).to include("reaches no mutable state" => :fails)
+      expect(outcomes.values.grep(Exception)).to be_empty
+      expect(Ractor.shareable?(strategy)).to be(false)
     end
 
     it "leaves both of Base's questions owned by Base" do

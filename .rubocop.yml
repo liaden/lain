@@ -74,9 +74,9 @@ YARD/MismatchName:
 # blind the cop repo-wide"). Its shape differs from the three above, too: those three carry the
 # real doc on a LATER reopen in the SAME file, so the cop's own node-at-a-time view eventually
 # sees it. `Lain`'s one canonical docstring lives in `lib/lain.rb`, a DIFFERENT file, on the
-# reopen this codebase treats as THE module's documentation (the compiled-extension mount and
-# the algebra seal both live there, after it). `live.rb`'s reopen carries no docstring of its
-# own for the same "exactly one, and it goes on the reopen" reason CLAUDE.md gives elsewhere --
+# reopen this codebase treats as THE module's documentation (the compiled-extension mount lives
+# there, after it). `live.rb`'s reopen carries no docstring of its own for the same "exactly
+# one, and it goes on the reopen" reason CLAUDE.md gives elsewhere --
 # it is simply never going to be the file that reopen is in, so there was never a later-half to
 # wait for.
 Style/Documentation:
@@ -250,12 +250,12 @@ RSpec/IdenticalEqualityAssertion:
   Enabled: false
 
 # Group-level locals here are build-once values read (never mutated) by examples:
-# anonymous stand-in classes, fixture paths, and registry-derived data. In
-# `algebra_laws_spec.rb` the local also GENERATES the examples, which `let` cannot
-# do -- `let` does not exist at class-definition time. Rebuilding an anonymous
-# Class per example would be strictly worse. The trade this makes is real: a spec
-# that mutates a shared local gets cross-example bleed and the cop would have said
-# so. House style is deeply-frozen read-only values, so that trade is consistent.
+# anonymous stand-in classes, fixture paths, and the populations a shared law group
+# is included with -- which `let` cannot supply, because `let` does not exist at
+# class-definition time. Rebuilding an anonymous Class per example would be
+# strictly worse. The trade this makes is real: a spec that mutates a shared local
+# gets cross-example bleed and the cop would have said so. House style is
+# deeply-frozen read-only values, so that trade is consistent.
 RSpec/LeakyLocalVariable:
   Enabled: false
 
@@ -304,20 +304,15 @@ Performance/MethodObjectAsBlock:
 # below was read once, and the exclusion is the verdict.
 
 # All of these are class-level memoization of immutable, idempotently-computed
-# values: Algebra and Reline registries, ActiveModel::Name, the shipped prompt
-# templates read off disk, a digest format String, and Tool/Contracts declarations.
-# Two shapes, both safe. The declaration-time ones (tool.rb's @input_model,
-# contracts.rb's @own_preconditions, input.rb's @fields) run inside a class
-# body, so they are single-threaded by construction. The lazy `||=` ones are warmed
-# during `require` -- Algebra.registry, for instance, is reached from the `refute`
-# calls sitting in class bodies in purge_failed_inputs.rb and summarizing.rb, so the
-# memo is populated before any thread exists. Where one could still race, both
-# racers compute an equal frozen value and one is discarded: wasted work, not
-# corruption.
+# values: the Reline registry, ActiveModel::Name, the shipped prompt templates read
+# off disk, a digest format String, and Tool/Contracts declarations. Two shapes, both
+# safe. The declaration-time ones (tool.rb's @input_model, contracts.rb's
+# @own_preconditions, input.rb's @fields) run inside a class body, so they are
+# single-threaded by construction. Where a lazy `||=` one could race, both racers
+# compute an equal frozen value and one is discarded: wasted work, not corruption.
 ThreadSafety/ClassInstanceVariable:
   Exclude:
     - "exe/lain"
-    - "lib/lain/algebra.rb"
     - "lib/lain/compaction/summary_snapshot.rb"
     - "lib/lain/declarative/carrier.rb"
     - "lib/lain/frontend/completion.rb"
@@ -329,7 +324,6 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool.rb"
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"
-    - "spec/support/algebra_generators.rb"
 
 # The five deliberate threads, and they now have two legitimate owners.
 #
@@ -452,13 +446,9 @@ RSpec/IteratedExpectation:
 
 # `include_examples` INLINES the shared examples into the calling group;
 # `it_behaves_like` nests them in a child. This codebase depends on the difference
-# and says so in two places (strategy_spec.rb's header, algebra_generators.rb): a
-# config Hash written in a group body closes over `self` = the example group, where
-# no `let` exists yet. algebra_laws_spec.rb proves it -- the line after the include
-# reads `examples.map(&:description)` to learn which laws the shared group just
-# defined, and under `it_behaves_like` those examples belong to a child group, so it
-# reads the wrong set. Converting all 44 sites turned that file red. The example
-# COUNT is identical either way, so a green suite cannot vouch for the other 43.
+# and says so in strategy_spec.rb's header: a config Hash written in a group body
+# closes over `self` = the example group, where no `let` exists yet. The example
+# COUNT is identical either way, so a green suite cannot vouch for a conversion.
 RSpec/IncludeExamples:
   Enabled: false
 

@@ -3,8 +3,7 @@
 # Spans and doubles, built by a module rather than by `let`s because half of
 # this file's subjects are built in a GROUP BODY: `include_examples` runs there,
 # and a config Hash written there closes over `self` = the example group, where
-# no `let` exists yet. spec/support/algebra_generators.rb documents the same rule
-# and answers it the same way.
+# no `let` exists yet.
 module StrategyFixtures
   module_function
 
@@ -34,36 +33,26 @@ module StrategyFixtures
     end.new.freeze
   end
 
-  # Elementwise and unconditional -- {Lain::Algebra::Elementwise::Alone} -- so it
-  # writes ONLY its per-message map and inherits both the span map and #collapse.
-  # This is the elementwise shape. Declared against a scratch registry:
-  # {Lain::Algebra.registry} is process-wide and spec/algebra_laws_spec.rb
-  # asserts that every generator answers a declaration somebody makes, so an
-  # anonymous double declaring against the global one goes red in that file, not
-  # this one.
-  def marking(registry)
+  # Elementwise and unconditional: #blocks is the concatenation of a per-message
+  # map that knows only its own message, and #collapse is inherited -- Elide's
+  # shape.
+  def marking
     Class.new(Lain::Compaction::Strategy::Base) do
-      include Lain::Algebra::Elementwise
-      include Lain::Algebra::Pure
+      def blocks(messages) = messages.flat_map { |message| marked(message) }
 
       private
 
       def marked(message) = [{ "type" => "text", "text" => "<#{message.fetch("role")}>" }]
-
-      elementwise(on: :blocks, each: :marked, registry:)
-      pure(on: :blocks, registry:)
     end.new.freeze
   end
 
   # Pure and NOT elementwise: a tally is a function of the whole span, so no map
-  # over elements can produce it. This is the shape behind both negatives
-  # -- the homomorphism one and the registry refutation of :elementwise. The two
-  # helpers that look unused are the knobs a refutation's generator must supply,
-  # since a battery needs SOMETHING to hold the claim to.
-  def tallying(registry)
+  # over elements can produce it. This is the shape behind both negatives -- the
+  # homomorphism one and the elementwise battery's. The two helpers that look
+  # unused are the knobs that battery is handed, since a refutation needs
+  # SOMETHING to hold the operation to.
+  def tallying
     Class.new(Lain::Compaction::Strategy::Base) do
-      include Lain::Algebra::Pure
-
       def blocks(messages) = [{ "type" => "text", "text" => "#{messages.size} messages" }]
 
       def whole_span(_span) = :nothing
@@ -71,13 +60,11 @@ module StrategyFixtures
       private
 
       def per_message(message, _analysis) = [{ "type" => "text", "text" => message.fetch("role") }]
-
-      pure(on: :blocks, registry:)
     end.new.freeze
   end
 
-  # Reachable mutable state, which is what {Lain::Algebra::Pure}'s shareability
-  # proxy is a proxy FOR: the shape a strategy holding an oracle has.
+  # Reachable mutable state, which is what the purity laws' shareability proxy
+  # is a proxy FOR: the shape a strategy holding an oracle has.
   module Tally
     def initialize
       super
@@ -86,26 +73,93 @@ module StrategyFixtures
   end
 
   # Elementwise and NOT pure: it holds a mutable tally, so it is not
-  # `Ractor.shareable?`, and it declares no purity. The tally never enters a
-  # per-message image, so the map is still a homomorphism -- which is the point:
-  # the axes are independent.
-  def counting(registry)
+  # `Ractor.shareable?`. The tally never enters a per-message image, so the map
+  # is still a homomorphism -- which is the point: the axes are independent.
+  def counting
     Class.new(Lain::Compaction::Strategy::Base) do
-      include Lain::Algebra::Elementwise
-      include Lain::Algebra::Pure
       include Tally
+
+      def blocks(messages) = messages.flat_map { |message| counted(message) }
 
       private
 
       def counted(message) = [{ "type" => "text", "text" => "<#{message.fetch("role")}>" }]
-
-      elementwise(on: :blocks, each: :counted, registry:)
     end.new
+  end
+
+  def elementwise_battery(strategy, each:, analysis: nil)
+    AlgebraLaws::Elementwise.from(instance: -> { strategy }, spans: -> { repeating },
+                                  operation: :blocks, each:, analysis:)
+  end
+
+  def purity_battery(strategy)
+    AlgebraLaws::Pure.from(instance: -> { strategy }, operation: :blocks, population: -> { spans })
+  end
+
+  # The one span every composition law is read over, and the four zones it
+  # divides into. Four because the widest law in the group -- associativity --
+  # draws THREE times, so any three consecutive draws have to be three
+  # different zones; a cycle of three would hand associativity `a | a` on every
+  # third iteration.
+  COMPOSITION_SPAN = 0..15
+  ZONE = 4
+  ZONES = 4
+
+  # == Why the population is a fixed cycle of zone-disjoint strategies
+  #
+  # `#|` is PARTIAL -- two strategies whose ranges overlap refuse, and `a | a`
+  # always overlaps -- while the shared monoid group draws its population
+  # through a NULLARY `generator` called independently per law, up to three
+  # times in one check. "Draw a disjoint pair" is therefore not expressible as a
+  # filter over an already-built pool: nothing downstream of the generator can
+  # see the other draws.
+  #
+  # So the pool is built disjoint instead. Four strategies, each owning one
+  # quarter of COMPOSITION_SPAN and proposing a real range inside it, handed out
+  # in a fixed cycle: any three consecutive draws are three different zones, so
+  # no law is given an overlapping pair or `a | a`. The zones carry NON-EMPTY
+  # range-sets, so the laws are read over a composition that composes
+  # something -- an all-Identity pool would satisfy every law about nothing.
+  #
+  # And no draw is built THROUGH `#|`: a population produced by the operation
+  # under test collapses along with it, and the laws then hold vacuously. Break
+  # `#|` in any way at all and these four are untouched -- a left-absorbing `#|`
+  # answers only the left operand's zone, which commutativity reads as
+  # different ranges out and fails.
+  def composition
+    drawn = Array.new(ZONES) { |zone| zoned(zone) }.cycle
+    { operation: ->(a, b) { a | b }, generator: -> { drawn.next }, equal: observationally_equal }
+  end
+
+  # One zone's worth of one span, collapsed to a marker naming the zone. The
+  # range stops one index short of its zone so consecutive zones are separated
+  # by a retained index rather than merely adjacent -- adjacency is legal, and
+  # an off-by-one that merged two zones would then be invisible.
+  def zoned(zone)
+    first = zone * ZONE
+    Class.new(Lain::Compaction::Strategy::Base) do
+      define_method(:name) { -"zone #{zone}" }
+      define_method(:propose_ranges) { |_messages, **| [first..(first + ZONE - 2)] }
+      define_method(:blocks) { |_messages| [{ "type" => "text", "text" => "<zone #{zone}>" }] }
+    end.new.freeze
+  end
+
+  # Two composed strategies are never `==` as objects, so equality is
+  # OBSERVATIONAL, and over both halves of the seam: the ranges answered over
+  # one span AND what each collapses to. Ranges alone would leave the dispatch
+  # unread, which is the half `a | Identity` collapsing exactly as `a` turns on.
+  def observationally_equal
+    probe = Array.new(COMPOSITION_SPAN.size) { |index| message("m#{index}") }
+    observe = lambda do |strategy|
+      strategy.ranges(probe, span: COMPOSITION_SPAN).map do |range|
+        [range.first, range.max, strategy.collapse(probe[range], range:).content]
+      end
+    end
+    ->(a, b) { observe.call(a) == observe.call(b) }
   end
 end
 
 RSpec.describe Lain::Compaction::Strategy do
-  let(:registry) { Lain::Algebra::Registry.new }
   let(:span) { StrategyFixtures.span(4) }
 
   describe "the seam every strategy answers" do
@@ -136,48 +190,34 @@ RSpec.describe Lain::Compaction::Strategy do
         .to raise_error(Lain::Error, /blocks/)
     end
 
-    # The natural typo, and the one that used to pass in silence: the card's own
-    # duck section names #collapse, and Algebra::Elementwise only refuses
-    # generating over a method the class wrote ITSELF.
-    it "refuses an elementwise declaration aimed at the collapse rather than the blocks" do
-      scratch = registry
-
-      expect do
-        Class.new(described_class::Base) do
-          include Lain::Algebra::Elementwise
-
-          private
-
-          def attested(_message) = [{ "type" => "text", "text" => "x" }]
-
-          elementwise(on: :collapse, each: :attested, registry: scratch)
-        end
-      end.to raise_error(Lain::Error, /blocks/)
+    # The `define_method` door: it fires `method_added` exactly as `def` does.
+    it "refuses a collapse written by define_method, naming what to write" do
+      expect { Class.new(described_class::Base) { define_method(:collapse) { |_messages| [] } } }
+        .to raise_error(Lain::Error, /blocks/)
     end
 
-    it "still allows the hooks, and generating over the inherited blocks" do
-      expect { StrategyFixtures.marking(registry) }.not_to raise_error
-      expect(StrategyFixtures.marking(registry).blocks(span).size).to eq(span.size)
+    it "still allows the hooks, and a hand-written blocks over the inherited collapse" do
+      expect { StrategyFixtures.marking }.not_to raise_error
+      expect(StrategyFixtures.marking.blocks(span).size).to eq(span.size)
     end
 
     # `method_added` fires for every `def`-shaped door, but it structurally
     # cannot see module composition: an `include`d or `prepend`ed module that
     # defines #collapse, or a `define_singleton_method`, never reaches it. That
-    # is not the door the card invites -- but such a strategy is told to
-    # `include` two modules, so composition IS the idiom here and a shared
-    # mixin is the obvious next refactor. Ownership catches every door at once,
-    # including the three the hook cannot, so this assertion is the seal and
-    # the hook is only the early, better-worded half of it.
+    # is not the door a strategy is invited through, but a shared mixin is the
+    # obvious next refactor. Ownership catches every door at once, including
+    # the three the hook cannot, so this assertion is the seal and the hook is
+    # only the early, better-worded half of it. Every strategy in lib/ is
+    # named, plus the doubles here: nothing enumerates strategies for us.
     it "keeps both questions owned by Base, whatever a strategy includes" do
-      strategies = [described_class::Identity, described_class::Base,
-                    StrategyFixtures.marking(registry).class,
-                    StrategyFixtures.tallying(registry).class,
-                    StrategyFixtures.counting(registry).class,
-                    *Lain::Algebra.registry.map(&:subject)]
+      strategies = [described_class::Identity, described_class::Base, described_class::Elide,
+                    described_class::ElideToolObservations, described_class::Summarizing,
+                    described_class::SummarizeConversation, described_class::Composed,
+                    StrategyFixtures.marking.class, StrategyFixtures.tallying.class,
+                    StrategyFixtures.counting.class]
 
-      sealed = strategies.uniq.select { |subject| subject.is_a?(Class) && subject <= described_class::Base }
       questions = %i[ranges collapse]
-      owners = sealed.flat_map do |subject|
+      owners = strategies.flat_map do |subject|
         questions.map { |question| subject.instance_method(question).owner }
       end
 
@@ -251,70 +291,38 @@ RSpec.describe Lain::Compaction::Strategy do
     end
   end
 
+  # Elementwise and pure are independent axes, and each is a matter of what
+  # `#blocks` DOES: the batteries read the operation, and nothing a class says
+  # about itself enters into it.
   describe "the two algebraic axes" do
-    it "answers them independently" do
-      elementwise_only = StrategyFixtures.counting(registry)
-      pure_only = StrategyFixtures.tallying(registry)
+    it "is elementwise but not pure when it holds a tally the map never reads" do
+      counting = StrategyFixtures.counting
 
-      expect([elementwise_only.is_a?(Lain::Algebra::Elementwise), elementwise_only.pure?(:blocks, registry:)])
-        .to eq([true, false])
-      expect([pure_only.is_a?(Lain::Algebra::Elementwise), pure_only.pure?(:blocks, registry:)])
-        .to eq([false, true])
+      expect(AlgebraLaws.outcomes(StrategyFixtures.elementwise_battery(counting, each: :counted)).values.uniq)
+        .to eq([:holds])
+      expect(AlgebraLaws.outcomes(StrategyFixtures.purity_battery(counting)))
+        .to include("reaches no mutable state" => :fails)
     end
 
-    it "reads elementwise-ness off the module, with no second declaration to drift" do
-      expect(StrategyFixtures.marking(registry)).to be_a(Lain::Algebra::Elementwise)
-      expect(StrategyFixtures.tallying(registry)).not_to be_a(Lain::Algebra::Elementwise)
-      expect(described_class::Base.instance_methods.grep(/elementwise|homomorph/)).to be_empty
-    end
-  end
+    it "is pure but not elementwise when it answers a function of the whole span" do
+      tallying = StrategyFixtures.tallying
+      battery = StrategyFixtures.elementwise_battery(tallying, each: :per_message, analysis: :whole_span)
+      refuted = AlgebraLaws.outcomes(battery)
 
-  # The group the REGISTRY SWEEP judges every :elementwise claim by -- a
-  # different file from the homomorphism group below, and the one that decides
-  # whether an :elementwise declaration and a refutation can be swept at all. It
-  # was hardcoded to `instance.call(span)`, and this seam has no #call by design.
-  describe "the elementwise battery the registry sweep judges strategies by" do
-    def battery(strategy, each:, operation: :blocks, analysis: nil)
-      AlgebraLaws::Elementwise.from(instance: -> { strategy }, spans: -> { StrategyFixtures.repeating },
-                                    operation:, each:, analysis:)
-    end
-
-    def outcomes(battery)
-      battery.to_h.transform_values do |law|
-        law.call ? :holds : :fails
-      rescue StandardError => e
-        e.class
-      end
-    end
-
-    it "proves an unconditional declaration made on the seam's own operation" do
-      declared = battery(StrategyFixtures.marking(registry), each: :marked)
-
-      expect(outcomes(declared).values.uniq).to eq([:holds])
-    end
-
-    it "reads the operation the registry recorded, rather than one assumed by name" do
-      StrategyFixtures.marking(registry)
-
-      expect(registry.declarations.map { |entry| [entry.operation, entry.analysis] }).to include([:blocks, nil])
-    end
-
-    it "confirms a whole-span refutation by a law that fails rather than raises" do
-      refuted = outcomes(battery(StrategyFixtures.tallying(registry), each: :per_message, analysis: :whole_span))
-
+      expect(AlgebraLaws.outcomes(StrategyFixtures.purity_battery(tallying)).values.uniq).to eq([:holds])
       expect(refuted).to include("concatenates its per-element map against the whole-span analysis" => :fails)
-      expect(refuted.values.uniq - %i[holds fails]).to be_empty
+      expect(refuted.values.grep(Exception)).to be_empty
     end
 
-    it "gives the declaration's own guards something to read, on the same spans" do
-      declared = battery(StrategyFixtures.marking(registry), each: :marked)
+    it "offers the elementwise battery something to read, on the same spans" do
+      battery = StrategyFixtures.elementwise_battery(StrategyFixtures.marking, each: :marked)
 
-      expect([declared.rewritten.empty?, declared.judged.empty?]).to eq([false, false])
+      expect([battery.rewritten.empty?, battery.judged.empty?]).to eq([false, false])
     end
   end
 
   describe "an elementwise strategy, held to the homomorphism law" do
-    strategy = StrategyFixtures.marking(Lain::Algebra::Registry.new)
+    strategy = StrategyFixtures.marking
     drawn = StrategyFixtures.spans
 
     include_examples "a monoid homomorphism",
@@ -324,7 +332,7 @@ RSpec.describe Lain::Compaction::Strategy do
   end
 
   describe "a whole-span strategy, held to the negative" do
-    strategy = StrategyFixtures.tallying(Lain::Algebra::Registry.new)
+    strategy = StrategyFixtures.tallying
     drawn = StrategyFixtures.spans
 
     include_examples "not a monoid homomorphism",
@@ -334,12 +342,34 @@ RSpec.describe Lain::Compaction::Strategy do
   end
 
   describe "a pure strategy, held to the purity laws" do
-    strategy = StrategyFixtures.tallying(Lain::Algebra::Registry.new)
+    strategy = StrategyFixtures.tallying
 
     include_examples "a pure operation",
                      instance: -> { strategy },
                      operation: :blocks,
                      population: -> { StrategyFixtures.spans }
+  end
+
+  # Identity proposes no ranges whatever it is offered, so what the purity laws
+  # read is the shareability proxy and the absence of any reachable state --
+  # the whole claim for a Null Object. The population is drawn fresh per law,
+  # so one law cannot read arguments another has already been through.
+  describe "the identity strategy, held to the purity laws on #propose_ranges" do
+    identity = described_class::Identity.new
+
+    include_examples "a pure operation",
+                     instance: -> { identity },
+                     operation: :propose_ranges,
+                     population: -> { StrategyFixtures.spans },
+                     keywords: ->(span) { { span: 0..[span.size - 1, 0].max } }
+  end
+
+  # The fold the compaction flag resolves a `+`-joined name through: a
+  # commutative monoid whose unit is the Identity strategy.
+  describe "the composition monoid on #|" do
+    include_examples "a monoid", identity: described_class::Identity.new, **StrategyFixtures.composition
+
+    include_examples "a commutative monoid", **StrategyFixtures.composition
   end
 
   describe "the replacement a collapse answers" do
@@ -357,7 +387,7 @@ RSpec.describe Lain::Compaction::Strategy do
     end
 
     # Anthropic rejects the request if ANY text block is empty, so an all-blank
-    # reading let `[blank, good]` through -- and `+` then propagated it.
+    # reading let `[blank, good]` through.
     it "refuses a blank text block even beside a good one" do
       [[{ "type" => "text", "text" => "   " }],
        [{ "type" => "text", "text" => "" }, { "type" => "text", "text" => "kept" }],
@@ -391,22 +421,6 @@ RSpec.describe Lain::Compaction::Strategy do
 
     it "answers DROP rather than a blank replacement for no blocks at all" do
       expect(described_class::Replacement.of([])).to be(described_class::DROP)
-    end
-
-    it "concatenates under DROP as its unit, answering the operand itself" do
-      expect(described_class::DROP + replacement).to be(replacement)
-      expect(replacement + described_class::DROP).to be(replacement)
-      expect((replacement + replacement).content).to eq(content + content)
-    end
-
-    # The fold `#+` invites -- `inject(:+)` over a span's replacements -- used to
-    # deep-copy the whole accumulated content at every step.
-    it "copies nothing when folding replacements whose content is already shareable" do
-      folded = Array.new(4) { |i| described_class::Replacement.text("block #{i}") }
-                    .inject(described_class::DROP, :+)
-
-      expect(folded.content.size).to eq(4)
-      expect(folded).to be_deeply_frozen
     end
 
     it "is a deeply frozen, shareable value that leaves its caller's blocks alone" do

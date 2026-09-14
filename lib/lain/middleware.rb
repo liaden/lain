@@ -6,47 +6,14 @@ module Lain
   # environment on the way in, invoking the downstream via the block, and
   # transforming the result on the way out.
   #
-  # The shape recurs across the project because middleware forms a MONOID under
-  # composition: `>>` is associative and {Identity} is a pass-through unit. The
-  # law is not decoration -- a non-associative composition operator would make
-  # the meaning of a stack depend on how it happened to be grouped, which is
-  # precisely the Rack ordering footgun. {Stack} makes the order inspectable and
-  # mutable so the footgun is visible, and the law (property-tested) guarantees
-  # grouping never changes behavior.
+  # Middlewares compose by membership in a {Stack}, never by a binary operator
+  # nesting two of them into an opaque pair. Ordering is precisely the Rack
+  # footgun, so the one composition mechanism is the one whose order a reader
+  # can inspect and adjust.
   module Middleware
-    # The composition operator, mixed into everything that behaves as a
-    # middleware. `a >> b` yields a new middleware that runs `a` outermost and
-    # `b` just inside it.
-    module Composable
-      def >>(other)
-        Composed.new(self, other)
-      end
-    end
-
-    # Two middlewares nested into one. Associativity falls out of this being
-    # plain function nesting: however you group the `>>`s, the resulting nesting
-    # order is the same, so there is only one behavior to observe.
-    class Composed
-      include Composable
-
-      def initialize(outer, inner)
-        @outer = outer
-        @inner = inner
-        freeze
-      end
-
-      def call(env, &app)
-        @outer.call(env) { |inner_env| @inner.call(inner_env, &app) }
-      end
-    end
-
     # The leaf base: a pass-through. Subclasses override {#call} and invoke the
-    # downstream via {#downstream}. On its own it is the monoid identity's
-    # behavior, which is why {Identity} is just an instance of it.
+    # downstream via {#downstream}.
     class Base
-      include Composable
-      include Algebra::Monoid
-
       def call(env, &app)
         downstream(env, &app)
       end
@@ -63,20 +30,7 @@ module Lain
       def downstream(env, &app)
         app ? yield(env) : env
       end
-
-      # {Identity} is an instance built after this class body closes (below),
-      # so the unit can only be named lazily -- {Context::Combinator}'s same
-      # move. Declared on {Base} only, per the {Context::Combinator} precedent:
-      # `registry.about(Composed)` answers `[]` because `>>` and the monoid it
-      # forms both belong to the base capability every middleware shares, not
-      # to the one subclass that happens to implement composition.
-      monoid on: :>>, identity: Algebra.later { Middleware::Identity }
     end
-
-    # The monoid unit: composing it changes nothing. Having a real value for
-    # "no-op middleware" is what lets a fold over an empty middleware list, or an
-    # optional middleware slot, stay total instead of special-casing nil.
-    Identity = Base.new
 
     # An ordered, INSPECTABLE, MUTABLE list of middlewares that is itself a
     # middleware. Ordering is Rack's classic footgun, so unlike the frozen value
@@ -85,8 +39,6 @@ module Lain
     # `#insert_after`) rather than having to reconstruct the whole chain to move
     # one entry.
     class Stack
-      include Composable
-
       def initialize(middlewares = [])
         @middlewares = middlewares.dup
       end

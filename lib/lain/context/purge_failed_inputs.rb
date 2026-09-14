@@ -12,8 +12,10 @@ module Lain
     # failure is recorded on the ANSWERING tool_result, so which ids failed can
     # only be read off the whole list), then a map over messages against that
     # fixed analysis. Unlike DedupeToolCalls the second phase is NOT elementwise
-    # even relative to the analysis, which the refutation at the bottom of this
-    # body states. Nothing here may be re-expressed in terms of tool_use ids to
+    # even relative to the analysis: `turns:` is a POSITION, so two `==` messages
+    # either side of the boundary take different images in one call, which no
+    # function of (message, analysis) can do. Its spec exhibits that witness.
+    # Nothing here may be re-expressed in terms of tool_use ids to
     # dodge that -- {Grader::ToolCallIndex} treats a repeated id as a wire
     # anomaly to tolerate, never as impossible, and an id-keyed rewrite of this
     # class silently redacts protected content when one shows up.
@@ -96,16 +98,6 @@ module Lain
         redact = failed_ids.include?(Response::ToolUse.wrap(block).id)
         redact ? block.merge("input" => {}) : block
       end
-
-      # Filed directly rather than through {Algebra::Elementwise}, which refuses
-      # to refute an includer. Below #call, because a refutation is checked
-      # against the operation it names exactly like a declaration is.
-      Algebra.registry.refute(
-        subject: self, operation: :call, structure: :elementwise,
-        reason: "the trailing turns: window is positional -- two messages that are == take different " \
-                "images inside one call when the boundary falls between them, so no (message, analysis) " \
-                "function reproduces #call"
-      )
     end
   end
 end

@@ -8,9 +8,7 @@ require "tmpdir"
 # a Thor executable that calls `LainCLI.start(ARGV)` at load time -- per its
 # own header comment, nothing there is unit-tested the way lib/ is, so this
 # spec pins down the SHAPE the repl phase is built from instead: the env
-# contract (`:text`/`:agent` going in, `:response` added on the way out) and
-# that a Stack over that env satisfies the same monoid law every other phase
-# does.
+# contract (`:text`/`:agent` going in, `:response` added on the way out).
 RSpec.describe "the repl phase's Middleware::Stack" do
   # exe/lain's `dispatch` in miniature: `:text`/`:agent` go in, downstream
   # runs the real command and the result comes back as `:response`.
@@ -116,34 +114,5 @@ RSpec.describe "the repl phase's Middleware::Stack" do
           .to raise_error(ArgumentError, /role_spawn/)
       end
     end
-  end
-
-  describe "the monoid law (property-tested)" do
-    def tag(symbol)
-      Class.new(Lain::Middleware::Base) do
-        define_method(:call) do |env, &downstream|
-          entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
-          exited = downstream.call(entered)
-          exited.merge(trace: exited.fetch(:trace) + [[symbol, :out]])
-        end
-      end.new
-    end
-
-    def observe(middleware)
-      env = Lain::Middleware::Env.wrap({ text: "hi", agent: :the_agent, trace: [] })
-      middleware.call(env) { |inner| inner }.fetch(:trace)
-    end
-
-    let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }
-
-    def compose(sequence)
-      sequence.map { |symbol| pool.fetch(symbol) }.reduce(Lain::Middleware::Identity, :>>)
-    end
-
-    include_examples "a monoid",
-                     operation: ->(a, b) { a >> b },
-                     identity: Lain::Middleware::Identity,
-                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b c d].sample }) },
-                     equal: ->(a, b) { observe(a) == observe(b) }
   end
 end

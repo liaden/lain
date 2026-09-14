@@ -42,7 +42,7 @@ RSpec.describe Lain::Agent::Instrumentation do
   describe "#with" do
     it "replaces one member and carries the other six through untouched" do
       journal = RecordingChannel.new
-      base = described_class.new(journal:, turn_middleware: Lain::Middleware::Stack.new([Lain::Middleware::Identity]))
+      base = described_class.new(journal:, turn_middleware: Lain::Middleware::Stack.new([Lain::Middleware::Base.new]))
 
       source = a_source
       folded = base.with(pipeline_source: source)

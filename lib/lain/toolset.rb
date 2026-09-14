@@ -19,7 +19,6 @@ module Lain
     class UnknownTool < Error; end
 
     include Enumerable
-    include Algebra::Attenuation
     include Inspectable
 
     # The schema and its digest are built HERE rather than memoized on demand:
@@ -76,6 +75,24 @@ module Lain
     # raises, so the constructing line cannot claim a capability that is not
     # really there -- the "read one line to know what it can do" guarantee stays
     # honest. Returns a new frozen Toolset; the receiver is untouched.
+    #
+    # Attenuation goes DOWN and only down, and its spec holds the pair to laws:
+    # `except(x) == only(names - x)`, chaining either can never widen, and the
+    # partiality is a law too -- `only` outside the set raises, and `except`
+    # twice over the same names raises because the second names a tool already
+    # gone.
+    #
+    # There is deliberately no join. Two Toolsets have no least upper bound
+    # here; union exists only at CONSTRUCTION, below the trust boundary, where
+    # {Tools::Subagent#child_union} assembles a child's set out of tools the
+    # parent already holds.
+    #
+    # The boundary covers the MODEL-FACING surface: the rendered schema and the
+    # `#include?`/`#fetch` pair {Agent::ToolRunner} resolves a call with. It is
+    # NOT a claim about the Ruby object graph -- `only(:subagent)
+    # .fetch("subagent").attenuates_from` hands back the whole un-attenuated
+    # union. Reaching a tool's own constructor arguments in-process is not the
+    # threat this is against; a spec pins both halves so neither reading drifts.
     def only(*names)
       keys = normalize(names)
       missing = keys.reject { |key| @by_name.key?(key) }
@@ -94,25 +111,6 @@ module Lain
 
       self.class.new(@by_name.except(*keys).values)
     end
-
-    # Attenuation goes DOWN and only down, held to laws by the registry:
-    # `except(x) == only(names - x)`, chaining either can never widen, and the
-    # partiality is a law too -- `only` outside the set raises, and `except`
-    # twice over the same names raises because the second names a tool already
-    # gone.
-    #
-    # There is deliberately no join. Two Toolsets have no least upper bound
-    # here; union exists only at CONSTRUCTION, below the trust boundary, where
-    # {Tools::Subagent#child_union} assembles a child's set out of tools the
-    # parent already holds.
-    #
-    # The boundary covers the MODEL-FACING surface: the rendered schema and the
-    # `#include?`/`#fetch` pair {Agent::ToolRunner} resolves a call with. It is
-    # NOT a claim about the Ruby object graph -- `only(:subagent)
-    # .fetch("subagent").attenuates_from` hands back the whole un-attenuated
-    # union. Reaching a tool's own constructor arguments in-process is not the
-    # threat this is against; a spec pins both halves so neither reading drifts.
-    attenuation on: :only, dual: :except
 
     # Identical bytes for two Toolsets holding the same tools regardless of the
     # order they were built in -- the invariant prompt caching depends on.

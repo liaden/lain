@@ -212,41 +212,4 @@ RSpec.describe Lain::Middleware::SkillDispatch do
       end
     end
   end
-
-  describe "SkillDispatch preserves the repl monoid" do
-    # A tag middleware over the repl phase's `:trace`, exactly the harness
-    # repl_middleware_spec uses -- SkillDispatch is folded into the same pool so
-    # the law is checked WITH it present (it is a pass-through for "hi").
-    def tag(symbol)
-      Class.new(Lain::Middleware::Base) do
-        define_method(:call) do |env, &downstream|
-          entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
-          exited = downstream.call(entered)
-          exited.merge(trace: exited.fetch(:trace) + [[symbol, :out]])
-        end
-      end.new
-    end
-
-    def observe(middleware)
-      env = Lain::Middleware::Env.wrap({ text: "hi", agent: :the_agent, trace: [] })
-      middleware.call(env) { |inner| inner }.fetch(:trace)
-    end
-
-    around do |example|
-      with_dispatch(shipped: create_plan) do |dispatch|
-        @pool = { a: tag(:a), b: tag(:b), s: dispatch }
-        example.run
-      end
-    end
-
-    def compose(sequence)
-      sequence.map { |symbol| @pool.fetch(symbol) }.reduce(Lain::Middleware::Identity, :>>)
-    end
-
-    include_examples "a monoid",
-                     operation: ->(a, b) { a >> b },
-                     identity: Lain::Middleware::Identity,
-                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b s].sample }) },
-                     equal: ->(a, b) { observe(a) == observe(b) }
-  end
 end

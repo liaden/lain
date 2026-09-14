@@ -4,10 +4,8 @@
 # the reason spec/lain/compaction/strategy_spec.rb records: `include_examples`
 # and several multi-history examples run in a group body, where no `let` exists.
 #
-# None of these doubles declares any algebra. {Lain::Algebra.registry} is
-# process-wide and spec/algebra_laws_spec.rb asserts every declaration has a
-# generator, so an anonymous class declaring against the global registry would
-# go red there rather than here.
+# The monoid `|` forms is held to its laws in spec/lain/compaction/strategy_spec.rb,
+# where the operator lives; this file is about what a composition DOES.
 module ComposedFixtures
   module_function
 
@@ -207,17 +205,6 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
   end
 
   describe "the shape of the object" do
-    # The un-deferral ruling and the operator both belong in `lib/`; this pins
-    # that the registry can be read for them.
-    it "is declared a commutative monoid on #| with the Identity strategy as its unit" do
-      declared = Lain::Algebra.registry.declarations
-                              .select { |entry| entry.subject == Lain::Compaction::Strategy::Base }
-
-      expect(declared.map(&:structure)).to contain_exactly(:monoid, :commutative_monoid)
-      expect(declared.map(&:operation).uniq).to eq([:|])
-      expect(declared.first.identity).to be_a(Lain::Compaction::Strategy::Identity)
-    end
-
     it "is one more subclass of the seam, with both questions still owned by Base" do
       %i[ranges collapse].each do |question|
         expect(described_class.instance_method(question).owner).to be(Lain::Compaction::Strategy::Base)
@@ -247,7 +234,7 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
 
     # Stated mechanically, per CLAUDE.md: {Scheduler::COMPOSE} makes the
     # pipeline shareable, a Range SUBCLASS is not frozen the way a literal is,
-    # and dropping `freeze` from Owned leaves the whole law sweep green.
+    # and dropping `freeze` from Owned leaves every law group green.
     it "is shareable, as is every range it tags and any partition holding one" do
       composed = left | right
       ranges = composed.ranges(messages, span: 0..7)

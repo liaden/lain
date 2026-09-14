@@ -107,23 +107,28 @@ RSpec.describe Lain::Context::PurgeFailedInputs do
     end
   end
 
-  # The negative is a first-class entry, not an absence: Algebra::Elementwise
-  # is deliberately NOT included, and the refutation is filed directly. Both
-  # examples below are the law failing -- an elementwise map is a function of
-  # (message, analysis), and these show #call is not one.
+  # The negative, exhibited rather than recorded: every example below is the
+  # elementwise law failing -- an elementwise map is a function of (message,
+  # analysis), and these show #call is not one.
   describe "the refutation of elementwise" do
-    it "refutes elementwise on #call, naming the positional window" do
-      refutation = Lain::Algebra.registry.refutations
-                                .find { |entry| entry.subject == described_class }
+    # The strong witness, `[m, error, m]` with `turns: 1`: the first and last
+    # messages `==`, the failure recorded on the tool_result between them, and
+    # the boundary falling between the two. It rules out EVERY candidate
+    # analysis at once rather than merely the one the class computes, which is
+    # why the law read is functionality and not concatenation. The battery
+    # classifies rather than asserts, so a law that raised stays apart from one
+    # that failed: a refutation confirmed by an error proves nothing.
+    it "is not elementwise: the trailing turns: window is positional, so two equal messages take two images" do
+      combinator = described_class.new(turns: 1)
+      repeated = assistant(tool_use(id: "x", name: "search", input: { "q" => "BIG" }))
+      witness = [repeated, user(tool_result(id: "x", content: "boom", is_error: true)), repeated]
+      laws = AlgebraLaws::Elementwise.from(instance: -> { combinator }, spans: -> { [witness] }, operation: :call,
+                                           each: :without_failed_input, analysis: :failed_tool_use_ids)
+      outcomes = AlgebraLaws.outcomes(laws)
 
-      expect([refutation.operation, refutation.structure]).to eq(%i[call elementwise])
-      expect(refutation.reason).to include("positional")
-    end
-
-    it "never also declares elementwise, and does not include the module" do
-      expect(Lain::Algebra.registry.declares?(subject: described_class, operation: :call,
-                                              structure: :elementwise)).to be(false)
-      expect(described_class.new(turns: 2)).not_to be_a(Lain::Algebra::Elementwise)
+      expect(outcomes).to include("gives two equal elements equal images within one call" => :fails)
+      expect(outcomes.values.grep(Exception)).to be_empty
+      expect(laws.judged).not_to be_empty
     end
 
     # A function answers one image per argument. Here two `==` messages take

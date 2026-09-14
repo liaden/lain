@@ -57,12 +57,6 @@ module DerivationFixtures
     timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
   end
 
-  # The strategy doubles below deliberately declare NO algebra.
-  # {Lain::Algebra.registry} is process-wide and spec/algebra_laws_spec.rb
-  # asserts that every declaration has a generator and every generator a
-  # declaration, so an anonymous class declaring against the global
-  # registry goes red in that file rather than in this one.
-
   # Collapses the whole span it is offered, into one block naming how many
   # messages it subsumed -- so a replacement's content is a function of the
   # span's LENGTH, which is what makes the non-functoriality example legible.

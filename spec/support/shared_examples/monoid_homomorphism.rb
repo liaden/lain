@@ -19,31 +19,35 @@
 # `call(S) == S.flat_map { each(_1, analysis(S)) }`, and its doc explains why
 # the plain form here is FALSE for a combinator declared `given:` an analysis:
 # splitting a span splits the analysis, so `DedupeToolCalls` answers two
-# messages for a span it answers four for in halves. A sweep testing the plain
-# form would refute every correct `given:` declaration.
+# messages for a span it answers four for in halves. The plain form would refute
+# every correct map that is elementwise only relative to an analysis.
 #
-# So this group is scoped to UNCONDITIONAL strategies -- the
-# {Lain::Algebra::Elementwise::Alone} shape, whose per-element map knows only
-# its own element. That scoping is not a weakening. By the universal property of
-# the free monoid, a map out of it is determined by its action on generators, so
-# for an `Alone` declaration the plain law is exactly equivalent to the
-# conditional one; there is nothing weaker being asked. What the scoping
+# So this group is scoped to UNCONDITIONAL strategies, whose per-element map
+# knows only its own element. That scoping is not a weakening. By the universal
+# property of the free monoid, a map out of it is determined by its action on
+# generators, so for an unconditional map the plain law is exactly equivalent to
+# the conditional one; there is nothing weaker being asked. What the scoping
 # excludes is the family for which the plain law is false ON PURPOSE, and for
 # those the conditional group is the right judge and this one is not offered.
 #
 # Include with a Hash, built at the `include_examples` site so its callables
-# close over locals rather than over example-group methods -- the discipline
-# spec/support/algebra_generators.rb documents:
+# close over locals rather than over example-group methods:
 #
 #   collapse  [#call(span) -> replacement]  the map under test
 #   unit      [replacement]                 the target monoid's unit, DROP
 #   spans     [#call -> Array<span>]        the population, drawn once
-#   combine   [#call(a, b) -> replacement]  defaults to `a + b`
+#   combine   [#call(a, b) -> replacement]  defaults to concatenating the two
+#                                           contents back into a replacement
 #   equal     [#call(a, b) -> bool]         defaults to `==`
 module AlgebraLaws
+  # The free monoid's operation, spelled out: no replacement answers `+`,
+  # because nothing outside a spec ever folded two of them. Outside the Data
+  # block, where a constant written inside would land here anyway.
+  CONCATENATED_CONTENT = ->(a, b) { Lain::Compaction::Strategy::Replacement.of(a.content + b.content) }
+
   MonoidHomomorphism = Data.define(:collapse, :combine, :unit, :spans, :same) do
     def self.from(config)
-      new(collapse: config.fetch(:collapse), combine: config.fetch(:combine, ->(a, b) { a + b }),
+      new(collapse: config.fetch(:collapse), combine: config.fetch(:combine, CONCATENATED_CONTENT),
           unit: config.fetch(:unit), spans: config.fetch(:spans).call,
           same: config.fetch(:equal, ->(a, b) { a == b }))
     end
@@ -82,7 +86,7 @@ RSpec.shared_examples "a monoid homomorphism" do |config|
 
   # Nested, so the including group's own `examples` are exactly the two laws
   # above -- the shape elementwise.rb uses, kept here so the two files read the
-  # same way even though no registry sweep pins this one.
+  # same way.
   context "when reading those laws over these spans" do
     it "includes more than one, so a concatenation is a real one" do
       expect(battery.spans.size).to be > 1

@@ -11,16 +11,14 @@ module Lain
       # A strategy and not a `nil` the derivation branches on -- the same role
       # {Sink::Null} and {Context::Identity} play.
       #
-      # Purity is declared on {#propose_ranges} and not on `#blocks`, because
-      # those are different claims and this object makes only one: it proposes
-      # no ranges, so it is never asked to collapse one, and inheriting the loud
-      # refusal is the honest answer to a question it cannot be asked.
+      # Its spec holds {#propose_ranges} to the purity laws and not `#blocks`,
+      # because those are different claims and this object makes only one: it
+      # proposes no ranges, so it is never asked to collapse one, and inheriting
+      # the loud refusal is the honest answer to a question it cannot be asked.
       class Identity < Base
         # It holds nothing, so the whole of its construction is the freeze. Not
         # on {Base}, for the reason {Elide} states.
         prepend Freezable
-
-        include Algebra::Pure
 
         NO_RANGES = [].freeze
 
@@ -28,8 +26,6 @@ module Lain
         # whatever span it is offered, and naming an argument it does not read
         # would be the only place in the file suggesting otherwise.
         def propose_ranges(_messages, **) = NO_RANGES
-
-        pure on: :propose_ranges
       end
     end
   end

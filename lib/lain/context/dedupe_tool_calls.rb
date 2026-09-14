@@ -17,15 +17,13 @@ module Lain
     #
     # Two phases: an ANALYSIS of the whole list (which tool_use ids are stale),
     # then a map over each message against that fixed analysis. It is
-    # {Algebra::Elementwise} only RELATIVE to that analysis -- a message cannot
-    # tell on its own whether a later message supersedes it -- so an
-    # unconditional elementwise claim would be false. The analysis is public so
-    # a caller can ask for it as a value; the per-message map stays private
-    # (Algebra::Elementwise reaches it by `send`) and still gives every output
-    # message one known preimage, so a caller could journal what was dropped.
+    # elementwise only RELATIVE to that analysis -- a message cannot tell on its
+    # own whether a later message supersedes it -- so an unconditional
+    # elementwise claim would be false. The analysis is public so a caller can
+    # ask for it as a value; the per-message map stays private and still gives
+    # every output message one known preimage, so a caller could journal what
+    # was dropped.
     class DedupeToolCalls < Combinator
-      include Algebra::Elementwise
-
       def initialize(protected_patterns: ProtectedPatterns::NONE)
         super()
         @protected_patterns = protected_patterns
@@ -47,6 +45,13 @@ module Lain
           .flat_map { |occurrences| occurrences[0..-2] }
           .reject { |(message, _use)| @protected_patterns.protects?(Canonical.dump(message)) }
           .map { |(_message, use)| use.id }
+      end
+
+      # The concatenation of the per-message map against the whole-span
+      # analysis, which is the elementwise law its spec holds it to.
+      def call(messages)
+        stale_ids = stale_tool_use_ids(messages)
+        messages.flat_map { |message| without_stale(message, stale_ids) }
       end
 
       private
@@ -95,10 +100,6 @@ module Lain
         else false
         end
       end
-
-      # Below the methods it names, which Algebra::Elementwise requires: the
-      # claim is checked at load, so a typo fails here rather than mid-render.
-      elementwise on: :call, each: :without_stale, given: :stale_tool_use_ids
     end
   end
 end

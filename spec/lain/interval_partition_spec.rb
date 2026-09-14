@@ -235,8 +235,8 @@ RSpec.describe Lain::IntervalPartition do
     end
 
     # A meet over the partitions of ONE span, said as the laws rather than as
-    # prose. The registry proves the same four laws over an exhaustive
-    # population; this example is the readable statement of them.
+    # prose. The examples below read the same four over every partition of a
+    # smaller span; this one is the readable statement of them.
     it "is idempotent, commutative and associative over one span" do
       a = over([0..3, 4..7], owner: "a")
       b = over([0..1, 2..5, 6..7], owner: "b")
@@ -282,4 +282,72 @@ RSpec.describe Lain::IntervalPartition do
       expect(described_class::NotAPartition.new).to be_a(Lain::Error)
     end
   end
+end
+
+# Every partial interval partition of one small span -- 34 of them over `0..3`,
+# which is every value IntervalPartition accepts there, the empty one included.
+# A semilattice population is normally grown at random, because a hand-picked
+# shape is where an associativity bug hides; this order is small enough to
+# enumerate outright, so leaving nothing out answers the same concern.
+module PartitionPopulations
+  module_function
+
+  SPAN = 0..3
+
+  def population
+    subsets(intervals(SPAN)).select { |ranges| disjoint?(ranges) }.map { |ranges| partition(ranges) }
+  end
+
+  def intervals(span) = span.flat_map { |first| (first..span.max).map { |last| first..last } }
+
+  def subsets(pool) = (0..pool.size).flat_map { |size| pool.combination(size).to_a }
+
+  # Ascending AND non-overlapping in one reading: `combination` preserves the
+  # pool's order, so a selection whose every neighbour pair is separated is
+  # already sorted.
+  def disjoint?(ranges) = ranges.each_cons(2).all? { |before, after| before.max < after.first }
+
+  def partition(ranges) = Lain::IntervalPartition.of(SPAN, ranges, owner: "a partition")
+end
+
+# The meet the composed compaction strategy folds its operands' proposals
+# through. `ancestor_of:` is REFINEMENT and not ancestry: the group's default
+# asks `#ancestor_of?`, which a partition does not answer, and the order this is
+# a meet of is "every interval of mine sits inside one of yours".
+RSpec.describe Lain::IntervalPartition, "the meet semilattice under refinement" do
+  population = PartitionPopulations.population
+
+  it "enumerates every partial interval partition of the span, without repeats" do
+    expect([population.size, population.uniq.size]).to eq([34, 34])
+  end
+
+  # The shared group samples ten draws per law, which over 34 members misses a
+  # meet that is wrong on one ordered pair nearly every run. So the four laws
+  # are also read over EVERY pair and triple -- about a second and a half, most
+  # of it the 39,304 triples -- and each answers the ranges of the first
+  # counterexample it finds, which is what a failure then names.
+  context "when every pair and triple is read" do
+    pairs = population.product(population)
+
+    it "is idempotent" do
+      expect(population.find { |a| a.meet(a) != a }&.ranges).to be_nil
+    end
+
+    it "is commutative" do
+      expect(pairs.find { |a, b| a.meet(b) != b.meet(a) }&.map(&:ranges)).to be_nil
+    end
+
+    it "is associative" do
+      triples = pairs.product(population).map(&:flatten)
+      expect(triples.find { |a, b, c| a.meet(b).meet(c) != a.meet(b.meet(c)) }&.map(&:ranges)).to be_nil
+    end
+
+    it "orders a meet below both operands" do
+      expect(pairs.find { |a, b| !(a.meet(b).refines?(a) && a.meet(b).refines?(b)) }&.map(&:ranges)).to be_nil
+    end
+  end
+
+  include_examples "a meet semilattice under ancestry",
+                   population: -> { population },
+                   ancestor_of: ->(finer, coarser) { finer.refines?(coarser) }
 end

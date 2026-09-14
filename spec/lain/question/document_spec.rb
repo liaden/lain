@@ -194,7 +194,7 @@ RSpec.describe Lain::Question::Document do
 
   # AC: the round trip is identity for an arbitrary answer set.
   # A deterministic population rather than a random generator, which is how
-  # this repo property-tests elsewhere (spec/support/algebra_generators.rb):
+  # this repo property-tests elsewhere (spec/lain/interval_partition_spec.rb):
   # every selection shape crossed with every comment shape that a human can
   # type, so a failure names the same case on every run.
   describe "the round trip" do

@@ -90,13 +90,8 @@ RSpec.describe Lain::Context::DedupeToolCalls do
 
   # The two phases the class is factored into: an analysis of the whole list,
   # then a map over each message against that fixed analysis. The analysis is
-  # surface and the registry records its NAME, so these examples ask the
-  # registry for it rather than hard-coding a method; the per-message map is a
-  # private helper, which is how Algebra::Elementwise reaches it.
+  # surface; the per-message map is a private helper, reached here by `send`.
   describe "the two-phase factoring" do
-    let(:declaration) do
-      Lain::Algebra.registry.about(described_class).find { |entry| entry.structure == :elementwise }
-    end
     # One message is REWRITTEN (its text survives, its stale tool_use does not)
     # and one is DROPPED (nothing survives), which is the pair of outcomes the
     # per-message map has to be able to express.
@@ -110,7 +105,7 @@ RSpec.describe Lain::Context::DedupeToolCalls do
       ]
     end
 
-    def analysis_of(combinator, list) = combinator.public_send(declaration.analysis, list)
+    def analysis_of(combinator, list) = combinator.stale_tool_use_ids(list)
 
     def image_of(combinator, message, analysis) = combinator.send(:without_stale, message, analysis)
 
@@ -137,12 +132,20 @@ RSpec.describe Lain::Context::DedupeToolCalls do
       expect(images.first.first["content"]).to eq([{ "type" => "text", "text" => "let me look" }])
     end
 
-    it "declares elementwise only relative to its analysis, never unconditionally" do
-      expect([declaration.operation, declaration.analysis]).to eq(%i[call stale_tool_use_ids])
+    it "keeps the per-message map a private helper" do
+      expect(described_class.new).not_to respond_to(:without_stale)
     end
 
-    it "keeps the per-message map a private helper, which Elementwise reaches by send" do
-      expect(described_class.new).not_to respond_to(:without_stale)
+    # The bytes the whole-span map answered while it was generated from the
+    # per-message map, pinned so that writing it out by hand is a refactor and
+    # not a change: the rewritten message keeps its text, the stale answer is
+    # dropped, and the newest pair survives in order.
+    it "answers a span with a stale tool use byte for byte as the generated map did" do
+      expected = [assistant({ "type" => "text", "text" => "let me look" }),
+                  assistant(tool_use(id: "call-2", name: "search", input: { "q" => "cats" })),
+                  user(tool_result(id: "call-2", content: "new result"))]
+
+      expect(Lain::Canonical.dump(described_class.new.call(mixed_messages))).to eq(Lain::Canonical.dump(expected))
     end
   end
 
@@ -163,4 +166,46 @@ RSpec.describe Lain::Context::DedupeToolCalls do
                      generator: -> { compose(Array.new(rand(0..3)) { %i[dedupe identity].sample }) },
                      equal: ->(a, b) { observe(a) == observe(b) }
   end
+end
+
+# The elementwise laws, over the shapes the per-message map has to survive. The
+# spans are built eagerly and handed back by a lambda that closes over them: a
+# lambda that called back into the group would resolve helpers against whatever
+# `self` the law group `instance_exec`s it with.
+RSpec.describe Lain::Context::DedupeToolCalls, "the elementwise laws" do
+  def self.tool_use(id:, input: { "q" => "cats" })
+    { "type" => "tool_use", "id" => id, "name" => "search", "input" => input }
+  end
+
+  def self.tool_result(id:, content: "r")
+    { "type" => "tool_result", "tool_use_id" => id, "content" => content, "is_error" => false }
+  end
+
+  def self.message(role, *blocks) = { "role" => role, "content" => blocks }
+
+  # A stale tool_use superseded by a later identical one: the first call's
+  # message is rewritten and its answering tool_result dropped, which is the
+  # pair of outcomes a per-message map has to be able to express.
+  restated_call = [message("assistant", tool_use(id: "a")), message("user", tool_result(id: "a", content: "old")),
+                   message("assistant", tool_use(id: "b")), message("user", tool_result(id: "b", content: "new"))]
+
+  # Deliberately the same SHAPE as the purge combinator's refutation witness,
+  # `[m, answer, m]`, where the two `==` messages are ones the call genuinely
+  # rewrites: each carries a text block, so dropping the duplicated tool_use
+  # leaves content behind rather than emptying the message. Both take the same
+  # image, because `#without_stale` is a function of the message and the
+  # analysis. Two `==` messages this call never touches would prove nothing.
+  repeated = message("assistant", { "type" => "text", "text" => "look" }, tool_use(id: "dup"))
+  answer = message("user", tool_result(id: "dup"), { "type" => "text", "text" => "note" })
+  spans = [restated_call, [repeated, answer, repeated], []]
+
+  # The conditional law and not the plain homomorphism: splitting a span splits
+  # the analysis, so `call(A ++ B) == call(A) ++ call(B)` fails for this
+  # combinator while `call(S) == S.flat_map { each(_1, analysis(S)) }` holds.
+  include_examples "an elementwise map",
+                   instance: -> { described_class.new },
+                   spans: -> { spans },
+                   operation: :call,
+                   each: :without_stale,
+                   analysis: :stale_tool_use_ids
 end

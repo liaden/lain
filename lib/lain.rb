@@ -32,9 +32,6 @@ require_relative "lain/canonical"
 require_relative "lain/content_addressed"
 require_relative "lain/prompt"
 require_relative "lain/inspectable"
-require_relative "lain/algebra"
-# After `algebra`, not before: IntervalPartition declares its meet semilattice
-# in its own class body, so the verb has to exist by the time this loads.
 require_relative "lain/interval_partition"
 require_relative "lain/blankness"
 require_relative "lain/markdown_identifier"
@@ -142,9 +139,3 @@ module Lain
   # The compiled extension's own namespace, defined from Rust by magnus.
   module Ext; end
 end
-
-# Every claim lain makes about its own algebra has now been filed by the class
-# body that makes it, so the process-wide registry closes: a declaration after
-# this line is a runtime mutation of global state, and Algebra::Sealed refuses
-# it. Injected registries are nobody else's and are untouched.
-Lain::Algebra.registry.seal

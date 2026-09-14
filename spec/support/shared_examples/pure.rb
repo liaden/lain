@@ -1,21 +1,17 @@
 # frozen_string_literal: true
 
-# The laws of {Lain::Algebra::Pure} -- written by the structure's first
-# consumer, which is what spec/algebra_laws_spec.rb said would happen: ":pure is
-# in STRUCTURES and nothing declares it yet, so the first `pure on:` line will
-# fail here, naming itself, until someone writes its laws. That failure is the
-# feature."
+# The laws of a pure operation: a function of its arguments alone, consulting no
+# mutable collaborator, reading no clock, touching no I/O.
 #
 # Group and battery are the SAME object, as in
 # spec/support/shared_examples/elementwise.rb, because both readings are needed
-# at once: a compaction strategy DECLARES purity and a model-backed one REFUTES
-# it, and a refutation is confirmed by running a battery and requiring the named
+# at once: a compaction strategy obeys purity and a model-backed one does not,
+# and that negative is confirmed by running the battery and requiring the named
 # law to fail. Two transcriptions of one law set can drift; one cannot.
 #
 # == Which law carries the weight
 #
-# `shareable?` is the load-bearing one, and it is the mechanical proxy
-# {Lain::Algebra::Pure}'s own doc names: `Ractor.shareable?` is CLAUDE.md's
+# `shareable?` is the load-bearing one: `Ractor.shareable?` is CLAUDE.md's
 # "mechanical statement of 'no reachable mutable state'", which is exactly the
 # premise re-derivation needs -- nothing reachable can differ between two calls.
 # It is a proxy and not a proof (nothing stops a method body reading a global),
@@ -37,12 +33,9 @@
 #
 # == Two things this group refuses to take on trust
 #
-# WHICH OPERATION. The declared operation is threaded in from the registry as
-# evidence (spec/algebra_laws_spec.rb's `EVIDENCE`) and INVOKED here, rather than
-# the generator supplying a lambda that calls whatever it likes. A generator that
-# declared `pure on: :blocks` and exercised `#propose_ranges` would otherwise be
-# green, which is the same hole spec/algebra_laws_spec.rb:293-296 closes for
-# refutations by demanding they name the law they turn on.
+# WHICH OPERATION. The operation is named as a Symbol and INVOKED here, rather
+# than the includer supplying a lambda that calls whatever it likes. A call site
+# that meant `#blocks` and exercised `#propose_ranges` would otherwise be green.
 #
 # A FRESH POPULATION. `population` is held as a thunk and called once per law,
 # never materialized once and shared. Three laws over one mutable population is
@@ -55,14 +48,8 @@
 # close over locals rather than over example-group methods:
 #
 #   instance    [#call -> object]        the subject, built once
-#   operation   [Symbol]                 the declared operation; the sweep folds
-#                                        this in from the registry, so a
-#                                        hand-written call site states it itself
-#   population  [#call -> Array<input>]  the inputs, drawn FRESH per law. Named
-#                                        `population` on purpose: that is one of
-#                                        the two knobs spec/algebra_laws_spec.rb's
-#                                        barren check reads, so an empty one
-#                                        fails the sweep by name.
+#   operation   [Symbol]                 the operation under test
+#   population  [#call -> Array<input>]  the inputs, drawn FRESH per law
 #   keywords    [#call(input) -> Hash]   keyword arguments for the operation,
 #                                        derived from the input. Defaults to
 #                                        none, which is the `#blocks(span)`
@@ -100,9 +87,8 @@ module AlgebraLaws
     # whether the second ran first.
     def population = draw.call
 
-    # SENT rather than public_sent: {Lain::Algebra.answers?} admits a private
-    # operation, so "does this class answer it?" stays a different question from
-    # "is it public?".
+    # SENT rather than public_sent, so a private operation is judged too: "does
+    # this class answer it?" stays a different question from "is it public?".
     def answer(input) = instance.send(operation, input, **keywords.call(input))
 
     # The inputs, without repeats. A population that is one input repeated
@@ -128,8 +114,8 @@ RSpec.shared_examples "a pure operation" do |config|
 
   battery.to_h.each { |law, holds| it(law) { expect(holds.call).to be(true) } }
 
-  # Nested, so the including group's own `examples` are exactly the three laws
-  # above -- which is what spec/algebra_laws_spec.rb's battery/group pin reads.
+  # Nested, so the including group's own examples are exactly the three laws
+  # above and the guards on the population read as guards.
   context "when reading those laws over these inputs" do
     it "includes more than one distinct input" do
       expect(battery.distinct.size).to be > 1

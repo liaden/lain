@@ -1,5 +1,42 @@
 # frozen_string_literal: true
 
+# Every capability name a Toolset hands out through a public message, asked of
+# the DROPPED names as well as the kept ones -- which is why `candidates` is a
+# parameter rather than something derivable from the result.
+#
+# Three of these are what a reader sees: `#names`, the Enumerable, and the
+# schema sent to the model. The other two are what actually resolve a tool call
+# -- `#include?` and `#fetch`, in {Lain::Agent::ToolRunner} -- and they are the
+# ones that matter. A set honest in the first three and lying in the last two
+# passes every other attenuation law while a dropped tool executes end to end;
+# the escape below holds that exact set and dispatches it for real.
+#
+# `#[]` is not probed separately: it is an alias installed in Toolset's own
+# body, so it is a distinct method a subclass can leave honest while overriding
+# `#fetch`. The runner calls `#fetch`, so `#fetch` is what a capability escape
+# has to go through.
+module ToolsetProbes
+  module_function
+
+  def revealed(toolset, candidates)
+    (listed(toolset) + candidates.select { |name| toolset.include?(name) } +
+      candidates.flat_map { |name| fetched(toolset, name) }).uniq
+  end
+
+  def listed(toolset)
+    toolset.names + toolset.map(&:name) + toolset.to_schema.map { |entry| entry["name"] }
+  end
+
+  # What a fetch hands over, under both names it could be known by: the one the
+  # caller asked with and the one the tool answers to.
+  def fetched(toolset, name)
+    tool = toolset.fetch(name)
+    [name, tool.name]
+  rescue Lain::Toolset::UnknownTool
+    []
+  end
+end
+
 RSpec.describe Lain::Toolset do
   # Builds a throwaway tool class with a given name. Only the name matters for
   # capability-set behavior, so the body is trivial.
@@ -174,29 +211,39 @@ RSpec.describe Lain::Toolset do
     end
   end
 
-  # The same laws spec/algebra_laws_spec.rb walks the registry to reach, run
-  # here as well -- the house pattern usage_spec.rb and middleware_spec.rb
-  # already follow. The sweep proves the DECLARATION is honoured; this proves it
-  # where the value lives, so a reader of Toolset finds the structure and its
-  # proof without leaving the class. `operation:` and `dual:` are stated by hand
-  # because there is no registry entry to fold them in from at a direct call
-  # site.
+  # The attenuation laws, run where the value lives, so a reader of Toolset
+  # finds the structure and its proof without leaving the class.
   #
-  # The population is built from tool instances and plain name slices, never
-  # through `#only` or `#except`: a population produced by the operation under
-  # test collapses along with it, and the laws then hold vacuously.
-  describe "the attenuation laws, where the structure is declared" do
-    tools = %w[bash grep read_file].map { |name| tool_named(name) }
-    subjects = [tools, tools.first(2), []].map { |held| described_class.new(held) }
-    draws = subjects.flat_map do |subject|
-      [[], subject.names.first(1), subject.names].uniq.map { |request| [subject, request] }
+  # Every subject is handed to `Toolset.new` as a list of tool INSTANCES, and
+  # every request is a plain slice of the name Array those instances produce.
+  # Neither `#only` nor `#except` is called anywhere in the construction: a
+  # population produced by the operation under test collapses along with it,
+  # and the laws then hold vacuously.
+  #
+  # Four sets of decreasing size plus the empty one, each crossed with name
+  # subsets as DATA -- prefixes, suffixes, every PAIR, the empty request and the
+  # whole list. The pairs close a hole in the composition law: two names at
+  # opposite ends of the sorted list co-occur ONLY in the whole-list request,
+  # where `only(subject, request) == subject` and the composition conjunct
+  # degenerates to `only(s, b) == only(s, b)`. Every pair now has a request
+  # that genuinely narrows and still contains it.
+  describe "the attenuation laws" do
+    def self.requests(names)
+      prefixes = names.each_index.map { |i| names.first(i + 1) }
+      suffixes = names.each_index.map { |i| names.last(i + 1) }
+      ([[], names] + prefixes + suffixes + names.combination(2).to_a).uniq
     end
+
+    tools = %w[bash glob grep read_file].map { |name| tool_named(name) }
+    draws = [tools, tools.first(3), tools.values_at(0, 3), tools.first(1), []]
+            .map { |held| described_class.new(held) }
+            .flat_map { |subject| requests(subject.names).map { |request| [subject, request] } }
 
     include_examples "an attenuation",
                      population: -> { draws },
                      operation: :only,
                      dual: :except,
-                     observed: AlgebraGenerators::Toolsets.method(:revealed),
+                     observed: ToolsetProbes.method(:revealed),
                      refusal: described_class::UnknownTool
   end
 
@@ -258,7 +305,7 @@ RSpec.describe Lain::Toolset do
     it "is refused by monotonicity, and by monotonicity alone" do
       laws = AlgebraLaws::Attenuation.from(
         population: -> { [[full, %w[grep]]] }, operation: :only, dual: :except,
-        observed: AlgebraGenerators::Toolsets.method(:revealed), refusal: described_class::UnknownTool
+        observed: ToolsetProbes.method(:revealed), refusal: described_class::UnknownTool
       )
       others = laws.to_h.reject { |_law, holds| holds.name == :monotonic? }
 

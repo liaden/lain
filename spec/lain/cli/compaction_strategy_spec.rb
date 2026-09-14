@@ -232,6 +232,25 @@ RSpec.describe Lain::CLI::CompactionStrategy do
       expect(strategy.ranges(mixed, span: whole)).to eq([1..2, 3..4, 5..6, 7..10])
     end
 
+    # The one production fold over strategies with a law behind it: the name
+    # splits on the separator and folds through `|`, so the two spellings must
+    # resolve to observationally equal compositions -- the same ranges, each
+    # collapsed to the same content -- or the order a flag was typed in would
+    # decide what a run compacts to.
+    it "resolves one composed strategy whose union is commutative, ranges and collapses alike" do
+      forward = resolve("elide-tools+summarize-conversation", tier: tier_factory, journal: [])
+      backward = resolve("summarize-conversation+elide-tools", tier: tier_factory, journal: [])
+      observe = lambda do |strategy|
+        strategy.ranges(mixed, span: whole).map do |range|
+          [range.first, range.max, strategy.collapse(mixed[range], range:).content]
+        end
+      end
+
+      expect([forward, backward]).to all(be_a(Lain::Compaction::Strategy::Composed))
+      expect(observe.call(forward)).to eq(observe.call(backward))
+      expect(observe.call(forward).map(&:last)).to all(be_present)
+    end
+
     it "partitions the same span whichever way round the two are spelled" do
       strategy = resolve("summarize-conversation+elide-tools", tier: tier_factory, journal: [])
 

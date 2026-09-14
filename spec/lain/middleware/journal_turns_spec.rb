@@ -54,9 +54,9 @@ RSpec.describe Lain::Middleware::JournalTurns do
     expect(caught).to be_empty
   end
 
-  it "composes as a middleware (the monoid surface)" do
+  it "runs as a member of a Stack, the shape every production chain takes" do
     middleware = described_class.new(scribe:, timeline: -> { timeline })
-    composed = Lain::Middleware::Identity >> middleware
+    composed = Lain::Middleware::Stack.new([Lain::Middleware::Base.new, middleware])
 
     composed.call({ timeline: }) { |env| env }
 

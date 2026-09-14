@@ -60,13 +60,13 @@ RSpec.describe "Effects via Fiber vs handler objects", :spike do
   end
   let(:fiber_app) { Spikes::FiberEffectInterpreter.new(&resolver).to_app }
 
-  # One real pass-through member ({Middleware::Identity}, an instance of
-  # {Middleware::Base}) sits in the Stack, so the fold builds an actual composed
-  # chain link around each prototype rather than degenerating to the
-  # zero-middleware case -- equivalence is proven through composition, not just
-  # through the boundary wrap.
+  # One real pass-through member (a bare {Middleware::Base}) sits in the
+  # Stack, so the fold builds an actual composed chain link around each
+  # prototype rather than degenerating to the zero-middleware case --
+  # equivalence is proven through composition, not just through the boundary
+  # wrap.
   def run_through_stack(app, effect)
-    Lain::Middleware::Stack.new([Lain::Middleware::Identity]).call({ effect:, context: nil }, &app)
+    Lain::Middleware::Stack.new([Lain::Middleware::Base.new]).call({ effect:, context: nil }, &app)
   end
 
   describe "equivalence" do
