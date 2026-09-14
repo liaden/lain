@@ -31,10 +31,11 @@ module Lain
     #
     # {ToolCallIndex#lineage} is a single deterministic path, so this floor
     # cannot itself produce more than one cause. `caused_by` is still an Array:
-    # {Timeline#causal_meets}'s shape is the SET of maximal common ancestors at
-    # a criss-cross fan-in, and a journaled `turn` record carries no
-    # `causal_parents` field to reconstruct that richer walk from -- so a caller
-    # must never assume a single element, because the type does not promise one.
+    # the causal ancestry order (`Ext::Timeline#causal_meets`) answers the SET
+    # of maximal common ancestors at a criss-cross fan-in, and a journaled
+    # `turn` record carries no `causal_parents` field to reconstruct that
+    # richer walk from -- so a caller must never assume a single element,
+    # because the type does not promise one.
     class FrustrationRepair
       # The fuzzy-signal seam, Null by default: one swappable arm over one
       # interface, decided without a model call until one is wired in.

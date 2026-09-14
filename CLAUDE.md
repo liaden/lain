@@ -110,7 +110,7 @@ The rule above says a comment explains WHY. These say how much of it there may b
 one is allowed to cite. `bin/comment-census` measures all three and is the worklist.
 
 - **Density is set by an exemplar, not by a ratio.** `lib/lain/timeline.rb` is the measured shape:
-  **0.82 prose:code, longest comment block 24 lines**. Write toward that file rather than toward a
+  **0.79 prose:code, longest comment block 16 lines**. Write toward that file rather than toward a
   number — the mandate is *whatever comments remain are genuinely useful*, and a ratio met by
   deleting a reason is a failure wearing a pass's clothes. For scale, the census read `lib/` on
   2026-09-12 at 61,518 prose against 51,296 code (1.20:1), 471 of 773 files carrying more comment than code.

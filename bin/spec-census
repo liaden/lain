@@ -922,9 +922,10 @@ module SpecCensus
       # class has no `lib/` consumer at all, so each of its flagged methods is
       # one consequence of that and not an independent finding.
       #
-      # File-granular, so a nested helper used only by the class it is written
-      # under (`Timeline::Dominators`) reads as unwired too -- true as stated,
-      # and still the wrong word for what it is. Asking this per CLASS rather
+      # File-granular, so a nested class named only inside the class it is
+      # written under (`Sensitivity::Regions::Region`, whose instances
+      # `Middleware::RedactSecretReads` reads) reads as unwired too -- true as
+      # stated, and still the wrong word for what it is. Asking this per CLASS rather
       # than per file needs the scoped resolution LibReach's doc declines to
       # approximate.
       def unwired?(defn)
@@ -971,16 +972,14 @@ module SpecCensus
       "nothing has zero lib callers", never as "nothing is public only for a
       test".
 
-      THREE FAMILIES BELOW ARE LEGITIMATE AND DOMINATE THE LIST. Narrowing any
-      of them is a defect, not a cleanup, and all three were named up front:
-        * property-test law counterexamples -- `Algebra::Monoid#not_a_monoid`,
-          `Algebra::Pure#not_pure` and their siblings exist to be called by a
-          spec; that is their whole job.
-        * alternative constructors -- `Question::Answer.from_body`,
-          `Approval::Gate.from_journal`, `CLI::Up.from_options`: public API by
-          intent even when only a spec exercises them today.
-        * documented algebra predicates -- `Timeline#ancestor_of?`,
-          `Timeline::Dominators#dominates?` are the DAG's public vocabulary.
+      TWO FAMILIES BELOW ARE LEGITIMATE AND RECUR ON THE LIST. Narrowing
+      either is a defect, not a cleanup, and both were named up front:
+        * alternative constructors -- `CLI::Up.from_options`,
+          `CLI::EpicSubmit.from_options`: public API by intent even when only
+          a spec exercises them today.
+        * documented order vocabulary -- `Dag::RenderAncestry.below?` and
+          `.diverge_at` are the DAG's public questions, specified before any
+          lib/ caller asks them.
       Injected collaborators and Null Objects are EXCLUDED rather than listed,
       since a flag on one is the rule's error -- see LibReach::DOUBLE_OWNERS.
 

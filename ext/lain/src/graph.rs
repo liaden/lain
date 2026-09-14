@@ -12,24 +12,28 @@
 //! It exists as a separate module rather than more functions in `dag` because
 //! the two disagree about what an edge is, and that disagreement is the whole
 //! point: they implement different operators over different graphs, not one
-//! operator with a widened definition. Ruby carries the same split --
-//! `Timeline#meet` walks render parents while `Timeline::CausalAncestry` and
-//! `Timeline::Tree` walk the union -- and it is a ruling, not an accident.
+//! operator with a widened definition. The Ruby-visible orders carry the same
+//! split -- `Ext::Dag::RenderAncestry` walks render parents while
+//! `Ext::Dag::Dominance` and `Ext::Dag::CausalAncestry` walk the union -- and
+//! it is a ruling, not an accident.
 //!
 //! The graph itself comes from `petgraph` (see this crate's `Cargo.toml`),
-//! whose `algo::dominators::simple_fast` is the same published
-//! Cooper/Harvey/Kennedy dominance algorithm the Ruby side hand-rolls.
+//! whose `algo::dominators::simple_fast` is the published Cooper/Harvey/Kennedy
+//! dominance algorithm, so this module builds the graph and never the solver.
 //! Everything here is plain Rust over a store map -- no `magnus`, no embedded
 //! Ruby VM -- for the reason `dag` states: the structure can then be proven by
 //! `cargo test`, and the FFI layer crosses the boundary once with a batched
 //! result rather than once per node.
 //!
 //! **Which suite proves what, when this module carries a claim.** `cargo test`
-//! proves the Rust ALGORITHM obeys a law. `spec/lain/rust/*` proves the Rust
-//! BINDING agrees with Ruby, by running the shared example groups unchanged,
-//! and it is the sole authority on that cross-implementation claim -- no test
-//! in this file compares against a Ruby value. `dag`'s module doc states the
-//! same split once for the render structure; this module inherits it.
+//! proves the Rust ALGORITHM obeys a law and answers its named fixtures. There
+//! is no Ruby implementation of anything here to agree with: this module is the
+//! only one. `spec/lain/rust/dominator_meet_spec.rb` and `causal_meets_spec.rb`
+//! prove the BINDING answers written-down fixtures, runs the shared law group
+//! with dominance injected, and matches a brute-force reading of each order's
+//! definition -- those brute-force groups, and the fixtures here, are the
+//! independent checks, because a law run whose order predicate comes from the
+//! same implementation as its meet proves the two self-consistent and no more.
 //!
 //! # The structure, and exactly which laws are proven where
 //!
@@ -46,10 +50,11 @@
 //!
 //! **Four laws, and no fifth:** idempotent, commutative, associative, and "a
 //! meet sits below both operands" -- below in the DOMINANCE order, which is the
-//! predicate `spec/support/algebra_generators.rb` injects for exactly this
-//! reason. They are not written in this file: the `algebra` module's
-//! `declare_meet_semilattice!` emits them as `algebra::dominance_laws`, over
-//! this file's `tests::law_population`, and their names are the ones
+//! predicate `spec/lain/rust/dominator_meet_spec.rb`'s law run injects for
+//! exactly this reason. They are not written in this file: the `algebra`
+//! module's `declare_meet_semilattice!` emits them as
+//! `algebra::dominance_laws`, over this file's `tests::law_population`, and
+//! their names are the ones
 //! `spec/support/shared_examples/meet_semilattice.rb` uses, so the two layers
 //! cannot come to disagree about what a law IS.
 //!
@@ -57,15 +62,13 @@
 //! than an omission.** The causal ancestry order has no unique greatest lower
 //! bound: a criss-cross fan-in leaves incomparable maximal common ancestors, so
 //! the operator answers the SET of them (git merge-base's shape) and a
-//! set-valued operator is not a meet. Ruby states it as a first-class negative
-//! (`Timeline`'s `not_a_meet_semilattice on: :causal_meets`), and Rust states it
-//! as a type: `algebra::CausalAncestry` implements `MaximalLowerBounds` and not
+//! set-valued operator is not a meet. That ruling is a type:
+//! `algebra::CausalAncestry` implements `MaximalLowerBounds` and not
 //! `MeetSemilattice`, so no law expansion can name this function.
 //!
 //! **Every query is scoped to the closure of the PAIR it is asked about**, as
-//! [`UnionGraph::scoped`] explains -- not to the whole store. That is Ruby's
-//! shape (`Tree.new(@store, key)`) and it is a correctness-preserving scope,
-//! not just a cheaper one.
+//! [`UnionGraph::scoped`] explains -- not to the whole store. It is a
+//! correctness-preserving scope, not just a cheaper one.
 //!
 //! **What reaches the shipped artifact, precisely -- because the stub this file
 //! replaced was careful about it and the answer has moved twice.** All three
@@ -105,8 +108,7 @@ pub fn dominator_meet(
     b_head: Option<&Digest>,
 ) -> Result<Option<Digest>, DanglingDigest> {
     match (a_head, b_head) {
-        // The bottom absorbs. Answered before the graph is built, exactly as
-        // Ruby's `Dominators#meet` returns early on a nil head, so an empty
+        // The bottom absorbs. Answered before the graph is built, so an empty
         // Timeline costs no closure at all.
         (Some(a), Some(b)) => Ok(UnionGraph::scoped(map, &[a, b])?.deepest_common_dominator(a, b)),
         _ => Ok(None),
@@ -114,7 +116,7 @@ pub fn dominator_meet(
 }
 
 /// Whether every virtual-root path to `node` passes through `dominator` --
-/// Ruby `Dominators#dominates?`. Reflexive; `None`, the empty Timeline's head,
+/// `Ext::Timeline#dominates?`. Reflexive; `None`, the empty Timeline's head,
 /// sits below everything and above only itself.
 ///
 /// This is the ORDER (`a <= b`) the meet-semilattice is taken over, so it is
@@ -131,8 +133,8 @@ pub fn dominates(
         (None, _) => Ok(true),
         (Some(_), None) => Ok(false),
         (Some(dominator), Some(node)) => {
-            // Scoped to BOTH, as Ruby is: a dominator that is not an ancestor
-            // is still in the closure, and simply not on `node`'s chain.
+            // Scoped to BOTH: a dominator that is not an ancestor is still in
+            // the closure, and simply not on `node`'s chain.
             let scoped = UnionGraph::scoped(map, &[dominator, node])?;
             let wanted = scoped.index_of(dominator);
             let relation = scoped.relation();
@@ -155,7 +157,7 @@ pub fn dominates(
 /// assume it does.** "Scoped to the pair" there means a graph over the pair's
 /// closure; here there is no graph at all, but the two closures are taken WHOLE
 /// -- this is linear in both heads' full ancestry, every time, with no early
-/// stop. Ruby's `CausalAncestry#meets` has exactly the same shape.
+/// stop.
 pub fn causal_meets(
     map: &StoreMap,
     a_head: Option<&Digest>,
@@ -184,8 +186,8 @@ fn parent_edges(event: &EventData) -> impl Iterator<Item = &Digest> {
 
 /// The reflexive-transitive closure of `seeds` over [`parent_edges`], seeds
 /// included, in the order first reached. Iterative with an explicit frontier
-/// for the reason Ruby's is: causal chains reach thousands of events deep and a
-/// recursive walk would carry that on the stack.
+/// because causal chains reach thousands of events deep and a recursive walk
+/// would carry that on the stack.
 ///
 /// A digest the map does not hold is `Err(DanglingDigest)` naming it -- the
 /// same corruption/root distinction `dag` draws, and the reason a query over an
@@ -215,11 +217,10 @@ fn closure(map: &StoreMap, seeds: &[&Digest]) -> Result<Vec<Digest>, DanglingDig
 /// That closure is wider than it needs to be, and knowingly so: called from
 /// [`causal_meets`], every candidate is a COMMON ancestor, and a parent of a
 /// common ancestor is itself common -- so `covered` can only ever be a subset
-/// of `candidates`, and walking past them buys nothing. Kept because it is the
-/// shape Ruby's `CausalAncestry#maximal` has and because the function then
-/// answers correctly for any candidate set rather than only for that one
-/// caller's. If a bench ever shows this hot, the fix is to stop the closure at
-/// the candidate set, not to change what it answers.
+/// of `candidates`, and walking past them buys nothing. Kept because the
+/// function then answers correctly for any candidate set rather than only for
+/// that one caller's. If a bench ever shows this hot, the fix is to stop the
+/// closure at the candidate set, not to change what it answers.
 fn maximal(map: &StoreMap, candidates: &[Digest]) -> Result<Vec<Digest>, DanglingDigest> {
     let events: Vec<&EventData> = candidates
         .iter()
@@ -247,22 +248,22 @@ fn maximal(map: &StoreMap, candidates: &[Digest]) -> Result<Vec<Digest>, Danglin
 /// answer: the closure is ancestor-closed, so every virtual-root path to either
 /// head lies entirely inside it and no node's dominators can change. What a
 /// wider graph would add is nodes off both paths, which contribute no path and
-/// no dominance. Ruby scopes identically (`Tree.new(@store, key)`), and the
-/// asymptotic difference is the point -- a store holds every event ever
-/// committed, while a pair's closure holds only the two chains being compared.
+/// no dominance. The asymptotic difference is the point -- a store holds every
+/// event ever committed, while a pair's closure holds only the two chains being
+/// compared.
 ///
-/// The memo Ruby hangs off its `Dominators` collaborator has no equivalent
-/// here: these are pure functions and a query object holding a mutable cache is
-/// a separate decision, taken where the Ruby-facing binding lives.
+/// Nothing memoizes: these are pure functions, and a query object holding a
+/// mutable cache is a separate decision, taken where the Ruby-facing binding
+/// lives.
 struct UnionGraph {
     /// The flow graph -- edges run PARENT to CHILD, the direction dominance
     /// flows, which is the reverse of the ancestry direction `dag` walks.
     /// A node's weight is its digest, or `None` for the virtual root.
     graph: DiGraph<Option<Digest>, ()>,
     /// The virtual root, spanning the closure's forest roots. A modelling
-    /// artifact with no digest, mirroring Ruby `Tree::ROOT`: it is what makes
-    /// dominance total over a forest, and callers see `None` where a walk
-    /// reaches it -- it must never leave this module.
+    /// artifact with no digest: it is what makes dominance total over a
+    /// forest, and callers see `None` where a walk reaches it -- it must never
+    /// leave this module.
     root: NodeIndex,
     /// Digest to node index, so a query can enter the graph at a head.
     nodes: HashMap<Digest, NodeIndex>,
@@ -525,7 +526,7 @@ pub(crate) mod tests {
             "disjoint heads bottom out at the virtual root, which never leaves this module"
         );
         // The bottom absorbs from either side, which is what the empty Timeline
-        // means on the Ruby side.
+        // means to a Ruby caller of the binding.
         assert_eq!(dominator_meet(&map, Some(&tip_p), None), Ok(None));
         assert_eq!(dominator_meet(&map, None, Some(&tip_p)), Ok(None));
     }
@@ -568,11 +569,11 @@ pub(crate) mod tests {
         expected.sort();
         assert_eq!(causal_meets(&map, Some(&tip_p), Some(&tip_q)), Ok(expected));
 
-        // And the count is not capped at two. Ruby's own witness is THREE-way
-        // (`spec/support/algebra_generators.rb`'s `criss_cross`), because that
-        // is the shape that refutes associativity under every single-valued
-        // reading of the set -- which is the reason no law expansion names
-        // this function.
+        // And the count is not capped at two. The criss-cross witness is
+        // THREE-way, here and in `spec/lain/rust/causal_meets_spec.rb`, because
+        // that is the shape that refutes associativity under every
+        // single-valued reading of the set -- which is the reason no law
+        // expansion names this function.
         let map = StoreMap::new_sync();
         let (map, root) = commit(&map, None, &[], "root");
         let (map, x) = commit(&map, Some(&root), &[], "x");

@@ -149,9 +149,9 @@ unicode-segmentation = "1"
 # Graph primitives for the union graph over an event's BOTH parent edges -- the
 # render edge and the causal set -- which a render-only walk (`dag.rs`) cannot
 # reach. It is here for `algo::dominators::simple_fast`, the same engineered
-# Cooper/Harvey/Kennedy "Simple, Fast Dominance" algorithm
-# `Lain::Timeline::Tree` hand-rolls in Ruby: a published algorithm a mature
-# crate already implements is exactly the case the prefer-crates rule names.
+# Cooper/Harvey/Kennedy "Simple, Fast Dominance" algorithm a Ruby twin once
+# hand-rolled: a published algorithm a mature crate already implements is
+# exactly the case the prefer-crates rule names.
 # Pure in-memory data-structure work over an owned graph -- no I/O, no threads,
 # no environment, no terminal -- so it belongs in this in-process crate.
 # Pinned EXACT to satisfy `cargo deny`'s wildcard ban.

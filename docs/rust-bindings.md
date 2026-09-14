@@ -27,9 +27,15 @@ Before binding, all five must hold. If any fails, keep it in Ruby.
 3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
 4. **The boundary is crossed in batches, not per element.** Conversion cost dominates almost
    every naive binding; a per-node FFI call in a DAG walk loses to plain Ruby.
-5. **It survives the same tests.** `Timeline` ships as pure Ruby first, and the `Regular` /
-   `MeetSemilattice` property tests must pass unchanged against **both** implementations. That
-   is how we know a port is correct, and it is why the Ruby version is not deleted.
+5. **It survives the same tests.** `Timeline` ships as pure Ruby first, and **where both
+   implementations exist** the `Regular` / `MeetSemilattice` property tests must pass unchanged
+   against both. That is how we know a port is correct, and it is why the Ruby version is not
+   deleted. Dominance and causal ancestry are the exception, by ruling: they live only in Rust.
+   An operation implemented only in Rust is held to the shared law group where it is a
+   semilattice (dominance), and in every case to fixtures whose expected answers are written
+   down, never derived from a second implementation, plus a check read off the order's
+   definition — which is all causal ancestry has, its Rust type implementing
+   `MaximalLowerBounds` and never `MeetSemilattice`.
 
 Structures that plausibly qualify, and what they buy:
 

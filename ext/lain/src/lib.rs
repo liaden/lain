@@ -1593,19 +1593,19 @@ mod ffi {
             Self::meet_via::<RenderAncestry>(ruby, rb_self, other)
         }
 
-        /// Ruby `Timeline#dominator_meet`: the deepest common dominator over
-        /// the UNION graph -- render and causal edges together -- which is the
-        /// latest event no in-flight branch can bypass. A DIFFERENT operator
-        /// from `meet` above over a different graph, not a widened one, which
-        /// is why it is `meet_via` at `Dominance` rather than `RenderAncestry`.
+        /// The deepest common dominator over the UNION graph -- render and
+        /// causal edges together -- which is the latest event no in-flight
+        /// branch can bypass: the safe-compaction checkpoint, and this is its
+        /// only implementation. A DIFFERENT operator from `meet` above over a
+        /// different graph, not a widened one, which is why it is `meet_via` at
+        /// `Dominance` rather than `RenderAncestry`.
         ///
         /// A meet that climbs all the way to the virtual root answers the EMPTY
         /// timeline: the root is a modelling artifact that never leaves
-        /// `graph`, exactly as Ruby's `checkout(nil)` hides it.
+        /// `graph`, so a Ruby caller sees `checkout(nil)`.
         ///
-        /// No `dominators:` keyword. Ruby's memo hangs off a mutable
-        /// collaborator the caller holds; this handle is frozen and every call
-        /// is one-shot, so exposing that query object is a decision of its own.
+        /// No memo. This handle is frozen and every call is one-shot; a query
+        /// object holding a cache the caller keeps is a decision of its own.
         fn dominator_meet(
             ruby: &Ruby,
             rb_self: Obj<Timeline>,
@@ -1614,9 +1614,9 @@ mod ffi {
             Self::meet_via::<Dominance>(ruby, rb_self, other)
         }
 
-        /// Ruby `Dominators#dominates?`, asked of the receiver: does every path
-        /// from the virtual root to `other`'s head pass through this one's?
-        /// Shaped like `ancestor_of?` -- receiver below, argument above.
+        /// The dominance order, asked of the receiver: does every path from
+        /// the virtual root to `other`'s head pass through this one's? Shaped
+        /// like `ancestor_of?` -- receiver below, argument above.
         ///
         /// It is exposed because it is the ORDER `dominator_meet` is a meet of,
         /// and it is strictly STRONGER than `ancestor_of?`: reachability asks
@@ -1628,10 +1628,9 @@ mod ffi {
             Self::below_via::<Dominance>(ruby, rb_self, other)
         }
 
-        /// Ruby `Timeline#causal_meets`: the common causal ancestors of the two
-        /// heads that are not ancestors of another common one -- git
-        /// merge-base's maximal lower bounds -- as a frozen Array of frozen
-        /// digest Strings in digest order.
+        /// The common causal ancestors of the two heads that are not
+        /// ancestors of another common one -- git merge-base's maximal lower
+        /// bounds -- as a frozen Array of frozen digest Strings in digest order.
         ///
         /// An Array and NOT a Timeline, unlike every other meet-ish method
         /// here, because the answer's cardinality routinely exceeds one: a

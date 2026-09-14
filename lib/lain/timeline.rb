@@ -26,11 +26,10 @@ module Lain
     end
 
     # Referential integrity, and deliberately NOT a {Lain::Declarative}
-    # declaration. The rule is one predicate against an INJECTED COLLABORATOR
-    # (does this store hold this digest), not a shape check on a value, and
-    # stating it declaratively costs eleven lines where the clause costs one --
-    # enough to push this class through `Metrics/ClassLength`, whose only honest
-    # fix would be extracting a collaborator that has no separate responsibility.
+    # declaration. A declaration states the shape of a value; this rule is one
+    # predicate against an INJECTED COLLABORATOR (does this store hold this
+    # digest), and stating it declaratively costs eleven lines where the clause
+    # costs one.
     def initialize(head_digest:, store:)
       raise Store::MissingObject, "no object #{head_digest.inspect}" if head_digest && !store.key?(head_digest)
 
@@ -57,10 +56,12 @@ module Lain
     # its content, with the old head as its parent.
     #
     # `causal_parents` defaults to the empty set (a plain turn hashes exactly as
-    # before); the Agent passes the mailbox messages this turn folded so they
-    # stop being pending (decision 2). Each is a Store edge, so {Store#put}
-    # refuses a turn naming a message the store has not already seen -- the same
-    # referential-integrity guard `parent` and `payload_digest` ride.
+    # before); the Agent passes the mailbox messages this turn folded, because
+    # a message stays pending until a committed turn names it a causal parent --
+    # folding is read off the log, never popped from a queue. Each is a Store
+    # edge, so {Store#put} refuses a turn naming a message the store has not
+    # already seen -- the same referential-integrity guard `parent` and
+    # `payload_digest` ride.
     def commit(role:, content:, meta: {}, causal_parents: [])
       turn = Event.turn(role:, content:, parent: head_digest, meta:, correlation: next_correlation, causal_parents:)
       # The envelope's payload_digest is a Store edge (referential integrity),
@@ -131,52 +132,6 @@ module Lain
       other.include?(head_digest)
     end
 
-    # Pinned 2026-07-17: the causal ancestry order -- reachability over
-    # BOTH parent edges, render and causal, git's "all parents" -- has no unique
-    # greatest lower bound: a criss-cross fan-in leaves incomparable maximal
-    # common ancestors, and any singleton answer would be arbitrary. So this
-    # takes git merge-base's shape: the SET of maximal lower bounds (the common
-    # causal ancestors that are not ancestors of another common one), as frozen
-    # digests in digest order -- the one canonical order incomparable elements
-    # admit. A pure projection over the Store; {Dag::RenderAncestry} stays
-    # render-edge and untouched, because cache-break localization needs answers
-    # that are stable as causal edges land.
-    def causal_meets(other)
-      Dag.same_store!(self, other)
-      CausalAncestry.new(store).meets(head_digest, other.head_digest)
-    end
-
-    # Pinned 2026-07-17: the checkpoint primitive. The deepest common
-    # dominator of the two heads over the UNION graph -- render and causal
-    # edges together, under a virtual root spanning the closure's forest
-    # roots: the latest event EVERY path from that root to both heads must
-    # pass through, i.e. the latest point no in-flight branch can bypass,
-    # which is what makes it the synchronization/safe-compaction answer.
-    # Unlike #causal_meets this IS a true meet-semilattice (a node's
-    # dominators are totally ordered, so the deepest common dominator is the
-    # unique nearest common ancestor on the dominator tree); its laws run
-    # under the same shared group as {Dag::RenderAncestry.meet}, dominance
-    # injected.
-    #
-    # The CRDT causal-stability caveat, inherent and documented rather than a
-    # bug: one quiet participant stalls the frontier. An open subagent branch
-    # (spawned, not yet folded) keeps this answer at or before its spawn
-    # point however far the parent advances, until the branch speaks or
-    # closes -- mitigated operationally by actors' explicit stop.
-    #
-    # Pure and computed on demand. Timelines are frozen, so the memo lives on
-    # the injected {Dominators}, keyed by head-digest pair -- sound because
-    # the arguments anchor the closure and events are immutable, so a pair's
-    # union graph can never change. The default mints a fresh Dominators per
-    # call, so every invocation rebuilds the whole union-graph dominator tree;
-    # a caller asking more than once should hold ONE and pass it. An
-    # all-the-way-up answer is the empty Timeline: the virtual root is a
-    # modeling artifact and never leaves the projection.
-    def dominator_meet(other, dominators: Dominators.new(store))
-      Dag.same_store!(self, other)
-      checkout(dominators.meet(head_digest, other.head_digest))
-    end
-
     # Pinned: the chain's identity, by the same derivation
     # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --
     # a chain is named by its root event's digest, no separate id machinery.
@@ -209,200 +164,5 @@ module Lain
     # NEXT turn" is a different intent from "this chain's identity," even
     # though {Event::ChainWriter.correlation_of} answers both the same way.
     def next_correlation = correlation
-  end
-
-  class Timeline
-    # {Timeline#causal_meets}'s collaborator: the causal ancestry ORDER --
-    # reachability over BOTH parent edges, render and causal, git's "all
-    # parents". It takes the Store rather than a head because the order
-    # belongs to the shared DAG; a Timeline is only one pointer into it.
-    class CausalAncestry
-      def initialize(store)
-        @store = store
-      end
-
-      # {Timeline#causal_meets}'s set, computed where the order lives: the
-      # common causal ancestors of the two heads that are not ancestors of
-      # another common one (git merge-base's maximal lower bounds), as
-      # frozen digests in digest order.
-      def meets(head_a, head_b)
-        mine = closure([head_a])
-        common = closure([head_b]).keys.select { |digest| mine.key?(digest) }
-        maximal(common).sort.freeze
-      end
-
-      # Reflexive-transitive closure of the seeds, seeds included (nil seeds
-      # -- the empty Timeline -- contribute nothing, which is what keeps
-      # #causal_meets total). Iterative with an explicit frontier: causal
-      # chains reach thousands of events deep, and Ruby's stack does not.
-      def closure(seeds)
-        seen = {}
-        frontier = seeds.compact
-        while (digest = frontier.pop)
-          unless seen.key?(digest)
-            seen[digest] = true
-            frontier.concat(edges(@store.fetch(digest)))
-          end
-        end
-        seen
-      end
-
-      # The members of `digests` no other member sits above. A member is
-      # non-maximal exactly when it is reachable from another member's
-      # parents, so ONE closure over all those parents finds every
-      # non-maximal member at once, instead of one walk per candidate pair.
-      def maximal(digests)
-        covered = closure(digests.flat_map { |digest| edges(@store.fetch(digest)) })
-        digests.reject { |digest| covered.key?(digest) }
-      end
-
-      private
-
-      def edges(event)
-        [event.render_parent, *event.causal_parents].compact
-      end
-    end
-  end
-
-  class Timeline
-    # {Timeline#dominator_meet}'s collaborator and its memo's home: Timeline
-    # values are frozen, so "computed on demand, memoized by head-digest
-    # pair" caches here, on the query object a caller holds. Safe under
-    # concurrent actor fibers without a lock: every memo value is a pure
-    # function of its key over immutable events, so the worst interleaving
-    # recomputes the same answer, and each Hash operation is atomic under
-    # the GVL.
-    class Dominators
-      def initialize(store)
-        @store = store
-        @meets = {}
-      end
-
-      # The deepest common dominator's digest, or nil where the meet climbs
-      # all the way to the virtual root (which includes either head being
-      # nil -- the empty Timeline is the bottom element and absorbs).
-      def meet(head_a, head_b)
-        return nil if head_a.nil? || head_b.nil?
-
-        @meets.fetch([head_a, head_b].sort) do |key|
-          @meets[key] = Tree.new(@store, key).meet(head_a, head_b)
-        end
-      end
-
-      # The dominance order itself, exposed because the semilattice's laws
-      # are stated against it (the render-ancestry predicate is strictly
-      # weaker): every virtual-root path to `node` passes through
-      # `dominator`. Reflexive; nil, the empty Timeline's head, sits below
-      # everything and above only itself.
-      def dominates?(dominator, node)
-        return true if dominator.nil?
-        return false if node.nil?
-
-        Tree.new(@store, [dominator, node]).chain(node).include?(dominator)
-      end
-
-      # One dominator tree over the union closure of its seed heads --
-      # Cooper/Harvey/Kennedy, "A Simple, Fast Dominance Algorithm":
-      # immediate dominators by intersect-walks over a rank order, then any
-      # meet is the tree's nearest common ancestor. Their worklist collapses
-      # to a single sweep here because the union graph is acyclic (content
-      # addressing: an event can only name earlier digests), so topological
-      # order processes every predecessor before its successors and one
-      # pass is already the fixed point.
-      class Tree
-        # The virtual root over the closure's forest roots. A modeling
-        # artifact: it has no digest and must never leave this class --
-        # callers see nil where a walk reaches it.
-        ROOT = Object.new
-        private_constant :ROOT
-
-        def initialize(store, heads)
-          @preds = flow_predecessors(store, heads)
-          @rank = topological_rank
-          @idom = immediate_dominators
-        end
-
-        def meet(head_a, head_b)
-          ancestor = intersect(head_a, head_b)
-          ancestor.equal?(ROOT) ? nil : ancestor
-        end
-
-        # The node itself, then each strictly-shallower dominator, deepest
-        # first, the virtual root excluded.
-        def chain(node)
-          Enumerator.new do |yielder|
-            current = node
-            until current.equal?(ROOT)
-              yielder << current
-              current = @idom.fetch(current)
-            end
-          end
-        end
-
-        private
-
-        # node => flow-graph predecessors: its union-graph parents, or the
-        # virtual root under the closure's forest roots.
-        def flow_predecessors(store, heads)
-          CausalAncestry.new(store).closure(heads).keys.to_h do |digest|
-            event = store.fetch(digest)
-            parents = [event.render_parent, *event.causal_parents].compact.uniq
-            [digest, parents.empty? ? [ROOT] : parents]
-          end
-        end
-
-        def successors
-          @successors ||= @preds.each_with_object({}) do |(digest, parents), children|
-            parents.each { |parent| (children[parent] ||= []) << digest }
-          end
-        end
-
-        # Kahn's algorithm from the virtual root. ANY topological rank
-        # serves the intersect walks: an immediate dominator is a proper
-        # ancestor, so its rank is strictly smaller.
-        #
-        # The frontier is a queue, but `Array#shift` is O(n) per call -- it
-        # has to shift every remaining element down -- which would turn one
-        # sweep over the union graph into O(n^2). `each_with_index` walks the
-        # same Array by an index cursor instead, and MRI keeps re-reading the
-        # Array's current length each step, so appending to `frontier` inside
-        # the block is exactly "push new work, the cursor reaches it later" --
-        # the append/pop worklist discipline {CausalAncestry#closure} already
-        # documents, minus the pop.
-        def topological_rank
-          indegree = @preds.transform_values(&:length)
-          frontier = [ROOT]
-          rank = {}
-          frontier.each_with_index do |node, cursor|
-            rank[node] = cursor
-            frontier.concat(released_children(node, indegree))
-          end
-          rank
-        end
-
-        # The successors whose last unprocessed predecessor was `node`.
-        def released_children(node, indegree)
-          successors.fetch(node, []).select { |child| (indegree[child] -= 1).zero? }
-        end
-
-        def immediate_dominators
-          @idom = { ROOT => ROOT }
-          @preds.keys.sort_by { |digest| @rank.fetch(digest) }.each do |digest|
-            @idom[digest] = @preds.fetch(digest).reduce { |left, right| intersect(left, right) }
-          end
-          @idom
-        end
-
-        # CHK's intersect: leapfrog the deeper finger up its dominator
-        # chain until the fingers agree -- the nearest common ancestor.
-        def intersect(left, right)
-          until left == right
-            left = @idom.fetch(left) while @rank.fetch(left) > @rank.fetch(right)
-            right = @idom.fetch(right) while @rank.fetch(right) > @rank.fetch(left)
-          end
-          left
-        end
-      end
-    end
   end
 end

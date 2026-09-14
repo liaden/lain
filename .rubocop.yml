@@ -172,14 +172,11 @@ Metrics/ParameterLists:
 # only what made you look.
 #
 # The old numbers -- ClassLength 125, the rest at RuboCop's defaults -- got answered a
-# fourth way, and the tree records it: 30 files in lib/ reopen their own class or module
-# mid-file, and 61 comments across 51 files name a Metrics cop as the reason code is
+# fourth way, and the tree records it: 26 files in lib/ reopen their own class or module
+# mid-file, and 50 comments across 45 files name a Metrics cop as the reason code is
 # shaped as it is. Those splits moved a `class` keyword and nothing else, both halves
-# keeping the same ivars, the same helpers and the same responsibility.
-# lib/lain/timeline.rb, the comment-density exemplar CLAUDE.md points at, is three of
-# them, and its own comment names the trade: the only honest fix would be "extracting a
-# collaborator that has no separate responsibility". So the headroom below is for merging
-# those back, not for new classes to grow into.
+# keeping the same ivars, the same helpers and the same responsibility. So the headroom
+# below is for merging those back, not for new classes to grow into.
 #
 # The method-level numbers carry a caveat the class-level ones do not. The distribution
 # they were read from is CENSORED -- every method-level maximum in lib/ sits at exactly

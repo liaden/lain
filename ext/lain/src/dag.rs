@@ -3,9 +3,9 @@
 //! The Store maps a digest to its [`EventData`]; walking render-parent pointers
 //! through that map is all `ancestors`, `meet`, and `ancestor_of?` need. Every
 //! walk here follows the SINGLE render edge -- the first-parent chain -- and is
-//! unchanged by the envelope re-port: `causal_parents` never participates
-//! (causal projections stay Ruby-only until a bench shows them hot). Keeping
-//! these as plain functions over an `rpds` map -- no `magnus` -- is what lets
+//! unchanged by the envelope re-port: `causal_parents` never participates (the
+//! union-graph orders live in [`crate::graph`]). Keeping these as plain
+//! functions over an `rpds` map -- no `magnus` -- is what lets
 //! the structure below be proven without an embedded Ruby VM, and lets the FFI
 //! layer perform each walk ENTIRELY in Rust, crossing the boundary once with a
 //! batched result rather than once per node.
