@@ -307,6 +307,13 @@ time of writing that was 24 declarations (elementwise 7, meet_semilattice 5, mon
 attenuation 2, commutative_monoid 2) and 5 refutations; on 2026-09-13 it is roughly 18 and 6. **Capture
 the real numbers first and compare against those** — the comparison is the check, not the constants.
 
+> **2026-09-14: moot.** `simplify-09-orders-as-types.md` deleted `Lain::Algebra`, its registry, its
+> seal and `spec/algebra_laws_spec.rb` (`7a1d4602`); a law now runs as an `include_examples` in its
+> subject's own spec and needs no load-time completeness. So the registry-close half of this card —
+> both shapes above, the count check, AC 5, AC 6 and the two escalation triggers about the seal — has
+> nothing left to act on. They are left in place for the next run of this plan to re-scope, not deleted
+> here; the manifest removal and ACs 1–4 stand.
+
 **Acceptance criteria**
 
 ```gherkin
@@ -336,6 +343,9 @@ Scenario: an empty registry is still refused
   When it runs against a registry holding no claims
   Then it fails, saying no claim was made
 ```
+
+**AC 5 and AC 6 are moot as written** (2026-09-14) — see the dated note under T2's registry close.
+
 → spec files: `spec/zeitwerk_spec.rb` (AC 2, AC 3), `spec/value_object_shareability_spec.rb` (AC 4 —
 existing, and the count is the check), `spec/algebra_laws_spec.rb` (AC 5, and **AC 6 is new and is the
 registry half's real deliverable** — 2026-09-14: this file no longer exists, deleted with the registry
@@ -354,9 +364,10 @@ by `7a1d4602`; AC 5 and AC 6 need a different home or drop with it), plus a CLI 
   credit for it. Its job is to confirm the guard still *fires* under autoloading — which is the one thing
   Zeitwerk could break about it. Note `Registry#seal` is `freeze` over a process global, so exercising the
   empty case needs the injected-registry seam at `algebra.rb:306`.
+  (2026-09-14: moot — see the dated note under T2's registry close.)
 - **If the seal cannot be made to work under autoloading in either shape, stop the whole plan.** The
   registry is how lain's algebraic claims are held to their laws, and no amount of require-line deletion is
-  worth losing it silently.
+  worth losing it silently. (2026-09-14: moot — see the dated note under T2's registry close.)
 - **This trigger is void, and the counts were wrong anyway.** It warned that simplify-09's T3 and T4 would
   change the expected counts in AC 5; **simplify-09 was dropped entirely on 2026-09-13**. But AC 5's
   *"twenty-four claims and five refutations"* is stale on its own — measured, the registry holds roughly
@@ -552,7 +563,7 @@ After the last wave:
 - **`bundle exec rspec spec/value_object_shareability_spec.rb` with its class count recorded.** 25 lines
   sweeping 267 classes; a lower count passes silently and is the canary for an incomplete load.
 - **`bundle exec rspec spec/algebra_laws_spec.rb` with its claim count recorded.** Same reasoning, and
-  T5's AC 4 is the guard.
+  T5's AC 4 is the guard. (2026-09-14: moot — see the dated note under T2's registry close.)
 - `bundle exec rubocop` clean, and confirm the `Style/Documentation` `AllowedConstants` list did not need
   to grow — T3 deletes namespace declarations, and an implicit namespace with no docstring is a
   `Style/Documentation` offence waiting to happen.

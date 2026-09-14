@@ -977,6 +977,18 @@ raises"`** (`tier_one_read_contract.rb:100`, **1**), *"an ollama deployment"* (2
 homomorphism"* (2), and six more at 2. A shared example with one caller is indirection with no reuse —
 inline it.
 
+> **2026-09-14, amended — do not delete `elementwise.rb` or inline the law groups.** Since
+> `simplify-09-orders-as-types.md` the law groups are included literally in their subjects' specs, and
+> `ARCHITECTURE.md`'s algebra section now describes that as the design: `"an elementwise map"` has 2
+> callers (`dedupe_tool_calls_spec.rb`, `elide_spec.rb`) and its battery 3 readers, and stays;
+> `"an attenuation"` (1 literal caller, `toolset_spec.rb`, plus a direct battery read in the same
+> file) and `"a pure operation"` (4 callers today) are law groups whose battery is also read by a
+> negative example, and are exempt from the two-caller rule, because inlining one splits a law's
+> positive and negative readings into two transcriptions. A new law group also starts with one caller
+> (ARCHITECTURE's "How to hold an operation to a law", step 1), so the threshold cannot apply to law
+> groups at all. As written, this card's file list and AC 2 would undo that; re-scope them to the
+> non-law groups before running it.
+
 **Two changes to the card's list.** `"an exec boundary matching bash"` **no longer exists**: it was
 renamed `"an exec backend answering for a term"` (`exec_term_contract.rb:34`) and now has **3** callers,
 so it leaves the list entirely. And `"a tier-1 read of any path that never raises"` is a **new** 1-caller

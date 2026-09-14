@@ -214,7 +214,8 @@ collapsed into `Lain::Event`, kind-tagged `:turn`, over a closed
 `KINDS = %i[turn spawn message snapshot]`. `Context#render` is a **pure** function
 `(Timeline, Toolset, Workspace) → Request`; purity and cache-hit are the same constraint. Tool
 calls are `Effect`s interpreted by an `Effect::Handler`, with `Middleware` the Rack-idiom public
-API over that (a property-tested monoid). Tools are capabilities, not permissions. `Provider` is
+API in front of it — one `Middleware::Stack` per agent, ending in the gate, then exactly one
+interpreter. Tools are capabilities, not permissions. `Provider` is
 one round trip, never a loop — Lain owns the loop, because the loop is the object of study.
 
 - **`Workspace` is sent, not stored**: it renders into the Request, never onto the Timeline. A

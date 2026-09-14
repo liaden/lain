@@ -534,7 +534,7 @@ with it. [`docs/GLOSSARY.md`](docs/GLOSSARY.md) defines the math and CS vocabula
 | `Provider` / `Capability` | One HTTP round trip, no loop. `Anthropic` (default), `AnthropicReference` (SDK oracle), `Ollama`, `Mock`. | Lain owns the loop, because the loop is the object of study. `Capability::Policy` resolves a combinator/provider mismatch loudly. |
 | `Context` / `Workspace` | A composable pipeline of message transformations. `#render` is pure. | Purity and cache-hit are the same constraint. `Workspace` is sent, never stored. |
 | `Tool` / `Toolset` / `Tool::Input` | 23 tool classes, 20 of them in the live chat toolset. `Tool::Input` (ActiveModel) declares the JSON Schema and the local validation once. | Capabilities, not permissions: a subagent holds what it was handed, and the schema cannot drift from the validation. |
-| `Effect` / `Effect::Handler` / `Gate` / `Middleware` | The Rack idiom over a property-tested monoid. | Deterministic replay is a recorded handler rather than a live one. `Gate` is where tier-3 approval lives. |
+| `Effect` / `Effect::Handler` / `Gate` / `Middleware` | An ordered `Middleware::Stack` of guards and the approval gate, ending in one interpreter. | `Live` runs a tool, `Mock` answers canned results; `Gate` is where tier-3 approval lives, and it must be the last layer before the interpreter. |
 | `Agent` / `Budget` / `ToolRunner` / `Supervisor` | An explicit `state_machines` machine plus its collaborators. | Every `stop_reason` is a transition, so refusals and ceilings cannot be forgotten. Cancellation is structured, never `Thread#kill`. |
 | `Arm` / `Compare` / `Ledger` / `PriceBook` | 4 orchestration topologies on one seam, scored by distribution and priced from the Journal. | Comparing topologies should not mean editing the loop. |
 | `Grader` | `Fixture` (deterministic assertions) and `Rubric` (LLM judge in a separate window) behind one `Grade`. | Mechanical metrics say nothing about whether the agent was right. |
@@ -600,9 +600,10 @@ function, two invariants. `Event`, `Store`, and `Timeline` form a lossless conte
 DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. `Context#render` is a **pure**
 function `(Timeline, Toolset, Workspace) -> Request`; purity and cache-hit are the same constraint.
 Tool calls are `Effect`s interpreted by an `Effect::Handler`, and `Middleware` is the Rack-idiom
-public API over that, [property-tested](docs/GLOSSARY.md#property-based-testing) as a monoid. Tools
-are capabilities, not permissions. `Provider` is one round trip with no loop, because Lain owns the
-loop and the loop is the object of study.
+public API in front of it: an ordered stack of layers, ending in the approval gate. The operations
+that do compose are held to their [laws](docs/GLOSSARY.md#property-based-testing) in their own
+specs. Tools are capabilities, not permissions. `Provider` is one round trip with no loop, because
+Lain owns the loop and the loop is the object of study.
 
 `Workspace` is **sent, not stored**: it renders into the Request and is never appended to the
 Timeline. Subagents get a fresh Timeline root whose `meta["spawned_from"]` names the parent's head,
@@ -639,9 +640,9 @@ duplicates before the sum runs.
 
 ### Tool calls run through a middleware stack
 
-A tool call is an `Effect`, interpreted by an `Effect::Handler`. The public API over that is the
-Rack idiom, `#call(env) { |env| ... }`, and deterministic replay is just a recorded handler in
-place of a live one.
+A tool call is an `Effect`, interpreted by an `Effect::Handler` — `Live`, or `Mock` in specs. The
+public API in front of that is the Rack idiom, `#call(env) { |env| ... }`, and every refusal, mask
+and approval is a layer of the stack rather than a handler.
 
 Four stacks, one protocol:
 
