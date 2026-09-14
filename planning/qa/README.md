@@ -277,6 +277,16 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round17-2026-09-14.md`](../qa-findings-round17-2026-09-14.md) — round 17, a full
+  round over all eighteen, four scenarios of it driven in parallel fork contexts with their own
+  sandboxes. **Six HIGH:** any non-ASCII byte in `bash` output tears the ask (F88) and the dangling
+  call it leaves stalls composed compaction for good (F89); ollama's silent prompt truncation reads
+  as LOW occupancy (F90); `ComposedTerm` releases unnamed credential files with nobody asked (F91);
+  `shell_arm`/`isolation_lease` never reach the journal (F92); a torn `gate_decision` opens an epic
+  stage (F93). **F84 fixed.** `shell-terms` got its **first drive**. The desktop notifier these
+  documents still gate on was deleted in `c40ab419` (P36); `SKILL.md` and `qa-sandbox.sh` are
+  corrected, the scenario passages are owed.
+
 - [`../qa-findings-round15-2026-08-27.md`](../qa-findings-round15-2026-08-27.md) — round 15, the
   round that drove **seventeen scenarios and reported "all 17 … none dropped" against a directory
   that held eighteen** — `shell-terms.md` had landed through the merge the previous day and the
@@ -384,8 +394,14 @@ first exercised the section rather than what the section asks for:
   a wrong expectation in a scenario and a defect in lain look identical from the driver's seat, and
   telling them apart is the first round's real job. Until then they are coverage on paper only.
 
-- **`shell-terms.md` has been driven ZERO times — still true as of round 15, and it is the only
-  scenario in the directory of which that is true.** Round 15's own coverage table names seventeen
+- **`shell-terms.md` was first driven in round 17 (2026-09-14)** — every section but the metered §9,
+  which has no Anthropic key on this box and is void anyway until F92 journals `shell_arm`. The
+  hand-maintained tables held on all sixteen listed rows; the WIDER sweep is what found F91
+  (credential files outside the `Sensitivity` table approved with nobody asked) and T3 (no
+  240.0.0.0/4 row in `web_fetch`). **Every scenario in the directory has now been driven at least
+  once.** The history below is kept because the miscount it records is the lesson.
+- **`shell-terms.md` had been driven ZERO times through round 16, and was the only
+  scenario in the directory of which that was true.** Round 15's own coverage table names seventeen
   scenarios and this is the one absent from it; the round reported "none dropped" because it counted
   its list rather than the directory. **It is in the regression gate and in a full round both**, so
   the next round of either kind drives it, and a first drive is worth taking early. Written

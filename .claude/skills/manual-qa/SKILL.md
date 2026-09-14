@@ -93,33 +93,15 @@ Then, following `planning/qa/bench.md`: start or confirm the model server, recor
 2. `~/.lain` does not exist.
 3. The machine is quiet (`uptime`, and check for orphaned spinners from earlier agent work).
 
-**A fourth thing to settle before any act, because the sandbox does NOT cover it: the desktop.**
-`--desktop` is ON by default for an interactive chat, and `qa-sandbox.sh` rebuilds `PATH` but still
-ends it in `:$PATH` — so `/usr/bin/dunstify` stays reachable and a round fires **real notifications
-onto the human's real screen**. That is not hypothetical: CLAUDE.md records nine of them landing on
-a working human's display from agents' trees, which is why `desktop:` defaults to off everywhere the
-caller does not own the human's attention. So decide, and say which: the acts that verify the
-approval notifier run with it **on** and are named; every other act runs under `LAIN_DESKTOP=0`. A
-round that cannot say which acts raised notifications is a round whose notifications nobody can
-account for.
-
-**`LAIN_DESKTOP=0` must be exported BEFORE the tmux server is started, and nowhere else works.**
-`LAIN_DESKTOP` is **not** in `PaneCommand::PANE_ENV` (an 11-name allowlist: `LAIN_API_BASE`,
-`LAIN_MAX_TOKENS`, `LAIN_MODEL`, `LAIN_NUM_BATCH`, `LAIN_NUM_CTX`, `LAIN_PROVIDER`, `LAIN_SEED`, the
-three `LAIN_SUMMARIZER_*`, `LAIN_TEMPERATURE`), so exporting it in the shell that runs `lain up` does
-**nothing** — a pane inherits it only from the *server's* environment. The 2026-08-19 trial did
-exactly that and drove an unmuted cockpit it had no way to notice. So the gate is not "did I export
-it" but:
-
-```bash
-for p in $(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_pid}'); do
-  tr '\0' '\n' < /proc/$p/environ | command grep -c '^LAIN_DESKTOP=0'
-done     # every pane must report 1 -- absent means the notifier is LIVE
-```
-
-A muted round proves it the same way it proves the sandbox held: **by the negative**. `dunstctl count
-displayed` and `waiting` both **0** after an act containing gated calls is that proof, because
-approvals are raised `-u critical` and never auto-expire — any that fired would still be on screen.
+**The desktop notifier no longer exists — there is no fourth gate.** `Lain::Notify` was deleted on
+2026-09-12 (`c40ab419`), and with it `--desktop`, `LAIN_DESKTOP` and every dunst surface. Round 17
+spent an act proving it by the negative: a cockpit started from a server with `LAIN_DESKTOP` unset
+and `/usr/bin/dunstify` on `PATH` parked a gated call, and `dunstctl count displayed`/`waiting` read
+**0/0**. A round that still exports `LAIN_DESKTOP=0` is harmless; a round that schedules notifier
+checks (`cockpit-surfaces.md` §5's withdrawal half, `shell-terms.md` §5's `dunstctl` negative) is
+testing a surface that is gone — record those sections as moot rather than passed. Take
+`dunstctl count displayed` at close-out anyway: it is one command, and it is what would notice a
+notifier coming back.
 
 Also record the round's start time — you need it for the close-out negative check.
 
@@ -268,12 +250,13 @@ established it.
   cannot see that one**, because lain's own repo gitignores `/.lain/` (`.gitignore:22`), so it is
   invisible to both of the other checks at once. Take the `git status` baseline at the START of the
   round; you cannot reconstruct it afterwards.
-- **Clear the desktop, and verify that negative too.** If any act ran with the notifier on, close
-  what it raised (`dunstctl close-all`) and confirm none survives. This is not tidiness: approvals
-  are raised `-u critical`, which never auto-expires, and dunst suspends expiry entirely while
-  nobody has touched the keyboard for 120s — which is exactly what an unattended round produces.
-  Withdrawal only fires when another surface answers the pending, so a round that ends early leaves
-  them up indefinitely on the human's screen, naming commands nobody is going to run.
+- **Confirm the desktop is still silent** — `dunstctl count displayed` and `waiting` both 0. The
+  notifier is deleted (see Phase 2), so a non-zero here means something raised notifications that
+  nothing in lain should be able to raise.
+- **Kill every listener and daemon an act started, by pid, and check the ports.** Round 17 left a
+  `pathcount.rb` listening on :21436 after `kill %1` in a shell that did not own the job, and a
+  prefix allow-list approved `bin/rails server -d`, which daemonised puma on :3000 outside tmux.
+  `ss -ltnp` over the ports the round used is the check; `tmux kill-server` does not reach either.
 - Leave the sandbox directory in place — it is the evidence.
 - Fold anything the round taught the *process* back into `planning/qa/method.md` or the scenario,
   and say you did. A round that improves only the code and not the method will re-learn the same

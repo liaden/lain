@@ -17,6 +17,15 @@ SOCK="lain-qa-$TAG"
 mkdir -p "$QA"/{xdg/config,xdg/state,xdg/cache,xdg/runtime,tmp,shim,records,project}
 chmod 700 "$QA/xdg/runtime"
 
+# The redirected XDG_CONFIG_HOME hides the operator's ~/.config/git/config, so
+# every commit a round makes -- epic-tier's red step above all -- fails with
+# "Author identity unknown" and reads as a lain refusal. Seed a throwaway
+# identity once; never copy the operator's own.
+if [ ! -f "$QA/xdg/config/git/config" ]; then
+  mkdir -p "$QA/xdg/config/git"
+  printf '[user]\n\tname = lain QA\n\temail = qa@example.invalid\n' > "$QA/xdg/config/git/config"
+fi
+
 # --- the environment every helper sources ------------------------------------
 cat > "$QA/env.sh" <<EOF
 export QA="$QA"
@@ -433,7 +442,10 @@ remote_expr() {
 case "${1:-}" in
   expr) remote_expr "$2" ;;
   send) nvim --server "$S" --remote-send "$2" ;;
-  bufs) remote_expr "join(map(getbufinfo({'buflisted':0}), {_,b -> b.name.' ('.b.linecount.')'}), '\n')" ;;
+  # "\n" in DOUBLE quotes inside the vimscript: a single-quoted '\n' is a
+  # literal backslash-n, so every multi-line read came back as one line with
+  # "\n" in it (round 17 read lain://status that way).
+  bufs) remote_expr "join(map(getbufinfo({'buflisted':0}), {_,b -> b.name.' ('.b.linecount.')'}), \"\\n\")" ;;
   tabs) remote_expr "join(map(gettabinfo(), {_,t -> 'tab'.t.tabnr.'='.len(t.windows)}), ' ')" ;;
   # :messages already separates its entries with real newlines and nvim never
   # escapes a literal backslash in message text -- piping through `tr '\\' '\n'`
@@ -441,7 +453,7 @@ case "${1:-}" in
   # legitimately contains one (a Windows-shaped path, a regex in an error).
   # remote_expr's own terminator is what this arm was missing, not translation.
   msgs) remote_expr "execute('messages')" ;;
-  buf)  remote_expr "join(getbufline(bufnr('$2'), 1, ${3:-20}), '\n')" ;;
+  buf)  remote_expr "join(getbufline(bufnr('$2'), 1, ${3:-20}), \"\\n\")" ;;
   fold) remote_expr "'level='.foldlevel($2).' closed='.foldclosed($2).' closedend='.foldclosedend($2)" ;;
   *)    echo "usage: nv.sh {expr|send|bufs|tabs|msgs|buf|fold} ..." >&2; exit 2 ;;
 esac
@@ -551,10 +563,7 @@ sandbox   $QA
 tmux      -L $SOCK
 started   $(cat "$QA/records/round-start")   <- close-out negative check uses this
 
-  . $QA/env.sh
-  export LAIN_DESKTOP=0          # MUST be before new-session: not in PANE_ENV, so a
-                                 # pane only gets it from the SERVER's environment.
-                                 # Omit it only for a named notifier act.
+  . $QA/env.sh                   # (no LAIN_DESKTOP: the notifier was deleted in c40ab419)
   tmux -L $SOCK kill-server 2>/dev/null; sleep 1     # kill-server is async; without the
   tmux -L $SOCK new-session -d -s bootstrap -x 220 -y 50; sleep 0.5   # settles, new-session
   tmux -L $SOCK set-option -g default-size 220x50    # hits the dying server and BOTH fail

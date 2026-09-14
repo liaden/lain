@@ -594,6 +594,26 @@ wrong surface returns plausible text rather than an error.
     | command grep -qE '\[y/N\][[:space:]]*$'
   ```
 
+  **The converse is round 17's, and it is the more dangerous half: a last-line `[y/N]` is not proof
+  the prompt is LIVE.** When another surface decides the pending — `:LainApprove` in nvim, or
+  `--secret-oracle` — the TTY's prompt stays drawn with nothing written after it, and a `n` typed
+  there is delivered as a **chat prompt** rather than a denial (findings F106). Before answering a
+  `[y/N]` by hand, confirm it is still parked: `lain://approval`'s `b:lain_approval_calls` over RPC in
+  a cockpit, or the journal's last `approval_pending` having no later `approval_decision` for the
+  same `tool_use_id`.
+- **A helper that refuses only on `[y/N]` still types into `human>`.** A line sent while the model
+  has parked an `ask_human` is taken as the answer, and a line sent while a turn is still
+  DISPATCHING is typeahead that the next reader consumes — which, when that reader is an approval,
+  is recorded as a human denial 19 ms after the prompt appeared (F102). `drive.sh`'s quiet window is
+  the only guard, and a summarizer reload (F95: ~30 s of journal silence per summarized tool result
+  while `LAIN_NUM_BATCH` is set) outlasts a 25–30 s window. Use >= 60 s, and check the last line is
+  `you>` before sending.
+- **A review's thread pane opens by itself** when the cursor rests on an anchored line
+  (`51_thread.lua` `review_thread.refresh`), which renumbers the review tab's windows: NEW moves
+  from 2 to 3. A `:2wincmd w` recipe then lands in `lain://thread/<id>`, and the next text keys are
+  typed into it in insert mode — round 17 did exactly that. Address windows by buffer name
+  (`win_gotoid(win_getid(bufwinnr('<name>')))`) and gate every text-sending gesture on `bufname()`.
+
 **`nv.sh` reads now terminate themselves, so two consecutive reads land on separate lines rather
 than running together.** Round 15 read `tab2=4` immediately followed by a bare `4` as `tab2=44` and
 briefly had a 44-window review tab — a finding that had to be withdrawn. `expr`, `bufs`, `tabs`,
