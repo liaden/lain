@@ -25,13 +25,13 @@ module Lain
       # run, because they are things the build DISCOVERS rather than things it
       # is told.
       class ToolsetBuild
-        # == Why both seam axes are delegators over a thunk, not values
+        # == Why both seam axes read the board through a thunk, not as values
         #
         # {Tools::Subagent::Seam} is a frozen `Data` built ONCE, here, and the
         # run's {Switchboard} does not exist yet: the board requires the base
         # `toolset:` that {#build} RETURNS. Asking for the board here is a
         # construction cycle, not an argument that was forgotten, so it arrives
-        # as a thunk read at call time.
+        # as a thunk read later.
         #
         # The cycle is not the only reason. A captured
         # `mode_switch.posture.permits` freezes the child's capability rule at
@@ -41,12 +41,13 @@ module Lain
         # The {Context::ModelSwitch} / {Approval::PolicySwitch} rule: a live
         # change is a slot the holder already has, never a setter.
         #
-        # Three delegators and not one because they read separate slots and
-        # answer separate ducks -- `include?`, `call(effect, context)`,
-        # `gates?` -- and their liveness differs: `gate_policy` and
-        # `sensitivity` are consulted per CALL, `permits` per SPAWN, so a child
-        # already running keeps the plain {Toolset} it was rendered
-        # ({Tools::Subagent::ChildBuilder#permitted}).
+        # Two seam members read it, at two different moments. `permits` is
+        # asked per SPAWN, so a child already running keeps the plain {Toolset}
+        # it was rendered ({Tools::Subagent::ChildBuilder#permitted}). The tool
+        # guard ({CLI::ToolGuard::Spawned}) reads the board once per child, as
+        # the child is built, and builds the parent's own stack over it -- gate
+        # included, holding the board's one policy switch, so a `/mode` flip
+        # reaches the child's next gated call through the slot it already has.
         PosturePermits = Data.define(:board) do
           def include?(tool_name) = board.call.mode_switch.posture.permits.include?(tool_name)
         end
@@ -57,39 +58,6 @@ module Lain
         # ({Approval::Queue}'s `requester:`) without claiming an identity the
         # spawn never took.
         SPAWN_REQUESTER = "subagent"
-
-        # The gate half of the same late binding: {Middleware::Gate}'s
-        # policy duck, answering through whichever policy the board's ONE
-        # {Approval::PolicySwitch} currently holds, so a `/mode` posture flip
-        # reaches a child's next tier-3 call.
-        #
-        # It is also the one object on a child's gate path that knows WHICH
-        # child it is gating, so it is where the requester is bound -- the
-        # board, the switch and the ladder are all session-wide and cannot tell
-        # a fleet apart. The name rides the context
-        # ({Approval::PolicySwitch::Requested}) rather than a new parameter,
-        # because the parent's gate and the child's must keep resolving the
-        # SAME policy through the SAME two-argument duck, and that identity is
-        # what makes the privilege inversion unrepresentable.
-        LivePolicy = Data.define(:board, :requester) do
-          def initialize(board:, requester: SPAWN_REQUESTER) = super
-
-          def call(effect, context)
-            board.call.policy_switch.call(effect, Lain::Approval::PolicySwitch::Requested.new(context, requester))
-          end
-        end
-
-        # The PATH half of the same gate, over the same thunk. Not folded into
-        # {LivePolicy}: the gate asks its policy `call(effect, context)` and its
-        # sensitivity `gates?(effect)`, two different ducks at two different
-        # points -- one decides, one selects what gets decided. Read through
-        # the board rather than captured, so a child's gate and its parent's
-        # resolve the same one policy and cannot be wired to disagree about
-        # which paths are sensitive.
-        LiveSensitivity = Data.define(:board) do
-          def gates?(effect) = board.call.sensitivity.gates?(effect)
-          def denial(effect) = board.call.sensitivity.denial(effect)
-        end
 
         # The role the chat's own subagent spawns, named ONCE: what it may do
         # (its `only`-set, through {Backend#spawn_policy}) and what a human is
@@ -255,9 +223,9 @@ module Lain
         # the role. Launched as an actor, so its lifecycle reaches the journal
         # the fleet reads.
         #
-        # Its seam is the run's own, the guard its children run behind
-        # included, bar two members: who the gate is told is asking, and the
-        # lane the orchestrator's children lease from and hand back through.
+        # Its seam is the run's own bar two members: the tool stack its children
+        # run behind, copied only to change who the gate is told is asking, and
+        # the lane the orchestrator's children lease from and hand back through.
         # That lane is the ISSUE's, and both halves are required: a default
         # would be the chat's, and a child's work would come home onto the
         # chat's branch with no gate in front of it.
@@ -299,16 +267,9 @@ module Lain
         end
 
         # The ONE {Lain::Tools::Subagent::Seam} every child spawn is built
-        # over. Both posture axes arrive as delegators over the switchboard
-        # thunk; see the class comment for why neither may be a captured value.
+        # over. Both posture axes arrive over the switchboard thunk; see the
+        # class comment for why neither may be a captured value.
         #
-        # `denial:` -- what a refused call is REPORTED as -- is a bare thunk
-        # rather than a fourth delegator Data, on `context_factory`'s
-        # precedent: what a child needs back is a String, not an object
-        # answering a duck. It rides the same board thunk for the same
-        # privilege-inversion reason the other three do -- a child told the
-        # generic "approval denied" in an unattended session reads a human's no
-        # and retries a call nobody can ever approve, for the life of the run.
         # `isolation:` is the run's ONE backend, INJECTED -- the same instance
         # {Wiring} hands the {Supervisor}, never a second resolution of the same
         # flag. Two backends over one project each allocate from per-instance
@@ -322,7 +283,7 @@ module Lain
         # and nothing here wraps it again. The same Leases is where the run's
         # handoff reaches a child, so every lease on the spawn lane ends in it.
         #
-        # `tool_middleware:` is the parent's own guard, over the same thunk.
+        # `tool_middleware:` is the parent's own stack, over the same thunk.
         def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:, isolation:,
                        handback:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
@@ -331,20 +292,23 @@ module Lain
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,
                                                                                  handoff: handback.handoff,
                                                                                  sync: handback.sync),
-                                          gate_policy: LivePolicy.new(board: switchboard),
-                                          permits: PosturePermits.new(board: switchboard),
-                                          sensitivity: LiveSensitivity.new(board: switchboard),
-                                          denial: -> { switchboard.call.denial })
+                                          permits: PosturePermits.new(board: switchboard))
         end
 
         # The stack {Wiring#backing} mounts in the parent's tool phase, built again
         # for each child over the same board and the same chronicle: one region
-        # ledger, one approval queue, one filter and one layout for the whole
-        # run. The board thunk is read when a child is built, so a board still
-        # nil then raises rather than handing the child a guard over nothing.
-        # The child's environment says where its writes land.
+        # ledger, one approval queue, one filter, one layout, one gate policy and
+        # one refusal sentence for the whole run. The board thunk is read when a
+        # child is built, so a board still nil then raises rather than handing
+        # the child a stack over nothing. The child's environment says where its
+        # writes land.
+        #
+        # The child's gate is the privilege-inversion guard: a child gated over
+        # anything but its parent's policy could do what its parent must ask to
+        # do. It cannot be, because the child's gate comes from the builder that
+        # makes the parent's, over the same board.
         def guard(chronicle, switchboard)
-          ->(worker_env) { ToolGuard.child_stack(chronicle, switchboard.call, worker_env) }
+          ToolGuard::Spawned.new(chronicle:, board: switchboard, requester: SPAWN_REQUESTER)
         end
 
         # One seam serves every role: role, policy and persona are chosen PER
@@ -420,10 +384,13 @@ module Lain
 
         # The same name one rail over: an approval asks the same "who is
         # asking" a question does, so both halves are read off the one word
-        # rather than two literals that could drift. Only the gate policy is
-        # rebound -- every other member of the run's ONE seam is shared, which
-        # is the identity the privilege-inversion guard rests on.
-        def announcing(requester, over: seam) = over.with(gate_policy: over.gate_policy.with(requester:))
+        # rather than two literals that could drift. Only the name the tool
+        # stack asks under is rebound -- every other member of the run's ONE
+        # seam is shared, which is the identity the privilege-inversion guard
+        # rests on.
+        def announcing(requester, over: seam)
+          over.with(tool_middleware: over.tool_middleware.with(requester:))
+        end
       end
     end
   end

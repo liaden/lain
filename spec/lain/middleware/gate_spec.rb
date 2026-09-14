@@ -347,4 +347,40 @@ RSpec.describe Lain::Middleware::Gate do
       expect(policy.contexts).to eq(["some context"])
     end
   end
+
+  # The gate approves the tool the runner resolved and the input it was shown,
+  # so its guarantee is positional: a layer after it could rewrite what it
+  # approved. Every tool stack an agent runs is checked against that here,
+  # before any tool is dispatched through it.
+  describe ".closes!" do
+    let(:tail) { [Lain::Middleware::Sensitivity.new, described_class.new] }
+
+    def stack(*layers) = Lain::Middleware::Stack.new(layers)
+
+    it "answers the very stack when the path refusal and then the gate end it" do
+      closed = stack(Lain::Middleware::RefuseSecretWrites.new, *tail)
+
+      expect(described_class.closes!(closed)).to be(closed)
+    end
+
+    it "refuses a stack with no gate at all, naming what it must end in" do
+      expect { described_class.closes!(stack) }
+        .to raise_error(described_class::Unclosed, /must end in the path refusal and then the gate.*\[\]/)
+    end
+
+    it "refuses a stack with a layer after the gate" do
+      expect { described_class.closes!(stack(*tail, Lain::Middleware::RefuseSecretWrites.new)) }
+        .to raise_error(described_class::Unclosed, /RefuseSecretWrites\]/)
+    end
+
+    # A denied path is not approvable, so its refusal has to be asked before
+    # the gate that asks a human; a gate with anything else just ahead of it
+    # lets a denied path reach the queue.
+    it "refuses a gate the path refusal does not immediately precede" do
+      expect { described_class.closes!(stack(described_class.new)) }
+        .to raise_error(described_class::Unclosed)
+      expect { described_class.closes!(stack(tail.first, Lain::Middleware::RefuseSecretWrites.new, tail.last)) }
+        .to raise_error(described_class::Unclosed)
+    end
+  end
 end

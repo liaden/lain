@@ -79,9 +79,10 @@ end
 # ungated for every child holding it -- and four shipped roles hold it.
 #
 # The two axes the parent's posture governs arrive on the spawn {Seam} and
-# nowhere else: `gate_policy` (what a tier-3 call must pass) and `permits`
-# (which capabilities the posture lets a child hold at all). Both default to
-# Null Objects, so an unwired spawn behaves exactly as it did before.
+# nowhere else: the tool guard (whose last layer is the gate a tier-3 call must
+# pass) and `permits` (which capabilities the posture lets a child hold at
+# all). The examples below build that guard with the real {CLI::ToolGuard}, so
+# a child is gated by the same builder a chat's own stack comes from.
 RSpec.describe "Subagent gating" do
   let(:store) { Lain::Store.new }
   let(:parent) do
@@ -108,9 +109,14 @@ RSpec.describe "Subagent gating" do
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
-  def seam(provider:, observer: record, **over)
+  # `gate_policy:` and `sensitivity:` are what the guard is gated BY; an
+  # example that names neither gets a gate approving everything over no path
+  # policy, which is what a seam nobody taught about a gate stands for.
+  def seam(provider:, observer: record, gate_policy: Lain::Middleware::Gate::ApproveAll.new,
+           sensitivity: Lain::Sensitivity::Policy::Null.instance, **over)
     Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, journal:,
-                                    tool_middleware: ToolRegistry::UNGUARDED, observer:, **over)
+                                    tool_middleware: ToolRegistry.gated(policy: gate_policy, sensitivity:),
+                                    observer:, **over)
   end
 
   def build_subagent(provider:, role: :dev, posture: :schema, **over)
@@ -325,13 +331,19 @@ RSpec.describe "Subagent gating" do
   # ---- The stack a built child really runs behind ---------------------------
   #
   # Read off a child Agent the builder really built, because what is asserted
-  # is the order of a security posture: a call the child was never attenuated
-  # to is refused first, a denied path next, and only then may a human be
-  # asked -- and the interpreter, last, is a bare Live that refuses nothing.
+  # is the order of a security posture: the guards first, then a call the child
+  # was never attenuated to is refused, a denied path next, and only then may a
+  # human be asked -- and the interpreter, last, is a bare Live that refuses
+  # nothing.
   describe "the child's tool stack" do
     let(:path_policy) do
       Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester",
                                                                        cwd: "/home/tester/project"))
+    end
+
+    let(:guards) do
+      [Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+       Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout]
     end
 
     def child(posture: :schema, sensitivity: path_policy, role: :dev)
@@ -345,11 +357,12 @@ RSpec.describe "Subagent gating" do
 
     def listed(agent) = [*runner_of(agent).middleware.to_a.map(&:class), runner_of(agent).handler.class]
 
-    it "puts the path refusal outside the gate, both over the seam's one policy, and a bare Live last" do
+    it "puts the path refusal outside the gate, both over the guard's one policy, and a bare Live last" do
       built = child
 
-      expect(listed(built)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
-      expect(runner_of(built).middleware.to_a.map { |layer| layer.instance_variable_get(:@sensitivity) })
+      expect(listed(built))
+        .to eq([*guards, Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+      expect(runner_of(built).middleware.to_a.last(2).map { |layer| layer.instance_variable_get(:@sensitivity) })
         .to all(be(path_policy))
     end
 
@@ -363,10 +376,13 @@ RSpec.describe "Subagent gating" do
       expect(refusal["content"]).to include("protected path")
     end
 
-    it "puts the unpermitted-call refusal outermost under the handler_union posture" do
+    # Between the guards and the path refusal: after the guards, so they still
+    # see every call; outside the gate, so a disallowed call is never parked;
+    # and the gate still the last layer before the interpreter.
+    it "puts the unpermitted-call refusal just outside the path refusal under the handler_union posture" do
       expect(listed(child(posture: :handler_union, role: :merge_resolver)))
-        .to eq([Lain::Middleware::RefuseUnpermitted, Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
-                Lain::Effect::Handler::Live])
+        .to eq([*guards, Lain::Middleware::RefuseUnpermitted, Lain::Middleware::Sensitivity,
+                Lain::Middleware::Gate, Lain::Effect::Handler::Live])
     end
 
     # The gate judges what the runner resolves, and under `handler_union` the
@@ -379,17 +395,180 @@ RSpec.describe "Subagent gating" do
       expect(built.toolset.names).to include("bash")
     end
 
-    # Through the live delegator, which is what production wires: the child's
-    # layers and the parent's must resolve the SAME policy object, or the two
-    # can be told different things about which paths are denied.
-    it "resolves, through the board delegator, the very policy the parent's layers hold" do
-      board = Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "m",
-                                         sensitivity: path_policy, toolset: union)
-      live = Lain::CLI::Wiring::ToolsetBuild::LiveSensitivity.new(board: -> { board })
-      child_layer = runner_of(child(sensitivity: live)).middleware.to_a.first
+    # A thunk may hand every child the one stack it holds; inserting the
+    # refusal into THAT would reach every sibling and the parent it came from.
+    it "inserts the unpermitted-call refusal into a copy, never into the stack the guard handed over" do
+      shared = ToolRegistry::UNGUARDED.call(Lain::WorkerEnv.default)
+      builder = Lain::Tools::Subagent::ChildBuilder.new(
+        seam: seam(provider: mock).with(tool_middleware: ->(_worker_env) { shared }), toolset: union,
+        policy: Lain::Role::Catalog[:merge_resolver].spawn_policy(posture: :handler_union),
+        budget: Lain::Agent::Budget.new
+      )
 
-      expect(board.gate.first.instance_variable_get(:@sensitivity)).to equal(path_policy)
-      expect(child_layer.instance_variable_get(:@sensitivity).board.call.sensitivity).to equal(path_policy)
+      builder.build(parent, ceiling: 1)
+
+      expect(shared.to_a.map(&:class)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+    end
+  end
+
+  # ---- A builder whose stack the gate does not close ----------------------
+  #
+  # The seam's builder is the one place a child's gate comes from, so a child
+  # is built only over a stack the path refusal and the gate end -- refused as
+  # the child is built, before any tool it holds can run.
+  describe "a builder whose stack the gate does not close" do
+    def spawned_over(builder, posture: :schema)
+      tool = Lain::Tools::Subagent.new(
+        seam: seam(provider: mock(*calls("bash"))).with(tool_middleware: builder), toolset: union,
+        policy: Lain::Role::Catalog[:dev].spawn_policy(posture:), budget: Lain::Agent::Budget.new, max_depth: 1
+      )
+      tool.call({ "prompt" => "go" }, invocation)
+    end
+
+    def empty = ->(_worker_env) { Lain::Middleware::Stack.new }
+
+    it "refuses a child over an empty stack, and bash never runs" do
+      expect { spawned_over(empty) }.to raise_error(Lain::Middleware::Gate::Unclosed)
+      expect(tools[:bash].runs).to be_empty
+    end
+
+    it "refuses it by the same name under the handler_union posture" do
+      expect { spawned_over(empty, posture: :handler_union) }.to raise_error(Lain::Middleware::Gate::Unclosed)
+      expect(tools[:bash].runs).to be_empty
+    end
+
+    it "refuses a child whose stack has a layer after the gate" do
+      after_gate = lambda do |worker_env|
+        ToolRegistry::UNGUARDED.call(worker_env).use(Lain::Middleware::RefuseSecretWrites.new)
+      end
+
+      expect { spawned_over(after_gate) }.to raise_error(Lain::Middleware::Gate::Unclosed)
+      expect(tools[:bash].runs).to be_empty
+    end
+  end
+
+  # ---- One builder, parent and child ---------------------------------------
+  #
+  # Driven over a REAL board and the real spawn wiring a chat builds
+  # ({CLI::Wiring::ToolsetBuild}), because what is asserted is that the parent's
+  # stack and a child's come out of the same {CLI::ToolGuard} over the same
+  # board -- which a hand-built seam could satisfy while production did not.
+  describe "the stack a chat and its children are gated by" do
+    let(:chronicle) { Lain::CLI::Chronicle::Null.new }
+    let(:path_policy) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester",
+                                                                       cwd: "/home/tester/project"))
+    end
+    let(:base) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+    let(:session_journal) { Lain::Journal.new(io: StringIO.new) }
+
+    def board(attended: true)
+      @board ||= Lain::CLI::Switchboard.new(journal: session_journal, model: "m", toolset: base,
+                                            sensitivity: path_policy, attended:)
+    end
+
+    # The run's spawn wiring over `board`, built as a chat builds it, with the
+    # scripted provider every child it spawns talks to.
+    def wired(provider)
+      backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 })
+      the_board = board
+      build = Lain::CLI::Wiring::ToolsetBuild.new(
+        backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
+        parent: -> { parent }, journal:, library: backend.library, epic: Lain::CLI::EpicMount::NoEpic,
+        root: "/home/tester/project", switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build
+      )
+      [build, build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { parent }))]
+    end
+
+    def recording(ran)
+      Lain::Effect::Handler::Mock.new do |effect, _context|
+        ran << effect.name
+        Lain::Tool::Result.ok("the interpreter ran")
+      end
+    end
+
+    def parent_stack = Lain::CLI::ToolGuard.stack(chronicle, board)
+
+    def parent_dispatch(name, input, ran = [])
+      dispatch_call(name, input, toolset: board.toolset, layers: parent_stack.to_a, handler: recording(ran),
+                                 context: Lain::Session.new)
+    end
+
+    def child_result(provider) = tool_results_of(provider.requests[1]).first
+
+    def tool_results_of(request)
+      request.messages.flat_map { |message| message["content"] }
+                      .select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+    end
+
+    def scripted(name, input) = mock(tool_response(["c1", name, input]), text_response("done"))
+
+    # ---- Scenario: a child is gated by the same policy as its parent --------
+
+    it "denies a child the tool its parent's policy denies, in the parent's own words" do
+      board(attended: false)
+      ran = []
+      parent_told = parent_dispatch("bash", { "command" => "true" }, ran)
+      provider = scripted("bash", { "command" => "true" })
+      build, = wired(provider)
+
+      build.role_spawn.call(:dev, :fresh, "go")
+
+      expect(parent_told.content).to include("no approval is possible for tool \"bash\"")
+      expect(ran).to be_empty
+      expect(child_result(provider)).to include("is_error" => true, "content" => parent_told.content)
+    end
+
+    # ---- Scenario: a child's denial names the child -------------------------
+
+    it "parks a child's gated call under the child's name, where the parent's parks under its own" do
+      board.mode_switch.switch(Lain::Mode.new(posture: :manual), surface: "spec")
+      read = { "path" => "/home/tester/project/.env" }
+      provider = scripted("read_file", read)
+      _, toolset = wired(provider)
+
+      asked = Sync do |task|
+        parent_call = task.async { parent_dispatch("read_file", read) }
+        parent_park = task.with_timeout(1) { board.approvals.dequeue }.tap { |pending| pending.deny(surface: "spec") }
+        child_call = task.async { toolset.fetch("subagent").call({ "prompt" => "go" }, invocation) }
+        child_park = task.with_timeout(1) { board.approvals.dequeue }.tap { |pending| pending.deny(surface: "spec") }
+        parent_call.wait
+        child_call.wait
+        [parent_park, child_park]
+      end
+
+      expect(asked.map(&:requester)).to eq(%w[agent researcher])
+      expect(asked.map(&:tool)).to eq(%w[read_file read_file])
+      expect(child_result(provider))
+        .to include("is_error" => true, "content" => %(approval denied for tool "read_file"))
+    end
+
+    # ---- Scenario: parent and child stacks come from one builder -------------
+
+    it "hands the parent and a really spawned child the same layers, the gate last, over the one board" do
+      agents = []
+      allow(Lain::Agent).to receive(:new).and_wrap_original do |original, **kw|
+        original.call(**kw).tap { |agent| agents << agent }
+      end
+      build, = wired(mock(text_response("done")))
+
+      build.role_spawn.call(:dev, :fresh, "go")
+      runner = agents.last.send(:tool_runner)
+      child_layers = runner.middleware.to_a
+      parent_layers = parent_stack.to_a
+
+      expect(parent_layers.map(&:class))
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+      expect(child_layers.map(&:class)).to eq(parent_layers.map(&:class))
+      expect(runner.handler).to be_a(Lain::Effect::Handler::Live)
+      [parent_layers, child_layers].each do |layers|
+        expect(layers.last.instance_variable_get(:@sensitivity)).to be(board.sensitivity)
+        expect(layers.grep(Lain::Middleware::RedactSecretReads).first.ledger).to be(board.ledger)
+      end
+      expect(parent_layers.last.instance_variable_get(:@policy)).to be(board.policy_switch)
+      expect(child_layers.last.instance_variable_get(:@policy).policy).to be(board.policy_switch)
     end
   end
 
@@ -406,6 +585,33 @@ RSpec.describe "Subagent gating" do
       # every child holds and {Subagent::NoAskers} is the wired-to-nothing
       # answer for -- an asker whose question reaches no queue.
       expect(rendered(provider)).to eq((union.names + %w[ask_human]).sort)
+    end
+
+    # ---- Scenario: a seam with no stack builder is refused ------------------
+    #
+    # The gate rides the guard, so a seam holding no builder is a child with no
+    # gate: refused where it is built, not discovered at the first spawn.
+    it "refuses a seam whose tool middleware is not a builder at all" do
+      expect do
+        Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context }, parent:,
+                                        tool_middleware: nil)
+      end.to raise_error(ArgumentError, /tool_middleware/)
+    end
+
+    # The likeliest wrong value is the stack itself: it answers `call`, so it
+    # would pass as a builder and fail only at the first spawn, deep inside it.
+    it "refuses a stack handed where a builder of one belongs, by name" do
+      expect do
+        Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context }, parent:,
+                                        tool_middleware: ToolRegistry::UNGUARDED.call(Lain::WorkerEnv.default))
+      end.to raise_error(Lain::Tools::Subagent::NotABuilder, /tool_middleware must build/)
+    end
+
+    it "refuses a lone middleware handed where a builder belongs, by name" do
+      expect do
+        Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context }, parent:,
+                                        tool_middleware: Lain::Middleware::Gate.new)
+      end.to raise_error(Lain::Tools::Subagent::NotABuilder)
     end
 
     it "is still a value: two all-default seams with the same members compare equal" do

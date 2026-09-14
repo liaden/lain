@@ -21,7 +21,40 @@ module ToolRegistry
   # What a spawn a spec builds says when its children run behind no tool
   # guard. It lives here and never in lib/, so no production constant means
   # "no guard": every real spawn names the guard it runs behind.
-  UNGUARDED = ->(_worker_env) { Lain::Middleware::Stack.new }.freeze
+  #
+  # Not an EMPTY stack: every stack {Lain::CLI::ToolGuard} builds ends in the
+  # path refusal and the gate, and a child's posture places its own refusal
+  # relative to them. So "no guard" is those two layers over the Nulls a seam
+  # nobody taught about a gate stands for -- nothing is sensitive, and every
+  # gated call is approved.
+  UNGUARDED = lambda { |_worker_env|
+    Lain::Middleware::Stack.new([Lain::Middleware::Sensitivity.new,
+                                 Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::ApproveAll.new)])
+  }.freeze
+
+  # A builder putting `layers` ahead of {UNGUARDED}'s two, for a spec that
+  # watches the calls a child's stack passes: every child's stack has to end
+  # in the gate, so a watcher alone is not one.
+  #
+  # @return [#call] `worker_env -> Lain::Middleware::Stack`
+  def self.guarded_by(*layers)
+    ->(worker_env) { Lain::Middleware::Stack.new([*layers, *UNGUARDED.call(worker_env).to_a]) }
+  end
+
+  # A child's guard as the real builder makes it, gated by `policy` over
+  # `sensitivity`, for a spec that asks what a child's gate does. No approval
+  # queue, so the read guard releases every region, byte-for-byte what a child
+  # read before children were guarded, and the gate is the only thing under
+  # test.
+  #
+  # @return [#call] `worker_env -> Lain::Middleware::Stack`
+  def self.gated(policy:, sensitivity: Lain::Sensitivity::Policy::Null.instance)
+    inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil, sensitivity:,
+                                              test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+                                              policy:, denial: Lain::Middleware::Gate::DENIAL)
+    chronicle = Lain::CLI::ToolGuard::Journaled.new(journal: Lain::Channel::Null.instance)
+    ->(worker_env) { Lain::CLI::ToolGuard.working(chronicle, inputs, worker_env) }
+  end
 
   def self.build_subagent
     Lain::Tools::Subagent.new(

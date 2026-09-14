@@ -11,7 +11,7 @@ require "tmpdir"
 # ledger from a freshly constructed second one, which is exactly the mistake
 # this file exists to catch.
 class ToolGuardSpecBoard
-  attr_reader :ledger, :approvals, :sensitivity, :test_layout
+  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy
 
   # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
   # for this file's own reason, one slot over: the claim is that the listing
@@ -19,10 +19,14 @@ class ToolGuardSpecBoard
   # filter built beside it, and a double answering `filter` cannot tell those
   # apart. The default is the live one because that is what {CLI::Wiring} now
   # builds; a queueless board with no classifier passes the Null.
-  def initialize(approvals: nil, sensitivity: nil, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+  # `policy` is the gate's, answering a fixed verdict and recording the context
+  # it was asked in, so an example can see WHO a call was asked for.
+  def initialize(approvals: nil, sensitivity: nil, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+                 policy: ToolGuardSpecPolicy.new)
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
     @test_layout = test_layout
+    @policy = policy
     @sensitivity = sensitivity || Lain::Sensitivity::Policy.new(
       sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
     )
@@ -30,7 +34,23 @@ class ToolGuardSpecBoard
 
   # The one value a real {Lain::CLI::Switchboard} holds, over these same slots.
   def guard_inputs
-    @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:)
+    @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:, policy:,
+                                                       denial: "the spec board refuses %<name>s")
+  end
+end
+
+# A gate policy answering one verdict, keeping every context it was asked in.
+class ToolGuardSpecPolicy
+  attr_reader :contexts
+
+  def initialize(verdict: false)
+    @verdict = verdict
+    @contexts = []
+  end
+
+  def call(_effect, context)
+    @contexts << context
+    @verdict
   end
 end
 
@@ -84,10 +104,11 @@ RSpec.describe Lain::CLI::ToolGuard do
   def read_call(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
   describe "the stack it builds" do
-    it "puts the write, read, listing and test layout guards in the tool phase, in that order" do
+    it "puts the write, read, listing and test layout guards first, then the path refusal and the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     # Everything the guards are built over is ONE value on the board, so a
@@ -95,7 +116,8 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "reads every input off the board's one value" do
       inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: queue,
                                                 sensitivity: Lain::Sensitivity::Policy::Null.instance,
-                                                test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+                                                test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+                                                policy: ToolGuardSpecPolicy.new, denial: "no %<name>s")
       bare = Data.define(:guard_inputs).new(guard_inputs: inputs)
 
       read = described_class.stack(chronicle, bare).to_a.grep(Lain::Middleware::RedactSecretReads).first
@@ -165,6 +187,138 @@ RSpec.describe Lain::CLI::ToolGuard do
   # of it: two of its three callers are outside `Agent`, and this is one. So it
   # stayed its own object when the collaborator RESOLVER folded back in, and
   # this example is where that asymmetry is pinned rather than remembered.
+  # The gate is a guard like the other four, built over the same one value, so
+  # a chat's stack and every child's come out of this one module. Its place is
+  # the posture: the gate judges the tool the runner resolved and approves the
+  # input it was shown, so nothing may sit between it and the interpreter.
+  describe "the gate every stack ends in" do
+    def gate_of(stack) = stack.to_a.last
+
+    def dispatched(stack, name = "bash", context: :the_session)
+      env = stack.call({ effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input: {}),
+                         tool: Lain::Tools::Bash.new, context: }) do |passed|
+        passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
+      end
+      env.fetch(:result)
+    end
+
+    it "ends the chat's stack, a child's and a run's with no chat alike in the gate" do
+      board = ToolGuardSpecBoard.new
+      built = [described_class.stack(chronicle, board),
+               described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher"),
+               described_class.detached(journal:).call(Lain::WorkerEnv.default)]
+
+      expect(built.map { |stack| stack.to_a.last(2).map(&:class) })
+        .to all(eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate]))
+    end
+
+    it "judges both axes over the board's one path policy and asks the board's one gate policy" do
+      board = ToolGuardSpecBoard.new
+      layers = guards(board).last(2)
+
+      expect(layers.map { |layer| layer.instance_variable_get(:@sensitivity) }).to all(be(board.sensitivity))
+      expect(gate_of(guards(board)).instance_variable_get(:@policy)).to be(board.policy)
+    end
+
+    it "reports a refused call in the board's own words" do
+      expect(dispatched(described_class.stack(chronicle, ToolGuardSpecBoard.new)))
+        .to eq(Lain::Tool::Result.error(%(the spec board refuses "bash")))
+    end
+
+    it "records a refused path into the chronicle's journal, where the read guard records a mask" do
+      refused = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                           input: { "path" => "/home/tester/.ssh/id_rsa" })
+
+      described_class.stack(chronicle, ToolGuardSpecBoard.new)
+                     .call({ effect: refused, tool: Lain::Tools::ReadFile.new, context: nil }) { |passed| passed }
+
+      expect(Lain::Journal.records(journal_io.string.lines, type: "read_refused").to_a.size).to eq(1)
+    end
+
+    # The child's half of the same record: a refused path lands where its
+    # parent's does, never on a channel nothing renders.
+    it "records a child's refused path into the chronicle's journal too" do
+      refused = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                           input: { "path" => "/home/tester/.ssh/id_rsa" })
+
+      described_class.child_stack(chronicle, ToolGuardSpecBoard.new, Lain::WorkerEnv.default, requester: "researcher")
+                     .call({ effect: refused, tool: Lain::Tools::ReadFile.new, context: nil }) { |passed| passed }
+
+      expect(Lain::Journal.records(journal_io.string.lines, type: "read_refused").to_a.size).to eq(1)
+    end
+
+    # The check a child's stack is held to, on every stack built here: the
+    # parent's, a chat child's and a run's with no chat alike.
+    it "holds every stack it builds to the gate closing it" do
+      allow(Lain::Middleware::Gate).to receive(:closes!).and_call_original
+      board = ToolGuardSpecBoard.new
+
+      described_class.stack(chronicle, board)
+      described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")
+      described_class.detached(journal:).call(Lain::WorkerEnv.default)
+
+      expect(Lain::Middleware::Gate).to have_received(:closes!).exactly(3).times
+    end
+
+    # The parent asks as itself: a context nobody wrapped names nobody, which
+    # the approval queue reads as the session's own agent.
+    it "asks the parent's policy in the session's own context" do
+      board = ToolGuardSpecBoard.new
+
+      dispatched(described_class.stack(chronicle, board))
+
+      expect(board.policy.contexts).to eq([:the_session])
+    end
+
+    # A child asks the SAME policy, through a context naming the child, so a
+    # park says which of a fleet is asking while the verdict stays the board's.
+    it "asks a child's policy through a context naming the child" do
+      board = ToolGuardSpecBoard.new
+
+      dispatched(described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher"))
+
+      expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
+      expect(board.policy.contexts.first.__getobj__).to be(:the_session)
+    end
+  end
+
+  # What a chat's spawn seam carries: the builder over a board that does not
+  # exist yet when the seam does, and the name its children are asked for.
+  describe Lain::CLI::ToolGuard::Spawned do
+    subject(:spawned) { described_class.new(chronicle:, board: -> { board }, requester: "subagent") }
+
+    let(:board) { ToolGuardSpecBoard.new }
+
+    it "builds a child's stack over the board the thunk answers when a child is built" do
+      stack = spawned.call(Lain::WorkerEnv.default)
+
+      expect(stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.ledger).to be(board.ledger)
+      expect(stack.to_a.last.instance_variable_get(:@policy).requester).to eq("subagent")
+    end
+
+    # Rebinding who is asking is a copy differing in that one member, so the
+    # run's one seam is never relabelled in place.
+    it "names a different child in a copy, leaving itself as it was" do
+      renamed = spawned.with(requester: "researcher")
+
+      expect(renamed.call(Lain::WorkerEnv.default).to_a.last.instance_variable_get(:@policy).requester)
+        .to eq("researcher")
+      expect(spawned.requester).to eq("subagent")
+    end
+
+    it "builds a fresh stack per child, so a layer one child's builder inserts reaches no other" do
+      expect(spawned.call(Lain::WorkerEnv.default)).not_to be(spawned.call(Lain::WorkerEnv.default))
+    end
+
+    # A board still nil when a child is built is a spawn that beat the chat's
+    # assembly: refused loudly, never a child built over nothing.
+    it "refuses to build a child over a board that does not exist yet" do
+      unbuilt = described_class.new(chronicle:, board: -> {}, requester: "subagent")
+
+      expect { unbuilt.call(Lain::WorkerEnv.default) }.to raise_error(NoMethodError, /guard_inputs/)
+    end
+  end
+
   describe Lain::CLI::ToolGuard::Journaled do
     it "builds the instrumentation a journal-only run hands to Agent.new" do
       journal = RecordingChannel.new
@@ -269,25 +423,25 @@ RSpec.describe Lain::CLI::ToolGuard do
     let(:run) { Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::TestLayout::None, root: @project) }
     let(:board) { ToolGuardSpecBoard.new(test_layout: run) }
 
+    def child_stack(worker_env) = described_class.child_stack(chronicle, board, worker_env, requester: "subagent")
+
     it "is the parent's stack, guard for guard" do
-      expect(described_class.child_stack(chronicle, board, env_at(@checkout, checkout: @checkout)).to_a.map(&:class))
-        .to eq(guards(board).map(&:class))
+      expect(child_stack(env_at(@checkout, checkout: @checkout)).to_a.map(&:class)).to eq(guards(board).map(&:class))
     end
 
     it "judges a leased child's writes at its own checkout too, through the board's one run" do
-      layout = layout_of(described_class.child_stack(chronicle, board, env_at(@checkout, checkout: @checkout)))
+      layout = layout_of(child_stack(env_at(@checkout, checkout: @checkout)))
 
       expect(layout.run).to be(board.test_layout)
       expect(layout.roots).to eq([@project, @checkout])
     end
 
     it "judges an unleased child standing in another repository at the project root alone" do
-      expect(layout_of(described_class.child_stack(chronicle, board, env_at(@checkout))).roots).to eq([@project])
+      expect(layout_of(child_stack(env_at(@checkout))).roots).to eq([@project])
     end
 
     it "judges an unleased child standing in the project at the project root alone" do
-      expect(layout_of(described_class.child_stack(chronicle, board, env_at(File.join(@project, "lib")))).roots)
-        .to eq([@project])
+      expect(layout_of(child_stack(env_at(File.join(@project, "lib")))).roots).to eq([@project])
     end
   end
 
@@ -298,7 +452,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     def detached_read(stack, path)
       Sync do
-        stack.call({ effect: read_call(path), context: Lain::Session.new }) do |inner|
+        stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: Lain::Session.new }) do |inner|
           invocation = Lain::Tool::Invocation.new(tool_use_id: inner.fetch(:effect).tool_use_id,
                                                   context: inner.fetch(:context))
           inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
@@ -308,10 +462,25 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     def detached_guards(thunk) = thunk.call(Lain::WorkerEnv.default).to_a
 
-    it "answers a thunk building the chat's four guards, in the chat's order" do
+    it "answers a thunk building the chat's layers, in the chat's order" do
       expect(detached_guards(described_class.detached(journal:)).map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+        .to eq(guards(ToolGuardSpecBoard.new).map(&:class))
+    end
+
+    # A run with no chat has no surface for a question to reach, so its gate
+    # APPROVES, deliberately against the gate's own fail-closed default: the
+    # roles such a run spawns hold no gated tool, and a gate that parked would
+    # park forever. Over the Null path policy, for the listing's reason below.
+    it "approves every gated call, over no path policy" do
+      stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
+      bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+
+      env = stack.call({ effect: bash, tool: Lain::Tools::Bash.new, context: nil }) do |passed|
+        passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
+      end
+
+      expect(env.fetch(:result)).to eq(Lain::Tool::Result.ok("the interpreter ran"))
+      expect(stack.to_a.last.instance_variable_get(:@sensitivity)).to be(Lain::Sensitivity::Policy::Null.instance)
     end
 
     # The thunk is called once per child, and every child must release into the
@@ -368,7 +537,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     # a seam, not a double: what is under test is what the BYTES do.
     def bytes_read_through(stack, path)
       Sync do
-        stack.call({ effect: read_call(path), context: Lain::Session.new }) do |inner|
+        stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: Lain::Session.new }) do |inner|
           invocation = Lain::Tool::Invocation.new(tool_use_id: inner.fetch(:effect).tool_use_id,
                                                   context: inner.fetch(:context))
           inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
@@ -392,7 +561,8 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     it "DENIES every gated call, because nobody is there to ask" do
       told = dispatch_call("bash", { "command" => "ls" }, id: "tu_gate", toolset: board.toolset,
-                                                          layers: board.gate, context: Lain::Session.new)
+                                                          layers: described_class.stack(chronicle, board).to_a,
+                                                          context: Lain::Session.new)
 
       expect(told.is_error).to be(true)
       expect(told.content).to include("no approval is possible")

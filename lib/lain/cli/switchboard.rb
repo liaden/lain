@@ -41,9 +41,9 @@ module Lain
       # -- and no authority. `ladder` is never nil and never a different KIND
       # of thing (a session with nobody to ask gets an {Approval::Escalation}
       # of one refusing {Unattended} rung), so no caller writes
-      # `if board.ladder`. `sensitivity` is read here by the parent's gate and,
-      # through the board thunk, by every child's: ONE policy, so the two
-      # cannot disagree.
+      # `if board.ladder`. `sensitivity` is read off {#guard_inputs} by the
+      # gate {ToolGuard} builds for the parent and for every child: ONE policy,
+      # so the two cannot disagree.
       #
       # `ledger` is the opposite kind of slot: deliberately mutable run state,
       # where the reading IS the authority to release. It is exposed because
@@ -99,10 +99,11 @@ module Lain
             test_layout:, attended: !options[:non_interactive])
       end
 
-      # What the tool guard is built over, as ONE value: the ledger and the
-      # path policy described above, the approval queue, and the session's one
-      # test layout run, which the parent's guard and every child's read, so
-      # they hold one layout and say its absence once.
+      # What the tool stack is built over, as ONE value: the ledger and the
+      # path policy described above, the approval queue, the session's one
+      # test layout run, the gate's one policy switch, and what a refused call
+      # is reported as ({#denial}). The parent's stack and every child's read
+      # it, so they hold one of each and say an absence once.
       attr_reader :guard_inputs
 
       delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
@@ -180,68 +181,20 @@ module Lain
         # so building it before the ladder that may not want it costs nothing.
         @triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict:)
         @rules = rules.to_a.freeze
-        # Kept, where the switches merely borrow it: {#gate}'s path refusals
-        # are journaled as they happen, and re-resolving one per gate would
-        # leak an fd -- {Chronicle::Null#record_journal} opens the null device
-        # on EVERY call.
-        @journal = journal
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:) if @attended
-        @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
-                                              test_layout:)
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(posture: :accept_edits), journal:)
+        # After the seed, which is what makes the policy switch it carries.
+        @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
+                                              test_layout:, policy: @policy_switch, denial:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY
       # context that gets it; a subagent renders its role's own.
       def graft(context) = context.with_model(@model_switch)
-
-      # The session's approval gate, as the two tool-phase layers a call passes
-      # before it is interpreted: the {Middleware::Gate} holds this board's ONE
-      # policy switch, so every posture flip reaches it while the gate itself
-      # stays construction-fixed.
-      #
-      # {Middleware::Sensitivity} sits AHEAD of it, over the SAME one policy: a
-      # denied path is not approvable, and a gate policy answer is a Boolean, so
-      # every Boolean is approvable by construction. Two axes in the order that
-      # leaves the human a move on the axis that has one -- the gated path
-      # reaches the queue, the denied one never does. Nothing here reads the
-      # session's posture, so a session approving everything refuses a denied
-      # path exactly as an asking one does.
-      #
-      # @return [Array<Middleware::Base>] outermost first, to append after the
-      #   tool guard's layers
-      def gate
-        [Middleware::Sensitivity.new(sensitivity:, journal: @journal),
-         Middleware::Gate.new(policy: policy_switch, sensitivity:, denial:)]
-      end
-
-      # What a refused call is REPORTED as, which is a different question from
-      # who refused it and is why it is not the policy's to answer. PUBLIC
-      # because {#gate} builds the parent's own gate and
-      # {CLI::Wiring::ToolsetBuild::spawn_seam} threads this same value onto
-      # every child's seam. A String and nothing else, on {#ladder}'s terms.
-      #
-      # An attended session keeps the default: a human was asked and said no,
-      # so trying again later, or differently, is a real move. An UNATTENDED
-      # one must not borrow that sentence. `approval denied for tool "bash"` is
-      # byte-identical to the human's no, and a model that reads it as one will
-      # retry a call nobody can approve, for the whole run. So the unattended
-      # denial says what is true -- nobody was asked, nobody can be, this will
-      # not change -- and then what to do instead, on
-      # {Tools::AskHuman::Unattended}'s rule: a refusal that only says "no"
-      # invites the same call again.
-      def denial
-        return Middleware::Gate::DENIAL if @attended
-
-        "no approval is possible for tool %<name>s: this session was started with --non-interactive, " \
-          "so no human is attached and nothing can approve a gated call. This is not somebody answering " \
-          "no -- retrying will fail the same way every time. Do what you can without this tool, or stop " \
-          "and say what it was for."
-      end
 
       # The {Agent::SnapshotSlot} the Agent's deliveries write through, or
       # {Agent::SnapshotSlot::Unbound} until the agent build binds one.
@@ -289,6 +242,30 @@ module Lain
       end
 
       private
+
+      # What a refused call is REPORTED as, which is a different question from
+      # who refused it and is why it is not the policy's to answer. It rides
+      # {#guard_inputs}, so the parent's gate and every child's report a
+      # refusal in the same words. A String and nothing else, on {#ladder}'s
+      # terms.
+      #
+      # An attended session keeps the default: a human was asked and said no,
+      # so trying again later, or differently, is a real move. An UNATTENDED
+      # one must not borrow that sentence. `approval denied for tool "bash"` is
+      # byte-identical to the human's no, and a model that reads it as one will
+      # retry a call nobody can approve, for the whole run. So the unattended
+      # denial says what is true -- nobody was asked, nobody can be, this will
+      # not change -- and then what to do instead, on
+      # {Tools::AskHuman::Unattended}'s rule: a refusal that only says "no"
+      # invites the same call again.
+      def denial
+        return Middleware::Gate::DENIAL if @attended
+
+        "no approval is possible for tool %<name>s: this session was started with --non-interactive, " \
+          "so no human is attached and nothing can approve a gated call. This is not somebody answering " \
+          "no -- retrying will fail the same way every time. Do what you can without this tool, or stop " \
+          "and say what it was for."
+      end
 
       # The starting mode's resolution seeds both live slots DIRECTLY rather
       # than through {#apply}, because construction must journal nothing: the

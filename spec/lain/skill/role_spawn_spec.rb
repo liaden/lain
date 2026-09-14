@@ -57,7 +57,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     end.new
     provider = mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]), text_response("done"))
 
-    seam(provider:, tool_middleware: ->(_worker_env) { Lain::Middleware::Stack.new([guard]) }).call(:dev, :fresh, "go")
+    seam(provider:, tool_middleware: ToolRegistry.guarded_by(guard)).call(:dev, :fresh, "go")
 
     expect(seen).to eq(["read_file"])
   end
@@ -170,7 +170,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     # runs in, so recording it is recording where the child stands.
     def watched(provider:)
       seam(provider:, isolation: Lain::Isolation::Leases.new(backend:),
-           tool_middleware: ->(worker_env) { Lain::Middleware::Stack.new([]).tap { seen << worker_env } })
+           tool_middleware: ->(worker_env) { ToolRegistry::UNGUARDED.call(worker_env).tap { seen << worker_env } })
     end
 
     def tool_results(request)

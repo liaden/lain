@@ -22,6 +22,12 @@ RSpec.describe Lain::CLI::Switchboard do
 
   def gated_call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")
 
+  # The layers a session's tool calls pass, as the tool guard builds them over
+  # this board -- the one place a chat's stack is assembled.
+  def tool_stack(board)
+    Lain::CLI::ToolGuard.stack(Lain::CLI::ToolGuard::Journaled.new(journal:), board).to_a
+  end
+
   def mode_records = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
 
   def policy_records = Lain::Journal.records(journal_io.string.lines, type: "policy_switch").to_a
@@ -68,6 +74,18 @@ RSpec.describe Lain::CLI::Switchboard do
           .to eq([board.ledger, board.approvals, board.sensitivity, run])
         expect(inputs.approvals).to be(board.approvals)
         expect(inputs.ledger).to be(board.ledger)
+      end
+
+      # The gate is built from the same value: the board's ONE policy switch,
+      # which every posture flip reaches, and the sentence its refusals are
+      # reported in -- decided once, because whether a human is attached does
+      # not change for a session's whole life.
+      it "carries the board's one policy switch and its refusal sentence among the guard's inputs" do
+        board = described_class.for(chronicle:, options: { non_interactive: true }, model: "claude-opus-4-8",
+                                    toolset: base, test_layout: layout_run)
+
+        expect(board.guard_inputs.policy).to be(board.policy_switch)
+        expect(board.guard_inputs.denial).to start_with("no approval is possible for tool %<name>s")
       end
 
       it "gives a directly built board a run of its own that declares no layout" do
@@ -376,7 +394,7 @@ RSpec.describe Lain::CLI::Switchboard do
         # gate and read by the model off a tool_result, and a double anywhere
         # in that path would be asserting on the double.
         def refusal(board)
-          dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: board.gate,
+          dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: tool_stack(board),
                                                        context: Lain::Session.new).content
         end
 
@@ -508,11 +526,11 @@ RSpec.describe Lain::CLI::Switchboard do
 
   # The snapshot slot is born in the agent build and bound here, because the
   # board is the one object a `/mode` flip goes through.
-  # The two layers every tool call of a session passes before it is
-  # interpreted, driven through the real runner. The interpreter is a Mock that
-  # records, so "it did not run" is an observation rather than an inference
-  # from a refusal's wording -- and `bash` never really runs.
-  describe "#gate, the layers a session's tool calls pass" do
+  # The layers every tool call of a session passes before it is interpreted,
+  # built over this board and driven through the real runner. The interpreter
+  # is a Mock that records, so "it did not run" is an observation rather than
+  # an inference from a refusal's wording -- and `bash` never really runs.
+  describe "the tool stack built over this board" do
     def recording(ran)
       Lain::Effect::Handler::Mock.new do |effect, _context|
         ran << effect.name
@@ -524,7 +542,7 @@ RSpec.describe Lain::CLI::Switchboard do
       ran = []
       board = switchboard(attended: false)
 
-      result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: board.gate,
+      result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: tool_stack(board),
                                                             handler: recording(ran))
 
       expect(result).to have_attributes(is_error: true, content: /no approval is possible for tool "bash"/)
@@ -536,7 +554,7 @@ RSpec.describe Lain::CLI::Switchboard do
       board = switchboard
       board.mode_switch.switch(mode(:auto), surface: "tty")
 
-      result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: board.gate,
+      result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: tool_stack(board),
                                                             handler: recording(ran))
 
       expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
@@ -555,8 +573,8 @@ RSpec.describe Lain::CLI::Switchboard do
         board.mode_switch.switch(mode(:manual), surface: "tty")
         result = Sync do |task|
           call = task.async do
-            dispatch_call("bash", { "command" => "rm -rf build" }, toolset: board.toolset, layers: board.gate,
-                                                                   handler: recording(ran))
+            dispatch_call("bash", { "command" => "rm -rf build" }, toolset: board.toolset,
+                                                                   layers: tool_stack(board), handler: recording(ran))
           end
           pending = task.with_timeout(1) { board.approvals.dequeue }
           board.mode_switch.switch(mode(flip), surface: "tty")
@@ -582,15 +600,17 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # The order is a security posture: a denied path is not approvable, so the
-    # refusal that no answer lifts sits outside the gate that asks.
-    it "lists the path refusal ahead of the approval gate" do
-      expect(switchboard.gate.map(&:class)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+    # refusal that no answer lifts sits outside the gate that asks, and the
+    # gate is last, so nothing rewrites what it approved.
+    it "ends in the path refusal and then the approval gate" do
+      expect(tool_stack(switchboard).last(2).map(&:class)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     it "judges both layers against the board's one path policy" do
       board = switchboard
 
-      expect(board.gate.map { |layer| layer.instance_variable_get(:@sensitivity) }).to all(be(board.sensitivity))
+      expect(tool_stack(board).last(2).map { |layer| layer.instance_variable_get(:@sensitivity) })
+        .to all(be(board.sensitivity))
     end
   end
 

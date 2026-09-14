@@ -370,41 +370,11 @@ module Lain
       # Data class, and the block's own constant lookup is lexical from here.
       NO_OBSERVER = Event::ChainWriter::Null.new.freeze
 
-      # The gate a child runs behind when nothing wired one. Shared and frozen
-      # for {NO_OBSERVER}'s reason.
-      #
-      # APPROVING rather than denying, deliberately against
-      # {Middleware::Gate}'s own fail-closed default: a child spawned by a
-      # harness that never wired a queue has no surface to answer a question, so
-      # the roles the harness spawns UNATTENDED would park or refuse forever.
-      # Absence means "this seam was never taught about a gate", not "deny"; a
-      # caller that wants the session's gate passes it.
-      UNGATED = Middleware::Gate::ApproveAll.new.freeze
-
-      # The path axis a seam was never taught about: nothing is sensitive, which
-      # is byte-for-byte what a child did before the path boundary existed.
-      # Shared for {NO_OBSERVER}'s equality reason.
-      #
-      # `lain.rb` loads `lain/sensitivity` well before `lain/tools`, so unlike
-      # `mode/resolution.rb`'s deferred lookups this one may resolve eagerly in
-      # the class body.
-      UNJUDGED = Sensitivity::Policy::Null.instance
-
-      # The refusal SENTENCE a seam was never taught about: whatever
-      # {Middleware::Gate} says on its own.
-      #
-      # A THUNK, like `context_factory` and unlike the Null objects above, for
-      # that member's reason: the live one reads a {CLI::Switchboard} that does
-      # not exist when the seam is built. Resolved once per child chain in
-      # {ChildBuilder#gated}, not per call -- the sentence turns on whether a
-      # human is attached, fixed for a session's whole life, where the policy
-      # beside it flips with `/mode`.
-      #
-      # NOT `Sensitivity#denial`, which is a different message about a different
-      # axis: that one answers for a path that may not be touched at all, this
-      # one for a call that COULD have been approved by a human who is not
-      # there. The word is taken twice; read which object is being asked.
-      GENERIC_DENIAL = -> { Middleware::Gate::DENIAL }
+      # A spawn seam handed something other than a builder of a child's tool
+      # stack. Named, and raised where the seam is built: the likeliest wrong
+      # value is a stack or a lone middleware, and both answer `call`, so
+      # unrefused they would fail only at the first spawn, deep inside it.
+      class NotABuilder < ArgumentError; end
 
       # The ask-the-human seam a spawn was never taught about: there is no
       # queue and no desktop for a question to reach, at ANY depth an
@@ -747,29 +717,29 @@ module Lain
       # different base union, so it is per-caller state, not shared seam state.
       #
       # Frozen like every Data, but NOT `Ractor.shareable?` and not aspiring to
-      # be: `context_factory` and `denial` are callables, a provider is a live
-      # client, and `parent` is a thunk or a Timeline. A new member should say
-      # which direction it moves that claim; the current ones move it nowhere
-      # new. This bundles collaborators -- it is not a value in the
+      # be: `context_factory` and `tool_middleware` are callables, a provider is
+      # a live client, and `parent` is a thunk or a Timeline. A new member
+      # should say which direction it moves that claim; the current ones move it
+      # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :supervisor, :observer,
-                         :gate_policy, :permits, :askers, :sensitivity, :denial, :isolation, :escalation) do
+                         :permits, :askers, :isolation, :escalation) do
         # Everything after `tool_middleware` defaults to its Null object;
-        # {UNGATED} and {Mode::Posture::Permits::All} are the two that say "no
-        # posture has been bound to this seam". The first four stay required,
-        # so Data's own missing-keyword error is the loud failure, unwritten.
+        # {Mode::Posture::Permits::All} is the one that says "no posture has
+        # been bound to this seam". The first four stay required, so Data's own
+        # missing-keyword error is the loud failure, unwritten.
         #
         # `tool_middleware` has no default and no named Null in lib/: a child's
-        # tools run behind the guard this names, and a defaulted guard is how a
-        # production spawn would run with none while nothing said so. A caller
-        # that wants none builds an empty {Middleware::Stack} and says so.
+        # tools run behind the stack this builds -- the guards AND the gate --
+        # and a defaulted one is how a production spawn would run ungated while
+        # nothing said so. So it is refused unless it can build one at all.
         #
-        # It is a thunk over the child's {WorkerEnv}, called once per child as
-        # that child is built, on `denial`'s reason -- a chat's guard reads a
-        # board that does not exist yet when this seam does -- and because a
-        # stack is mutable, so one shared between children would let a `#use`
-        # on one reach them all. The environment is what tells a guard where a
-        # child leased into a checkout of its own writes.
+        # It is a builder over the child's {WorkerEnv}, called once per child as
+        # that child is built, because a chat's stack reads a board that does
+        # not exist yet when this seam does ({CLI::ToolGuard::Spawned}), and
+        # because a stack is mutable, so one shared between children would let
+        # a `#use` on one reach them all. The environment is what tells a guard
+        # where a child leased into a checkout of its own writes.
         #
         # `askers` wants the same treatment and does not yet have it: its
         # default is {NoAskers}, so a chat seam assembled with no askers takes
@@ -788,9 +758,10 @@ module Lain
         # rather than only its immediate parent's name.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
-                       gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers,
-                       sensitivity: UNJUDGED, denial: GENERIC_DENIAL, isolation: NO_ISOLATION,
+                       permits: Mode::Posture::Permits::All, askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze)
+          Seam.refuse_unbuildable(tool_middleware)
+
           super
         end
 
@@ -810,16 +781,25 @@ module Lain
           seam
         end
 
+        def self.refuse_unbuildable(tool_middleware)
+          return if tool_middleware.respond_to?(:call) && !middleware?(tool_middleware)
+
+          raise NotABuilder, "tool_middleware must build a child's tool stack from its WorkerEnv, not be one: " \
+                             "got #{tool_middleware.inspect}"
+        end
+
+        def self.middleware?(value) = value.is_a?(Middleware::Stack) || value.is_a?(Middleware::Base)
+
         def self.refuse_unknown(unknown)
           return if unknown.empty?
 
           raise ArgumentError, "unknown keyword#{"s" if unknown.size > 1}: #{unknown.map(&:inspect).join(", ")}"
         end
-        private_class_method :refuse_unknown
+        private_class_method :refuse_unknown, :middleware?
       end
 
-      # What a child IS: the union it renders, the Agent over it, the handler
-      # enforcing the posture. Parent-agnostic by construction -- `parent`
+      # What a child IS: the union it renders, the Agent over it, the tool
+      # stack enforcing the posture. Parent-agnostic by construction -- `parent`
       # arrives per {#build}, never at initialize -- so one builder serves every
       # spawn without carrying spawn-specific state.
       class ChildBuilder
@@ -1072,7 +1052,7 @@ module Lain
         # not blow up. `Permits#include?` asks one name at a time for exactly
         # this reason.
         #
-        # == Read PER SPAWN, where `gate_policy` is read per CALL
+        # == Read PER SPAWN, where the gate's policy is read per CALL
         #
         # The two axes a posture governs do not have the same liveness, and the
         # difference is observable. A child renders a frozen {Toolset} once,
@@ -1127,11 +1107,10 @@ module Lain
         # parent's Session, so the child's read-set starts empty by
         # construction.
         #
-        # Its tool phase is whatever guard the seam names, built for THIS child,
-        # with the child's gating layers appended: a chat's guard is the
-        # parent's own stack over the parent's board, so a child's read is
-        # masked, parked and released exactly as the parent's. A NEW stack
-        # rather than a `#use` on the guard's, which the seam's thunk may share.
+        # Its tool phase is whatever stack the seam's builder makes for THIS
+        # child: a chat's is the parent's own stack over the parent's board, gate
+        # included, so a child's read is masked, parked and released, and its
+        # gated call asked about, exactly as the parent's.
         #
         # The interpreter is a bare {Effect::Handler::Live}: the runner resolves
         # each call against the RENDERED toolset -- the attenuated set under
@@ -1147,8 +1126,34 @@ module Lain
           )
         end
 
+        # `schema` renders the attenuated set, so the stack as built suffices;
+        # `handler_union` renders the shared union, so {Middleware::RefuseUnpermitted}
+        # enforces the `only`-set the model can see but must not use.
+        #
+        # It goes just outside the path refusal, never around the whole stack
+        # and never inside the gate: the guards still see every call first, and
+        # a call the child was never attenuated to is refused outright, not
+        # parked for a human who would then watch it be refused anyway. Into a
+        # COPY, because a builder may hand every child the one stack it holds.
+        #
+        # Whatever the builder returns is held to {Middleware::Gate.closes!}
+        # first: the builder is the only place a child's gate comes from, so a
+        # stack it does not end in the gate is refused here, as the child is
+        # built and before any of its tools can run.
+        #
+        # Under `handler_union` a `plan`-mode child is SHOWN tools the posture
+        # forbids it, which reads against {Mode::Posture}'s note that plan is
+        # safe because "the rendered schema simply does not contain
+        # `edit_file`". That note describes the DEFAULT posture's mechanism, not
+        # the guarantee. What plan promises is that the child cannot DISPATCH a
+        # mutating tool: `schema` withholds the name, `handler_union` shows it
+        # and refuses it, and neither can dispatch it.
         def child_stack(worker_env, allowed)
-          Middleware::Stack.new([*@seam.tool_middleware.call(worker_env).to_a, *child_gate(allowed)])
+          stack = Middleware::Gate.closes!(Middleware::Stack.new(@seam.tool_middleware.call(worker_env).to_a))
+          return stack unless @policy.posture.refuses_over_union?
+
+          stack.insert_before(Middleware::Sensitivity,
+                              Middleware::RefuseUnpermitted.new(allowed: allowed.names, journal: @seam.journal))
         end
 
         # The child's turns, into the session record, per ITERATION rather than
@@ -1172,58 +1177,6 @@ module Lain
         # system sees the persona'd context rather than the bare factory one.
         def child_context
           @policy.prefix.child_context(@persona.child_context(@seam.context_factory.call), journal: @seam.journal)
-        end
-
-        # `schema` renders the attenuated set, so the gate alone suffices;
-        # `handler_union` renders the shared union, so {Middleware::RefuseUnpermitted}
-        # enforces the `only`-set the model can see but must not use. Both run
-        # behind {#gated}.
-        #
-        # Under `handler_union` a `plan`-mode child is SHOWN tools the posture
-        # forbids it, which reads against {Mode::Posture}'s note that plan is
-        # safe because "the rendered schema simply does not contain
-        # `edit_file`". That note describes the DEFAULT posture's mechanism, not
-        # the guarantee. What plan promises is that the child cannot DISPATCH a
-        # mutating tool: `schema` withholds the name, `handler_union` shows it
-        # and refuses it, and neither can dispatch it.
-        def child_gate(allowed)
-          return gated unless @policy.posture.refuses_over_union?
-
-          [Middleware::RefuseUnpermitted.new(allowed: allowed.names, journal: @seam.journal), *gated]
-        end
-
-        # The session's approval gate in front of the child's executor: a child
-        # holding a tier-3 tool asks the SAME policy its parent asks, so `bash`
-        # is not ungated merely because a subagent is the one calling it. A
-        # denial arrives as an is_error {Tool::Result}, never a raise, which is
-        # what keeps the child's loop running rather than wedging on a refusal.
-        #
-        # Layered INSIDE the unpermitted-call refusal above, not around it, and
-        # the order is the point: a call the child was never attenuated to must
-        # be refused outright, not parked for a human who would then watch it be
-        # refused anyway. Under `schema` there is no refusal layer to sit behind
-        # -- a name outside the rendered set resolves to {Toolset::Unheld}, so
-        # the gate lets it pass and the interpreter reports the unknown tool.
-        #
-        # BOTH gating axes ride the seam, and the sensitivity half is not
-        # optional: a child gate built without the session's sensitivity policy
-        # would let a subagent read a path its parent must ask about -- a
-        # privilege inversion, since the child is the LESS supervised of the
-        # two. Same reason it is here rather than only in {CLI::Switchboard#gate}.
-        # It is read per call through the same board thunk `gate_policy`
-        # travels, so the two can never resolve to different sessions.
-        #
-        # What a refusal SAYS travels the same seam for the same reason: a child
-        # gated by its parent's policy but told the generic "approval denied"
-        # reads that as a human's no, invites a retry, and retries for the life
-        # of a run where nobody can ever answer. Resolved HERE, once per child
-        # chain, because the board exists by spawn time and cannot change after.
-        #
-        # @return [Array<Middleware::Base>] the path refusal, then the gate
-        def gated
-          [Middleware::Sensitivity.new(sensitivity: @seam.sensitivity, journal: @seam.journal),
-           Middleware::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity,
-                                denial: @seam.denial.call)]
         end
       end
     end

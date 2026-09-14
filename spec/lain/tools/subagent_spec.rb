@@ -1526,7 +1526,7 @@ RSpec.describe Lain::Tools::Subagent do
 
   # ---- The PATH boundary reaches a child, or it is a privilege inversion ------
   #
-  # A child's gate is built HERE ({ChildBuilder#gated}), from the seam. So a
+  # A child's gate is built by the tool stack builder its seam carries. So a
   # sensitivity policy that reached the parent's gate and not the seam would
   # leave every subagent able to read what its parent must ask about -- and the
   # child is the LESS supervised of the two, so that is an inversion rather than
@@ -1555,10 +1555,17 @@ RSpec.describe Lain::Tools::Subagent do
       Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: tmpdir))
     end
 
-    def child_reads(path, **seam)
+    # The stack a child here runs behind, as the tool guard builds one: gated
+    # by `gate_policy` over `sensitivity`, and over no path policy at all when
+    # none travelled the seam.
+    def guarded(gate_policy:, sensitivity: Lain::Sensitivity::Policy::Null.instance)
+      { tool_middleware: ToolRegistry.gated(policy: gate_policy, sensitivity:) }
+    end
+
+    def child_reads(path, **gating)
       tool = build_subagent(provider: mock(tool_response(["r1", "read_file", { "path" => path }]),
                                            text_response("done")),
-                            **seam)
+                            **guarded(**gating))
       tool.call({ "prompt" => "read it" }, invocation)
       record.child(store).to_a
             .select { |turn| turn.role == "user" }
@@ -1620,9 +1627,9 @@ RSpec.describe Lain::Tools::Subagent do
                      policy: spawn_policy(only: %i[read_file subagent]), **seam)
     end
 
-    def grandchild_result(**seam)
+    def grandchild_result(**gating)
       provider = nesting_provider
-      two_deep(provider, **seam).call({ "prompt" => "start" }, invocation)
+      two_deep(provider, **guarded(**gating)).call({ "prompt" => "start" }, invocation)
 
       provider.requests[2].messages.flat_map { |message| message["content"] }
                                    .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
@@ -1648,10 +1655,10 @@ RSpec.describe Lain::Tools::Subagent do
     #
     # The examples above prove a child's gate ASKS. This proves the child's
     # stack also REFUSES outright, which is a different layer
-    # ({Middleware::Sensitivity}) built by the same {ChildBuilder#gated}
-    # from the same seam. Wired into `Switchboard#gate` alone it would reach
-    # every parent and no child, so a subagent could read what its parent may
-    # not -- the same inversion closed above, one axis over.
+    # ({Middleware::Sensitivity}) built by the same {CLI::ToolGuard} from the
+    # same seam. Built for the parent alone it would reach every parent and no
+    # child, so a subagent could read what its parent may not -- the same
+    # inversion closed above, one axis over.
     #
     # `secret` is overridden rather than added beside: `child_reads`,
     # `nesting_provider`, `two_deep` and `grandchild_result` all read it, so
@@ -1716,19 +1723,6 @@ RSpec.describe Lain::Tools::Subagent do
         expect(leaked["is_error"]).to be(false)
         expect(leaked["content"]).to include("hunter2")
       end
-    end
-
-    # The seam's own default, said as a value rather than as behaviour: a seam
-    # nobody taught about paths must carry the ONE shared Null, or two otherwise
-    # identical Seams stop comparing equal.
-    it "defaults to the one shared Null policy, so unwired seams still compare equal" do
-      seam = Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: -> {}, parent: :pa,
-                                             tool_middleware: ToolRegistry::UNGUARDED)
-
-      expect(seam.sensitivity).to be(Lain::Sensitivity::Policy::Null.instance)
-      expect(seam).to eq(Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: seam.context_factory,
-                                                         parent: :pa,
-                                                         tool_middleware: ToolRegistry::UNGUARDED))
     end
   end
 
@@ -2841,7 +2835,7 @@ RSpec.describe Lain::Tools::Subagent do
     # seams over identical collaborators compared unequal while their two
     # singleton neighbours compared equal.
     it "equates two seams built from the same collaborators, defaults included" do
-      members = { provider: :p, context_factory: :cf, parent: :pa, tool_middleware: :tm }
+      members = { provider: :p, context_factory: :cf, parent: :pa, tool_middleware: ToolRegistry::UNGUARDED }
 
       expect(Lain::Tools::Subagent::Seam.new(**members))
         .to eq(Lain::Tools::Subagent::Seam.new(**members))
@@ -2870,7 +2864,7 @@ RSpec.describe Lain::Tools::Subagent do
       guard = SubagentSpecToolGuard.new
       tool = build_subagent(provider: mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]),
                                            text_response("done")),
-                            tool_middleware: ->(_worker_env) { Lain::Middleware::Stack.new([guard]) })
+                            tool_middleware: ToolRegistry.guarded_by(guard))
 
       tool.call({ "prompt" => "go" }, invocation)
 
@@ -2882,7 +2876,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "asks the seam for the guard once per child, when that child is built" do
       built = 0
       tool = build_subagent(provider: mock(text_response("a"), text_response("b")),
-                            tool_middleware: ->(_worker_env) { (built += 1) && Lain::Middleware::Stack.new })
+                            tool_middleware: ->(env) { (built += 1) && ToolRegistry::UNGUARDED.call(env) })
 
       expect(built).to eq(0)
       2.times { tool.call({ "prompt" => "go" }, invocation) }
@@ -2897,7 +2891,7 @@ RSpec.describe Lain::Tools::Subagent do
         cwds = []
         tool = build_subagent(provider: mock(text_response("done")),
                               isolation: Lain::Isolation::Leases.new(backend: SubagentSpecIsolation.new(dir)),
-                              tool_middleware: ->(env) { (cwds << env.cwd) && Lain::Middleware::Stack.new })
+                              tool_middleware: ->(env) { (cwds << env.cwd) && ToolRegistry::UNGUARDED.call(env) })
 
         tool.call({ "prompt" => "go" }, invocation)
 

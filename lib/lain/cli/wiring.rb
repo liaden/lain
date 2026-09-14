@@ -142,8 +142,8 @@ module Lain
         #   it, because the ladder's triage rung denies before the tool is
         #   reached. The two postures that DO reach the tool are exactly the
         #   two that skip the ladder: `/mode auto`, whose gate policy is
-        #   {Middleware::Gate::ApproveAll}, and a child spawned over
-        #   {Lain::Tools::Subagent::UNGATED}, which is the same class.
+        #   {Middleware::Gate::ApproveAll}, and a child of a run with no chat,
+        #   whose gate {CLI::ToolGuard.detached} builds over the same class.
         #
         #   NOT a defect this card may fix: what a deny should MEAN at the tool
         #   -- refuse outright, or run as a term anyway -- is a design question
@@ -458,18 +458,18 @@ module Lain
 
       # What the Agent is built FROM: the provider the run talks to, the
       # compaction wiring hung off it, the instrumentation stack, and the
-      # executor the board's gate closes over.
+      # executor the tool stack ends in.
       #
       # The board ARRIVES as an argument rather than being resolved here, and
       # that is load-bearing: {#switchboard} is memoized at its ONE call site,
-      # and {#approvals}, the command surface and the gate-policy thunk every
-      # subagent inherits all read that memo afterwards. A second resolution
+      # and {#approvals}, the command surface and the board thunk every
+      # subagent's tool stack is built over all read that memo afterwards. A second resolution
       # down here would leave all three reading a different board -- or nil.
       #
       # The Agent's ONE Toolset is the board's, not the caller's, because a
       # `/mode` flip changes the live slot without rebuilding anything: its
-      # runner resolves each call against it once, and the board's gate and
-      # the Live executor both judge that one resolution. `views:` exists
+      # runner resolves each call against it once, and the gate and the Live
+      # executor both judge that one resolution. `views:` exists
       # because a streamed tool's bytes are a view, not a record, so the
       # executor writes them to the TTY Channel AND the editor's -- never to
       # the journal, which already holds them in the turn's tool_result.
@@ -510,9 +510,11 @@ module Lain
       # hands over is memoized in {Backend}, which is loud about a differing
       # rebind ({Backend::Rebound}); the mount is a pure assembler over those,
       # so a memo here would only add a second place for a stale collaborator
-      # to hide. `board:` reaches {ToolGuard} for the read guard's ledger and
-      # queue -- the BOARD's, so this agent releases into the run's one region
-      # ledger rather than a second nobody reads.
+      # to hide. `board:` reaches {ToolGuard}, which builds the whole tool stack
+      # over the board's one set of inputs -- so this agent releases into the
+      # run's one region ledger, and its gate asks the run's one policy, rather
+      # than a second nobody reads. The stack's order is a security posture,
+      # and {ToolGuard} is where it is stated.
       def backing(backend, channel, timeline, board:)
         provider = spooled_provider(backend, channel:)
         journal_degradation(backend.context, provider, journal: chronicle.record_journal)
@@ -528,16 +530,8 @@ module Lain
         # turn's three readers see three windows.
         window = backend.context_window
         { provider:, context_window: window,
-          instrumentation: mount.instrumentation.with(tool_middleware: tool_phase(board),
+          instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle, board),
                                                       turn_middleware: turn_phase(timeline, window)) }
-      end
-
-      # The tool stack: the guards OUTERMOST, then the board's two gating
-      # layers, then -- as the runner's handler -- the interpreter. The order is
-      # a security posture, not tidiness: a secret write is refused before a
-      # human is ever asked about it.
-      def tool_phase(board)
-        Middleware::Stack.new([*ToolGuard.stack(chronicle, board).to_a, *board.gate])
       end
 
       # The turn stack, with the window refresh OUTERMOST -- ahead of the

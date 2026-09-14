@@ -46,6 +46,27 @@ module Lain
       # wired.
       DENIAL = "approval denied for tool %<name>s"
 
+      # A tool stack this gate does not close.
+      class Unclosed < Error; end
+
+      # The check every agent's tool stack is held to before a tool runs
+      # through it: the path refusal and then this gate end it. The gate last,
+      # because its guarantee is positional -- a layer after it could rewrite
+      # the tool or the input it approved. {Sensitivity} just ahead, because a
+      # denied path is not approvable and must be refused before a human is
+      # asked about it.
+      #
+      # @param stack [Middleware::Stack]
+      # @return [Middleware::Stack] the same stack
+      # @raise [Unclosed] naming the layers the stack does end in
+      def self.closes!(stack)
+        ending = stack.to_a.last(2)
+        return stack if ending.map(&:class) == [Sensitivity, self]
+
+        raise Unclosed, "a tool stack must end in the path refusal and then the gate, with nothing after the " \
+                        "gate to rewrite what it approved; this one ends in #{ending.map(&:class).inspect}"
+      end
+
       # @param policy [#call] `(effect, context) -> Boolean`, the approval
       #   decision; receives the inner ToolCall even when wrapped in an Approval
       # @param sensitivity [#gates?] the second gating axis, `(effect) ->

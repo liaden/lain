@@ -244,7 +244,7 @@ end
 # what an example needs to see is which object the Agent was built over, and
 # that {Lain::CLI::Wiring}'s `#agent_over` never went looking for one of its own.
 class WiringAgentSpecBoard
-  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals, :sensitivity, :snapshots
+  attr_reader :toolset, :grafted, :ledger, :approvals, :sensitivity, :snapshots, :policy_switch
 
   # The posture a real board starts in declares `:shadow_git`; the stand-in
   # answers the write-set scope so building an Agent over it shells no git.
@@ -265,8 +265,8 @@ class WiringAgentSpecBoard
   # stand-in simply had no reason to answer it until something asked.
   def initialize(toolset, approvals: nil)
     @toolset = toolset
-    @gate_calls = []
     @grafted = []
+    @policy_switch = Lain::Middleware::Gate::ApproveAll.new
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
     @sensitivity = Lain::Sensitivity::Policy.new(
@@ -274,17 +274,14 @@ class WiringAgentSpecBoard
     )
   end
 
-  # The one value the tool guard is built over, as a real board holds it: these
-  # same slots, and a test layout run declaring none.
+  # The one value the tool stack is built over, as a real board holds it: these
+  # same slots, a test layout run declaring none, and a gate policy approving
+  # every call, which an example can tell apart from any other by identity.
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(
-      ledger:, approvals:, sensitivity:, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared
+      ledger:, approvals:, sensitivity:, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+      policy: policy_switch, denial: Lain::Middleware::Gate::DENIAL
     )
-  end
-
-  def gate
-    [Lain::Middleware::Sensitivity.new(sensitivity:),
-     Lain::Middleware::Gate.new(policy: Lain::Tools::Subagent::UNGATED, sensitivity:)].tap { |layers| @gate_calls << layers }
   end
 
   def graft(context)
@@ -2617,14 +2614,15 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # The child's half of the same wiring: {ToolsetBuild::LiveSensitivity}
-    # delegates to `board.sensitivity` per call, so a subagent asks THIS
-    # classifier. It answered the Null's false until the board held a real one.
+    # The child's half of the same wiring: the seam's tool stack is built over
+    # the board, so a subagent's gate asks THIS classifier. It answered the
+    # Null's false until the board held a real one.
     it "hands the same classifier to the subagent seam" do
       in_tree do |root|
-        live = wired(root:).send(:toolset_build).send(:seam).sensitivity
+        child_gate = wired(root:).send(:toolset_build).send(:seam).tool_middleware
+                                 .call(Lain::WorkerEnv.default).to_a.last
 
-        expect(live.gates?(read_of(File.join(root, ".env")))).to be(true)
+        expect(child_gate.instance_variable_get(:@sensitivity).gates?(read_of(File.join(root, ".env")))).to be(true)
       end
     end
 
@@ -2694,7 +2692,8 @@ RSpec.describe Lain::CLI::Wiring do
 
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
             .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-                    Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout])
+                    Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+                    Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
           expect(listing_guard(board).filter).to be(board.sensitivity.filter)
           expect(listing_guard(board).filter).not_to be(Lain::Sensitivity::Filter::Null.instance)
         end
@@ -3059,14 +3058,14 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # The stack's order is inspectable end to end: the four guards, the path
     # refusal, the approval gate, and the interpreter last -- a bare Live,
     # because everything that may refuse a call is a layer in front of it.
-    it "runs the guards, then the board's own gate layers, then a bare Live interpreter" do
+    it "runs the guards, then the gate over the board's own policy, then a bare Live interpreter" do
       runner = build.send(:tool_runner)
 
       expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
-      expect(runner.middleware.to_a.last(2)).to eq(board.gate_calls.last)
+      expect(runner.middleware.to_a.last.instance_variable_get(:@policy)).to be(board.policy_switch)
     end
 
     it "seeds the Agent with a resumed Timeline when one is passed" do
@@ -3141,7 +3140,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
 
     it "records a file no lain tool wrote in the next snapshot, rooted at the project root" do
       wiring, agent = wired_chat
-      board = wiring.role_spawn.seam.gate_policy.board.call
+      board = wiring.role_spawn.seam.tool_middleware.board.call
       board.mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
 
       agent.ask("make it")
@@ -3195,60 +3194,45 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to raise_error(ArgumentError, /\[:replies, :agent\]/)
     end
 
-    # A subagent's gate policy is {ToolsetBuild::LivePolicy} over the thunk
-    # `-> { @switchboard }`, read at SPAWN time -- turns after the Agent was
-    # built, which is what lets it be late. Reached here through public readers
-    # only ({Wiring#role_spawn}, {Skill::RoleSpawn#seam},
-    # {Tools::Subagent::Seam#gate_policy}), because the point is the seam a
+    # A subagent's tool stack is built by {CLI::ToolGuard::Spawned} over the
+    # thunk `-> { @switchboard }`, read at SPAWN time -- turns after the Agent
+    # was built, which is what lets it be late. Reached here through public
+    # readers only ({Wiring#role_spawn}, {Skill::RoleSpawn#seam},
+    # {Tools::Subagent::Seam#tool_middleware}), because the point is the seam a
     # child really travels over and not an ivar.
-    def child_gate_policy = wiring.role_spawn.seam.gate_policy
+    def child_guard = wiring.role_spawn.seam.tool_middleware
 
-    # Driving `.board.call` IS driving the thunk: that is the call
-    # {LivePolicy#call} makes on every child tier-3 dispatch. The ungated
-    # stand-in this once also named is gone from lib/ and {ToolsetBuild} now
-    # requires a `switchboard:`, so "it did not resolve the ungated default"
-    # has no default to be about -- an assertion that could no longer fail.
-    it "is what a subagent's gate policy thunk resolves" do
+    def child_gate = child_guard.call(Lain::WorkerEnv.default).to_a.last
+
+    # Driving `.board.call` IS driving the thunk: that is the call the builder
+    # makes as each child is built.
+    it "is what a subagent's tool stack thunk resolves" do
       wire
 
-      expect(child_gate_policy.board.call).to be_a(Lain::CLI::Switchboard)
+      expect(child_guard.board.call).to be_a(Lain::CLI::Switchboard)
     end
 
     # The privilege-inversion guard, stated as the thing a child's dispatch
-    # actually consults: {LivePolicy#call} resolves the board, asks it for
-    # `policy_switch`, and calls whatever that slot currently holds.
+    # actually consults: the gate a child is built behind asks the board's
+    # ONE policy switch, and calls whatever that slot currently holds.
     #
     # The queue assertion is the one that is not a tautology, and the direction
     # is the whole of why: the left side travels the CHILD's thunk out to a
     # board and back, where the right side is {Wiring}'s own reader over the
-    # memo. Two paths, one object. Comparing a board's `approvals` against
-    # itself -- which an earlier edition of this example did -- is
-    # `x.approvals == x.approvals` and passes for any board at all, including
-    # the ungated one.
+    # memo. Two paths, one object.
     #
     # What then adjudicates is the run's escalation ladder. Against an ungated
-    # board it would be {Tools::Subagent::UNGATED}, an unconditional approver:
-    # a child could do what its parent must ask to do, which is a privilege
-    # inversion and not a wiring omission.
+    # board it would be an unconditional approver: a child could do what its
+    # parent must ask to do, which is a privilege inversion and not a wiring
+    # omission.
     it "gates a child through the run's own queue, the one its parent is gated by" do
       wire
-      resolved = child_gate_policy.board.call
+      resolved = child_guard.board.call
 
+      expect(child_gate.instance_variable_get(:@policy).policy).to be(resolved.policy_switch)
       expect(resolved.approvals).to be(wiring.approvals)
       expect(resolved.policy_switch.current).to be_a(Lain::Approval::Escalation)
       expect(resolved.policy_switch.current).not_to be_a(Lain::Middleware::Gate::ApproveAll)
-    end
-
-    # The third axis, over the SAME seam and the SAME thunk. It matters that
-    # both chains resolve one board rather than two: a `LiveSensitivity` built
-    # over a second thunk would answer a different session's policy, and every
-    # behavioural check would still agree while nothing was configured.
-    def child_sensitivity = wiring.role_spawn.seam.sensitivity
-
-    it "resolves a child's sensitivity through the run's own board" do
-      wire
-
-      expect(child_sensitivity.board.call).to be_a(Lain::CLI::Switchboard)
     end
 
     # The identity that makes the privilege inversion unrepresentable: ONE
@@ -3260,12 +3244,10 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # `#sensitivity` is read off the resolved board rather than off Wiring,
     # which keeps no public reader for it: the board IS the parent gate's
     # source, so reading its slot is reading what the parent consults.
-    it "resolves that sensitivity from the same board its gate policy resolves" do
+    it "resolves a child's sensitivity from the same board its gate policy resolves" do
       wire
-      board = child_sensitivity.board.call
 
-      expect(board).to be(child_gate_policy.board.call)
-      expect(child_sensitivity.board.call.sensitivity).to be(board.sensitivity)
+      expect(child_gate.instance_variable_get(:@sensitivity)).to be(child_guard.board.call.sensitivity)
     end
 
     # The late half, which the two above cannot see: the thunk closes over an
@@ -3278,7 +3260,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       wiring.send(:build_toolset, recorder, backend: wired_backend, parent: -> {},
                                             ask_human: Lain::Tools::AskHuman.new(parent: -> {}))
 
-      expect(wiring.role_spawn.seam.gate_policy.board.call).to be_nil
+      expect(wiring.role_spawn.seam.tool_middleware.board.call).to be_nil
     end
   end
 end

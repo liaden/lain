@@ -267,8 +267,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # change" checkable -- two seams cannot drift when there is only one object.
     #
     # The chat's own subagent became a `with` COPY differing in exactly one
-    # member: its gate policy names the actor a human is TOLD is asking, and the
-    # researcher is not every role. The no-drift property the object identity
+    # member: its tool stack's gate names the actor a human is TOLD is asking,
+    # and the researcher is not every role. The no-drift property the object identity
     # stood in for is unharmed -- `with` copies rather than constructs, so a new
     # member added to the one `#spawn_seam` still reaches both -- so the claim is
     # stated per member instead, which is what a second Seam.new would fail.
@@ -276,16 +276,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       full = toolset_build.build(recorder, ask_human:)
       child = full.fetch("subagent").seam
       role = toolset_build.role_spawn.seam
-      shared = Lain::Tools::Subagent::Seam.members - [:gate_policy]
+      shared = Lain::Tools::Subagent::Seam.members - [:tool_middleware]
 
       expect(shared.reject { |member| child.public_send(member).equal?(role.public_send(member)) }).to be_empty
-      expect(child.gate_policy.board).to be(role.gate_policy.board)
-      expect(child.gate_policy.requester).to eq("researcher")
+      expect(child.tool_middleware.board).to be(role.tool_middleware.board)
+      expect(child.tool_middleware.chronicle).to be(role.tool_middleware.chronicle)
+      expect(child.tool_middleware.requester).to eq("researcher")
       # The SEPARATION half, and the reason it is asserted rather than assumed:
       # an edit that rebound the one `@seam` in place instead of copying would
       # label every role spawn "researcher", and the line above would still be
       # green. This is the line that catches it.
-      expect(role.gate_policy.requester).to eq(described_class::SPAWN_REQUESTER)
+      expect(role.tool_middleware.requester).to eq(described_class::SPAWN_REQUESTER)
     end
 
     it "fills that seam from the run's provider, parent handle, journal, supervisor and chronicle observer" do
@@ -332,7 +333,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # A THUNK, exactly as `wiring.rb` passes one: the board requires the
       # session's base `toolset:` and that toolset is what #build
       # RETURNS, so a board cannot exist when this seam is constructed. Both
-      # axes are therefore delegators that read through it at call time.
+      # axes therefore read through it later: `permits` per spawn, the tool
+      # stack as each child is built.
       subject(:toolset_build) { build_with(options, switchboard: -> { switchboard }) }
 
       def child_permits
@@ -340,14 +342,21 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         toolset_build.role_spawn.seam.permits
       end
 
-      def child_gate
+      # The stack a child is built behind, gate last, as the seam builds it.
+      def child_layers
         toolset_build.build(recorder, ask_human:)
-        toolset_build.role_spawn.seam.gate_policy
+        toolset_build.role_spawn.seam.tool_middleware.call(Lain::WorkerEnv.default).to_a
       end
 
-      def child_sensitivity
-        toolset_build.build(recorder, ask_human:)
-        toolset_build.role_spawn.seam.sensitivity
+      def parent_layers = Lain::CLI::ToolGuard.stack(chronicle, switchboard).to_a
+
+      # A gate's answer to `effect`, over the tool it names, read as whether it
+      # refused -- nothing past the gate runs.
+      def refuses?(gate, effect, tool)
+        env = gate.call({ effect:, tool:, context: nil }) do |passed|
+          passed.merge(result: Lain::Tool::Result.ok("passed on"))
+        end
+        env.fetch(:result).error?
       end
 
       def reads(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
@@ -358,14 +367,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # moment a project config differs, so "the child gates what the parent
       # gates" has to be "the child asks the parent's own object".
       # Read through the GATES each side really runs behind, not off the board
-      # twice: the parent's comes out of {Switchboard#gate}, the child's travels
-      # its delegator's thunk. Two paths, one object.
+      # twice: the parent's comes out of {CLI::ToolGuard.stack}, the child's
+      # out of the builder its seam carries. Two paths, one object.
       it "hands a child the very sensitivity policy the parent's gate consults" do
-        parent_policy = switchboard.gate.last.instance_variable_get(:@sensitivity)
+        parent_policy = parent_layers.last.instance_variable_get(:@sensitivity)
 
         expect(parent_policy).to be(sensitivity)
-        expect(child_sensitivity.board.call).to be(switchboard)
-        expect(child_sensitivity.board.call.sensitivity).to be(parent_policy)
+        expect(child_layers.last.instance_variable_get(:@sensitivity)).to be(parent_policy)
       end
 
       # The tool guard, the fourth thing a child inherits over the board: the
@@ -373,10 +381,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # a child's read releases into the run's one ledger and parks on its one
       # queue. Asserted by identity for {Lain::CLI::ToolGuard}'s own reason.
       describe "the tool guard a child runs behind" do
-        def child_guards
-          toolset_build.build(recorder, ask_human:)
-          toolset_build.role_spawn.seam.tool_middleware.call(Lain::WorkerEnv.default).to_a
-        end
+        def child_guards = child_layers
 
         it "judges a child's writes by the board's one test layout run" do
           expect(child_guards.grep(Lain::Middleware::GuardTestLayout).first.run).to be(switchboard.test_layout)
@@ -398,27 +403,22 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         end
       end
 
-      # And that the delegator really delegates: a child's gate asking
-      # `gates?` must reach that policy, not a Null it was quietly built with.
-      # The parent's own gate is driven beside it, over the same effect, so the
-      # claim is a comparison rather than two separate readings. `#gate` is the
-      # path-denial layer then the gate, so the GATING axis is read off the
-      # last: `.env` is gated rather than denied. Under DenyAll a gated call is
-      # refused and an ungated one passes on, which is the question asked.
+      # And that a child's gate really reaches that policy, not a Null it was
+      # quietly built with. The parent's own gate is driven beside it, over the
+      # same effect, so the claim is a comparison rather than two separate
+      # readings. The GATING axis is read off the last layer: `.env` is gated
+      # rather than denied. Under DenyAll a gated call is refused and an ungated
+      # one passes on, which is the question asked.
       it "gates a child's read of .env exactly as the parent's own gate does" do
         switchboard.policy_switch.switch(Lain::Middleware::Gate::DenyAll.new, surface: "spec")
-        parent_refuses = lambda do |effect|
-          env = switchboard.gate.last.call({ effect:, tool: Lain::Tools::ReadFile.new, context: nil }) do |passed|
-            passed.merge(result: Lain::Tool::Result.ok("passed on"))
-          end
-          env.fetch(:result).error?
-        end
+        child_gate = child_layers.last
+        parent_gate = parent_layers.last
+        read_file = Lain::Tools::ReadFile.new
 
-        expect(child_sensitivity.gates?(reads(".env"))).to be(true)
-        expect(parent_refuses.call(reads(".env"))).to be(true)
-
-        expect(child_sensitivity.gates?(reads("README.md"))).to be(false)
-        expect(parent_refuses.call(reads("README.md"))).to be(false)
+        expect([refuses?(child_gate, reads(".env"), read_file), refuses?(parent_gate, reads(".env"), read_file)])
+          .to eq([true, true])
+        expect([refuses?(child_gate, reads("README.md"), read_file),
+                refuses?(parent_gate, reads("README.md"), read_file)]).to eq([false, false])
       end
 
       # The sentence a refused call is REPORTED as travels the same thunk, for
@@ -428,14 +428,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # started with --non-interactive, where nobody can ever answer. It would
       # retry for the life of the run.
       describe "what a child is told when its gate refuses" do
-        # The sentence a child's OWN seam carries, read the way its gate reads
-        # it, through the real runner over the board's own toolset -- the gate
-        # reads the tier off the tool that resolves, and an empty set would
-        # resolve `bash` to nothing and never gate it. DenyAll means it never runs.
+        # The sentence a child's OWN stack reports, through the real runner over
+        # the board's own toolset -- the gate reads the tier off the tool that
+        # resolves, and an empty set would resolve `bash` to nothing and never
+        # gate it. DenyAll, and a recording interpreter, mean it never runs.
         def child_refusal(board)
-          gate = Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::DenyAll.new,
-                                            denial: child_seam(board).denial.call)
-          dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: [gate],
+          board.policy_switch.switch(Lain::Middleware::Gate::DenyAll.new, surface: "spec")
+          never = Lain::Effect::Handler::Mock.new { |_effect, _context| raise "a refused call reached the interpreter" }
+          dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, handler: never,
+                                                       layers: child_seam(board).tool_middleware
+                                                                                .call(Lain::WorkerEnv.default).to_a,
                                                        context: Lain::Session.new).content
         end
 
@@ -469,55 +471,19 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         end
       end
 
-      # The two properties the THUNK exists for, driven directly on the
-      # delegator over a board slot an example can move. Neither is visible
-      # through the seam above, because there the board is already in place.
-      context "when the board slot moves under the delegator" do
-        let(:board_slot) { [nil] }
-        let(:live) { described_class::LiveSensitivity.new(board: -> { board_slot.first }) }
-
-        def board(policy)
-          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "m",
-                                     sensitivity: policy,
-                                     toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]))
-        end
-
-        # {ToolsetBuild#spawn_seam} builds the seam BEFORE `Wiring#build_agent`
-        # memoizes the board, so the delegator has to read the ivar at CALL
-        # time. One that captured `board.call` at construction would answer nil
-        # here and take the session's whole path boundary with it.
-        it "answers the board that exists when it is ASKED, not when it was built" do
-          expect { live.gates?(reads(".env")) }.to raise_error(NoMethodError, /sensitivity/)
-
-          board_slot[0] = board(sensitivity)
-
-          expect(live.gates?(reads(".env"))).to be(true)
-        end
-
-        # The staleness the design prevents, said as a re-read: a delegator that
-        # memoized on first call would keep answering the first board after the
-        # session replaced it.
-        it "re-reads the board on every call, so a replaced policy takes effect" do
-          board_slot[0] = board(sensitivity)
-          expect(live.gates?(reads(".env"))).to be(true)
-
-          board_slot[0] = board(Lain::Sensitivity::Policy::Null.instance)
-          expect(live.gates?(reads(".env"))).to be(false)
-        end
-      end
-
-      # Asserted through behaviour rather than by identity: the seam holds a
-      # delegator, and what matters is that the answer comes from the board's
-      # ONE policy switch -- so flipping that switch must change the answer.
+      # Asserted through behaviour rather than by identity alone: what matters
+      # is that the answer comes from the board's ONE policy switch -- so
+      # flipping that switch must change the answer a child's gate gives.
       it "answers a child's gated call through the board's own policy switch" do
-        gate = child_gate
+        gate = child_layers.last
+        bash = Lain::Tools::Bash.new
         effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {})
 
         switchboard.policy_switch.switch(Lain::Middleware::Gate::ApproveAll.new, surface: "spec")
-        expect(gate.call(effect, nil)).to be(true)
+        expect(refuses?(gate, effect, bash)).to be(false)
 
         switchboard.policy_switch.switch(Lain::Middleware::Gate::DenyAll.new, surface: "spec")
-        expect(gate.call(effect, nil)).to be(false)
+        expect(refuses?(gate, effect, bash)).to be(true)
       end
 
       it "permits everything under the default posture" do
@@ -704,13 +670,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "leaves a boardless build's children ungated and unattenuated" do
       toolset_build.build(recorder, ask_human:)
       seam = toolset_build.role_spawn.seam
-      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {})
+      layers = seam.tool_middleware.call(Lain::WorkerEnv.default).to_a
+      bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {})
 
-      expect(seam.gate_policy.call(effect, nil)).to be(true)
+      passed = layers.last.call({ effect: bash, tool: Lain::Tools::Bash.new, context: nil }) do |env|
+        env.merge(result: Lain::Tool::Result.ok("passed on"))
+      end
+      expect(passed.fetch(:result)).to eq(Lain::Tool::Result.ok("passed on"))
       expect(seam.permits.include?(:bash)).to be(true)
-      expect(seam.sensitivity.gates?(Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "read_file",
-                                                                input: { "path" => ".env" }))).to be(false)
-      expect(seam.tool_middleware.call(Lain::WorkerEnv.default).to_a.grep(Lain::Middleware::RedactSecretReads).first.queue)
+      expect(layers.last.instance_variable_get(:@sensitivity)).to be(Lain::Sensitivity::Policy::Null.instance)
+      expect(layers.grep(Lain::Middleware::RedactSecretReads).first.queue)
         .to be(Lain::Middleware::RedactSecretReads::Unqueued.instance)
     end
 
@@ -718,22 +687,18 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # raise rather than fall back to an ungated board: a fallback would
     # silently ungate a real session if the assembly order ever changed.
     #
-    # ALL THREE axes, because they fail differently and the gating pair are the
-    # sharper ones: a `|| SpecNulls::NoSwitchboard` on `permits` alone hands a
-    # child the capabilities the session no longer holds, but the same fallback
-    # on `gate_policy` resolves to that board's `policy_switch` -- which is
-    # `UNGATED`, an `ApproveAll` -- and silently ungates every child in the run,
-    # while the same fallback on `sensitivity` resolves to a Null and ungates
-    # every sensitive PATH for children only. Pinning one axis leaves the worse
-    # regressions free to land green.
+    # BOTH readers, because they fail differently: a `|| SpecNulls::NoSwitchboard`
+    # on `permits` alone hands a child the capabilities the session no longer
+    # holds, but the same fallback in the tool stack builds the child's gate
+    # over that board's approve-all policy and Null path policy -- silently
+    # ungating every child in the run. Pinning one leaves the worse regression
+    # free to land green.
     it "refuses loudly, rather than ungating, if a spawn beats the board into existence" do
       build = build_with(options, switchboard: -> {})
       build.build(recorder, ask_human:)
       seam = build.role_spawn.seam
 
       expect { seam.permits.include?(:bash) }.to raise_error(NoMethodError, /mode_switch/)
-      expect { seam.gate_policy.call(nil, nil) }.to raise_error(NoMethodError, /policy_switch/)
-      expect { seam.sensitivity.gates?(nil) }.to raise_error(NoMethodError, /sensitivity/)
       expect { seam.tool_middleware.call(Lain::WorkerEnv.default) }.to raise_error(NoMethodError, /guard_inputs/)
     end
 
@@ -962,7 +927,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       toolset_build.build(recorder, ask_human:)
       epic = issue_epic
       run = toolset_build.role_spawn.seam
-      shared = Lain::Tools::Subagent::Seam.members - %i[gate_policy isolation]
+      shared = Lain::Tools::Subagent::Seam.members - %i[tool_middleware isolation]
 
       expect(epic.seam.isolation).not_to be(run.isolation)
       expect(epic.attenuates_from.fetch("subagent")["dev"].seam.isolation).to be(epic.seam.isolation)
@@ -970,7 +935,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       [epic.seam, epic.attenuates_from.fetch("subagent")["dev"].seam].each do |seam|
         expect(shared.reject { |member| seam.public_send(member).equal?(run.public_send(member)) }).to be_empty
       end
-      expect(epic.seam.gate_policy.requester).to eq("issue_orchestrator")
+      expect(epic.seam.tool_middleware.board).to be(run.tool_middleware.board)
+      expect(epic.seam.tool_middleware.requester).to eq("issue_orchestrator")
     end
 
     context "when the chat is built by CLI::Wiring" do

@@ -70,10 +70,11 @@ RSpec.describe Lain::Bench::Harness do
       expect(wiring.tool_middleware.to_a.map(&:class)).to eq(production.to_a.map(&:class))
     end
 
-    it "holds all four guards, not the write refusal alone" do
+    it "holds all four guards and the gate, not the write refusal alone" do
       expect(wiring.tool_middleware.to_a.map(&:class)).to eq(
         [Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-         Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout]
+         Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+         Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
       )
     end
 
@@ -114,7 +115,7 @@ RSpec.describe Lain::Bench::Harness do
       stack = described_class::INSTRUMENTATION.call(journal:, recorder:, worker_env: env).tool_middleware
       effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
       session = Lain::Session.new(worker_env: env)
-      stack.call({ effect:, context: session }) do |inner|
+      stack.call({ effect:, tool: Lain::Tools::ReadFile.new, context: session }) do |inner|
         invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
         inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
       end

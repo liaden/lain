@@ -779,7 +779,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
           .to raise_error(ArgumentError, /tool_middlewere/)
       end
 
-      %i[provider context_factory parent gate_policy].each do |member|
+      %i[provider context_factory parent].each do |member|
         it "takes no #{member}, which is not the pair's to be handed" do
           expect { pair(member => :smuggled) }.to raise_error(ArgumentError, /#{member}/)
         end
