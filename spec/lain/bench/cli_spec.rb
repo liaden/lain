@@ -302,6 +302,23 @@ RSpec.describe Lain::Bench::CLI do
       expect(isolations).to all(be(Lain::Arm::NoIsolation))
     end
 
+    # THE ONE JOURNAL, READ BY TWO CONSUMERS -- and the only example in the tree
+    # that holds `#arm_report`'s half of the grade wiring. `journal:` is named
+    # explicitly on this method rather than left riding `**backend_options`,
+    # because a keyword the isolation resolver merely forwards could never also
+    # reach Arm::Driver; delete that and every OTHER example here stays green,
+    # since the journal is exercised for lease telemetry and read for a verdict
+    # nowhere else.
+    it "journals every arm's grade into the same journal the leases are recorded in" do
+      journal = Lain::Channel.new
+      cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "none", journal:)
+
+      records = journal.drain.grep(Lain::Telemetry::GradeRecord)
+      expect(records.size).to eq(arms.size * tasks.size)
+      expect(records.map(&:grader).uniq).to eq([Lain::Grader::Fixture.name])
+      expect(records.map(&:score)).to all(eq(1.0))
+    end
+
     # An unset flag is NOT `--isolation none`. Unset keeps the arm-local
     # NoIsolation, whose lease carries NO WorkerEnv at all; `none` resolves a
     # real Isolation::Null that leases the shared process environment. Passing

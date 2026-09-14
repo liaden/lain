@@ -34,6 +34,23 @@ module DriverSpecSupport
       Lain::Arm::Run.new(arm: name, timeline: nil, grade: FakeGrade.new(1.0), elapsed: 0.1, ledger: @ledger)
     end
   end
+
+  # Remembers every subject it was handed on its way to the real grader, so an
+  # example can hold the journaled subject digest against the very Timeline
+  # that was graded rather than against a shape assertion.
+  class RecordingGrader
+    attr_reader :subjects
+
+    def initialize(inner)
+      @inner = inner
+      @subjects = []
+    end
+
+    def grade(subject)
+      @subjects << subject
+      @inner.grade(subject)
+    end
+  end
 end
 
 # The Driver runs N arms over a task suite and folds each arm's runs into its
@@ -482,6 +499,83 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
+  # THE BENCH'S HEADLINE METRIC ON THE EXPERIMENT RECORD. Every other column
+  # the Driver folds is recoverable from the journal already -- usage and
+  # payments ride the arms' own records -- while the GRADE, the one number the
+  # comparison is for, reached the rendered report and nothing else.
+  # {Grader::Journaling} is the decorator that fixes it, and the Driver is
+  # where it goes: the grader is threaded verbatim into every arm's `#run`, so
+  # decorating it once at construction journals every arm's every run.
+  describe "#report — the grade on the experiment record" do
+    let(:journal) { Lain::Channel.new }
+
+    def grade_records(channel) = channel.drain.grep(Lain::Telemetry::GradeRecord)
+
+    # Scenario: a graded arm run writes its score to the journal.
+    it "journals one grade record per run, carrying the score" do
+      described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+      records = grade_records(journal)
+
+      expect(records.size).to eq(arms.size * tasks.size)
+      expect(records.map(&:score)).to all(eq(1.0))
+    end
+
+    # Scenario: the grade record names its grader.
+    #
+    # The INNER grader's class, not the decorator's: an attestation naming
+    # `Grader::Journaling` would attribute every verdict in the tree to the
+    # wrapper and tell a reader nothing about what judged.
+    it "names the grader that produced the verdict" do
+      described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(grade_records(journal).map(&:grader).uniq).to eq([Lain::Grader::Fixture.name])
+    end
+
+    # Scenario: the grade record names its subject.
+    #
+    # A Timeline answers no `#digest` of its own, so the Driver must inject the
+    # resolution rather than let the decorator's duck-typed fallback guess --
+    # held here against the head digest of the very Timeline that was graded.
+    it "addresses the trajectory it graded" do
+      spy = DriverSpecSupport::RecordingGrader.new(grader)
+      described_class.new([Lain::Arm::SingleThread.new(name: "single-thread")], tasks:, spawn_seam:,
+                                                                                grader: spy, journal:).report
+
+      expect(grade_records(journal).map(&:subject_digest)).to eq(spy.subjects.map(&:head_digest))
+    end
+
+    # Scenario: an ungraded run writes no grade record.
+    #
+    # An arm that never consults the grader it was handed must leave no
+    # attestation behind, because the decorator can only honestly journal a
+    # verdict it was asked for. NO ARM IN THE TREE REACHES THIS DRIVER AND
+    # BEHAVES THAT WAY -- `Arm::Epic` does ignore its `grader:`, but it is
+    # rostered only by `LiveArms.altitude` and `Bench::Altitude` folds its own
+    # report rather than driving the Driver at all. So this is a forward
+    # contract for the arms a project will author, and it discriminates a real
+    # alternative design: a decorator that attested once per RUN rather than
+    # once per `#grade` would journal four empty verdicts here.
+    it "writes no grade record for an arm that never consults its grader" do
+      ungraded = [DriverSpecSupport::FixedCacheArm.new(name: "ungraded", cache_creation_input_tokens: 40),
+                  DriverSpecSupport::FixedCacheArm.new(name: "ungraded-b", cache_creation_input_tokens: 40)]
+      described_class.new(ungraded, tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(grade_records(journal)).to be_empty
+    end
+
+    # Scenario: the reported score is unchanged by journaling.
+    #
+    # {Grader::Journaling} passes the Grade through verbatim, so the attestation
+    # is a side record and never a second opinion -- the two reports' score
+    # sections must be byte-identical.
+    it "reports the same scores journaled and unjournaled" do
+      journaled = described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+      plain = described_class.new(arms, tasks:, spawn_seam:, grader:).report
+
+      expect(section_for(journaled, "grader score")).to eq(section_for(plain, "grader score"))
+    end
+  end
+
   describe "distribution validation" do
     it "refuses a single-task suite -- one run is not a distribution" do
       expect { described_class.new(arms, tasks: ["only one"], spawn_seam:, grader:) }
@@ -491,6 +585,17 @@ RSpec.describe Lain::Arm::Driver do
     it "refuses an empty arm list" do
       expect { described_class.new([], tasks:, spawn_seam:, grader:) }
         .to raise_error(ArgumentError, /arm/i)
+    end
+
+    # `isolation_name:`, `fixture:` and `model:` all read nil as UNSET, so a
+    # caller reasonably expects `journal:` to as well -- and it is the one that
+    # cannot, because the decorator pushes onto it and a nil answers no `<<`.
+    # Left to detonate it does so from inside the run loop, AFTER every arm has
+    # asked a real provider and the money is spent, and `@report ||=` never
+    # memoises on a raise path, so the retry re-pays the suite.
+    it "refuses a nil journal at construction rather than dying mid-suite, after the spend" do
+      expect { described_class.new(arms, tasks:, spawn_seam:, grader:, journal: nil) }
+        .to raise_error(ArgumentError, /journal/i)
     end
   end
 end

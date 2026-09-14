@@ -113,17 +113,28 @@ module Lain
       # @param backend_options [Hash] forwarded verbatim to
       #   {Lain::CLI::IsolationBackend.resolve}; ITS signature owns those
       #   defaults, so restating them here would be a second authority
+      # @param journal [#<<, nil] READ TWICE, by two different consumers of one
+      #   record: the resolver decorates the backend with it so lease telemetry
+      #   lands, and {Arm::Driver} journals every arm's grade into it. Named
+      #   rather than left riding `backend_options`, because a keyword the
+      #   resolver merely forwards could never also reach the Driver
       # @return [String] never printed here
       # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
       #   resolver's advertised set
       # @raise [ArgumentError] on backend options with no name to resolve
-      def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, fixture: nil, model: nil, **backend_options)
+      def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, journal: nil, fixture: nil, model: nil,
+                     **backend_options)
+        # Absent, NO keyword at all on either side, so each one's own default
+        # stands -- {Arm::Driver}'s Null channel here, and {#arm_isolation}'s
+        # deliberate refusal of options given with no name to resolve them for.
+        journaling = { journal: }.compact
         # `isolation_name:` is the operator's own word, and the only thing that
         # can NAME the backend: every name resolves to the same
         # {Isolation::Journal} decorator once `--isolation` requires a journal,
         # so a class name renders `none` and `worktree` identically.
         Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, isolation_name: isolation,
-                              **arm_isolation(isolation, **backend_options)).report
+                              **journaling,
+                              **arm_isolation(isolation, **backend_options, **journaling)).report
       end
 
       # The live arm comparison, ASSEMBLED: the entry point `bench arms` sits

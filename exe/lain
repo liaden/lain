@@ -600,8 +600,9 @@ class LainCLI < Thor
                                     "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); leave it unset " \
                                     "for Arm::Driver's own default, which leases nothing -- not the same as none"
     method_option :journal, type: :string,
-                            desc: "NDJSON file this run's isolation lease telemetry is recorded into; " \
-                                  "--isolation leases the workers, and refuses without somewhere to record them"
+                            desc: "NDJSON file this run's grade records and isolation lease telemetry " \
+                                  "are recorded into; --isolation leases the workers, and refuses " \
+                                  "without somewhere to record them"
     # Flag name → Lain::CLI::Backend option, RECORD_FLAGS' shape: one declarative
     # map, so adding a sampler flag is one line here and one method_option above.
     # Bench::CLI#arms_report takes the BACKEND these build, not the flags -- the
@@ -652,9 +653,9 @@ class LainCLI < Thor
       def refuse_journal_without_isolation!
         return unless options[:journal] && options[:isolation].nil?
 
-        raise Thor::Error, "--journal records the isolation leases a run takes, and nothing leases without " \
-                           "--isolation: drop --journal, or add --isolation " \
-                           "#{Lain::CLI::IsolationBackend::BACKENDS.join("|")}"
+        raise Thor::Error, "--journal records this run's grades AND the isolation leases it takes, and " \
+                           "nothing leases without --isolation: drop --journal, or add --isolation " \
+                           "#{Lain::CLI::IsolationBackend::BACKENDS.join("|")} to record both"
       end
 
       # A SET --isolation REQUIRES a journal, and Bench::CLI is what refuses the

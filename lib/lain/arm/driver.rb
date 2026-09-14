@@ -52,6 +52,15 @@ module Lain
       COLUMNS = %w[arm n mean median min max].freeze
       private_constant :COLUMNS
 
+      # How a graded subject is addressed for its {Telemetry::GradeRecord}.
+      # Every arm hands its grader a {Timeline}, which carries no `#digest` of
+      # its own -- its content address is its head turn's -- so the Driver
+      # injects the resolution rather than leaving
+      # {Grader::Journaling#digest_for} to its duck-typed fallbacks, which would
+      # raise on a subject that is neither addressable nor a bare String.
+      SUBJECT_DIGEST = :head_digest.to_proc.freeze
+      private_constant :SUBJECT_DIGEST
+
       # What an attribution field prints when the caller supplied none. A BLANK
       # field reads as "there was none"; this says the record does not know,
       # which is the weaker claim and the true one.
@@ -118,16 +127,32 @@ module Lain
       #   name `bench arms` can resolve comes back wrapped in the SAME
       #   {Isolation::Journal} decorator, so a class name cannot tell `none` from
       #   `worktree`; this can.
-      # @raise [ArgumentError] on fewer than two tasks or no arms
+      # @param journal [#<<] where each graded run's {Telemetry::GradeRecord}
+      #   lands. THE GRADE IS THE BENCH'S HEADLINE METRIC and, alone among the
+      #   columns folded here, reached the rendered report and nothing else --
+      #   usage and payments already ride the arms' own journal records. The
+      #   Null channel by default, so no caller guards `if journal` -- and an
+      #   explicit nil is REFUSED rather than treated as unset, because unlike
+      #   its three sibling optional keywords a nil here survives construction
+      #   and dies inside the decorator, after every arm has already been paid
+      #   for. {Channel::Null::INSTANCE} is how a caller says "nowhere".
+      # @raise [ArgumentError] on fewer than two tasks, no arms, or a nil journal
       def initialize(arms, tasks:, spawn_seam:, grader:, isolation: NoIsolation, isolation_name: nil,
-                     fixture: nil, model: nil)
+                     fixture: nil, model: nil, journal: Channel::Null::INSTANCE)
         @arms = Array(arms).freeze
         @tasks = Array(tasks).freeze
         raise ArgumentError, "the driver needs at least one arm to compare" if @arms.empty?
         raise ArgumentError, "a distribution needs n >= 2 tasks; one run is not a distribution" if @tasks.size < 2
+        raise ArgumentError, "journal: nil has nowhere to record a grade; pass Channel::Null::INSTANCE" if journal.nil?
 
         @spawn_seam = spawn_seam
-        @grader = grader
+        # DECORATED ONCE, HERE, because the grader is threaded verbatim into
+        # every arm's `#run` -- so one wrap attests every arm's every run. An
+        # arm that never consults the grader it was handed journals nothing,
+        # truthfully: no arm this Driver can be given today behaves that way,
+        # so it is a forward contract for the arms a project will author, not a
+        # description of one in the tree.
+        @grader = Grader::Journaling.new(inner: grader, journal:, subject_digest: SUBJECT_DIGEST)
         @isolation = isolation
         @isolation_name = isolation_name
         @fixture = fixture
