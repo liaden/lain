@@ -538,9 +538,12 @@ finding, not as your own mistake.
 `call_index` is **1-based**, because the lua side indexes `calls` with it directly, while
 vimscript's `getbufvar` hands back a 0-based List — which is where the `[N-1]` and the trailing
 `- 1` come from. From lua the same read is `calls[call_index[N]]` with no arithmetic at all; that
-is what the live-nvim example does at `spec/lain/frontend/neovim_runtime_spec.rb:404`, which
-asserts in one breath that the rendered lines still do **not** contain the command and that
-`b:lain_approval_calls` does.
+is what the live-nvim example does -- `carries the wrapped command unwrapped, with the rendered
+lines unchanged`, in `spec/lain/frontend/neovim/runtime/62_approval_spec.rb` -- which asserts in one
+breath that the rendered lines still do **not** contain the command and that
+`b:lain_approval_calls` does. (By NAME, not by line: it was cited as a line number in
+`neovim_runtime_spec.rb` until that file was split per runtime lua module on 2026-09-14, and the
+number would have been wrong within days regardless.)
 
 Two things to know before matching on the result:
 

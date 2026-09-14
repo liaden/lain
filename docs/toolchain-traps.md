@@ -297,7 +297,8 @@ the cop.
   probing`.
 
   Added 2026-08-28, and it is the one shape this ledger did not yet carry: two examples in
-  `neovim_runtime_spec`'s `answering a parked approval in the editor, end to end` group fail
+  `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`'s `answering a parked approval in the
+  editor, end to end` group fail
   **in isolation** while the same file passes inside a full `pspec` run --
   `resolves one unwrapped call per answerable row, in queue order, for two parked approvals` and
   `carries the wrapped command unwrapped, with the rendered lines unchanged`. Measured at
@@ -305,8 +306,14 @@ the cop.
   whole-suite run of the same tree at 0 failures. So the usual reflex is inverted here -- solo is
   the unreliable reading and the suite is the trustworthy one, which is the opposite of what the
   TMPDIR note above trains you to do. Do not take a red from
-  `rspec spec/lain/frontend/neovim_runtime_spec.rb` as evidence of anything; re-run it under the
-  whole suite before believing it, and expect a `pspec` to trip it occasionally too.
+  `rspec spec/lain/frontend/neovim/runtime/62_approval_spec.rb` as evidence of anything; re-run it
+  under the whole suite before believing it, and expect a `pspec` to trip it occasionally too.
+  (The group lived in `spec/lain/frontend/neovim_runtime_spec.rb` until 2026-09-14, when that file's
+  eighteen groups were split to one spec per runtime lua module. The two example NAMES are
+  unchanged, which is why this entry still finds them -- and that is the general rule rather than a
+  detail of this one entry: **a path in a flake entry is a convenience, not the key.** When a file
+  moves, repoint the path and keep the name. CLAUDE.md's "record a flaky spec by NAME, never by
+  line number" is what let this entry survive a split that moved every line in it.)
 
   Added 2026-08-23: the entry above still under-describes this file. Two MORE of its examples have
   been observed red and green on the same box within minutes, both in the `#continue refuses a
@@ -428,8 +435,8 @@ the cop.
   prime is the NEW OWNER's. That is the sequential re-attach a human performs (quit lain, start
   another in the same nvim), never a live double attach — which is refused, and refused *because*
   a newcomer's empty prime replacing a running lain's rendered views is one of the three harms
-  runtime.lua's head measured. Both halves are pinned by `neovim_runtime_spec`'s "one lain per
-  editor".
+  runtime.lua's head measured. Both halves are pinned by
+  `spec/lain/frontend/neovim/runtime_spec.rb`'s "one lain per editor".
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`

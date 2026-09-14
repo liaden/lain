@@ -131,7 +131,7 @@ end
 #     LAIN_NVIM=0 bundle exec rspec        # skip them
 #
 # They were opt-in ("slow"), and the cost of that was that 97 examples -- whole files, including
-# the 714-line neovim_runtime_spec and the 426-line neovim_request_spec -- never ran in any
+# the runtime specs under neovim/runtime/ and the 426-line neovim_request_spec -- never ran in any
 # pre-commit or CI, so nothing but a manual run could catch a regression in them. Measured before
 # flipping: the entire :nvim set is 13.3s wall, against a ~70s serial suite. That is not slow
 # enough to buy invisibility with, and the tag stays only so a machine with no nvim, or a run that

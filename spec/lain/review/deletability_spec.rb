@@ -113,8 +113,13 @@ module DeletionMap
     Capability.new(
       key: "thread",
       constants: %w[ThreadView],
+      # Two spec files, because the pane has two halves: the editor's, which needs a
+      # real nvim, and the view's, which does not. The recorder in `spec/support/`
+      # is the capability's own fixture and goes with them -- neither sweep can see
+      # it, since its name carries none of the capability's words.
       files: ["lib/lain/frontend/neovim/runtime/51_thread.lua", "lib/lain/frontend/neovim/thread_view.rb",
-              "spec/lain/frontend/neovim/thread_view_spec.rb"],
+              "spec/lain/frontend/neovim/runtime/51_thread_spec.rb",
+              "spec/lain/frontend/neovim/thread_view_spec.rb", "spec/support/recording_thread_inlet.rb"],
       # `#annotate` and `#thread` are the PORT's messages, so they survive the
       # pane and have to BECOME something -- deleting the pane is a rewrite here,
       # not a removal, which is the one thing the plan's "annotations still work"

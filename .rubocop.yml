@@ -411,9 +411,13 @@ RSpec/MessageSpies:
   Enabled: false
 
 # Three helpers hold the expectation for their callers: `refuses` (rewind_spec),
-# `refute_workspace_key` (workspace_spec), and `wait_until`, which RAISES on timeout
-# (neovim_runtime_spec.rb:59) and so fails the example with a description of the
-# editor state. Defaults are restated because AllowedPatterns replaces rather than
+# `refute_workspace_key` (workspace_spec), and `wait_until_editor`, which RAISES on
+# timeout (spec/support/neovim_runtime.rb) and so fails the example with a description
+# of the editor state. It carries the suffix because the bare `wait_until` is a
+# DIFFERENT helper with a shorter deadline that returns nil rather than raising, and
+# the two met when the runtime spec was split into per-module files -- a forgotten
+# include would otherwise have swapped one for the other in silence.
+# Defaults are restated because AllowedPatterns replaces rather than
 # merges. support_vsock_availability_spec is a META-spec: it builds a nested example
 # group whose `it("probe")` deliberately asserts nothing, and the OUTER example
 # asserts on whether that probe ran.

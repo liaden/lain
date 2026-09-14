@@ -257,7 +257,7 @@ prose.
 |---|---|---|---|---|
 | Diagnostics (T17) | *executed by simplify-03's T1 -- the files this row named are gone from the tree* | `review.rb`'s require; **`frontend/neovim.rb`'s protocol history** | **Prefill (T22)** | **10731** |
 | `/critique` prefill (T22) | *executed by simplify-03's T1 -- the files this row named are gone from the tree* | `review.rb`'s require | none | **10774** |
-| Thread pane (T18) | `runtime/51_thread.lua`, `lib/lain/frontend/neovim/thread_view.rb`, `spec/lain/frontend/neovim/thread_view_spec.rb` | `frontend/neovim.rb`'s require **and its protocol history**; **`review/surface/neovim.rb`'s `#annotate` and `#thread`** and their spec; `neovim_runtime_spec.rb`'s protocol-9 pin; the manual stanza in `plugin/nvim/doc/lain.txt` | **Docent (T24)** | **10673** |
+| Thread pane (T18) | `runtime/51_thread.lua`, `lib/lain/frontend/neovim/thread_view.rb`, `spec/lain/frontend/neovim/runtime/51_thread_spec.rb`, `spec/lain/frontend/neovim/thread_view_spec.rb`, `spec/support/recording_thread_inlet.rb` | `frontend/neovim.rb`'s require **and its protocol history**; **`review/surface/neovim.rb`'s `#annotate` and `#thread`** and their spec; the manual stanza in `plugin/nvim/doc/lain.txt` | **Docent (T24)** | **10673** |
 | Docent (T24) | `lib/lain/review/docent.rb`, `lib/lain/prompt/templates/role/diff-docent.md`, `spec/lain/review/docent_spec.rb` | `review.rb`'s require; `role/catalog.rb`; `spec/lain/role_spec.rb`'s roll call; `cli/wiring/toolset_build.rb`; **`spec/lain/cli/wiring/toolset_build_spec.rb`'s two wiring examples** | none | **10803** |
 | GitHub submit (T23, **reached by T34**) | `lib/lain/review/submit.rb`, `lib/lain/review/submit/outbox.rb`, `spec/lain/review/submit_spec.rb`, `spec/lain/review/submit/outbox_spec.rb`, `lib/lain/cli/command/review_submit.rb`, `spec/lain/cli/command/review_submit_spec.rb`, `lib/lain/forge/gh/endpoint.rb` | `review.rb`'s require; `forge/gh.rb` (verb + endpoint require), `forge/gh/recorded.rb` ×2, `forge/journaled.rb`, `forge/intent.rb`, `forge/reconcile.rb`; **`cli/command.rb`'s require, `cli/command/surface.rb`'s outbox and its `builtins` line, `cli/command/review.rb`'s `outbox:` and its hold**; `gh_parity.rb`, `gh_spec.rb`, `recorded_spec.rb`, **`intent_spec.rb`, `reconcile_spec.rb`, `cli/command/surface_spec.rb`'s command set and two wiring examples, `cli/command/review_spec.rb`'s outbox examples** | none | not re-measured since T34 |
 | GitHub source (T10) | `lib/lain/review/source/github_pr.rb`, `spec/lain/review/source/github_pr_spec.rb` | `review/source.rb`'s require; **`cli/review.rb`'s whole pull-request leg** and **eight examples in `spec/lain/cli/review_spec.rb`** | **Submit (T23)** | **10704** |
@@ -278,11 +278,26 @@ is a LoadError rather than a missing feature — which is why the lines are name
 **Three things a reference sweep cannot see, and all three were found by deleting.**
 
 1. **The protocol history in `lib/lain/frontend/neovim.rb` is a comment that two specs read.**
-   `spec/lain/frontend/neovim_runtime_spec.rb` asserts every `__lain.` entry point and every
-   `:Lain*` command the history names against the *live* runtime. Both lua capabilities publish
-   entry points the history lists, so deleting either lua module without editing that comment is a
-   red suite — and any scan that strips comments (T18's own row does, deliberately, so that prose
-   may cite a capability freely) is blind to it.
+   The claim it used to be checked by is no longer one file's, and saying otherwise would be worse
+   than saying nothing. The `__lain.` entry points are asserted against the *live* runtime by
+   `spec/lain/frontend/neovim/runtime/45_views_spec.rb`, and only those the rail table names —
+   every row of `RenderQueue::RAILS`, checked before it is stood aside so a table naming a function
+   the runtime never published fails rather than passes. The `:Lain*` commands are driven where the
+   module that defines each one is specified: `spec/lain/frontend/neovim/runtime/30_commands_spec.rb`,
+   `spec/lain/frontend/neovim/runtime/46_sidebar_spec.rb`,
+   `spec/lain/frontend/neovim/runtime/51_thread_spec.rb`,
+   `spec/lain/frontend/neovim/runtime/65_review_spec.rb` and `spec/lain/frontend/neovim_spec.rb`
+   carry the bulk. Both lua capabilities publish entry points the history lists, so deleting either
+   lua module without editing that comment is a red suite — and any scan that strips comments
+   (T18's own row does, deliberately, so that prose may cite a capability freely) is blind to it.
+
+   **Updated 2026-09-14.** This row named the old spec/lain/frontend/neovim_runtime_spec.rb (spelled
+   without backticks here on purpose: the guard below reads every quoted path in this section back
+   against the tree, and that one is gone), a single file holding eighteen groups over twelve-plus
+   lua modules. It was split to mirror paths under
+   `spec/lain/frontend/neovim/runtime/`, so the pin moved with the module it pins; the thread
+   pane's own row gained the second spec file and the recorder both its halves build. The
+   protocol-9 pin this row also cited is gone with the hand-maintained handshake integer.
 2. **`Review::Surface::Neovim` renders `#annotate` *and* `#thread` through the thread pane.** Those
    two are the PORT's messages, so they survive the pane and have to become something: deleting the
    pane is a rewrite there, not a removal. The earlier row's "annotations still work" was true of
