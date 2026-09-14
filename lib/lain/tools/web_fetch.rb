@@ -98,9 +98,12 @@ module Lain
                    "100.64.0.0/10" => "carrier-grade NAT",
                    "192.0.0.0/24" => "IETF protocol assignment",
                    # Not a destination the open web serves: a multicast group
-                   # and the broadcast address are not hosts at all, and
-                   # 198.18.0.0/15 is set aside for benchmark rigs.
+                   # and the broadcast address are not hosts at all, 240.0.0.0/4
+                   # is IANA's own "reserved for future use" (no allocation has
+                   # ever routed there), and 198.18.0.0/15 is set aside for
+                   # benchmark rigs.
                    "224.0.0.0/4" => "multicast",
+                   "240.0.0.0/4" => "reserved",
                    "255.255.255.255" => "broadcast",
                    "198.18.0.0/15" => "benchmarking",
                    # Two different things. Four are IPv6 transition prefixes,

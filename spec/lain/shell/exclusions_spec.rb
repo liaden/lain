@@ -123,6 +123,24 @@ RSpec.describe Lain::Shell::Exclusions do
       expect { described_class.from({ "exclude" => ["/usr/bin/curl"] }) }
         .to raise_error(Lain::Config::Refusal, /program name/)
     end
+
+    # A bare argv[0] a shell hands to exec never contains whitespace, so a
+    # pattern that does can never match one -- the same failure as an entry
+    # nobody wrote.
+    it "refuses an entry that can never match an unquoted command" do
+      expect { described_class.from({ "exclude" => ["cu rl"] }) }
+        .to raise_error(Lain::Config::Refusal, /can never match an unquoted command/)
+    end
+
+    # A malformed entry and an unknown key are two different mistakes; a
+    # config broken both ways should not cost two runs to discover.
+    it "reports a malformed entry and an unknown key in the same refusal" do
+      expect { described_class.from({ "exclude" => ["cu rl"], "excluded" => ["curl"] }) }
+        .to raise_error(Lain::Config::Refusal) { |error|
+          expect(error.message).to match(/"excluded".*known keys: exclude/)
+          expect(error.message).to include("can never match an unquoted command")
+        }
+    end
   end
 
   describe "the value" do

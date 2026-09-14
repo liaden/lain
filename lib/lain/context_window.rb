@@ -112,15 +112,8 @@ module Lain
       # Ollama publishes "1M".
       "deepseek-v4-flash:cloud" => 1_000_000,
       "deepseek-v4-flash:0731-cloud" => 1_000_000,
-      "deepseek-v4-flash:preview-cloud" => 1_000_000,
       "deepseek-v4-pro:cloud" => 1_000_000,
       "deepseek-v4-pro:0813-cloud" => 1_000_000,
-
-      # `/api/show` reports 524,288 (512Ki) against the page's "1M" -- a 1.9x
-      # over-claim, measured 2026-08-24. A genuinely different build from
-      # `deepseek-v4-pro:cloud` (`parameter_size` 1600000000000, `modified_at`
-      # 2026-04-24), which is why the base tag does not cover this one.
-      "deepseek-v4-pro:preview-cloud" => 524_288,
       "kimi-k3:cloud" => 1_000_000,
 
       # Ollama publishes "976K". Its own page's prose says "1M" in the next

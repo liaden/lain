@@ -628,6 +628,16 @@ RSpec.describe Lain::Tools::WebFetch do
       expect(contacted).to be_empty
     end
 
+    # 240.0.0.0/4 is IANA's "reserved for future use" block -- not on the open
+    # web under any routing, and RANGES omitted it, so a real SYN went out.
+    it "refuses the reserved 240.0.0.0/4 range" do
+      result = tool.call({ url: "http://240.0.0.1/" }, nil)
+
+      expect(result).to be_error
+      expect(result.content).to include("240.0.0.0/4")
+      expect(contacted).to be_empty
+    end
+
     # Two different things, both refused. A transition prefix embeds a v4
     # address, so it is one more spelling of a blocked destination -- and
     # 64:ff9b::/96 is the NAT64 well-known prefix, which on a NAT64 network

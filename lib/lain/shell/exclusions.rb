@@ -41,6 +41,10 @@ module Lain
       # reach it for the wildcard to mean what the file says. The same flag
       # {Sensitivity::Rules} matches with, so the config speaks one glob dialect.
       GLOB = File::FNM_DOTMATCH
+      # A bare argv[0] a shell hands to exec is one word: whatever splits a
+      # command line stops at whitespace, so a pattern containing any can never
+      # match one -- the same failure as an entry nobody wrote.
+      WHITESPACE = /\s/
 
       # The table as `config.toml` spells it, which is how every refusal here
       # names it.
@@ -54,11 +58,16 @@ module Lain
         raise Config::Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
         unknown = table.keys - KEYS
-        # A silently ignored `excluded` reads as an exclusion that is in force
-        # and is not.
-        raise Config::Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
+        patterns = table.fetch(EXCLUDE, [])
+        raise not_a_list(patterns, path:) unless patterns.is_a?(Array)
 
-        new(patterns: compile(table.fetch(EXCLUDE, []), path:))
+        # One pass over the WHOLE table, so a config broken two ways -- a typo'd
+        # key beside an entry that can never match -- costs one run to
+        # discover rather than one fix-and-rerun per problem.
+        malformed = patterns.filter_map { |pattern| malformed_detail(pattern) }
+        raise refused(unknown, malformed, path:) if unknown.any? || malformed.any?
+
+        new(patterns: compile(patterns, path:))
       end
 
       # @return [Exclusions] the value an absent table yields, and the one that
@@ -87,10 +96,28 @@ module Lain
       # line in a committed config would take the gate down for good. Refused
       # here, where the refusal names the file.
       def self.check!(pattern, path: nil)
-        raise malformed(pattern, "must be a string", path:) unless pattern.is_a?(String)
-        raise malformed(pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
-        raise malformed(pattern, "must not be blank", path:) if pattern.strip.empty?
-        raise malformed(pattern, "must be a program name, not a path", path:) if pattern.include?("/")
+        detail = problem(pattern)
+        raise malformed(pattern, detail, path:) if detail
+      end
+
+      # nil when +pattern+ is fine, else the same detail {.check!} would raise
+      # on. Split out from {.check!} so {.from} can learn about EVERY malformed
+      # entry in one pass instead of stopping at the first.
+      def self.problem(pattern)
+        return "must be a string" unless pattern.is_a?(String)
+        return "must be matchable text" unless Sensitivity.readable?(pattern)
+        return "must not be blank" if pattern.strip.empty?
+        return "must be a program name, not a path" if pattern.include?("/")
+        return "can never match an unquoted command" if pattern.match?(WHITESPACE)
+
+        nil
+      end
+
+      # nil when +pattern+ is fine, else the message {.malformed} would build --
+      # what {.from} collects across every entry before raising once.
+      def self.malformed_detail(pattern)
+        detail = problem(pattern)
+        "#{EXCLUDE} #{detail}: #{pattern.inspect}" if detail
       end
 
       # `exclude = "curl"` -- a single value where the shape is a list.
@@ -111,7 +138,25 @@ module Lain
                             path:, table: TABLE, key: EXCLUDE, value: pattern)
       end
 
-      private_class_method :compile, :settled, :check!, :not_a_list, :malformed
+      # One refusal naming every problem the table has: the unknown keys (if
+      # any), then every malformed entry -- so a config broken two ways is
+      # fixed once, rather than looking right again the next time it loads.
+      #
+      # The unknown-keys wording matches {Config::Refusal.unknown_keys}'s own,
+      # built here rather than borrowed from it: that constructor already
+      # wraps its detail in a full message (path and table included), and this
+      # one detail has to sit beside {.malformed_detail}'s inside a single
+      # wrapping instead of carrying two.
+      #
+      # @return [Config::Refusal]
+      def self.refused(unknown, malformed, path: nil)
+        unknown_detail = "has no keys #{unknown.map(&:inspect).join(", ")}; known keys: #{KEYS.join(", ")}"
+        details = unknown.empty? ? malformed : [unknown_detail, *malformed]
+        Config::Refusal.new(details.join("; "),
+                            path:, table: TABLE, key: unknown + (malformed.empty? ? [] : [EXCLUDE]), value: nil)
+      end
+
+      private_class_method :compile, :settled, :check!, :problem, :malformed_detail, :not_a_list, :malformed, :refused
 
       # Validated here too, {Sensitivity::Rules}' precedent: a value built by
       # hand carries entries that never came through {.from}.

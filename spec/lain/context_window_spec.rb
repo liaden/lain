@@ -271,10 +271,8 @@ RSpec.describe Lain::ContextWindow do
         "qwen3.5:397b-cloud" => 256_000,
         "deepseek-v4-flash:cloud" => 1_000_000,
         "deepseek-v4-flash:0731-cloud" => 1_000_000,
-        "deepseek-v4-flash:preview-cloud" => 1_000_000,
         "deepseek-v4-pro:cloud" => 1_000_000,
         "deepseek-v4-pro:0813-cloud" => 1_000_000,
-        "deepseek-v4-pro:preview-cloud" => 524_288,
         "kimi-k3:cloud" => 1_000_000,
         "kimi-k2.7-code:cloud" => 256_000,
         "kimi-k2.6:cloud" => 256_000,
@@ -307,6 +305,20 @@ RSpec.describe Lain::ContextWindow do
         expect(resolution.window_tokens).to eq(described_class::CONSERVATIVE_FALLBACK)
         expect(resolution.provenance).to eq(described_class::GUESSED)
         expect(resolution).not_to be_authoritative
+      end
+
+      # `deepseek-v4-flash:preview-cloud` and `deepseek-v4-pro:preview-cloud`
+      # were retired -- `/api/show` says so -- so publishing a window for
+      # either is a row that can only ever be wrong. A retired tag is exactly
+      # the "not carried" case above, not a special one: it falls to the same
+      # fallback, not a raise, because a stale session may still name it.
+      %w[deepseek-v4-flash:preview-cloud deepseek-v4-pro:preview-cloud].each do |model|
+        it "no longer resolves the retired #{model} as published" do
+          resolution = book.resolve(model)
+
+          expect(resolution.provenance).not_to eq(described_class::PUBLISHED)
+          expect(resolution).not_to be_authoritative
+        end
       end
 
       # An escalation trigger, kept as a live assertion rather than a
@@ -399,10 +411,8 @@ RSpec.describe Lain::ContextWindow do
           "nemotron-3-nano:30b-cloud" => 262_144,
           "minimax-m2.7:cloud" => 196_608,
           "gpt-oss:20b-cloud" => 131_072,
-          "deepseek-v4-pro:preview-cloud" => 524_288,
           "deepseek-v4-pro:0813-cloud" => 1_048_576,
           "deepseek-v4-flash:0731-cloud" => 1_048_576,
-          "deepseek-v4-flash:preview-cloud" => 1_048_576,
           "kimi-k2.7-code:cloud" => 262_144,
           "gemma4:31b-cloud" => 262_144
         }
