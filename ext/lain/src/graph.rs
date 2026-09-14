@@ -47,19 +47,20 @@
 //! **Four laws, and no fifth:** idempotent, commutative, associative, and "a
 //! meet sits below both operands" -- below in the DOMINANCE order, which is the
 //! predicate `spec/support/algebra_generators.rb` injects for exactly this
-//! reason. Each has a `#[test]` below named for it, and the list is the same
-//! one `spec/support/shared_examples/meet_semilattice.rb` asserts -- that file
-//! is the authority on which laws exist, so the two layers cannot come to
-//! disagree about what a law IS.
+//! reason. They are not written in this file: the `algebra` module's
+//! `declare_meet_semilattice!` emits them as `algebra::dominance_laws`, over
+//! this file's `tests::law_population`, and their names are the ones
+//! `spec/support/shared_examples/meet_semilattice.rb` uses, so the two layers
+//! cannot come to disagree about what a law IS.
 //!
 //! **[`causal_meets`] makes NO semilattice claim, and that is a ruling rather
 //! than an omission.** The causal ancestry order has no unique greatest lower
 //! bound: a criss-cross fan-in leaves incomparable maximal common ancestors, so
 //! the operator answers the SET of them (git merge-base's shape) and a
 //! set-valued operator is not a meet. Ruby states it as a first-class negative
-//! (`Timeline`'s `not_a_meet_semilattice on: :causal_meets`); no law test below
-//! names this function, and adding one would be asserting a structure both
-//! layers deny.
+//! (`Timeline`'s `not_a_meet_semilattice on: :causal_meets`), and Rust states it
+//! as a type: `algebra::CausalAncestry` implements `MaximalLowerBounds` and not
+//! `MeetSemilattice`, so no law expansion can name this function.
 //!
 //! **Every query is scoped to the closure of the PAIR it is asked about**, as
 //! [`UnionGraph::scoped`] explains -- not to the whole store. That is Ruby's
@@ -94,10 +95,10 @@ use std::collections::{HashMap, HashSet};
 ///
 /// This is the MEET of the dominance meet-semilattice (see the module doc), and
 /// it is **idempotent, commutative, and associative**, sitting below both
-/// operands under [`dominates`]. Proven by `cargo test` against this function
-/// over a union-graph population that includes a disconnected pair; that the
-/// Ruby-facing binding obeys the same four is a separate claim owned by
-/// `spec/lain/rust/*`.
+/// operands under [`dominates`]. Proven by `cargo test` against this function,
+/// through `algebra::Dominance`, over a union-graph population that includes a
+/// disconnected pair; that the Ruby-facing binding obeys the same four is a
+/// separate claim owned by `spec/lain/rust/*`.
 pub fn dominator_meet(
     map: &StoreMap,
     a_head: Option<&Digest>,
@@ -343,7 +344,7 @@ impl UnionGraph {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::canonical::{Canon, build_object};
     use crate::event::Role;
@@ -363,7 +364,7 @@ mod tests {
     // Commit `body` with BOTH edges: one render parent and any number of causal
     // parents. That second argument is the whole difference from `dag`'s
     // fixture, and every graph below is built out of it.
-    fn commit(
+    pub(crate) fn commit(
         map: &StoreMap,
         parent: Option<&Digest>,
         causal: &[&Digest],
@@ -414,7 +415,7 @@ mod tests {
     // and deliberately bounded: associativity is exhaustive over triples, so
     // 17 heads are 4_913 of them, each building its own pair-scoped graph.
     // Grow this only after checking what it costs.
-    fn law_population() -> (StoreMap, Vec<Option<Digest>>) {
+    pub(crate) fn law_population() -> (StoreMap, Vec<Option<Digest>>) {
         let map = StoreMap::new_sync();
         let (map, r0) = commit(&map, None, &[], "r0");
         let (map, r1) = commit(&map, Some(&r0), &[], "r1");
@@ -570,7 +571,7 @@ mod tests {
         // And the count is not capped at two. Ruby's own witness is THREE-way
         // (`spec/support/algebra_generators.rb`'s `criss_cross`), because that
         // is the shape that refutes associativity under every single-valued
-        // reading of the set -- which is the reason no law test below names
+        // reading of the set -- which is the reason no law expansion names
         // this function.
         let map = StoreMap::new_sync();
         let (map, root) = commit(&map, None, &[], "root");
@@ -649,103 +650,5 @@ mod tests {
             disjoint > 0,
             "the law population has no disconnected pair, so its bottom element is never reached"
         );
-    }
-
-    // -------------------------------------------------------------------
-    // The four semilattice laws.
-    //
-    // These are the SAME four the Ruby group asserts -- idempotent,
-    // commutative, associative, and "a meet sits below both operands"
-    // (`spec/support/shared_examples/meet_semilattice.rb`, which is the
-    // authority on which laws exist; neither side asserts a law the other
-    // does not). `dag.rs` fences its four the same way, so the two modules
-    // cannot drift about what a law IS.
-    //
-    // They are stated over `Option<Digest>` with `None` as the ABSORBING
-    // bottom, because that is what Ruby's nil-to-empty-Timeline `checkout`
-    // means -- and over a population that includes a pair with no shared
-    // history, so the bottom is actually reached (guarded above).
-    //
-    // The order the fourth law is taken over is DOMINANCE, not render
-    // ancestry -- `spec/support/algebra_generators.rb` injects
-    // `dominators.dominates?` for exactly this reason, the render-ancestry
-    // predicate being strictly weaker and making the law pass vacuously.
-    //
-    // What they prove here is different from what they prove in RSpec: this
-    // module proves the pure Rust ALGORITHM obeys them, at a layer with no
-    // `magnus` and no Ruby VM. That the Rust BINDING agrees with Ruby is a
-    // separate claim owned solely by `spec/lain/rust/*` -- no `cargo test`
-    // here compares against a Ruby value.
-    //
-    // `causal_meets` is deliberately ABSENT from this fence. It is set-valued
-    // and Ruby declares it `not_a_meet_semilattice`; a law test on it would
-    // assert a structure both layers deny.
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn dominator_meet_is_idempotent() {
-        let (map, heads) = law_population();
-        for a in &heads {
-            assert_eq!(
-                dominator_meet(&map, a.as_ref(), a.as_ref()),
-                Ok(a.clone()),
-                "idempotence failed for {a:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn dominator_meet_is_commutative() {
-        let (map, heads) = law_population();
-        for a in &heads {
-            for b in &heads {
-                assert_eq!(
-                    dominator_meet(&map, a.as_ref(), b.as_ref()),
-                    dominator_meet(&map, b.as_ref(), a.as_ref()),
-                    "commutativity failed for {a:?} and {b:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn dominator_meet_is_associative() {
-        let (map, heads) = law_population();
-        for a in &heads {
-            for b in &heads {
-                let ab = dominator_meet(&map, a.as_ref(), b.as_ref())
-                    .expect("the population is well-formed");
-                for c in &heads {
-                    let bc = dominator_meet(&map, b.as_ref(), c.as_ref())
-                        .expect("the population is well-formed");
-                    assert_eq!(
-                        dominator_meet(&map, ab.as_ref(), c.as_ref()),
-                        dominator_meet(&map, a.as_ref(), bc.as_ref()),
-                        "associativity failed for {a:?}, {b:?}, {c:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn dominator_meet_orders_below_both_operands() {
-        let (map, heads) = law_population();
-        for a in &heads {
-            for b in &heads {
-                let m = dominator_meet(&map, a.as_ref(), b.as_ref())
-                    .expect("the population is well-formed");
-                assert_eq!(
-                    dominates(&map, m.as_ref(), a.as_ref()),
-                    Ok(true),
-                    "{m:?} does not dominate {a:?}"
-                );
-                assert_eq!(
-                    dominates(&map, m.as_ref(), b.as_ref()),
-                    Ok(true),
-                    "{m:?} does not dominate {b:?}"
-                );
-            }
-        }
     }
 }

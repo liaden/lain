@@ -11,7 +11,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 217/217 today (`-p lain`); must not regress
+cargo test                                  # 231/231 today (`-p lain`); must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`
@@ -57,10 +57,10 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   here is private, so its scope is **zero items**. Do not read it as evidence the crate is
   documented — on its own it would not notice a doc comment deleted anywhere in `ext/lain`.
   The enforcing lint is **scoped**: `#[deny(clippy::missing_docs_in_private_items)]` sits on
-  `mod dag;` and `mod digest;`, the modules carrying the algebraic claims. Both are already at
-  zero offenses, so it cost no doc-writing diff, and deleting a doc comment in either is now a
-  hard error. Crate-wide that lint would report 109 and stays off — filler comments on 109 items
-  are worse than none. **If you add a module carrying a law, put the scoped deny on it too**;
+  `mod algebra;`, `mod dag;`, `mod digest;` and `mod graph;`, the modules carrying the algebraic
+  claims. All are at zero offenses, and deleting a doc comment in any of them is a hard error.
+  Crate-wide that lint would report 109 and stays off — filler comments on 109 items are worse
+  than none. **If you add a module carrying a law, put the scoped deny on it too**;
   that, not the root deny, is what protects a documented claim.
 - **Intra-doc links are a crate-root `deny`** (`rustdoc::broken_intra_doc_links`,
   `rustdoc::private_intra_doc_links`), and `cargo doc --no-deps` is clean. Note the trap that
@@ -126,20 +126,26 @@ Batch across the boundary. A per-node FFI call in a DAG walk loses to plain Ruby
 conversion cost dominates almost every naive binding. If a port is not asymptotically better, it is
 not better.
 
-### A ported structure inherits the Ruby declaration; it does not make its own
+### A ported algebraic structure keeps the Ruby law names; that is the whole contract
 
-When the ported thing is algebraic — a semilattice, a monoid, a lattice — **the Ruby shared
-example group is the authority on which laws exist**, and the Rust tests assert that same list.
-`spec/support/shared_examples/meet_semilattice.rb` declares exactly four laws (idempotent,
-commutative, associative, meet-below-both); `dag.rs` asserts those four, named to match, and
-invents no fifth. This is not deference for its own sake: the two layers must not come to
-disagree about what a law *is*, or the differential oracle has quietly forked.
+When the ported thing is algebraic — a semilattice, a monoid, a lattice — the Rust law tests carry
+**the same law names** as the Ruby shared example group, and no others.
+`spec/support/shared_examples/meet_semilattice.rb` names exactly four laws (idempotent,
+commutative, associative, meet-below-both); `algebra.rs`'s `declare_meet_semilattice!` emits
+those four, named to match, and invents no fifth. The names are the entire cross-language
+contract: the two layers must not come to disagree about what a law *is*.
 
-So do not reach for a `trait Monoid` or `trait MeetSemilattice` to "make it official". An algebra
+Do not reach for a `trait Monoid` or `trait MeetSemilattice` to "make it official". An algebra
 trait earns its place only when a **production** Rust function is generic over the structure and
 genuinely needs to be — a trait written solely so tests can call it is indirection with a law
-attached, and it invites a second, drifting declaration of the same laws. Until then: plain
-`#[test]` functions named for the property, matching `dag.rs`.
+attached, and it invites a second, drifting declaration of the same laws. `MeetSemilattice`
+passed that test: `ffi`'s `Timeline::meet_via::<S>` and `Timeline::below_via::<S>` are generic
+over it, and `Ext::Timeline#meet`, `#ancestor_of?`, `#dominator_meet`, `#dominates?` and the
+`Ext::Dag::RenderAncestry` / `Ext::Dag::Dominance` singletons are those two functions at two
+types. Clippy called the trait dead code until they were. The trait is sealed, and the macro that
+writes the seal's impl is the same expansion that writes the law tests, so an order cannot claim
+the structure without them. An order that is *not* a semilattice gets a different trait
+(`CausalAncestry` implements `MaximalLowerBounds`), never a negative impl or a flag.
 
 **The two suites prove different things, and a doc comment must say which.**
 
@@ -157,11 +163,12 @@ the FFI method and test the decision. `put_into` was split out of `Store::put` f
 the method keeps the lock and the error translation, the pure function carries the idempotence law
 and its proof.
 
-**A law test asserts a declared law; everything else goes below the banner.** `dag.rs`'s and
-`lib.rs`'s law blocks are fenced with a comment naming the Ruby group they inherit from, and
-tests that merely characterize an implementation choice (`a_re_put_returns_early_without_revalidating_edges`
-pins `put_into`'s `contains_key` shortcut) sit *outside* that fence, labelled as characterization.
-A reader must never inherit a house rule as though it were one of the declared laws.
+**A law test asserts a declared law; everything else goes below the banner.** `algebra.rs`'s law
+modules are macro-emitted and `lib.rs`'s law block is fenced with a comment naming the Ruby group
+it inherits from; tests that merely characterize an implementation choice
+(`a_re_put_returns_early_without_revalidating_edges` pins `put_into`'s `contains_key` shortcut)
+sit *outside* that fence, labelled as characterization. A reader must never inherit a house rule
+as though it were one of the declared laws.
 
 ## Scratch buffers go in a thread-local, not in the wrapped object
 

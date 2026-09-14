@@ -16,16 +16,16 @@
 //! not notice a deleted doc comment anywhere in this crate.
 //!
 //! The lint that actually bites today is scoped rather than global:
-//! `clippy::missing_docs_in_private_items` is denied on `dag`, `digest` and
-//! `graph`, the modules carrying this crate's ancestry structures and the
-//! claims made about them -- `graph` carries the deny from the moment it is
-//! declared, so nothing can land in it undocumented. All three are at zero
-//! offenses, so the deny costs no doc-writing diff -- and deleting any doc
-//! comment in them is a hard error (verified: removing `meet`'s doc yields
-//! `error: missing documentation for a function`). Crate-wide the same lint
-//! would report 109 and is deliberately NOT enabled: filler comments on 109
-//! items would be worse than none, while the modules that carry a law are
-//! covered.
+//! `clippy::missing_docs_in_private_items` is denied on `algebra`, `dag`,
+//! `digest` and `graph`, the modules carrying this crate's ancestry structures
+//! and the claims made about them -- `graph` and `algebra` carried the deny from
+//! the moment each was declared, so nothing can land in them undocumented. All
+//! four are at zero offenses, so the deny costs no doc-writing diff -- and
+//! deleting any doc comment in them is a hard error (verified: removing
+//! `meet`'s doc yields `error: missing documentation for a function`).
+//! Crate-wide the same lint would report 109 and is deliberately NOT enabled:
+//! filler comments on 109 items would be worse than none, while the modules
+//! that carry a law are covered.
 //!
 //! What that documentation is FOR: an item carrying an ALGEBRAIC claim must name
 //! the structure, the operation, and which suite proves it. There are two suites
@@ -36,6 +36,8 @@
 
 use tracing_subscriber::EnvFilter;
 
+#[deny(clippy::missing_docs_in_private_items)]
+mod algebra;
 mod astgrep;
 mod bm25;
 mod canonical;
@@ -339,11 +341,13 @@ mod ffi {
     use super::{
         DanglingPut, NumClass, blake3_hex, build_env_filter, classify_num, dup_writer, put_into,
     };
+    use crate::algebra::{
+        CausalAncestry, Dominance, MaximalLowerBounds, MeetSemilattice, RenderAncestry,
+    };
     use crate::canonical::{self, Canon};
-    use crate::dag;
+    use crate::dag::{self, StoreMap};
     use crate::digest::Digest;
     use crate::event::{EventData, Role};
-    use crate::graph;
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
         RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
@@ -1535,12 +1539,50 @@ mod ffi {
             found.map_err(|e| missing_object(ruby, e))
         }
 
-        fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
+        /// The meet of this head and `other`'s in the order `S`: the production
+        /// function generic over `algebra::MeetSemilattice` that the trait
+        /// exists for. `meet` and `dominator_meet` are this at two types, and
+        /// `Ext::Dag::RenderAncestry.meet` / `Ext::Dag::Dominance.meet` register
+        /// it directly.
+        ///
+        /// The store check runs before the order is asked anything, so the
+        /// cross-store refusal is the one `ensure_same_store` words whatever
+        /// order is chosen. The answer wraps the `Option` directly: the digest
+        /// came out of the store's own walk, so the head validation `checkout`
+        /// adds for a caller-supplied digest has nothing to catch.
+        fn meet_via<S>(
+            ruby: &Ruby,
+            rb_self: Obj<Timeline>,
+            other: &Timeline,
+        ) -> Result<Obj<Timeline>, Error>
+        where
+            S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>,
+        {
+            ensure_same_store(ruby, &rb_self, other)?;
+            let store_value = rb_self.store_value(ruby);
+            let store: &Store = store_ref(ruby, &rb_self)?;
+            // Locked read in its own statement, translated on the next line --
+            // see `ancestors` for why the guard must be gone first.
+            let walked = S::meet(&store.locked(), &rb_self.head, &other.head);
+            let common = walked.map_err(|e| missing_object(ruby, e))?;
+            Ok(Timeline::wrap(ruby, common, store_value))
+        }
+
+        /// Whether this head is below `other`'s in the order `S` -- receiver
+        /// below, argument above. `ancestor_of?` and `dominates?` are this at
+        /// two types, and the `Ext::Dag` orders register it as `below?`.
+        fn below_via<S>(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error>
+        where
+            S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>,
+        {
             ensure_same_store(ruby, rb_self, other)?;
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked =
-                dag::ancestor_of(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let walked = S::below(&store.locked(), &rb_self.head, &other.head);
             walked.map_err(|e| missing_object(ruby, e))
+        }
+
+        fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
+            Self::below_via::<RenderAncestry>(ruby, rb_self, other)
         }
 
         fn meet(
@@ -1548,26 +1590,18 @@ mod ffi {
             rb_self: Obj<Timeline>,
             other: &Timeline,
         ) -> Result<Obj<Timeline>, Error> {
-            ensure_same_store(ruby, &rb_self, other)?;
-            let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(ruby, &rb_self)?;
-            let walked = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
-            let common = walked.map_err(|e| missing_object(ruby, e))?;
-            Ok(Timeline::wrap(ruby, common, store_value))
+            Self::meet_via::<RenderAncestry>(ruby, rb_self, other)
         }
 
         /// Ruby `Timeline#dominator_meet`: the deepest common dominator over
         /// the UNION graph -- render and causal edges together -- which is the
         /// latest event no in-flight branch can bypass. A DIFFERENT operator
         /// from `meet` above over a different graph, not a widened one, which
-        /// is why it reaches `graph` rather than `dag`.
+        /// is why it is `meet_via` at `Dominance` rather than `RenderAncestry`.
         ///
         /// A meet that climbs all the way to the virtual root answers the EMPTY
         /// timeline: the root is a modelling artifact that never leaves
-        /// `graph`, exactly as Ruby's `checkout(nil)` hides it. Wrapping the
-        /// `Option` directly is what `meet` does and for the same reason -- the
-        /// digest came out of the store's own walk, so the head validation
-        /// `checkout` adds for a caller-supplied digest has nothing to catch.
+        /// `graph`, exactly as Ruby's `checkout(nil)` hides it.
         ///
         /// No `dominators:` keyword. Ruby's memo hangs off a mutable
         /// collaborator the caller holds; this handle is frozen and every call
@@ -1577,15 +1611,7 @@ mod ffi {
             rb_self: Obj<Timeline>,
             other: &Timeline,
         ) -> Result<Obj<Timeline>, Error> {
-            ensure_same_store(ruby, &rb_self, other)?;
-            let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(ruby, &rb_self)?;
-            // Locked read in its own statement, translated on the next line --
-            // see `ancestors` for why the guard must be gone first.
-            let walked =
-                graph::dominator_meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
-            let common = walked.map_err(|e| missing_object(ruby, e))?;
-            Ok(Timeline::wrap(ruby, common, store_value))
+            Self::meet_via::<Dominance>(ruby, rb_self, other)
         }
 
         /// Ruby `Dominators#dominates?`, asked of the receiver: does every path
@@ -1599,11 +1625,7 @@ mod ffi {
         /// this predicate, and checking it with the weaker one passes
         /// vacuously.
         fn dominates_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
-            ensure_same_store(ruby, rb_self, other)?;
-            let store: &Store = store_ref(ruby, rb_self)?;
-            let walked =
-                graph::dominates(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
-            walked.map_err(|e| missing_object(ruby, e))
+            Self::below_via::<Dominance>(ruby, rb_self, other)
         }
 
         /// Ruby `Timeline#causal_meets`: the common causal ancestors of the two
@@ -1614,10 +1636,12 @@ mod ffi {
         /// An Array and NOT a Timeline, unlike every other meet-ish method
         /// here, because the answer's cardinality routinely exceeds one: a
         /// criss-cross fan-in leaves incomparable bounds and no greatest among
-        /// them, which is why Ruby declares this operator
-        /// `not_a_meet_semilattice` and why nothing wraps the answer in a head.
+        /// them, which is why `algebra::CausalAncestry` implements
+        /// `MaximalLowerBounds` rather than `MeetSemilattice`, and why nothing
+        /// wraps the answer in a head. `Ext::Dag::CausalAncestry.meets`
+        /// registers this same function.
         ///
-        /// The boundary is crossed ONCE. `graph::causal_meets` names no
+        /// The boundary is crossed ONCE. `CausalAncestry::meets` names no
         /// `magnus` type, so it structurally cannot speak to Ruby per digest;
         /// it answers a finished `Vec<Digest>` and only then, with the store
         /// guard already dropped, is one Array built from it -- which is also
@@ -1630,8 +1654,7 @@ mod ffi {
         ) -> Result<RArray, Error> {
             ensure_same_store(ruby, rb_self, other)?;
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked =
-                graph::causal_meets(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let walked = CausalAncestry::meets(&store.locked(), &rb_self.head, &other.head);
             let bounds = walked.map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(bounds.len());
             for digest in &bounds {
@@ -1991,6 +2014,26 @@ mod ffi {
         timeline.define_method("hash", method!(<Timeline as typed_data::Hash>::hash, 0))?;
         timeline.define_method("to_s", method!(Timeline::to_s, 0))?;
         timeline.define_method("inspect", method!(Timeline::inspect, 0))?;
+
+        // The orders themselves, named: stateless classes whose singleton
+        // methods take two `Ext::Timeline`s as elements. Each registers the
+        // same generic function its timeline binding delegates to, so the two
+        // spellings cannot come to answer differently. `CausalAncestry` gets
+        // no `meet` because it has no greatest lower bound to give.
+        let dag_orders = ext.define_module("Dag")?;
+        let render_ancestry = dag_orders.define_class("RenderAncestry", ruby.class_object())?;
+        render_ancestry
+            .define_singleton_method("meet", function!(Timeline::meet_via::<RenderAncestry>, 2))?;
+        render_ancestry.define_singleton_method(
+            "below?",
+            function!(Timeline::below_via::<RenderAncestry>, 2),
+        )?;
+        let dominance = dag_orders.define_class("Dominance", ruby.class_object())?;
+        dominance.define_singleton_method("meet", function!(Timeline::meet_via::<Dominance>, 2))?;
+        dominance
+            .define_singleton_method("below?", function!(Timeline::below_via::<Dominance>, 2))?;
+        let causal_ancestry = dag_orders.define_class("CausalAncestry", ruby.class_object())?;
+        causal_ancestry.define_singleton_method("meets", function!(Timeline::causal_meets, 2))?;
 
         Ok(())
     }
