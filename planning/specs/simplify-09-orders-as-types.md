@@ -168,7 +168,7 @@ while the sweep still expects their generators — T1 removes both together.
 
 ## Tasks
 
-### T1 — Make the render order a type and take every declaration off `Timeline`   [wave 1] [risk: high]
+### T1 — Make the render order a type and take every declaration off `Timeline`   [wave 1] [risk: high] ✅ landed `62aa555d`
 
 **Depends on:** none
 **Files:** create `lib/lain/dag.rb`, `lib/lain/dag/render_ancestry.rb`,
@@ -255,7 +255,7 @@ Scenario: a timeline no longer answers a meet of its own
   method with no `lib/` caller counts the same way. The ratchet is `<=`, so this card may not raise
   the figure. If it would, make `diverge_at` private to the module until a caller exists and say so.
 
-### T2 — The three orders as zero-sized types behind a sealed trait, and the FFI generic over them   [wave 1] [risk: medium]
+### T2 — The three orders as zero-sized types behind a sealed trait, and the FFI generic over them   [wave 1] [risk: medium] ✅ landed `98085764`
 
 **Depends on:** none
 **Files:** create `ext/lain/src/algebra.rs`, `spec/lain/rust/dag_spec.rb`; modify
@@ -349,7 +349,7 @@ hand `impl sealed::Proven` inside that file compiles, which is why AC 1 says "ou
 - The scoped `#[deny(clippy::missing_docs_in_private_items)]` goes on `mod algebra;` like
   `dag`/`digest`/`graph`; every private item in the new module needs a doc comment.
 
-### T3 — Delete the registry; a live operation's laws move to its subject, a dead operation goes   [wave 2] [risk: medium]
+### T3 — Delete the registry; a live operation's laws move to its subject, a dead operation goes   [wave 2] [risk: medium] ✅ landed `7a1d4602`
 
 **Depends on:** T1
 **Files:** delete `lib/lain/algebra.rb`, `lib/lain/algebra/` (6 files), `spec/algebra_laws_spec.rb`,
@@ -458,7 +458,7 @@ recorded in the commit message; `spec/lain/middleware_spec.rb` (AC 5),
 - `elementwise.rb:107-112`'s message, quoted in `ARCHITECTURE.md:1079`, is gone — hand T8 the
   sentence.
 
-### T4 — Retire the Ruby dominance and causal implementations; the Rust bindings' specs stand on fixtures   [wave 2] [risk: medium]
+### T4 — Retire the Ruby dominance and causal implementations; the Rust bindings' specs stand on fixtures   [wave 2] [risk: medium] ✅ landed `047c55d6`
 
 **Depends on:** T1, T2
 **Files:** modify `lib/lain/timeline.rb` (delete `#causal_meets` `:178`, `#dominator_meet`
@@ -537,7 +537,7 @@ Scenario: a Ruby timeline no longer answers dominance or causal questions
 - `.rubocop.yml:179`'s comment-density exemplar is `timeline.rb`; this card removes ~190 lines of
   it. Report the new prose:code ratio; do not edit `.rubocop.yml`.
 
-### T5 — Split `Effect::Handler`: two interpreters stay, every decorator becomes a middleware, the dead ones go   [wave 1] [risk: high]
+### T5 — Split `Effect::Handler`: two interpreters stay, every decorator becomes a middleware, the dead ones go   [wave 1] [risk: high] ✅ landed `75b26bc8`
 
 **Depends on:** none
 **Files:** modify `lib/lain/effect/handler.rb` (drop `inner:`, `handles?`/`perform` triad, `to_app`,
@@ -657,7 +657,7 @@ green, it is the secret boundary)
 - **Do not edit `spec/lain/tools/subagent_spec.rb`** (T1 has it this wave); this card's subagent
   assertions go in `subagent_gate_spec.rb`.
 
-### T6 — One builder for the tool stack, parent and child   [wave 3] [risk: high]
+### T6 — One builder for the tool stack, parent and child   [wave 3] [risk: high] ✅ landed `3ab0c175`
 
 **Depends on:** T5
 **Files:** modify `lib/lain/cli/tool_guard.rb:72-87`, `lib/lain/cli/switchboard.rb` (delete `#gate`
@@ -721,7 +721,7 @@ Scenario: a seam with no stack builder is refused
   path's gate differs from chat's on purpose, the "one builder" takes a policy argument; if by
   accident, say so — do not silently unify a security posture.
 
-### T7 — Name the context pipeline: a resolver, a flag, a journal field, inheritance at spawn and on replay   [wave 2] [risk: medium]
+### T7 — Name the context pipeline: a resolver, a flag, a journal field, inheritance at spawn and on replay   [wave 2] [risk: medium] ✅ landed `87115b97`
 
 **Depends on:** none
 **Files:** create `lib/lain/cli/context_pipeline.rb`, `spec/lain/cli/context_pipeline_spec.rb`;
@@ -951,6 +951,10 @@ Reviewed 2026-09-14 against the three plans that have not run. T9 applies these.
   stalled turn). T1 and T2 of 12 are unaffected except that any prose naming
   `Effect::Handler::Gate` names `Middleware::Gate`.
 - Re-ground before running: 12's grounding commit is `d2bb133c`, which is not an ancestor of HEAD.
+- Record the human's 2026-09-14 direction (see Execution log): asking the end user and
+  agent-to-agent communication are to be modelled as `Context::Mailbox` messages (events), and
+  `Mailbox` is today only ever `Mailbox::Null`. 12's register is the natural place to decide
+  whether its entries are mailbox messages.
 
 **`simplify-14-nvim-descope.md`.** Declined; nothing in this plan touches the review surface, the
 nvim runtime, or the rails table. `--context-pipeline` is a `chat` option and is invisible to the
@@ -992,3 +996,95 @@ After the last wave:
 - **Collisions the card lists do not name**: T5 and T7 both edit `lib/lain/cli/backend.rb`
   (`:348` and `:235`); T3 and T5 both edit `spec/lain/middleware_spec.rb`. T3 and T7 wait on T5
   for those files as well as on their stated dependencies.
+- **T1 escalation, resolved by the orchestrator.** `lib_reach` rose 76 → 79: the deleted
+  declarations were the only `lib/` mentions of `not_a_meet_semilattice`, `causal_meets` and
+  `dominator_meet`, which T3 and T4 delete. Making `diverge_at` private reaches only 78, so it was
+  not done. Accepted as transient; T3 and T4 together must land it below 76. Also found:
+  `Timeline#ancestor_of?` has no `lib/` caller at HEAD either (the card's "Reachable from" overstated
+  it); the sweep had six Timeline generator entries, not five.
+- **For T9 (simplify-13 amendment), from the Rust review.** `Ext::Timeline#diverge_at`
+  (`lib.rs`) still calls `dag::meet` directly rather than through the trait, and
+  `Ext::Dag::RenderAncestry` is a class with no `diverge_at`, while the Ruby `Dag::RenderAncestry` is
+  a module that has one. The store flip's repoint to `Ext::Dag::RenderAncestry` needs both.
+- **T2 landed** as `98085764` (`cargo test` 231). Review caught a law suite that could not see a
+  not-greatest meet or an order relating everything; one generic `below ⇔ meet == a` test now does.
+  First commit attempt died on `grep::probe_hazards::probe_regular_file_swapped_for_a_fifo_between_stat_and_open`
+  in `crates/lain-core` under load from concurrent agents (untouched by this card; 5/5 green alone).
+  Its own comment says the stat/open window is real and a hit parks a thread — a genuine race,
+  surfaced as a load-sensitive flake, not recorded in `docs/toolchain-traps.md`. Reported, not fixed.
+- **T1 landed** as `62aa555d`. `rake pspec` with T1 on T2: 17,934 examples (T2's 17,967 − 33 moved
+  or deleted), one red in `spec/lain/cli/up_spec.rb`'s real-tmux nvim-cockpit example while another
+  worktree's suite ran; 128/128 alone. Review caught that the four shared laws never check
+  *greatest*; a local greatest-lower-bound law in the render-order spec now does.
+- **Collision ruling revised at T1's landing.** T3 (with T5 on `spec/lain/middleware_spec.rb`) and
+  T7 (with T5 on `lib/lain/cli/backend.rb`) start now rather than wait: the shared hunks are disjoint
+  (Composable/Composed examples vs. T5's handler examples; `:235` vs `:348`), landing is serialized
+  through `git apply --3way`, and whichever lands second reruns its specs on the merged tree.
+- **T5 handed back** with 92 files against a card of ~30: the extra `lib/` edits are YARD links to
+  the moved classes, plus `Toolset::Unheld` / `Tool#held?` (so an unheld name is refused by name
+  rather than put to a human) and a root-qualified `::Lain::Sensitivity` in two secret middlewares.
+  `spec/lain/tools/subagent_spec.rb` needed 14 examples ported (they named `Handler::Gate`
+  constants); applied as a deliberate scope expansion once T1 had landed. The orchestrator
+  rebased the worktree onto `62aa555d` before review. New overlaps with T3 (in flight):
+  `lib/lain/toolset.rb` (tail require vs `:22,:115`), `spec/lain/toolset_spec.rb`,
+  `spec/lain/tools/parallel_commutation_spec.rb`. The integration grep `to_app` matches
+  `auto_approve`; the check needs `\bto_app\b`. `exe/lain:39`'s comment names
+  `Effect::Handler::Gate` and is fixed at landing.
+- **T5 review: REQUEST-CHANGES.** The panel's parity probe (real switchboard, guard stack, policy
+  and queue, run on both trees) found the one thing the second tool lookup had been for: resolving
+  the tool once, before the gate parks on a human, let a `/mode plan` flip during the wait end in
+  the call running; HEAD refused it. 15 of 16 scenarios were otherwise byte-identical. For T8's
+  list, beyond the three docs: `docs/concurrency.md:227-256`, `docs/toolchain-traps.md:172-173`
+  (T5 edits both).
+- **Out of scope, found by the T5 panel, reported to the human:** on HEAD and after T5 alike,
+  `write_file` to `~/.ssh/authorized_keys` is neither denied nor gated by the sensitivity table.
+- **Follow-ups recorded from the T7 panel (not this plan's):** `--resume`/`--fork` do not inherit
+  the recorded pipeline (resume inherits no launch flag today); `Context::Prune` can keep a
+  `tool_result` whose `tool_use` it cut, which the Anthropic API likely rejects;
+  `lain chat --compact-strategy typo` leaves a 19 KB session file behind.
+- **T5 landed** as `75b26bc8`; `rake pspec` on the merged tree 17,936 / 0 failures (62aa555d's
+  17,934 − 4 from `subagent_spec.rb`'s port + 6 from the fix rounds). Two fix rounds: the mode-flip
+  regression (re-lookup at the interpreter end, identity-checked), then a stand-in for an unheld
+  name swapped in after the gate. lib +589/−727, spec +1,550/−1,456. T6 cut from `75b26bc8`.
+- **T3 review: REQUEST-CHANGES.** Two law runs the sweep had went nowhere: `IntervalPartition#meet`'s
+  exhaustive check over its hardest partitions (a meet wrong on one ordered pair went red on 1 of 20
+  seeds, always at HEAD), and the battery in Summarizing's elementwise refutation. The deletion is
+  otherwise −160 examples, every one itemised. Worktree re-based onto `75b26bc8` by 3-way apply;
+  one conflict, `lib/lain/toolset.rb`, handed to the implementer.
+- **T4 landed** as `047c55d6` (17,915 on the merged tree). The orchestrator corrected `.rubocop.yml`'s
+  tree counts (26 reopening files; 50 Metrics comments across 45 files — stale since `5a5b75e0`, not
+  only by this card), `ext/lain/Cargo.toml`'s comment naming `Timeline::Tree`, and `CLAUDE.md`'s
+  exemplar figures to `timeline.rb`'s measured 0.79 prose:code, longest block 16. The commit hook
+  failed three times on load-induced flakes while review agents ran mutants (`HeadlessEditor`
+  ignores-TERM, the nvim two-approval end-to-end, the lain-core fifo probe again); green at 8 workers.
+- **T7 landed** as `87115b97` (17,954). Review follow-ups beyond the card, applied: a variance guard
+  refusing recordings rendered by different stages, and refusal of a repeated stage.
+- **T3 landed** as `7a1d4602` (17,798). Review caught two law runs that had moved nowhere
+  (partition meet's exhaustive read, Summarizing's battery). `bin/spec-census --check` is **green**
+  for the first time in this plan: assertions 184, `lib_reach` 68 against a ceiling of 76 (the
+  census suggests lowering it; no card raises or lowers a ceiling).
+- **Ledger after T1–T5, T7** (`9b2ac4e7..7a1d4602`): lib +1,024/−2,216 (−1,192), spec +3,323/−5,006
+  (−1,683), ext +583/−337 (+246); 12 lib files deleted, 8 added.
+- **Human direction, 2026-09-14, recorded mid-run (no card in this plan changes).** Asked whether the
+  catalog combinators should join the default chat pipeline the way the tool guard stack always
+  runs: no — `--context-pipeline` stays as it landed, as an override whose unset arm is the default.
+  The preferred direction is a Ruby config file, `./config/lain/config.rb`, in which a user defines
+  custom middleware and adds it to the chain for each area middleware runs in (provider HTTP calls,
+  tool calls, compaction flows) — a follow-up plan, not this one. `Recall` and `Mailbox` are also
+  unreachable from `lain chat` (only `bench/sweep.rb` builds a `Recall`; only `Mailbox::Null` is
+  ever constructed); left alone here. `Mailbox` *should* become live: asking the end user a
+  question and agent-to-agent communication are both to be modelled as mailboxes and sent messages
+  (events) — a follow-up after this plan, and relevant to `simplify-12-ask.md` (T9 notes it there).
+- **T6 review: APPROVE-WITH-FIXES.** 17/17 parity scenarios byte-identical to `7a1d4602` on the
+  implementer's probe, 28 adversarial scenarios (nested spawn, handler_union, epic's approve-all,
+  bench/improve/consolidation no-op layers, `snapshot_slot`) likewise. Accepted behaviour change: a
+  child's refused-path record reaches the session journal; before, it was pushed onto the terminal
+  channel, whose decorator returned nil for it, so it was dropped. Caught: the one builder no longer
+  guaranteed a child's stack ends in the gate (an empty builder yields an ungated child). T6 edits
+  `spec/lain/tools/subagent_spec.rb` (simplify-10 overlap; no simplify-10 work is in flight).
+- **Out of scope, the same on `7a1d4602` before T6, reported to the human:** a child's toolset is fixed at
+  spawn, so a `/mode plan` flip while a child's bash call is parked, then approved, still runs it —
+  the mode-flip refusal restored in the handler split covers the parent only.
+- **T6 landed** as `3ab0c175` (17,820). Fix round added `Middleware::Gate.closes!`: every stack
+  `ToolGuard` builds, and whatever a seam's builder hands a child, must end Sensitivity → Gate or is
+  refused before a tool runs. T8 and T9 start from `3ab0c175` plus this log.
