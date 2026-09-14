@@ -345,6 +345,35 @@ RSpec.describe Lain::Bench::CLI do
       expect(provider.requests.map(&:model).tally).to include("qwen3:0.6b" => 8)
     end
 
+    # The operator's OWN way out, a flag rather than a Ruby argument --
+    # `--cheap-model` names the sibling an ollama backend routes narrow tasks
+    # to, so a real qwen3 backend gets a routing arm without an injected
+    # `router:` of the caller's own.
+    it "routes an ollama backend's narrow tasks to its own named cheap model" do
+      cli.arms_report(fixture_path:, provider:, tools: toolless, cheap_model: "qwen3:4b",
+                      backend: backend(provider: "ollama", model: "qwen3-coder:30b"))
+      tally = provider.requests.map(&:model).tally
+
+      expect(tally.keys).to contain_exactly("qwen3-coder:30b", "qwen3:4b")
+      expect(tally.fetch("qwen3:4b")).to eq(3)
+    end
+
+    it "refuses an ollama backend naming no --cheap-model, before any arm runs" do
+      expect do
+        cli.arms_report(fixture_path:, provider:, tools: toolless,
+                        backend: backend(provider: "ollama", model: "qwen3-coder:30b"))
+      end.to raise_error(Lain::Bench::LiveArms::UnroutableBackend, /--cheap-model/)
+      expect(provider.call_count).to eq(0)
+    end
+
+    it "refuses a --cheap-model equal to --model, as running the control twice" do
+      expect do
+        cli.arms_report(fixture_path:, provider:, tools: toolless, cheap_model: "qwen3:4b",
+                        backend: backend(provider: "ollama", model: "qwen3:4b"))
+      end.to raise_error(Lain::Bench::LiveArms::UnroutableBackend)
+      expect(provider.call_count).to eq(0)
+    end
+
     # An injected price book that never reaches an arm prices every run off the
     # default table instead -- a cost column that looks valid and is not.
     it "threads an injected price book into every arm" do

@@ -631,6 +631,27 @@ RSpec.describe LainCLI do
       expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: "/tmp/explicit.sock"))
     end
   end
+
+  # `--cheap-model` names a model, not a Lain::CLI::Backend field, so it reaches
+  # `Bench::CLI#arms_report` the way `--system`/`--isolation`/`--journal` do:
+  # read literally off `options`, never through `ARMS_FLAGS`.
+  describe "bench arms --cheap-model" do
+    it "declares the flag and forwards it to arms_report literally" do
+      entry = instance_double(Lain::Bench::CLI)
+      calls = []
+      allow(Lain::Bench::CLI).to receive(:new).and_return(entry)
+      allow(entry).to receive(:arms_report) { |**kwargs|
+        calls << kwargs
+        "the report"
+      }
+
+      expect { described_class::Bench.start(%w[arms suite/tasks.yml --cheap-model qwen3:4b], debug: true) }
+        .to output("the report\n").to_stdout
+
+      expect(described_class::Bench.commands.fetch("arms").options).to have_key(:cheap_model)
+      expect(calls.last).to include(cheap_model: "qwen3:4b")
+    end
+  end
 end
 
 # The one thing about `exe/lain` that only a SUBPROCESS can say, which is why

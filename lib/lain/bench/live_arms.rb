@@ -89,12 +89,13 @@ module Lain
       # three files while longer ones name a single file.
       #
       # @param capable [String] the backend's own resolved model
+      # @param cheap [String] the model narrow tasks route to
       # @return [#call] the {Oracle::Heuristic} predicate
-      def self.default_route(capable)
+      def self.default_route(capable, cheap: CHEAP_MODEL)
         lambda do |inputs|
           files = files_named(inputs.fetch(:task))
           spread = files.size > 1
-          { "model" => spread ? capable : CHEAP_MODEL, "template" => "",
+          { "model" => spread ? capable : cheap, "template" => "",
             "reason" => "task names #{files.size} file(s), #{spread ? "more than one" : "at most one"}" }
         end
       end
@@ -105,27 +106,55 @@ module Lain
       # {DEFAULT_DECOMPOSE} is this roster's while the mechanism stays
       # {Arm::OrchestratorWorker}'s.
       #
+      # `cheap_model:` is the operator's own answer to "what is cheaper than
+      # this backend's model" -- ONE id, read literally, never a per-provider
+      # table (see {ROUTABLE_MODEL}'s comment): there is no general "a cheaper
+      # model than this one" function to write. Unset, a Claude `model` keeps
+      # {CHEAP_MODEL}; unset on anything else there is nothing to fall back to.
+      #
       # @param model [String] what the backend resolved
+      # @param cheap_model [String, nil] `--cheap-model`, read literally
       # @return [Oracle::Heuristic]
-      # @raise [UnroutableBackend] when no cheaper sibling is servable
-      def self.default_router(model)
-        refuse_unroutable!(model)
-        Oracle::Heuristic.new(definition: Oracle::Router.definition, predicate: default_route(model))
+      # @raise [UnroutableBackend] when no cheaper sibling is named or servable
+      def self.default_router(model, cheap_model: nil)
+        cheap = cheap_model || claude_default_cheap(model)
+        refuse_unroutable!(model, cheap)
+        Oracle::Heuristic.new(definition: Oracle::Router.definition, predicate: default_route(model, cheap:))
       end
 
-      # Loudly, and BEFORE any arm runs. `--provider ollama` resolves a model
-      # {CHEAP_MODEL} means nothing to, and finding that out on the fourth arm
-      # -- after three have billed against a real provider -- is the expensive
-      # way to learn it.
-      def self.refuse_unroutable!(model)
-        return if model.to_s.match?(ROUTABLE_MODEL) && model.to_s != CHEAP_MODEL
+      # {CHEAP_MODEL} is Anthropic's own, so it answers "what is cheaper than
+      # this" only for a `model` that is itself Anthropic's.
+      #
+      # @param model [String] what the backend resolved
+      # @return [String, nil] {CHEAP_MODEL}, or nil when `model` is not Claude's
+      def self.claude_default_cheap(model)
+        CHEAP_MODEL if model.to_s.match?(ROUTABLE_MODEL)
+      end
+      private_class_method :claude_default_cheap
+
+      # Loudly, and BEFORE any arm runs. An unset `--cheap-model` on a backend
+      # {CHEAP_MODEL} means nothing to, or a `--cheap-model` equal to `model`
+      # itself, both mean the fourth arm cannot be told apart from the control
+      # -- finding that out after three arms have billed against a real
+      # provider is the expensive way to learn it.
+      #
+      # @param model [String] what the backend resolved
+      # @param cheap [String, nil] the resolved cheap sibling, or nil when none
+      #   was named and none could be assumed
+      def self.refuse_unroutable!(model, cheap)
+        if cheap.nil?
+          raise UnroutableBackend,
+                "the adaptive-router arm routes narrow tasks to a cheaper model, and this run resolved " \
+                "#{model.to_s.inspect}, which is not a Claude model -- so this roster has no cheaper " \
+                "sibling to name for it. Give `bench arms` an Anthropic --model, or a --cheap-model " \
+                "naming a model this backend can serve"
+        end
+
+        return unless cheap == model.to_s
 
         raise UnroutableBackend,
-              "the adaptive-router arm routes narrow tasks to #{CHEAP_MODEL}, and this run resolved " \
-              "#{model.to_s.inspect}, which it is no cheaper than -- so the fourth arm would either ask " \
-              "a provider for a model it does not serve, or run the control twice under two names. Give " \
-              "`bench arms` an Anthropic --model, or pass a `router:` of your own to " \
-              "Bench::CLI#arms_report to route this backend's own models"
+              "the adaptive-router arm would send both branches to #{model.to_s.inspect}, running the " \
+              "control twice under two names. Name a --cheap-model different from --model"
       end
       private_class_method :refuse_unroutable!
 
@@ -198,14 +227,18 @@ module Lain
       #   moves all four arms; without it the fourth would spend under an id
       #   nobody asked for while the report header named this one.
       # @param router [#ask, #definition] the tier {Arm::AdaptiveRouter} asks
-      #   which model each child runs under; built from `model` when absent. The
-      #   arm takes its `definition:` OFF this object rather than defaulting its
-      #   own, so the journaled `oracle_digest` names the oracle that answered.
+      #   which model each child runs under; built from `model` (and
+      #   `cheap_model`) when absent. The arm takes its `definition:` OFF this
+      #   object rather than defaulting its own, so the journaled
+      #   `oracle_digest` names the oracle that answered.
+      # @param cheap_model [String, nil] `--cheap-model`, forwarded to
+      #   {.default_router} when `router` is absent; ignored when `router` is
+      #   given, since a caller bringing its own tier answers this question itself.
       # @return [Array<Lain::Arm>] single-thread control first
       # @raise [UnroutableBackend] when no `router` is given and `model` has no
-      #   cheaper sibling this roster can name
+      #   cheaper sibling named or servable
       def self.build(price_book: PriceBook.default, decompose: DEFAULT_DECOMPOSE,
-                     model: Provider::Anthropic::DEFAULT_MODEL, router: nil)
+                     model: Provider::Anthropic::DEFAULT_MODEL, router: nil, cheap_model: nil)
         # One instrument, so all four arms report wall-time off the same clock
         # and dollars off the same book -- the comparison is only a comparison
         # if the measuring is shared.
@@ -213,7 +246,8 @@ module Lain
         [Arm::SingleThread.new(name: "single-thread", instrument:),
          Arm::OrchestratorWorker.new(name: "orchestrator-worker", instrument:, decompose:),
          Arm::DualLedger.new(name: "dual-ledger", instrument:),
-         Arm::AdaptiveRouter.new(name: "adaptive-router", router: router || default_router(model), instrument:)]
+         Arm::AdaptiveRouter.new(name: "adaptive-router", instrument:,
+                                 router: router || default_router(model, cheap_model:))]
       end
     end
   end

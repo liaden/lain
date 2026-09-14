@@ -163,9 +163,11 @@ RSpec.describe Lain::Bench::LiveArms do
           .to raise_error(described_class::UnroutableBackend, /qwen3:4b/)
       end
 
+      # `--cheap-model` is the operator's way out now, not a Ruby-only `router:`
+      # kwarg nobody can spell on a command line.
       it "names both ways out of that refusal" do
         expect { described_class.build(model: "qwen3:4b") }
-          .to raise_error(described_class::UnroutableBackend, /--model.*router:/m)
+          .to raise_error(described_class::UnroutableBackend, /--model.*--cheap-model/m)
       end
 
       # The other collapse, and it is not a provider problem: routing the cheap
@@ -181,6 +183,40 @@ RSpec.describe Lain::Bench::LiveArms do
                                              predicate: ->(*) { { "model" => "qwen3:0.6b", "template" => "" } })
 
         expect(described_class.build(model: "qwen3:4b", router:).map(&:name)).to include("adaptive-router")
+      end
+    end
+
+    # `--cheap-model` names the sibling literally, so a backend the built-in
+    # constant means nothing to still gets a routing arm.
+    describe "a named --cheap-model" do
+      def routed(model, task, cheap_model:)
+        described_class.default_router(model, cheap_model:).ask(task:).await.model
+      end
+
+      it "sends a single-file task to the named cheap model" do
+        expect(routed("qwen3-coder:30b", "Fix the off-by-one in lib/report.rb.", cheap_model: "qwen3:4b"))
+          .to eq("qwen3:4b")
+      end
+
+      it "leaves a task spread across files on the capable model" do
+        expect(routed("qwen3-coder:30b", "Rename the method in lib/a.rb, lib/b.rb and lib/c.rb.",
+                      cheap_model: "qwen3:4b"))
+          .to eq("qwen3-coder:30b")
+      end
+
+      it "refuses naming --cheap-model when the backend is not Claude and none was given" do
+        expect { described_class.default_router("qwen3-coder:30b") }
+          .to raise_error(described_class::UnroutableBackend, /--cheap-model/)
+      end
+
+      it "refuses a --cheap-model equal to the capable model, as running the control twice" do
+        expect { described_class.default_router("qwen3:4b", cheap_model: "qwen3:4b") }
+          .to raise_error(described_class::UnroutableBackend, /control twice/)
+      end
+
+      it "keeps the built-in cheap model on a Claude backend when --cheap-model is unset" do
+        expect(described_class.default_router("claude-sonnet-4").ask(task: "Fix lib/x.rb.").await.model)
+          .to eq(described_class::CHEAP_MODEL)
       end
     end
   end

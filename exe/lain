@@ -587,6 +587,15 @@ class LainCLI < Thor
                                  "unset, since an untaught arm scores near zero"
     method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
     method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
+    # Read LITERALLY, like --system/--isolation/--journal below: it names a
+    # model id, not a Lain::CLI::Backend field, so ARMS_FLAGS cannot carry it.
+    # Unset on a Claude --model the router keeps its own claude-haiku-4-5;
+    # unset on any other backend, or equal to --model, the roster refuses
+    # rather than guessing (LiveArms.refuse_unroutable!).
+    method_option :cheap_model, type: :string,
+                                desc: "Model id the routing arm sends single-file tasks to. Required " \
+                                      "for any --provider but Anthropic's, whose own claude-haiku-4-5 " \
+                                      "default answers when this is unset; refused when equal to --model"
     # NO Thor `default:`, deliberately, and NOT chat's declaration copied over
     # (which sets `default: IsolationBackend::DEFAULT`). A default materializes
     # the key, so `options[:isolation]` would never be nil -- and unset is not
@@ -608,12 +617,13 @@ class LainCLI < Thor
     # Flag name → Lain::CLI::Backend option, RECORD_FLAGS' shape: one declarative
     # map, so adding a sampler flag is one line here and one method_option above.
     # Bench::CLI#arms_report takes the BACKEND these build, not the flags -- the
-    # chat path's single-argument shape -- so the three that are NOT the backend's
+    # chat path's single-argument shape -- so the four that are NOT the backend's
     # are read literally below: `--system` (an override Backend#context takes
     # rather than an option it reads), `--isolation` (a name for a different
-    # resolver), and `--journal` (a PATH here, an open Journal there; a String
+    # resolver), `--journal` (a PATH here, an open Journal there; a String
     # answers `<<` by appending to itself, so forwarding one verbatim would
-    # quietly collect the telemetry in a local variable).
+    # quietly collect the telemetry in a local variable), and `--cheap-model`
+    # (a model id LiveArms.build routes to, not a field Backend resolves).
     #
     # `decompose:` and `price_book:` are absent for their own reason -- a lambda
     # and a price table are injection seams for specs, not things an argv spells.
@@ -630,7 +640,8 @@ class LainCLI < Thor
       render do
         backend = Lain::CLI::Backend.new(ARMS_FLAGS.to_h { |flag, key| [key, options[flag]] })
         Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend:, journal:,
-                                         system: options[:system], isolation: options[:isolation])
+                                         system: options[:system], isolation: options[:isolation],
+                                         cheap_model: options[:cheap_model])
       end
     ensure
       # Closing is what discards a journal this run created and never wrote to,

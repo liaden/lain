@@ -185,6 +185,10 @@ module Lain
       #   the model `backend` resolved, which is what keeps that arm on the
       #   operator's `--model`. A caller on a backend the default cannot route
       #   ({LiveArms::UnroutableBackend}) passes its own here.
+      # @param cheap_model [String, nil] `--cheap-model`, read literally and
+      #   forwarded to {LiveArms.build} when `router` is absent; the model id
+      #   the routing arm sends single-file tasks to. Ignored when `router` is
+      #   given.
       # @param price_book [Lain::PriceBook] prices every arm's journal
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}; ITS
       #   signature owns those defaults, including the unset `system:` that
@@ -195,12 +199,12 @@ module Lain
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt
       # @raise [LiveArms::UnroutableBackend] when the resolved model has no
-      #   cheaper sibling the default router can name and no `router` was given
+      #   cheaper sibling named or servable and no `router` was given
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
-                      decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil,
+                      decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil, cheap_model: nil,
                       price_book: PriceBook.default, **spawn_options)
         refuse_unisolated_writes!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: isolating_flag)
         suite = ArmTasks.new(fixture_path:)
@@ -210,7 +214,7 @@ module Lain
         # arm's capable branch is that model, so all four arms run what the
         # operator asked for and only the cheap branch departs from it.
         spawn_seam = SpawnSeam.new(backend:, **spawn_options)
-        arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:),
+        arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
                    grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
       end
