@@ -74,7 +74,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
         actor.settle
 
         expect(actor.timeline).not_to be_empty
-        expect(actor.timeline.meet(parent_timeline)).to be_empty
+        expect(Lain::Dag::RenderAncestry.meet(actor.timeline, parent_timeline)).to be_empty
         saved = actor.timeline
 
         parent = parent_agent
@@ -82,7 +82,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
         parent.ask("turn two")
 
         expect(actor.timeline).to eq(saved)
-        expect(actor.timeline.meet(parent.timeline)).to be_empty
+        expect(Lain::Dag::RenderAncestry.meet(actor.timeline, parent.timeline)).to be_empty
         actor.stop
       end
     end

@@ -68,6 +68,7 @@ require_relative "lain/store"
 require_relative "lain/event"
 require_relative "lain/run_clock"
 require_relative "lain/status_feed"
+require_relative "lain/dag"
 require_relative "lain/timeline"
 require_relative "lain/session_record"
 require_relative "lain/agent"
@@ -139,24 +140,7 @@ end
 # orchestration tactics are swappable, observable, and comparable.
 module Lain
   # The compiled extension's own namespace, defined from Rust by magnus.
-  module Ext
-    # Mirrors lib/lain/timeline.rb's three algebra claims and must not drift
-    # from them. Declared here rather than in `lib/` because the class is the
-    # extension's: this is the only point after it loads and before the seal.
-    class Timeline
-      include Algebra::MeetSemilattice
-
-      meet_semilattice on: :meet, bottom: "the empty Timeline, per store"
-      meet_semilattice on: :dominator_meet,
-                       bottom: "the empty Timeline, per store (the virtual root, unnameable)"
-
-      not_a_meet_semilattice on: :causal_meets,
-                             because: "the causal ancestry order has no unique greatest lower bound -- a " \
-                                      "criss-cross fan-in leaves incomparable maximal common ancestors, so " \
-                                      "this answers with the SET of them (git merge-base's shape) and a " \
-                                      "set-valued operator makes no semilattice claim"
-    end
-  end
+  module Ext; end
 end
 
 # Every claim lain makes about its own algebra has now been filed by the class

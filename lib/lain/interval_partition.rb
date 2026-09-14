@@ -242,8 +242,8 @@ module Lain
     #
     # It is the GREATEST lower bound under the refinement order {#refines?} names,
     # which is why it is declared a semilattice at the foot of this class. Its
-    # partiality -- two different spans refuse -- is {Timeline#meet}'s with span
-    # substituted for store.
+    # partiality -- two different spans refuse -- is {Dag::RenderAncestry.meet}'s
+    # with span substituted for store.
     def meet(other)
       refuse_mismatched(other)
       IntervalPartition.new(owner: "#{owner} meet #{other.owner}", span:, ranges: intersections(other),

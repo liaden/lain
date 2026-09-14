@@ -254,8 +254,8 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
     tool.call({ "prompt" => "two" }, invocation)
     second_child = record.child(store)
 
-    expect(first_child.meet(parent)).to be_empty
-    expect(first_child.meet(second_child)).to be_empty
+    expect(Lain::Dag::RenderAncestry.meet(first_child, parent)).to be_empty
+    expect(Lain::Dag::RenderAncestry.meet(first_child, second_child)).to be_empty
     expect(first_child.to_a.first.content.first["text"]).to eq("one")
     expect(second_child.to_a.first.content.first["text"]).to eq("two")
   end

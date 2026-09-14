@@ -7,11 +7,8 @@ module Lain
   # two Timelines that share a head produces two branches whose common prefix is
   # stored exactly once. Time-travel (#rewind, #checkout) is pointer movement.
   #
-  # Under the ancestry relation the Timelines over one Store form a meet
-  # semilattice: +a <= b+ when a is an ancestor of b, +#meet+ is the greatest
-  # common ancestor, and the empty Timeline is the bottom element (which is what
-  # makes #meet total even for turns that share no history). #meet is therefore
-  # idempotent, commutative, and associative -- laws the specs assert directly.
+  # A Timeline is an element of the DAG's render order, not the owner of it:
+  # the meet lives on {Dag::RenderAncestry}, and #ancestor_of? is its predicate.
   #
   # Named branch refs are deliberately absent for now; a branch here is just a
   # Timeline value that somebody is holding.
@@ -20,12 +17,7 @@ module Lain
   # receiver that owns its elements, where a Timeline is a movable pointer into
   # a Store it does not own and that other Timelines share.
   class Timeline
-    # Granted here, claimed per operation below: three meet-ish operators and
-    # only two of them are semilattices, so a bare `include` naming nothing
-    # would be a lie about #causal_meets.
-    include Algebra::MeetSemilattice
-
-    class CrossStore < Error; end
+    CrossStore = Dag::CrossStore
 
     attr_reader :head_digest, :store
 
@@ -133,36 +125,10 @@ module Lain
     end
 
     def ancestor_of?(other)
-      same_store!(other)
+      Dag.same_store!(self, other)
       return true if empty?
 
       other.include?(head_digest)
-    end
-
-    # Greatest common ancestor. Total: Timelines sharing no history meet at the
-    # empty Timeline, the bottom element.
-    def meet(other)
-      same_store!(other)
-      mine = ancestor_digests.to_h { |digest| [digest, true] }
-      # `mine` has to see the whole of self's history to answer "is this
-      # digest in my history" at all -- that side cannot stop early. `other`
-      # can: walking Event objects (not `ancestor_digests`, which maps the
-      # whole Array first) lets `#find` stop the instant it lands on shared
-      # history, instead of continuing on toward other's own root.
-      common = other.ancestors.find { |turn| mine.key?(turn.digest) }
-      checkout(common&.digest)
-    end
-    alias & meet
-
-    # `&` is the same method, so the claim covers both spellings; a second
-    # entry for the alias would only make one operation look like two.
-    meet_semilattice on: :meet, bottom: "the empty Timeline, per store"
-
-    # The event where two branches diverged, or nil if they share no history.
-    # Walking two chains and comparing digests is all that cache-break
-    # localization needs.
-    def diverge_at(other)
-      meet(other).head
     end
 
     # Pinned 2026-07-17: the causal ancestry order -- reachability over
@@ -172,21 +138,13 @@ module Lain
     # takes git merge-base's shape: the SET of maximal lower bounds (the common
     # causal ancestors that are not ancestors of another common one), as frozen
     # digests in digest order -- the one canonical order incomparable elements
-    # admit. A pure projection over the Store; #meet/#diverge_at stay
+    # admit. A pure projection over the Store; {Dag::RenderAncestry} stays
     # render-edge and untouched, because cache-break localization needs answers
     # that are stable as causal edges land.
     def causal_meets(other)
-      same_store!(other)
+      Dag.same_store!(self, other)
       CausalAncestry.new(store).meets(head_digest, other.head_digest)
     end
-
-    # The paragraph above, as a first-class negative rather than a comment that
-    # rots: this is the one meet-ish operator here that is NOT a semilattice.
-    not_a_meet_semilattice on: :causal_meets,
-                           because: "the causal ancestry order has no unique greatest lower bound -- a " \
-                                    "criss-cross fan-in leaves incomparable maximal common ancestors, so " \
-                                    "this answers with the SET of them (git merge-base's shape) and a " \
-                                    "set-valued operator makes no semilattice claim"
 
     # Pinned 2026-07-17: the checkpoint primitive. The deepest common
     # dominator of the two heads over the UNION graph -- render and causal
@@ -197,7 +155,8 @@ module Lain
     # Unlike #causal_meets this IS a true meet-semilattice (a node's
     # dominators are totally ordered, so the deepest common dominator is the
     # unique nearest common ancestor on the dominator tree); its laws run
-    # under the same shared group as the render meet, dominance injected.
+    # under the same shared group as {Dag::RenderAncestry.meet}, dominance
+    # injected.
     #
     # The CRDT causal-stability caveat, inherent and documented rather than a
     # bug: one quiet participant stalls the frontier. An open subagent branch
@@ -208,21 +167,15 @@ module Lain
     # Pure and computed on demand. Timelines are frozen, so the memo lives on
     # the injected {Dominators}, keyed by head-digest pair -- sound because
     # the arguments anchor the closure and events are immutable, so a pair's
-    # union graph can never change. Callers wanting cross-call memoization
-    # hold one Dominators and pass it; the default answers one-shot. An
+    # union graph can never change. The default mints a fresh Dominators per
+    # call, so every invocation rebuilds the whole union-graph dominator tree;
+    # a caller asking more than once should hold ONE and pass it. An
     # all-the-way-up answer is the empty Timeline: the virtual root is a
     # modeling artifact and never leaves the projection.
     def dominator_meet(other, dominators: Dominators.new(store))
-      same_store!(other)
+      Dag.same_store!(self, other)
       checkout(dominators.meet(head_digest, other.head_digest))
     end
-
-    # The second semilattice, under dominance rather than render ancestry --
-    # which is why the claim is per operation and not per class. A walk driven
-    # off this entry should inject ONE Dominators across the run, as the law
-    # group does: the default mints a fresh one per call, so every invocation
-    # rebuilds the whole union-graph dominator tree.
-    meet_semilattice on: :dominator_meet, bottom: "the empty Timeline, per store (the virtual root, unnameable)"
 
     # Pinned: the chain's identity, by the same derivation
     # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --
@@ -256,12 +209,6 @@ module Lain
     # NEXT turn" is a different intent from "this chain's identity," even
     # though {Event::ChainWriter.correlation_of} answers both the same way.
     def next_correlation = correlation
-
-    def same_store!(other)
-      return if store.equal?(other.store)
-
-      raise CrossStore, "cannot compare Timelines backed by different stores"
-    end
   end
 
   class Timeline

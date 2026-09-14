@@ -153,89 +153,24 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  describe "the meet semilattice under ancestry" do
-    let(:base) { say(say(timeline, "a"), "b", role: :assistant) }
-    let(:left) { say(say(base, "l1"), "l2", role: :assistant) }
-    let(:right) { say(base, "r1") }
-
-    it "finds the greatest common ancestor" do
-      expect(left.meet(right)).to eq(base)
-    end
-
-    it "exposes the divergence turn, which is what cache-break localization needs" do
-      expect(left.diverge_at(right)).to eq(base.head)
-    end
-
-    it "aliases #& to #meet" do
-      expect(left & right).to eq(base)
-    end
-
-    it "meets to the empty timeline when two roots share no history" do
-      other_root = say(described_class.empty(store:), "unrelated")
-      expect(left.meet(other_root)).to be_empty
-    end
-
-    it "returns nil from #diverge_at when there is no shared history" do
-      other_root = say(described_class.empty(store:), "unrelated")
-      expect(left.diverge_at(other_root)).to be_nil
-    end
-
-    it "refuses to compare across stores" do
-      stranger = say(described_class.empty(store: Lain::Store.new), "x")
-      expect { left.meet(stranger) }.to raise_error(described_class::CrossStore)
-    end
-
-    describe "the laws" do
-      # Build a random render forest, then fan-in events whose causal parents
-      # cross-link the chains, and assert the meet laws on randomly chosen
-      # members. To be precise about what this guards: #meet walks the render
-      # edge only, and the fan-in members sit as leaves ON that render tree, so
-      # no meet here ever traverses a causal edge -- this population does not
-      # (cannot) exercise meet "over a DAG". What it pins is that ADDING causal
-      # cross-links to the Store leaves the render-tree meet unperturbed.
-      # Randomized because a hand-picked shape is exactly where an
-      # associativity bug hides.
-      let(:population) do
-        timelines = [say(timeline, "root")]
-        30.times { |i| timelines << say(timelines.sample, "n#{i}") }
-        timelines + Array.new(10) { fan_in(timelines.sample, timelines.sample(2)) }
-      end
-
-      include_examples "a meet semilattice under ancestry", population: -> { population }
-    end
-
-    # #meet builds `mine` (self's ancestry, a Hash) eagerly -- that side
-    # has to see everything to answer "is this digest in my history" at all,
-    # so it is not what this optimisation targets. The OTHER side is a #find over
-    # `other`'s ancestors, and #find can stop the moment it lands on a digest
-    # already in `mine` -- it should never keep walking toward other's own
-    # root once the shared history is reached.
-    describe "cost: the find-side stops at the shared history" do
-      it "walks past the answer only on the eager side, never on the find-side" do
-        base_length = 60
-        base = (1...base_length).inject(say(timeline, "0")) { |acc, i| say(acc, i.to_s) }
-        mine = say(base, "mine")
-        other = say(base, "other")
-
-        tally = count_store_fetches(store) { mine.meet(other) }
-
-        # mine's side walks its own whole chain (base_length + its own commit)
-        # to build the membership hash; the find-side sees only other's own
-        # head, then the shared base head where the two chains meet -- two
-        # fetches, never another base_length worth.
-        expect(tally.count).to eq(base_length + 1 + 2)
-      end
+  # A Timeline is an element of the DAG's render order, not its owner: the
+  # meet and the divergence are {Lain::Dag::RenderAncestry}'s to answer.
+  describe "the render meet" do
+    it "is not a message a timeline answers" do
+      expect(timeline).not_to respond_to(:meet)
+      expect(timeline).not_to respond_to(:&)
+      expect(timeline).not_to respond_to(:diverge_at)
     end
   end
 
   # A pinned ruling (Joel, 2026-07-17): three operators, each honest about its
-  # question. #meet/#diverge_at stay render-edge and byte-unchanged (cache-break
-  # localization); #causal_meets is the SET of maximal lower bounds of the
-  # causal ancestry order -- reachability over BOTH parent edges, git's "all
-  # parents" -- in git merge-base's shape, plural under criss-cross. It is
-  # deliberately NOT under the MeetSemilattice law group: a set-valued operator
-  # makes no semilattice claim (that is dominator_meet's job, a different
-  # operator).
+  # question. {Lain::Dag::RenderAncestry} stays render-edge and byte-unchanged
+  # (cache-break localization); #causal_meets is the SET of maximal lower
+  # bounds of the causal ancestry order -- reachability over BOTH parent edges,
+  # git's "all parents" -- in git merge-base's shape, plural under
+  # criss-cross. It is deliberately NOT under the MeetSemilattice law group: a
+  # set-valued operator makes no semilattice claim (that is dominator_meet's
+  # job, a different operator).
   describe "#causal_meets" do
     let(:base) { say(say(timeline, "a"), "b", role: :assistant) }
     let(:left) { say(say(base, "l1"), "l2", role: :assistant) }
@@ -253,7 +188,7 @@ RSpec.describe Lain::Timeline do
       # right's head IS a causal ancestor of the synthesis (via the fold), so
       # the meet set reaches it -- while the render meet still stops at base.
       expect(synthesis.causal_meets(right)).to eq([right.head_digest])
-      expect(synthesis.meet(right)).to eq(base)
+      expect(Lain::Dag::RenderAncestry.meet(synthesis, right)).to eq(base)
     end
 
     it "returns both maximal ancestors of a criss-cross, never an arbitrary singleton" do
@@ -519,50 +454,6 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # The ruling above, said in `lib/` per operation rather than only in
-  # the shapes of the groups that run. Three meet-ish operators and only two
-  # semilattices is exactly why the claim is per-operation: `include
-  # MeetSemilattice` on the class, naming nothing, would be a lie about
-  # #causal_meets.
-  describe "the declared algebra" do
-    let(:claims) { Lain::Algebra.registry.about(described_class) }
-
-    let(:declarations) { claims.grep(Lain::Algebra::Declaration) }
-
-    it "declares both the render meet and the dominator meet -- the two the law group above runs" do
-      expect(declarations.map { |claim| [claim.structure, claim.operation] })
-        .to contain_exactly(%i[meet_semilattice meet], %i[meet_semilattice dominator_meet])
-    end
-
-    # Prose, not a value: Timeline.empty mints a fresh Store per call, so a
-    # stored bottom would raise CrossStore against every real operand.
-    it "names each bottom in prose" do
-      expect(declarations.map(&:bottom))
-        .to contain_exactly(a_string_including("empty Timeline"), a_string_including("empty Timeline"))
-    end
-
-    it "refutes the semilattice on #causal_meets, naming the criss-cross fan-in" do
-      refutation = claims.grep(Lain::Algebra::Refutation).find { |claim| claim.operation == :causal_meets }
-      expect([refutation.structure, refutation.reason]).to match([:meet_semilattice, /criss-cross/])
-    end
-  end
-
-  # #meet and #diverge_at walk the render edge only; causal edges landing in
-  # the Store must not perturb them. On single-parent render chains they return
-  # exactly what they returned before causal edges existed -- the ruling's
-  # premise, pinned as a strict regression.
-  describe "the render meet under causal-edge insertion" do
-    let(:base) { say(say(timeline, "a"), "b", role: :assistant) }
-    let(:left) { say(say(base, "l1"), "l2", role: :assistant) }
-    let(:right) { say(base, "r1") }
-
-    it "leaves #meet and #diverge_at exactly as before" do
-      fan_in(left, [right]) # a causal edge now exists in the store
-      expect(left.meet(right)).to eq(base)
-      expect(left.diverge_at(right)).to eq(base.head)
-    end
-  end
-
   describe "#ancestor_of?" do
     let(:base) { say(timeline, "a") }
     let(:child) { say(base, "b", role: :assistant) }
@@ -708,7 +599,7 @@ RSpec.describe Lain::Timeline do
     end
 
     it "shares no prompt history with the parent" do
-      expect(child.meet(parent)).to be_empty
+      expect(Lain::Dag::RenderAncestry.meet(child, parent)).to be_empty
     end
 
     it "keeps causal lineage recoverable from meta" do

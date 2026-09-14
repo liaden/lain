@@ -10,32 +10,14 @@
 # and shipping it would put the means of checking a claim inside the thing
 # being checked.
 module AlgebraGenerators
-  # Memoized, so the populations below are built ONCE for the whole sweep. That
-  # is not tidiness: two Timelines from different `Timeline.empty` calls raise
-  # CrossStore against each other, and {Lain::Timeline::Dominators} carries the
-  # memo that keeps the dominator laws from rebuilding a union-graph dominator
-  # tree per invocation.
+  # Memoized, so the populations below are built ONCE for the whole sweep.
   def self.registered
     @registered ||= {
       [Lain::Context::Combinator, :>>] => Combinators.composition,
       [Lain::Usage, :+] => Usages.addition,
-      [Lain::Timeline, :meet] => Timelines.render_meet(Lain::Timeline.empty),
-      [Lain::Timeline, :dominator_meet] => Timelines.dominator_meet(Lain::Timeline.empty),
-      [Lain::Timeline, :causal_meets] => Timelines.causal_meets(Lain::Timeline.empty),
       [Lain::Context::DedupeToolCalls, :call] => Spans.dedupe,
       [Lain::Context::PurgeFailedInputs, :call] => Spans.purge
-    }.merge(strategy_claims, middleware_claims, toolset_claims, partition_claims, ext_timeline_claims).freeze
-  end
-
-  # The same three claims against the Rust-backed Timeline, which answers the
-  # same duck -- so the generators take the empty Timeline to grow from and one
-  # population builder and one witness serve both ports. Only the dominator
-  # knobs differ, and that difference is a shape of the FFI surface rather than
-  # of the structure; {Timelines.ext_dominator_meet} says how.
-  def self.ext_timeline_claims
-    { [Lain::Ext::Timeline, :meet] => Timelines.render_meet(Lain::Ext::Timeline.empty),
-      [Lain::Ext::Timeline, :dominator_meet] => Timelines.ext_dominator_meet(Lain::Ext::Timeline.empty),
-      [Lain::Ext::Timeline, :causal_meets] => Timelines.causal_meets(Lain::Ext::Timeline.empty) }
+    }.merge(strategy_claims, middleware_claims, toolset_claims, partition_claims).freeze
   end
 
   # {Lain::IntervalPartition}'s refinement meet, kept apart from `registered`
@@ -168,98 +150,6 @@ module AlgebraGenerators
     def usage
       Lain::Usage.new(input_tokens: rand(0..5000), output_tokens: rand(0..2000),
                       cache_creation_input_tokens: rand(0..3000), cache_read_input_tokens: rand(0..9000))
-    end
-  end
-
-  module Timelines
-    module_function
-
-    def say(timeline, body, causal: [])
-      timeline.commit(role: :user, content: [{ "type" => "text", "text" => body }], causal_parents: causal)
-    end
-
-    # A render forest with causal cross-links added, the shape
-    # spec/lain/timeline_spec.rb grows for this same group: `#meet` walks the
-    # render edge only, and the fan-ins sit as leaves ON that tree, so what
-    # this pins is that causal edges leave the render meet unperturbed.
-    def render_meet(empty)
-      forest = MeetSemilatticePopulations.grow([say(empty, "root")], 30, "n")
-      10.times { |i| forest << MeetSemilatticePopulations.fan_in(forest.sample(3), "f#{i}") }
-      { population: -> { forest } }
-    end
-
-    # ONE Dominators across the whole run, as spec/lain/timeline_spec.rb does:
-    # `#dominator_meet`'s default argument mints a fresh one per call, which
-    # rebuilds the entire union-graph dominator tree every invocation. The
-    # order predicate is dominance, which the group's default render-ancestry
-    # predicate is strictly weaker than.
-    def dominator_meet(empty)
-      forest = MeetSemilatticePopulations.union_graph(empty)
-      dominators = Lain::Timeline::Dominators.new(empty.store)
-      { population: -> { forest },
-        meet: ->(a, b) { a.dominator_meet(b, dominators:) },
-        ancestor_of: ->(m, a) { dominators.dominates?(m.head_digest, a.head_digest) } }
-    end
-
-    # The dominator meet across the FFI boundary, held to the same laws over the
-    # same population. Two knobs move, and both are shapes of that surface
-    # rather than of the structure: every call across the boundary is one-shot,
-    # so there is no Dominators to thread, and the order predicate is asked of
-    # the timelines rather than of their digests.
-    def ext_dominator_meet(empty)
-      forest = MeetSemilatticePopulations.union_graph(empty)
-      { population: -> { forest },
-        meet: ->(a, b) { a.dominator_meet(b) },
-        ancestor_of: ->(m, a) { m.dominates?(a) } }
-    end
-
-    # The refutation's witness, and the single-valued READING that makes it a
-    # law failure rather than a type error.
-    #
-    # `#causal_meets` answers a SET, so asking it the semilattice laws bare
-    # kills associativity with a NoMethodError on Array -- an error, which says
-    # nothing about associativity. It sorts its answer, so it designates
-    # exactly two single-valued readings of itself, `.first` (== min) and
-    # `.last` (== max), and the witness below fails associativity under BOTH.
-    # The refutation is therefore not co-constructed against the reading the
-    # battery happens to use: a THREE-way criss-cross leaves three incomparable
-    # maximal lower bounds, and a third element that is neither the least nor
-    # the greatest of them reassociates differently whichever end a reading
-    # picks. (A two-way criss-cross does NOT have that property -- there `.last`
-    # holds all four laws -- which is why the witness is three-way.)
-    #
-    # Why a failing associativity refutes the structure at all: had the causal
-    # order a unique greatest lower bound, the derived single-valued function
-    # WOULD be the meet, and a meet is associative. `exhibits` then states the
-    # registry's recorded reason head-on -- the answer's cardinality exceeds
-    # one, so there is no greatest among them to derive.
-    def causal_meets(empty)
-      x, y, mid = criss_cross(empty)
-      { population: -> { [x, y, mid] },
-        meet: ->(a, b) { a.checkout(a.causal_meets(b).first) },
-        ancestor_of: causally_below(empty.store),
-        refutes: "is associative",
-        exhibits: { "answers more than one maximal lower bound, so there is no greatest one" =>
-                      -> { x.causal_meets(y).size > 1 } } }
-    end
-
-    # Two tips that each render off one branch and causally fold the other two,
-    # plus the branch point that is neither the least nor the greatest of the
-    # three by digest -- the one NO reading of the set picks, which is what
-    # makes reassociation disagree with itself under either.
-    def criss_cross(empty)
-      root = say(empty, "root")
-      branches = %w[a b c].map { |body| say(root, body) }
-      tips = branches.first(2).map { |from| say(from, "tip", causal: (branches - [from]).map(&:head_digest)) }
-      tips + [branches.sort_by(&:head_digest)[1]]
-    end
-
-    # The order `#causal_meets` is a meet OF -- reachability over both parent
-    # edges. The group's default `#ancestor_of?` walks render edges only and
-    # would be answering about a different order entirely.
-    def causally_below(store)
-      ancestry = Lain::Timeline::CausalAncestry.new(store)
-      ->(m, a) { m.head_digest.nil? || ancestry.closure([a.head_digest]).key?(m.head_digest) }
     end
   end
 

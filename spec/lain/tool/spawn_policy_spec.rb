@@ -38,7 +38,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
         base = strategy.base_timeline(parent:, store:)
         expect(base).to be_empty
         expect(base.store).to be(store)
-        expect(base.meet(parent)).to be_empty
+        expect(Lain::Dag::RenderAncestry.meet(base, parent)).to be_empty
       end
 
       it "copies nothing into the Store (an empty base commits no turn)" do
@@ -105,7 +105,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
         base = strategy.base_timeline(parent:, store:)
         expect(base).to be_empty
         expect(base.store).to be(store)
-        expect(base.meet(parent)).to be_empty
+        expect(Lain::Dag::RenderAncestry.meet(base, parent)).to be_empty
       end
 
       it "copies nothing into the Store" do
