@@ -56,13 +56,11 @@ module Lain
     # role tail unmarked after the breakpoint -- REPLACING the factory's own
     # system, never appending: the bulk already IS `slots.render("system")`, so
     # appending to a factory whose system is that same render would emit the
-    # bulk twice. Model, max_tokens, stream and `extra` ride through unchanged.
+    # bulk twice. Everything else -- the render pipeline included -- rides
+    # through unchanged.
     def child_context(context, slots:)
       bulk, tail = prelude_segments(slots:)
-      Context.new(
-        model: context.model, max_tokens: context.max_tokens, stream: context.stream, extra: context.extra,
-        system: [{ "type" => "text", "text" => bulk, "cache" => true }, { "type" => "text", "text" => tail }]
-      )
+      context.with_system([{ "type" => "text", "text" => bulk, "cache" => true }, { "type" => "text", "text" => tail }])
     end
   end
 

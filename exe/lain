@@ -797,6 +797,7 @@ class LainCLI < Thor
     def self.declare(thor)
       history(thor)
       strategy(thor)
+      pipeline(thor)
       summarizer(thor)
     end
 
@@ -834,6 +835,22 @@ class LainCLI < Thor
                                             desc: "How a compacted span collapses " \
                                                   "(#{Lain::CLI::CompactionStrategy::STRATEGIES.join(", ")}; " \
                                                   "unset keeps the eager tool-result tier)"
+    end
+
+    # Beside `--compact-strategy` because it is the other render-strategy arm,
+    # and with NO `default:` for that flag's reason above: a Thor default
+    # materializes the key, so the unset arm -- the Context every recorded
+    # session already renders under, whose header names no pipeline -- could
+    # never reach {Lain::CLI::ContextPipeline.named} as nil. Names
+    # {Lain::CLI::ContextPipeline::PIPELINES} rather than restating the set.
+    def self.pipeline(thor)
+      thor.method_option :context_pipeline, type: :string,
+                                            desc: "Which context pipeline renders each request " \
+                                                  "(#{Lain::CLI::ContextPipeline::PIPELINES.keys.join(", ")}, " \
+                                                  "or several joined by +, applied left to right). A word " \
+                                                  "REPLACES the default: prune alone sends no reminders and " \
+                                                  "no cache breakpoints, prune+default keeps both. Unset " \
+                                                  "renders the default and records no name"
     end
 
     # A TIER, chosen independently of the chat model: a frontier chat can

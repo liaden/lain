@@ -135,6 +135,54 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(rebuilt.context).to be(sentinel)
       expect(seen).to include(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
     end
+
+    # A replay that rendered the default for a session recorded under another
+    # pipeline would diverge from its own baseline and blame the harness.
+    describe "a session recorded under a named pipeline" do
+      let(:context) do
+        Lain::CLI::ContextPipeline.named("prune").context(model: "claude-opus-4-8", max_tokens: 1024,
+                                                          system: "be terse")
+      end
+
+      def rendered(ctx) = ctx.render(timeline: agent.timeline, toolset:, workspace:)
+
+      it "reloads under that pipeline, not the default" do
+        reloaded = recording.context
+
+        expect(reloaded.pipeline_name).to eq("prune")
+        expect(rendered(reloaded)).to have_same_digest_as(rendered(context))
+        expect(rendered(reloaded))
+          .not_to have_same_digest_as(rendered(Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                                                 system: "be terse")))
+      end
+
+      it "hands the recorded name to a custom factory beside the transport fields" do
+        seen = nil
+        factory = lambda do |**fields|
+          seen = fields
+          Lain::Context.new(model: "custom-pipeline", max_tokens: 7)
+        end
+
+        described_class.new(entries, context_factory: factory).recording
+
+        expect(seen).to include(context_pipeline: "prune")
+      end
+
+      it "refuses a name the catalog does not hold as Corrupt, the class every loader caller rescues" do
+        renamed = entries.map { |line| line.sub('"context_pipeline":"prune"', '"context_pipeline":"prune-v0"') }
+
+        expect { described_class.new(renamed).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt) do |error|
+            expect(error.message).to include('session header records context_pipeline "prune-v0"')
+            expect(error.message).to include('unknown part "prune-v0"')
+            expect(error.message).not_to include("--context-pipeline")
+          end
+      end
+    end
+
+    it "reloads a session recorded without a name under the default, naming none" do
+      expect(recording.context.pipeline_name).to be_nil
+    end
   end
 
   describe "integrity" do

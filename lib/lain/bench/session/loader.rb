@@ -14,12 +14,15 @@ module Lain
       # prefix, so truncating the tail would otherwise pass), and every
       # request_sent record must rebuild to its own recorded digest.
       class Loader
-        # Rebuilds the recorded run's Context with the SAME default pipeline it
-        # recorded under. Injectable so a caller replaying push-recall can
-        # supply a Context whose pipeline composes a memory stage, WITHOUT this
-        # class hardcoding that choice.
-        DEFAULT_CONTEXT_FACTORY = lambda do |model:, max_tokens:, system:, stream:, extra:|
-          Context.new(model:, max_tokens:, system:, stream:, extra:)
+        # Rebuilds the recorded run's Context under the pipeline its header
+        # names, re-resolved from the catalog, and under the default when it
+        # names none. Injectable so a caller replaying push-recall can supply a
+        # Context whose pipeline composes a memory stage, WITHOUT this class
+        # hardcoding that choice. Root-qualified: {Bench::CLI} shadows the
+        # top-level one for everything inside `Bench`.
+        DEFAULT_CONTEXT_FACTORY = lambda do |model:, max_tokens:, system:, stream:, extra:, context_pipeline:|
+          ::Lain::CLI::ContextPipeline.named(context_pipeline, origin: "context_pipeline")
+                                      .context(model:, max_tokens:, system:, stream:, extra:)
         end
 
         # Raised only when a header actually names a `resumed_from` file and no
@@ -43,7 +46,8 @@ module Lain
         # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck;
         #   entries it answers nil for are somebody else's records and skipped
         # @param context_factory [#call] builds the Context from the recorded
-        #   transport fields; defaults to the recorded default pipeline.
+        #   transport fields and the recorded `context_pipeline:` name (nil when
+        #   the header names none); defaults to {DEFAULT_CONTEXT_FACTORY}.
         # @param resolve [#call] `basename -> entries`, consulted only when a
         #   header names `resumed_from`; defaults to {NO_RESOLVER}.
         def initialize(entries, context_factory: DEFAULT_CONTEXT_FACTORY, resolve: NO_RESOLVER)
@@ -214,10 +218,19 @@ module Lain
 
         # `extra` (sampler params) loads unverified like the other transport
         # fields; `|| {}` tolerates recordings written before the key existed.
+        # A missing `context_pipeline` is the ordinary case, not an old one:
+        # a session nobody named a pipeline for writes no key.
+        #
+        # A name the catalog no longer holds refuses as {Corrupt}, {#posture}'s
+        # rule: every loader caller rescues that class by name. It cites the
+        # header, not the flag -- whoever replays never typed one.
         def context
           @context_factory.call(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"),
                                 system: header["system"], stream: header.fetch("stream"),
-                                extra: header["extra"] || {})
+                                extra: header["extra"] || {}, context_pipeline: header["context_pipeline"])
+        rescue ::Lain::CLI::ContextPipeline::Unknown => e
+          raise Corrupt, "the session header records context_pipeline #{header["context_pipeline"].inspect}, " \
+                         "which no longer resolves: #{e.message}"
         end
 
         def toolset

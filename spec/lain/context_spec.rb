@@ -239,9 +239,9 @@ RSpec.describe Lain::Context do
         .to have_same_digest_as(context.render(timeline:, toolset:, workspace:))
     end
 
-    it "leaves the default Context's REQUIRES a static constant" do
-      expect(context.requires).to eq(described_class::REQUIRES)
-      expect(described_class::REQUIRES).to include(:prompt_caching)
+    it "answers the default pipeline's own requires, prompt caching among them" do
+      expect(context.requires).to eq(described_class.pipeline(Lain::Workspace.empty).requires)
+      expect(context.requires).to include(:prompt_caching)
     end
 
     it "routes render through an injected combinator instead of the default" do
@@ -264,22 +264,22 @@ RSpec.describe Lain::Context do
     it "derives #requires from an injected ->(workspace) provider's pipeline" do
       injected = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
                                      pipeline: T21PipelineProviders::DEFAULT)
-      expect(injected.requires).to eq(described_class::REQUIRES)
+      expect(injected.requires).to eq(context.requires)
     end
 
     # The no-injection path must derive #requires from the pipeline that
-    # ACTUALLY runs (self.class.pipeline), never shortcut to the base REQUIRES
-    # constant. A subclass overriding self.pipeline renders via #pipeline_for;
+    # ACTUALLY runs (self.class.pipeline), never shortcut to the base class's
+    # default. A subclass overriding self.pipeline renders via #pipeline_for;
     # #requires must agree, or Capability::Policy would degrade/raise for a
     # capability the subclass's real pipeline never uses.
-    it "derives #requires from a self.pipeline-overriding subclass's own pipeline, not base REQUIRES" do
+    it "derives #requires from a self.pipeline-overriding subclass's own pipeline, not the base default's" do
       pruning = Class.new(described_class) do
         def self.pipeline(_workspace) = Lain::Context::Prune.new(keep_last: 1)
       end
       ctx = pruning.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
 
       expect(ctx.requires).to eq(pruning.pipeline(Lain::Workspace.empty).requires)
-      expect(ctx.requires).not_to eq(described_class::REQUIRES)
+      expect(ctx.requires).not_to eq(context.requires)
     end
 
     # Documented tradeoff, pinned so it is never silent: a RAW Combinator
@@ -325,6 +325,43 @@ RSpec.describe Lain::Context do
 
   # The mirror of #with_model: the copy-with that lets a per-turn source swap
   # the render strategy without the Context's owner rebuilding it from parts.
+  # The name is a label the session record reads, so it must survive every copy
+  # the chat and a spawn make -- and it is never resolved here, so a name no
+  # catalog holds still constructs.
+  describe "#pipeline_name" do
+    let(:named) { described_class.new(model: "claude-opus-4-8", max_tokens: 64, pipeline_name: "a+b") }
+
+    it "is nil when nobody named the pipeline" do
+      expect(context.pipeline_name).to be_nil
+    end
+
+    it "survives #with_model, #with_pipeline and #with_system" do
+      copies = [named.with_model("claude-haiku-4-5"), named.with_pipeline(Lain::Context::Identity),
+                named.with_system("be brief")]
+
+      expect(copies.map(&:pipeline_name)).to eq(["a+b"] * 3)
+    end
+
+    it "is frozen with the Context, so the Context stays shareable" do
+      expect(described_class.new(model: "m", max_tokens: 1, pipeline_name: +"a")).to be_deeply_frozen
+    end
+  end
+
+  describe "#with_system" do
+    let(:built) do
+      described_class.new(model: "claude-opus-4-8", max_tokens: 64, system: "be terse",
+                          stream: false, extra: { "temperature" => 0.2 }, pipeline: Lain::Context::Identity)
+    end
+
+    it "replaces the system prompt and keeps everything else, the pipeline included" do
+      copy = built.with_system("be brief")
+
+      expect([copy.model, copy.max_tokens, copy.system, copy.stream, copy.extra])
+        .to eq(["claude-opus-4-8", 64, "be brief", false, { "temperature" => 0.2 }])
+      expect(copy.render(timeline:, toolset:).messages).to eq(built.render(timeline:, toolset:).messages)
+    end
+  end
+
   describe "#with_pipeline" do
     let(:built) do
       described_class.new(model: "claude-opus-4-8", max_tokens: 64, system: "be terse",

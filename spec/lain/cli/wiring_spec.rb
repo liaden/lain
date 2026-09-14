@@ -309,6 +309,10 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  # What the default Context asks of a provider, read off a Context rather than
+  # a snapshot: the answer belongs to the pipeline in effect.
+  let(:default_requires) { Lain::Context.new(model: "any", max_tokens: 1).requires }
+
   let(:mock_provider) do
     Lain::Provider::Mock.new(responses: [
                                Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
@@ -581,13 +585,13 @@ RSpec.describe Lain::CLI::Wiring do
     # Recorded here as well as in spec/lain/seams/capability_degraded_spec.rb
     # because THIS file is where #wire_agent's own contract lives: the mock
     # below declares a capability set that is missing one the real
-    # {Lain::Context::REQUIRES} names, and the assertion reads the journal
+    # default Context requires, and the assertion reads the journal
     # bytes rather than a policy object nobody injected.
     it "journals what the run's provider cannot give its context, once, under :degrade" do
       io = StringIO.new
       recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
       lacking = Lain::Provider::Mock.new(responses: [Lain::Response.new(content: [], stop_reason: :end_turn)],
-                                         capabilities: Lain::Context::REQUIRES - %i[prompt_caching])
+                                         capabilities: default_requires - %i[prompt_caching])
       recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
       recorder, session = recording_wiring.run_state(nil)
       recording_wiring.wire_agent(channel:, recorder:, session:,
@@ -596,7 +600,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       degraded = io.string.each_line.map { |line| JSON.parse(line) }
                                     .select { |record| record["type"] == "capability_degraded" }
-      expect(Lain::Context::REQUIRES).to include(:prompt_caching)
+      expect(default_requires).to include(:prompt_caching)
       expect(degraded.map { |record| record.values_at("capability", "provider") })
         .to eq([["prompt_caching", "Lain::Provider::Mock"]])
     end
@@ -611,7 +615,7 @@ RSpec.describe Lain::CLI::Wiring do
       recorder, session = recording_wiring.run_state(nil)
       recording_wiring.wire_agent(channel:, recorder:, session:, backend:)
 
-      expect(Lain::Context::REQUIRES.all? { |capability| mock_provider.supports?(capability) }).to be(true)
+      expect(default_requires.all? { |capability| mock_provider.supports?(capability) }).to be(true)
       expect(io.string).not_to include("capability_degraded")
     end
 
@@ -2910,7 +2914,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     end
 
     # The real ollama declaration -- `%i[streaming thinking structured_output]`,
-    # no `:prompt_caching` -- against the real {Lain::Context::REQUIRES}. A
+    # no `:prompt_caching` -- against what the real default Context requires. A
     # double answering `supports?` would be asserting on the double.
     def wire_over(capabilities)
       lacking = Lain::Provider::Mock.new(capabilities:)
@@ -2921,15 +2925,15 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     end
 
     it "writes one record per capability the provider cannot give the context" do
-      wire_over(Lain::Context::REQUIRES - %i[prompt_caching])
+      wire_over(context.requires - %i[prompt_caching])
 
-      expect(Lain::Context::REQUIRES).to include(:prompt_caching)
+      expect(context.requires).to include(:prompt_caching)
       expect(degraded_lines.map { |record| record.values_at("capability", "requirer", "provider") })
         .to eq([%w[prompt_caching Lain::Context Lain::Provider::Mock]])
     end
 
     it "writes nothing when the provider supports everything the context requires" do
-      wire_over(Lain::Context::REQUIRES)
+      wire_over(context.requires)
 
       expect(io.string).to be_empty
     end
@@ -2946,7 +2950,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # method needs one message, so a StringIO-backed {Lain::Journal} is the
     # whole fixture.
     it "degrades rather than raising, which is the whole of why :strict is not wired" do
-      lacking = Lain::Provider::Mock.new(capabilities: Lain::Context::REQUIRES - %i[prompt_caching])
+      lacking = Lain::Provider::Mock.new(capabilities: context.requires - %i[prompt_caching])
 
       expect { wiring.send(:journal_degradation, context, lacking, journal: Lain::Journal.new(io:)) }
         .not_to raise_error

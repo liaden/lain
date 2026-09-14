@@ -181,6 +181,23 @@ RSpec.describe Lain::Tool::SpawnPolicy do
 
           expect(notes).to be_empty
         end
+
+        # A spawn that dropped the parent's pipeline would render the child
+        # under the default while the parent's session record named another,
+        # and nothing would say so.
+        it "carries the parent's named pipeline, so the child renders through it" do
+          named = Lain::CLI::ContextPipeline.named("prune").context(model: "child-model", max_tokens: 256,
+                                                                    system: "be small")
+          long = (1..30).inject(Lain::Timeline.empty(store:)) do |chain, index|
+            chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
+          end
+          shaped = strategy.child_context(named)
+
+          expect(shaped.pipeline_name).to eq("prune")
+          expect(shaped.render(timeline: long, toolset: allowed).messages)
+            .to eq(named.render(timeline: long, toolset: allowed).messages)
+          expect(shaped.render(timeline: long, toolset: allowed).messages.size).to be < long.to_a.size
+        end
       end
 
       describe "#journal_floor (the minimum-cacheable-prefix note)" do

@@ -129,6 +129,24 @@ RSpec.describe Lain::Role do
     let(:sre) { Lain::Role::Catalog.fetch(:reviewer_sre) }
     let(:researcher) { Lain::Role::Catalog.fetch(:researcher) }
 
+    # The persona replaces the system prompt and nothing else: a child that
+    # rendered under the default while its parent ran a named pipeline would
+    # be a different arm than the session record says.
+    it "reshapes the factory context without dropping its named pipeline" do
+      with_project do |slots|
+        parent = Lain::CLI::ContextPipeline.named("prune").context(model: "probe", max_tokens: 64)
+        long = (1..30).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |chain, index|
+          chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
+        end
+        child = sre.child_context(parent, slots:)
+
+        expect(child.pipeline_name).to eq("prune")
+        expect(child.render(timeline: long, toolset: union).messages)
+          .to eq(parent.render(timeline: long, toolset: union).messages)
+        expect(child.render(timeline: long, toolset: union).messages.size).to be < long.to_a.size
+      end
+    end
+
     it "returns a frozen [bulk, role_tail] pair" do
       with_project do |slots|
         segments = sre.prelude_segments(slots:)

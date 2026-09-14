@@ -34,20 +34,20 @@ module Lain
     CACHE_LOOKBACK_BLOCKS = CacheBreakpoints::LOOKBACK_BLOCKS
     BREAKPOINT_EVERY = CacheBreakpoints::EVERY
 
-    # Named once so both #render and REQUIRES read from a SINGLE source: change
-    # the strategy here and the declared capabilities follow automatically.
+    # The strategy a Context renders through when none is injected. There is no
+    # constant snapshot of its capabilities: a reader asks {#requires}, which
+    # answers for the pipeline actually in effect.
     def self.pipeline(workspace)
       Reminder.new(workspace:) >> CacheBreakpoints.new
     end
 
-    # DERIVED from the pipeline above rather than hardcoded, so the declaration
-    # cannot drift from the behavior. Reminder#requires is
-    # workspace-independent, so an empty Workspace yields a representative
-    # pipeline. A Provider lacking a capability degrades loudly, into the
-    # Journal, rather than silently producing a different prompt.
-    REQUIRES = pipeline(Workspace.empty).requires
-
     attr_reader :system, :max_tokens, :stream, :extra, :requires
+
+    # The catalog name the pipeline was chosen by, or nil when nobody named one
+    # -- the class default, or a pipeline injected as a value. Carried by every
+    # copy, because a copy is how the chat grafts its live model and how a spawn
+    # reshapes its persona, and the session record must name what rendered.
+    attr_reader :pipeline_name
 
     # The model in force NOW. A fixed model wears a {StaticModel}, a live
     # `/model` slot is a {ModelSwitch}, and BOTH answer `#current`, so every
@@ -73,11 +73,15 @@ module Lain
     #   silently defeating "Workspace is sent, not stored".
     #
     # The requires slot is derived from the EFFECTIVE pipeline in both the
-    # injected and the fallback case, never shortcut to the REQUIRES constant:
-    # a `self.pipeline`-overriding subclass would otherwise report the base
-    # class's capabilities for a pipeline that never uses them. One extra
-    # `#pipeline_for` call per construction is that guarantee's price.
-    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil)
+    # injected and the fallback case: a `self.pipeline`-overriding subclass
+    # would otherwise report the base class's capabilities for a pipeline that
+    # never uses them. One extra `#pipeline_for` call per construction is that
+    # guarantee's price.
+    #
+    # `pipeline_name` is a label and is never resolved here: a name becomes a
+    # pipeline before construction ({CLI::ContextPipeline}), so #render reads
+    # nothing a name could change.
+    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil, pipeline_name: nil)
       # A delegating slot is stored AS the slot; flattening it to its current
       # value would fix the model at construction, which is the very seam
       # `/model` exists to escape.
@@ -87,6 +91,7 @@ module Lain
       @stream = stream
       @extra = Canonical.normalize(extra)
       @pipeline = pipeline
+      @pipeline_name = pipeline_name && -pipeline_name
       @requires = pipeline_for(Workspace.empty).requires
       freeze
     end
@@ -94,22 +99,21 @@ module Lain
     # How Wiring grafts a live {ModelSwitch} onto the Context a Backend already
     # assembled, without Backend learning about slots. A copy, because Context
     # is frozen by design.
-    def with_model(model)
-      self.class.new(model:, max_tokens:, system:, stream:, extra:, pipeline: @pipeline)
-    end
+    def with_model(model) = copy(model:)
+
+    # How a spawn gives a child its persona: the system prompt replaced, the
+    # render strategy and everything else kept.
+    def with_system(system) = copy(system:)
 
     # The mirror of #with_model: how a per-turn source
     # ({Agent::PipelineSource}) swaps the render strategy without rebuilding the
     # Context from parts it does not own.
     #
-    # `model: @model` is the STORED slot, deliberately not the `#model` reader.
-    # The reader unwraps to `.current`, so writing it here would flatten a live
-    # {ModelSwitch} to whatever it held at copy time and silently break `/model`
-    # from the next turn on. #with_model never faces this -- `model:` there
-    # resolves to its own shadowed parameter.
-    def with_pipeline(pipeline)
-      self.class.new(model: @model, max_tokens:, system:, stream:, extra:, pipeline:)
-    end
+    # The name is KEPT. That is true of compaction's swap, a composition over
+    # the named base whose collapse policy the scheduler journals. A caller that
+    # replaces the pipeline outright ({Plan::Runner}) keeps a label that no
+    # longer describes what renders, so it must be handed an unnamed Context.
+    def with_pipeline(pipeline) = copy(pipeline:)
 
     # The default strategy is one point in the combinator space a caller reaches
     # for directly, never a parallel implementation of it.
@@ -171,6 +175,17 @@ module Lain
     end
 
     private
+
+    # The one place every attribute is listed, so a copy cannot drop one.
+    #
+    # `model: @model` is the STORED slot, deliberately not the `#model` reader.
+    # The reader unwraps to `.current`, so copying it would flatten a live
+    # {ModelSwitch} to whatever it held at copy time and silently break `/model`
+    # from the next turn on.
+    def copy(**changes)
+      self.class.new(model: @model, max_tokens:, system:, stream:, extra:, pipeline: @pipeline, pipeline_name:,
+                     **changes)
+    end
 
     # Hoisted, because a `[].freeze` literal allocates a fresh Array per read
     # and this one is read on every turn of a compacting session.

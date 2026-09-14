@@ -231,9 +231,13 @@ module Lain
       # is known). Sampler params ride Request#extra via the Context. The system
       # prompt renders from the loaded {#slots} unless a caller overrides it --
       # bench record's `--system` flag is the one caller that does.
+      #
+      # `--context-pipeline` is resolved here, so a typo refuses wherever a
+      # context is first built -- the pre-flight included -- and an unset flag
+      # builds the Context it always did.
       def context(system_override: nil)
-        Context.new(model:, max_tokens:, extra: sampler_extra,
-                    system: system_override || slots.render)
+        ContextPipeline.named(@options[:context_pipeline])
+                       .context(model:, max_tokens:, extra: sampler_extra, system: system_override || slots.render)
       end
 
       # The ONE window book this run measures occupancy against, resolved by

@@ -479,5 +479,5 @@ require_relative "neovim/changeset_diff"
 require_relative "neovim/review_view"
 require_relative "neovim/thread_view"
 # LAST: it builds the three views above, so every one of them must exist by the
-# time its body is read (the same load-order rule {Context::REQUIRES} states).
+# time its body is read.
 require_relative "neovim/surfaces"

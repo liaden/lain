@@ -850,3 +850,47 @@ RSpec.describe Lain::SessionRecord do
     end
   end
 end
+
+# Which context pipeline rendered the session. Written only when one was NAMED,
+# `resumed_from`'s idiom again: a chat launched without the flag must keep
+# writing the header every session on disk already has.
+RSpec.describe Lain::SessionRecord, ".header" do
+  let(:toolset) { CoreGraph.toolset }
+
+  def header(context) = described_class.header(context:, toolset:)
+
+  it "names the pipeline a context was built under" do
+    named = Lain::CLI::ContextPipeline.named("prune+cache-breakpoints").context(model: "m", max_tokens: 8)
+
+    expect(header(named)).to include("context_pipeline" => "prune+cache-breakpoints")
+  end
+
+  it "writes no context_pipeline key for a context no name was given" do
+    expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("context_pipeline")
+  end
+
+  describe "on a real launch" do
+    include ChatLaunchProbe
+
+    around do |example|
+      Dir.mktmpdir("lain-session-header") do |dir|
+        @root = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def launched_header(options)
+      _agent, records = launch_chat(options, root: @root)
+      records.select { |record| record["type"] == described_class::HEADER_TYPE }.sole
+    end
+
+    it "names the pipeline the chat was launched with" do
+      expect(launched_header(context_pipeline: "dedupe-tool-calls+default"))
+        .to include("context_pipeline" => "dedupe-tool-calls+default")
+    end
+
+    it "writes no key when the chat was launched without the flag" do
+      expect(launched_header({})).not_to have_key("context_pipeline")
+    end
+  end
+end

@@ -67,11 +67,19 @@ RSpec.describe Lain::Bench::Session do
     # renders different bytes -- booked as DIVERGED instead of failing here.
     # The same members-pin idiom Telemetry::RequestSent uses against Request.
     it "records every Context constructor input, so a new kwarg cannot be dropped in silence" do
-      header = parsed_records.find { |record| record["type"] == "session" }
+      # Written under a NAMED pipeline, because an unnamed one writes no key for
+      # its name, and the header spells `pipeline_name` as `context_pipeline`,
+      # the flag's word.
+      named_io = StringIO.new
+      named = Lain::CLI::ContextPipeline.named("default").context(model: "claude-opus-4-8", max_tokens: 1024)
+      described_class.write(Lain::Journal.new(io: named_io), timeline: agent.timeline, context: named,
+                                                             toolset:, workspace:)
+      header = named_io.string.each_line.map { |line| JSON.parse(line) }.find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
       # `provider` is deliberately NOT a Context constructor input -- the
       # provider choice lives beside the context, never inside it.
-      recorded = header.keys - %w[type context_class head tools reminders ts provider]
+      recorded = (header.keys - %w[type context_class head tools reminders ts provider])
+                 .map { |key| key == "context_pipeline" ? "pipeline_name" : key }
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
       # provider), not serializable data -- like a `self.pipeline`-
       # overriding subclass, it is reconstructed by the Loader's injectable

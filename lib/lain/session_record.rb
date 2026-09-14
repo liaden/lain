@@ -39,14 +39,25 @@ module Lain
     # nil, the OPEN marker, because the scribe writes this before any turn
     # commits and never rewrites it. `resumed_from:` merges in only when present
     # -- a fresh session's header must stay byte-identical to the pre-resume
-    # format, so absence is no key, never a nil value.
+    # format, so absence is no key, never a nil value. The context pipeline's
+    # name follows the same rule, through {.context_pipeline}.
     def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil)
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
-                 "tools" => toolset.to_schema, "reminders" => workspace.reminders }
+                 "tools" => toolset.to_schema, "reminders" => workspace.reminders }.merge(context_pipeline(context))
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
+    end
+
+    # The header field naming which catalog pipeline rendered the session, and
+    # no field at all when none was named. Shared with {Bench::Session}'s own
+    # header writer, because one Loader reads both and resolves this key back.
+    #
+    # @param context [Context]
+    # @return [Hash{String => String}] empty for an unnamed pipeline
+    def context_pipeline(context)
+      context.pipeline_name.nil? ? {} : { "context_pipeline" => context.pipeline_name }
     end
 
     # The same fields {Bench::Session} writes: the body plus the render edge,

@@ -10,12 +10,13 @@ module Lain
     # {Recording} from the bytes alone, re-deriving each turn's content address
     # so the file's own digests are its integrity check.
     #
-    # The header captures exactly {Lain::Context}'s constructor inputs, so a
-    # loaded Recording rebuilds the DEFAULT-pipeline Context. A run recorded
-    # under a Context subclass still round-trips its data -- the header's
-    # `context_class` names what rendered it, as data -- but
-    # {Recording#dry_replay} claims byte identity only for default-pipeline
-    # sessions. That is the stated limit of this format.
+    # The header captures exactly {Lain::Context}'s constructor inputs, a
+    # catalog pipeline by its recorded name, so a loaded Recording rebuilds the
+    # Context the run rendered under. A pipeline no catalog word names -- a
+    # Context subclass, or one injected as a value -- still round-trips its
+    # data, the header's `context_class` naming what rendered it, but reloads
+    # under the default, and {Recording#dry_replay} claims byte identity only
+    # for catalog-pipeline sessions. That is the stated limit of this format.
     #
     # == One run, one journal, one file
     #
@@ -110,10 +111,11 @@ module Lain
       # cannot be `Ractor.shareable?` whole; every other member is.
       #
       # `context_class` is the header's recorded class name, pure data and
-      # never constantized: `context` is always the reloaded DEFAULT-pipeline
-      # Context, so a consumer comparing the two can tell a custom-pipeline
-      # recording (which legitimately will not replay to byte identity) from a
-      # genuine harness leak.
+      # never constantized: `context` is rebuilt as a plain Context under the
+      # pipeline the header NAMES, and under the default when it names none, so
+      # a consumer comparing the two can tell a custom-pipeline recording
+      # (which legitimately will not replay to byte identity) from a genuine
+      # harness leak.
       #
       # `open` names whether {Loader} verified a full anchor or only the
       # unverified-prefix shape; `messages` is the session's re-put
@@ -209,7 +211,7 @@ module Lain
             "system" => context.system, "stream" => context.stream, "extra" => context.extra,
             "head" => timeline.head_digest,
             "tools" => toolset.to_schema, "reminders" => workspace.reminders
-          }
+          }.merge(SessionRecord.context_pipeline(context))
           provider.nil? ? record : record.merge("provider" => provider)
         end
 

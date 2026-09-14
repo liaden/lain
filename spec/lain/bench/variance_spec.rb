@@ -38,15 +38,15 @@ RSpec.describe Lain::Bench::Variance do
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what the driver will hold.
-  def record(responses, degrade: nil, flips: [])
-    Lain::Bench::Session.load(session_bytes(responses, degrade:, flips:).each_line)
+  def record(responses, degrade: nil, flips: [], under: context)
+    Lain::Bench::Session.load(session_bytes(responses, degrade:, flips:, under:).each_line)
   end
 
-  def session_bytes(responses, degrade: nil, flips: [])
+  def session_bytes(responses, degrade: nil, flips: [], under: context)
     io = StringIO.new
     journal = Lain::Journal.new(io:)
     flip!(journal, flips)
-    run_and_write(journal, responses)
+    run_and_write(journal, responses, under)
     degrade!(journal, degrade)
     io.string
   end
@@ -60,11 +60,15 @@ RSpec.describe Lain::Bench::Variance do
     end
   end
 
-  def run_and_write(journal, responses)
+  def run_and_write(journal, responses, context)
     agent, = record_journaled_run(responses, journal:, toolset:,
                                              context:, workspace:)
     Lain::Bench::Session.write(journal, timeline: agent.timeline, context:,
                                         toolset:, workspace:)
+  end
+
+  def named(pipeline)
+    Lain::CLI::ContextPipeline.named(pipeline).context(model: "claude-sonnet-4-6", max_tokens: 1024, system: "be terse")
   end
 
   def degrade!(journal, capability)
@@ -176,6 +180,21 @@ RSpec.describe Lain::Bench::Variance do
         record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual plan]])
       end
       expect(described_class.new(recordings: pair).report).to include("posture: manual → plan")
+    end
+
+    # A pipeline decides the bytes each model call sends, so a pruned run held
+    # against an unpruned one would report the pipeline as the model's variance.
+    # Judged on the stages that rendered, not the words: an unset flag and
+    # `default` send identical bytes, which is the only thing variance reads.
+    it "raises when the recordings rendered through different context pipelines" do
+      pruned = record([tool_response("tu_1", "hi"), text_response("done")], under: named("prune"))
+      expect { described_class.new(recordings: [reference, pruned]) }
+        .to raise_error(Lain::Error, /cannot compare runs under different context pipelines: .*prune/)
+    end
+
+    it "compares a recording named default with an unset one, which rendered the same stages" do
+      defaulted = record([tool_response("tu_1", "hi"), text_response("done")], under: named("default"))
+      expect(described_class.new(recordings: [reference, defaulted]).report).to include("2: byte-identical")
     end
 
     # Every fixture in the repo predates modes, so absence has to stay sayable:

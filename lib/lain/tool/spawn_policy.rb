@@ -193,11 +193,7 @@ module Lain
 
             blocks, stripped = stripped_system(context.system)
             journal << SystemMarkStripped.new(strategy: label, stripped:) if stripped.positive?
-            Context.new(
-              model: context.model, max_tokens: context.max_tokens,
-              system: blocks + [{ "type" => "text", "text" => @template }],
-              stream: context.stream, extra: context.extra
-            )
+            context.with_system(blocks + [{ "type" => "text", "text" => @template }])
           end
 
           def journal_floor(journal)

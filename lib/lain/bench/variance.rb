@@ -8,8 +8,9 @@ module Lain
     # 1. Determinism -- each recording, dry-replayed under its own Context,
     #    must re-render byte-identical to what was actually sent. Divergence
     #    here is either the harness leaking state into a render or a
-    #    custom-pipeline recording that {Session.load} rebuilds as the default
-    #    Context; the line says which, via {Session::Recording#context_class}.
+    #    recording under a Context subclass, which {Session.load} rebuilds as a
+    #    plain Context; the line says which, via
+    #    {Session::Recording#context_class}.
     # 2. Divergence -- where each recording's actually-sent baseline first
     #    parts ways from the first recording's, named to the model call and
     #    the changed cache_payload fields. This is the MODEL'S variance,
@@ -36,12 +37,15 @@ module Lain
       #   whose baseline cannot line up 1:1 with its model calls
       # @raise [Capability::Guard::Mismatch] when the recordings degraded different sets
       # @raise [Lain::Error] when the recordings walked different posture rungs
+      # @raise [Lain::Error] when the recordings rendered through different
+      #   context pipeline stages
       def initialize(recordings:, price_book: PriceBook.default)
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
           @recordings.size < 2
 
         @price_book = price_book
+        guard_pipelines!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -111,6 +115,21 @@ module Lain
           )
         end)
       end
+
+      # The pipeline decides the bytes every model call sends, so two arms held
+      # together would report it as the model's variance. Judged on the stages
+      # that rendered rather than the recorded words: an unset flag and
+      # `default` send the same bytes, and bytes are what this report reads.
+      def guard_pipelines!
+        names = @recordings.map { |recording| recording.context.pipeline_name }
+        mismatch = names.combination(2).find { |(one, other)| stages(one) != stages(other) }
+        return if mismatch.nil?
+
+        raise ::Lain::Error, "cannot compare runs under different context pipelines: " \
+                             "#{mismatch.map { |name| name || "unset" }.join(" vs ")}"
+      end
+
+      def stages(name) = ::Lain::CLI::ContextPipeline.named(name).stages
 
       # One candidate baseline held against the reference's: the first model
       # call whose request digest differs, the fields that changed there, and

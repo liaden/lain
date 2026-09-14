@@ -110,7 +110,7 @@ RSpec.describe "capability degradation on the chat path", :seam do
   # The requirer this run actually has: derived from the pipeline, never named
   # by hand, so a pipeline change moves the expectation with it rather than
   # leaving a stale literal green.
-  def required_capabilities = Lain::Context::REQUIRES
+  def required_capabilities = Lain::Context.new(model: "any", max_tokens: 1).requires
 
   it "records the capability a real ollama chat silently lost" do
     run_a_turn(ollama)
