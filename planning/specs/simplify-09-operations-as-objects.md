@@ -1,6 +1,7 @@
 # Simplify 09 — verbs terminate, adverbs decorate, and an operation gets a name
 
 status: draft — **dropped, not run**; see Execution log
+superseded-by: `simplify-09-orders-as-types.md` (rebuilt 2026-09-14 from `research-orders-as-types-and-simplification.md`)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; Edward Kmett and Philip Wadler join for T3 and T4
