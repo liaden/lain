@@ -5,7 +5,9 @@
 `ctx N%`, the `options` asymmetry on the ollama wire — and, since 2026-08-18, the two other things a
 launch settles before a model is ever asked: **which prices the run will quote** (`PriceBook`, its
 freshness lint, and the deliberate zero fallback compaction uses) and **which collapse strategy it
-resolved** (`CLI::CompactionStrategy`).
+resolved** (`CLI::CompactionStrategy`) — and, since 2026-09-14, **which context pipeline renders
+every request, and whether the session record says so** (`CLI::ContextPipeline`, the header's
+`context_pipeline`).
 
 **Cost:** cheap. Most of it is launch-level and needs no model call at all. **Run it first** — it
 is the fastest way to tell whether the bench is honest before spending a session on a subject.
@@ -319,6 +321,100 @@ p PriceFreshnessLinter.check(source: src, path: "lib/lain/price_book.rb", today:
 
 Correct output is `ok?=false` with
 `no "Reviewed YYYY-MM-DD" marker found near the price table`.
+
+## 9 — `--context-pipeline` resolves at LAUNCH, and the header reads it back
+
+Six words ship — `default`, `reminder`, `cache-breakpoints`, `prune`, `dedupe-tool-calls`,
+`purge-failed-inputs` — joined with `+` and folded **left to right**, so order is part of the name.
+Like §7, everything here is settled while the `Backend` builds its `Context`: **no model call**, and
+`< /dev/null` with no `--prompt` reaches the REPL, reads EOF and exits.
+
+**The instrument is the `session` header, not the screen.** Nothing renders the pipeline; the header
+carries a `context_pipeline` key **only when a pipeline was named**. `drive.sh`'s `ls -t` recipe
+(`method.md`) is safe here because nothing else is writing, but pin the file anyway if a cockpit is
+up:
+
+```bash
+header(){ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="session";
+  puts(r.key?("context_pipeline") ? r["context_pipeline"].inspect : "(no key)")}' \
+  "$(ls -t "$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1)"; }
+count(){ ls "$XDG_STATE_HOME/lain/sessions"/*/*.ndjson 2>/dev/null | wc -l; }
+
+run                                                      ; header   # unset
+run --context-pipeline default                           ; header
+run --context-pipeline prune                             ; header
+run --context-pipeline 'dedupe-tool-calls+cache-breakpoints'; header
+```
+
+Driven against the built binary 2026-09-14 (`main` at `ea03482e`, sandboxed XDG, no model resident)
+— every launch exit **0**:
+
+| flag | header's `context_pipeline` |
+|---|---|
+| unset | `(no key)` — the header is byte-identical to every one written before the flag existed |
+| `default` | `"default"` — renders the same bytes as unset, and is still told apart in the record |
+| `prune` | `"prune"` |
+| `dedupe-tool-calls+cache-breakpoints` | `"dedupe-tool-calls+cache-breakpoints"` — the name exactly as typed |
+
+**A `"default"` on an unset launch, or `(no key)` on a named one, is the regression.** The first
+would silently rewrite every recorded header's bytes; the second loses which arm a session was.
+
+Then the refusals — count the session files around each, because **a refused name must leave no
+journal behind**:
+
+```bash
+n=$(count); run --context-pipeline 'prune+nope';        echo "files $n -> $(count)"
+n=$(count); run --context-pipeline 'prune+';            echo "files $n -> $(count)"
+n=$(count); run --context-pipeline '';                  echo "files $n -> $(count)"
+n=$(count); run --context-pipeline 'default+reminder';  echo "files $n -> $(count)"
+```
+
+Verified the same day — exit **1**, one line, **zero** backtrace frames, and the file count unchanged
+every time:
+
+```
+unknown part "nope" in --context-pipeline "prune+nope", expected one of ["default", "reminder", "cache-breakpoints", "prune", "dedupe-tool-calls", "purge-failed-inputs"], or several joined by "+"
+unknown part "" in --context-pipeline "prune+", expected one of [...], or several joined by "+"
+unknown part "" in --context-pipeline "", expected one of [...], or several joined by "+"
+repeated part "reminder" in --context-pipeline "default+reminder", expected one of [...], or several joined by "+"; each stage renders once, and "default" is reminder+cache-breakpoints
+```
+
+Read the last one carefully: `default+reminder` repeats no WORD, and is refused by the **stage** it
+repeats, because `default` *is* `reminder+cache-breakpoints` and the workspace would be sent twice.
+A launch that accepts it is the regression.
+
+**A word REPLACES the default; it does not add to it.** `prune` alone sends no workspace reminders
+and marks no cache breakpoints, and nothing degrades loudly, because nothing it requires is
+missing. A driver who launches `prune` into a real session and files "the todo list stopped
+reaching the model" has found the documented arm, not a defect — `prune+default` keeps both.
+
+### 9b — the recorded name survives replay
+
+`lain bench variance` reloads each recording and re-resolves its header's name, and it **refuses to
+compare recordings whose pipelines render different stages**, because a pipeline difference would
+otherwise be reported as the model's variance. Using the sessions §9 just wrote:
+
+```bash
+lain bench variance <the prune session> <the unset session>; echo "exit=$?"
+lain bench variance <the unset session> <the default session>
+```
+
+Verified 2026-09-14: the first exits **1**, no backtrace, ending
+`cannot compare runs under different context pipelines: prune vs unset`; the second **reports**,
+because an unset flag and `default` render the same stages. A table for the first pair is the
+regression; a refusal for the second is too.
+
+### What §9 cannot reach
+
+- **Spawn inheritance.** A child renders through its parent's pipeline — its `Context` comes from
+  the same factory, and the persona swap keeps the name — but a child's requests are not journaled
+  (`request_sent` is wired into the main agent only), so the record cannot show it. It is spec-owned
+  (`spec/lain/role_spec.rb`, "reshapes the factory context without dropping its named pipeline").
+- **`--resume` / `--fork`.** They do **not** inherit the recorded name: the resumed header carries
+  whatever the new launch was given. Documented behaviour today, not a finding.
+- **`lain up PATH -- --context-pipeline <typo>`** refuses in the pre-flight, on the operator's own
+  terminal rather than in a dead tmux pane. Written from the code and **not yet driven**; a first
+  drive should expect to correct this line as much as to find a defect.
 
 ## What this scenario does not cover
 

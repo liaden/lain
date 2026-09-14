@@ -363,7 +363,7 @@ Check four things and then stop:
    escalation rungs for that call. A parked-and-auto-drained call and a never-parked one look
    identical at the prompt and are not the same session.
 4. **A `denied` path is still refused.** `read_file` on the fixture key must fail under `auto`
-   exactly as it does at `accept_edits`: `Effect::Handler::Sensitivity` sits *outside* the gate, so no
+   exactly as it does at `accept_edits`: `Middleware::Sensitivity` runs *ahead of* the gate, so no
    policy can lift it. Type the path **resolved and absolute**, for the reason `secret-boundary.md`
    §5 gives — a `~` or a `$HOME` is not expanded on the `read_file` arm. The `bash` spelling of the
    same probe (`cat` on that path) is §5's and goes through a different rung; drive it there, and

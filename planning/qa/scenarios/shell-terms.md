@@ -85,7 +85,7 @@ sections that most look like defects (§3, §6) are only findings under the wron
 | posture | how you get it | what decides a `bash` call |
 |---|---|---|
 | **attended** | the ordinary cockpit (`lain up`, `lain chat`) | the three-rung ladder: `Triage` → `Rules` → `Surfaces` (`escalation.rb:145-147`) |
-| **`/mode auto`** | typing `/mode auto` | **the ladder is replaced wholesale.** `Posture` `auto` carries `gate_policy: :approve_all` (`mode/posture.rb:115-116`), which resolves to `Effect::Handler::Gate::ApproveAll` (`mode/resolution.rb:107`). **Neither the exclusion table nor the approval rule fires** — no rung is consulted, and no `escalation` record is written |
+| **`/mode auto`** | typing `/mode auto` | **the ladder is replaced wholesale.** `Posture` `auto` carries `gate_policy: :approve_all` (`mode/posture.rb:115-116`), which resolves to `Middleware::Gate::ApproveAll` (`mode/resolution.rb:107`). **Neither the exclusion table nor the approval rule fires** — no rung is consulted, and no `escalation` record is written |
 | **unattended** | a session with no queue: `lain chat --non-interactive --prompt '…'` (the flag **requires** `--prompt`; without it the launch refuses with `--non-interactive needs --prompt: it reads no line from the terminal, so a run with no question seeded has nothing to ask`) | a ladder of **one** rung that refuses everything (`cli/switchboard.rb:299`), reason verbatim: `no human is attached to this session, so no rung can ask anybody and nothing can approve` (`switchboard.rb:420`) |
 
 Two consequences worth stating flatly, because both read as bugs:
@@ -296,7 +296,10 @@ outright, or run as a term anyway — is named as the next rung on the chunk's *
 shell* axis and is a design question, not a patch. **File it only if the attended posture
 reaches the tool at all**, which it must not: the triage rung denies first (§2). The two
 postures that *do* reach the tool are exactly the two that skip the ladder — `/mode auto`
-and a child spawned over `Tools::Subagent::UNGATED`. If you can make an attended session run
+and an agent in a run with no chat — a bench arm, `lain improve`, `lain consolidate`, or a child one
+of them spawns — whose stack `CLI::ToolGuard.detached` builds with a gate over
+`Middleware::Gate::ApproveAll` (a chat's own children are gated over the parent's board). If you
+can make an attended session run
 an excluded program, that is a real and serious finding.
 
 ## 4 — what the approval rule approves, and what it refuses *(free — `/ruby`)*
@@ -627,8 +630,9 @@ bought. Do not report a local number as the paid one.
 - **`Exec::Core` and the lain-core daemon.** `--exec` refuses `core` by name and no shipped
   tool constructs the backend, so no chat path reaches `Exec::Core#takes_term?`
   (`exec/core.rb:42`, permanently `false`). Spec-covered; not drivable from a cockpit.
-- **A subagent's ungated handler.** `Tools::Subagent::UNGATED` is the other posture that
-  reaches the tool with no ladder, and driving it belongs with
+- **An agent with no chat to ask.** An agent in a run with no chat — a bench arm, `lain improve`,
+  `lain consolidate`, or a child one of them spawns — whose stack `CLI::ToolGuard.detached` builds
+  with a gate over `Middleware::Gate::ApproveAll`, is the other posture that reaches the tool with no ladder, and driving it belongs with
   [`subagents-and-backends.md`](subagents-and-backends.md), which owns actor mode and the
   isolation backends. §3 names the consequence; it does not drive the spawn.
 - **Piped terms inside a container.** Deliberately out of scope for the chunk: `docker run`

@@ -101,12 +101,13 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
 
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
-  `Effect`/`Handler`/`Middleware` monoid, `Provider`, pure `Context#render`,
+  `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
   `Agent`/`Budget`/`ToolRunner`, `Channel`/`Sink`, `ext/lain` tracing.
 - **M1b–M3b — hands, observability, test infra, transport fork.** `[built]`: tools
   (`read_file`/`list_files`/`bash`), `Handler::Approving` + TTY, the NDJSON `Journal` + cost
   accounting, `spec/support` + VCR, and the RubyLLM transport fork with `AnthropicRaw`.
-- **M3c — the bench.** `[built]` (this session): `Lain::Algebra` shared law groups, the `Context`
+- **M3c — the bench.** `[built]` (this session): the shared law groups (since 2026-09-14 each
+  included in its subject's own spec, the registry that swept them deleted), the `Context`
   combinators under `>>`, the `turn`/`repl` middleware phases, `:strict`/`:degrade` capability
   guarding, and `Bench::DryReplay`/`LiveReplay` + `Grader::Fixture`/`Rubric` + `Compare` +
   speculative branching. The committed *core*; the `[exp]`/`[parked]` fold-ins below remain future work.
@@ -158,7 +159,9 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 
 ### M2 — observability & durability `[built]`
 - `Journal` as NDJSON on its own fd (never stderr), synchronous, lossless.
-- Per-turn usage and dollar cost, **aggregated over unique digests**. `Handler::Recorded`. Channel
+- Per-turn usage and dollar cost, **aggregated over unique digests**. ~~`Handler::Recorded`~~
+  (deleted 2026-09-14: it replayed a record nothing wrote; the tool phase keeps 2 interpreters,
+  `Live` and `Mock`). Channel
   split to drop-oldest for the frontend. Rust `tracing` spans merge into the same stream.
 - **Prioritization:** token cost is the **80%-of-variance performance proxy** (Anthropic) — invest
   here; it de-risks every later experiment. *Measurement lands before the seams.*
@@ -207,8 +210,12 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 > `[exp]`/`[parked]`. ~~Known follow-up: `Agent::Accounting`~~ — **built**; usage is journaled per
 > turn and `Ledger`/`Compare` price from the Journal, not `turn.meta`. CE-1/CE-2/CE-3 and
 > `Bench::Rewrites` landed in chunk-cache-memory-hands (2026-07-13).
-- `[built]` `Lain::Algebra` with property-tested laws. `Context` combinators composing under `>>`, each
-  declaring `requires`. All four middleware phases (`model`/`tool`/`turn`/`repl`).
+- `[built]` Property-tested laws, each held in its subject's own spec by `include_examples` with a
+  population (`Lain::Algebra`'s registry and sweep were deleted 2026-09-14; the three DAG orders are
+  `Dag::RenderAncestry` in Ruby and Rust types for dominance (behind the sealed `MeetSemilattice`
+  trait) and causal ancestry (`MaximalLowerBounds`)). `Context`
+  combinators composing under `>>`, each declaring `requires`, selectable by name with
+  `--context-pipeline`. All four middleware phases (`model`/`tool`/`turn`/`repl`).
 - `[built]` `Bench::DryReplay`, `LiveReplay`, `Grader::Fixture`, `Grader::Rubric`, `Compare` with
   distributions and capability-set guarding.
 - **Fold-ins (this is where most new work lands):**
@@ -364,7 +371,10 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   (the Rust re-port, blocked on TL-3). **✅ Both ruled and landed 2026-07-17** — see item 10
   below: TL-3 ruled enriched (a) (render meet byte-unchanged, set-valued `causal_meets`, new
   `dominator_meet` checkpoint primitive); TL-5 landed as the T25 Rust re-port, un-parking all
-  four digest-parity pendings. **Remaining M5 tail:** grader-from-Gherkin; the edge-grain
+  four digest-parity pendings. (2026-09-14: the render meet is now `Dag::RenderAncestry`, and
+  `causal_meets`/`dominator_meet` live only in Rust, as `Lain::Ext::Dag::CausalAncestry` and
+  `Lain::Ext::Dag::Dominance`; the checkpoint primitive is still unwired.) **Remaining M5 tail:**
+  grader-from-Gherkin; the edge-grain
   provenance question for OM-1/OM-6 (today's parent→child `tool_result` link stays
   correlation-grain only, no causal edge — the 2026-07-17 chunk left this open by design).
 - **✅ Landed 2026-07-17** (`planning/specs/chunk-meet-supervision-fanout-interface.md`): the
@@ -878,7 +888,8 @@ XDG path relative, which put machine state back inside the user's repository)
 10. **✅ Built (2026-07-17)** — `planning/specs/chunk-meet-supervision-fanout-interface.md`, all
    22 task cards landed, one commit each: the TL-3 ruling (enriched (a): render meet unchanged ·
    set-valued `causal_meets` · a new `dominator_meet` checkpoint primitive — research:
-   `planning/dominator-meet-research-2026-07.md`) + the T25 Rust re-port un-parking the four
+   `planning/dominator-meet-research-2026-07.md`; both now Rust-only, see M5 above) + the T25 Rust
+   re-port un-parking the four
    digest-parity pendings; R.1–R.5 and the recorded residuals; the Workspace Timeline write side
    + OM-6 supervision with replay-restart (`bin/demo-supervision`); CE-4 sibling-template + CE-5
    `stream_started` + stagger (`bin/demo-fanout`); and the interface band (state feed + tmux HUD
@@ -968,6 +979,13 @@ XDG path relative, which put machine state back inside the user's repository)
    differential oracle), and declaring `Regular` / `Store` idempotence / `Canonical` determinism
    (each
    needs a generator under the sweep's contract).
+   **Superseded 2026-09-14.** The registry, its declarations, its sweep and its seal are deleted:
+   each live operation's laws run as `include_examples` in its own spec, a deliberate negative is an
+   ordinary example that shows the named law failing, and an operation with no production caller
+   (`Middleware`'s `>>`, `Replacement#+`) went with it. The Rust ruling reversed on its own
+   condition: the three DAG orders are now zero-sized types, the two semilattices behind a sealed
+   `MeetSemilattice` trait whose production callers are the generic `meet_via`/`below_via` bindings, and
+   `CausalAncestry` implements `MaximalLowerBounds` instead.
 
 16. **✅ Landed — planned 2026-07-27, panel-reviewed** —
    `planning/specs/chunk-derived-context-timeline.md` (**requires chunk 15**): the derived context
@@ -1170,7 +1188,9 @@ XDG path relative, which put machine state back inside the user's repository)
    (`spec/lain/timeline_spec.rb:150`) and 4 (`spec/lain/rust/timeline_spec.rb:77`); and
    `Ext::Timeline#ancestors` returns an Array with no block form, so `Ledger`'s
    `timeline.ancestors { … }` (`ledger.rb:117`) would silently accumulate nothing. Ruby's
-   `causal_meets`, `dominator_meet`, and `correlation` have no Ext counterpart at all. **Ruled
+   `causal_meets`, `dominator_meet`, and `correlation` have no Ext counterpart at all (reversed
+   since: the Ruby `causal_meets` and `dominator_meet` were deleted 2026-09-14 and exist only as
+   `Ext::Timeline` methods and `Lain::Ext::Dag::*` orders). **Ruled
    this chunk (item 20): the dag/canonical/event bindings stay unwired.** Timeline construction
    is scattered across **16 sites in 12 files** with no factory to swap, so a wiring decision has
    to name a seam before it can name an implementation.
@@ -1210,7 +1230,8 @@ XDG path relative, which put machine state back inside the user's repository)
    `Compaction::Strategy::Base` **plus the refinement meet and `Strategy::Composed`**
    (un-deferring derived-context follow-up 3 — Joel: building it proves the extraction); and
    the algebra registry's own follow-ups 0/0b/11 (Middleware monoid declaration, verb latch,
-   `Registry#seal`). **Sequenced strictly after chunk 21's review-fixes chunk B lands** — its
+   `Registry#seal`) — all three since deleted with the registry and `Middleware`'s `>>`
+   (2026-09-14). **Sequenced strictly after chunk 21's review-fixes chunk B lands** — its
    T21/T23/T32 touch the same files; re-verify all anchors against post-B main.
 
 26. **✅ Landed, 26 of 27 (T20 deferred by ruling) — planned 2026-07-30, panel-reviewed** —

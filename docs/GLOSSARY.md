@@ -11,15 +11,18 @@ in this codebase specifically.
 > A set with an associative binary operation and an identity element.
 > ([Wikipedia](https://en.wikipedia.org/wiki/Monoid))
 
-Five operations in lain are monoids, and each one is property-tested against the same shared example
-group in `spec/support/shared_examples/monoid.rb`. `Middleware` composes with `Composable#>>`, and
-`Middleware::Identity` is the pass-through that leaves a stack unchanged. The `Context` combinator
-chain composes with the same `>>`. `Usage` adds token counts and is additionally commutative, so the
-order you fold a session's turns in cannot change the total.
-`Compaction::Strategy::Replacement` concatenates content blocks with `+` over `DROP` (see
-[free monoid](#free-monoid)). `Compaction::Strategy::Base#|` composes two strategies over one span
-with `Strategy::Identity` as its unit, and is commutative too, because the derivation folds ranges in
-ascending index order whichever operand was written first.
+Four operations in lain are monoids, and each one's own spec holds it to the same shared example
+group in `spec/support/shared_examples/monoid.rb`. The `Context` combinator chain composes with
+`>>`, with `Context::Identity` as its unit. `Usage` adds token counts and is additionally
+commutative, so the order you fold a session's turns in cannot change the total.
+`Compaction::Strategy::Base#|` composes two strategies over one span with `Strategy::Identity` as its
+unit, and is commutative too, because the derivation folds ranges in ascending index order whichever
+operand was written first. `Mode::LayerSet#|` is set union over the layers a human enabled, with the
+empty set as its unit — commutative and idempotent, so the order layers were switched on in cannot
+matter.
+
+A `Middleware::Stack` is deliberately not on the list: a stack is an ordered list of layers, composed
+by membership rather than by an operator, so there is no bracketing for the law to rule out.
 
 The laws matter operationally. If `Context` composition were not associative, the prompt you get
 would depend on how you bracketed the combinators, which is the class of bug that ordinary
@@ -34,18 +37,17 @@ Because `Context` composition is associative, a strategy *description* is determ
 sequence of combinators and not by how they are bracketed, so the descriptions form the free
 monoid on the combinator set. Distinct descriptions can name the same strategy (composing with the
 identity; pruning twice), so the strategy space proper is that monoid's image under evaluation,
-but descriptions are what is enumerable: the bench sweeps words over a fixed generator list
-instead of running a hand-written menu of named strategies.
+but descriptions are what is enumerable: a bench can walk the words over a fixed generator list
+instead of curating a hand-written menu of named strategies. `--context-pipeline` takes one such
+word, `+`-joined over five stages; no command walks them yet.
 
 There is a second instance one level down. A compaction strategy's `#blocks` maps a span of messages
 into the free monoid on **content blocks** — concatenation, with the empty block list as `ε`. The
-image of that unit is `Compaction::Strategy::DROP`, and `Replacement` declares itself a monoid over
-it — `monoid on: :+, identity: Algebra.later { DROP }`, deferred because the unit is defined below the
-declaration — so `spec/support/shared_examples/monoid.rb` holds it to the same identity and
-associativity laws it holds `Middleware` to. That declaration is why a range whose collapse answers
-`DROP` contributes no replacement event at all rather than an empty one: vanishing *is* what a unit
-does, and `Strategy::Base#collapse` reads an empty block list as `DROP` rather than as a blank
-message the provider would reject.
+image of that unit is `Compaction::Strategy::DROP`: `Replacement.of([])` answers `DROP` rather than
+minting an empty replacement, which is why a range whose collapse answers no blocks contributes no
+replacement event at all rather than an empty one. Vanishing *is* what a unit does, and it is what
+keeps a blank message the provider would reject from ever being built. The homomorphism group's
+"maps the empty span to the unit" law (below) is where that is held.
 
 ### Monoid homomorphism
 
@@ -56,24 +58,23 @@ Both halves are checked by `spec/support/shared_examples/monoid_homomorphism.rb`
 span to the unit" and "maps a concatenation of spans to the concatenation of their collapses".
 `Compaction::Strategy::Elide` is held to it; `Compaction::Strategy::Summarizing` is held to the
 group's *negative* reading, because summarizing a concatenation is not the concatenation of
-summaries.
+summaries. Both readings run in the subject's own spec: `elide_spec.rb` includes the positive,
+`summarizing_spec.rb` the negative.
 
 The universal property of the free monoid is what makes this the same condition as being
 **elementwise**. A map out of a free monoid is determined by its action on generators, so a
 span-collapse that is a homomorphism is exactly one that is a per-message map concatenated — and
-conversely. That equivalence is why `Algebra::Elementwise` is *structure* rather than convention:
-`elementwise on: :blocks, each: :attested` **generates** the whole-span method as
-`span.flat_map { attested(_1) }`, so an includer cannot be non-homomorphic through that door, and
-`is_a?(Elementwise)` is the classification with no separate label to drift from it. Recording the
-negative therefore means *not* including the module and filing the refutation directly with
-`Algebra.registry.refute` — `Elementwise.not_elementwise` raises `Algebra::Contradiction` on an
-includer, on purpose.
+conversely. So `Elide` writes its whole-span method by hand as `span.flat_map { attested(_1) }`,
+and `spec/support/shared_examples/elementwise.rb` holds that one line to the property: one law
+catches the whole-span method drifting from the per-element map it names, another catches a
+per-element map that consults position or state. The negative is an ordinary example that runs the
+same laws as a battery and requires the named one to fail — `Context::PurgeFailedInputs` gives two
+equal messages two different images in one call — and a law that *raised* instead confirms nothing,
+so the example also requires that none did.
 
-`spec/algebra_laws_spec.rb` sweeps the registry, so every declaration runs the shared group and every
-refutation runs a battery, and a refutation confirmed by an *error* rather than by a failing law is
-itself a failure. The scoping is worth knowing: the plain law above is false on purpose for a
-combinator declared `given:` an analysis of the whole span (splitting the span splits the analysis),
-so that family is judged by the conditional law in `elementwise.rb` instead.
+The scoping is worth knowing: the plain law above is false on purpose for a combinator that hands
+every element an analysis of the whole span (splitting the span splits the analysis), so that family
+— `Context::DedupeToolCalls` — is judged by the conditional law in `elementwise.rb` instead.
 
 ### Endomorphism
 
@@ -179,19 +180,17 @@ and only one of them is a strategy:
 deliberately **not** adopted: its `chunk_while` runs over tool_use objects and their parallel-safety
 answers, not over indices, so routing it through the value would be change for symmetry's sake. Its
 `chunk_while` makes well-formedness structural anyway — the runs are *generated* rather than
-proposed and checked, which is the same door-closing move `Algebra::Elementwise` makes when it
-generates a whole-span map out of a per-message one.
+proposed and checked, so there is no bad answer for a check to catch.
 
 The **refinement meet** is now built, and it is the pairwise *intersection* of the two operands'
 ranges, not the union of their cut points. These partitions are partial — a gap is a stretch no range
 claims — so a cut-point reading fills the gaps and proposes a collapse neither operand asked for,
 which also costs the operation the two properties it exists for: meeting with the uncut partition
 stops answering the other operand, and the result stops refining its own operands. Under the
-refinement order `#refines?` names, the intersection is the greatest lower bound. The class declares
-`meet_semilattice on: :meet, bottom: "the empty partition, per span"`, and the law sweep proves it
-over an **exhaustive** population: all 34 partial interval partitions of `0..3`, with the bottom, the
-uncut span and two gapped partitions placed last so the battery's witnesses are the four that bend
-the laws hardest (`AlgebraGenerators::Partitions` in `spec/support/algebra_generators.rb`).
+refinement order `#refines?` names, the intersection is the greatest lower bound.
+`spec/lain/interval_partition_spec.rb` holds it to the shared semilattice group over an **exhaustive**
+population — all 34 partial interval partitions of `0..3` — and, because the group samples ten
+draws per law and would miss a hard case among 34, checks every pair and triple beside it.
 
 `Compaction::Strategy::Composed` (`elide | summarize`) is the consumer that made the extraction pay:
 two strategies compose only over **disjoint** stretches, which is exactly "their meet is empty", and
@@ -203,29 +202,36 @@ an overlap refuses naming both owners and the indices they both claimed
 > An operation that can be applied multiple times without changing the result beyond the first
 > application. ([Wikipedia](https://en.wikipedia.org/wiki/Idempotence))
 
-One of the 3 laws checked by `spec/support/shared_examples/meet_semilattice.rb`, alongside
-commutativity and associativity. `timeline.meet(timeline)` must return the same timeline.
+One of the 4 laws checked by `spec/support/shared_examples/meet_semilattice.rb`, alongside
+commutativity, associativity and "a meet sits below both operands". `Dag::RenderAncestry.meet(timeline, timeline)` must return the same
+timeline.
 
 ### Meet-semilattice
 
 > A partially ordered set in which any 2 elements have a greatest lower bound, called their meet.
 > ([Wikipedia](https://en.wikipedia.org/wiki/Semilattice))
 
-`Timeline#dominator_meet` is a genuine meet-semilattice, because a node's dominators are totally
-ordered and so the deepest common dominator is unique. `Timeline#meet` over render edges is one too.
-`Timeline#causal_meets` is deliberately **not**: the causal DAG admits no unique greatest lower
-bound, so it returns the set of maximal common ancestors instead of a single element, the way
-`git merge-base` does.
+One Store's event DAG carries three orders, and Timelines are their elements. Render ancestry
+(`Dag::RenderAncestry`, over the first-parent edge) is a genuine meet-semilattice: the chain is
+linear, so the deepest common ancestor is unique. Dominance over the union of both parent edges
+(`Lain::Ext::Dag::Dominance`, Rust) is one too, because a node's dominators are totally ordered and so
+the deepest common dominator is unique. Causal ancestry (`Lain::Ext::Dag::CausalAncestry`, Rust) is
+deliberately **not**: the causal DAG admits no unique greatest lower bound, so `causal_meets`
+returns the set of maximal common ancestors instead of a single element, the way `git merge-base`
+does.
 
 Knowing which of the 3 you are holding matters, because only the semilattice ones obey the laws that
-`meet_semilattice.rb` checks.
+`meet_semilattice.rb` checks. In Rust the difference is a type: the two semilattice orders implement
+a sealed `MeetSemilattice` trait whose impl can only be written by a macro that states the laws in
+the same expansion, and causal ancestry implements `MaximalLowerBounds` instead, so a function that
+needs a unique meet cannot be handed it.
 
-`Lain::IntervalPartition#meet` is the third **declared** instance and the only one outside
-`Timeline`: the common refinement of two partitions of one span, greatest under the refinement order
-`#refines?` names (see [interval partition](#interval-partition)). Its bottom is recorded as prose
-rather than as a value, exactly as `Timeline`'s two are — a partition carries its span, so "the empty
-partition" is a different value for every span, which makes the bottom a fact about the structure
-rather than a member of it.
+`Lain::IntervalPartition#meet` is the third instance held to the group and the only one outside the
+DAG: the common refinement of two partitions of one span, greatest under the refinement order
+`#refines?` names (see [interval partition](#interval-partition)). Its bottom is prose rather than a
+value, exactly as the DAG orders' are — a partition carries its span, so "the empty partition" is a
+different value for every span, which makes the bottom a fact about the structure rather than a
+member of it.
 
 ### Regular type
 
@@ -246,7 +252,8 @@ The mechanical statement of "no reachable mutable state" is `Ractor.shareable?(e
 
 The conversation history is one. Acyclicity is not enforced by a check, it falls out of content
 addressing: an event's digest covers its parent's digest, so an event can only ever name digests
-that already existed. That is also why the dominator algorithm below needs only 1 topological pass.
+that already existed. That is also why the union graph the dominance order is taken over needs no
+cycle check before a dominator algorithm runs on it.
 
 ### Merkle tree
 
@@ -299,13 +306,16 @@ since an unstable serialization would break the cache prefix without changing me
 > each node to its immediate dominator.
 > ([Wikipedia](https://en.wikipedia.org/wiki/Dominator_(graph_theory)))
 
-This is the structure behind `Timeline#dominator_meet`, the checkpoint primitive. The deepest common
-dominator of 2 heads is the latest event every path to both must pass through, which makes it the
-latest point no in-flight branch can bypass, and therefore the safe place to synchronize or compact.
+This is the structure behind `dominator_meet`, the checkpoint primitive, which lives only in Rust
+(`Lain::Ext::Dag::Dominance`, `Ext::Timeline#dominator_meet`) and is specified but not yet called
+from `lib/`. The deepest common dominator of 2 heads is the latest event every path to both must
+pass through, which makes it the latest point no in-flight branch can bypass, and therefore the safe
+place to synchronize or compact.
 
-`Timeline::Dominators::Tree` implements Cooper, Harvey, and Kennedy's algorithm: immediate dominators
-by intersect-walks over a topological rank, after which any meet is a nearest-common-ancestor query.
-Their iterative worklist collapses to a single sweep here because the union graph is acyclic.
+`ext/lain/src/graph.rs` builds the union graph under a virtual root and hands it to `petgraph`'s
+`simple_fast`, which is Cooper, Harvey, and Kennedy's algorithm: immediate dominators by
+intersect-walks over a postorder numbering, after which any meet is a nearest-common-ancestor
+query on the dominator tree.
 ([A Simple, Fast Dominance Algorithm](https://www.cs.tufts.edu/~nr/cs257/archive/keith-cooper/dom14.pdf))
 
 ### Topological order
@@ -313,9 +323,11 @@ Their iterative worklist collapses to a single sweep here because the union grap
 > A linear ordering of a directed acyclic graph's vertices such that every edge points forward in the
 > ordering. ([Wikipedia](https://en.wikipedia.org/wiki/Topological_sorting))
 
-`Timeline::Dominators::Tree` ranks nodes this way (via Kahn's algorithm from a virtual root) so that
-every predecessor is processed before its successors. Any topological rank serves, because an
-immediate dominator is always a proper ancestor and so always has a strictly smaller rank.
+`lib/lain.rb` is one: the load-order manifest lists every unit after the units it references, so a
+unit is never loaded before something it names at load time. Keeping that one ordered list is what
+makes a circular dependency show itself, where scattered `require`s would hide the cycle behind
+idempotent early returns. A dominator algorithm ranks nodes the same way, for the same reason: every
+predecessor must be processed before its successors.
 
 ## Data structures
 
@@ -380,18 +392,19 @@ is an object waiting to be named.
 > A behavioral pattern where each handler either processes a request or passes it to the next handler
 > in the chain. ([Wikipedia](https://en.wikipedia.org/wiki/Chain-of-responsibility_pattern))
 
-`Effect::Handler` composes by decoration: each holds an optional `inner` and delegates whatever it
-does not handle. `Gate` is the clearest case, since it handles approval and delegates dispatch, and
-holds no `Toolset` of its own so that gating and dispatch can never disagree about what a tool name
-resolves to. `Middleware::Composed` is the same shape one layer up.
+A `Middleware::Stack` is one. Each layer's `#call(env, &app)` either answers the call — a refusal,
+a masked result — or passes it on through `#downstream`, and an agent's tool phase is six such layers
+built in one place (`CLI::ToolGuard`): the secret-write, secret-read, path-listing and test-layout
+guards, then `Middleware::Sensitivity`, which refuses a denied path, then `Middleware::Gate`, which
+asks about what a human may still allow. A `handler_union` child gets a seventh,
+`Middleware::RefuseUnpermitted`, inserted just ahead of `Sensitivity`. The order is the posture, and `Middleware::Gate.closes!`
+refuses a stack that does not end with those last two.
 
-Read algebraically, a handler chain is a **left-biased** union of partial interpreters, with the base
-`Handler` — which handles nothing and only delegates — as its identity. `#call` asks `handles?`
-outermost-first, so 2 handlers claiming the same effect resolve to the outermost, silently. No chain
-in the tree has that overlap today, at 3 effect kinds; naming the bias is what keeps a later reader
-from discovering it by debugging. `planning/tool-use-algebra.md` B7 records the fix if the effect
-vocabulary grows: a routing table keyed by kind, which is the same posture the `Algebra` registry
-takes toward clobbering a claim.
+The chain ends in an interpreter, never in another link: `Effect::Handler::Live` runs the tool and
+`Effect::Handler::Mock` answers a canned result, and neither delegates to anything. Handlers once
+composed by decoration too, and a chain of partial interpreters resolves two claims on one effect to
+whichever is outermost, silently. Keeping every refusal in the stack and exactly one interpreter at
+its end removes the question rather than documenting its answer.
 
 ### Anti-corruption layer
 
@@ -468,12 +481,11 @@ construction with `toolset.only(:read_file, :grep)`. There is no permission laye
 answer to "what can this subagent do" is 1 line of code you can read rather than a policy you have
 to audit. `Role` packages an attenuation with a prompt slot and a spawn posture.
 
-Attenuation is also a registered structure (`lib/lain/algebra/attenuation.rb`), declared on `Toolset`
-as `attenuation on: :only, dual: :except`. The dual rides on one claim instead of being a second
-declaration, because `except(x)` *is* `only(names - x)` and that equation is one of the laws; a
-typo'd `dual:` is refused at load by the same `answers?` check the operation gets. 7 laws run from
-`spec/support/shared_examples/attenuation.rb`: idempotence, composition inside the request, duality,
-identity, monotonicity, and 2 **raises** — chaining `except` over the same names, and attenuating
+Attenuation is also a law group, `spec/support/shared_examples/attenuation.rb`, which
+`spec/lain/toolset_spec.rb` includes over `#only` with `#except` as its dual. The dual rides on the one
+inclusion instead of being a second, because `except(x)` *is* `only(names - x)` and that equation is
+one of the laws. 7 laws: idempotence, composition inside the request, duality, identity,
+monotonicity, and 2 **raises** — chaining `except` over the same names, and attenuating
 outside the previous request. The partiality is the structure, so the raises are first-class laws
 rather than edge cases; without them the operation would look total and the no-join reading would
 rest on nothing.
@@ -483,15 +495,15 @@ security value is. Bounding a result by the receiver's names certifies nearly no
 fetches out of the receiver's own index and can fail only by inventing a tool. The law is
 `observed(only(s, r)) ⊆ r`, probed with the **dropped** names as well as the kept ones. A `Toolset`
 honest in `#names`, `#each`, `#to_schema` and `#digest` and lying in `#include?` and `#fetch` — the
-2 messages `Effect::Handler::Live` authorizes and dispatches with — passed every other law while a
-dropped tool executed end to end. `spec/lain/toolset_spec.rb` holds that set and runs it through the
-real handler; the escape is now a spec. The rendered schema's names are inside `observed`, so a
-dropped capability cannot come back through `#to_schema` either; the stronger reading of that —
+latter the one message `Agent::ToolRunner` resolves a call with — passed every other law while a dropped tool
+executed end to end. `spec/lain/toolset_spec.rb` holds that set and runs it through the real runner
+and `Effect::Handler::Live`; the escape is now a spec. The rendered schema's names are inside
+`observed`, so a dropped capability cannot come back through `#to_schema` either; the stronger reading of that —
 attenuating then rendering equals rendering then filtering, entry for entry — is not pinned.
 
-There is deliberately **no join**, and no `not_a_join_semilattice` refutation either, since a
-structure with no positive declarer anywhere fails the registry's own "named consumer" bar. A join
-would let a holder recover a capability it had dropped. Union exists only at construction, below the
+There is deliberately **no join**, and no negative example for one either, since a law group no
+operation is held to would be a claim with no consumer. A join would let a holder recover a
+capability it had dropped. Union exists only at construction, below the
 trust boundary, where `Tools::Subagent#child_union` assembles a child's set out of tools the parent
 already holds. The claim is scoped to the **model-facing surface** — the rendered schema, plus that
 `#include?`/`#fetch` pair — and is not a claim about the Ruby object graph:
@@ -510,8 +522,8 @@ two is owed.
 One reading the postures break: **under `:handler_union` the rendered schema does not determine the
 capability set.** Two children with different `only` sets render byte-identical tools blocks, which
 is the point, since sibling cache sharing is what CE-4 measures, and
-`Subagent::RefusingHandler` is what refuses a disallowed call, journaling a `"refused"` record. Under
-`:schema` the name is simply absent from the rendered tools and `Toolset#fetch` raises with nothing
+`Middleware::RefuseUnpermitted`, placed in the child's tool stack just outside the path refusal, is
+what refuses a disallowed call, journaling a `refused` record. Under `:schema` the name is simply absent from the rendered tools and `Toolset#fetch` raises with nothing
 journaled. That is the *only* designed divergence:
 `spec/lain/tools/subagent_posture_equivalence_spec.rb` pins the 2 postures as extensionally equal
 over every allowed call.
@@ -594,9 +606,11 @@ closed set is the point: an unknown kind fails loudly rather than being silently
 lain states its laws as RSpec shared example groups and runs them against every implementation:
 `monoid.rb`, `meet_semilattice.rb`, `elementwise.rb`, `pure.rb`, `attenuation.rb`,
 `monoid_homomorphism.rb`, `regular.rb`, `store_laws.rb`, `canonical_laws.rb`, `memory_index_laws.rb`,
-and `provider_parity.rb`. This is also the acceptance test for any Rust port. A Rust `Timeline` has to
-pass the same unchanged law suites as the Ruby one, which is how a port is known to be a swap rather
-than a rewrite.
+and `provider_parity.rb`. An operation is held to a law in its own spec, which includes the group
+with a population drawn for that operation, so the claim and its proof sit where a reader of the
+operation will look. This is also the acceptance test for any Rust port: where both implementations
+exist, the Rust one has to pass the same unchanged group as the Ruby one, which is how a port is
+known to be a swap rather than a rewrite.
 
 `monoid_homomorphism.rb` is the first group whose **negative** form is asserted too. It ships two
 readings of one law set from one object — "a monoid homomorphism" and "not a monoid homomorphism" —
@@ -606,19 +620,16 @@ model-backed collapse, and without an example saying so a later reader tidies it
 cannot have. Its failure message names the witness pair, so a negative that has quietly become true
 says which spans stopped distinguishing it.
 
-The same posture runs one level up. `Lain::Algebra` records structures as declarations in `lib/`,
-beside the operations they are about, and `spec/algebra_laws_spec.rb` sweeps that registry rather
-than a hand-kept list: a declaration with no generator fails, a generator for a claim nobody makes
-fails, and a *refutation* is confirmed only by a law that genuinely fails — one that raises instead
-proves nothing and fails the sweep.
+The same posture holds for `elementwise.rb` and `pure.rb`, whose group and battery are one object:
+a spec showing an operation is *not* the structure runs the battery through `AlgebraLaws.outcomes`
+(`spec/support/shared_examples/law_outcomes.rb`). Each law answers `:holds`, `:fails`, or the exception it raised, and the negative is confirmed only
+by the named law answering `:fails` with nothing raised — a law that raised was never evaluated, so
+it can neither confirm nor deny anything.
 
-The registry **seals** once `lib/lain.rb` has loaded every unit, so a claim is something a class body
-makes and never something a running process does: any declaration verb against the global registry
-afterwards raises `Algebra::Sealed`, and `sealed?` *is* `frozen?` so the two cannot come to disagree.
-Specs go on declaring into injected registries exactly as before. The latch sits on the verbs and not
-only on `Registry#declare`, which is not belt and braces: `Algebra::Elementwise` generates its
-whole-span method *before* it files its claim, so a registry-only latch would refuse the declaration,
-file nothing, and leave a working generated method on the class — silent past the raise.
+A population is where a law can pass without testing anything: over an empty one, "every draw
+satisfies the law" is true of nothing, and a population built with the operation under test bends
+along with any bug in it. So a group guards its population where it can, and a spec whose population
+sampling would miss a hard case says so and checks it exhaustively beside the group.
 
 ### CRDT, causal stability
 
@@ -626,9 +637,9 @@ file nothing, and leave a working generated method on the class — silent past 
 > stability is knowing that no further events can arrive before a given point.
 > ([crdt.tech](https://crdt.tech/))
 
-`Timeline#dominator_meet` inherits the standard causal-stability caveat: 1 quiet participant stalls
-the frontier. A subagent branch that has spawned but not folded back pins the answer at or before its
-spawn point however far the parent advances. This is documented rather than fixed, and the
+`dominator_meet` (the Rust dominance order's meet, not yet called from `lib/`) inherits the standard
+causal-stability caveat: 1 quiet participant stalls the frontier. A subagent branch that has spawned
+but not folded back pins the answer at or before its spawn point however far the parent advances. This is documented rather than fixed, and the
 operational mitigation is an actor's explicit stop.
 
 ### Distribution, variance

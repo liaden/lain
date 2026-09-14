@@ -73,7 +73,7 @@ finding, and the shapes are close enough that it is easy.
 | posture | what adjudicates | what this scenario's subject does there |
 |---|---|---|
 | **attended** (`plan`, `accept_edits`, `accept_all`) | the `[Triage, Rules, Surfaces]` ladder (`escalation.rb:145`) | everything here is live |
-| **`/mode auto`** | `Effect::Handler::Gate::ApproveAll` (`gate.rb:32-34`), which **replaces** the ladder | the ladder never runs, so **no rung is journalled at all** — see §11 |
+| **`/mode auto`** | `Middleware::Gate::ApproveAll` (`middleware/gate.rb:35-37`), which **replaces** the ladder | the ladder never runs, so **no rung is journalled at all** — see §11 |
 | **unattended** (no queue) | a one-rung `Unattended` deny-all ladder (`switchboard.rb:265,385-396`) | every gated call is denied before any of this is consulted |
 
 `plan` is a fourth thing worth stating separately: it is `deny_all` over a read-only permit set

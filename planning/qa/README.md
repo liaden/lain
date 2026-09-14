@@ -24,7 +24,7 @@ Pick by the question being asked, not by coverage. Each states its own cost and 
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`session-and-window.md`](scenarios/session-and-window.md) | Is the bench **honest before a model is asked** — served window, `provenance`, occupancy, the launch-level refusals, the `options` asymmetry, **which prices it will quote and which collapse strategy it resolved**? Mostly needs no model call. | cheap |
+| [`session-and-window.md`](scenarios/session-and-window.md) | Is the bench **honest before a model is asked** — served window, `provenance`, occupancy, the launch-level refusals, the `options` asymmetry, **which prices it will quote, which collapse strategy it resolved, and which context pipeline renders every request — read back off the session header** (§9, `--context-pipeline`)? Mostly needs no model call. | cheap |
 | [`rust-cli.md`](scenarios/rust-cli.md) | Does the loop work **end to end**, on a non-Ruby toolchain, with a real compile-error unhappy path? The smoke test. | cheap |
 | [`cockpit-surfaces.md`](scenarios/cockpit-surfaces.md) | Do the nvim/tmux surfaces tell the truth — review flow, **notes on a survey of a dummy app the round writes itself**, buffer staleness, the approval surfaces and the notifier that shares their queue, the live timeline, how a refusal is *delivered*? **Four of round 4's seven defects were here, and every fix landed somewhere other than where the symptom was.** | cheap, piggybacks |
 | [`failure-injection.md`](scenarios/failure-injection.md) | Is the record **unforgeable**, does every failure path refuse by name, and do the **tool bounds, the windowed-read contract and the summarizer's ceilings** hold? The deterministic half needs no model at all. The standalone regression gate. | minutes |
@@ -242,7 +242,8 @@ user, and never what a round with no scope named runs. **Its membership is the c
 set enumerated above and nowhere else** — one list, so the two cannot drift apart again. All of it
 is cheap, deterministic, and covers the paths most chunks touch. As of 2026-08-18 the first pair
 also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
-its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
+its lint, `--compact-strategy` resolution (and, since 2026-09-14, `--context-pipeline` resolution and
+its header field), both tool-bound shapes, the `edit_file` refusal
 vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
 crash-on-start case. That is deliberate: **a check that only runs in an expensive scenario mostly
 does not run**, so anything deterministic belongs in the cheap set even when the feature it guards

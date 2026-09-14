@@ -108,6 +108,13 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
   puts "#{r["type"]}\t#{r["tool"]}\t#{r["reason"]}\t#{r["path"]}" if r["type"]=="read_refused"}' "$JOURNAL"
 ```
 
+**Since 2026-09-14 a count of these records is the run's refused paths across the parent AND every
+child, not the parent's alone.** A child's tool stack is built by the same `CLI::ToolGuard` as its
+parent's and journals to the same session record, where a child's refusal used to be pushed onto the
+terminal channel and dropped. The record names **no actor** — `read_redacted` already had this shape —
+so tell a parent's refusal from a child's by `tool_use_id` against the turn records if it matters. A
+count that rose after a spawned child read a denied path is that change, not a regression.
+
 **The `reason` travelling whole rather than collapsed to a Boolean is the check.** `protected` and
 `configured` are different findings, and reporting a *project's own rule* as lain's makes "why is my
 file denied?" unanswerable. A round that finds every refusal reading `protected` regardless of
@@ -308,7 +315,7 @@ the model receive is one generic sentence:
 approval denied for tool "bash"
 ```
 
-**That is the entire message** — `Effect::Handler::Gate::DENIAL` (`gate.rb:54`), byte-identical to
+**That is the entire message** — `Middleware::Gate::DENIAL` (`middleware/gate.rb:47`), byte-identical to
 every other gated refusal. **The rung's `reason` never leaves the Journal**: nothing in
 `lib/lain/frontend/` renders an `escalation` record, so the transcript cannot tell you which rung
 refused, or whether a rung refused at all rather than the posture. **FAIL: the prompt asks you to
@@ -397,7 +404,7 @@ rung denies a protected argv at the *default* posture, which is F63 as filed —
 than that. A Triage deny is an **ordinary ladder deny**, and an approve-all policy replaces the
 ladder outright, so no amount of correctness inside the rung reaches a session that has raised the
 posture. A `bash` argv is therefore **not** unliftable the way a `read_file` path is: the `read_file`
-arm refuses inside `Effect::Handler::Sensitivity`, which sits *outside* the Gate, and no posture
+arm refuses inside `Middleware::Sensitivity`, the layer just ahead of the Gate, and no posture
 reaches outside the Gate. Closing the `bash` half means moving the argv check to that same side —
 extending `Sensitivity::PATH_FIELDS`, which already carries `"bash" => "cwd"` and so contributes one
 path where it needs N. That is a **shape** change to the pre-gate table rather than a new rule, it
@@ -412,7 +419,7 @@ characters, in the same session — through `read_file` rather than `bash`:
 you> read the file <P>
 ```
 
-`Effect::Handler::Sensitivity` sits *outside* the gate, so that arm is unliftable by any posture and
+`Middleware::Sensitivity` runs *ahead of* the gate, so that arm is unliftable by any posture and
 must refuse by name — `refused: <P> is a protected path; no approval can lift this, so name a
 different path rather than retrying this one in another form` — with nothing parked. **This sentence
 does reach the screen**, unlike the rung's, which is what makes the two arms tell an operator two
@@ -482,7 +489,7 @@ the expanding. **Do not file these one at a time.** They are one known-open with
 round that files thirteen findings here has buried the one decision that matters.
 
 **A second known-open, and round 11 owns it: two unliftable refusals, two operator experiences.**
-`Effect::Handler::Sensitivity#refuse` names the path, names why, and says `no approval can lift this,
+`Middleware::Sensitivity#refuse` names the path, names why, and says `no approval can lift this,
 so name a different path rather than retrying this one in another form`. The **ladder's** unliftable
 rung — the one this section just proved fires — renders **byte-identically to an ordinary posture
 deny**: `approval denied for tool "bash"`, because nothing in `lib/lain/frontend/` renders an
