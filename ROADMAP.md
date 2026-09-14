@@ -1822,6 +1822,27 @@ XDG path relative, which put machine state back inside the user's repository)
      included. Expiring them waits for a later ruling: a lost worker commit costs more than the
      refs do.
 
+47. **Planned (2026-09-14, panel-reviewed)** — `planning/specs/chunk-qa-round17-the-record-the-human-the-window.md`:
+   the QA round-17 discharge (`planning/qa-findings-round17-2026-09-14.md`, F88–F130), taken as one
+   chunk on the human's ruling and cut by file ownership rather than theme. Grounding found six
+   missing owners rather than forty-odd bugs, and each card restores one. **Bytes:** nothing checks
+   a tool result's encoding before commit, so a `bash` `✅` tears the ask and strands an unanswered
+   `tool_use`. `Tool::ResultBlock.of` becomes the one text boundary, and any tear now answers its
+   call. **The record:** five collaborators journal onto the display channel, so `shell_arm`,
+   leases and handbacks never reach the file. That was round 16's deferred Open decision 5, and it
+   is taken now. Lineage readers walk a `meta.spawned_from` shape production never wrote, so
+   `lain consolidate` finds nothing in any chat. **The human:** four stdin readers race for one
+   terminal. The human ruled **nvim-first**: a cockpit answers in `lain://inbox`/`lain://approval`,
+   and a plain chat keeps inline prompts behind a typeahead discard. **The window:** nothing
+   measures a request before send, so ollama silently truncated the system prompt and tools away.
+   Compaction re-decides each render and un-compacts when its signal clears. It becomes a
+   **sticky cut** held as Source policy state, with the Timeline still lossless and the replacement
+   spanning the compacted range. **Policy:** automatic shell approval gains a project-root
+   predicate and the gated credential table widens, and all four mode layers get consumers.
+   **Epic, undo, review:** fail-closed sign-off folds, one advance rule, and write-time undo
+   pre-images (item 46's follow-up). `/critique` over a held review goes Docent-style over the
+   changeset's objects, verified by a manual `/critique` of lain on itself. 29 cards, 6 waves.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
