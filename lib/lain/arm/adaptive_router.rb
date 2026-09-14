@@ -23,22 +23,33 @@ module Lain
     # the model IT ran under, so {Ledger} and {Compare} price every run through
     # the real per-model rate rather than one blended number.
     class AdaptiveRouter < Arm
+      # A caller that named a definition its router does not answer under. The
+      # journaled `oracle_digest` would address an oracle that never answered,
+      # which is unreadable rather than merely wrong, so it refuses at
+      # construction -- before a task, a spawn or a dollar.
+      class MismatchedDefinition < Error; end
+
       # @param name [String] the arm's label
       # @param router [#ask, #model, #usage] the live tier answering
       #   `definition`'s question -- {Oracle::Router.heuristic} or a model tier
-      # @param definition [Oracle::Definition] the SAME definition `router` was
-      #   built over (its schema/template/tier) -- the journaled
+      # @param definition [Oracle::Definition, nil] the SAME definition `router`
+      #   was built over (its schema/template/tier) -- the journaled
       #   `oracle_digest` names the oracle that actually answered only if this
       #   matches, the same pairing {Oracle::Recorded::Journaling} already
-      #   requires of ITS caller. Defaults to the heuristic-tier definition,
-      #   matching {Oracle::Router.heuristic}'s own default tier.
+      #   requires of ITS caller. Unset, it is READ OFF THE ROUTER, which is
+      #   what makes the pair a pair: the previous default named a constant, so
+      #   a caller passing a router built over any other tier journaled a
+      #   decision addressed to an oracle that never answered, with nothing red
+      #   anywhere. Given BOTH, they are checked against each other rather than
+      #   assumed to agree. A tier exposing no `definition` must pass one, and
+      #   says so by raising here rather than at the report.
       # @param instrument [Instrument] times the ask and prices the journal
       # @param handoff [#reclaim, #surrender] forwarded to {Arm}'s lease bracket
-      def initialize(router:, name: "adaptive-router", definition: Oracle::Router.definition,
+      def initialize(router:, name: "adaptive-router", definition: nil,
                      instrument: Instrument.new, handoff: Isolation::WorkerHandoff::Null)
         super(name:, handoff:)
         @router = router
-        @definition = definition
+        @definition = paired(definition, router)
         @instrument = instrument
       end
 
@@ -66,6 +77,21 @@ module Lain
       end
 
       private
+
+      # The pair, resolved and then CHECKED. A tier exposing no reader cannot be
+      # checked, so the caller's own definition stands -- an unverifiable pair is
+      # the caller's to get right, and refusing it would lock out every tier that
+      # predates the reader.
+      def paired(definition, router)
+        return router.definition if definition.nil?
+        return definition unless router.respond_to?(:definition) && definition.digest != router.definition.digest
+
+        raise MismatchedDefinition,
+              "this arm was given definition #{definition.digest} and a router answering under " \
+              "#{router.definition.digest}, so every routing decision would journal an oracle_digest " \
+              "naming an oracle that never answered. Pass the definition the router was built over, or " \
+              "pass none and let the arm read it off the router"
+      end
 
       # The ONE call site that reaches `@router`, which is the structural claim
       # above made mechanical: `model`/`template` cross into {#run} as plain

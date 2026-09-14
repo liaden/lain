@@ -161,8 +161,12 @@ module Lain
       # per task, and the dual-ledger arm asks about
       # {Arm::DualLedger::DEFAULT_MAX_STEPS} times on essentially every task --
       # its ceiling is the typical case, not the worst one, so budget a live
-      # `bench arms` at roughly five times the control arm's cost rather than at
-      # one ask per task.
+      # `bench arms` at roughly NINE times the control arm's cost rather than at
+      # one ask per task. Measured over the committed suite: single-thread 8,
+      # orchestrator-worker 17, dual-ledger 40, adaptive-router 8 -- 73 calls
+      # against the control's 8. The routing arm adds about an eighth of the
+      # total and less in dollars, since the tasks it routes cheaply are the
+      # ones a small model is priced for.
       #
       # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none";
       # a SET name REQUIRES `journal:`, and {#lease_options} says why.
@@ -176,6 +180,11 @@ module Lain
       #   {Telemetry::IsolationLease} records land; REQUIRED with an `isolation`
       # @param decompose [#call] how the orchestrator arm splits a task up; see
       #   {LiveArms::DEFAULT_DECOMPOSE} for why the arm's own default is wrong here
+      # @param router [#ask, #definition, nil] the tier the adaptive-router arm
+      #   asks which model each child runs under; nil builds the default from
+      #   the model `backend` resolved, which is what keeps that arm on the
+      #   operator's `--model`. A caller on a backend the default cannot route
+      #   ({LiveArms::UnroutableBackend}) passes its own here.
       # @param price_book [Lain::PriceBook] prices every arm's journal
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}; ITS
       #   signature owns those defaults, including the unset `system:` that
@@ -185,19 +194,23 @@ module Lain
       # @return [String] the Driver's report; never printed here
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt
+      # @raise [LiveArms::UnroutableBackend] when the resolved model has no
+      #   cheaper sibling the default router can name and no `router` was given
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
-                      decompose: LiveArms::DEFAULT_DECOMPOSE,
+                      decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil,
                       price_book: PriceBook.default, **spawn_options)
         refuse_unisolated_writes!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: isolating_flag)
         suite = ArmTasks.new(fixture_path:)
         # Named rather than inlined, because the header's `model:` has to be THE
         # seam's own answer -- a second resolution off `backend` could disagree
-        # with what actually ran.
+        # with what actually ran. The ROSTER reads the same answer: the routing
+        # arm's capable branch is that model, so all four arms run what the
+        # operator asked for and only the cheap branch departs from it.
         spawn_seam = SpawnSeam.new(backend:, **spawn_options)
-        arm_report(LiveArms.build(price_book:, decompose:),
+        arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
                    grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
       end

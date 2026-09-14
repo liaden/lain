@@ -25,6 +25,11 @@ module Lain
       # the tier.
       attr_reader :model
 
+      # The question this tier answers under, exposed for {Heuristic#definition}'s
+      # reason: a journaling wrapper is handed the definition off the tier it
+      # wraps, so the pair cannot drift.
+      attr_reader :definition
+
       # @param definition [Oracle::Definition] renders the question and validates
       #   the decoded reply -- both ends of the round trip, so this tier owns
       #   neither the prompt nor the schema

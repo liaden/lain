@@ -17,7 +17,7 @@ require "tmpdir"
 # "already initialized constant" warnings to the suite's stderr.
 #
 # NOTHING HERE SPENDS MONEY. `bench arms` is the highest-spend path in the repo
-# (three arms x N tasks against a real provider), so every example either stops
+# (four arms x N tasks against a real provider), so every example either stops
 # at the Bench::CLI seam with a double, or -- for the three that must drive the
 # real assembly -- injects a Provider::Mock through it.
 load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Bench)

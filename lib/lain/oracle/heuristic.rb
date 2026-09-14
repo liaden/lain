@@ -7,6 +7,14 @@ module Lain
     # so a caller cannot tell which tier answered. No provider is wired -- #ask is
     # the whole computation.
     class Heuristic
+      # Exposed for the same reason {Model#model} is: a caller that wraps this
+      # tier in {Recorded::Journaling} must hand that wrapper the SAME
+      # definition the tier answers under, and the honest way to hand it over
+      # is to read it off the tier rather than to name it twice and hope the two
+      # names agree. Without this reader the pair agrees by coincidence, and a
+      # journaled `oracle_digest` can address an oracle that never answered.
+      attr_reader :definition
+
       # @param definition [Oracle::Definition] owns the schema the answer is
       #   validated against
       # @param predicate [#call] `inputs Hash -> answer attributes Hash`

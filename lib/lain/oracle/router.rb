@@ -38,11 +38,17 @@ module Lain
         Definition.new(template: TEMPLATE, schema: SCHEMA, tier:)
       end
 
-      # The heuristic baseline every richer arm must beat: a task at least
-      # `long_after_chars` long routes to `long_model`, everything shorter to
-      # `short_model`. `template` is the SAME string on both branches -- a
-      # heuristic that also picked a per-branch template would be a richer arm
-      # than this baseline claims to be.
+      # The LENGTH baseline: a task at least `long_after_chars` long routes to
+      # `long_model`, everything shorter to `short_model`. `template` is the
+      # SAME string on both branches -- a heuristic that also picked a
+      # per-branch template would be a richer arm than this baseline claims to
+      # be.
+      #
+      # THE LIVE ROSTER DELIBERATELY DOES NOT USE IT: `long_after_chars` is a
+      # number tuned to a corpus, and `bench arms FIXTURE` takes an arbitrary
+      # one. {Bench::LiveArms.default_route} splits on a property of the task
+      # instead. This stays as the baseline that split has to beat, which is an
+      # experiment somebody has to run rather than one that ships.
       #
       # @param short_model [String]
       # @param long_model [String]

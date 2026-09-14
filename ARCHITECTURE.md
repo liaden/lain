@@ -1031,9 +1031,12 @@ The payoff is the [free monoid](docs/GLOSSARY.md#free-monoid). Since bracketing 
 strategy *description* is exactly its finite sequence of combinators, and the descriptions form
 the free monoid on the combinator set. Distinct descriptions can name the same strategy
 (compose with `Identity`; prune twice), so the strategy space proper is the image of the
-description space, but descriptions are what the bench enumerates: fix a generator list, bound
-the length, and `lain bench sweep` walks the words mechanically. That enumerable space is what
-the algebra buys the bench.
+description space, but descriptions are what a bench *can* enumerate: fix a generator list,
+bound the length, and the words are walkable mechanically. **No command walks them today.**
+`lain bench sweep` (`bench/sweep.rb`) is the offline recall@k *retrieval* eval over the committed
+gold corpus — five retrieval arms, no combinator — and nothing else enumerates the words either.
+So the enumerable space is what the algebra buys the bench, and spending it is unwritten work
+rather than shipped work.
 
 ### Homomorphisms: which collapses distribute, and which must not
 

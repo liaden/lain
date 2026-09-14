@@ -122,6 +122,57 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     end
   end
 
+  # ---- The router and the definition are a PAIR ----------------------------
+
+  # The journaled `oracle_digest` names the oracle that actually answered only
+  # if the two agree. They used to agree by coincidence -- the arm defaulted to
+  # a constant while the router was built over its own definition -- so the
+  # first caller to pass a `router:` built over another tier would have
+  # journaled a decision addressed to an oracle that never answered, with
+  # nothing red anywhere.
+  describe "the router and the definition it is journaled under" do
+    def model_tier_definition = Lain::Oracle::Router.definition(tier: :model)
+
+    it "takes the definition off the router when the caller names none" do
+      tiered = Lain::Oracle::Heuristic.new(definition: model_tier_definition,
+                                           predicate: ->(*) { { "model" => "m", "template" => "" } })
+      captured = nil
+      allow(Lain::Ledger).to receive(:from_journal).and_wrap_original do |original, entries, **kwargs|
+        captured = entries
+        original.call(entries, **kwargs)
+      end
+
+      described_class.new(router: tiered).run("fix the typo", spawn_seam:, grader:)
+
+      expect(captured.find { |entry| entry["type"] == "oracle_answer" })
+        .to include("oracle_digest" => model_tier_definition.digest)
+    end
+
+    it "refuses a definition that disagrees with the router it was handed" do
+      expect { described_class.new(router:, definition: model_tier_definition) }
+        .to raise_error(described_class::MismatchedDefinition, /oracle_digest|answered/)
+    end
+
+    it "names both digests in that refusal" do
+      expect { described_class.new(router:, definition: model_tier_definition) }
+        .to raise_error(described_class::MismatchedDefinition,
+                        /#{model_tier_definition.digest}.*#{Lain::Oracle::Router.definition.digest}/m)
+    end
+
+    # A tier exposing no reader is not an error -- it simply cannot be checked,
+    # so the caller's own definition stands.
+    it "accepts a definition from a caller whose tier exposes none" do
+      tierless = Object.new.tap do |tier|
+        def tier.ask(_inputs) = Lain::Oracle::Router.definition.answer("model" => "m", "template" => "")
+        def tier.model = nil
+        def tier.usage = {}
+      end
+
+      expect { described_class.new(router: tierless, definition: Lain::Oracle::Router.definition) }
+        .not_to raise_error
+    end
+  end
+
   # ---- Re-routing mid-session is structurally impossible --------------------
 
   describe "re-routing mid-session is structurally impossible" do

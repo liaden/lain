@@ -97,21 +97,22 @@ RSpec.describe Lain::Bench::CLI do
       expect(report).to be_a(String)
     end
 
-    # Not just "a String": the three arms of the reuse target (arm_sweep.rb:130-141)
-    # over EVERY task the fixture declares. The Driver's header states both counts,
-    # so a suite silently truncated to the two tasks Driver demands, or an arm
-    # quietly dropped, fails here.
+    # Not just "a String": all four orchestration arms over EVERY task the
+    # fixture declares. The Driver's header states both counts, so a suite
+    # silently truncated to the two tasks Driver demands, or an arm quietly
+    # dropped, fails here.
     #
     # The header was widened, and the attribution is asserted in the SAME example
     # because it is the same claim about the same four lines: what ran, over what,
     # under what. `arms_report` is the only caller that can answer all three, so a
     # header that keeps the counts and drops the fixture is still an unattributable
     # record.
-    it "compares all three arms over the whole committed suite, and says what produced the report" do
+    it "compares all four arms over the whole committed suite, and says what produced the report" do
       report = arms_report
 
-      expect(report).to include("3 arms over 8 tasks")
-        .and include("single-thread").and include("orchestrator-worker").and include("dual-ledger")
+      expect(report).to include("4 arms over 8 tasks")
+        .and include("single-thread").and include("orchestrator-worker")
+        .and include("dual-ledger").and include("adaptive-router")
       expect(report).to include(fixture_path)
       # The model the arms were CONFIGURED with (the backend's resolved default),
       # which in this spec is deliberately not the model the mock's responses
@@ -145,7 +146,8 @@ RSpec.describe Lain::Bench::CLI do
       section = report.split("\n\n").find { |block| block.start_with?("cost (USD)") }
 
       expect(section).not_to be_nil
-      expect(section).to include("single-thread").and include("orchestrator-worker").and include("dual-ledger")
+      expect(section).to include("single-thread").and include("orchestrator-worker")
+        .and include("dual-ledger").and include("adaptive-router")
       expect(section).not_to match(/\s0\.000000(\s|$)/)
     end
 
@@ -285,15 +287,62 @@ RSpec.describe Lain::Bench::CLI do
     # this tail, and a silently dropped one is invisible: an unpinned --seed is
     # a reproducibility hole on a bench whose whole claim is repeatability. The
     # Request the provider was actually handed is the end of that wire.
+    # EVERY request, not `last_request`: the routing arm runs last, so reading
+    # the tail off the final request would assert the flags against one child of
+    # one arm. The ceiling and the sampler must reach ALL of them, the routed
+    # ones included -- which is what pins that `Context#with_model` copies
+    # everything except the model. `--model` itself is the example below, since
+    # it is the one flag an arm here is entitled to depart from.
     it "carries every sampler flag in the tail through to the provider" do
       cli.arms_report(fixture_path:, provider:, tools: toolless,
-                      backend: backend(model: "claude-haiku-4-5", max_tokens: 321,
+                      backend: backend(model: "claude-sonnet-4", max_tokens: 321,
                                        temperature: 0.25, seed: 99))
 
-      request = provider.last_request
-      expect(request.model).to eq("claude-haiku-4-5")
-      expect(request.max_tokens).to eq(321)
-      expect(request.extra).to include("temperature" => 0.25, "seed" => 99)
+      expect(provider.requests.map(&:max_tokens).uniq).to eq([321])
+      expect(provider.requests.map(&:extra)).to all(include("temperature" => 0.25, "seed" => 99))
+    end
+
+    # THE OPERATOR'S MODEL IS THE ROSTER'S MODEL, on all four arms. The routing
+    # arm may send a task to a CHEAPER sibling -- that is what the arm is -- and
+    # it may never send one to a model nobody asked for. An earlier draft of
+    # this card routed to two absolute ids, so `--model claude-sonnet-4` bought
+    # opus on five of eight tasks while the report header still said sonnet.
+    #
+    # A TALLY, not a `uniq`: the set is blind to another arm drifting, since a
+    # drifting single-thread would land on a model already in it. The counts say
+    # which arm moved.
+    it "runs every arm under the model the operator asked for, departing only where it routes cheaper" do
+      cli.arms_report(fixture_path:, provider:, tools: toolless, backend: backend(model: "claude-sonnet-4"))
+      tally = provider.requests.map(&:model).tally
+
+      expect(tally.keys).to contain_exactly("claude-sonnet-4", Lain::Bench::LiveArms::CHEAP_MODEL)
+      expect(tally.fetch(Lain::Bench::LiveArms::CHEAP_MODEL)).to eq(3)
+    end
+
+    # `--provider ollama` is advertised and worked before the fourth arm landed.
+    # The cheap branch is an Anthropic id, so on a backend that cannot serve one
+    # the roster REFUSES AT ASSEMBLY rather than asking a qwen3 endpoint for
+    # `claude-haiku-4-5` on arm four, after three arms have billed.
+    it "refuses a backend it has no cheaper sibling for, before any arm runs" do
+      expect do
+        cli.arms_report(fixture_path:, provider:, tools: toolless,
+                        backend: backend(provider: "ollama", model: "qwen3:4b"))
+      end.to raise_error(Lain::Bench::LiveArms::UnroutableBackend, /qwen3:4b/)
+      expect(provider.call_count).to eq(0)
+    end
+
+    # The way out of that refusal, and the reason `.build` takes the keyword at
+    # all: a caller with its own tier routes its own models. Without this the
+    # refusal names an escape hatch that does not exist -- which is the exact
+    # shape of defect this card was sent back for.
+    it "lets a caller route an unpriceable backend with its own tier" do
+      router = Lain::Oracle::Heuristic.new(definition: Lain::Oracle::Router.definition,
+                                           predicate: ->(*) { { "model" => "qwen3:0.6b", "template" => "" } })
+
+      cli.arms_report(fixture_path:, provider:, tools: toolless, router:,
+                      backend: backend(provider: "ollama", model: "qwen3:4b"))
+
+      expect(provider.requests.map(&:model).tally).to include("qwen3:0.6b" => 8)
     end
 
     # An injected price book that never reaches an arm prices every run off the
@@ -402,7 +451,7 @@ RSpec.describe Lain::Bench::CLI do
     end
 
     it "lets a toolless run through unisolated, which is the control the bench needs" do
-      expect(arms_report).to include("3 arms over")
+      expect(arms_report).to include("4 arms over")
     end
   end
 
@@ -432,7 +481,7 @@ RSpec.describe Lain::Bench::CLI do
         path = write_fixture(dir, ["do the thing", "do the other thing"])
 
         expect(cli.arms_report(fixture_path: path, backend:, provider:, tools: toolless))
-          .to include("3 arms over 2 tasks")
+          .to include("4 arms over 2 tasks")
       end
     end
 

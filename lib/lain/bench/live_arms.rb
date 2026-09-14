@@ -2,9 +2,10 @@
 
 module Lain
   module Bench
-    # Which topologies the live arm comparison puts side by side, and how the
-    # orchestrator among them splits a task up: {ArmSweep}'s three, since a
-    # comparison is only a comparison against the {Arm::SingleThread} control.
+    # Which topologies the live arm comparison puts side by side, how the
+    # orchestrator among them splits a task up, and which model the router among
+    # them sends each child to -- always against the {Arm::SingleThread}
+    # control, since a comparison is only a comparison against one.
     #
     # A MODULE with a builder rather than a frozen constant map because
     # `lain/bench` loads BEFORE `lain/arm` (see lain.rb) -- these classes exist
@@ -43,11 +44,90 @@ module Lain
       # A task naming no path is not split at all: one worker doing the whole
       # thing beats N workers doing nothing.
       DEFAULT_DECOMPOSE = lambda do |task|
-        paths = task.to_s.scan(FILE_PATH).uniq
+        paths = files_named(task)
         return [task.to_s] if paths.empty?
 
         paths.map { |path| "#{task}\n\nYour share of this task is #{path}, and only #{path}." }
       end
+
+      # The files a task names, deduplicated, read by BOTH seams this module
+      # hands the roster: the orchestrator's decomposition above and the
+      # router's model choice below. One reader, so the two cannot disagree
+      # about what makes a task big.
+      def self.files_named(task) = task.to_s.scan(FILE_PATH).uniq
+      private_class_method :files_named
+
+      # The cheaper sibling a narrow task is routed to. ONE id and not a
+      # per-provider table, because there is no general "a cheaper model than
+      # this one" function to write: a roster whose backend cannot serve this
+      # id is REFUSED at assembly instead of guessing.
+      CHEAP_MODEL = "claude-haiku-4-5"
+
+      # What a backend must have resolved for {.default_router} to route it: an
+      # Anthropic id, since {CHEAP_MODEL} is one, and not {CHEAP_MODEL} itself,
+      # which would put both branches on one model and bill a fourth arm to
+      # reprint the control.
+      ROUTABLE_MODEL = /\Aclaude-/
+      private_constant :ROUTABLE_MODEL
+
+      # A backend this roster's own router cannot route on. Its own error rather
+      # than {CLI::Refusal} only in WHERE it is raised: the policy that knows
+      # what is routable lives here, and `exe/lain` presents every {Lain::Error}
+      # as a sentence, so an operator still meets a sentence and not a trace.
+      class UnroutableBackend < Lain::Error; end
+
+      # WHICH MODEL A CHILD RUNS UNDER: the capable branch is WHATEVER THE
+      # BACKEND RESOLVED, so `--model` moves this arm exactly as it moves the
+      # other three and only the cheap branch departs from it.
+      #
+      # The split is a PROPERTY OF THE TASK, the one {DEFAULT_DECOMPOSE} already
+      # splits on and read through the same {files_named}: a task naming more
+      # than one file is one whose edits have to stay consistent ACROSS files,
+      # which is the work a bigger model is bought for. A threshold on task
+      # LENGTH -- the obvious alternative -- is a number tuned to a corpus, and
+      # on the committed suite it ranks backwards: the shortest task there names
+      # three files while longer ones name a single file.
+      #
+      # @param capable [String] the backend's own resolved model
+      # @return [#call] the {Oracle::Heuristic} predicate
+      def self.default_route(capable)
+        lambda do |inputs|
+          files = files_named(inputs.fetch(:task))
+          spread = files.size > 1
+          { "model" => spread ? capable : CHEAP_MODEL, "template" => "",
+            "reason" => "task names #{files.size} file(s), #{spread ? "more than one" : "at most one"}" }
+        end
+      end
+
+      # The heuristic tier {Arm::AdaptiveRouter} asks. The QUESTION stays
+      # {Oracle::Router}'s -- template, schema and tier, and so the digest a
+      # replay keys on -- while the POLICY is this roster's, exactly as
+      # {DEFAULT_DECOMPOSE} is this roster's while the mechanism stays
+      # {Arm::OrchestratorWorker}'s.
+      #
+      # @param model [String] what the backend resolved
+      # @return [Oracle::Heuristic]
+      # @raise [UnroutableBackend] when no cheaper sibling is servable
+      def self.default_router(model)
+        refuse_unroutable!(model)
+        Oracle::Heuristic.new(definition: Oracle::Router.definition, predicate: default_route(model))
+      end
+
+      # Loudly, and BEFORE any arm runs. `--provider ollama` resolves a model
+      # {CHEAP_MODEL} means nothing to, and finding that out on the fourth arm
+      # -- after three have billed against a real provider -- is the expensive
+      # way to learn it.
+      def self.refuse_unroutable!(model)
+        return if model.to_s.match?(ROUTABLE_MODEL) && model.to_s != CHEAP_MODEL
+
+        raise UnroutableBackend,
+              "the adaptive-router arm routes narrow tasks to #{CHEAP_MODEL}, and this run resolved " \
+              "#{model.to_s.inspect}, which it is no cheaper than -- so the fourth arm would either ask " \
+              "a provider for a model it does not serve, or run the control twice under two names. Give " \
+              "`bench arms` an Anthropic --model, or pass a `router:` of your own to " \
+              "Bench::CLI#arms_report to route this backend's own models"
+      end
+      private_class_method :refuse_unroutable!
 
       # The two epic entries' labels. They differ in WHO answers the gates and in
       # nothing else, so the names are the only thing telling their rows apart.
@@ -113,15 +193,27 @@ module Lain
       # @param price_book [Lain::PriceBook] prices each arm's journal
       # @param decompose [#call] `call(task) -> Array<String>`, the orchestrator's
       #   split; the linear arms have nothing to decompose
+      # @param model [String] what the backend this roster's seam was built from
+      #   resolved. The routing arm's capable branch IS this string, so `--model`
+      #   moves all four arms; without it the fourth would spend under an id
+      #   nobody asked for while the report header named this one.
+      # @param router [#ask, #definition] the tier {Arm::AdaptiveRouter} asks
+      #   which model each child runs under; built from `model` when absent. The
+      #   arm takes its `definition:` OFF this object rather than defaulting its
+      #   own, so the journaled `oracle_digest` names the oracle that answered.
       # @return [Array<Lain::Arm>] single-thread control first
-      def self.build(price_book: PriceBook.default, decompose: DEFAULT_DECOMPOSE)
-        # One instrument, so all three arms report wall-time off the same clock
+      # @raise [UnroutableBackend] when no `router` is given and `model` has no
+      #   cheaper sibling this roster can name
+      def self.build(price_book: PriceBook.default, decompose: DEFAULT_DECOMPOSE,
+                     model: Provider::Anthropic::DEFAULT_MODEL, router: nil)
+        # One instrument, so all four arms report wall-time off the same clock
         # and dollars off the same book -- the comparison is only a comparison
         # if the measuring is shared.
         instrument = Arm::Instrument.new(price_book:)
         [Arm::SingleThread.new(name: "single-thread", instrument:),
          Arm::OrchestratorWorker.new(name: "orchestrator-worker", instrument:, decompose:),
-         Arm::DualLedger.new(name: "dual-ledger", instrument:)]
+         Arm::DualLedger.new(name: "dual-ledger", instrument:),
+         Arm::AdaptiveRouter.new(name: "adaptive-router", router: router || default_router(model), instrument:)]
       end
     end
   end

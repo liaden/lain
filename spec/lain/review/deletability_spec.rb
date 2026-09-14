@@ -281,44 +281,6 @@ module DeletionMap
       forces: [], plan: VERIFIED_DELETIONS, untestable: nil
     ),
     Capability.new(
-      key: "adaptive_router",
-      # ONE row for two files because they are one unit: the router's only
-      # reference anywhere is the arm's `definition:` keyword default. And
-      # `Oracle::Router` is spelled qualified for the reason the disclosure row
-      # gives, doubled -- `Frontend::Neovim::Router` is a live class with that
-      # leaf name.
-      #
-      # The cost, stated so nobody trusts a check that is not there:
-      # `oracle/router.rb` is held on this list by a HUMAN and by nothing else.
-      # The DEFINED-here example cannot see it (no `module Oracle::Router` line
-      # exists to match), and the require-site example iterates `own`, so a path
-      # dropped from this list is never looked at -- delete it and the file
-      # stays green while the row stops deleting the router.
-      constants: %w[AdaptiveRouter Oracle::Router],
-      files: ["lib/lain/arm/adaptive_router.rb", "lib/lain/oracle/router.rb",
-              "spec/lain/arm/adaptive_router_spec.rb", "spec/lain/oracle/router_spec.rb"],
-      # A spec that names the router to assert the secret-read oracle never
-      # consults it -- a negative expectation is still a reference, and it
-      # stops compiling when the constant goes.
-      consumers: ["spec/lain/oracle/secret_read_spec.rb",
-                  # Two more that drive the router to prove the spawn seam HONOURS the
-                  # model it routes to -- the seam used to swallow it, so an arm could
-                  # route and change nothing. Both stop compiling when the constant goes.
-                  "spec/lain/bench/spawn_seam_spec.rb",
-                  "spec/lain/arm_spec.rb"],
-      edits: {
-        "lib/lain/arm.rb" => ['require_relative "arm/adaptive_router"'],
-        "lib/lain/oracle.rb" => ['require_relative "oracle/router"'],
-        # The architecture document counts this arm in a claim that goes FALSE
-        # the moment the file does, which is worth a marker; the roadmap's
-        # entry for the same unit is a worklist item the deletion answers
-        # rather than a claim it breaks, and pinning a marker into a document
-        # that churns weekly buys noise rather than safety.
-        "ARCHITECTURE.md" => ["arm/{single_thread,orchestrator_worker,dual_ledger,adaptive_router}.rb"]
-      },
-      forces: [], plan: VERIFIED_DELETIONS, untestable: nil
-    ),
-    Capability.new(
       key: "epic_gate",
       constants: [], files: [], consumers: [], edits: {}, forces: [], plan: REVIEW_SURFACE,
       # The one row that is a REVERT rather than a removal: it owns no file, and
@@ -339,7 +301,7 @@ module DeletionMap
   # survived until this pair existed -- is a red example rather than a green run
   # with fewer of them.
   TESTABLE = CAPABILITIES.select(&:testable?).freeze
-  KEYS = %w[thread docent submit github_pr disclosure tool_search disclosure_sweep adaptive_router].freeze
+  KEYS = %w[thread docent submit github_pr disclosure tool_search disclosure_sweep].freeze
 
   module_function
 
