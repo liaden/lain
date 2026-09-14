@@ -310,6 +310,65 @@ else's.
   alive? Either answer is a change to `Arm::Driver`, so it belongs with T7's subject and not inside it.
   Filed here so it survives this plan.
 
+  **Strengthened 2026-09-13 by T4, which reached the same method from the other side.** T4 mapped all
+  three `Compare::Run.from_timeline` call sites while threading posture: `bench/variance.rb` is now
+  honest on both axes; `bench/decider_sweep/arms.rb` is defensible (offline replay, so an empty
+  degraded set is a true statement); and **`arm.rb:64` — `Arm::Run#compare_run` — is vacuous on BOTH
+  `degraded:` and `posture:`**. `Arm::Run` has no posture member, so there is no one-line fix: honest
+  wiring touches every arm class. T4 asked before widening and the widening was **declined**, because
+  it hardens a bridge `Arm::Driver` never crosses.
+
+  So the bridge is now known to be (a) kept alive only by its specs, (b) never crossed by the Driver,
+  which says so in a comment, and (c) silently vacuous on both comparability guards. That is a much
+  sharper statement of the problem than the reachability audit alone produced, and it makes the
+  question easier: a path with no production caller that would also lie to two guards if it acquired
+  one is not a bridge worth keeping unless somebody wires it deliberately.
+
+- **`--journal` now records more than the sentence that gates it says, and T6 should own the fix.**
+  Landing T1 makes the grade reach the Journal, but `exe/lain:652`'s `refuse_journal_without_isolation!`
+  still refuses `--journal` without `--isolation` on the stated grounds that *"--journal records the
+  isolation leases a run takes, and nothing leases without --isolation"*. That premise is now
+  incomplete: a `--journal` run also records a `grade_record`, which has nothing to do with leases. So
+  an operator who wants the bench's headline metric and does not want isolation is refused by a
+  sentence that no longer explains itself. **T1 was deliberately not widened** — `exe/lain` is
+  orchestrator-owned, and relaxing `Bench::CLI#arm_isolation` alone would redden `cli_spec.rb:311-317`
+  while argv still refused, which is a worse state than either end. **T6 is the natural owner**: it
+  already opens `exe/lain` and `bench/cli.rb`, it is last so it can see what T9 decided, and adding
+  `--grader` is the same kind of edit. Whoever takes it must decide whether the pair is still
+  defensible or whether the refusal splits in two.
+
+- **If T9 wires altitude, the grade journaling has to be repeated there.** T1 decorates
+  `Arm::Driver`'s grader, which covers the `bench arms` path completely — the three arms take no
+  `grading:` and consult `grader:` directly. The **altitude** path builds `Altitude`, not
+  `Arm::Driver`, and is not covered. This is only a cost on the wire branch; retiring makes it moot.
+
+- **The grade record lands on the journal but joins to nothing. Filed 2026-09-13 from T1's review;
+  needs its own card.** `Telemetry::GradeRecord` carries `grader, score, pass, why, subject_digest,
+  criteria_digest` and names **no arm, no task and no run**. Driving the real `Bench::CLI#arm_report`
+  over two arms x two tasks produces **four grade records with two distinct subject digests** — both
+  arms ran the same task over the same seam, and content-addressing is doing its job, so identical
+  trajectories collide. An operator reading that NDJSON cannot tell which arm scored what, and in the
+  collision case cannot tell the records apart at all.
+
+  Two aggravations. `arm/driver.rb:206` memoises with `@report ||=` while `#fold` deliberately does
+  not memoise on a raise path, so **a retried `bench arms` appends a second full set of
+  indistinguishable records** — the same re-payment defect `#fold`'s own comment books. And the digest
+  addresses a turn in a Store that only ever existed in memory: `Bench::SpawnSeam#call` builds every
+  agent with `timeline: nil`, so the Store is per-run and discarded. The address is stable *as a
+  value* and never rewritten, but it resolves to nothing after the process exits and nothing else in
+  the operator's journal carries it.
+
+  **`head_digest` is the right address and T1's choice was correct** — it is the Timeline's real
+  content address and the only honest one. It is simply not a join key. Fixing this means
+  `Telemetry::GradeRecord` gains an attribution key, which is outside T1's Files list and wants its own
+  red-before-green. So T1's Intent — *"three lines make the score observable"* — is **half delivered**:
+  the record exists and is addressed honestly; it is not yet attributable.
+
+- **Dropping the `--journal`/`--isolation` pair refusal is a card, not a diff. Filed 2026-09-13.**
+  The message reword lands with T1 as a wiring diff. Retiring the pair refusal itself also touches
+  `Bench::CLI#arm_isolation` and retires two `cli_spec.rb` examples, so it needs its own
+  red-before-green. Both the implementer and the panel reached this conclusion independently.
+
 ## Waves
 
 Wave 1: T1, T3, T4
@@ -485,7 +544,70 @@ Scenario: the replay paths keep their empty toolset deliberately
   rather than the new default, and AC 5 pins that. What is still open: if a **third** site turns out to
   need one, report it, because two is the measured count and the ruling above is enumerated, not a policy.
 
-### T3 — Wire the fourth arm the architecture already claims ships   [wave 1] [risk: low]
+### T3 — Wire the fourth arm the architecture already claims ships
+
+**RESEQUENCED 2026-09-13, by the orchestrator: this card now depends on T2, and its first
+implementation was held rather than landed.** It was built in wave 1, came back green, and the panel
+returned REQUEST-CHANGES on a BLOCKER it proved with a probe against the real seam rather than by
+reading:
+
+    seam.model             = "claude-opus-4-8"
+    child context model    = "claude-opus-4-8"
+    routed model honoured? = false
+
+`spawn_seam.rb:118` takes `model:`/`template:` into an anonymous `**` and builds every child off the
+single `@context` resolved at construction (`:82`), so `arm/single_thread.rb` and
+`arm/adaptive_router.rb` are the same program over the same provider, Context and model. The router's
+answer becomes a journaled `Telemetry::OracleAnswer` and changes nothing else.
+
+**Why that is a blocker and not a shortfall.** Against a real provider at temperature > 0 the two
+columns differ *by sampling noise*, which does not read as a duplicate — it reads as a result:
+*adaptive routing performs the same as the control at the same cost.* A study bench that manufactures
+a false negative on its headline comparison has done something worse than leaving the arm unwired,
+and `bench arms` is the repo's highest-spend path — it would bill ~12% more per invocation to do it.
+
+**It does not match T5's precedent, which was the argument for shipping it disclosed.** T5's
+`Disclosure::Upfront` is a no-op wrapper, but `DisclosureSweep` still varies its axis *inside its own
+harness* — `Deferred` genuinely withholds schemas and fetches through `ToolSearch`, so its two arms
+differ in the report it prints. Here nothing differs inside the harness at all, and T5's sweeps are
+offline and free.
+
+**So the fix belongs to T2**, which owns `bench/spawn_seam.rb` and whose whole subject is giving the
+bench a real harness. T2 must give `SpawnSeam` a per-call Context: the panel's preferred shape is
+explicit `model:`/`template:` parameters threaded into it, or explicit parameters that `raise` on a
+non-nil value so an arm routing against a seam that cannot route fails at the first task rather than
+at the report. An anonymous `**` is for keywords a method does not know about, and this seam names
+both in its own docs at `:95-98`.
+
+**Four further findings carry into the resumed card:**
+
+1. `ROUTE_AFTER_CHARS`'s stated justification is **false on the path it serves** — it says a
+   threshold the whole suite falls one side of would print a second copy of the control, but every
+   child already goes to the same model. And its one real claim, that 160 splits the committed
+   fixture, is **pinned by nothing**: the spec builds its long task as `"a" * (ROUTE_AFTER_CHARS + 1)`,
+   so it passes for any value. Measured over `spec/fixtures/arms/tasks.yml` the lengths are
+   `[111,118,142,143,159,184,189,192]` and 160 answers 5 haiku / 3 opus.
+2. The threshold **degenerates silently on any other fixture** — `bench arms FIXTURE` takes an
+   arbitrary path, and a suite entirely under or over 160 chars routes every child to one model with
+   no warning while still billing for the extra arm. The principled alternative is one screen up in
+   the same file: `DEFAULT_DECOMPOSE` faces the identical problem and splits on a **property of the
+   task** (the file paths it names) rather than a number tuned to a corpus.
+3. `router:` arrives **without the `definition:` it must agree with**. `Oracle::Recorded::Journaling`
+   journals `@definition.digest` without checking `inner` was built over it, and `Oracle::Heuristic`
+   exposes no `#definition` reader. Today they agree by coincidence; the moment anything passes
+   `router:` — which is exactly what T6's `Arm::Catalog` and `--arms` exist to allow — `bench arms`
+   journals a decision addressed to an oracle that never answered, with no red example anywhere.
+   **This must land before T6.**
+4. The replacement documentation guard is stronger than the pin it replaced but has two brittle
+   edges: it equates arm labels with filenames via `name.tr("-", "_")`, which `PROGRESSIVE`/`HANDS_OFF`
+   already falsify (`epic-progressive` and `epic-hands-off` from one `arm/epic.rb`), and
+   `claim&.split(",")` has no `strip`, so reformatting the doc to `arm/{a, b}.rb` reds the suite.
+
+**What was confirmed clean and should not be re-litigated on resume:** the shared `Arm::Instrument`
+is honoured and now pinned; `ARCHITECTURE.md:1035` is corrected honestly against `bench/sweep.rb:8-29`;
+the oracle digest is consistent on the default path and nothing became unreplayable; and the
+`adaptive_router` row removal from `deletability_spec.rb` is complete and correct, verified by reading
+per that row's own "held by a HUMAN" warning.   [wave 1] [risk: low]
 
 **Depends on:** none
 **Files:** modify `lib/lain/bench/live_arms.rb`, `ARCHITECTURE.md`, `exe/lain`;
@@ -560,7 +682,16 @@ reading, and `spec/lain/review/deletability_spec.rb` must be green with the `ada
   fix is the `bench/session` → `SessionRecord` merge, which is not this card.
 - If `bench arms` now costs 4/3 of what it did, say so. It spends real money per invocation.
 
-### T4 — Let the comparability guard fire   [wave 1] [risk: low]
+### T4 — Let the comparability guard fire
+
+**Scope widened 2026-09-13, by the orchestrator, and the card would not have worked without it.** The
+plan located the defect at the missing `posture:` argument. The real cause is one layer down:
+`Bench::Session::Recording` folds `capability_degraded` off a run's journal but **dropped `mode_switch`
+records entirely**, so there was no posture in existence for `Variance` to thread and any posture it
+could synthesise would read `UNRECORDED` for every run — the guard would still never fire. The card
+therefore also covers `lib/lain/bench/session.rb`, `lib/lain/bench/session/loader.rb` and their specs,
+plus `spec/lain/bench/variance_spec.rb`. None is orchestrator-owned or contended. `Compare::Posture.from_journal`
+gains its first caller anywhere.   [wave 1] [risk: low]
 
 **Depends on:** none
 **Files:** modify `lib/lain/compare.rb`, `lib/lain/bench/variance.rb`, `lib/lain/arm.rb`;

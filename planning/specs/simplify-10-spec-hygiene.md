@@ -343,6 +343,103 @@ follow-on still owns that edit, and the number it should carry is 8.35%.
   that are not there is not a card; if the two real globbers ever become a cost, that is a fresh
   grounding, not this one.
 
+
+- **T9's rule is disproven, and the disproof is the card's real output. Settled 2026-09-13; nothing
+  is deleted.** The card rested on *"a helper is exercised by the specs that use it; a broken helper
+  reddens them."* That is false for precisely the helpers it named, and it was tested rather than
+  argued: **gutting `be_deeply_frozen` to always-pass left 203 user examples green** while only
+  `support_matchers_spec.rb` reddened. A helper whose failure mode is **silent** — a matcher that
+  always passes, a counter that under-counts, a watchdog that never fires — does not redden its
+  users, so its users are not its coverage. `support_store_fetch_count_spec.rb:13-16` says so in its
+  own header, and `SpecWatchdog::Starvation` never runs in a green suite at all. **The refined rule,
+  which is worth more than the 699 lines:** a helper needs its own spec exactly when its breakage is
+  quiet. That is the same family as `CLAUDE.md`'s "check the example COUNT, not just the failure
+  count" and the mutation-harness trap.
+
+  **The mutation figure is narrower than first written, and the correction matters more than the
+  number.** The 203 green examples were **the four value-object specs sampled** (`event`, `store`,
+  `context`, `timeline`), not the suite. `be_deeply_frozen` defines `match` and
+  `failure_message_when_negated` but **no `match_when_negated`**, so `not_to be_deeply_frozen` negates
+  `match` — and gutting `match` to always-true therefore reddens every negated site. There are eight,
+  all running in a default suite (`approval/remembered_spec.rb:323`, `agent/instrumentation_spec.rb:72`,
+  `review/lazy_file_spec.rb:253`, `cli/wiring_spec.rb:1141`, `tool/result_block_spec.rb:240`,
+  `compaction/strategy/summarizing_spec.rb:231`, `compaction/source_spec.rb:1367`,
+  `compaction/strategy/summarize_conversation_spec.rb:307`). The four sampled files happen to contain
+  zero negated uses, which is why they stayed green — a property of the sample, not of the suite.
+
+  **The rule still holds**, for the reason that survives the correction: a **positive**
+  `to be_deeply_frozen` genuinely cannot tell, and the matcher's diagnostics, refusals and termination
+  are covered by nothing but its own spec. What the correction kills is the stronger gloss that *no*
+  user spec could catch the mutation. Eight could have caught this particular one.
+
+- **The caller counts the card and this plan both published were wrong, and the method was wrong.**
+  `spec/algebra_laws_spec.rb:280` is `include_examples AlgebraLaws::GROUPS.fetch(declaration.structure), config`
+  — **dynamic dispatch, invisible to any grep for a literal `it_behaves_like "name"`**, which is how
+  every count in this plan was produced. Re-derived: `"an elementwise map"` has **2** callers (not 0),
+  `"a pure operation"` **4** (not 1), `"an attenuation"` **2** (not 1). All three clear the card's own
+  two-caller threshold and stay. `spec/support/shared_examples/elementwise.rb` is additionally
+  undeletable for a second reason: it also defines `AlgebraLaws::Elementwise` (`:61-63`), read by
+  `algebra_laws_spec.rb:125` and `compaction/strategy_spec.rb:278` — moving it aside kills **122
+  examples** with an `uninitialized constant`. **Any later card that counts spec references must
+  resolve dynamic dispatch, not grep literals.** T6 and T10 both count; warn them.
+
+- **A drifted guard found in passing, and it is T3's defect in another file.**
+  `spec/support_vsock_availability_spec.rb:136-146` is a **byte-for-byte copy** of
+  `spec/support/tags.rb:238-246` rather than a reference, and the two have **already drifted** —
+  `tags.rb:241` now says *"the kernel's vsock_loopback transport is unavailable"* against the copy's
+  *"vsock_loopback unavailable"*, so the spec's `include(...)` at `:193` passes against its own copy
+  and would fail against the real sentence. It is a check that cannot fail, which is exactly what T3
+  is moving to `bin/` in a different file. The spec is also the **only** caller of
+  `VsockAvailability.available?` in a default run, and `:176-178` is the only assertion that the real
+  config excludes `:vsock`. Fixing it means referencing `tags.rb` instead of copying it — a rewrite,
+  not a deletion, and not this card. Filed here so it is not lost.
+
+- **T3's packer-poisoning claim is FALSE, proved by experiment 2026-09-13.** The plan asserted the
+  advisory lines written into `tmp/parallel_runtime_rspec.log` are parsed by the knapsack packer as a
+  phantom multi-second entry, mis-packing every subsequent run. They are not. `parallel_tests`'
+  `runtimes` does `rpartition(':')` and then `if tests.include?(test)`, so a line whose left side is
+  not a known spec path is **discarded before it becomes an entry**. The implementer called `runtimes`
+  directly on a log seeded with both advisory lines and confirmed no phantom key survives. There are
+  also **two** such lines, not one — `lib reach:` goes unmentioned in this plan.
+
+  The lines are still worth removing: writing prose into a machine-read file is the same hazard
+  CLAUDE.md names for the Journal. But **no mis-pack has been happening**, the card's escalation
+  trigger about filesize-vs-runtime packing is settled without a `pspec` run, and any wall change on
+  cleanup is purely the 5.9s file leaving the packer's input.
+
+- **T3's subject was also mis-described, and the correction changes the arithmetic.** Only **2 of the
+  41 examples** were report-only; the other 39 are ordinary unit tests of two Prism scanners costing
+  0.02s in total. `--profile` puts **5.91s of 5.93s (99.7%)** in the two whole-tree examples, which is
+  where the saving actually is. Both "report-only" examples additionally carried a real assertion
+  (`listed == violations.size`, guarding the renderer against dropping an entry), and the file hid a
+  live tree guard — `FixtureDiscipline`'s *"finds none in the real spec/fixtures"* reddens the day
+  someone plants a collectible file in a fixture project. Neither was deletable; both were preserved.
+
+  **So the suite grows rather than shrinks: the delta is +5, not −41** (−41 deleted, +44 for the
+  script's own spec, +2 for the preserved fixture guard). Any later card comparing against a baseline
+  must use **17,842**, not 17,796.
+
+- **`bin/spec-census` gets no pre-commit hook, by decision.** `bin/comment-census` — the precedent the
+  card cites — has neither a rake task nor a hook, and CLAUDE.md calls it *"the worklist"*. Parity is
+  the right default, and gating on a ratchet is its own decision with its own cost. `--check` exists
+  and provably exits non-zero, so the gate can be added the day someone wants it.
+
+- **T3 moves comment mass out of every density check the repo has — a move, not a prune.** The
+  deleted `spec/spec_discipline_spec.rb` was 842 code / 405 prose **inside** `bin/comment-census`'s
+  documented scope (`lib/`, `spec/`, the runtime Lua). The replacement puts 344 / 44 back in scope and
+  lands a 546-line script in `bin/`, which is outside that scope — and `comment-census` cannot read it
+  regardless, since `language_for` keys on the file extension and `bin/spec-census` has none. So the
+  next census reads roughly **361 fewer in-scope prose lines** because of this card, and the script's
+  own 79-line module doc is measured by nothing. Nothing was gamed and the prose is load-bearing;
+  recorded once so a later reader does not bank the delta as a prune.
+
+- **After T3, the censuses no longer touch the real tree in any automated run.** The deleted spec
+  walked all 791 spec files and all of `lib/` with Prism on every suite run, which incidentally proved
+  the walk survived the actual tree. The 37 in-memory fixtures cover the scanner's API surface well,
+  so the residual exposure is narrow — a Prism upgrade or a novel construct that crashes the walk now
+  surfaces only when a human runs the script — and since the scan is report-only, a crash costs the
+  report and nothing else. Known, accepted, not blocking.
+
 ## Waves
 
 Wave 1: T3, T4, T9
