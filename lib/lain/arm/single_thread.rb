@@ -34,14 +34,20 @@ module Lain
       #
       # @param task [String] the instruction to ask
       # @param spawn_seam [#call] `call(journal:, **spawn_opts) -> Agent`, a FRESH
-      #   agent per call; this arm passes only `journal:`
+      #   agent per call; this arm passes `journal:` and the lease's `worker_env:`
       # @param grader [#grade] `grade(timeline) -> Grader::Grade`
       # @param isolation [#acquire] the injected backend (Null by default)
       # @return [Run]
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
-        leased(isolation:) do
+        leased(isolation:) do |lease|
           journal = Channel.new
-          agent = spawn_seam.call(journal:)
+          # The lease's environment is CARRIED, not just acquired. An arm that
+          # takes a checkout and then spawns into the process cwd makes
+          # `--isolation` bill for a worktree it never writes in -- and the
+          # bench's own refusal names that flag as what contains a writing
+          # toolset. Unisolated, NoIsolation::Lease#worker_env is nil and the
+          # seam coalesces it, so nothing about an unleased run changes.
+          agent = spawn_seam.call(journal:, worker_env: lease.worker_env)
           # The ask's own value is dropped: the settled Timeline is read off the
           # agent, which is also where a multi-turn run would leave it.
           elapsed, = @instrument.timed { agent.ask(task) }

@@ -443,11 +443,15 @@ RSpec.describe "lain bench arms" do
     # rested on nothing in argv being able to reach it, and --journal is what
     # broke that premise. So the door is closed HERE, in front of the library
     # refusal, which stays exactly as it is and stays the authority.
-    it "refuses --journal without --isolation in one clean line, naming the backends" do
+    # It names the CONTAINING backends, not every advertised one. Recommending a
+    # backend the tool-floor guard then refuses would spend the operator a second
+    # round trip on this command's own advice -- so the set here is the set that
+    # both guards accept, and `none` is named nowhere as a suggestion.
+    it "refuses --journal without --isolation in one clean line, naming what to type" do
       stub_entry
       result = run("arms", "suite/tasks.yml", "--journal", journal_path)
 
-      expect(result.stderr).to include("--isolation", *Lain::CLI::IsolationBackend::BACKENDS)
+      expect(result.stderr).to include("--isolation", *Lain::Bench::CLI::CONTAINING_BACKENDS)
       expect(result.exited.status).not_to eq(0)
     end
 

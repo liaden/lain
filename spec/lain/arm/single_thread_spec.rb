@@ -9,8 +9,13 @@ RSpec.describe Lain::Arm::SingleThread do
   # A FRESH agent per call (Provider::Mock is stateful -- it consumes its
   # scripted responses), journaling into whatever recording channel the arm
   # injects so the run can be priced.
+  #
+  # `**` because the seam duck is `call(journal:, **spawn_opts)` and this arm
+  # also passes its lease's `worker_env:`. A double pinned to `journal:` alone
+  # pins a NARROWER duck than production answers, which is how a fixed-arity
+  # stand-in reddens on a change that is correct everywhere else.
   let(:spawn_seam) do
-    lambda do |journal:|
+    lambda do |journal:, **|
       Lain::Agent.new(
         provider: Lain::Provider::Mock.new(
           responses: [text_response("done", model: "claude-sonnet-4",

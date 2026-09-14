@@ -597,8 +597,10 @@ class LainCLI < Thor
     # only, so the flag's advertised set and the resolver cannot disagree.
     method_option :isolation, type: :string,
                               desc: "Isolation backend every arm leases its workers from " \
-                                    "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); leave it unset " \
-                                    "for Arm::Driver's own default, which leases nothing -- not the same as none"
+                                    "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); only " \
+                                    "#{Lain::Bench::CLI::CONTAINING_BACKENDS.join("|")} contains where the tools " \
+                                    "write, so a run with the tool floor requires one. Unset leases nothing -- " \
+                                    "not the same as none, and toolless runs only"
     method_option :journal, type: :string,
                             desc: "NDJSON file this run's grade records and isolation lease telemetry " \
                                   "are recorded into; --isolation leases the workers, and refuses " \
@@ -655,7 +657,8 @@ class LainCLI < Thor
 
         raise Thor::Error, "--journal records this run's grades AND the isolation leases it takes, and " \
                            "nothing leases without --isolation: drop --journal, or add --isolation " \
-                           "#{Lain::CLI::IsolationBackend::BACKENDS.join("|")} to record both"
+                           "#{Lain::Bench::CLI::CONTAINING_BACKENDS.join("|")} to record both. Naming a " \
+                           "backend that does not contain is refused separately, once the tools are known"
       end
 
       # A SET --isolation REQUIRES a journal, and Bench::CLI is what refuses the

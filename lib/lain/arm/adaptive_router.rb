@@ -50,17 +50,18 @@ module Lain
       # @param task [String] the instruction to ask; also the router's own
       #   question input
       # @param spawn_seam [#call] `call(journal:, **spawn_opts) -> Agent`; this
-      #   arm passes `journal:`, `model:`, and `template:`
+      #   arm passes `journal:`, `model:`, `template:`, and the lease's
+      #   `worker_env:`
       # @param grader [#grade] `grade(timeline) -> Grader::Grade`
       # @param isolation [#acquire] the injected backend (Null by default)
       # @return [Run]
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
-        leased(isolation:) do
+        leased(isolation:) do |lease|
           journal = Channel.new
           # Route, THEN run, as two statements: the ordering IS this arm's claim,
           # so it is not left to argument-evaluation order to imply.
           routed = route(task, journal:)
-          graded_run(task, spawn_seam:, grader:, journal:, routed:)
+          graded_run(task, spawn_seam:, grader:, journal:, routed:, lease:)
         end
       end
 
@@ -76,8 +77,12 @@ module Lain
 
       # Split from {#run} so neither method carries both routing and executing
       # the routed run.
-      def graded_run(task, spawn_seam:, grader:, journal:, routed:)
-        agent = spawn_seam.call(journal:, model: routed.model, template: routed.template)
+      # The lease reaches here rather than only the routing answer: a routed
+      # child still runs somewhere, and that somewhere is the checkout the lease
+      # cut. See {SingleThread#run} for what carrying it costs an unleased run.
+      def graded_run(task, spawn_seam:, grader:, journal:, routed:, lease:)
+        agent = spawn_seam.call(journal:, model: routed.model, template: routed.template,
+                                worker_env: lease.worker_env)
         elapsed, = @instrument.timed { agent.ask(task) }
         # Price BEFORE grading -- see {SingleThread#run}: `#price` drains, and
         # inside an argument list evaluation order would reverse the two.

@@ -11,7 +11,7 @@
 # example that skips the injection names a provider that is refused before any
 # client is built).
 RSpec.describe Lain::Bench::SpawnSeam do
-  subject(:seam) { described_class.new(backend:, provider:, toolset:) }
+  subject(:seam) { described_class.new(backend:, provider:, tools:) }
 
   # The one object the seam now takes, built the way exe/lain and every other
   # Backend spec build it: from the flag hash. `max_tokens` is spelled out
@@ -29,7 +29,10 @@ RSpec.describe Lain::Bench::SpawnSeam do
     )
   end
 
-  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+  # WHAT an agent may do, asked once per spawn. A lambda rather than a Toolset,
+  # because the tools hold run state (a Memory::Recorder) that two arms of one
+  # comparison must not share.
+  let(:tools) { ->(**) { Lain::Toolset.new([EchoTool.new]) } }
 
   def journal = Lain::Channel.new
 
@@ -71,8 +74,44 @@ RSpec.describe Lain::Bench::SpawnSeam do
     # The capabilities every arm is handed through. Dropped, every arm still
     # completes and merely scores zero -- which a bench cannot tell apart from a
     # model that failed the task.
-    it "gives every agent the injected toolset" do
-      expect(seam.call(journal:).toolset).to be(toolset)
+    it "gives every agent the injected tools" do
+      expect(seam.call(journal:).toolset.names).to eq(["echo"])
+    end
+
+    # A FRESH set per spawn, and the reason is contamination rather than tidiness:
+    # memory_write/memory_read share a Memory::Recorder, so one Recorder across
+    # the comparison would let the fourth arm's read answer with the first arm's
+    # write. The DIGEST is what must not move -- it is the prompt-cache prefix.
+    it "builds a fresh toolset per spawn, identical in schema" do
+      first = seam.call(journal:).toolset
+      second = seam.call(journal:).toolset
+
+      expect(first).not_to be(second)
+      expect(first.digest).to eq(second.digest)
+    end
+
+    # The card's whole subject: no bench run had ever executed with tools, so
+    # every number the bench produced measured the model. The default is the
+    # chat's OWN floor, through Lain::CLI::Wiring::BaseTools, not a second list.
+    it "hands every agent the production capability floor by default" do
+      toolset = described_class.new(backend:, provider:).call(journal:).toolset
+
+      expect(toolset.names).to include("write_file", "read_file", "bash")
+    end
+
+    it "declares those tools in the request the provider sees" do
+      described_class.new(backend:, provider:).call(journal:).ask("do the task")
+
+      expect(provider.requests.first.tools.map { |tool| tool["name"] }).to include("write_file")
+    end
+
+    # AN EMPTY TOOLSET STAYS REACHABLE, because "does the harness set the score"
+    # is only a question this bench can answer if the toolless arm still runs.
+    it "declares no tools when the empty harness is injected" do
+      seam = described_class.new(backend:, provider:, tools: Lain::Bench::Harness::NO_TOOLS)
+      seam.call(journal:).ask("do the task")
+
+      expect(provider.requests.first.tools).to be_empty
     end
 
     it "routes the agent's telemetry to the journal it was called with" do
@@ -102,11 +141,11 @@ RSpec.describe Lain::Bench::SpawnSeam do
       expect(seam.call(journal:, timeline: rooted).timeline.head).to eq(rooted.head)
     end
 
-    # The adaptive router spawns with `model:`/`template:`; a fixed-arity seam
-    # would reject those, so the tail is accepted and ignored rather than
-    # crashing an arm this seam does not yet serve.
-    it "accepts spawn-time options it does not use" do
-      expect(seam.call(journal:, model: "claude-haiku-4", template: :sibling)).to be_a(Lain::Agent)
+    # `spawned_from:` is the one keyword still dropped -- lineage means writing a
+    # :spawn event into the lead's Store, which is Tools::Subagent::Lineage's job
+    # and not something a keyword this seam forwards. Named rather than swallowed.
+    it "accepts the lineage keyword it still drops" do
+      expect(seam.call(journal:, spawned_from: "sha256:deadbeef")).to be_a(Lain::Agent)
     end
 
     it "leaves an unisolated call on the process environment" do
@@ -238,6 +277,67 @@ RSpec.describe Lain::Bench::SpawnSeam do
     # with whole file bodies, so its ceiling is not record's one-line echo.
     it "declares a ceiling sized for a whole file body, larger than record's" do
       expect(described_class::DEFAULT_MAX_TOKENS).to be > Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens)
+    end
+  end
+
+  # The defect that held the adaptive-router arm: the routed arm and the control
+  # were the same program
+  # over the same model, so `bench arms` would have billed a fourth arm to print
+  # a second copy of the control -- and against a real provider at temperature >
+  # 0 the two columns differ by sampling noise, which reads as a RESULT rather
+  # than as a duplicate.
+  describe "the routed spawn" do
+    it "builds the child under the model the router chose" do
+      expect(seam.call(journal:, model: "claude-haiku-4").context.model).to eq("claude-haiku-4")
+    end
+
+    it "leaves an unrouted child on the backend's own model" do
+      expect(seam.call(journal:).context.model).to eq(backend.model)
+    end
+
+    # Routing must not cost the unrouted arms their cache prefix: an unrouted
+    # spawn answers the seam's ONE Context itself, byte-identically.
+    it "renders one identical prefix for every unrouted agent" do
+      expect(prefix(seam.call(journal:))).to eq(prefix(seam.call(journal:)))
+    end
+
+    it "renders a different prefix for a routed agent" do
+      expect(prefix(seam.call(journal:, model: "claude-haiku-4"))).not_to eq(prefix(seam.call(journal:)))
+    end
+
+    it "treats a blank routed model as unrouted" do
+      expect(seam.call(journal:, model: "").context.model).to eq(backend.model)
+    end
+
+    # The other half of the router's answer, and the half this seam has nowhere
+    # to put. It RAISES rather than being swallowed, so an arm routing against a
+    # seam that cannot route fails at the first task and not at the report.
+    it "refuses a sibling template it cannot render" do
+      expect { seam.call(journal:, template: "shared-prefix") }
+        .to raise_error(described_class::UnroutableTemplate, /template/)
+    end
+
+    it "names the template it refused and the way out of the refusal" do
+      expect { seam.call(journal:, template: "shared-prefix") }
+        .to raise_error(described_class::UnroutableTemplate, /"shared-prefix".*[Rr]oute on model alone/m)
+    end
+
+    # Oracle::Router.heuristic's own default template is blank, which is the whole
+    # default path: the refusal must not fire on it.
+    it "accepts the blank template the heuristic router actually sends" do
+      expect(seam.call(journal:, model: "claude-haiku-4", template: "")).to be_a(Lain::Agent)
+    end
+
+    # The consumer's own duck rather than this spec's reading of it.
+    it "honours the model Arm::AdaptiveRouter routes to" do
+      router = Lain::Oracle::Router.heuristic(short_model: "claude-haiku-4", long_model: "claude-opus-4-8",
+                                              long_after_chars: 1)
+      arm = Lain::Arm::AdaptiveRouter.new(router:)
+      grader = Lain::Grader::Fixture.new("any") { |fixture| fixture.check("ran") { |timeline| timeline.to_a.any? } }
+
+      arm.run("a long task", spawn_seam: seam, grader:)
+
+      expect(provider.requests.first.model).to eq("claude-opus-4-8")
     end
   end
 end

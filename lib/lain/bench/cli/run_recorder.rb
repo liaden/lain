@@ -7,11 +7,28 @@ module Lain
       # context, prompts, attribution -- and this owns HOW one run becomes one
       # loadable session file.
       class RunRecorder
-        def initialize(provider:, context:, attribution:, prompts:)
+        # @param provider [Lain::Provider] the recording client every run asks
+        # @param context [Lain::Context] what every run renders through
+        # @param attribution [Lain::Telemetry::SlotFills] the prompt slots this
+        #   recording was taken under, written once per session file
+        # @param prompts [Array<String>] the task file's lines, asked in order
+        # @param tools [#call] `call(recorder:, journal:) -> Toolset`, asked once
+        #   per recorded run; see {Bench::Harness}. TOOLLESS by default, the same
+        #   answer {CLI#record} gives and for the same reason: this object takes
+        #   no `worker_env:` and {#build_agent} spawns on {WorkerEnv.default}, so
+        #   a writing toolset here acts in the caller's own cwd whatever the
+        #   caller has leased. A second default saying otherwise would be a
+        #   promise this class cannot keep.
+        # @param instrumentation [#call] `call(journal:, recorder:, worker_env:)
+        #   -> Agent::Instrumentation`, asked once per recorded run
+        def initialize(provider:, context:, attribution:, prompts:,
+                       tools: Harness::NO_TOOLS, instrumentation: Harness::INSTRUMENTATION)
           @provider = provider
           @context = context
           @attribution = attribution
           @prompts = prompts
+          @tools = tools
+          @instrumentation = instrumentation
           freeze
         end
 
@@ -48,18 +65,26 @@ module Lain
           Session.write(journal, timeline: agent.timeline, context: @context, toolset: agent.toolset)
         end
 
-        # Wired even though these synthetic tasks carry no memory_write tool
-        # yet: {Memory::JournalMemoryRoot} pairs each turn's digest with the
-        # root in force when it rendered, so a later run's recall replays
-        # against the exact snapshot. The RAW `journal`, not the wrapped one,
-        # backs JournalRequests and RefuseSecretWrites, so those land unpaired
-        # -- JournalMemoryRoot only decorates the Agent's turn_usage stream.
+        # ONE recorder per run, shared by the two halves that must agree about
+        # it: the `memory_write`/`memory_read` tools write into it, and
+        # {Memory::JournalMemoryRoot} pairs each turn's digest with the root it
+        # held when that turn rendered, so a later run's recall replays against
+        # the exact snapshot. Building it here rather than inside either factory
+        # is what makes that sharing a fact of this method rather than a
+        # coincidence between two lambdas.
+        #
+        # The worker env is {WorkerEnv.default} and NOT a parameter, which is
+        # what makes the toolless default above the only honest one: giving this
+        # class an env to spawn into is the change that would let a recorded run
+        # carry real capabilities safely.
+        #
+        # A recorded session with tools declared is not comparable with one
+        # taken without them -- a different prompt, a different cache prefix and
+        # a different task -- so which harness a run used is part of its record.
         def build_agent(journal)
           recorder = Memory::Recorder.new
-          Agent.new(provider: @provider, toolset: Toolset.new([]), context: @context,
-                    journal: Memory::JournalMemoryRoot.new(journal:, recorder:),
-                    model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:)]),
-                    tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal:)]))
+          Agent.new(provider: @provider, toolset: @tools.call(recorder:, journal:), context: @context,
+                    instrumentation: @instrumentation.call(journal:, recorder:, worker_env: WorkerEnv.default))
         end
       end
     end

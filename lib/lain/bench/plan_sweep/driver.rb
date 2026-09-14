@@ -81,6 +81,13 @@ module Lain
         #   renders through. ONE Context rather than loose primitives each side
         #   rebuilds from: the churn numbers only mean anything if both sides
         #   measured the same prompt, and only the pipeline is ever swapped.
+        # The empty toolset is DELIBERATE, and is the second of the two
+        # exceptions to the live seam's rule that a bench agent gets the chat's
+        # capability floor ({Bench::Harness}). This sweep measures SCRIPTED
+        # runs -- every assistant turn comes off the fixture, never off a model
+        # -- so a callable tool would put a real filesystem effect inside a
+        # measurement whose whole claim is that a rerun reproduces it byte for
+        # byte. Toolless is what keeps the replay deterministic.
         def initialize(fixture:, context: DEFAULT_CONTEXT)
           @fixture = fixture
           @context = context

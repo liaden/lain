@@ -85,7 +85,7 @@ module Lain
       # into a caller-held sink so the transitions are observed before that
       # drain empties the channel.
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
-        leased(isolation:) do
+        leased(isolation:) do |lease|
           journal = @journal_factory.call
           # The planner build sits INSIDE the span, where it has always been.
           # `elapsed` is a recorded bench number, so dropping a phase out of it
@@ -93,7 +93,7 @@ module Lain
           # Narrowing the span is a methodology change, never a refactor's
           # side effect.
           elapsed, state = @instrument.timed do
-            drive(task, spawn_seam:, journal:, planner: build_planner(journal))
+            drive(task, spawn_seam:, journal:, planner: build_planner(journal), lease:)
           end
           # Price BEFORE grading -- see {SingleThread#run}.
           ledger = @instrument.price(journal)
@@ -141,10 +141,10 @@ module Lain
       # reading and an inference from the replan count is not one: a terminally
       # dried-up ledger leaves the machine `:stalled`, and every other exit is
       # closed here with `end_turn!` to `:done`.
-      def drive(task, spawn_seam:, planner:, journal:)
+      def drive(task, spawn_seam:, planner:, journal:, lease:)
         control = Loop.new(ledger: LedgerState.initial(task:), stall_limit: @stall_limit)
         until planner.terminal? || control.steps >= @max_steps
-          control = step(control, task, spawn_seam:, planner:, journal:)
+          control = step(control, task, spawn_seam:, planner:, journal:, lease:)
         end
         planner.end_turn! unless planner.terminal?
         control
@@ -153,9 +153,13 @@ module Lain
       # One outer step: spawn a fresh agent over the current ledger and threaded
       # Timeline, ask, read progress, and -- when the stall counter tops K --
       # announce the stall on the shared machine.
-      def step(control, task, spawn_seam:, planner:, journal:)
+      # EVERY step carries the lease, not just the first: this arm spawns a fresh
+      # agent per step, and one of them landing outside the checkout is the same
+      # defect as all of them doing so. See {SingleThread#run} for the reason.
+      def step(control, task, spawn_seam:, planner:, journal:, lease:)
         planner.dispatch!
-        agent = spawn_seam.call(journal:, workspace: workspace_for(control.ledger), timeline: control.timeline)
+        agent = spawn_seam.call(journal:, workspace: workspace_for(control.ledger), timeline: control.timeline,
+                                worker_env: lease.worker_env)
         response = agent.ask(task)
         advanced = control.advance(
           timeline: agent.timeline,

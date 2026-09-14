@@ -72,6 +72,15 @@ module Lain
 
         # ONE spawn seam driving all three arms: a fresh Agent per call, because
         # the mock is stateful, over a {Replay} provider and an empty toolset.
+        #
+        # THE EMPTY TOOLSET IS DELIBERATE HERE and is the exception to the live
+        # seam's rule, which now hands every agent the chat's capability floor
+        # ({Bench::Harness}). This arm REPLAYS a committed trajectory
+        # instead of asking a model, so a tool a replayed agent could actually
+        # call would reach a real filesystem on a path whose whole value is that
+        # a rerun reproduces the recorded run byte for byte. Toolless is what
+        # keeps the replay deterministic, so a reader of `bench arm-sweep` meets
+        # a toolless run first -- correctly.
         # @return [#call]
         def seam
           recordings = self

@@ -295,7 +295,12 @@ module DeletionMap
       # A spec that names the router to assert the secret-read oracle never
       # consults it -- a negative expectation is still a reference, and it
       # stops compiling when the constant goes.
-      consumers: ["spec/lain/oracle/secret_read_spec.rb"],
+      consumers: ["spec/lain/oracle/secret_read_spec.rb",
+                  # Two more that drive the router to prove the spawn seam HONOURS the
+                  # model it routes to -- the seam used to swallow it, so an arm could
+                  # route and change nothing. Both stop compiling when the constant goes.
+                  "spec/lain/bench/spawn_seam_spec.rb",
+                  "spec/lain/arm_spec.rb"],
       edits: {
         "lib/lain/arm.rb" => ['require_relative "arm/adaptive_router"'],
         "lib/lain/oracle.rb" => ['require_relative "oracle/router"'],

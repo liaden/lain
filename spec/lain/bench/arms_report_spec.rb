@@ -55,7 +55,14 @@ RSpec.describe Lain::Bench::CLI do
     )
   end
 
-  def arms_report(**) = cli.arms_report(fixture_path:, backend:, provider:, **)
+  # TOOLLESS by default, and named rather than inherited: every claim in this
+  # file is about ASSEMBLY -- which backend reaches the arms, which grader,
+  # which price book -- and a writing toolset with nothing containing it is
+  # refused at this method's door (Bench::CLI#refuse_unisolated_writes!). The
+  # capability axis has its own file, spec/lain/bench/harness_spec.rb.
+  def arms_report(**) = cli.arms_report(fixture_path:, backend:, provider:, tools: toolless, **)
+
+  def toolless = Lain::Bench::Harness::NO_TOOLS
 
   # The Driver renders one titled table per metric, blank-line separated.
   def score_section(report) = report.split("\n\n").find { |section| section.start_with?("grader score") }
@@ -262,7 +269,7 @@ RSpec.describe Lain::Bench::CLI do
     # ArmTasks owns what a missing one means -- one authority on "what a bench
     # task is".
     it "surfaces ArmTasks' own error for a fixture path that is not there" do
-      expect { cli.arms_report(fixture_path: "no/such/tasks.yml", backend:, provider:) }
+      expect { cli.arms_report(fixture_path: "no/such/tasks.yml", backend:, provider:, tools: toolless) }
         .to raise_error(Lain::Bench::ArmTasks::MissingFixture, %r{no/such/tasks\.yml})
     end
 
@@ -270,7 +277,7 @@ RSpec.describe Lain::Bench::CLI do
     # an unknown --provider raises the one Lain::CLI error every bench command
     # raises, at assembly, before an arm runs.
     it "resolves the provider through the one backend every bench command uses" do
-      expect { cli.arms_report(fixture_path:, backend: backend(provider: "gpt5")) }
+      expect { cli.arms_report(fixture_path:, backend: backend(provider: "gpt5"), tools: toolless) }
         .to raise_error(Lain::CLI::UnknownProvider, /gpt5/)
     end
 
@@ -279,7 +286,7 @@ RSpec.describe Lain::Bench::CLI do
     # a reproducibility hole on a bench whose whole claim is repeatability. The
     # Request the provider was actually handed is the end of that wire.
     it "carries every sampler flag in the tail through to the provider" do
-      cli.arms_report(fixture_path:, provider:,
+      cli.arms_report(fixture_path:, provider:, tools: toolless,
                       backend: backend(model: "claude-haiku-4-5", max_tokens: 321,
                                        temperature: 0.25, seed: 99))
 
@@ -371,6 +378,34 @@ RSpec.describe Lain::Bench::CLI do
   # comes from the command line. SuiteGrader dispatches BY PROMPT, so two
   # tasks sharing one would both resolve to the first -- the second's gold scored
   # against the first's trajectory, silently. Refused where the assumption lives.
+  # THE HUMAN'S RULING, at the door of the highest-spend command in the repo.
+  # An unisolated arm leases through Arm::NoIsolation and runs in the operator's
+  # own checkout, and the floor carries `bash` behind Effect::Handler::Live with
+  # no gate in front of it.
+  describe "refusing a writing toolset with nothing to contain it" do
+    it "refuses the default floor when no isolation is named" do
+      expect { cli.arms_report(fixture_path:, backend:, provider:) }
+        .to raise_error(described_class::Refusal, /can write.*nothing isolates/m)
+    end
+
+    # `none` is not isolation: it leases over the shared process environment, so
+    # it cuts no checkout. Refusing it is the difference between a guard and a
+    # flag that looks like one.
+    it "refuses the default floor under an isolation that contains nothing" do
+      expect { cli.arms_report(fixture_path:, backend:, provider:, isolation: "none", journal: Lain::Channel.new) }
+        .to raise_error(described_class::Refusal, /--isolation none does not isolate/)
+    end
+
+    it "names the flags that fix it" do
+      expect { cli.arms_report(fixture_path:, backend:, provider:) }
+        .to raise_error(described_class::Refusal, /--isolation worktree --journal PATH/)
+    end
+
+    it "lets a toolless run through unisolated, which is the control the bench needs" do
+      expect(arms_report).to include("3 arms over")
+    end
+  end
+
   describe "the grader's dispatch key" do
     def write_fixture(dir, prompts)
       path = File.join(dir, "tasks.yml")
@@ -386,7 +421,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir("lain-arm-tasks") do |dir|
         path = write_fixture(dir, ["do the thing", "do the thing"])
 
-        expect { cli.arms_report(fixture_path: path, backend:, provider:) }
+        expect { cli.arms_report(fixture_path: path, backend:, provider:, tools: toolless) }
           .to raise_error(described_class::Refusal, /task-0.*task-1|task-1.*task-0/m)
         expect(provider.call_count).to eq(0)
       end
@@ -396,7 +431,8 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir("lain-arm-tasks") do |dir|
         path = write_fixture(dir, ["do the thing", "do the other thing"])
 
-        expect(cli.arms_report(fixture_path: path, backend:, provider:)).to include("3 arms over 2 tasks")
+        expect(cli.arms_report(fixture_path: path, backend:, provider:, tools: toolless))
+          .to include("3 arms over 2 tasks")
       end
     end
 

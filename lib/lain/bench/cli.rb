@@ -29,6 +29,21 @@ module Lain
       # copy of anthropic's answer sitting in this hash was read by nothing.
       RECORD_DEFAULTS = { runs: 2, max_tokens: 1024 }.freeze
 
+      # The isolation backends that actually CONTAIN a write -- the ones that
+      # cut a checkout of their own, so a `write_file` inside a lease lands
+      # there and not in the tree the command was started from.
+      #
+      # ENUMERATED, not `IsolationBackend::BACKENDS - [DEFAULT]`. Subtraction is
+      # derived fail-OPEN: a backend added upstream would be classified as
+      # containing by nobody's decision, on the one axis where being wrong ships
+      # a flag that looks like isolation and is not. So an unadvertised name
+      # defaults to UNCONTAINED, and a spec reddens when the advertised set
+      # grows past this list -- the shape {Harness::WRITERS} already uses.
+      #
+      # `none` is absent on purpose: it leases over the SHARED process
+      # environment and cuts nothing.
+      CONTAINING_BACKENDS = %w[worktree].freeze
+
       # The three-section {Variance} report over recorded session files.
       #
       # @param sources [Array<String>] paths; a directory means every
@@ -176,6 +191,7 @@ module Lain
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
                       decompose: LiveArms::DEFAULT_DECOMPOSE,
                       price_book: PriceBook.default, **spawn_options)
+        refuse_unisolated_writes!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: isolating_flag)
         suite = ArmTasks.new(fixture_path:)
         # Named rather than inlined, because the header's `model:` has to be THE
         # seam's own answer -- a second resolution off `backend` could disagree
@@ -226,6 +242,7 @@ module Lain
       # @raise [Altitude::MalformedTask, Error] on a suite it cannot fold
       def altitude_report(fixture_path:, backend:, seams:, grader:, sink: Sink::Null.new,
                           isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)
+        refuse_unisolated_writes!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: isolating_flag)
         Altitude.new(fixture_path:, spawn_seam: SpawnSeam.new(backend:, **spawn_options), grader:, sink:,
                      arms: LiveArms.altitude(seams:, price_book:),
                      **altitude_isolation(isolation, journal)).report
@@ -235,8 +252,14 @@ module Lain
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.
       #
-      # Tools are deliberately absent: the synthetic echo tasks this records
-      # need none, and an empty Toolset keeps the recorded schema trivial.
+      # THE TOOLLESS HARNESS IS THIS COMMAND'S DEFAULT, and that is a ruling
+      # rather than the accident it used to be. `bench record` leases nothing --
+      # it has no `--isolation`, no worker env and no checkout of its own -- so
+      # a toolset that can write would act in the operator's own tree, and
+      # {#refuse_unisolated_writes!} refuses that pair wherever it is
+      # representable. {RunRecorder} itself defaults to the real floor, because
+      # a caller holding an isolated environment should get the harness; the
+      # COMMAND is what declines to be the thing that runs it unisolated.
       #
       # Provider and Context come from the SAME {Lain::CLI::Backend} the chat
       # path is handed, so `--provider`/`--temperature`/`--seed` mean one thing
@@ -265,9 +288,15 @@ module Lain
       #   prompt slots and attributed as such
       # @param provider [Lain::Provider, nil] injected in specs; nil asks the
       #   backend for the real recording client, behind the money gate below
+      # @param tools [#call] what each recorded run may DO; the toolless harness
+      #   by default, for the reason above
+      # @param instrumentation [#call] what each recorded run REPORTS through,
+      #   the per-turn Context source included
       # @return [Array<String>] the written session paths, in run order
       def record(taskfile:, out:, backend:, runs: RECORD_DEFAULTS.fetch(:runs),
-                 system: nil, provider: nil)
+                 system: nil, provider: nil, tools: Harness::NO_TOOLS,
+                 instrumentation: Harness::INSTRUMENTATION)
+        refuse_unisolated_writes!(tools, isolation: nil, flag: nil)
         runs = check_runs(runs)
         prompts = prompts_from(taskfile)
         provider ||= recording_provider(backend)
@@ -275,7 +304,7 @@ module Lain
         # The attribution must name what ACTUALLY rendered: `--system` renders
         # instead of the slots, and `SlotFills.from` owns that distinction.
         attribution = Telemetry::SlotFills.from(backend.slots, override: system)
-        run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:)
+        run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:, tools:, instrumentation:)
         (1..runs).map { |index| run_recorder.record(File.join(out, "#{index}.ndjson")) }
       end
 
@@ -301,6 +330,70 @@ module Lain
         raise Refusal, "--isolation #{isolation} leases workers and has no journal to record them in" if journal.nil?
 
         { isolation:, journal: }
+      end
+
+      # Named once, so the commands that can offer it quote one sentence and the
+      # help text cannot drift from the refusal.
+      def isolating_flag = "--isolation #{CONTAINING_BACKENDS.join("|")} --journal PATH"
+
+      # THE PAIR THIS BENCH MAY NOT RUN: a capability set that can act outside
+      # the run's own memory, with nothing isolating where it acts.
+      #
+      # {#lease_options}'s shape, and deliberately so -- an operator meets one
+      # idiom rather than two. That guard refuses a named isolation with nowhere
+      # to record its leases; this one refuses tools with nowhere to contain
+      # them. Both name the flags that fix them, and both fire at the door
+      # rather than after a paid run.
+      #
+      # IT FIRES FIRST, uniformly, at all three assembly methods: a refusal that
+      # a wiring mistake elsewhere could get in front of is not a guard. The one
+      # thing that is deliberately NOT its business is a name outside the
+      # advertised set; see {#uncontained?}.
+      #
+      # It is UNREPRESENTABLE rather than merely documented, which is the
+      # standard this project already holds its secret boundary to: an
+      # unisolated arm leases through {Arm::NoIsolation} and runs in the
+      # operator's own checkout, and the floor carries `bash` behind
+      # {Effect::Handler::Live} with no gate in front of it.
+      #
+      # @param tools [#call] the capability factory the run would be built with
+      # @param isolation [String, nil] the `--isolation` name; nil is UNSET
+      # @param flag [String, nil] what the operator can type to fix it, or nil
+      #   where the command offers no isolation at all
+      # @raise [Refusal] on the unsafe pair
+      def refuse_unisolated_writes!(tools, isolation:, flag:)
+        return unless uncontained?(isolation)
+        # Asked of a BUILT set rather than of the factory: what a run may do is
+        # a property of the tools, and a caller may inject a factory of its own.
+        # Called with the FULL documented signature -- an injected factory that
+        # honours the contract must not raise a bare ArgumentError from inside a
+        # guard, where it would render as a backtrace instead of this method's
+        # own clean Refusal.
+        return unless Harness.writes?(tools.call(recorder: Memory::Recorder.new,
+                                                 journal: Channel::Null.instance))
+
+        raise Refusal, "this run's tools can write (#{Harness::WRITERS.join(", ")}) and " \
+                       "#{uncontained(isolation)} where they write, so they would act in the working tree " \
+                       "this command was run from#{"; add #{flag}" unless flag.nil?}"
+      end
+
+      # Unset, or an ADVERTISED backend that contains nothing. A name outside
+      # the advertised set is deliberately NOT this guard's business:
+      # {Lain::CLI::IsolationBackend::Unknown} names the whole set and is the
+      # diagnosis a typo needs, so it has to speak first -- a safety refusal
+      # quoting `--isolation nope does not isolate` would answer a question
+      # nobody asked and hide the one they did.
+      def uncontained?(isolation)
+        return true if isolation.nil?
+
+        Lain::CLI::IsolationBackend::BACKENDS.include?(isolation) && !CONTAINING_BACKENDS.include?(isolation)
+      end
+
+      # Says which of the two ways the run is uncontained, because "no
+      # --isolation" and "--isolation none" are different mistakes and only one
+      # of them looks like a typo.
+      def uncontained(isolation)
+        isolation.nil? ? "nothing isolates" : "--isolation #{isolation} does not isolate"
       end
 
       # {Altitude} takes a resolved BACKEND (or none), where {#arm_report} takes

@@ -91,6 +91,14 @@ YAML
 # -- so the exe rescues Lain::Error ALONE and a programmer bug's ArgumentError
 # keeps its backtrace. Nothing here rescues for the user, nothing here prints.
 RSpec.describe Lain::Bench::CLI do
+  # Runs the block for its SIDE EFFECTS, swallowing the refusal under test: the
+  # claim is about what reached the filesystem, not about the message.
+  def suppress(error)
+    yield
+  rescue error
+    nil
+  end
+
   fixture_dir = File.expand_path("../../fixtures/sessions/variance", __dir__)
 
   subject(:cli) { described_class.new }
@@ -264,7 +272,7 @@ RSpec.describe Lain::Bench::CLI do
   # that ran under different confinement.
   describe "#arm_report" do
     let(:spawn_seam) do
-      lambda do |journal:|
+      lambda do |journal:, **|
         Lain::Agent.new(
           provider: Lain::Provider::Mock.new(
             responses: [text_response("done", model: "claude-sonnet-4",
@@ -456,8 +464,12 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # TOOLLESS, for #arms_report's reason one describe up: every claim here is
+    # about the roster and the report, and a writing toolset with nothing
+    # containing it is refused at this method's door.
     def altitude_report(path, **)
-      cli.altitude_report(fixture_path: path, backend:, seams:, grader:, sink:, provider:, **)
+      cli.altitude_report(fixture_path: path, backend:, seams:, grader:, sink:, provider:,
+                          tools: Lain::Bench::Harness::NO_TOOLS, **)
     end
 
     # The "grader score" table, arm => its mean cell. Read as CELLS rather than
@@ -516,6 +528,22 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  # The containing set is ENUMERATED rather than derived, which is only safe if
+  # something reddens when the advertised set grows. This is that something.
+  describe "which isolation backends contain a write" do
+    it "names only backends the resolver actually advertises" do
+      expect(Lain::CLI::IsolationBackend::BACKENDS).to include(*described_class::CONTAINING_BACKENDS)
+    end
+
+    # THE FAIL-CLOSED HALF. A backend added upstream lands here as UNCONTAINED
+    # until somebody rules on it, and this example is where they are told to.
+    it "leaves every other advertised backend uncontained, so a new one must be ruled on" do
+      unruled = Lain::CLI::IsolationBackend::BACKENDS - described_class::CONTAINING_BACKENDS
+
+      expect(unruled).to eq([Lain::CLI::IsolationBackend::DEFAULT])
+    end
+  end
+
   describe "#record" do
     let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
 
@@ -543,6 +571,21 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # A REAL Agent::PipelineSource, not a double: the claim is that a bench run
+    # can now render through a live compaction source and that the source's own
+    # per-turn record reaches the session file the sweeps read back.
+    def compacting_harness
+      lambda do |journal:, recorder:, worker_env:|
+        source = Lain::Compaction::Source.new(
+          need: Lain::Compaction::Need.new(byte_threshold: 1),
+          cold: Lain::Compaction::Cold.new(cache_profile: { ttl: 300 }, journal:),
+          hard_cap: 1_048_576, keep_last: 20, journal:
+        )
+        Lain::Bench::Harness::INSTRUMENTATION.call(journal:, recorder:, worker_env:)
+                                             .with(pipeline_source: source)
+      end
+    end
+
     it "records n loadable sessions through the injected provider, one numbered file per run" do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
@@ -562,6 +605,93 @@ RSpec.describe Lain::Bench::CLI do
                    backend: backend(model: "claude-sonnet-4-6"), provider:)
         expect(provider.call_count).to eq(2)
         expect(provider.requests.map { |request| request.messages.size }).to all(eq(1))
+      end
+    end
+
+    # THE CARD'S SUBJECT. Both bench agent sites passed `Toolset.new([])` and no
+    # `instrumentation:`, so no bench run had ever executed with tools, a context
+    # strategy or compaction -- every number the bench produced measured the
+    # model, against a project whose thesis is that the harness sets the score.
+    # `bench record` leases nothing -- no --isolation, no worker env, no
+    # checkout of its own -- so the toolless harness is the only one it may
+    # default to, and the recorded session is what says which side of that line
+    # a number came from.
+    it "records a toolless run by default, and the session says so" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        paths = cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, backend:, provider:)
+
+        expect(provider.requests.first.tools).to be_empty
+        expect(Lain::Bench::Session.load(paths.first).toolset.to_schema).to be_empty
+      end
+    end
+
+    # THE HUMAN'S RULING, made unrepresentable rather than documented: a
+    # capability set that can act outside the run's own memory, with nothing
+    # isolating where it acts, is refused at the door.
+    it "refuses a writing toolset, because it has nothing to isolate one with" do
+      Dir.mktmpdir do |tmp|
+        expect do
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out: File.join(tmp, "sessions"),
+                     backend:, provider:, tools: Lain::Bench::Harness::TOOLS)
+        end.to raise_error(described_class::Refusal, /can write.*nothing isolates/m)
+      end
+    end
+
+    it "writes nothing at all when it refuses the pair" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        FileUtils.mkdir_p(out)
+        suppress(described_class::Refusal) do
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, backend:, provider:,
+                     tools: Lain::Bench::Harness::TOOLS)
+        end
+
+        expect(Dir.children(out)).to be_empty
+      end
+    end
+
+    # The recorder can carry the real floor, and a caller has to ASK for it --
+    # RunRecorder spawns on WorkerEnv.default, so nothing it is handed is
+    # contained and its own default is toolless for that reason.
+    it "records a run through the real floor when the recorder is explicitly given one" do
+      Dir.mktmpdir do |tmp|
+        recorder = described_class::RunRecorder.new(
+          provider:, context: backend(model: "claude-sonnet-4-6").context,
+          attribution: Lain::Telemetry::SlotFills.from(backend.slots), prompts: ["what is the aspirin dosing?"],
+          tools: Lain::Bench::Harness::TOOLS
+        )
+        recorder.record(File.join(tmp, "1.ndjson"))
+
+        expect(provider.requests.first.tools.map { |tool| tool["name"] })
+          .to include("write_file", "read_file", "bash")
+      end
+    end
+
+    it "records a toolless run when the recorder is built with no tools named" do
+      Dir.mktmpdir do |tmp|
+        recorder = described_class::RunRecorder.new(
+          provider:, context: backend.context,
+          attribution: Lain::Telemetry::SlotFills.from(backend.slots), prompts: ["what is the aspirin dosing?"]
+        )
+        recorder.record(File.join(tmp, "1.ndjson"))
+
+        expect(provider.requests.first.tools).to be_empty
+      end
+    end
+
+    # The other half of the harness: WHICH Context each turn rendered through.
+    # PipelineSource::Null applied everywhere before this, so no bench run had a
+    # context strategy at all -- and a strategy that leaves no record is a
+    # measurement a comparison cannot attribute.
+    it "records which pipeline rendered each request when one is wired" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        paths = cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, backend:, provider:,
+                           instrumentation: compacting_harness)
+
+        types = File.readlines(paths.first).map { |line| JSON.parse(line)["type"] }
+        expect(types).to include("compaction_decision")
       end
     end
 

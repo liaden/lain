@@ -16,6 +16,11 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
   # A FRESH agent per call (Provider::Mock is stateful), built from whichever
   # `model:`/`template:` the router chose -- exactly the spawn_seam duck
   # `arm_spec`'s toy routing arm pins (`call(journal:, **spawn_opts) -> Agent`).
+  #
+  # `worker_env: nil` rides along in every recorded set because an unleased run
+  # takes NoIsolation::Lease's own nil env; the seam coalesces it. Asserted
+  # rather than filtered out, so an arm that stopped carrying its lease forward
+  # would change these expectations rather than pass them silently.
   let(:seen_spawn_opts) { [] }
   let(:spawn_seam) do
     lambda do |journal:, **spawn_opts|
@@ -41,7 +46,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     it "spawns the child under the router's chosen model" do
       run = arm.run("fix the typo", spawn_seam:, grader:)
 
-      expect(seen_spawn_opts).to eq([{ model: "claude-haiku-4", template: "" }])
+      expect(seen_spawn_opts).to eq([{ model: "claude-haiku-4", template: "", worker_env: nil }])
       expect(run).to be_a(Lain::Arm::Run)
       expect(run.timeline.to_a.map(&:role)).to eq(%w[user assistant])
     end
@@ -49,7 +54,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     it "routes a long task to the long model" do
       arm.run("a" * 25, spawn_seam:, grader:)
 
-      expect(seen_spawn_opts).to eq([{ model: "claude-opus-4-8", template: "" }])
+      expect(seen_spawn_opts).to eq([{ model: "claude-opus-4-8", template: "", worker_env: nil }])
     end
 
     it "grades the run with the injected grader" do

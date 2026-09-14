@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "bench/harness"
 require_relative "bench/dry_replay"
 require_relative "bench/session"
 require_relative "bench/variance"
