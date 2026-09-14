@@ -344,23 +344,7 @@ RSpec.describe Lain::CLI::Repl do
   # A REAL headless editor, because the seam is exactly the attach: `nvim: nil`
   # takes the other branch of `attach_editor` and would prove nothing about it.
   describe "the editor a changeset review is drawn in", :nvim, :seam do
-    around do |example|
-      socket = File.join(Dir.tmpdir, "lain-repl-review-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-      # `-n`, no swap file: the suite accumulates them otherwise and eventually
-      # fails with E326.
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @socket = socket
-      example.run
-    ensure
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-      FileUtils.rm_f(socket)
-    end
+    around { |example| headless_editor("lain-repl-review-spec") { example.run } }
 
     def editor_wiring(tty_factory, dir)
       Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,

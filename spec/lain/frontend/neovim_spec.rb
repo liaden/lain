@@ -14,30 +14,13 @@ require "tmpdir"
 # editor actually did, not about the frontend's own bookkeeping.
 RSpec.describe Lain::Frontend::Neovim, :nvim do
   around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @socket = socket
-    @nvim_pid = pid
-    example.run
-  ensure
-    @inspector = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        # An example that kills nvim itself (the teardown specs) already reaped it.
-      end
+    headless_editor("lain-nvim-spec") do |editor|
+      @nvim_pid = editor.pid
+      example.run
     end
-    FileUtils.rm_f(socket)
   end
 
   let(:channel) { Lain::Channel.new }
-
-  def inspector
-    @inspector ||= Neovim.attach_unix(@socket)
-  end
 
   def journal_lines
     inspector.exec_lua(<<~LUA, [])
@@ -52,7 +35,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   # Kill the editor out from under the frontend -- the teardown specs' whole
-  # premise. Reaps the pid and clears it so the around hook's TERM is a no-op.
+  # premise. Reaps the pid here, and the harness's own reap then meets an
+  # already-dead process, which is the ESRCH it tolerates by design.
   def kill_nvim
     Process.kill("KILL", @nvim_pid)
     Process.wait(@nvim_pid)

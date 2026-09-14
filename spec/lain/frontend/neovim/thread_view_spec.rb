@@ -122,31 +122,12 @@ end
 
 RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
   around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-thread-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    # `-n` (no swap file) is not tidiness: the new side is a REAL file buffer,
-    # one example EDITS it, and an editor killed with a modified buffer
-    # preserves its swap -- after which the next example's `bufload` of the
-    # shared fixture answers E325 ATTENTION and the whole file cascades.
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
-                chdir: ThreadFixture::PROJECT, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @socket = socket
-    @editor = Neovim.attach_unix(socket)
-    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
-    @editor.exec_lua(ThreadFixture::CURSOR_TICK_PROBE, [])
-    example.run
-  ensure
-    @editor = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
+    headless_editor("lain-nvim-thread-spec", chdir: ThreadFixture::PROJECT, runtime: true) do
+      # The cursor probe rides with the runtime: every example in this file reads
+      # what it recorded, so an editor without it is an editor no example can use.
+      @editor.exec_lua(ThreadFixture::CURSOR_TICK_PROBE, [])
+      example.run
     end
-    FileUtils.rm_f(socket)
   end
 
   def lua(source, args = []) = @editor.exec_lua(source, args)

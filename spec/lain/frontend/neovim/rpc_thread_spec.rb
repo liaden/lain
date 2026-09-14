@@ -1172,28 +1172,7 @@ end
 
 RSpec.describe Lain::Frontend::Neovim, "the thread pane's write refusal", :nvim do
   around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-thread-write-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    # `-n`, `thread_view_spec.rb`'s reason: the new side is a REAL file buffer in
-    # a shared fixture, and an editor killed with a modified buffer leaves a swap
-    # file that answers the next example's `bufload` with E325.
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
-                chdir: ThreadWriteFixture::PROJECT, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @editor = Neovim.attach_unix(socket)
-    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
-    example.run
-  ensure
-    @editor = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-    end
-    FileUtils.rm_f(socket)
+    headless_editor("lain-nvim-thread-write-spec", chdir: ThreadWriteFixture::PROJECT, runtime: true) { example.run }
   end
 
   def lua(source, args = []) = @editor.exec_lua(source, args)

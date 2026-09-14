@@ -3,8 +3,6 @@
 require "fileutils"
 require "neovim"
 require "socket"
-require "timeout"
-require "tmpdir"
 
 # `runtime/47_diff.lua` -- the reading surface. One changed file drawn into the
 # layout's two diff slots: the real file on the new side, `git show <base>:<path>`
@@ -95,31 +93,11 @@ module DiffModeFixture
 end
 
 RSpec.describe Lain::Frontend::Neovim, :nvim do
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-diff-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    # chdir into the fixture: every path on this wire is repository-relative
-    # (`RenderInlet#open_changeset` sends "lib/lain/agent.rb"), so the editor's
-    # cwd is what resolves it -- and an absolute path in a spec would hide a
-    # module that only works because the spec handed it one.
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
-                chdir: project, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @editor = Neovim.attach_unix(socket)
-    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
-    example.run
-  ensure
-    @editor = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-    end
-    FileUtils.rm_f(socket)
-  end
+  # chdir into the fixture: every path on this wire is repository-relative
+  # (`RenderInlet#open_changeset` sends "lib/lain/agent.rb"), so the editor's
+  # cwd is what resolves it -- and an absolute path in a spec would hide a
+  # module that only works because the spec handed it one.
+  around { |example| headless_editor("lain-nvim-diff-spec", chdir: project, runtime: true) { example.run } }
 
   def project = DiffModeFixture::PROJECT
 

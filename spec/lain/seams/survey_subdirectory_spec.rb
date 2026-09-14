@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "neovim"
-require "timeout"
 require "tmpdir"
 
 # The editor rail {Lain::CLI::HumanReplies} asks for, reduced to the four
@@ -140,29 +139,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
 
   # nvim as the cockpit starts it: in the pane's cwd, which is where the human
   # typed `lain up` -- NOT the repository top the resolver discovers from it.
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-survey-subdir-#{Process.pid}-#{rand(1_000_000)}.sock")
-    # `-n` (no swap file), the repository's rule for a headless nvim in a spec:
-    # a suite that leaves swap files behind eventually fails with E326.
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
-                chdir: @here, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @editor = Neovim.attach_unix(socket)
-    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim.protocol, @editor.channel_id])
-    example.run
-  ensure
-    @editor = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-    end
-    FileUtils.rm_f(socket)
-  end
+  around { |example| headless_editor("lain-survey-subdir", chdir: @here, runtime: true) { example.run } }
 
   def greeter = File.join(@here, "lib", "greeter.rb")
 

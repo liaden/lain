@@ -1,10 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
-require "fileutils"
 require "neovim"
-require "timeout"
-require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalViewSpecSupport
@@ -825,32 +822,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # rather than dying in the spawn (that tag's own note: the guard has to be a
   # filter, never a per-example skip).
   describe "the fold surface, in a real editor", :nvim, :seam do
-    # A socket this example NAMED. Never a glob, never one found on disk: a
-    # sibling agent on this chunk attached to a stranger's editor that way, and
-    # the failure mode is driving somebody else's session.
-    around do |example|
-      socket = File.join(Dir.tmpdir, "lain-t9-approval-fold-#{Process.pid}-#{rand(1_000_000)}.sock")
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @socket = socket
-      example.run
-    ensure
-      @inspector = nil
-      kill_editor(pid)
-      FileUtils.rm_f(socket)
-    end
-
-    # By PID, the one this block spawned. `pkill -f nvim` would match a human's
-    # own cockpit -- and this shell's argv besides.
-    def kill_editor(pid)
-      Process.kill("TERM", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    end
-
-    # A THIRD connection, so observing never disturbs the frontend's own.
-    def inspector = @inspector ||= Neovim.attach_unix(@socket)
+    around { |example| headless_editor("lain-approval-fold-spec") { example.run } }
 
     def buffer_lines
       inspector.exec_lua(<<~LUA, [described_class::BUFFER])

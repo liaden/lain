@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "neovim"
-require "timeout"
 require "tmpdir"
 
 # The inlet as this object uses it: ONE of {Lain::Frontend::Neovim::RenderInlet}'s
@@ -425,27 +423,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
     let(:real_inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}) }
 
     around do |example|
-      socket = File.join(Dir.tmpdir, "lain-changeset-diff-#{Process.pid}-#{rand(1_000_000)}.sock")
-      # `-n` (no swap file), the repository's rule for a headless nvim in a spec:
-      # a suite that leaves swap files behind eventually fails with E326.
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
-                  chdir: ChangesetDiffFixture::PROJECT, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @editor = Neovim.attach_unix(socket)
-      @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                       [Lain::VERSION, Lain::Frontend::Neovim.protocol, @editor.channel_id])
-      example.run
-    ensure
-      @editor = nil
-      if pid
-        begin
-          Process.kill("TERM", pid)
-          Process.wait(pid)
-        rescue Errno::ESRCH, Errno::ECHILD
-          nil
-        end
-      end
-      FileUtils.rm_f(socket)
+      headless_editor("lain-changeset-diff", chdir: ChangesetDiffFixture::PROJECT, runtime: true) { example.run }
     end
 
     # Every buffer the review stamped, as the three facts a note reads off one plus

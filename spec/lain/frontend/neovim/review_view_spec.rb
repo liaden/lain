@@ -4,7 +4,6 @@ require "fileutils"
 require "neovim"
 require "socket"
 require "stringio"
-require "timeout"
 require "tmpdir"
 
 # `lain://review`, the changeset review's navigator -- the scopes it
@@ -893,36 +892,12 @@ end
 # here was the whole around hook -- spawn, socket wait, attach and runtime
 # injection -- not the spawn.
 RSpec.describe "runtime/46_sidebar.lua", :nvim do
-  # `layout_spec.rb`'s hook: one editor per example, torn down whatever the
-  # example did to it -- these examples close windows and swap the current
-  # buffer, which is the state a shared editor would carry into the next one.
-  around do |example|
-    @editor, pid, socket = self.class.headless_editor
-    example.run
-  ensure
-    self.class.stop_editor(pid, socket)
-  end
+  # One editor per example, torn down whatever the example did to it -- these
+  # examples close windows and swap the current buffer, which is the state a
+  # shared editor would carry into the next one.
+  around { |example| headless_editor("lain-nvim-sidebar-spec", runtime: true) { example.run } }
 
   def review_buffer = Lain::Frontend::Neovim::ReviewView::NAME
-
-  def self.headless_editor
-    socket = File.join(Dir.tmpdir, "lain-nvim-sidebar-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    editor = Neovim.attach_unix(socket)
-    editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                    [Lain::VERSION, Lain::Frontend::Neovim.protocol, editor.channel_id])
-    [editor, pid, socket]
-  end
-
-  def self.stop_editor(pid, socket)
-    Process.kill("TERM", pid)
-    Process.wait(pid)
-  rescue Errno::ESRCH, Errno::ECHILD
-    nil
-  ensure
-    FileUtils.rm_f(socket)
-  end
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 
@@ -1207,22 +1182,11 @@ end
 # an example that ran the command directly would pass against a runtime that
 # binds no keys at all.
 RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :nvim, :seam do
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-gestures-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @socket = socket
-    example.run
-  ensure
-    @inspector = nil
-    begin
-      Process.kill("TERM", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    end
-    FileUtils.rm_f(socket)
-  end
+  # {#inspector}, the second connection, is how this file observes an editor the
+  # frontend owns: `_G.__lain` is process-wide lua state, so a render posted from
+  # there lands in the same runtime the frontend injected, and the `chan` upvalue
+  # the gestures send on still names the FRONTEND's channel.
+  around { |example| headless_editor("lain-nvim-gestures-spec") { example.run } }
 
   let(:channel) { Lain::Channel.new }
 
@@ -1243,12 +1207,6 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
       end
     end.new
   end
-
-  # The SECOND connection, which is how every :nvim spec here observes an editor
-  # the frontend owns: `_G.__lain` is process-wide lua state, so a render posted
-  # from here lands in the same runtime the frontend injected, and the `chan`
-  # upvalue the gestures send on still names the FRONTEND's channel.
-  def inspector = @inspector ||= Neovim.attach_unix(@socket)
 
   def sidebar = Lain::Frontend::Neovim::ReviewView::NAME
 

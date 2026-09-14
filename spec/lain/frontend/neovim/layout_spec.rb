@@ -1,10 +1,7 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "neovim"
 require "socket"
-require "timeout"
-require "tmpdir"
 
 # `runtime/41_layout.lua` -- the review's own tabpage, the two entry points
 # every later review capability renders through, and the repair that runs before
@@ -16,26 +13,7 @@ require "tmpdir"
 # does with windows and tabpages -- and a frontend in front of that would mean
 # every assertion had to first prove the frontend was not the thing that moved.
 RSpec.describe Lain::Frontend::Neovim, :nvim do
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-layout-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @editor = Neovim.attach_unix(socket)
-    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, described_class.protocol, @editor.channel_id])
-    example.run
-  ensure
-    @editor = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-    end
-    FileUtils.rm_f(socket)
-  end
+  around { |example| headless_editor("lain-nvim-layout-spec", runtime: true) { example.run } }
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 

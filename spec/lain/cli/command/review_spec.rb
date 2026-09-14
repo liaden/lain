@@ -5,7 +5,6 @@ require "fileutils"
 require "mixlib/shellout"
 require "neovim"
 require "stringio"
-require "timeout"
 require "tmpdir"
 
 # `/review <target>`: the repl command that puts a human in front of a
@@ -740,29 +739,7 @@ RSpec.describe Lain::CLI::Command::Review do
   # editor means "queued" and never "drawn" -- so the only assertion worth
   # making about the nvim leg is one that reads the buffer nvim actually holds.
   describe "the sidebar a real nvim draws", :nvim, :seam do
-    around do |example|
-      socket = File.join(Dir.tmpdir, "lain-review-cmd-#{Process.pid}-#{rand(1_000_000)}.sock")
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @socket = socket
-      example.run
-    ensure
-      @inspector = nil
-      if pid
-        begin
-          Process.kill("TERM", pid)
-          Process.wait(pid)
-        rescue Errno::ESRCH, Errno::ECHILD
-          nil
-        end
-      end
-      FileUtils.rm_f(socket)
-    end
-
-    # A SECOND, independent connection, `neovim_spec.rb`'s inspector: every
-    # assertion is about what the editor actually did, never about the
-    # frontend's own bookkeeping.
-    def inspector = @inspector ||= Neovim.attach_unix(@socket)
+    around { |example| headless_editor("lain-review-cmd") { example.run } }
 
     def sidebar_lines
       inspector.exec_lua(<<~LUA, [])

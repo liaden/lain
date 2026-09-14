@@ -3,7 +3,6 @@
 require "fileutils"
 require "neovim"
 require "socket"
-require "timeout"
 require "tmpdir"
 
 # The injected runtime is one chunk assembled from many files, and this is
@@ -194,28 +193,7 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
   # PRESENT and has to have RUN -- a chunk that parses but whose later half never
   # executed would still satisfy every string assertion above.
   describe "injected into a real editor", :nvim do
-    around do |example|
-      socket = File.join(Dir.tmpdir, "lain-runtime-loader-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @socket = socket
-      example.run
-    ensure
-      @inspector = nil
-      if pid
-        begin
-          Process.kill("TERM", pid)
-          Process.wait(pid)
-        rescue Errno::ESRCH, Errno::ECHILD
-          nil
-        end
-      end
-      FileUtils.rm_f(socket)
-    end
-
-    def inspector
-      @inspector ||= Neovim.attach_unix(@socket)
-    end
+    around { |example| headless_editor("lain-runtime-loader-spec") { example.run } }
 
     def wait_until(timeout: 8)
       deadline = Time.now + timeout

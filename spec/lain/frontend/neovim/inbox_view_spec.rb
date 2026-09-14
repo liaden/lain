@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "json"
 require "timeout"
 require "tmpdir"
@@ -1215,28 +1214,10 @@ end
 # neovim_buffers_spec (see its header for the second-connection idiom): the
 # inbox primes at attach, lists arrivals, and drains through :LainReply.
 RSpec.describe Lain::Frontend::Neovim, :nvim do
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-inbox-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @socket = socket
-    example.run
-  ensure
-    begin
-      Process.kill("TERM", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    end
-    FileUtils.rm_f(socket)
-  end
+  around { |example| headless_editor("lain-nvim-inbox-spec") { example.run } }
 
   let(:channel) { Lain::Channel.new }
   let(:store) { Lain::Store.new }
-
-  def inspector
-    @inspector ||= Neovim.attach_unix(@socket)
-  end
 
   def buffer_lines(name)
     inspector.exec_lua(<<~LUA, [name])

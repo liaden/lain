@@ -3,7 +3,6 @@
 require "fileutils"
 require "neovim"
 require "stringio"
-require "timeout"
 require "tmpdir"
 
 # `/survey <path>`: the repl command that puts a human in front of a
@@ -1177,29 +1176,14 @@ RSpec.describe Lain::CLI::Command::Survey do
   describe "the survey banner's commands, against a real editor", :nvim, :seam do
     around do |example|
       two_documents
-      socket = File.join(Dir.tmpdir, "lain-survey-cmd-#{Process.pid}-#{rand(1_000_000)}.sock")
       # `chdir: @root`, `47_diff.lua`'s ROOT: paths land relative to the
       # SURVEYED tree, and `Lain::Frontend::Neovim::ChangesetDiff` posts them
       # exactly as {Lain::Review::Source::Corpus} named them -- repository-
       # relative to the corpus, never to this process's own cwd.
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, chdir: @root,
-                                                                             out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @nvim = Neovim.attach_unix(socket)
-      @nvim.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim.protocol, @nvim.channel_id])
-      example.run
-    ensure
-      @nvim = nil
-      if pid
-        begin
-          Process.kill("TERM", pid)
-          Process.wait(pid)
-        rescue Errno::ESRCH, Errno::ECHILD
-          nil
-        end
+      headless_editor("lain-survey-cmd", chdir: @root) do |editor|
+        @nvim = editor.with_runtime
+        example.run
       end
-      FileUtils.rm_f(socket)
     end
 
     def messages

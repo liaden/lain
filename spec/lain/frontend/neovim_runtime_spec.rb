@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "async"
-require "fileutils"
 require "neovim"
 require "socket"
 require "timeout"
@@ -21,24 +20,7 @@ end
 # on a unix socket, observed through a SECOND independent connection so every
 # assertion is about what the editor actually did.
 RSpec.describe Lain::Frontend::Neovim, :nvim do
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-runtime-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @socket = socket
-    example.run
-  ensure
-    @inspector = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-    end
-    FileUtils.rm_f(socket)
-  end
+  around { |example| headless_editor("lain-nvim-runtime-spec") { example.run } }
 
   let(:channel) { Lain::Channel.new }
 
@@ -58,10 +40,6 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # roles, event kinds, ages, sender attribution.
   def syntax_groups
     %w[lainToolName lainDigest lainRole lainEventKind lainAge lainSender]
-  end
-
-  def inspector
-    @inspector ||= Neovim.attach_unix(@socket)
   end
 
   # The failure NAMES the buffers the editor actually has. A bare "timed out"

@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "neovim"
 require "socket"
 require "timeout"
 require "tmpdir"
@@ -77,32 +76,16 @@ end
 # since a spec asserting where a marker lands cannot be doubled into meaning
 # anything.
 RSpec.describe "the review annotation runtime", :nvim, :seam do
+  # `noswapfile`, on top of the harness's own `-n`, because this file MODIFIES
+  # the new side (the refusal example has to), and the editor is killed with TERM
+  # afterwards -- which leaves a swap file in the shared fixture beside the real
+  # file. The next example's `bufload` then meets `E325: ATTENTION` and the
+  # failure names nothing about annotations at all. The new side's swap file is
+  # `47_diff.lua`'s concern and `diff_mode_spec.rb` is where it is asserted;
+  # nothing here depends on it.
   around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-annotate-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    # `noswapfile` because this file MODIFIES the new side (the refusal example
-    # has to), and the editor is killed with TERM afterwards -- which leaves a
-    # swap file in the shared fixture beside the real file. The next example's
-    # `bufload` then meets `E325: ATTENTION` and the failure names nothing about
-    # annotations at all. The new side's swap file is `47_diff.lua`'s concern and
-    # `diff_mode_spec.rb` is where it is asserted; nothing here depends on it.
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--cmd", "set noswapfile", "--listen", socket,
-                chdir: project, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @editor = Neovim.attach_unix(socket)
-    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                     [Lain::VERSION, Lain::Frontend::Neovim.protocol, @editor.channel_id])
-    example.run
-  ensure
-    @editor = nil
-    if pid
-      begin
-        Process.kill("TERM", pid)
-        Process.wait(pid)
-      rescue Errno::ESRCH, Errno::ECHILD
-        nil
-      end
-    end
-    FileUtils.rm_f(socket)
+    headless_editor("lain-nvim-annotate-spec", chdir: project, runtime: true,
+                                               args: ["--cmd", "set noswapfile"]) { example.run }
   end
 
   def project = AnnotateFixture::PROJECT

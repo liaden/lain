@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "json"
 require "neovim"
 require "socket"
 require "timeout"
-require "tmpdir"
 
 # 4-2.3: the one EDITABLE lain:// view. `lain://request` shows the pending
 # request as pretty JSON; a human edits it in place and `:LainResend` feeds the
@@ -14,32 +12,13 @@ require "tmpdir"
 # headless-nvim harness as the other :nvim specs (a SECOND, independent
 # {#inspector} connection observes buffer state); see neovim_spec.rb's header.
 RSpec.describe Lain::Frontend::Neovim, :nvim do
-  around do |example|
-    socket = File.join(Dir.tmpdir, "lain-nvim-request-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-    @socket = socket
-    @nvim_pid = pid
-    example.run
-  ensure
-    begin
-      Process.kill("TERM", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    end
-    FileUtils.rm_f(socket)
-  end
+  around { |example| headless_editor("lain-nvim-request-spec") { example.run } }
 
   let(:channel) { Lain::Channel.new }
   let(:journal) { Lain::Channel.new }
   let(:payload) do
     { "model" => "a", "max_tokens" => 16,
       "messages" => [{ "role" => "user", "content" => "hi" }] }
-  end
-
-  def inspector
-    @inspector ||= Neovim.attach_unix(@socket)
   end
 
   def buffer_lines(name)

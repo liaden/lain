@@ -3,7 +3,6 @@
 require "fileutils"
 require "neovim"
 require "socket"
-require "timeout"
 require "tmpdir"
 
 # The inlet as this surface uses it: {Lain::Frontend::Neovim::RenderInlet}'s
@@ -701,27 +700,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
     let(:real_inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}) }
 
     around do |example|
-      socket = File.join(Dir.tmpdir, "lain-review-surface-#{Process.pid}-#{rand(1_000_000)}.sock")
-      # `-n` (no swap file), the repository's rule for a headless nvim in a
-      # spec: a suite that leaves swap files behind eventually fails with E326.
-      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
-                  chdir: NeovimSurfaceFixture::PROJECT, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
-      @editor = Neovim.attach_unix(socket)
-      @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
-                       [Lain::VERSION, Lain::Frontend::Neovim.protocol, @editor.channel_id])
-      example.run
-    ensure
-      @editor = nil
-      if pid
-        begin
-          Process.kill("TERM", pid)
-          Process.wait(pid)
-        rescue Errno::ESRCH, Errno::ECHILD
-          nil
-        end
-      end
-      FileUtils.rm_f(socket)
+      headless_editor("lain-review-surface", chdir: NeovimSurfaceFixture::PROJECT, runtime: true) { example.run }
     end
 
     def deliver = real_inlet.drain(@editor)
