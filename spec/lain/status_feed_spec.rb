@@ -332,10 +332,10 @@ RSpec.describe Lain::StatusFeed do
     # the head, and these examples drive that record, which is the one a live
     # chat actually delivers.
     describe "retiring off the record the tee actually carries" do
-      let(:store) { Lain::Store.new }
+      let(:store) { CoreGraph.store }
 
       def stored_question(question: "which db?", from: "orchestrator")
-        parent = Lain::Timeline.empty(store:).commit(role: :user, content: text("seed #{question}"))
+        parent = CoreGraph.timeline(store:).commit(role: :user, content: text("seed #{question}"))
         Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
                                                  causal_parents: [], body: { "question" => question })
       end
@@ -343,10 +343,10 @@ RSpec.describe Lain::StatusFeed do
       # The delivery commit's shape: a committed chain whose head turn cites
       # the questions it folded in.
       def commit_citing(*digests)
-        Lain::Timeline.empty(store:)
-                      .commit(role: :user, content: text("hi"))
-                      .commit(role: :assistant, content: text("asking"), causal_parents: digests)
-                      .head_digest
+        CoreGraph.timeline(store:)
+                 .commit(role: :user, content: text("hi"))
+                 .commit(role: :assistant, content: text("asking"), causal_parents: digests)
+                 .head_digest
       end
 
       it "retires an answered question off the committed turn's usage record, not off a :turn Event" do
@@ -398,7 +398,7 @@ RSpec.describe Lain::StatusFeed do
       # as a miss: this sink rides the JournalTee, which re-raises into the
       # agent loop, so a head the store cannot resolve may not cost the turn.
       it "treats a head the bound Store does not hold as a miss, never a raise" do
-        feed = described_class.new(path:, store: Lain::Store.new)
+        feed = described_class.new(path:, store: CoreGraph.store)
         question = stored_question
         feed << question
 
@@ -467,19 +467,19 @@ RSpec.describe Lain::StatusFeed do
     # methods would retire on one inbox surface and not the other, which is
     # exactly what the nvim view's parity spec exists to forbid.
     describe "retiring a relayed subagent question" do
-      let(:store) { Lain::Store.new }
+      let(:store) { CoreGraph.store }
 
       def stored_question(question: "which db?", from: "orchestrator")
-        parent = Lain::Timeline.empty(store:).commit(role: :user, content: text("seed #{question}"))
+        parent = CoreGraph.timeline(store:).commit(role: :user, content: text("seed #{question}"))
         Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
                                                  causal_parents: [], body: { "question" => question })
       end
 
       def commit_citing(*digests)
-        Lain::Timeline.empty(store:)
-                      .commit(role: :user, content: text("hi"))
-                      .commit(role: :assistant, content: text("asking"), causal_parents: digests)
-                      .head_digest
+        CoreGraph.timeline(store:)
+                 .commit(role: :user, content: text("hi"))
+                 .commit(role: :assistant, content: text("asking"), causal_parents: digests)
+                 .head_digest
       end
 
       # Built through the record's own `from_event`, over a real `:turn` Event,
@@ -916,13 +916,13 @@ RSpec.describe Lain::StatusFeed do
     it "publishes the same occupancy the REPL prompt line renders, off one shared book" do
       book = Lain::ContextWindow.new(windows: { "qwen3-coder:30b" => 32_768 },
                                      fallback: Lain::ContextWindow::CONSERVATIVE_FALLBACK)
-      agent = Lain::Agent.new(
-        provider: Lain::Provider::Mock.new(
-          responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn,
-                                         usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))]
+      agent = CoreGraph.agent(
+        provider: CoreGraph.provider(
+          Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn,
+                             usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))
         ),
-        toolset: Lain::Toolset.new([]),
-        context: Lain::Context.new(model: "qwen3-coder:30b", max_tokens: 64),
+        toolset: CoreGraph.toolset([]),
+        context: CoreGraph.context(model: "qwen3-coder:30b", max_tokens: 64),
         context_window: book
       )
       agent.ask("hi")
@@ -947,13 +947,13 @@ RSpec.describe Lain::StatusFeed do
     # in the untagged-model case the served book was written for.
     it "agrees when the turn echoes the tagged name the run was started untagged with" do
       book = Lain::CLI::Backend::WindowBook::Served.new(model: "qwen3", window_tokens: 32_768)
-      agent = Lain::Agent.new(
-        provider: Lain::Provider::Mock.new(
-          responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn,
-                                         usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))]
+      agent = CoreGraph.agent(
+        provider: CoreGraph.provider(
+          Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn,
+                             usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))
         ),
-        toolset: Lain::Toolset.new([]),
-        context: Lain::Context.new(model: "qwen3", max_tokens: 64),
+        toolset: CoreGraph.toolset([]),
+        context: CoreGraph.context(model: "qwen3", max_tokens: 64),
         context_window: book
       )
       agent.ask("hi")

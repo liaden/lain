@@ -41,23 +41,23 @@ end
 RSpec.describe Lain::SessionRecord::Scribe do
   subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
 
-  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
-  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+  let(:context) { CoreGraph.context(system: "be terse") }
+  let(:toolset) { CoreGraph.toolset }
   let(:workspace) { Lain::Workspace.empty }
-  let(:store) { Lain::Store.new }
+  let(:store) { CoreGraph.store }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   # A user ask, an assistant tool_use, a user tool_result, an assistant reply --
   # the four render-chain turns one ask completes as. `text` is defined below:
   # a let body resolves it at example time, not here.
   let(:timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: text("hello"))
-                  .commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "tu_1",
-                                                        "name" => "echo", "input" => { "text" => "hi" } }])
-                  .commit(role: :user, content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
-                                                   "content" => "hi" }])
-                  .commit(role: :assistant, content: text("done"))
+    CoreGraph.timeline(store:)
+             .commit(role: :user, content: text("hello"))
+             .commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "tu_1",
+                                                   "name" => "echo", "input" => { "text" => "hi" } }])
+             .commit(role: :user, content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
+                                              "content" => "hi" }])
+             .commit(role: :assistant, content: text("done"))
   end
 
   def text(body) = [{ "type" => "text", "text" => body }]
@@ -67,7 +67,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # The Loader's own integrity check, inline: re-commit each turn record in file
   # order and demand it lands on the digest recorded beside it.
   def recommit_verifies?
-    of_type("turn").inject(Lain::Timeline.empty(store: Lain::Store.new)) do |chain, record|
+    of_type("turn").inject(CoreGraph.timeline) do |chain, record|
       rebuilt = chain.commit(role: record.fetch("role"), content: record.fetch("content"),
                              meta: record.fetch("meta"))
       raise "turn #{record.fetch("digest")} re-commits to #{rebuilt.head_digest}" unless
@@ -171,7 +171,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
 
     def chain_of(length)
-      (1..length).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |built, index|
+      (1..length).inject(CoreGraph.timeline) do |built, index|
         built.commit(role: :user, content: text("turn #{index}"))
       end
     end
@@ -294,7 +294,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
 
     def chain_of(length)
-      (1..length).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |built, index|
+      (1..length).inject(CoreGraph.timeline) do |built, index|
         built.commit(role: :user, content: text("turn #{index}"))
       end
     end
@@ -492,7 +492,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   describe "ask_human Q&A survives (observed ChainWriter, not a Timeline walk)" do
-    let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: text("ask me")) }
+    let(:parent) { CoreGraph.timeline(store:).commit(role: :user, content: text("ask me")) }
 
     it "journals both :message events as `message` records, every envelope+body field pinned" do
       writer = Lain::Event::ChainWriter.new(observer: scribe)
@@ -578,8 +578,8 @@ end
 # the same tolerant zero-record precedent Bench::Session::MemoryReplay itself
 # already sets for a memory_root-free chain.
 RSpec.describe Lain::SessionRecord::Replay do
-  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
-  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+  let(:context) { CoreGraph.context(system: "be terse") }
+  let(:toolset) { CoreGraph.toolset }
   let(:workspace) { Lain::Workspace.empty }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -752,7 +752,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
 
     it "replays cleanly to empty run-state from a journal with no session_read/todo_snapshot records" do
-      Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:)
+      CoreGraph.scribe(journal:, context:, toolset:, workspace:)
 
       fresh = replayed_session
 
@@ -767,7 +767,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   describe "the manifest pair needs no new record" do
     it "reconstructs manifest reminders through the existing MemoryReplay root" do
       recorder = Lain::Memory::Recorder.new
-      memory_toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)])
+      memory_toolset = CoreGraph.toolset([Lain::Tools::MemoryWrite.new(recorder:)])
       memory_journal = Lain::Memory::JournalMemoryRoot.new(journal:, recorder:)
       input = { "id" => "aspirin-dosing", "description" => "Aspirin dosing bounds", "body" => "40mg/kg max" }
       usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
@@ -776,8 +776,8 @@ RSpec.describe Lain::SessionRecord::Replay do
 
       agent, = record_journaled_run(responses, journal: memory_journal, toolset: memory_toolset, context:,
                                                workspace:)
-      Lain::SessionRecord::Scribe.new(journal:, context:, toolset: memory_toolset, workspace:)
-                                 .catch_up(agent.timeline)
+      CoreGraph.scribe(journal:, context:, toolset: memory_toolset, workspace:)
+               .catch_up(agent.timeline)
 
       expect(replayed_session.reminders.last).to include("aspirin-dosing | Aspirin dosing bounds")
     end
@@ -790,7 +790,7 @@ end
 # so every turn without a causal edge stays byte-identical to what this writer
 # emitted before the field existed.
 RSpec.describe Lain::SessionRecord do
-  let(:store) { Lain::Store.new }
+  let(:store) { CoreGraph.store }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -814,10 +814,10 @@ RSpec.describe Lain::SessionRecord do
     let(:recorded) { JSON.parse(line) }
 
     let(:turn) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: recorded.fetch("role"), content: recorded.fetch("content"),
-                            meta: recorded.fetch("meta"))
-                    .head
+      CoreGraph.timeline(store:)
+               .commit(role: recorded.fetch("role"), content: recorded.fetch("content"),
+                       meta: recorded.fetch("meta"))
+               .head
     end
 
     it "re-journals byte-identically to the committed pre-change record" do
@@ -838,11 +838,11 @@ RSpec.describe Lain::SessionRecord do
     let(:answered) { message(to: "agent", body: "81 mg") }
 
     let(:turn) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: text("what is the aspirin dosing?"))
-                    .commit(role: :assistant, content: text("81 mg"),
-                            causal_parents: [asked.digest, answered.digest])
-                    .head
+      CoreGraph.timeline(store:)
+               .commit(role: :user, content: text("what is the aspirin dosing?"))
+               .commit(role: :assistant, content: text("81 mg"),
+                       causal_parents: [asked.digest, answered.digest])
+               .head
     end
 
     it "records both parent digests, in the sorted order the content address holds them" do

@@ -135,16 +135,11 @@ end
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
-  let(:toolset) { Lain::Toolset.new([EchoTool.new, BoomTool.new]) }
-  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+  let(:toolset) { CoreGraph.toolset([EchoTool.new, BoomTool.new]) }
+  let(:context) { CoreGraph.context }
 
   def agent(responses, **overrides)
-    described_class.new(
-      provider: Lain::Provider::Mock.new(responses: Array(responses)),
-      toolset:,
-      context:,
-      **overrides
-    )
+    described_class.new(provider: CoreGraph.provider(*Array(responses)), toolset:, context:, **overrides)
   end
 
   # A thinking block rides along on every tool_use here, so the loop is
@@ -152,6 +147,35 @@ RSpec.describe Lain::Agent do
   def tool_response(*calls) = super(*calls, thinking: "considering")
 
   # ---- the loop -------------------------------------------------------------
+
+  # CoreGraph has no spec of its own -- it is exercised by every spec that uses
+  # it. This is the one property those specs LEAN on rather than merely enjoy:
+  # the default graph is closed. Asserted here because this file drives more of
+  # the factory than any other.
+  #
+  # Each default is named explicitly rather than inferred from a run, because
+  # only some of them redden their users when broken. Swapping the journal or
+  # the model for a real one fails in these specs; swapping the TOOLSET for an
+  # empty one leaves this file, status_feed and session_record entirely green
+  # and reddens only supervisor_spec -- so `echo` is pinned here, where a
+  # reader of the factory will find it, and not left to a distant file.
+  describe "the graph CoreGraph hands out by default" do
+    it "runs to completion holding no file descriptor of its own" do
+      expect(CoreGraph.journal).to be(Lain::Channel::Null.instance)
+      expect(CoreGraph.provider).to be_a(Lain::Provider::Mock)
+      expect(CoreGraph.toolset.names).to eq(["echo"])
+
+      # The run leg, and the only assertion here that measures rather than
+      # declares: a default graph that opened a journal file, a socket or a
+      # pipe would leave the descriptor behind. WebMock already owns "no
+      # network" suite-wide (spec/network_posture_spec.rb), so asking it again
+      # here would be an assertion that cannot fail.
+      before_fds = Dir.children("/proc/self/fd").size
+      CoreGraph.agent(provider: CoreGraph.provider(text_response("hi"))).ask("hi")
+
+      expect(Dir.children("/proc/self/fd").size).to eq(before_fds)
+    end
+  end
 
   describe "#ask" do
     it "appends the user turn and settles on end_turn" do
@@ -196,11 +220,11 @@ RSpec.describe Lain::Agent do
       a = nil
       ask = Lain::Tools::AskHuman.new(parent: -> { a.timeline })
       a = described_class.new(
-        provider: Lain::Provider::Mock.new(responses: [
-                                             tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
-                                             text_response("done")
-                                           ]),
-        toolset: Lain::Toolset.new([ask]), context:
+        provider: CoreGraph.provider(
+          tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
+          text_response("done")
+        ),
+        toolset: CoreGraph.toolset([ask]), context:
       )
 
       Sync do |task|
@@ -225,12 +249,12 @@ RSpec.describe Lain::Agent do
       a = nil
       ask = Lain::Tools::AskHuman.new(parent: -> { a.timeline })
       a = described_class.new(
-        provider: Lain::Provider::Mock.new(responses: [
-                                             tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
-                                             tool_response(["tu_2", "ask_human", { "question" => "and port?" }]),
-                                             text_response("done")
-                                           ]),
-        toolset: Lain::Toolset.new([ask]), context:
+        provider: CoreGraph.provider(
+          tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
+          tool_response(["tu_2", "ask_human", { "question" => "and port?" }]),
+          text_response("done")
+        ),
+        toolset: CoreGraph.toolset([ask]), context:
       )
 
       Sync do |task|
@@ -355,9 +379,7 @@ RSpec.describe Lain::Agent do
 
     # A server-side tool is mid-flight; resend and let it continue.
     it "re-requests on pause_turn rather than settling" do
-      provider = Lain::Provider::Mock.new(
-        responses: [text_response("", stop_reason: :pause_turn), text_response("finished")]
-      )
+      provider = CoreGraph.provider(text_response("", stop_reason: :pause_turn), text_response("finished"))
       a = described_class.new(provider:, toolset:, context:)
       response = a.ask("hi")
 
@@ -424,7 +446,7 @@ RSpec.describe Lain::Agent do
       # the provider instead of dying on arrival.
       it "names the ceiling that stopped the run, then answers the next prompt" do
         looping = tool_response(["tu_1", "echo", { "text" => "loop" }])
-        provider = Lain::Provider::Mock.new(responses: [looping, looping, looping, text_response("recovered")])
+        provider = CoreGraph.provider(looping, looping, looping, text_response("recovered"))
         a = described_class.new(provider:, toolset:, context:,
                                 budget: Lain::Agent::Budget.new(max_iterations: 2))
 
@@ -564,7 +586,7 @@ RSpec.describe Lain::Agent do
     end
 
     context "with a model the default book does not carry" do
-      let(:context) { Lain::Context.new(model: "qwen3:4b", max_tokens: 1024) }
+      let(:context) { CoreGraph.context(model: "qwen3:4b") }
 
       # An Agent built with no book of its own. `ContextWindow.default`'s
       # conservative fallback is the honest answer for a caller that named no
@@ -605,7 +627,7 @@ RSpec.describe Lain::Agent do
     # caller that cannot afford a raise on a blank model slot has to know it
     # can happen rather than discovering it as a REPL crash.
     context "with a blank model slot" do
-      let(:context) { Lain::Context.new(model: "  ", max_tokens: 1024) }
+      let(:context) { CoreGraph.context(model: "  ") }
 
       it "raises UnknownModel rather than reporting an occupancy nobody chose" do
         expect { agent(text_response).occupancy }
@@ -685,8 +707,8 @@ RSpec.describe Lain::Agent do
         def encode(request) = request.cache_payload
         def complete(*, **) = raise(Lain::Error, "connection reset by peer")
       end.new
-      subject = described_class.new(provider: exploding, toolset: Lain::Toolset.new([]),
-                                    context: Lain::Context.new(model: "opus", max_tokens: 64))
+      subject = described_class.new(provider: exploding, toolset: CoreGraph.toolset([]),
+                                    context: CoreGraph.context(model: "opus", max_tokens: 64))
       expect { subject.ask("hi") }.to raise_error(Lain::Error)
 
       expect(subject.state).to eq(:awaiting_model)
@@ -700,10 +722,10 @@ RSpec.describe Lain::Agent do
   # (lib/lain/tools/subagent.rb:222); these examples pin the behavior it
   # depends on before anything builds further on it. Spec-only: no lib change.
   describe "an injected Timeline" do
-    let(:seeded_store) { Lain::Store.new }
+    let(:seeded_store) { CoreGraph.store }
 
     def committed(store, *turns)
-      turns.inject(Lain::Timeline.empty(store:)) do |timeline, (role, text)|
+      turns.inject(CoreGraph.timeline(store:)) do |timeline, (role, text)|
         timeline.commit(role:, content: [{ "type" => "text", "text" => text }])
       end
     end
@@ -713,7 +735,7 @@ RSpec.describe Lain::Agent do
     end
 
     it "is the starting state: the request renders all three turns before the new user turn" do
-      provider = Lain::Provider::Mock.new(responses: [text_response("hello")])
+      provider = CoreGraph.provider(text_response("hello"))
       a = described_class.new(provider:, toolset:, context:, timeline: seed(seeded_store))
       a.ask("hi")
 
@@ -732,7 +754,7 @@ RSpec.describe Lain::Agent do
     end
 
     it "resumes an assistant head without inventing a user turn" do
-      assistant_head = committed(Lain::Store.new, [:user, "first"], [:assistant, "ack"])
+      assistant_head = committed(CoreGraph.store, [:user, "first"], [:assistant, "ack"])
 
       a = agent(text_response("hello"), timeline: assistant_head)
       a.ask("more")
@@ -770,14 +792,14 @@ RSpec.describe Lain::Agent do
       path = File.join(tmpdir, "read.txt")
       File.write(path, "contents")
       sightings = []
-      toolset = Lain::Toolset.new([Lain::Tools::ReadFile.new, ContextProbe.new(sightings)])
+      toolset = CoreGraph.toolset([Lain::Tools::ReadFile.new, ContextProbe.new(sightings)])
 
       a = described_class.new(
-        provider: Lain::Provider::Mock.new(responses: [
-                                             tool_response(["tu_1", "read_file", { "path" => path }]),
-                                             tool_response(["tu_2", "probe", {}]),
-                                             text_response
-                                           ]),
+        provider: CoreGraph.provider(
+          tool_response(["tu_1", "read_file", { "path" => path }]),
+          tool_response(["tu_2", "probe", {}]),
+          text_response
+        ),
         toolset:,
         context:
       )
@@ -793,7 +815,7 @@ RSpec.describe Lain::Agent do
     # of Workspace; the Agent composes them per render.
     it "carries a session reminder into the request tail without appending it to the Timeline" do
       reminding = instance_double(Lain::Session, reminders: ["ping the model"])
-      provider = Lain::Provider::Mock.new(responses: [text_response])
+      provider = CoreGraph.provider(text_response)
       a = described_class.new(provider:, toolset:, context:, session: reminding)
       a.ask("hi")
 
@@ -818,7 +840,7 @@ RSpec.describe Lain::Agent do
     # The default is a real Null Object, so an Agent built without a source
     # sends the bytes its base Context renders -- not "equivalent" bytes.
     it "sends a Request byte-identical to the base Context's own render, with no source wired" do
-      provider = Lain::Provider::Mock.new(responses: [text_response])
+      provider = CoreGraph.provider(text_response)
       a = described_class.new(provider:, toolset:, context:)
       a.ask("hi")
 
@@ -831,8 +853,7 @@ RSpec.describe Lain::Agent do
     end
 
     it "renders through the Context the source returns, so its pipeline decides what is sent" do
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                                      text_response])
+      provider = CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response)
       a = described_class.new(provider:, toolset:, context:,
                               pipeline_source: A1PipelineSources::Pruning.new(keep_last: 2))
       a.ask("hi")
@@ -844,9 +865,11 @@ RSpec.describe Lain::Agent do
     # A source consulted once per RUN would answer [1, 1, 1] here; one
     # consulted per RENDER widens with the turn.
     it "is consulted once per render, not once per run" do
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                                      tool_response(["tu_2", "echo", { "text" => "y" }]),
-                                                      text_response])
+      provider = CoreGraph.provider(
+        tool_response(["tu_1", "echo", { "text" => "x" }]),
+        tool_response(["tu_2", "echo", { "text" => "y" }]),
+        text_response
+      )
       a = described_class.new(provider:, toolset:, context:, pipeline_source: A1PipelineSources::Widening.new)
       a.ask("hi")
 
@@ -864,7 +887,7 @@ RSpec.describe Lain::Agent do
                                  stop_reason: :tool_use,
                                  usage: Lain::Usage.new(input_tokens: 40, output_tokens: 5,
                                                         cache_read_input_tokens: 2))
-      provider = Lain::Provider::Mock.new(responses: [first, text_response])
+      provider = CoreGraph.provider(first, text_response)
       recorder = A1PipelineSources::Recording.new
       a = described_class.new(provider:, toolset:, context:, pipeline_source: recorder)
       a.ask("hi")
@@ -880,8 +903,7 @@ RSpec.describe Lain::Agent do
     # style failure -- it is an IsolationError on the compacting turn.
     it "keeps every per-turn Context Ractor-shareable" do
       source = A1PipelineSources::Pruning.new(keep_last: 2)
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                                      text_response])
+      provider = CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response)
       described_class.new(provider:, toolset:, context:, pipeline_source: source).ask("hi")
 
       # The size check is what makes this about the Context RENDERED THROUGH and
@@ -896,13 +918,13 @@ RSpec.describe Lain::Agent do
     # resent edit must not acquire a pipeline on its way out.
     it "leaves an overridden dispatch alone -- the source is never consulted for a resend" do
       recorder = A1PipelineSources::Recording.new
-      provider = Lain::Provider::Mock.new(responses: [text_response])
+      provider = CoreGraph.provider(text_response)
       override = Lain::Agent::RequestOverride.new
       a = described_class.new(provider:, toolset:, context:, pipeline_source: recorder,
                               request_override: override)
-      override.queue(context.render(timeline: Lain::Timeline.empty(store: Lain::Store.new)
-                                                            .commit(role: :user, content: [{ "type" => "text",
-                                                                                             "text" => "edited" }]),
+      override.queue(context.render(timeline: CoreGraph.timeline
+                                                       .commit(role: :user, content: [{ "type" => "text",
+                                                                                        "text" => "edited" }]),
                                     toolset:))
       a.ask("hi")
 
@@ -923,20 +945,18 @@ RSpec.describe Lain::Agent do
   # because production wires no non-Null mailbox and a Null one makes every
   # ordering of capture, render and commit look the same.
   describe "the per-turn mailbox snapshot" do
-    let(:store) { Lain::Store.new }
+    let(:store) { CoreGraph.store }
     let(:log) { Lain::Tools::Subagent::Log.new }
     let(:parent_timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                    .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+      CoreGraph.timeline(store:)
+               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+               .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
     end
     let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
     let(:seam) { A1MailboxSeam::Seam.new(source: Lain::Context::Mailbox::Source.new(recipient:, log:)) }
 
     def note(text)
-      lineage = Lain::Tools::Subagent::Lineage.new(
-        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []), log:
-      )
+      lineage = Lain::Tools::Subagent::Lineage.new(policy: CoreGraph.spawn_policy, log:)
       lineage.note(parent_timeline, from: "actor", to: recipient, text:, causal_parents: [])
     end
 
@@ -950,7 +970,7 @@ RSpec.describe Lain::Agent do
     end
 
     def seam_agent(provider)
-      described_class.new(provider:, toolset: Lain::Toolset.new([]),
+      described_class.new(provider:, toolset: CoreGraph.toolset([]),
                           context: seam_context, timeline: parent_timeline, mailbox: seam)
     end
 
@@ -962,7 +982,7 @@ RSpec.describe Lain::Agent do
     # built ONCE would re-fold turn 1's stale snapshot on turn 2 and never see
     # what arrived in between.
     it "folds each turn's OWN frozen snapshot -- no stale pipeline-construction binding" do
-      provider = Lain::Provider::Mock.new(responses: [text_response("turn one"), text_response("turn two")])
+      provider = CoreGraph.provider(text_response("turn one"), text_response("turn two"))
       a = seam_agent(provider)
 
       first_note = note("before turn one")
@@ -1026,16 +1046,14 @@ RSpec.describe Lain::Agent do
 
         def observe(block, tool_name) = @seen << "#{tool_name}:#{block["tool_use_id"]}"
       end.new(seen)
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                                      text_response])
+      provider = CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response)
       described_class.new(provider:, toolset:, context:, tool_observer: observer).ask("hi")
 
       expect(seen).to eq(["echo:tu_1"])
     end
 
     it "observes nothing by default, leaving the delivered results byte-identical" do
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                                      text_response])
+      provider = CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response)
       a = described_class.new(provider:, toolset:, context:)
       a.ask("hi")
 
@@ -1054,10 +1072,10 @@ RSpec.describe Lain::Agent do
     # collaborator and an ingredient and get a constructible pair. Built per
     # call: an Agent must never be handed a collaborator another Agent drives.
     def wiring_value(keyword)
-      { model_caller: Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: [])),
+      { model_caller: Lain::Agent::ModelCaller.new(provider: CoreGraph.provider),
         tool_runner: Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new),
         accounting: Lain::Agent::Accounting.new,
-        provider: Lain::Provider::Mock.new(responses: []),
+        provider: CoreGraph.provider,
         model_middleware: Lain::Middleware::Stack.new,
         handler: Lain::Effect::Handler::Mock.new,
         tool_middleware: Lain::Middleware::Stack.new,
@@ -1066,8 +1084,7 @@ RSpec.describe Lain::Agent do
     end
 
     it "drives injected collaborators, with no provider:, journal: or middleware keyword" do
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                                      text_response("bye")])
+      provider = CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response("bye"))
       journal = RecordingChannel.new
       a = described_class.new(
         toolset:, context:,
@@ -1094,9 +1111,7 @@ RSpec.describe Lain::Agent do
       accounting = Lain::Agent::Accounting.new
       accounting.observe(text_response(usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2)), digest: "seed")
       a = described_class.new(toolset:, context:, accounting:,
-                              model_caller: Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(
-                                responses: []
-                              )))
+                              model_caller: Lain::Agent::ModelCaller.new(provider: CoreGraph.provider))
 
       expect(a.usage.input_tokens).to eq(40)
     end
@@ -1205,7 +1220,7 @@ RSpec.describe Lain::Agent do
       tool.define_singleton_method(:to_schema) do
         { "name" => "ask_human", "description" => "probe", "input_schema" => { "type" => "object" } }
       end
-      Lain::Toolset.new([tool])
+      CoreGraph.toolset([tool])
     end
 
     def handover_agent(style, tools:, provider:, timeline:)
@@ -1219,8 +1234,8 @@ RSpec.describe Lain::Agent do
     end
 
     def seeded_timeline
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      CoreGraph.timeline
+               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     # The delivery turn: the one user message holding every tool_result, whose
@@ -1231,7 +1246,7 @@ RSpec.describe Lain::Agent do
 
     def handover_turn(style)
       seeded = seeded_timeline
-      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "ask_human", {}]), text_response])
+      provider = CoreGraph.provider(tool_response(["tu_1", "ask_human", {}]), text_response)
       agent = handover_agent(style, tools: handover_toolset(seeded.head_digest), provider:, timeline: seeded)
       agent.ask("go")
       tool_result_turn(agent)
@@ -1252,7 +1267,7 @@ RSpec.describe Lain::Agent do
     # writing a different digest.
     it "refuses an injected ToolRunner built over a toolset that is not the Agent's" do
       expect do
-        described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
+        described_class.new(toolset:, context:, provider: CoreGraph.provider,
                             tool_runner: Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new))
       end.to raise_error(ArgumentError, /toolset/)
     end
@@ -1274,8 +1289,7 @@ RSpec.describe Lain::Agent do
     # member (the turn phase, the Context source) is asked TWICE and a per-tool
     # one (the observer, the tool phase) once.
     def echoing_provider
-      Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
-                                           text_response("bye")])
+      CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response("bye"))
     end
 
     def full_instrumentation
@@ -1318,7 +1332,7 @@ RSpec.describe Lain::Agent do
        tool_observer transition_listener pipeline_source].each do |member|
       it "refuses instrumentation: passed alongside the legacy #{member}:" do
         expect do
-          described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
+          described_class.new(toolset:, context:, provider: CoreGraph.provider,
                               instrumentation: Lain::Agent::Instrumentation.new,
                               member => Lain::Agent::Instrumentation.new.public_send(member))
         end.to raise_error(ArgumentError, /instrumentation:.*#{member}:/m)
@@ -1334,7 +1348,7 @@ RSpec.describe Lain::Agent do
     # so Ruby polices them and nothing behind them can ever be tripped.
     it "answers a typo with the keyword the caller meant, not just the typo" do
       message = begin
-        described_class.new(toolset:, context:, providr: Lain::Provider::Mock.new(responses: []))
+        described_class.new(toolset:, context:, providr: CoreGraph.provider)
         raise "expected an ArgumentError, and none was raised"
       rescue ArgumentError => e
         e.message
@@ -1396,7 +1410,7 @@ RSpec.describe Lain::Agent do
     # resolves both halves there rather than lazily on first use.
     it "still raises during initialize, before any turn runs, on a wiring mistake" do
       expect do
-        described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
+        described_class.new(toolset:, context:, provider: CoreGraph.provider,
                             instrumentation: Lain::Agent::Instrumentation.new,
                             journal: RecordingChannel.new)
       end.to raise_error(ArgumentError, /instrumentation:.*journal:/m)
@@ -1410,11 +1424,11 @@ RSpec.describe Lain::Agent do
     # clash table) and demands the same thing: no #ask, the raise comes out of
     # `described_class.new` itself.
     it "still raises during initialize on a double-wiring mistake between collaborators" do
-      model_caller = Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: []))
+      model_caller = Lain::Agent::ModelCaller.new(provider: CoreGraph.provider)
 
       expect do
         described_class.new(toolset:, context:, model_caller:,
-                            provider: Lain::Provider::Mock.new(responses: []))
+                            provider: CoreGraph.provider)
       end.to raise_error(ArgumentError, /model_caller.*provider/m)
     end
 
@@ -1423,7 +1437,7 @@ RSpec.describe Lain::Agent do
     # rather than a public call, same as the two other specs (subagent_spec.rb,
     # wiring_spec.rb) that reach this seam from outside.
     it "answers model_caller, tool_runner and accounting as the injected doubles" do
-      model_caller = Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: []))
+      model_caller = Lain::Agent::ModelCaller.new(provider: CoreGraph.provider)
       tool_runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new, toolset:)
       accounting = Lain::Agent::Accounting.new
       a = described_class.new(toolset:, context:, model_caller:, tool_runner:, accounting:)
@@ -1438,7 +1452,7 @@ RSpec.describe Lain::Agent do
       accounting.observe(text_response(usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2)), digest: "seed")
       a = described_class.new(toolset:, context:, accounting:,
                               model_caller: Lain::Agent::ModelCaller.new(
-                                provider: Lain::Provider::Mock.new(responses: [])
+                                provider: CoreGraph.provider
                               ))
 
       expect(a.usage).to equal(accounting.usage)

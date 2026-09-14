@@ -17,23 +17,17 @@ require "tmpdir"
 # registry a HUD or a graceful drain enumerates, and is the presence that
 # unrefuses the model-dispatched :actor (see subagent_spec).
 RSpec.describe Lain::Supervisor do
-  let(:store) { Lain::Store.new }
+  let(:store) { CoreGraph.store }
   let(:log) { Lain::Tools::Subagent::Log.new }
   let(:parent_timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    CoreGraph.timeline(store:)
+             .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+             .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
-  def actor_tool(*responses, journal: Lain::Channel::Null.instance)
-    Lain::Tools::Subagent.new(
-      tool_middleware: ToolRegistry::UNGUARDED,
-      provider: Lain::Provider::Mock.new(responses:),
-      context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
-      toolset: Lain::Toolset.new([EchoTool.new]),
-      policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
-      parent: parent_timeline, journal:, mode: :actor, log:
-    )
+  def actor_tool(*responses, journal: CoreGraph.journal)
+    CoreGraph.subagent(provider: CoreGraph.provider(*responses),
+                       parent: parent_timeline, journal:, mode: :actor, log:)
   end
 
   # A child provider that announces entry and parks; a :raise release fails
@@ -56,13 +50,9 @@ RSpec.describe Lain::Supervisor do
     end)
   end
 
-  def parking_tool(entered:, release:, journal: Lain::Channel::Null.instance)
-    Lain::Tools::Subagent.new(
-      tool_middleware: ToolRegistry::UNGUARDED,
+  def parking_tool(entered:, release:, journal: CoreGraph.journal)
+    CoreGraph.subagent(
       provider: SupervisorParkProvider.new(entered:, release:, responses: [text_response("late")]),
-      context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
-      toolset: Lain::Toolset.new([EchoTool.new]),
-      policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
       parent: parent_timeline, journal:, mode: :actor, log:
     )
   end
@@ -424,9 +414,9 @@ RSpec.describe Lain::Supervisor do
       )
       entered = Async::Queue.new
       release = Async::Queue.new
-      agent = Lain::Agent.new(provider: ParkProvider.new(entered:, release:, responses: [text_response]),
-                              toolset: Lain::Toolset.new([]),
-                              context: Lain::Context.new(model: "m", max_tokens: 64))
+      agent = CoreGraph.agent(provider: ParkProvider.new(entered:, release:, responses: [text_response]),
+                              toolset: CoreGraph.toolset([]),
+                              context: CoreGraph.context(model: "m", max_tokens: 64))
 
       outcome = nil
       Sync do |task|
@@ -492,13 +482,10 @@ RSpec.describe Lain::Supervisor do
 
     # The child's first turn calls the probe, then settles.
     def probing_actor_tool(collector)
-      Lain::Tools::Subagent.new(
-        tool_middleware: ToolRegistry::UNGUARDED,
-        provider: Lain::Provider::Mock.new(responses: [tool_response(%w[p env_probe] << {}), text_response("done")]),
-        context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
-        toolset: Lain::Toolset.new([EnvProbe.new(collector)]),
-        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
-        parent: parent_timeline, journal: Lain::Channel::Null.instance, mode: :actor, log:
+      CoreGraph.subagent(
+        provider: CoreGraph.provider(tool_response(%w[p env_probe] << {}), text_response("done")),
+        toolset: CoreGraph.toolset([EnvProbe.new(collector)]),
+        parent: parent_timeline, mode: :actor, log:
       )
     end
 
@@ -1058,23 +1045,23 @@ RSpec.describe Lain::Supervisor do
     # restores no workspace -- what is under test here is the ADOPTION.
     def killed_session_record
       io = StringIO.new
-      scribe = Lain::SessionRecord::Scribe.new(journal: Lain::Journal.new(io:), context: restart_context,
-                                               toolset: Lain::Toolset.new([]))
-      agent = restart_agent([text_response("worked")], Lain::Timeline.empty(store:))
+      scribe = CoreGraph.scribe(journal: Lain::Journal.new(io:), context: restart_context,
+                                toolset: CoreGraph.toolset([]))
+      agent = restart_agent([text_response("worked")], CoreGraph.timeline(store:))
       agent.ask("do the thing")
       scribe.catch_up(agent.timeline)
       io.string.each_line
     end
 
-    def restart_context = Lain::Context.new(model: "actor", max_tokens: 128)
+    def restart_context = CoreGraph.context(model: "actor", max_tokens: 128)
 
     def restart_agent(responses, timeline)
-      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), toolset: Lain::Toolset.new([]),
+      CoreGraph.agent(provider: CoreGraph.provider(*responses), toolset: CoreGraph.toolset([]),
                       context: restart_context, timeline:)
     end
 
     def restart(record, supervisor:)
-      Lain::Supervisor::Restart.new(entries: record, supervisor:, journal: Lain::Channel::Null.instance)
+      Lain::Supervisor::Restart.new(entries: record, supervisor:, journal: CoreGraph.journal)
                                .call(role: "researcher") { |recording| restart_agent([], recording.timeline) }
     end
 
@@ -1277,20 +1264,14 @@ RSpec.describe Lain::Supervisor do
 
     def row_of(supervisor, actor) = supervisor.find { |row| row.actor.equal?(actor) }
 
-    def retirement(log, journal: Lain::Channel::Null.instance, taken: false)
+    def retirement(log, journal: CoreGraph.journal, taken: false)
       Lain::Isolation::Worktree::Handback::Retirement.new(sync: RetireSync.new(log), journal:,
                                                           anchor: RetireAnchor.new(log, taken:))
     end
 
-    def retiring_tool(*responses, tools: [EchoTool.new], journal: Lain::Channel::Null.instance)
-      Lain::Tools::Subagent.new(
-        tool_middleware: ToolRegistry::UNGUARDED,
-        provider: Lain::Provider::Mock.new(responses:),
-        context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
-        toolset: Lain::Toolset.new(tools),
-        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
-        parent: parent_timeline, journal:, mode: :actor, log:
-      )
+    def retiring_tool(*responses, tools: [EchoTool.new], journal: CoreGraph.journal)
+      CoreGraph.subagent(provider: CoreGraph.provider(*responses), toolset: CoreGraph.toolset(tools),
+                         parent: parent_timeline, journal:, mode: :actor, log:)
     end
 
     def adopted(supervisor, tool)
@@ -1573,16 +1554,11 @@ RSpec.describe Lain::Supervisor do
       def parent_state = [git(@repo_root, "rev-parse", "HEAD"), git(@repo_root, "status", "--porcelain")]
 
       def committing(provider)
-        Lain::Tools::Subagent.new(
-          tool_middleware: ToolRegistry::UNGUARDED, provider:,
-          context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
-          toolset: Lain::Toolset.new([RetireCommitTool.new]),
-          policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
-          parent: parent_timeline, journal:, mode: :actor, log:
-        )
+        CoreGraph.subagent(provider:, toolset: CoreGraph.toolset([RetireCommitTool.new]),
+                           parent: parent_timeline, journal:, mode: :actor, log:)
       end
 
-      def commits = Lain::Provider::Mock.new(responses: [tool_response(["c1", "commit", {}]), text_response("done")])
+      def commits = CoreGraph.provider(tool_response(["c1", "commit", {}]), text_response("done"))
 
       # @return [Array(Tools::Subagent::Actor, WorkerEnv)]
       def committed(supervisor, provider)
@@ -1716,7 +1692,7 @@ RSpec.describe Lain::Supervisor do
           retirement = Lain::Isolation::Worktree::Handback::Retirement.over(isolation: ahead, journal:)
           supervisor = described_class.new(journal:, isolation: ahead, retirement:).run(task)
           actor = supervisor.adopt(role: "issue") do |worker_env|
-            committing(Lain::Provider::Mock.new(responses: [text_response("nothing to do")]))
+            committing(CoreGraph.provider(text_response("nothing to do")))
               .launch_actor("go", worker_env:)
           end
           report = supervisor.retire(row_of(supervisor, actor))
@@ -1746,12 +1722,9 @@ RSpec.describe Lain::Supervisor do
             Lain::Tool::Result.ok("marked")
           end
         end)
-        marker = Lain::Tools::Subagent.new(
-          tool_middleware: ToolRegistry::UNGUARDED,
-          provider: Lain::Provider::Mock.new(responses: [tool_response(["m1", "mark", {}]), text_response("marked")]),
-          context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
-          toolset: Lain::Toolset.new([RetireMarkTool.new]),
-          policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
+        marker = CoreGraph.subagent(
+          provider: CoreGraph.provider(tool_response(["m1", "mark", {}]), text_response("marked")),
+          toolset: CoreGraph.toolset([RetireMarkTool.new]),
           parent: parent_timeline, journal:, mode: :actor, log:
         )
 
