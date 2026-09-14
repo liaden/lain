@@ -148,9 +148,8 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
-  # The bench's headline metric, and until now the one metric the arm
-  # comparison did not carry -- `Arm::Run` folded usage and left cost to
-  # `#compare_run`, which the Driver never calls.
+  # The bench's headline metric: each arm's cost is the price its own
+  # `Arm::Run#compare_run` carries, folded per arm.
   describe "#report — the cost column" do
     # Scenario: the arm report carries a cost column.
     #
@@ -336,6 +335,17 @@ RSpec.describe Lain::Arm::Driver do
 
         expect(section_for(report, "cost (USD)")).not_to include("single-thread")
         expect(section_for(report, "cost (USD)")).not_to include("control-b")
+      end
+
+      # One authority on the sentence: the arm report and every Compare-backed
+      # report (`bench variance`, the decider sweep) refuse an unpriced cost in
+      # the same words, so an operator reading both is never told two things.
+      it "refuses in the very words a Compare over the same runs withholds its cost with" do
+        report = described_class.new(arms, tasks:, spawn_seam:, grader:).report
+        runs = tasks.map { |task| arms.first.run(task, spawn_seam:, grader:).compare_run }
+        withheld = Lain::Compare.new(runs).report.lines.find { |line| line.start_with?("cost (USD):") }
+
+        expect(withheld.to_s.chomp.delete_prefix("cost (USD): ")).to eq(refusal_line(report).chomp.strip)
       end
     end
 

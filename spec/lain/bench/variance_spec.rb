@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "tmpdir"
 
 # Variance is the experiment engine: n mock- or live-recorded runs of ONE
 # task, reported along three axes. Determinism -- each recording must
@@ -28,12 +29,12 @@ RSpec.describe Lain::Bench::Variance do
 
   # Narrowed over the shared builders: every response here is an echo call
   # carrying the priceable model and usage, so the call sites stay terse.
-  def tool_response(id, text)
-    super([id, "echo", { "text" => text }], usage:, model: "claude-sonnet-4-6")
+  def tool_response(id, text, model: "claude-sonnet-4-6")
+    super([id, "echo", { "text" => text }], usage:, model:)
   end
 
-  def text_response(text)
-    super(text, usage:, model: "claude-sonnet-4-6")
+  def text_response(text, model: "claude-sonnet-4-6")
+    super(text, usage:, model:)
   end
 
   # One mock-recorded run of the task, round-tripped through Session so the
@@ -101,6 +102,49 @@ RSpec.describe Lain::Bench::Variance do
       cost = Lain::Ledger.new(index: reference.ledger_index).cost(reference.timeline)
       expect(cost).to be > 0
       expect(report).to include("total tokens", "cost (USD)", format("%.6f", cost))
+    end
+  end
+
+  # A local model has usage and no price. The price book refuses to guess, and
+  # that refusal must not take the whole experiment down with it -- determinism
+  # and divergence included, neither of which ever needs a dollar figure.
+  describe "recordings of a model the price book cannot price" do
+    let(:local) do
+      Array.new(2) do
+        record([tool_response("tu_1", "hi", model: "qwen3:4b"), text_response("done", model: "qwen3:4b")])
+      end
+    end
+    let(:report) { described_class.new(recordings: local).report }
+
+    it "reports every section, total tokens included" do
+      expect(report).to include("1: byte-identical", "2: cache-identical to reference", "total tokens")
+    end
+
+    it "reads the cost row as not priced, with the ledger's reason, never 0.000000" do
+      expect(report).to include(%(cost (USD): not priced — no price for model "qwen3:4b"))
+      expect(report).not_to include("0.000000")
+    end
+
+    it "is reported by `lain bench variance` rather than refused" do
+      Dir.mktmpdir do |dir|
+        2.times do |index|
+          File.write(File.join(dir, "#{index}.ndjson"),
+                     session_bytes([tool_response("tu_1", "hi", model: "qwen3:4b"),
+                                    text_response("done", model: "qwen3:4b")]))
+        end
+        expect(Lain::Bench::CLI.new.variance_report([dir])).to include("cost (USD): not priced —")
+      end
+    end
+  end
+
+  describe "recordings from a provider that journals prompt_caching degraded" do
+    it "shows no cache hit ratio and says why" do
+      cacheless = Array.new(2) do
+        record([tool_response("tu_1", "hi"), text_response("done")], degrade: :prompt_caching)
+      end
+      report = described_class.new(recordings: cacheless).report
+      expect(report.lines.grep(/\Acache hit ratio\s{2,}/)).to be_empty
+      expect(report).to include("cache hit ratio: not measured — every run records prompt_caching degraded")
     end
   end
 

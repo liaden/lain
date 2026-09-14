@@ -23,15 +23,54 @@ module Lain
   # off each recording's own journal ({Bench::Session::Recording}) for exactly
   # that reason.
   #
+  # What it does NOT refuse is a metric some run cannot honestly answer. That
+  # metric is WITHHELD -- dropped from both tables, with a line saying why --
+  # and every other metric still reports: a run the price book cannot price
+  # still counted its tokens.
+  #
   # The report is a DX artifact, not a debug dump: a scannable per-metric table,
   # returned as a String (nothing here touches stdout).
   class Compare
     include Declarative
 
+    # A run's dollar figure, known. {#refuses?} is the question a report asks
+    # of a cost it holds, so it never has to ask which of the two it was given.
+    Priced = Data.define(:amount) do
+      def refuses? = false
+    end
+
+    # A run's dollar figure, unknowable, carrying the {Ledger}'s own refusal.
+    # Never a zero: reading {#amount} raises that refusal again, so a caller
+    # that folds the number anyway fails loudly instead of reporting "free".
+    Unpriced = Data.define(:reason) do
+      # The one wording every report that folds costs refuses in. The Ledger's
+      # message already names the fix, so a second phrasing here would be a
+      # second authority on how to make a run priceable.
+      #
+      # @param unpriced [Array<Unpriced>]
+      # @return [String]
+      def self.describe(unpriced) = "not priced — #{unpriced.map(&:reason).uniq.join("; ")}"
+
+      def initialize(reason:)
+        super(reason: -reason.to_s)
+      end
+
+      def refuses? = true
+      def amount = raise PriceBook::UnknownModel, reason
+    end
+
+    # Why a cache hit ratio over these runs would be a zero nobody measured.
+    NO_PROMPT_CACHE = "not measured — every run records prompt_caching degraded, so there was no cache to hit"
+    private_constant :NO_PROMPT_CACHE
+
     # One run's measured outcome, in the vocabulary Compare aggregates. Built
     # either directly from measured metrics or, more usually, from a recorded
     # Timeline via {.from_timeline}, which prices it through the {Ledger}.
-    Run = Data.define(:name, :usage, :cost, :score, :degraded, :posture) do
+    #
+    # `price` is {Priced} or {Unpriced}, never a bare number, so a run the book
+    # cannot price is still a run: the refusal travels with it to the report
+    # instead of unwinding the whole comparison from its constructor.
+    Run = Data.define(:name, :usage, :price, :score, :degraded, :posture) do
       # @param name [String] this run's label in the comparison table (the arm
       #   it came from)
       # @param timeline [Lain::Timeline] the recorded run
@@ -46,13 +85,26 @@ module Lain
       #   NOT RECORDED, which is not a rung (see {Posture}).
       def self.from_timeline(name:, timeline:, ledger:, grade: nil,
                              degraded: Capability::DegradedSet.new([]), posture: nil)
-        new(name:, usage: ledger.usage(timeline), cost: ledger.cost(timeline),
+        new(name:, usage: ledger.usage(timeline), price: price_of(ledger, timeline),
             score: grade&.score, degraded:, posture:)
       end
 
-      def initialize(name:, usage:, cost:, degraded:, score: nil, posture: nil)
-        super(name: -name.to_s, usage:, cost:, score:, degraded:, posture: Posture.coerce(posture))
+      # The Ledger keeps raising on a model its book has no row for; this is the
+      # one place that refusal becomes a value rather than an unwound report.
+      def self.price_of(ledger, timeline)
+        Priced.new(amount: ledger.cost(timeline))
+      rescue PriceBook::UnknownModel => e
+        Unpriced.new(reason: e.message)
       end
+      private_class_method :price_of
+
+      def initialize(name:, usage:, price:, degraded:, score: nil, posture: nil)
+        super(name: -name.to_s, usage:, price:, score:, degraded:, posture: Posture.coerce(posture))
+      end
+
+      # @return [BigDecimal]
+      # @raise [PriceBook::UnknownModel] when this run is {Unpriced}
+      def cost = price.amount
 
       def total_tokens = usage.total_tokens
       def cache_hit_ratio = usage.cache_hit_ratio
@@ -146,7 +198,7 @@ module Lain
     #
     # @return [String]
     def report
-      [header, "", summary_table, "", per_run_table].join("\n")
+      [header, "", summary_table, *withheld_lines, "", per_run_table].join("\n")
     end
 
     private
@@ -187,9 +239,30 @@ module Lain
     end
 
     # Score is only reportable when EVERY run was graded; a distribution over a
-    # subset would silently compare different populations.
+    # subset would silently compare different populations. It is dropped
+    # without a line, unlike {#withheld}, because an ungraded run is an
+    # experiment that asked no grader rather than a measurement that failed.
     def shown_metrics
-      METRICS.keys.select { |key| key != :score || @runs.all?(&:graded?) }
+      METRICS.keys.select { |key| key != :score || @runs.all?(&:graded?) } - withheld.keys
+    end
+
+    # Each metric some run cannot honestly answer, with the reason. Cost goes
+    # when ANY run is unpriced, for the same population reason as score. The
+    # cache ratio goes on the degraded set, which the guard has already made
+    # equal across the runs, so one run's answer is every run's.
+    def withheld
+      @withheld ||= { cost: unpriced_reason, cache_hit_ratio: no_prompt_cache_reason }.compact
+    end
+
+    def unpriced_reason
+      unpriced = @runs.map(&:price).select(&:refuses?)
+      Unpriced.describe(unpriced) unless unpriced.empty?
+    end
+
+    def no_prompt_cache_reason = (NO_PROMPT_CACHE if degraded.include?(:prompt_caching))
+
+    def withheld_lines
+      withheld.map { |key, reason| "#{METRICS.fetch(key).fetch(:label)}: #{reason}" }
     end
 
     # Compare's rows are METRICS, not arms, but the column-to-cell pairing under

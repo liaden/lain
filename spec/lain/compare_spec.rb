@@ -15,7 +15,8 @@ RSpec.describe Lain::Compare do
   end
 
   def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), posture: nil)
-    Lain::Compare::Run.new(name:, usage:, cost: BigDecimal(cost.to_s), score:, degraded:, posture:)
+    Lain::Compare::Run.new(name:, usage:, price: Lain::Compare::Priced.new(amount: BigDecimal(cost.to_s)), score:,
+                           degraded:, posture:)
   end
 
   let(:runs) do
@@ -163,7 +164,7 @@ RSpec.describe Lain::Compare do
 
     it "omits the score row when not every run was graded" do
       ungraded = runs.map do |r|
-        described_class::Run.new(name: r.name, usage: r.usage, cost: r.cost, degraded: r.degraded)
+        described_class::Run.new(name: r.name, usage: r.usage, price: r.price, degraded: r.degraded)
       end
       expect(described_class.new(ungraded).report.downcase).not_to include("score")
     end
@@ -202,6 +203,114 @@ RSpec.describe Lain::Compare do
       timeline, ledger = recorded("yo", input: 10, output: 1)
       run = described_class::Run.from_timeline(name: "recorded", timeline:, ledger:, posture: :plan)
       expect(run.posture.to_s).to eq("plan")
+    end
+  end
+
+  # A price book with no row for a model REFUSES rather than guessing, and the
+  # Ledger keeps raising -- but refusing to name a price is not refusing to
+  # compare. The tokens were still counted; only the dollar figure is unknowable,
+  # so only the dollar figure is withheld, and it says why in the Ledger's words.
+  describe "a run the price book cannot price" do
+    def recorded_run(name, model:)
+      timeline = Lain::Timeline.empty(store: Lain::Store.new)
+                               .commit(role: :user, content: [{ "type" => "text", "text" => name }])
+                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "done" }])
+      ledger = Lain::Ledger.from_journal([{ "type" => "turn_usage", "digest" => timeline.head_digest,
+                                            "model" => model, "usage" => { "input_tokens" => 100,
+                                                                           "output_tokens" => 20 } }])
+      described_class::Run.from_timeline(name:, timeline:, ledger:)
+    end
+
+    let(:unpriced) { [recorded_run("a", model: "qwen3:4b"), recorded_run("b", model: "qwen3:4b")] }
+    let(:report) { described_class.new(unpriced).report }
+
+    it "builds from a timeline without raising, carrying the ledger's reason instead of a cost" do
+      run = recorded_run("local", model: "qwen3:4b")
+      expect(run.price).to be_refuses
+      expect(run.price.reason).to include("qwen3:4b").and include("fallback")
+    end
+
+    # Never a zero: a caller that asks for the number anyway gets the Ledger's
+    # refusal back, not a figure it could mistake for "free".
+    it "raises the ledger's refusal when its cost is read as a number" do
+      expect { recorded_run("local", model: "qwen3:4b").cost }
+        .to raise_error(Lain::PriceBook::UnknownModel, /qwen3:4b/)
+    end
+
+    it "keeps an unpriced run deeply frozen" do
+      expect(unpriced.first).to be_deeply_frozen
+    end
+
+    it "still reports total tokens" do
+      row = report.lines.map(&:chomp).find { |line| line.start_with?("total tokens") }
+      expect(row.split(/\s{2,}/)).to eq(["total tokens", "2", "120.0", "120.0", "120.0", "120.0"])
+    end
+
+    it "withholds the cost row, saying not priced with the ledger's reason, never 0.000000" do
+      expect(report).to include(%(cost (USD): not priced — no price for model "qwen3:4b"))
+      expect(report).not_to include("0.000000")
+      expect(report.lines.grep(/\Acost \(USD\)\s{2,}/)).to be_empty
+    end
+
+    it "withholds the cost column from the per-run appendix" do
+      appendix_header = report.lines.map(&:chomp).find { |line| line.start_with?("run ") }
+      expect(appendix_header).not_to include("cost")
+    end
+
+    # One unknowable figure makes the whole distribution unknowable: a mean over
+    # the priced subset would silently compare different populations, the same
+    # reason score is withheld unless every run was graded.
+    it "withholds cost when any single run is unpriced" do
+      mixed = [recorded_run("priced", model: "claude-sonnet-4"), recorded_run("local", model: "qwen3:4b")]
+      expect(described_class.new(mixed).report).to include("cost (USD): not priced —")
+    end
+
+    it "names each distinct reason once" do
+      mixed = [recorded_run("a", model: "qwen3:4b"), recorded_run("b", model: "qwen3:4b"),
+               recorded_run("c", model: "llama3")]
+      line = described_class.new(mixed).report.lines.find { |candidate| candidate.start_with?("cost (USD):") }
+      expect(line.scan("qwen3:4b").size).to eq(1)
+      expect(line).to include("llama3")
+    end
+
+    it "refuses to draw the cost distribution rather than fold a zero" do
+      expect { described_class.new(unpriced).distribution(:cost) }
+        .to raise_error(Lain::PriceBook::UnknownModel)
+    end
+
+    it "leaves a fully priced report free of any withheld line" do
+      expect(described_class.new(runs).report).not_to include("not priced")
+    end
+  end
+
+  # A provider without prompt caching journals the degradation, and every cache
+  # read it reports is then a zero that was never measured. A cache hit ratio of
+  # 0.000 over such runs reads as "the cache went cold", which is not what
+  # happened: there was no cache.
+  describe "a cacheless provider" do
+    def degraded_runs(*capabilities)
+      degraded = Lain::Capability::DegradedSet.new(capabilities)
+      Array.new(2) { |i| run("r#{i}", usage: usage(input: 10, output: 1), cost: "0.001", degraded:) }
+    end
+
+    let(:report) { described_class.new(degraded_runs(:prompt_caching)).report }
+
+    it "shows no cache hit ratio row in the summary" do
+      expect(report.lines.grep(/\Acache hit ratio\s{2,}/)).to be_empty
+    end
+
+    it "shows no cache hit ratio column in the per-run appendix" do
+      appendix_header = report.lines.map(&:chomp).find { |line| line.start_with?("run ") }
+      expect(appendix_header).not_to include("cache hit ratio")
+    end
+
+    it "says why the ratio is withheld" do
+      expect(report).to include("cache hit ratio: not measured — every run records prompt_caching degraded")
+    end
+
+    it "keeps the ratio when the runs degraded some other capability" do
+      expect(described_class.new(degraded_runs(:thinking)).report.lines.grep(/\Acache hit ratio\s{2,}/))
+        .not_to be_empty
     end
   end
 

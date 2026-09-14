@@ -76,13 +76,15 @@ module Lain
       # report an unpriceable arm as FREE -- on a bench whose headline metric is
       # cost, silence is the failure mode.
       #
-      # One frame out the answer inverts: a report folding this metric must not
-      # die of it, or an unpriceable model takes score, tokens and wall-time down
-      # with it after every run was already paid for. {Driver#fold} degrades the
-      # cost SECTION to this error's own message instead. The escape is a
-      # {PriceBook} built with a `fallback:`, handed to this arm's {Instrument} --
-      # injectable by a library caller and by nothing on the command line, which
-      # is why the Driver's degradation had to exist.
+      # One frame out the answer inverts: a report folding cost must not die of
+      # it, or an unpriceable model takes score, tokens and wall-time down with
+      # it after every run was already paid for. So reports read {#compare_run}
+      # instead, whose {Compare::Run.from_timeline} turns this refusal into a
+      # {Compare::Unpriced} carrying the Ledger's message, and
+      # {Compare::Unpriced.describe} is the one wording every report refuses
+      # in. The escape is a {PriceBook} built with a `fallback:`, handed to this
+      # arm's {Instrument} -- injectable by a library caller and by nothing on
+      # the command line, which is why reports degrade rather than raise.
       #
       # @return [BigDecimal]
       # @raise [PriceBook::UnknownModel] on a payment whose model the book
