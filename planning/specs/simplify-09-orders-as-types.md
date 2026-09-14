@@ -1,6 +1,6 @@
 # Simplify 09 — orders are types, laws live with their subject, and an operation gets a name
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby, with one rust card (T2)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson; Edward Kmett and Philip Wadler join for T1–T4; Raph Levien, Andrew Gallant, Frank McSherry and Ashley Williams review T2
@@ -818,7 +818,7 @@ Scenario: a never-run combinator can be named and renders
 - `exe/lain`'s option must have **no default** (`:822`): a default makes the unset control arm
   unreachable, which is the mistake that comment exists to prevent.
 
-### T8 — Rewrite the documentation the code now falsifies   [wave 4] [risk: low]
+### T8 — Rewrite the documentation the code now falsifies   [wave 4] [risk: low] ✅ landed `e4cb1a6c`, `b93f3e2c`
 
 **Depends on:** T1, T2, T3, T4, T5, T6, T7
 **Files:** modify `ARCHITECTURE.md` (`:141-208` the DAG and three meets; `:325-342` handlers and
@@ -870,7 +870,7 @@ removes exactly that class)
 - `docs/GLOSSARY.md`'s algebra entries are teaching prose, not code description. Trim what the code
   no longer motivates; do not delete a definition a remaining law group still uses.
 
-### T9 — Amend the two downstream plans this one changes   [wave 4] [risk: low]
+### T9 — Amend the two downstream plans this one changes   [wave 4] [risk: low] ✅ landed `607debd0`
 
 **Depends on:** T1, T2, T3, T4, T5, T6, T7
 **Files:** modify `planning/specs/simplify-13-rust-port.md`, `planning/specs/simplify-12-ask.md`,
@@ -1088,3 +1088,25 @@ After the last wave:
 - **T6 landed** as `3ab0c175` (17,820). Fix round added `Middleware::Gate.closes!`: every stack
   `ToolGuard` builds, and whatever a seam's builder hands a child, must end Sensitivity → Gate or is
   refused before a tool runs. T8 and T9 start from `3ab0c175` plus this log.
+- **T9 landed** as `607debd0`, widened by the orchestrator to dated notes in simplify-10 and 11 as
+  well as 12 and 13. **T8 landed** as `e4cb1a6c` (the three docs, QA §9 in
+  `session-and-window.md`) and `b93f3e2c` (README, CLAUDE.md, `docs/commands.md`, simplify-10/11
+  moot-step notes — beyond the card, on the review's confirmation). The docs review ran QA §9 against
+  the real binary: refusal text as quoted, no session file left, a composed name recorded as typed.
+- **2026-09-14, done.** Integration checks on `b93f3e2c`:
+  - `rake pspec` **17,820 / 0 failures / 13 pending**; `rspec --dry-run` 17,820, so nothing was
+    truncated. Against the 17,945 baseline, −125: T2 +22, T1 −33, T5 +2, T4 −21, T7 +39, T3 −156, T6 +22.
+  - `cargo test -p lain` 231 (227 before); clippy `-D warnings`, `cargo doc` (0 warnings),
+    `cargo fmt --check`, `cargo deny check` clean.
+  - `bundle exec rubocop` clean, no new `rubocop:disable`. `bin/spec-census --check` **green**:
+    assertions 185 → 184, `lib_reach` 76 → 67 (the census now says the ceiling can be lowered).
+  - `grep -rn 'Algebra' lib/ exe/` empty; `grep -rnE 'Effect::Handler::Recorded|handles\?|\bto_app\b' lib/`
+    empty (the card's un-bounded `to_app` matches `auto_approve` 16 times).
+  - Ledger `9b2ac4e7..b93f3e2c`: lib +1,231/−2,452 (**−1,221**), spec +3,933/−5,209 (**−1,276**),
+    ext +583/−337 (+246), docs +625/−388; 19 files added, 18 deleted across lib and spec.
+  - **Owed, manual, human:** one `lain chat` with a tool denied by policy (refusal before any
+    interpreter ran); one `/mode plan` flip confirming the posture attenuates; one spawn from a chat
+    launched with a named pipeline, confirming the child rendered through it (child requests are not
+    journaled, so this is read off behaviour, not a record).
+  - Worktrees and branches are back to their pre-chunk set; the two spike worktrees under
+    `.claude/worktrees/` predate this run and were left (one is locked).
