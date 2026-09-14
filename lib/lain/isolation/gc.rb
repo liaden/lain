@@ -16,6 +16,11 @@ module Lain
     # branch. A checkout or anchor nothing reaches is the only place its work
     # lives, so it is kept.
     #
+    # A CHECKOUT STILL WHERE IT WAS CUT HAS NOT LANDED. Cut at the trunk's
+    # tip, its HEAD is reached from the trunk the moment it exists, which says
+    # nothing of whether anyone is done with it. While young it is kept; once
+    # expired it goes, holding nothing a branch does not.
+    #
     # A LIVE LEASE IS NEVER TOUCHED. Liveness is read off the checkout's own
     # {LeaseLock}, never off a journal, which a run may not have kept. A lock
     # lain cannot parse, or one taken on another host, is kept too.
@@ -295,9 +300,28 @@ module Lain
           landing = @repo.landing(entry.head)
           return expire(entry, dirty:, landing:) if age.expired? && (dirty || landing.empty?)
           return Records.kept(:worktree, entry.path, "uncommitted changes; retained until #{age}") if dirty
-          return reap(entry, landing) unless landing.empty?
+          return Records.kept(:worktree, entry.path, "unmerged commits; retained until #{age}") if landing.empty?
+          return reap(entry, landing) if moved?(entry)
 
-          Records.kept(:worktree, entry.path, "unmerged commits; retained until #{age}")
+          unmoved(entry, age)
+        end
+
+        # The branch pass's "nothing has landed on it since lain created it",
+        # for a checkout: `worktree add` opens the checkout's HEAD reflog at
+        # the commit it cut, and every move of HEAD since appends to it. Only
+        # an entry naming another commit proves a move; a reflog that is gone
+        # or unreadable proves nothing, and what gc cannot judge it keeps,
+        # which `retain_days` still bounds.
+        def moved?(entry)
+          shell = Checkout.new(entry.path, shell_out_factory: @shell_out_factory)
+                          .run("reflog", "show", "--format=%H", "HEAD")
+          shell.exitstatus.zero? && shell.stdout.split("\n").any? { |commit| commit != entry.head }
+        end
+
+        def unmoved(entry, age)
+          return reap(entry, "expired after #{@retain_days} days with nothing landed since it was cut") if age.expired?
+
+          Records.kept(:worktree, entry.path, "nothing has landed since it was cut; retained until #{age}")
         end
 
         def expire(entry, dirty:, landing:)

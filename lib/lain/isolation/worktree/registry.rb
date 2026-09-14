@@ -51,6 +51,18 @@ module Lain
 
         def move(from, to) = git("worktree", "move", from, to)
 
+        # Rewrites HEAD alone, never the index or a file, so a tree holding
+        # uncommitted work or an index git cannot read detaches all the same.
+        # Compare-and-swapped against `commit`: pointing a HEAD that has moved
+        # on back at it would leave the newer commit's changes reading as
+        # staged, work nobody made.
+        # @param path [String] a registered checkout
+        # @param commit [String] the commit HEAD resolved to when it was read
+        # @param reason [String] stamped into HEAD's reflog
+        def detach(path, commit, reason:)
+          run("git", "-C", path, "update-ref", "--no-deref", "-m", reason, "HEAD", commit, commit)
+        end
+
         # Refuses a locked tree, which is what makes a lock that appears after
         # a {#claim} stop the removal. It also drops the registration of an
         # unlocked checkout whose directory is already gone, and only that one.

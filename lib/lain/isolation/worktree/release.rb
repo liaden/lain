@@ -8,8 +8,15 @@ module Lain
       # retained on disk under a retention lock; a clean one has any commit no
       # ref reaches anchored first and is then removed; and one whose anchor
       # cannot be written is retained instead.
+      #
+      # A retained tree holds a commit, never a branch name. An issue's retry
+      # switches a new checkout onto the branch this one had out, and git
+      # refuses that while any checkout still has it, so retention anchors
+      # HEAD and then detaches it, leaving every file where the worker left it.
       class Release
         ANCHORED = "lain: anchored a released checkout's unreached commit"
+
+        DETACHED = "lain: detached a retained checkout from its branch"
 
         # @param registry [Registry] the repository's worktree list
         # @param clock [#call] answers now, stamped into a retention lock
@@ -32,18 +39,32 @@ module Lain
         def retain(path)
           @registry.unlock(path)
           @registry.lock(path, LeaseLock::Retained.at(@clock.call).reason)
+          registered(path).reject { |entry| entry.branch.empty? }.each { |entry| detach(entry) }
           :retained
+        end
+
+        # Anchored first, so a HEAD no ref reaches is never left the commit's
+        # only holder. A branch left checked out still holds the commit, so an
+        # anchor that cannot be written, or a detach refused because HEAD moved
+        # since it was read, leaves the tree as it is, and the retry's own
+        # refused switch names this checkout.
+        def detach(entry)
+          @registry.anchorage.keep(entry, reason: ANCHORED)
+          @registry.detach(entry.path, entry.head, reason: DETACHED)
+        rescue Anchorage::Unwritten
+          :attached
         end
 
         def reclaim(path)
           anchorage = @registry.anchorage
-          @registry.entries.select { |entry| entry.path == path }
-                           .each { |entry| anchorage.keep(entry, reason: ANCHORED) }
+          registered(path).each { |entry| anchorage.keep(entry, reason: ANCHORED) }
           remove(path)
           :removed
         rescue Anchorage::Unwritten
           retain(path)
         end
+
+        def registered(path) = @registry.entries.select { |entry| entry.path == path }
 
         # `--force` reliably removes a dirty tree; a retry clears a stale
         # registration whose directory is already gone. A failure to reclaim is

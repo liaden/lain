@@ -17,8 +17,14 @@ module Lain
       # The lock is CLAIMED, never simply unlocked ({Registry#claim}): another
       # process may have changed it between this look and this act, and a lock
       # that changed is left exactly as it now is.
+      #
+      # A leftover moved aside holds a commit, never a branch name: the retry
+      # of a crashed issue switches its fresh checkout onto the branch the
+      # leftover had out, which git refuses while any checkout still has it.
       class Leftover
         DROPPED = "lain: anchored the commit of a checkout whose directory was gone"
+
+        DETACHED = "lain: detached a leftover moved aside from its branch"
 
         # @param registry [Registry] the repository's worktree list
         # @param root [String] the worktree root the aside directory sits under
@@ -45,6 +51,7 @@ module Lain
           raise Refused, "worktree path #{entry.path} changed while it was being cleared" unless @registry.claim(entry)
           return drop(entry) unless File.directory?(entry.path)
 
+          detach(entry) unless entry.branch.empty?
           relocate(entry.path, LeaseLock::Retained.at(entry.lock.aged_from(@clock.call)))
         end
 
@@ -67,6 +74,18 @@ module Lain
           raise Refused.from_git("remove", entry.path, shell) unless shell.exitstatus.zero?
         rescue Anchorage::Unwritten => e
           raise Refused, "worktree path #{entry.path} still holds a commit that could not be anchored: #{e.message}"
+        end
+
+        # Anchored first, so a HEAD no ref reaches is never left the commit's
+        # only holder. The detach refuses when HEAD moved since it was read.
+        def detach(entry)
+          @registry.anchorage.keep(entry, reason: DETACHED)
+          shell = @registry.detach(entry.path, entry.head, reason: DETACHED)
+          return if shell.exitstatus.zero?
+
+          raise Refused, "worktree path #{entry.path} could not be detached from #{entry.branch}: #{shell.stderr.strip}"
+        rescue Anchorage::Unwritten => e
+          raise Refused, "worktree path #{entry.path} holds a commit that could not be anchored: #{e.message}"
         end
 
         def relocate(path, retention)

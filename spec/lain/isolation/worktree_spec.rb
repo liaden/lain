@@ -55,6 +55,36 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
 
   def head_commit(dir) = run_git(dir, "rev-parse", "HEAD").strip
 
+  # Answers the shell rather than raising, for a git command the example
+  # expects may be refused.
+  def try_git(dir, *args)
+    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                    .run_command
+  end
+
+  # The ref a checkout has out, or "" when its HEAD is detached.
+  def branch_of(dir) = try_git(dir, "symbolic-ref", "--quiet", "HEAD").stdout.strip
+
+  # What an issue actor does to a leased checkout before its worker writes.
+  def switch_onto_issue_branch(dir) = run_git(dir, "switch", "-q", "-c", "lain/issue/e/i")
+
+  # Runs `act` once, just before the backend's first `update-ref` of HEAD:
+  # the checkout's HEAD moving between the backend reading it and detaching it.
+  def moving_head_first(&act)
+    pending = [act]
+    lambda do |*argv, **kwargs|
+      pending.shift&.call if argv.include?("--no-deref")
+      Lain::Shell::Out.new(*argv, **kwargs)
+    end
+  end
+
+  def commit_file(dir, file)
+    File.write(File.join(dir, file), "#{file}\n")
+    run_git(dir, "add", file)
+    run_git(dir, "commit", "-q", "-m", file)
+    head_commit(dir)
+  end
+
   def lock_line(path)
     registered_worktrees.split("\n\n").find { |entry| entry.include?("worktree #{path}\n") }
                                       .to_s[/^locked.*$/].to_s
@@ -170,6 +200,36 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(lock_line(aside)).to match(/\Alocked lain-retained since=\S+\z/)
     ensure
       lease&.release
+    end
+
+    # The retry of a crashed issue switches its fresh checkout onto the same
+    # branch, which git refuses while the leftover still has it out.
+    it "detaches a crashed leftover moved aside from the branch it held, so the retry can switch onto it" do
+      crashed = crashed_backend.acquire("worker-1").worker_env.cwd
+      switch_onto_issue_branch(crashed)
+      File.write(File.join(crashed, "work.txt"), "uncommitted\n")
+      tip = head_commit(crashed)
+
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:).acquire("worker-1")
+      aside = Dir.glob(File.join(@root, "retained", "*")).first
+
+      expect([branch_of(aside), head_commit(aside), File.read(File.join(aside, "work.txt"))])
+        .to eq(["", tip, "uncommitted\n"])
+      expect(try_git(lease.worker_env.cwd, "switch", "-q", "lain/issue/e/i").exitstatus).to eq(0)
+    ensure
+      lease&.release
+    end
+
+    it "refuses, rather than move HEAD back, when the leftover's branch moved after it was read" do
+      crashed = crashed_backend.acquire("worker-1").worker_env.cwd
+      switch_onto_issue_branch(crashed)
+      moved = nil
+      factory = moving_head_first { moved = commit_file(crashed, "late.txt") }
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: factory)
+
+      expect { restarted.acquire("worker-1") }.to raise_error(described_class::Refused, /could not be detached/)
+      expect([branch_of(crashed), head_commit(crashed), run_git(crashed, "status", "--porcelain")])
+        .to eq(["refs/heads/lain/issue/e/i", moved, ""])
     end
   end
 
@@ -386,6 +446,42 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(File.read(File.join(path, "README"))).to eq("modified\n")
       expect(lock_line(path)).to match(/\Alocked lain-retained since=\d{4}-\d\d-\d\dT[\d:]+Z\z/)
       expect(backend.retained?(path)).to be(true)
+    end
+
+    # A retained tree holds a commit, not the branch name, so the issue's
+    # retry can check the branch out elsewhere; the files stay exactly as the
+    # worker left them.
+    it "detaches a retained checkout at its branch's commit, so a new checkout can switch onto the branch" do
+      lease = backend.acquire("worker-1")
+      path = worktree_path("worker-1")
+      switch_onto_issue_branch(path)
+      File.write(File.join(path, "work.txt"), "uncommitted\n")
+      tip = head_commit(path)
+
+      lease.release
+      retry_lease = backend.acquire("worker-2")
+
+      expect([branch_of(path), head_commit(path), File.read(File.join(path, "work.txt"))])
+        .to eq(["", tip, "uncommitted\n"])
+      expect(try_git(retry_lease.worker_env.cwd, "switch", "-q", "lain/issue/e/i").exitstatus).to eq(0)
+      expect(run_git(@repo_root, "for-each-ref", "refs/lain/worker/")).to eq("")
+    ensure
+      retry_lease&.release
+    end
+
+    it "leaves the branch checked out, rather than move HEAD back, when it moved after the checkout was read" do
+      moved = nil
+      path = worktree_path("worker-1")
+      factory = moving_head_first { moved = commit_file(path, "late.txt") }
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: factory)
+                             .acquire("worker-1")
+      switch_onto_issue_branch(path)
+      File.write(File.join(path, "work.txt"), "uncommitted\n")
+
+      lease.release
+
+      expect([branch_of(path), head_commit(path), run_git(path, "status", "--porcelain")])
+        .to eq(["refs/heads/lain/issue/e/i", moved, "?? work.txt\n"])
     end
 
     it "retains a checkout whose state git cannot read" do

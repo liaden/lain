@@ -89,6 +89,12 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     sha("HEAD", dir:)
   end
 
+  # A leased checkout whose own commit main has since taken: work that landed,
+  # rather than a checkout still standing where it was cut.
+  def landed_lease(worker, **)
+    lease(worker, **).tap { |dir| run_git(@repo_root, "merge", "-q", "--ff-only", commit_in(dir, "landed.txt", "l\n")) }
+  end
+
   def record_for(records, name) = records.find { |record| record.name == name }
 
   def summary(record) = [record.action, record.subject, record.reason]
@@ -109,9 +115,71 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     end
 
     it "calls work reachable from main landed" do
-      dir = lease("w1")
+      dir = landed_lease("w1")
 
       expect(summary(record_for(gc, dir))).to eq([:reaped, :worktree, "landed on main"])
+    end
+  end
+
+  # lain's landing checkout is cut on the epic's branch at main's tip, and
+  # main reaching its HEAD says nothing about whether it is still in use.
+  describe "a checkout still at the commit it was cut at" do
+    def fresh_checkout
+      Lain::Isolation::WorkingBranch.epic("fresh", repo_root: @repo_root)
+      File.join(@root, "landing").tap { |dir| run_git(@repo_root, "worktree", "add", "-q", dir, "epic/fresh") }
+    end
+
+    it "is kept, and the report says nothing has landed since it was cut" do
+      dir = fresh_checkout
+
+      record = record_for(gc, dir)
+
+      expect(File.directory?(dir)).to be(true)
+      expect(summary(record)).to match([:kept, :worktree,
+                                        a_string_starting_with("nothing has landed since it was cut")])
+    end
+
+    it "is kept after a detached HEAD moves nowhere, and reaped as landed once HEAD moves on" do
+      dir = lease("w1")
+      run_git(dir, "switch", "-q", "--detach")
+
+      kept = record_for(gc, dir)
+      commit_in(dir, "moved.txt", "moved\n").then { |moved| run_git(@repo_root, "merge", "-q", "--ff-only", moved) }
+      reaped = record_for(gc, dir)
+
+      expect(summary(kept)).to match([:kept, :worktree, a_string_starting_with("nothing has landed since it was cut")])
+      expect(summary(reaped)).to eq([:reaped, :worktree, "landed on main"])
+    end
+
+    # gc keeps what it cannot judge: with no reflog, nothing shows HEAD moved.
+    # Detached, so git has no branch reflog to answer in its place.
+    it "is kept when its HEAD reflog is gone, rather than reaped as landed" do
+      dir = lease("w1")
+      FileUtils.rm_f(File.join(admin_of(dir), "logs", "HEAD"))
+
+      record = record_for(gc, dir)
+
+      expect(File.directory?(dir)).to be(true)
+      expect(summary(record)).to match([:kept, :worktree, a_string_including("retained until")])
+      expect(record.reason).not_to include("landed on")
+    end
+
+    it "is kept when the repository keeps no reflogs at all" do
+      run_git(@repo_root, "config", "core.logAllRefUpdates", "false")
+      dir = lease("w1")
+
+      record = record_for(gc, dir)
+
+      expect([File.directory?(dir), record.action]).to eq([true, :kept])
+    end
+
+    it "is reaped once it expires, without being called landed" do
+      dir = fresh_checkout
+
+      record = record_for(gc(at: now + (8 * day)), dir)
+
+      expect(File.exist?(dir)).to be(false)
+      expect(summary(record)).to eq([:reaped, :worktree, "expired after 7 days with nothing landed since it was cut"])
     end
   end
 
@@ -220,6 +288,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     it "reaps an unlocked worktree under its root as a crash's leftover" do
       legacy = File.join(@root, "legacy")
       run_git(@repo_root, "worktree", "add", "-q", "--detach", legacy, "main")
+      run_git(@repo_root, "merge", "-q", "--ff-only", commit_in(legacy, "legacy.txt", "legacy\n"))
 
       expect(summary(record_for(gc, legacy))).to eq([:reaped, :worktree, "landed on main"])
       expect(File.exist?(legacy)).to be(false)
@@ -328,7 +397,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
         File.write(File.join(dir, "live-work.txt"), "a live worker's file\n")
       end
 
-      record = record_for(gc(shell_out_factory: factory), dir)
+      record = record_for(gc(at: now + (8 * day), shell_out_factory: factory), dir)
 
       expect(File.read(File.join(dir, "live-work.txt"))).to eq("a live worker's file\n")
       expect(lock_of(dir)).to start_with("locked lain-lease pid=#{Process.pid} ")
@@ -338,6 +407,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     it "never unlocks a tree it judged unlocked" do
       legacy = File.join(@root, "legacy")
       run_git(@repo_root, "worktree", "add", "-q", "--detach", legacy, "main")
+      run_git(@repo_root, "merge", "-q", "--ff-only", commit_in(legacy, "legacy.txt", "legacy\n"))
       factory = interleaved("--contains") { run_git(@repo_root, "worktree", "lock", "--reason", "a human's", legacy) }
 
       record = record_for(gc(shell_out_factory: factory), legacy)
@@ -367,7 +437,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     # Nothing but git stands between the claim and the removal: a lock taken
     # in that moment makes `worktree remove` refuse, and the tree stays.
     it "is what git refuses to remove over, so a lock taken after the claim still guards the tree" do
-      dir = lease("w1")
+      dir = landed_lease("w1")
       factory = interleaved("remove") { run_git(@repo_root, "worktree", "lock", "--reason", "after the claim", dir) }
 
       record = record_for(gc(shell_out_factory: factory), dir)
@@ -379,7 +449,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
 
     it "is found under worktree.useRelativePaths, where git records the paths relative to each other" do
       run_git(@repo_root, "config", "worktree.useRelativePaths", "true")
-      dir = lease("w1")
+      dir = landed_lease("w1")
 
       expect(File.read(File.join(dir, ".git"))).to start_with("gitdir: ..")
       expect(summary(record_for(gc, dir))).to eq([:reaped, :worktree, "landed on main"])
