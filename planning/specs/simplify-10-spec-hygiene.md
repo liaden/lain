@@ -383,6 +383,18 @@ follow-on still owns that edit, and the number it should carry is 8.35%.
   examples** with an `uninitialized constant`. **Any later card that counts spec references must
   resolve dynamic dispatch, not grep literals.** T6 and T10 both count; warn them.
 
+  > **2026-09-14, amended.** `simplify-09-orders-as-types.md` deleted the registry this bullet's
+  > dynamic dispatch ran through: `spec/algebra_laws_spec.rb` and `spec/lain/algebra_spec.rb` no
+  > longer exist, `Lain::Algebra` has no `lib/` reference, and each live law now runs inline in its
+  > subject's own spec (`7a1d4602`). The dynamic-dispatch undercounting this bullet warns about
+  > cannot recur through that file, because the file is gone — but the general lesson stands for
+  > whatever counts a card runs next. `spec/support/shared_examples/elementwise.rb` and the
+  > `AlgebraLaws` module it uses are **not** part of what was deleted and are still live: `"an
+  > elementwise map"` still has (at least) its two literal `include_examples` callers
+  > (`spec/lain/context/dedupe_tool_calls_spec.rb`, `spec/lain/compaction/strategy/elide_spec.rb`),
+  > confirmed by a direct grep rather than re-derived through the now-gone dynamic dispatch this
+  > bullet had to work around. Re-count before trusting either number as still current.
+
 - **A drifted guard found in passing, and it is T3's defect in another file.**
   `spec/support_vsock_availability_spec.rb:136-146` is a **byte-for-byte copy** of
   `spec/support/tags.rb:238-246` rather than a reference, and the two have **already drifted** —

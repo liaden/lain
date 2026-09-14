@@ -81,6 +81,21 @@ maintain a topological order by hand.
 statement in the file**, and `:141-145` states the property: *"Every claim lain makes about its own
 algebra has now been filed by the class body that makes it, so the process-wide registry closes."*
 
+> **2026-09-14, amended — the blocker is gone.** `simplify-09-orders-as-types.md` deleted the
+> registry, the seal, the sweep, and `spec/support/algebra_generators.rb` whole (`7a1d4602`):
+> `lib/lain/algebra.rb` and its siblings under `lib/lain/algebra/` no longer exist, `lib/lain.rb`
+> has no `.seal` call and no reference to `Lain::Algebra`, and `spec/algebra_laws_spec.rb` /
+> `spec/lain/algebra_spec.rb` are both deleted. Every law that registry swept now runs inline in
+> its own subject's spec (`spec/lain/toolset_spec.rb`, `spec/lain/interval_partition_spec.rb`,
+> `spec/lain/usage_spec.rb`, `spec/lain/compaction/strategy_spec.rb`, and others), with no
+> process-wide sealed state and therefore no load-order dependency for Zeitwerk to break. The
+> autoload hazard this whole section documents — a seal at require time closing an **empty**
+> registry under lazy class-body evaluation — cannot occur, because there is no registry left to
+> seal. Everything below through T2's registry-close design (the eager-load-vs-seal-on-first-read
+> choice, the count-preservation check, the empty-registry guard) is **moot as written** and needs
+> re-scoping to whatever T2 actually still has to do once the registry half of its job no longer
+> exists; `spec/value_object_shareability_spec.rb`'s 267-class sweep is unaffected and still real.
+
 **Under Zeitwerk, class bodies do not run until a constant is referenced.** So a seal at require time
 would close an **empty** registry, and `spec/algebra_laws_spec.rb` would sweep nothing while passing.
 Filed at the time of writing: 24 claims and 5 refutations; re-measured 2026-09-13 it is roughly **18
@@ -323,7 +338,8 @@ Scenario: an empty registry is still refused
 ```
 → spec files: `spec/zeitwerk_spec.rb` (AC 2, AC 3), `spec/value_object_shareability_spec.rb` (AC 4 —
 existing, and the count is the check), `spec/algebra_laws_spec.rb` (AC 5, and **AC 6 is new and is the
-registry half's real deliverable**), plus a CLI spec for AC 1
+registry half's real deliverable** — 2026-09-14: this file no longer exists, deleted with the registry
+by `7a1d4602`; AC 5 and AC 6 need a different home or drop with it), plus a CLI spec for AC 1
 
 **Escalation triggers**
 - **`spec/value_object_shareability_spec.rb` is 25 lines sweeping 267 value classes.** If eager loading

@@ -5,6 +5,12 @@ commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
 
+**2026-09-14, amended from `simplify-09-orders-as-types.md`.** This plan's grounding commit
+(`d2bb133c`) is not an ancestor of the current head — `simplify-09-orders-as-types.md` has since
+renamed and relocated the mechanism this plan's item (1) and its escalation ladder card depend on.
+**Re-ground before running any card of this plan**, starting from the notes below rather than from
+the grounding section as written; the two are the parts that moved.
+
 ## Intent
 
 Lain has **nine** mechanisms for "park the agent and get an answer from a human or another agent", plus a
@@ -32,6 +38,11 @@ Verified 2026-09-12 against the working tree at `d2bb133c`. `code` is non-blank,
 **The nine, and the tenth:**
 
 1. `Effect::Handler::Gate` + `Approval::Queue`
+   > **2026-09-14, renamed.** `simplify-09-orders-as-types.md`'s T5 turned every `Effect::Handler`
+   > decorator, this one included, into a `Middleware`. The mechanism is unchanged in shape and is
+   > now `Middleware::Gate` (`lib/lain/middleware/gate.rb`) + `Approval::Queue`, constructed together
+   > at `lib/lain/cli/switchboard.rb:186` (`@approvals = Approval::Queue.new(journal:) if @attended`).
+   > Wherever this plan's prose below says `Effect::Handler::Gate`, read `Middleware::Gate`.
 2. `Approval::Escalation`
 3. `Approval::Gate` + `Gate::Policy` / `Gate::Policies`
 4. `Approval::SignoffQueue`
@@ -48,6 +59,19 @@ Plus **`Oracle`**, which already generalizes the *answerer* axis — `#ask(input
 `cli/switchboard.rb:216` and `tools/subagent.rb:1445` — the chat path. `Approval::Gate` only at
 `cli/epic_driver/factory.rb:195` and `cli/epic_submit.rb:459` — the epic path. Separate answer types,
 separate journal records, separate policy catalogs, separate surface ducks.
+
+> **2026-09-14, amended.** `tools/subagent.rb:1445` no longer resolves (the file is ~1,190 lines
+> today) and `Effect::Handler::Gate` is `Middleware::Gate`; re-ground the line numbers before
+> running. The chat-path half of this observation moved house without changing its
+> shape. `simplify-09-orders-as-types.md`'s T6 gave the tool-call chain **one builder**,
+> `Lain::CLI::ToolGuard` (`lib/lain/cli/tool_guard.rb`), used for a chat's own stack, every child's,
+> and a run with no chat — it assembles the guard layers and ends every stack `Sensitivity` →
+> `Middleware::Gate` (`Middleware::Gate.closes!` refuses a stack that does not). That one builder is
+> **still only the chat path's builder**: the epic path's `Approval::Gate` + `Gate::Policy` /
+> `Gate::Policies` is untouched and the two systems still do not meet — but this plan's T5
+> ("the escalation ladder as a middleware stack") no longer has to *argue* that the tool-call path is
+> already one ordered stack with the gate as its last layer; that is now simply true, and
+> `Middleware::Gate.closes!`'s invariant is exactly the guarantee T5's ladder would need to preserve.
 
 **`subject_digest` is the unifier, and every mechanism already has one.** (1) `tool_use_id`;
 (3)(4)(5) `artifact_digest`; (6) the question event's digest; (7) `(epic_slug, generation)`;
@@ -137,8 +161,9 @@ defect.
   cannot be answered.
 - **Prerequisites.** simplify-01 (the Metrics limits — every card here produces a class over the current
   cap), simplify-03 (the dead-code sweep, so this plan does not migrate dead code), and
-  simplify-09's T1 (the `Effect::Handler` verb/adverb split — T5 builds the ladder on `Middleware::Stack`
-  and cannot do so while four adverbs are still handlers).
+  `simplify-09-orders-as-types.md`'s T5 (the `Effect::Handler` verb/adverb split — T5 here builds the
+  ladder on `Middleware::Stack` and cannot do so while four adverbs are still handlers).
+  > **2026-09-14, satisfied.** Landed as `75b26bc8`. This prerequisite is met.
 - simplify-07's T1 builds the shared `Neovim::ListView` that T6 needs. If 07 is not done, T6 grows.
 
 ## Open decisions
@@ -157,6 +182,20 @@ defect.
   `Ask::Register`'s at-most-one-per-subject cannot express that, T4's key design was wrong and this card
   will find it — **which is late**."* A plan that names the moment its own foundation might collapse, five
   waves downstream, is not ready.
+
+  > **2026-09-14, amended — the objection stands and is answerable, not merely a rejection.**
+  > `simplify-09-orders-as-types.md` did not need to answer it (it never unifies anything on the
+  > secret boundary), but its landing gives this plan's premise question a sharper shape: the fix is
+  > not "unify" or "don't", it is **two primitives, not one register**. `Gate` stays an
+  > **authorization**: a verdict, fail-closed by default, sitting on the secret boundary exactly where
+  > `Middleware::Gate` sits today (last in `CLI::ToolGuard`'s stack, after `Sensitivity`). `Ask` is an
+  > **enquiry**: free text, whose failure mode is a stalled turn rather than a denial, with no
+  > fail-closed default because there is nothing to fail closed *to*. Read this way, T1 and T2 of this
+  > plan are unaffected by anything simplify-09 changed — they are about the permission engine and the
+  > verdict vocabulary, neither of which the rename touched — except that any of their prose naming
+  > `Effect::Handler::Gate` now names `Middleware::Gate`. The at-most-one-per-subject key design
+  > question (`Review::Session`'s two-asks-per-digest case) is unaffected either way; it belongs to
+  > `Ask`, not to `Gate`, and splitting the two primitives does not resolve it.
 
 - **Two cards are extracted and stand on their own merits. Run these; defer the rest.**
   - **T1** (split `approval/` into its three real parts) — pure relocation, no behaviour change, and it
@@ -426,6 +465,16 @@ fail-closed**, at-most-one-per-subject.
 **`subject_digest` is why this works.** Every one of the nine already has one, and content addressing is
 already the repo's spine — these registers were each built *beside* it.
 
+> **2026-09-14, human direction, recorded for this card.** Asking the end user a question and
+> agent-to-agent communication are both to be modelled as `Context::Mailbox` messages — events, not
+> a side channel — as a follow-up after `simplify-09-orders-as-types.md`. `Mailbox` is not dead code
+> to route around: `lib/lain/context/mailbox.rb` exists and is real, but `Mailbox::Null` is the only
+> thing ever constructed in `lib/` today (`lib/lain/agent.rb:182`) — there is no live mailbox to build
+> against yet. This card's register is the natural place to decide whether an `Ask`'s open/settled
+> transitions are themselves mailbox messages, or whether the mailbox is a separate delivery
+> mechanism the register writes through. Decide it here rather than let `Ask` and a future live
+> `Mailbox` grow two competing ideas of "a message to somebody."
+
 **Acceptance criteria**
 
 ```gherkin
@@ -480,9 +529,24 @@ Scenario: a chat approval parks and settles through the register
 `lib/lain/approval/rule.rb`, `approval/risk.rb`; delete `lib/lain/approval/rule_chain.rb`,
 `lib/lain/epic/gate/policy.rb`, `epic/gate/policies.rb`; modify `lib/lain/cli/switchboard.rb`,
 `lib/lain/epic/gate.rb`
-**Reuse:** **`Middleware::Stack` is already a property-tested monoid** and simplify-09's T1 has just
-moved four adverbs onto it — the ladder is the same shape. `Risk` and `Rule` survive **as stack members**.
-`Oracle` is the machine rung and already answers `#ask -> Promise`.
+**Reuse:** **`Middleware::Stack` is the one composition mechanism**, and `Risk` and `Rule` survive
+**as stack members**. `Oracle` is the machine rung and already answers `#ask -> Promise`.
+> **2026-09-14, amended and landed — and one claim in this line was already false.**
+> `Middleware::Stack` is not, and was never meant to be, "a property-tested monoid": composition by
+> a binary operator was deleted with the algebra registry, and `lib/lain/middleware.rb:8-11` states
+> the design intent directly — "Middlewares compose by membership in a {Stack}, never by a binary
+> operator nesting two of them into an opaque pair" — so there is no `>>`, no `Composable`, and
+> nothing here to be a monoid. What is true, and lands this bullet's actual point:
+> `simplify-09-orders-as-types.md`'s T5 (`75b26bc8`) turned every `Effect::Handler` decorator —
+> `Gate`, `Sensitivity`, `Summarizing`, `RefusingHandler` — into a `Middleware`, and its T6
+> (`3ab0c175`) built `Lain::CLI::ToolGuard` as the one stack builder for a chat and every child,
+> assembling one ordered, inspectable `Middleware::Stack` whose tail — `Sensitivity` →
+> `Middleware::Gate` — `Middleware::Gate.closes!` enforces. This card's premise ("an escalation
+> ladder is exactly a `Middleware::Stack` over an `Ask`") is therefore not an analogy to reach for —
+> the tool-call chain this ladder must sit in front of is already exactly that stack. Whatever
+> ladder this card builds has to compose by membership in front of it, not invent a second
+> mechanism beside it.
+
 **Shared-file wiring:** require-line removals from `lib/lain/approval.rb` and `lib/lain/epic.rb`
 **Reachable from:** `CLI::Switchboard` builds the chat ladder and `Epic::Gate` the epic one; AC 1 and
 AC 4 each drive one
@@ -497,8 +561,9 @@ a `Middleware::Stack` over an `Ask`. `Escalation` (223 code), `RuleChain` (67),
 **`Oracle` becomes a rung.** Four of the nine mechanisms do not use it today despite its being exactly the
 "ask a machine instead" abstraction; as a stack member it is available to all of them.
 
-**This card requires simplify-09's T1.** Building the ladder on `Middleware::Stack` while four adverbs are
-still `Effect::Handler`s means two composition mechanisms again.
+**This card requires `simplify-09-orders-as-types.md`'s T5, landed as `75b26bc8`.** Building the ladder
+on `Middleware::Stack` while four adverbs are still `Effect::Handler`s would have meant two composition
+mechanisms again; that condition no longer holds.
 
 **Acceptance criteria**
 

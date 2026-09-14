@@ -162,9 +162,16 @@ lock-across-Ruby hazard. Open:
 - **G6** `Ext::Turn` lacks `from`, `to`, `body`, `carried_payload`. `carried_payload` is what makes Ruby's
   `commit` one digest pass rather than two (`timeline.rb:74-77`).
 - **G7** the algebra declaration — **simplify-02's T5 owns this**.
+  > **2026-09-14, amended.** G7 is closed. `simplify-09-orders-as-types.md` deleted `Lain::Algebra`
+  > whole (`lib/lain/algebra/` no longer exists, and `lib/` has no reference to `Lain::Algebra`) —
+  > there is no Ruby declaration left to mirror, load-time or otherwise.
 - **G8** the seam. The stale doc counted 16 sites; today it is **21 live `Timeline.new` sites across 19
-  files** plus ~20 bare `Store.new`. **simplify-09's T4 largely removes this gap** by making the three
-  meets store-bound operation objects, which *are* the seam.
+  files** plus ~20 bare `Store.new`.
+  > **2026-09-14, amended.** G8 shrinks rather than closes. `simplify-09-orders-as-types.md`'s T1
+  > moved the render meet off `Timeline` and into a stateless `Dag::RenderAncestry` module, which is
+  > a seam for that one operation but constructs nothing — the 21 `Timeline.new`/~20 `Store.new`
+  > sites T10 below routes through `Dag::Factory` are unaffected by it. What remains for G8 is
+  > exactly T10's construction seam.
 
 **G1's design is decided by a constraint, not a preference.** `Workspace::Snapshot::Blob` does **not** use
 `Canonical.digest` — `workspace/snapshot.rb:59`:
@@ -220,9 +227,15 @@ implementation detail.
 - **T3's doc edits are task scope and are the review-critical commit**: `ext/lain/CLAUDE.md`,
   `docs/rust-bindings.md`, `planning/rust-parity-gap.md`, `ROADMAP.md`.
 - **Prerequisites.** simplify-03's **T7** (it deletes `DerivationAudit` and the store-size assertions in its spec, which T7 here would otherwise have to reconcile), simplify-02's **T4** (block-form `#ancestors` — G4, the silent one) and **T5** (the
-  algebra declaration — G7) must have landed. simplify-09's **T4** (Timeline's meets as store-bound
-  operation objects) should have landed: it largely removes G8, and doing this plan first means building a
-  21-site factory that 09's T4 makes unnecessary.
+  algebra declaration — G7) must have landed.
+  > **2026-09-14, amended.** `simplify-09-operations-as-objects.md` (the plan this once cited as
+  > "T4") was dropped whole on 2026-09-13 and rebuilt as `simplify-09-orders-as-types.md`; this
+  > plan no longer waits on a card that does not exist. The seam it was waiting for **has landed**
+  > under a different name: `lib/lain.rb` requires `lib/lain/dag.rb`, and `Lain::Dag::RenderAncestry`
+  > (a module, not the store-bound object this bullet used to expect) already holds `.meet`,
+  > `.diverge_at` and `.below?` over a `Timeline` pair. G8 is not "largely removed" — it is closed
+  > for the render meet specifically; T10's factory is still the seam for construction, and its own
+  > note below says what remains.
 - **Nothing may be deleted before T8's corpus commit is green.** That is the plan's hard gate.
 - `rake rust:mutants` is a **chunk-boundary** gate, not a pre-commit hook. `pre-commit` already runs four
   cargo commands; a multi-minute mutation sweep there would be abandoned within a day, and an abandoned
@@ -348,6 +361,25 @@ a law
 **Reachable from:** the trait is implemented by the DAG's two meet operations; AC 1 is a compile-time
 check, which is the strongest form available
 
+> **2026-09-14, amended — this card is largely done.** `simplify-09-orders-as-types.md`'s T2 landed
+> (`98085764`, `cargo test -p lain` at 231) and wrote exactly this: `ext/lain/src/algebra.rs` holds
+> `mod sealed { pub trait Proven {} }`, `pub trait MeetSemilattice: sealed::Proven`, the
+> `declare_meet_semilattice!` macro, and `CausalAncestry`'s `MaximalLowerBounds` impl in place of a
+> `MeetSemilattice` one, with the witness test
+> `causal_ancestry_answers_more_than_one_maximal_lower_bound` (`algebra.rs:282-301`) already
+> exhibiting what the refutation's reason claims. Sitting beside the four named law bodies, one more
+> generic function was added on review because none of the four checked *greatest*:
+> `below_is_exactly_where_the_meet_answers_the_lower_operand_in_both_orders`
+> (`algebra.rs:350-368`) asserts the order-theoretic identity `a below b iff meet(a, b) == a` over
+> both semilattice orders — its own comment calls it "characterization rather than a fifth law
+> because the Ruby group names four," so the Ruby-named contract stays exactly four laws.
+> **This card's remaining scope is T1's half of the bargain**: point `declare_meet_semilattice!`'s
+> populations at T1's generated strategies and delete the hand-built ones — the trait, the seal, the
+> four law bodies and the added characterization do not need to be written again. Its compile-fail
+> ACs (AC 1, AC 2, AC 4) are unverified by any harness at `98085764` — no
+> `trybuild` dependency exists — so they stand exactly as this card already asks, unless a
+> `trybuild` addition is chosen here.
+
 **This card owns the four `proptest!` law bodies.** T1 owns the generators and writes no law bodies; the
 macro emits them. Two cards writing properties into one file is what an earlier draft had.
 
@@ -432,10 +464,27 @@ that is why this card is high risk rather than low
 
 1. **`ext/lain/CLAUDE.md`'s "do not reach for a `trait MeetSemilattice`"** — correct while a second,
    drifting declaration was possible; after the Ruby DAG goes, the Rust declaration is the *only* one.
+   > **2026-09-14, amended — already satisfied, not to be reversed.** `simplify-09-orders-as-types.md`'s
+   > T2 has already edited this exact rule (`ext/lain/CLAUDE.md:129-148` as it reads today; the
+   > "do not reach for" sentence sits at `:138-142`), and the resolution was **satisfaction**, not
+   > reversal: the section now reads "`MeetSemilattice` passed that test: `ffi`'s
+   > `Timeline::meet_via::<S>` and `Timeline::below_via::<S>` are generic over it," which is the
+   > condition the original rule itself named as the exception. There is nothing left here for this
+   > card to invert; if the doc needs anything, it is a note that the second declaration this rule
+   > warned about is now impossible rather than merely undesirable, once T13 deletes the Ruby DAG.
 2. **`ext/lain/CLAUDE.md:119`'s "the Ruby version is not deleted when the Rust one lands"** — the doctrine
    that makes this plan impossible as written.
+   > **2026-09-14, checked, unchanged.** Still reads exactly this at `:119` today. This inversion is
+   > still this card's to make.
 3. **`docs/rust-bindings.md` rule 5** — *"the property tests must pass unchanged against **both**
    implementations"* — replaced by the corpus rule plus the mutation gate.
+   > **2026-09-14, amended — already narrowed once.** `simplify-09-orders-as-types.md`'s T4 has
+   > already edited rule 5 (`docs/rust-bindings.md:30-38`): it no longer requires two
+   > implementations unconditionally — "**where both implementations exist** the `Regular` /
+   > `MeetSemilattice` property tests must pass unchanged against both" — and it already carves out
+   > dominance and causal ancestry as Rust-only, held to fixtures rather than a second
+   > implementation. This card's job narrows to replacing "where both implementations exist" (which
+   > after T13 is never) with the corpus rule.
 
 And **`planning/rust-parity-gap.md` is retired**: ~40% of it is stale (four gaps closed, line references
 drifted), and a document titled "the parity gap" implies a debt someone intends to pay. What is still true
@@ -504,6 +553,18 @@ structure** — a partial order is not a semilattice — is not.
 And `declare_not_meet_semilattice!(CausalMeets, because:, witness:)` emits one test that the criss-cross
 witness yields **more than one** maximal lower bound — the "EXHIBIT what the reason says" obligation
 `spec/algebra_laws_spec.rb` imposes on a refutation.
+
+> **2026-09-14, amended — the refutation macro is unnecessary.** `simplify-09-orders-as-types.md`'s
+> T2 already refuted `CausalAncestry` **by type**, not by a macro emitting a three-outcome battery:
+> `ext/lain/src/algebra.rs` declares `pub trait MaximalLowerBounds` as `CausalAncestry`'s trait
+> instead of `MeetSemilattice`, so there is no `impl MeetSemilattice for CausalAncestry` to negate
+> and no `NoMethodError`-shaped battery to reproduce — the compiler already refuses the wrong shape
+> for free. The witness test this paragraph asks for exists today, doing the same job:
+> `causal_ancestry_answers_more_than_one_maximal_lower_bound` (`algebra.rs:282-301`) builds the
+> criss-cross fan-in and asserts the three-element bound set. **`declare_not_meet_semilattice!` does
+> not need writing.** The eight order laws above it are unaffected — nothing today asserts
+> reflexivity, antisymmetry, transitivity or bottom-below-everything for either order, and they
+> remain net-new verification for this card to add.
 
 **Acceptance criteria**
 
@@ -900,15 +961,33 @@ should be run once by hand and recorded, not automated.
 ### T10 — The seam, without switching   [wave 7] [risk: medium]
 
 **Depends on:** T8
-**Files:** create `lib/lain/dag/factory.rb`; modify `lib/lain/dag.rb` (the subtree index simplify-09's
-T4 creates) to require it; modify the remaining `Timeline.new`/`Store.new` call sites
+**Files:** create `lib/lain/dag/factory.rb`; modify `lib/lain/dag.rb` (the subtree index
+`simplify-09-orders-as-types.md`'s T1 creates) to require it; modify the remaining
+`Timeline.new`/`Store.new` call sites
 
-**Name it `Dag::Factory`, not `Dag`.** simplify-09's T4 creates `lib/lain/dag/render_meet.rb` and its
-siblings, which makes `Lain::Dag` a **namespace** and `lib/lain/dag.rb` that subtree's index under the
-requires rule — so a factory *called* `Dag` would collide with the module holding the three meets. The
-index gets one manifest line in `lib/lain.rb`; the factory gets a line inside the index.
-**Reuse:** **simplify-09's T4 has already made the three meets store-bound operation objects**, which is
-most of this seam — those objects *are* the swap point. This card covers what remains.
+**Name it `Dag::Factory`, not `Dag`.** `simplify-09-orders-as-types.md`'s T1 (landed, `62aa555d`) has
+already made `lib/lain/dag.rb` the namespace's index and put the render meet at
+`lib/lain/dag/render_ancestry.rb` — so a factory *called* `Dag` would still collide with the module
+holding it. The index carries one manifest line in `lib/lain.rb` already; the factory gets a line
+inside the index.
+> **2026-09-14, amended.** "The three meets" overstates what landed: only the render order ported to
+> Ruby, as a stateless `Dag::RenderAncestry` **module** (`.meet`, `.diverge_at`, `.below?`) with no
+> state of its own to be "store-bound" — the plan's own Intent chose *not* to port dominance or
+> causal ancestry into Ruby at all, so `lib/lain/timeline.rb` no longer defines `dominator_meet`,
+> `causal_meets`, `Dominators` or `CausalAncestry` in any form; those exist only in
+> `ext/lain/src/{graph,algebra}.rs`. `Dag::RenderAncestry` is therefore not itself the construction
+> seam this card needs — it is a pure function over two already-constructed `Timeline`s, reached
+> without going through `Timeline.new`/`Store.new` at all. What it repoints (see T11's escalation
+> note below) is a *different* seam: `Ext::Timeline#diverge_at` (`lib.rs:1668-1695`) still calls
+> `dag::meet` directly rather than through the trait, and the Rust-side singleton
+> `Ext::Dag::RenderAncestry` (`lib.rs:2023`) is a plain class carrying `meet`/`below?` with **no
+> `diverge_at`** — while the Ruby module this card's factory must eventually stand beside has all
+> three. The store flip's repoint to `Ext::Dag::RenderAncestry` needs both fixed, and neither is
+> this card's job to fix; it is named here so T11 does not discover it late.
+
+**Reuse:** **`simplify-09-orders-as-types.md`'s T1 has already moved the render meet off `Timeline`**
+into `Dag::RenderAncestry`; that is one seam handled, but not the construction seam below. This card
+covers the 21+~20 sites, unchanged in count by that move.
 **Shared-file wiring:** a manifest line in `lib/lain.rb`
 **Reachable from:** every construction of a timeline or a store; AC 3 asserts no bare construction remains
 
@@ -917,7 +996,9 @@ implementation. Mechanical, zero behaviour change, suite green — the largest d
 shallowest read.
 
 The stale doc counted 16 sites; today it is **21 live `Timeline.new` across 19 files** plus ~20 bare
-`Store.new`. If simplify-09's T4 has landed, several of those are already routed.
+`Store.new`. `simplify-09-orders-as-types.md` did not touch construction — it moved an operation, not
+an object's home — so this count stands unchanged at `62aa555d`; verify it again at this card's start
+rather than trusting either number.
 
 **Acceptance criteria**
 
@@ -1006,6 +1087,15 @@ Scenario: both implementations agree on every corpus vector
 - `spec/lain/rust/dominator_meet_spec.rb` and `causal_meets_spec.rb` name **Ruby as their oracle**. With
   the flip in force they compare Rust against Ruby in the other direction, which still works — but after
   T13 they must be rewritten against the corpus. Note it here; do it there.
+  > **2026-09-14, amended — already moot.** `simplify-09-orders-as-types.md`'s T4 (landed, `047c55d6`)
+  > deleted the Ruby `Dominators`/`CausalAncestry` implementations outright rather than leaving them
+  > for this plan to retire, so neither spec names Ruby as an oracle any more: reading them today,
+  > `dominator_meet_spec.rb`'s docstring already says "Rust is the only implementation of either" and
+  > compares against fixtures small enough to check by hand plus the named vectors pinned in
+  > `ext/lain/src/graph.rs`. This trigger cannot fire because its premise is gone before T11 starts —
+  > there is no Ruby comparison direction to flip, in either direction. T13's job of rewriting the two
+  > specs against T8's corpus stands regardless, since "fixtures small enough to check by hand" is a
+  > weaker guarantee than a generated, checked-in corpus.
 
 ### T12 — Rehome the two units that are Ruby logic   [wave 9] [risk: medium]
 
@@ -1070,6 +1160,21 @@ Scenario: a subagent's lineage is still recorded
 **Shared-file wiring:** remove the four `require_relative` lines from `lib/lain.rb`; drop the
 `LAIN_DAG=ruby` switch and the `Ext::Turn` alias
 **Reachable from:** everything the factory builds; AC 1 is the suite green with no Ruby DAG present
+
+> **2026-09-14, amended — the deletion list changes on both ends.** It **gains**
+> `lib/lain/dag/render_ancestry.rb`: `simplify-09-orders-as-types.md`'s T1 ported the render meet to
+> Ruby as `Dag::RenderAncestry` (a stateless module — `.meet`, `.diverge_at`, `.below?` — over the
+> `Ext`/Ruby `Timeline` boundary), so once the flip is permanent this module is either deleted with
+> the rest or **repointed**, kept as a constant alias to `Ext::Dag::RenderAncestry`, if something
+> still wants the Ruby-facing name. Either way it is this card's decision to make, and its own
+> escalation trigger applies: `Ext::Dag::RenderAncestry` (`lib.rs:2023`, a plain class) has no
+> `diverge_at` today while the Ruby module does, so a repoint needs that method added to the Rust
+> singleton first, and `Ext::Timeline#diverge_at` (`lib.rs:1668-1695`) needs to call through the
+> trait rather than `dag::meet` directly — otherwise the repoint routes some callers through the
+> trait and one through a private shortcut, which is the exact silent-divergence shape this whole
+> plan exists to close. It **loses** nothing new beyond what is already true: `timeline.rb`'s
+> dominance and causal classes were never ported to Ruby by that plan (Intent says so explicitly),
+> so "already gone" describes their absence from day one, not a deletion this card still has to do.
 
 **380 code lines of implementation and 839 of spec.** The shared law groups —
 `meet_semilattice.rb` (60), `store_laws.rb` (18), `regular.rb` (37), `canonical_laws.rb` (89) — **stay**,
