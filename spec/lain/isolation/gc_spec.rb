@@ -403,6 +403,43 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       expect(summary(record_for(gc, "refs/heads/epic/open"))).to eq([:kept, :branch, "not merged into main"])
     end
 
+    # A delete killed between its marker and its branch leaves the branch
+    # unmarked at exactly the tip its own delete anchor holds. The branch
+    # reaching that commit is not the work landing anywhere: reaping the
+    # anchor would leave the branch lain means to delete as the tip's only ref.
+    context "when a delete lain started was left unfinished" do
+      let(:name) { "lain/issue/demo/a" }
+
+      def unfinished_delete
+        Lain::Isolation::WorkingBranch.owned(name, repo_root: @repo_root, from: sha("main"))
+        run_git(@repo_root, "switch", "-q", name)
+        tip = commit_in(@repo_root, "issue.txt", "issue\n")
+        run_git(@repo_root, "switch", "-q", "main")
+        anchor = Lain::Isolation::Worktree::Handback::Naming.new("#{name} #{tip}").ref
+        run_git(@repo_root, "update-ref", anchor, tip)
+        run_git(@repo_root, "update-ref", "-d", "refs/lain/owned/heads/#{name}")
+        [anchor, tip]
+      end
+
+      it "keeps its anchor while the unmarked branch still stands at the anchored tip" do
+        anchor, tip = unfinished_delete
+
+        record = record_for(gc, anchor)
+
+        expect(sha(anchor)).to eq(tip)
+        expect(summary(record)).to eq([:kept, :anchor, "#{name} still stands at it, a delete lain left unfinished"])
+      end
+
+      it "reaps the anchor as folded once that branch has moved on past it" do
+        anchor, = unfinished_delete
+        run_git(@repo_root, "switch", "-q", name)
+        commit_in(@repo_root, "more.txt", "more\n")
+        run_git(@repo_root, "switch", "-q", "main")
+
+        expect(summary(record_for(gc, anchor))).to eq([:reaped, :anchor, "folded into #{name}"])
+      end
+    end
+
     it "drops a marker whose branch a human already deleted" do
       Lain::Isolation::WorkingBranch.epic("gone", repo_root: @repo_root)
       run_git(@repo_root, "branch", "-D", "epic/gone")

@@ -19,6 +19,24 @@ class FactorySpecActor
   def address = "factory-spec"
 end
 
+# The chat's asker, answering every question at once with the words given and
+# keeping each question it was asked.
+class FactorySpecAsker
+  attr_reader :asked
+
+  def initialize(words)
+    @words = words
+    @asked = []
+  end
+
+  def ask(question)
+    @asked << question
+    Lain::Promise.new.tap { |promise| promise.resolve(@words) }
+  end
+
+  def withdraw(_promise) = nil
+end
+
 # Scripted actors: each leases a real checkout from the epic's own supervisor,
 # makes a red commit there the way the red step does, and commits its work on
 # top -- which is what gives the loop something real to anchor, gate and land.
@@ -188,9 +206,9 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
                              told: ->(_text) {}, root: repo, paths:, config:)
   end
 
-  def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil)
+  def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil, asker: nil)
     described_class.for(mount: mounted, chronicle: record, paths:, root: repo, library: backend.library,
-                        journal: Lain::Channel::Null.instance, toolset_build:, asker: nil, config:, actors:,
+                        journal: Lain::Channel::Null.instance, toolset_build:, asker:, config:, actors:,
                         **(grading ? { grading: } : {}))
   end
 
@@ -700,6 +718,40 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(result.reported.map(&:issue_id)).to eq(["a"])
       expect(result.reported.first.reason).to include("committed no work")
       expect(journaled_decisions.map { |decision| decision["stage"] }).not_to include("implementation")
+    end
+
+    # What an earlier run of issue a left: its lain-owned branch, cut at main
+    # and carrying a commit of its own.
+    def earlier_branch
+      git(repo, "branch", "lain/issue/demo/a", "main")
+      git(repo, "update-ref", "refs/lain/owned/heads/lain/issue/demo/a", git(repo, "rev-parse", "main"))
+      git(repo, "switch", "-q", "lain/issue/demo/a")
+      File.write(File.join(repo, "earlier.txt"), "an earlier run's work\n")
+      git(repo, "add", "earlier.txt")
+      git(repo, "commit", "-q", "-m", "earlier run")
+      git(repo, "switch", "-q", "main")
+      git(repo, "rev-parse", "lain/issue/demo/a")
+    end
+
+    it "asks once over an earlier run's issue branches, and on delete cuts fresh and names where each old tip went" do
+      File.write(File.join(repo, "Gemfile"), "source \"https://rubygems.org\"\n")
+      git(repo, "add", "Gemfile")
+      ignore_config
+      write_epic([issue("a")])
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+      old = earlier_branch
+      asker = FactorySpecAsker.new("delete")
+
+      result = factory_over(mount, record: chronicle, asker:).run(width: 1)
+
+      kept = git(repo, "for-each-ref", "--points-at", old, "--format=%(refname)", "refs/lain/worker/")
+      expect(asker.asked.size).to eq(1)
+      expect(asker.asked.first).to include("lain/issue/demo/a")
+      expect(kept).to start_with("refs/lain/worker/")
+      expect(git(repo, "rev-parse", "lain/issue/demo/a^")).to eq(epic_tip)
+      expect(git(repo, "rev-parse", "refs/lain/owned/heads/lain/issue/demo/a")).to eq(epic_tip)
+      expect(result.to_s).to include("deleted lain/issue/demo/a, its old tip kept at #{kept}")
     end
   end
 

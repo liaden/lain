@@ -104,6 +104,13 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     mock(tool_response(["w1", "write_file", { "path" => path, "content" => body }]), text_response("wrote the spec"))
   end
 
+  # write_file will not overwrite a file the child has not read, so a child
+  # replacing tests an earlier run committed does it through the shell.
+  def overwriting(path, body)
+    command = "printf '%s' '#{[body].pack("m0")}' | base64 -d > #{path}"
+    mock(tool_response(["b1", "bash", { "command" => command }]), text_response("rewrote the spec"))
+  end
+
   def role_spawn(provider)
     Lain::Skill::RoleSpawn.new(provider:, context_factory: -> { Lain::Context.new(model: "child", max_tokens: 256) },
                                toolset: union, parent: Lain::Timeline.empty(store: Lain::Store.new), slots:,
@@ -113,10 +120,27 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # The layout is the PROJECT's, resolved from the repository root the held
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
-  def step(provider, harness: rspec)
+  def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"))
     described_class.new(renderer:, role_spawn: role_spawn(provider), layout: Lain::Config.test_layout(root: repo),
                         harness:)
-                   .call(criteria, worker_env, subject: "app/models/order.rb")
+                   .call(criteria, worker_env, subject: "app/models/order.rb", since:)
+  end
+
+  # What an earlier run's red step left on a kept branch: the tests, committed
+  # under the message that names their target and criteria.
+  def committed_earlier(body, digest: criteria.digest)
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+    File.write(File.join(held, target), body)
+    git(held, "add", "--", target)
+    git(held, "commit", "--no-verify", "-q", "-m", "test: failing tests at #{target}, from criteria #{digest}")
+    git(held, "rev-parse", "HEAD")
+  end
+
+  def work_committed
+    File.write(File.join(held, "refund.txt"), "refund\n")
+    git(held, "add", "refund.txt")
+    git(held, "commit", "-q", "-m", "work")
+    git(held, "rev-parse", "HEAD")
   end
 
   def first_prompt(provider) = provider.requests.first.messages.first["content"].first["text"]
@@ -173,5 +197,112 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     expect { step(writing("spec/models/order_spec.rb", red), harness: unrun) }
       .to raise_error(Lain::Error, /#{Regexp.escape(target)}/)
     expect(git(held, "rev-parse", "HEAD")).to eq(head)
+  end
+
+  # The refusal used to quote the guard's accepting verdict ("... mirrors ..."),
+  # which read as the reason when the target was merely left untouched.
+  it "refuses a child that left the target as it stood, saying so rather than quoting the layout's verdict" do
+    committed_earlier(red, digest: "blake3:other")
+
+    expect { step(writing(target, red), harness: unrun) }
+      .to raise_error(Lain::Error, /left #{Regexp.escape(target)} exactly as it already stood/) { |error|
+        expect(error.message).not_to include("mirrors")
+      }
+  end
+
+  context "when the branch already holds this step's commit from an earlier run" do
+    it "carries it forward while its tests still fail, spawning nothing and committing nothing" do
+      earlier = committed_earlier(red)
+      provider = mock
+
+      result = step(provider)
+
+      expect([result.sha, result.carried, result.record.target]).to eq([earlier, true, target])
+      expect(result.run.failed.size).to eq(2)
+      expect(git(held, "rev-parse", "HEAD")).to eq(earlier)
+      expect(provider.call_count).to eq(0)
+    end
+
+    it "carries it forward from under implementation commits that have not yet turned it green" do
+      earlier = committed_earlier(red)
+      worked = work_committed
+
+      result = step(mock)
+
+      expect(result.sha).to eq(earlier)
+      expect(git(held, "rev-parse", "HEAD")).to eq(worked)
+    end
+
+    it "refuses, without claiming no work was done, once those tests no longer fail" do
+      committed_earlier(green)
+      head = git(held, "rev-parse", "HEAD")
+      provider = mock
+
+      expect { step(provider) }.to raise_error(Lain::Error, /no longer fail on this branch/) { |error|
+        expect(error.message).not_to include("before any work")
+        # A resumed or forked chat is never asked, so the remedy has to work
+        # from somewhere that will ask.
+        expect(error.message).to include("start a new chat and answer delete", "delete `lain/issue/demo/a` yourself")
+        expect(error.message).not_to include("delete `lain/issue/demo/a` (its tip is kept")
+      }
+      expect(git(held, "rev-parse", "HEAD")).to eq(head)
+      expect(provider.call_count).to eq(0)
+    end
+
+    it "does not carry a commit whose message matches but which never touched the tests" do
+      FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+      File.write(File.join(held, target), red)
+      git(held, "add", "--", target)
+      git(held, "commit", "--no-verify", "-q", "-m", "work that wrote the spec")
+      File.write(File.join(held, "unrelated.txt"), "unrelated\n")
+      git(held, "add", "unrelated.txt")
+      git(held, "commit", "--no-verify", "-q", "-m",
+          "test: failing tests at #{target}, from criteria #{criteria.digest}")
+      provider = overwriting(target, red.sub("totals its lines", "totals its two lines"))
+
+      result = step(provider)
+
+      expect(result.carried).to be(false)
+      expect(provider.call_count).to eq(2)
+    end
+
+    # Only the branch's own line is this issue's history; a merged side branch
+    # is somebody else's.
+    it "does not carry a commit reachable only through a merged side branch" do
+      git(held, "switch", "-q", "-c", "side")
+      committed_earlier(red)
+      git(held, "switch", "-q", "lain/issue/demo/a")
+      work_committed
+      git(held, "merge", "--no-ff", "-q", "-m", "merge side", "side")
+      provider = overwriting(target, red.sub("totals its lines", "totals its two lines"))
+
+      result = step(provider)
+
+      expect(result.carried).to be(false)
+      expect(provider.call_count).to eq(2)
+    end
+
+    it "generates afresh over a commit made from other criteria" do
+      stale = committed_earlier(green, digest: "blake3:other")
+      provider = overwriting(target, red)
+
+      result = step(provider)
+
+      expect(result.carried).to be(false)
+      expect(git(held, "rev-parse", "#{result.sha}^")).to eq(stale)
+      expect(provider.call_count).to eq(2)
+    end
+
+    # A commit the lease's base already holds belongs to the epic, not to this
+    # issue's earlier run.
+    it "does not carry a commit that sits at or below the base the lease was cut from" do
+      committed_earlier(red)
+      provider = overwriting(target, red.sub("totals its lines", "totals its two lines"))
+
+      result = step(provider, since: git(held, "rev-parse", "HEAD"))
+
+      expect(result.carried).to be(false)
+      expect(provider.call_count).to eq(2)
+    end
   end
 end

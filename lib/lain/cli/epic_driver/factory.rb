@@ -469,15 +469,21 @@ module Lain
         # The layout is resolved ONCE per run, so every issue's plan, red step
         # and landing are judged under the same one.
         #
+        # Issue branches an earlier run left are settled before anything is
+        # leased, so no issue is cut while its branch is still in question.
+        #
         # @param width [Integer] how many issues are carried at once
         # @param budget [Integer, nil] how many issues the whole run may land
+        # @param resumed [Boolean] whether the chat carrying the run was
+        #   resumed, which keeps an earlier run's branches without asking
         # @return [Run::Result]
-        def run(width: Run::WIDTH, budget: nil)
+        def run(width: Run::WIDTH, budget: nil, resumed: false)
           holding(landing_checkout) do |checkout|
             Sync do |task|
+              discarded = earlier.call(resumed:)
               fleet = supervisor.run(task)
               begin
-                loop_over(fleet, checkout, layout, width:, budget:).call
+                loop_over(fleet, checkout, layout, width:, budget:).call.with(discarded:)
               ensure
                 fleet.stop
               end
@@ -501,6 +507,11 @@ module Lain
         end
 
         def gate = Gate.new(submit:, slug:, journals: method(:signoffs))
+
+        def earlier
+          IssueActor::Earlier.new(slug:, repo_root: @root, asker: @optional.fetch(:asker) || IssueActor::Earlier::Unasked,
+                                  journal: record)
+        end
 
         # The landing runs in LAIN'S OWN checkout, never the human's -- see
         # {#landing_checkout}.
@@ -776,16 +787,19 @@ module Lain
 
         # What a run came to. `stopped` is nil when the loop ran out of runnable
         # issues on its own, and says why when something ended it early.
+        # `discarded` is the earlier run's issue branches the human had deleted
+        # before this one leased anything, each speaking its own line.
         #
         # Deeply frozen, like every other value here: the members are interned
         # and the collections copied, so `Ractor.shareable?` holds.
-        Result = Data.define(:landed, :reported, :stopped) do
-          def initialize(landed:, reported:, stopped:)
-            super(landed: landed.dup.freeze, reported: reported.dup.freeze, stopped: stopped && -stopped)
+        Result = Data.define(:landed, :reported, :stopped, :discarded) do
+          def initialize(landed:, reported:, stopped:, discarded: [])
+            super(landed: landed.dup.freeze, reported: reported.dup.freeze, stopped: stopped && -stopped,
+                  discarded: discarded.dup.freeze)
           end
 
           # @return [String] the reply the human reads at `you>`
-          def to_s = [*landed_lines, *reported_lines, *stopped_lines, summary].join("\n")
+          def to_s = [*discarded.map(&:to_s), *landed_lines, *reported_lines, *stopped_lines, summary].join("\n")
 
           private
 
@@ -1052,10 +1066,22 @@ module Lain
       # any work is done are refused too. They check nothing the work will
       # change, so the criteria or the generation are wrong, and a human has
       # to look.
+      #
+      # A KEPT BRANCH MAY ALREADY HOLD THIS STEP. An earlier run of the same
+      # criteria left its commit there, and generating again would leave the
+      # target exactly as it stands, which reads as no tests at all. So a
+      # commit the branch holds past the lease's base, whose message names this
+      # target and these criteria, is carried forward while its tests still
+      # fail -- with or without the earlier run's work above it.
       class IssueTests
-        # What the step left: the generation's record, the failing run, and the
-        # commit holding the tests.
-        Red = Data.define(:record, :run, :sha)
+        # What the step left: the generation's record, the failing run, the
+        # commit holding the tests, and whether an earlier run made that commit.
+        Red = Data.define(:record, :run, :sha, :carried) do
+          def initialize(record:, run:, sha:, carried: false) = super
+        end
+
+        # The part of a generation's record a carried commit still answers.
+        Carried = Data.define(:target, :criteria_digest)
 
         # @param renderer [Skill::Renderer] renders the test-writing scaffold
         # @param role_spawn [Skill::RoleSpawn] the run's role spawn; its
@@ -1077,17 +1103,24 @@ module Lain
         # @param worker_env [WorkerEnv] the held checkout, on the issue's branch
         # @param subject [String] the source file the tests are for, relative to
         #   the checkout
+        # @param since [String] the commit the lease was cut at; only a commit
+        #   past it is one an earlier run of this issue made
         # @param level [String, nil] a level the layout declares; its default
         #   level when nil
         # @return [Red]
         # @raise [Error] when the project declares no test layout, or declares
         #   no level whose tests mirror their sources; when the test_engineer
         #   child leaves no tests the layout accepts; when the subject's tests
-        #   already pass before any work is done; or when git refuses the
-        #   failing tests' commit
-        def call(criteria, worker_env, subject:, level: nil)
+        #   already pass before any work is done, or a carried commit's no
+        #   longer fail; or when git refuses the failing tests' commit
+        def call(criteria, worker_env, subject:, since:, level: nil)
           guard = Lain::TestLayout::Guard.new(layout: declared, root: worker_env.cwd)
-          record = generated(criteria, worker_env, guard, subject:, level: level || default_level(guard.layout))
+          level ||= default_level(guard.layout)
+          target = guard.layout.mapping.test_path(subject, level:)
+          carried = earlier(worker_env.cwd, target, criteria.digest, since)
+          return carry(criteria, worker_env, target, carried) unless carried.nil?
+
+          record = generated(criteria, worker_env, guard, subject:, level:)
           Red.new(record:, run: failing(record, worker_env), sha: commit(worker_env.cwd, record))
         end
 
@@ -1114,18 +1147,62 @@ module Lain
                                                      guard:).call(criteria, subject:, level:)
           return record if record.generated?
 
-          raise Error, "the test_engineer child left no tests the layout accepts at #{record.target} " \
-                       "(#{record.verdict}), so nothing was committed"
+          raise Error, "the test_engineer child #{ungenerated(record)}, so nothing was committed"
+        end
+
+        def ungenerated(record)
+          target = record.target
+          return "wrote no tests at #{target}" if record.missing?
+          return "left #{target} exactly as it already stood" unless record.created? || record.changed?
+
+          "wrote tests at #{target} the layout does not accept (#{record.verdict})"
         end
 
         def failing(record, worker_env)
-          run = @harness.call(worker_env.cwd).run(worker_env, paths: [record.target])
+          run = ran(record.target, worker_env)
           return run unless run.clean?
 
           raise Error, "#{record.target} ran #{run.total} examples and none failed before any work was " \
                        "done, so they check nothing the work will change: the criteria or the " \
                        "generation are wrong, and nothing was committed"
         end
+
+        # The newest commit past `since` carrying exactly this step's message,
+        # or nil when the branch holds none or its tip no longer has the tests.
+        def earlier(root, target, digest, since)
+          return unless File.file?(File.join(root, target))
+
+          git = Lain::Isolation::Checkout.new(root, shell_out_factory: @shell_out_factory)
+          wanted = message(target, digest)
+          git.run("log", "--first-parent", "--format=%H%x00%s", "#{since}..HEAD").stdout.split("\n")
+             .map { |line| line.split("\0", 2) }
+             .find { |sha, subject| subject == wanted && touched(git, sha) == [target] }&.first
+        end
+
+        # A message is only a claim; the commit's own paths are what it did.
+        def touched(git, sha)
+          git.run("diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", sha).stdout.split("\0")
+        end
+
+        # A resumed or forked chat is never asked about earlier branches, so the
+        # remedy names a way that asks.
+        def carry(criteria, worker_env, target, sha)
+          run = ran(target, worker_env)
+          record = Carried.new(target:, criteria_digest: criteria.digest)
+          return Red.new(record:, run:, sha:, carried: true) unless run.clean?
+
+          raise Error, "#{target} holds the failing tests an earlier run committed at #{sha} from these criteria, " \
+                       "but they no longer fail on this branch; start a new chat and answer delete at " \
+                       "`/implement-epic` (the old tip is kept under refs/lain/worker/), or delete " \
+                       "`#{branch_of(worker_env)}` yourself"
+        end
+
+        def branch_of(worker_env)
+          Lain::Isolation::Checkout.new(worker_env.cwd, shell_out_factory: @shell_out_factory)
+                                   .symbolic_head.delete_prefix("refs/heads/")
+        end
+
+        def ran(target, worker_env) = @harness.call(worker_env.cwd).run(worker_env, paths: [target])
 
         # The target alone, even when the child left other files, so the red
         # commit holds the tests and nothing else. `--no-verify` because the
@@ -1134,7 +1211,8 @@ module Lain
         def commit(root, record)
           git = Lain::Isolation::Checkout.new(root, shell_out_factory: @shell_out_factory)
           committed!(git.run("add", "--", record.target))
-          committed!(git.run("commit", "--no-verify", "-q", "-m", message(record), "--", record.target))
+          committed!(git.run("commit", "--no-verify", "-q", "-m", message(record.target, record.criteria_digest),
+                             "--", record.target))
           git.head.stdout.strip
         end
 
@@ -1144,7 +1222,7 @@ module Lain
           raise Error, "git refused the failing tests' commit: #{shell.stderr.strip}"
         end
 
-        def message(record) = "test: failing tests at #{record.target}, from criteria #{record.criteria_digest}"
+        def message(target, digest) = "test: failing tests at #{target}, from criteria #{digest}"
       end
     end
   end

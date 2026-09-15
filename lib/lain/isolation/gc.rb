@@ -406,9 +406,15 @@ module Lain
 
         private
 
+        # A branch reaching the commit is not the work landing when that branch
+        # is one a delete lain left unfinished: the anchor is the tip's keeper.
         def judge(ref, commit)
           landing = @repo.landing(commit)
           return Records.kept(:anchor, ref, "no branch reaches #{commit[0, 12]}") if landing.empty?
+
+          unfinished = WorkingBranch.unfinished_at(ref, commit, repo: @repo)
+          return Records.kept(:anchor, ref, "#{unfinished} still stands at it, a delete lain left unfinished") unless
+            unfinished.empty?
           return Records.reaped(:anchor, ref, landing) if @repo.delete(ref, commit)
 
           Records.kept(:anchor, ref, "it moved while gc ran")

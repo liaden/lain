@@ -251,10 +251,21 @@ module Lain
         # @raise [Error] when this chat is in no epic
         # @raise [Lain::Error] when the width is not a positive whole number
         def call(args, env)
-          env.epic_driver.run(**width(args.to_s)).to_s
+          env.epic_driver.run(**width(args.to_s), resumed: resumed?(env.journal_path)).to_s
         end
 
         private
+
+        # A chat resumed mid-epic -- after a crash, most often -- is carrying on
+        # the run its issue branches belong to, so the driver keeps them rather
+        # than asking. The session's own header is what says so: a resumed chat
+        # opens its file chained to the one it resumed.
+        def resumed?(path)
+          Array(path).select { |file| File.file?(file) }.any? do |file|
+            Lain::Journal.records(File.foreach(file), type: Lain::SessionRecord::HEADER_TYPE).first.to_h
+                         .key?("resumed_from")
+          end
+        end
 
         # {Command::Args} does this command's reading now -- it is what makes
         # `/implement-epic plans --wdith 1` name `--wdith` rather than reading

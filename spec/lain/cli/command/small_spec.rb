@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "async"
+require "json"
 require "stringio"
+require "tmpdir"
 
 # The nine built-ins `lib/lain/cli/command/small.rb` holds, one `RSpec.describe`
 # block per class -- a fold of six formerly-mirrored spec files
@@ -376,11 +378,12 @@ end
 # A driver that ran, as the command sees one.
 class ImplementEpicSpecDriver
   def initialize(reply) = @reply = reply
-  attr_reader :width, :budget
+  attr_reader :width, :budget, :resumed
 
-  def run(width: nil, budget: nil)
+  def run(width: nil, budget: nil, resumed: nil)
     @width = width
     @budget = budget
+    @resumed = resumed
     @reply
   end
 end
@@ -441,6 +444,39 @@ RSpec.describe Lain::CLI::Command::ImplementEpic do
     env = build_command_env(epic_driver: ImplementEpicSpecDriver.new("done"))
 
     expect { command.call("plans", env) }.to raise_error(Lain::Error, /plans/)
+  end
+
+  # A chat resumed mid-epic, after a crash most often, is carrying on the run
+  # its branches belong to: the driver keeps them rather than asking.
+  context "when deciding whether the chat carrying the run was resumed" do
+    def over_session(header)
+      driver = ImplementEpicSpecDriver.new("done")
+      Dir.mktmpdir("lain-implement-epic") do |dir|
+        path = File.join(dir, "session.ndjson")
+        File.write(path, "#{JSON.generate(header)}\n")
+        chronicle = instance_double(Lain::CLI::Chronicle, journal_path: path)
+        command.call("", build_command_env(epic_driver: driver, chronicle:))
+      end
+      driver.resumed
+    end
+
+    it "tells the driver so when the session's header chains from an earlier one" do
+      resumed_from = { "file" => "earlier.ndjson", "head" => "blake3:ab" }
+
+      expect(over_session({ "type" => "session", "resumed_from" => resumed_from })).to be(true)
+    end
+
+    it "tells the driver it was not for a fresh session" do
+      expect(over_session({ "type" => "session" })).to be(false)
+    end
+
+    it "tells the driver it was not for a chat that keeps no session file" do
+      driver = ImplementEpicSpecDriver.new("done")
+
+      command.call("", build_command_env(epic_driver: driver))
+
+      expect(driver.resumed).to be(false)
+    end
   end
 end
 

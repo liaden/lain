@@ -4,6 +4,28 @@ require "tmpdir"
 require "fileutils"
 require "mixlib/shellout"
 
+# A Checkout that runs a hook once, right after a chosen git invocation: how
+# a sibling's move lands in the one window a race can use.
+class WorkingBranchSpecRacingCheckout < Lain::Isolation::Checkout
+  def initialize(dir, after:, &hook)
+    super(dir)
+    @after = after
+    @hook = hook
+  end
+
+  def run(*args)
+    super.tap do
+      fire = @hook if @after.call(args)
+      @hook = nil if fire
+      fire&.call
+    end
+  end
+end
+
+# What a process killed mid-delete looks like from outside: a git invocation
+# that never runs.
+class WorkingBranchSpecCrash < StandardError; end
+
 # Operates on a THROWAWAY repo copied per example ({SeedRepo}), never the lain
 # repo it runs in.
 RSpec.describe Lain::Isolation::WorkingBranch, :seam do
@@ -259,6 +281,358 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
 
       expect { described_class.owned(name, repo_root: @repo_root, from: sha("main"), shell_out_factory: noisy) }
         .to raise_error(described_class::Refused, /not valid/)
+    end
+  end
+
+  # A re-run of an epic may start its issues fresh, and the marker is still the
+  # only licence: what is listed and what is deleted are the branches lain made.
+  describe ".owned_under" do
+    it "lists the branches lain marked under the prefix, and none a human made there" do
+      described_class.owned("lain/issue/demo/a", repo_root: @repo_root, from: sha("main"))
+      described_class.owned("lain/issue/other/a", repo_root: @repo_root, from: sha("main"))
+      run_git(@repo_root, "branch", "lain/issue/demo/b", "main")
+
+      expect(described_class.owned_under("lain/issue/demo", repo_root: @repo_root).map(&:name))
+        .to eq(["lain/issue/demo/a"])
+    end
+
+    it "lists nothing for a marker whose branch is gone" do
+      described_class.owned("lain/issue/demo/a", repo_root: @repo_root, from: sha("main"))
+      run_git(@repo_root, "branch", "-D", "lain/issue/demo/a")
+
+      expect(described_class.owned_under("lain/issue/demo", repo_root: @repo_root)).to be_empty
+    end
+  end
+
+  # Judged first, deleted after: every refusal a delete can meet is answered
+  # before anything moves, and the delete itself moves nothing.
+  describe "#discardable! and #discard" do
+    let(:name) { "lain/issue/demo/a" }
+    let(:marker) { "refs/lain/owned/heads/#{name}" }
+    let(:registry) do
+      Lain::Isolation::Worktree::Registry.new(repo_root: @repo_root, shell_out_factory: Lain::Shell::Out.public_method(:new))
+    end
+
+    def holders = described_class.holders(registry)
+
+    def branch_over(git = Lain::Isolation::Checkout.new(@repo_root))
+      described_class.new(name, repo_root: @repo_root, git:)
+    end
+
+    # A commit on the branch without checking it out.
+    def commit_on(branch_name, text)
+      tree = sha("#{branch_name}^{tree}")
+      made = run_git(@repo_root, "commit-tree", tree, "-p", sha(branch_name), "-m", text).strip
+      run_git(@repo_root, "update-ref", "refs/heads/#{branch_name}", made)
+      made
+    end
+
+    def owned_with_work
+      described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+      commit_on(name, "issue work")
+    end
+
+    def discarded(branch) = branch.discard(at: branch.discardable!(holders), registry:)
+
+    # main and the branch both change README, so `git rebase main` in `dir`
+    # stops on the conflict and leaves the rebase standing.
+    def rebase_stopped_in(dir)
+      File.write(File.join(dir, "README"), "issue side\n")
+      run_git(dir, "commit", "-q", "-am", "issue side")
+      expect(try_git(dir, "rebase", "main").exitstatus).not_to eq(0)
+    end
+
+    def main_moved
+      File.write(File.join(@repo_root, "README"), "main side\n")
+      run_git(@repo_root, "commit", "-q", "-am", "main side")
+    end
+
+    it "anchors the tip under refs/lain/worker/, then deletes the branch and its marker" do
+      tip = owned_with_work
+
+      anchor = discarded(branch_over)
+
+      expect(anchor).to start_with("refs/lain/worker/")
+      expect(sha(anchor)).to eq(tip)
+      expect([ref?("refs/heads/#{name}"), ref?(marker)]).to eq([false, false])
+    end
+
+    it "refuses a branch lain did not create, anchoring and deleting nothing" do
+      run_git(@repo_root, "branch", name, "main")
+
+      expect { branch_over.discardable!(holders) }
+        .to raise_error(described_class::Refused, /#{name}.*lain did not create/m)
+      expect(ref?("refs/heads/#{name}")).to be(true)
+      expect(refs("refs/lain/worker/")).to be_empty
+    end
+
+    # git's own branch delete refuses a checked-out branch; update-ref does not,
+    # so the rule is lain's to keep.
+    it "refuses a branch a checkout has out, naming the checkout" do
+      owned_with_work
+      Dir.mktmpdir("lain-working-branch-held") do |dir|
+        held = File.join(File.realpath(dir), "held")
+        run_git(@repo_root, "worktree", "add", "-q", held, name)
+
+        expect { branch_over.discardable!(holders) }
+          .to raise_error(described_class::Refused, /#{Regexp.escape(held)}/)
+        expect([ref?("refs/heads/#{name}"), ref?(marker)]).to eq([true, true])
+      ensure
+        run_git(@repo_root, "worktree", "remove", "--force", held)
+      end
+    end
+
+    # A rebase detaches its checkout, so no porcelain names the branch there,
+    # yet finishing the rebase rewrites the branch by name.
+    it "refuses a branch mid-rebase in a linked checkout, whose HEAD is detached" do
+      described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+      main_moved
+      Dir.mktmpdir("lain-working-branch-rebase") do |dir|
+        linked = File.join(File.realpath(dir), "linked")
+        run_git(@repo_root, "worktree", "add", "-q", linked, name)
+        rebase_stopped_in(linked)
+
+        expect { branch_over.discardable!(holders) }
+          .to raise_error(described_class::Refused, /being rebased at #{Regexp.escape(linked)}/)
+      ensure
+        try_git(linked, "rebase", "--abort")
+        try_git(@repo_root, "worktree", "remove", "--force", linked)
+      end
+    end
+
+    it "refuses a branch mid-rebase in the repository's own checkout" do
+      described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+      main_moved
+      run_git(@repo_root, "switch", "-q", name)
+      rebase_stopped_in(@repo_root)
+
+      expect { branch_over.discardable!(holders) }.to raise_error(described_class::Refused, /being rebased/)
+    ensure
+      try_git(@repo_root, "rebase", "--abort")
+    end
+
+    # Judged before anything is deleted, so a batch refuses whole rather than
+    # after the branches ahead of this one are gone.
+    it "judges a branch undeletable when the anchor its tip would take already holds another commit" do
+      tip = owned_with_work
+      anchor = Lain::Isolation::Worktree::Handback::Naming.new("#{name} #{tip}").ref
+      run_git(@repo_root, "update-ref", anchor, sha("main"))
+
+      expect { branch_over.discardable!(holders) }.to raise_error(described_class::Refused, /#{Regexp.escape(anchor)}/)
+      expect([sha(name), sha(anchor)]).to eq([tip, sha("main")])
+    end
+
+    it "never overwrites an anchor written after the branch was judged, deleting nothing" do
+      tip = owned_with_work
+      judged = branch_over.discardable!(holders)
+      anchor = Lain::Isolation::Worktree::Handback::Naming.new("#{name} #{tip}").ref
+      run_git(@repo_root, "update-ref", anchor, sha("main"))
+
+      expect { branch_over.discard(at: judged, registry:) }
+        .to raise_error(described_class::Refused, /could not be written/)
+      expect([sha(name), sha(anchor), ref?(marker)]).to eq([tip, sha("main"), true])
+    end
+
+    it "reuses the anchor a deletion at the same tip already wrote" do
+      tip = owned_with_work
+      first = discarded(branch_over)
+      described_class.owned(name, repo_root: @repo_root, from: tip)
+
+      expect(discarded(branch_over)).to eq(first)
+      expect(sha(first)).to eq(tip)
+    end
+
+    it "leaves a branch that moved after it was judged where it moved to, marked, its judged tip anchored" do
+      tip = owned_with_work
+      judged = branch_over.discardable!(holders)
+      moved = commit_on(name, "a sibling moved it")
+
+      expect { branch_over.discard(at: judged, registry:) }
+        .to raise_error(described_class::Refused, /could not be deleted/)
+      expect([sha(name), ref?(marker)]).to eq([moved, true])
+      expect(refs("refs/lain/worker/").map { |ref| sha(ref) }).to eq([tip])
+    end
+
+    # The marker is put back only onto a branch still standing; one another
+    # hand deleted outright gets none, and the refusal says so.
+    it "says the marker could not be put back when the branch it would mark is gone" do
+      owned_with_work
+      marker_deleted = ->(args) { args[0, 3] == ["update-ref", "-d", marker] }
+      git = WorkingBranchSpecRacingCheckout.new(@repo_root, after: marker_deleted) do
+        run_git(@repo_root, "update-ref", "-d", "refs/heads/#{name}")
+      end
+
+      expect { discarded(branch_over(git)) }.to raise_error(described_class::Refused) { |error|
+        expect(error.message).to include("its marker could not be put back")
+        expect(error.message).not_to include("still marked")
+      }
+      expect(ref?(marker)).to be(false)
+    end
+
+    # A crash between the marker's delete and the branch's leaves an unmarked
+    # branch standing at exactly the tip its own delete anchor holds. The
+    # anchor's name is derived from the branch name and that tip, so the pair
+    # is the record of a delete lain left unfinished, with no file beside it.
+    context "when a delete stopped between the marker and the branch" do
+      def crashed_mid_delete
+        tip = owned_with_work
+        marker_deleted = ->(args) { args[0, 3] == ["update-ref", "-d", marker] }
+        dying = WorkingBranchSpecRacingCheckout.new(@repo_root, after: marker_deleted) { raise WorkingBranchSpecCrash }
+        expect { discarded(branch_over(dying)) }.to raise_error(WorkingBranchSpecCrash)
+        tip
+      end
+
+      it "lists the unmarked branch as lain's, a delete left unfinished" do
+        tip = crashed_mid_delete
+
+        listed = described_class.owned_under("lain/issue/demo", repo_root: @repo_root)
+
+        expect(listed.map { |branch| [branch.name, branch.unfinished?] }).to eq([[name, true]])
+        expect([sha(name), ref?(marker)]).to eq([tip, false])
+      end
+
+      it "finishes the delete at the anchored tip" do
+        tip = crashed_mid_delete
+
+        anchor = discarded(branch_over)
+
+        expect(sha(anchor)).to eq(tip)
+        expect(ref?("refs/heads/#{name}")).to be(false)
+      end
+
+      it "reuses the branch as lain's own when it is kept, marking it again" do
+        tip = crashed_mid_delete
+
+        kept = described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+
+        expect([kept.tip, sha(marker)]).to eq([tip, tip])
+      end
+
+      it "refuses the branch as a human's once its tip has moved off the anchor" do
+        crashed_mid_delete
+        commit_on(name, "somebody's work")
+
+        expect { described_class.owned(name, repo_root: @repo_root, from: sha("main")) }
+          .to raise_error(described_class::Refused, /lain did not create/)
+        expect(described_class.owned_under("lain/issue/demo", repo_root: @repo_root)).to be_empty
+      end
+    end
+
+    # Two runs over one epic are serialised by the landing checkout's lock,
+    # but a chat standing on the epic's branch takes none. So a sibling may
+    # reach the branch at any point in a delete. The contract: a sibling that
+    # reclaims or leases the branch before the delete lands keeps it, owned
+    # and marked, and the delete refuses; one that arrives after finds it gone
+    # and cuts afresh, or refuses; every tip stays anchored; and the loser says
+    # so. The sibling below is lain's own launch: take the branch, check it
+    # out, then confirm lain still owns it.
+    context "when a sibling run reaches the branch mid-delete" do
+      def sibling_leases
+        taken = described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+        lease = File.join(@root_tmp, "sibling")
+        run_git(@repo_root, "worktree", "add", "-q", lease, name)
+        taken.still_owned!
+        lease
+      end
+
+      around do |example|
+        Dir.mktmpdir("lain-working-branch-sibling") do |dir|
+          @root_tmp = File.realpath(dir)
+          example.run
+        ensure
+          try_git(@repo_root, "worktree", "remove", "--force", File.join(@root_tmp, "sibling"))
+        end
+      end
+
+      def racing(after, &sibling) = branch_over(WorkingBranchSpecRacingCheckout.new(@repo_root, after:, &sibling))
+
+      it "refuses when the sibling leased the branch after it was judged, leaving it owned and anchored" do
+        tip = owned_with_work
+        anchor_written = ->(args) { args.include?("--create-reflog") && args.last == "" }
+        lease = nil
+        branch = racing(anchor_written) { lease = sibling_leases }
+
+        expect { discarded(branch) }.to raise_error(described_class::Refused) { |error|
+          expect(error.message).to include(lease)
+        }
+        expect([sha(name), ref?(marker)]).to eq([tip, true])
+        expect(refs("refs/lain/worker/").map { |ref| sha(ref) }).to eq([tip])
+      end
+
+      it "refuses when the sibling reclaimed and leased the branch after its marker went, leaving it owned" do
+        tip = owned_with_work
+        claimed = ->(args) { args[0, 3] == ["update-ref", "-d", marker] }
+        branch = racing(claimed) { sibling_leases }
+
+        expect { discarded(branch) }.to raise_error(described_class::Refused, /another run/)
+        expect([sha(name), ref?(marker)]).to eq([tip, true])
+        expect(refs("refs/lain/worker/").map { |ref| sha(ref) }).to eq([tip])
+      end
+
+      it "refuses when the sibling reclaimed the branch without yet leasing it, leaving it owned" do
+        tip = owned_with_work
+        claimed = ->(args) { args[0, 3] == ["update-ref", "-d", marker] }
+        branch = racing(claimed) { described_class.owned(name, repo_root: @repo_root, from: sha("main")) }
+
+        expect { discarded(branch) }.to raise_error(described_class::Refused, /another run/)
+        expect([sha(name), ref?(marker)]).to eq([tip, true])
+      end
+
+      # A sibling that checked the branch out and then finds lain's marker gone
+      # is the one that lost: it stops before doing anything on the branch.
+      it "makes a sibling that checked the branch out as its marker went refuse in words" do
+        owned_with_work
+        taken = described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+        run_git(@repo_root, "update-ref", "-d", marker)
+
+        expect { taken.still_owned! }.to raise_error(described_class::Refused, /another run is deleting it/)
+      end
+
+      it "makes a sibling reclaiming an unfinished delete refuse once that delete lands, leaving no marker behind" do
+        tip = owned_with_work
+        marker_deleted = ->(args) { args[0, 3] == ["update-ref", "-d", marker] }
+        dying = WorkingBranchSpecRacingCheckout.new(@repo_root, after: marker_deleted) { raise WorkingBranchSpecCrash }
+        expect { discarded(branch_over(dying)) }.to raise_error(WorkingBranchSpecCrash)
+        anchor_read = ->(args) { args[0, 2] == ["rev-parse", "--verify"] && args.last.start_with?("refs/lain/worker/") }
+        sibling = WorkingBranchSpecRacingCheckout.new(@repo_root, after: anchor_read) { discarded(branch_over) }
+
+        reclaiming = described_class.new(name, repo_root: @repo_root, git: sibling)
+
+        expect { reclaiming.establish(from: sha("main"), owned_only: true) }
+          .to raise_error(described_class::Refused, /another run deleted it/)
+        expect([ref?("refs/heads/#{name}"), ref?(marker)]).to eq([false, false])
+        expect(refs("refs/lain/worker/").map { |ref| sha(ref) }).to eq([tip])
+      end
+
+      # The reclaim reads the branch's tip and marks it in one transaction that
+      # verifies that tip, so a delete landing between the read and the mark
+      # still leaves no marker naming nothing.
+      it "makes a sibling refuse whose reclaim read the tip just before the delete landed" do
+        tip = owned_with_work
+        marker_deleted = ->(args) { args[0, 3] == ["update-ref", "-d", marker] }
+        dying = WorkingBranchSpecRacingCheckout.new(@repo_root, after: marker_deleted) { raise WorkingBranchSpecCrash }
+        expect { discarded(branch_over(dying)) }.to raise_error(WorkingBranchSpecCrash)
+        anchor_seen = false
+        tip_read_to_mark = lambda do |args|
+          anchor_seen ||= args.last.to_s.start_with?("refs/lain/worker/")
+          anchor_seen && args.last == "refs/heads/#{name}"
+        end
+        sibling = WorkingBranchSpecRacingCheckout.new(@repo_root, after: tip_read_to_mark) { discarded(branch_over) }
+
+        expect { described_class.new(name, repo_root: @repo_root, git: sibling).establish(from: tip, owned_only: true) }
+          .to raise_error(described_class::Refused, /another run deleted it/)
+        expect([ref?("refs/heads/#{name}"), ref?(marker)]).to eq([false, false])
+      end
+
+      it "lets a sibling arriving after the delete cut the branch afresh, marked, the old tip still anchored" do
+        tip = owned_with_work
+        discarded(branch_over)
+
+        fresh = described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+
+        expect([fresh.tip, sha(marker)]).to eq([sha("main"), sha("main")])
+        expect(refs("refs/lain/worker/").map { |ref| sha(ref) }).to eq([tip])
+      end
     end
   end
 

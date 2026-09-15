@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 module Lain
   module CLI
     module EpicDriver
@@ -25,6 +27,145 @@ module Lain
         # What one launch left standing: the actor, the id its anchor will take,
         # the branch its work is on, and the red step that precedes it.
         Launch = Data.define(:actor, :worker_id, :branch, :tests)
+
+        # The issue's branch as the lease found it: `from` is the epic's tip the
+        # checkout was cut at, and `stood_at` where the branch stood before the
+        # red step, which differs only for a branch an earlier run left.
+        Cut = Data.define(:branch, :from, :stood_at) do
+          def reused? = stood_at != from
+        end
+
+        # The issue branches an earlier run of this epic left standing, settled
+        # ONCE, before a re-run leases anything. Kept, each is reused where it
+        # stands and the red step carries its commit forward; deleted, each tip
+        # is anchored first and every issue is cut fresh from the epic's tip.
+        #
+        # KEEPING IS THE DEFAULT, because a delete is the one answer a second
+        # answer cannot take back: a chat resumed mid-epic is never asked, a
+        # session with nobody to ask keeps, and only `delete` deletes -- in any
+        # case, with trailing punctuation, the way a gate reads its reply.
+        # Only a branch lain's marker licenses is offered at all.
+        #
+        # ALL OR NOTHING, AS FAR AS GIT ALLOWS. Every branch is judged before
+        # any is deleted, so a held or unowned one refuses the lot. A branch a
+        # sibling moves after that still refuses its own delete, and the
+        # refusal then names each branch already gone and where its tip went.
+        class Earlier
+          DELETE = "delete"
+
+          UNFINISHED = " (a delete lain left unfinished)"
+
+          # One branch deleted on the human's word, and the anchor its old tip
+          # now stands on -- the one place a human can recover it from.
+          Discarded = Data.define(:branch, :anchor) do
+            def initialize(branch:, anchor:) = super(branch: -branch.to_s, anchor: -anchor.to_s)
+
+            def to_s = "deleted #{branch}, its old tip kept at #{anchor}"
+          end
+
+          # A session nobody can ask. Its reply is no word at all, so it keeps.
+          module Unasked
+            def self.ask(_question) = Lain::Promise.new.tap { |promise| promise.resolve("") }
+
+            def self.withdraw(_promise) = nil
+          end
+
+          # @param slug [String] the epic
+          # @param repo_root [String] the repository the issue branches live in
+          # @param asker [#ask, #withdraw] the chat's own, whose promise resolves
+          #   with what the human wrote
+          # @param journal [#record] where an asked question is retired, which
+          #   must be one the chat's inbox readers fold
+          # @param timeout [Numeric] seconds an unanswered question waits before
+          #   it keeps
+          # @param shell_out_factory [#call] builds the git subprocess runner
+          def initialize(slug:, repo_root:, asker:, journal:, timeout: Lain::Approval::Gate::DEFAULT_TIMEOUT,
+                         shell_out_factory: Lain::Shell::Out.public_method(:new))
+            @slug = slug
+            @repo_root = repo_root
+            @asker = asker
+            @journal = journal
+            @timeout = timeout
+            @shell_out_factory = shell_out_factory
+          end
+
+          # PRECONDITION: runs under an Async reactor, where the chat's answering
+          # surfaces are sibling fibers.
+          #
+          # @param resumed [Boolean] whether the chat carrying the run was resumed
+          # @return [Array<Discarded>] each deleted branch and the anchor its tip
+          #   stands on; empty when the branches were kept
+          # @raise [Isolation::WorkingBranch::Refused] when a branch to delete is
+          #   held by a checkout, or git refuses its anchor or its delete
+          def call(resumed:)
+            standing = resumed ? [] : branches
+            return [] if standing.empty? || !delete?(standing)
+
+            registry = Lain::Isolation::Worktree::Registry.new(repo_root: @repo_root,
+                                                               shell_out_factory: @shell_out_factory)
+            judged(standing, registry).each_with_object([]) do |(branch, tip), gone|
+              gone << discarded(branch, tip, registry, gone)
+            end
+          end
+
+          private
+
+          def branches
+            Lain::Isolation::WorkingBranch.owned_under(IssueActor.branch_prefix(@slug),
+                                                       repo_root: @repo_root, shell_out_factory: @shell_out_factory)
+          end
+
+          # @return [Array<Array(Isolation::WorkingBranch, String)>] each branch
+          #   and the tip it is deleted at
+          def judged(standing, registry)
+            holders = Lain::Isolation::WorkingBranch.holders(registry)
+            standing.map { |branch| [branch, branch.discardable!(holders)] }
+          end
+
+          def discarded(branch, tip, registry, gone)
+            Discarded.new(branch: branch.name, anchor: branch.discard(at: tip, registry:))
+          rescue Lain::Isolation::WorkingBranch::Refused => e
+            raise if gone.empty?
+
+            raise Lain::Isolation::WorkingBranch::Refused, "#{gone.join("; ")}; then #{e.message}"
+          end
+
+          def delete?(standing) = answered(@asker.ask(question(standing)))
+
+          def answered(asked)
+            reply(heard(asked)).strip.downcase.sub(Lain::Epic::GateReply::TRAILING_PUNCTUATION, "") == DELETE
+          ensure
+            settled(asked)
+          end
+
+          def heard(asked)
+            Async::Task.current.with_timeout(@timeout) { asked.await }
+          rescue Async::TimeoutError
+            ""
+          end
+
+          def reply(resolved) = resolved.respond_to?(:words) ? resolved.words.to_s : resolved.to_s
+
+          # For {Approval::Gate#withdrawn}'s and {Approval::Gate#retired}'s
+          # reasons: an asker admits one outstanding question, and an inbox
+          # lists a question until something in the record retires it.
+          def settled(asked)
+            @asker.withdraw(asked)
+            return unless asked.respond_to?(:digest)
+
+            @journal.record(Lain::Telemetry::QuestionsConsumed.new(turn: nil, digests: [asked.digest]))
+          end
+
+          def question(standing)
+            listed = standing.map { |branch| "#{branch.name} at #{branch.tip}#{UNFINISHED if branch.unfinished?}" }
+                             .join(", ")
+            "An earlier run of epic #{@slug.inspect} left #{listed}. Reply keep to reuse each where it stands, " \
+              "carrying its failing tests forward; delete removes all #{standing.size} of these earlier branches, " \
+              "saving each tip under #{Lain::Isolation::Worktree::Handback::Naming::REF_NAMESPACE}/ and cutting " \
+              "every issue fresh from the tip of #{Lain::Isolation::WorkingBranch.epic_name(@slug)}. Any other " \
+              "reply keeps them."
+          end
+        end
 
         # Where the actor's children work: each leasing a checkout cut from the
         # ISSUE's branch, and handing its work back into the actor's own
@@ -77,10 +218,12 @@ module Lain
         # issue's own contract -- where its approved plan is, what it must
         # satisfy, the failing tests it must turn green, and where its work has
         # to end up.
-        Brief = Data.define(:renderer, :home, :slug, :issue, :branch, :tests) do
+        Brief = Data.define(:renderer, :home, :slug, :issue, :cut, :tests) do
           def to_s = [renderer.render(SKILL), carrying, planned, satisfying, failing, settling].join("\n\n")
 
           def working_branch = Lain::Isolation::WorkingBranch.epic_name(slug)
+
+          def branch = cut.branch.name
 
           private
 
@@ -88,9 +231,15 @@ module Lain
             <<~SECTION.strip
               ## The issue you are carrying
 
-              Issue `#{issue.id}` of epic `#{slug}`: #{issue.title}. Your checkout stands on `#{branch}`,
-              cut from the tip of `#{working_branch}`.
+              Issue `#{issue.id}` of epic `#{slug}`: #{issue.title}. #{standing}
             SECTION
+          end
+
+          def standing
+            return "Your checkout stands on `#{branch}`, cut from the tip of `#{working_branch}`." unless cut.reused?
+
+            "Your checkout stands on `#{branch}`, reused as an earlier run left it at `#{cut.stood_at}` rather " \
+              "than cut from the tip of `#{working_branch}`."
           end
 
           def planned
@@ -114,13 +263,21 @@ module Lain
             <<~SECTION.strip
               ## The failing tests
 
-              Generated from those criteria and committed on your branch before your first turn:
+              #{committed}
 
               - `#{tests.record.target}`
 
               Make them pass. Never weaken or delete one -- if a test is wrong, say so in your answer
               instead of editing it away.
             SECTION
+          end
+
+          def committed
+            return "Generated from those criteria and committed on your branch before your first turn:" unless
+              tests.carried
+
+            "Generated from those criteria by an earlier run, committed on your branch at `#{tests.sha}`, and " \
+              "still failing:"
           end
 
           def settling
@@ -137,7 +294,11 @@ module Lain
         # @param slug [String] the epic
         # @param issue_id [String] the issue
         # @return [String] the branch one issue's work stands on
-        def self.branch_name(slug, issue_id) = "lain/issue/#{slug}/#{issue_id}"
+        def self.branch_name(slug, issue_id) = "#{branch_prefix(slug)}/#{issue_id}"
+
+        # @param slug [String] the epic
+        # @return [String] the prefix every one of the epic's issue branches takes
+        def self.branch_prefix(slug) = "lain/issue/#{slug}"
 
         # @param slug [String] the epic
         # @param supervisor [Supervisor] the epic's own, whose checkouts are cut
@@ -199,13 +360,13 @@ module Lain
         def adopted(issue, lane, subject:, level:)
           criteria = criteria_of(issue)
           red = nil
-          branch = nil
+          held = nil
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
-            branch = cut(worker_env, issue.id)
-            red = @tests.call(criteria, worker_env, subject:, level:)
-            spawner(worker_env, branch, lane).launch_actor(brief(issue, branch, red), worker_env:)
+            held = cut(worker_env, issue.id)
+            red = @tests.call(criteria, worker_env, subject:, level:, since: held.from)
+            spawner(worker_env, held.branch, lane).launch_actor(brief(issue, held, red), worker_env:)
           end
-          Launch.new(actor:, worker_id: lane, branch: branch.name, tests: red)
+          Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end
 
         # The issue's own lain-owned branch, established at the tip the lease
@@ -215,15 +376,16 @@ module Lain
         # a branch lain did not create.
         def cut(worker_env, issue_id)
           git = checkout(worker_env.cwd)
+          from = git.head.stdout.strip
           branch = Lain::Isolation::WorkingBranch.owned(self.class.branch_name(@slug, issue_id),
-                                                        repo_root: worker_env.cwd, from: git.head.stdout.strip,
+                                                        repo_root: worker_env.cwd, from:,
                                                         shell_out_factory: @shell_out_factory)
-          switched!(git, branch)
+          Cut.new(branch: switched!(git, branch), from:, stood_at: branch.tip)
         end
 
         def switched!(git, branch)
           shell = git.run("switch", "-q", branch.name)
-          return branch if shell.exitstatus.zero?
+          return branch.tap(&:still_owned!) if shell.exitstatus.zero?
 
           raise Error, "#{branch.name} could not be checked out in the issue's lease: #{said(shell)}"
         end
@@ -260,8 +422,8 @@ module Lain
           @subagent.call(**@lanes.over(worker_env, branch.name), lane:)
         end
 
-        def brief(issue, branch, red)
-          Brief.new(renderer: @renderer, home: @home, slug: @slug, issue:, branch: branch.name, tests: red).to_s
+        def brief(issue, cut, red)
+          Brief.new(renderer: @renderer, home: @home, slug: @slug, issue:, cut:, tests: red).to_s
         end
       end
     end
