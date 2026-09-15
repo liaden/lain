@@ -74,6 +74,8 @@ module Lain
         # The digest prefix the inspect idiom shows (see Event#inspect).
         SHORT = 19
 
+        FOLDS = [SessionRecord::TURN_TYPE, SessionRecord::REWOUND_TYPE].freeze
+
         def self.for(name:, path:)
           entries = LineCount.new(File.foreach(path))
           records = Journal.records(entries).to_a
@@ -105,7 +107,7 @@ module Lain
         def to_s
           return "#{@name}  ?  0 turns  #{unloadable}  -#{damage}" if header.nil?
 
-          "#{@name}  #{started}  #{turns.size} turns  #{status}  #{head_short}#{damage}"
+          "#{@name}  #{started}  #{chain.size} turns  #{status}  #{head_short}#{damage}"
         end
 
         private
@@ -149,8 +151,30 @@ module Lain
         end
 
         def header = @records.find { |record| record["type"] == SessionRecord::HEADER_TYPE }
-        def turns = @records.select { |record| record["type"] == SessionRecord::TURN_TYPE }
         def closed = @records.find { |record| record["type"] == "session_closed" }
+
+        # The records that move the head. A `rewound` record moves it back to a
+        # turn already recorded, or to nothing, and the turns above that stay in
+        # the file only because the journal is append-only.
+        def folded
+          @folded ||= @records.select { |record| FOLDS.include?(record["type"]) }
+        end
+
+        # The digests left on the chain. A rewind to a turn this file never
+        # recorded goes below the head it was resumed from, so none of this
+        # file's turns remain. {Bench::Session::ChainFold} and the scribe's
+        # written chain hold the same rewind rule; a listing holds no Store to
+        # fold with, so it keeps its own.
+        def chain = folded.each_with_object([]) { |record, digests| fold(digests, record) }
+
+        def fold(digests, record)
+          return digests << record["digest"] if record["type"] == SessionRecord::TURN_TYPE
+
+          digests.slice!(kept(digests, record["to"])..)
+        end
+
+        # A rewind keeps the digests up to and including its target.
+        def kept(digests, target) = (digests.index(target) || -1) + 1
 
         def started
           timestamp = header["ts"]
@@ -162,14 +186,18 @@ module Lain
           header["resumed_from"] ? "#{state}, chained" : state
         end
 
-        # The last turn record is the most recent head this file knows; a
-        # turnless file falls back to its recorded anchors (a closed file's
-        # own, then the chained-from head), "-" for a header-only session.
+        # The last turn or rewind is the most recent head this file knows, and a
+        # rewind to nothing leaves none; a file with neither falls back to its
+        # recorded anchors (a closed file's own, then the chained-from head), "-"
+        # for a header-only session.
         def head_short
-          digest = turns.last&.fetch("digest") || closed&.fetch("head", nil) ||
-                   header.dig("resumed_from", "head")
+          digest = folded.empty? ? anchor : head_of(folded.last)
           digest ? digest[0, SHORT] : "-"
         end
+
+        def head_of(record) = record["type"] == SessionRecord::TURN_TYPE ? record["digest"] : record["to"]
+
+        def anchor = closed&.fetch("head", nil) || header.dig("resumed_from", "head")
       end
     end
   end

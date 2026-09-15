@@ -1,14 +1,17 @@
 # frozen_string_literal: true
 
 require "json"
+require "socket"
 require "stringio"
 require "tmpdir"
+require "fileutils"
 
 # `lain watch SELECTOR` -- a read-only live view of ONE actor's stream.
 # It tails a live session journal, admits only records whose lineage chains
 # to the watched spawn S (decided from the Message records' explicit NDJSON
 # fields alone -- from/to/causal_parents -- never by Store reconstruction),
-# renders each through an injected sink, and exits 0 on session_closed.
+# renders each through an injected sink, and exits 0 on session_closed -- or
+# 1 once the writer its header records is gone without having closed it.
 RSpec.describe Lain::CLI::Watch do
   around do |example|
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
@@ -465,6 +468,117 @@ RSpec.describe Lain::CLI::Watch do
       described_class.new(selector:, path:, sink: output, paths:).run
 
       expect(output.string).not_to include("waiting for records")
+    end
+  end
+
+  # A live chat's header records its writer as a lease does: pid, start in
+  # clock ticks since boot, and host. A session killed before it could write
+  # session_closed leaves nothing else that would ever end the tail.
+  describe "a session whose writer is gone without closing it" do
+    let(:never_poll) { ->(_seconds) { raise "watch polled a session whose writer is gone" } }
+
+    def start_of(pid) = File.read("/proc/#{pid}/stat").rpartition(")").last.split.fetch(19)
+
+    def dead_pid = Process.spawn("true").tap { |pid| Process.wait(pid) }
+
+    def writer(pid, start) = { "writer" => { "pid" => pid, "start" => start, "host" => Socket.gethostname } }
+
+    def opened_by(fields) = [header_record.merge(fields), *opening_records.drop(1)]
+
+    it "renders what the writer left, says it ended without closing the session, and exits 1" do
+      path = write_journal(opened_by(writer(dead_pid, start_of(Process.pid))) + traffic_records)
+
+      status = described_class.new(selector:, path:, sink: output, paths:, sleeper: never_poll).run
+
+      expect(status).to eq(1)
+      expect(output.string).to include("S found 3 papers")
+      expect(output.string).to include("ended without closing the session", File.basename(path))
+    end
+
+    it "reads a pid now held by a later process as the writer gone" do
+      path = write_journal(opened_by(writer(Process.pid, "1")))
+
+      expect(described_class.new(selector:, path:, sink: output, paths:, sleeper: never_poll).run).to eq(1)
+    end
+
+    it "still says no spawn matched, beside the writer's end" do
+      path = write_journal(opened_by(writer(dead_pid, "1")))
+
+      described_class.new(selector: "beef", path:, sink: output, paths:, sleeper: never_poll).run
+
+      expect(output.string).to include("ended without closing the session", 'no spawn matched selector "beef"')
+    end
+
+    # The writer can land its last records and exit between the read that hit
+    # the end of the file and the question whether it still runs.
+    it "reads what the writer landed before it exited, once it is found gone" do
+      path = write_journal(opened_by(writer(Process.pid, start_of(Process.pid))))
+      probe = instance_double(Lain::Liveness::Probe)
+      allow(probe).to receive(:of) do
+        append_journal(path, traffic_records)
+        :dead
+      end
+
+      status = described_class.new(selector:, path:, sink: output, paths:, probe:, sleeper: never_poll).run
+
+      expect([status, output.string]).to match([1, a_string_including("S found 3 papers")])
+    end
+  end
+
+  describe "a session whose writer may still be writing it" do
+    def start_of(pid) = File.read("/proc/#{pid}/stat").rpartition(")").last.split.fetch(19)
+
+    def writer(pid, start) = { "writer" => { "pid" => pid, "start" => start, "host" => Socket.gethostname } }
+
+    # Appends the closer on the third poll, so a watch that concluded early
+    # returns before it and one that waited returns 0.
+    def watch_until_closed(path, **)
+      polls = 0
+      sleeper = lambda do |_seconds|
+        polls += 1
+        append_journal(path, [closed_record]) if polls == 3
+      end
+      [described_class.new(selector:, path:, sink: output, paths:, sleeper:, **).run, polls]
+    end
+
+    it "keeps tailing while the writer its header records is live" do
+      path = write_journal([header_record.merge(writer(Process.pid, start_of(Process.pid))),
+                            *opening_records.drop(1)])
+
+      expect(watch_until_closed(path)).to eq([0, 3])
+    end
+
+    # The system clock stepping forward moves nothing a start in clock ticks is
+    # compared against, so a live writer stays live however far it steps.
+    it "keeps tailing a live writer after the wall clock steps forward by hours" do
+      Dir.mktmpdir("lain-proc") do |proc_root|
+        FileUtils.mkdir_p(File.join(proc_root, Process.pid.to_s))
+        # Read and written rather than copied: a procfs file reports its size as zero.
+        File.write(File.join(proc_root, Process.pid.to_s, "stat"), File.read("/proc/#{Process.pid}/stat"))
+        stepped = File.read("/proc/stat").sub(/^btime (\d+)$/) { "btime #{Integer(Regexp.last_match(1)) + (3 * 3600)}" }
+        File.write(File.join(proc_root, "stat"), stepped)
+        name = "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{Process.pid}.ndjson"
+        path = write_journal([header_record.merge(writer(Process.pid, start_of(Process.pid)))] +
+                             opening_records.drop(1), name:)
+
+        expect(watch_until_closed(path, probe: Lain::Liveness::Probe.new(proc_root:))).to eq([0, 3])
+      end
+    end
+
+    # A header written before writers were recorded says nothing about its
+    # writer, whatever pid its file's name carries.
+    it "keeps tailing a session whose header records no writer" do
+      gone = Process.spawn("true").tap { |pid| Process.wait(pid) }
+      path = write_journal(opening_records, name: "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{gone}.ndjson")
+
+      expect(watch_until_closed(path)).to eq([0, 3])
+    end
+
+    it "keeps waiting on an empty file, which has no header to name a writer yet" do
+      path = File.join(paths.sessions_dir, "20260723T000000-1.ndjson")
+      File.write(path, "")
+
+      expect(watch_until_closed(path).last).to eq(3)
     end
   end
 end

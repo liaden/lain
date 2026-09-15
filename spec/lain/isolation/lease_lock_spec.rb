@@ -73,7 +73,7 @@ RSpec.describe Lain::Isolation::LeaseLock do
     it "says a lease whose process has exited is dead, rather than calling it another host's" do
       allow(table).to receive(:verdict).with(held).and_return(:dead)
 
-      expect(held.why(table)).to eq("leased by process 42 on box, which has exited")
+      expect(held.why(table)).to eq("leased by process 42 on box, which is no longer the process that took it")
     end
 
     it "completes the duck on every shape: why a lock holds or not, and where its age counts from" do
@@ -83,6 +83,15 @@ RSpec.describe Lain::Isolation::LeaseLock do
       expect(described_class.parse("x").aged_from(created)).to eq(created)
       expect(retained.why(table)).to eq("retained since 2026-09-03T00:00:00Z")
       expect(described_class::UNLOCKED.why(table)).to eq("not locked")
+    end
+
+    it "calls only a lease whose process has exited abandoned" do
+      allow(table).to receive(:verdict).with(held).and_return(:dead, :live, :elsewhere)
+      others = [described_class.parse("lain-retained since=2026-09-03T00:00:00Z"), described_class.parse("x"),
+                described_class::UNLOCKED]
+
+      expect(Array.new(3) { held.abandoned?(table) }).to eq([true, false, false])
+      expect(others.map { |lock| lock.abandoned?(table) }).to all(be(false))
     end
 
     it "releases an unlocked worktree, aged from the checkout" do

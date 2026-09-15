@@ -89,8 +89,11 @@ module Lain
         Journal.records(File.foreach(path), type: SessionRecord::HEADER_TYPE).first || {}
       end
 
-      def initialize(paths: Paths.new)
+      # @param paths [Paths] resolves this project's session directory
+      # @param probe [Liveness::Probe] asks whether an open session's writer runs
+      def initialize(paths: Paths.new, probe: Liveness::Probe.new)
         @paths = paths
+        @probe = probe
       end
 
       # The two SELECTIONS, apart from the opens below, so a caller that must
@@ -360,39 +363,16 @@ module Lain
         [open_notice(path, recording), outcome.notice, *mismatches].compact
       end
 
-      # {Journal.open}'s own naming (`<ts>-<pid>.ndjson`, `.btw` marked or not)
-      # puts the writer's pid IN the filename, so an open session can be asked
-      # about the SPECIFIC process rather than only "it wasn't closed".
-      WRITER_PID = /-(\d+)(?:\.btw)?\.ndjson\z/
-      private_constant :WRITER_PID
-
+      # The header records the process writing the file, so an open session can
+      # be asked about that process rather than only "it wasn't closed". Only a
+      # writer found live is claimed to be writing it still.
       def open_notice(path, recording)
         return unless recording.open?
 
-        pid = writer_pid(path)
-        return "#{File.basename(path)} is still open in process #{pid}" if pid && alive?(pid)
+        writer = Liveness::Writer.from_header(self.class.header(path))
+        return "#{File.basename(path)} is still open in process #{writer.pid}" if writer.verdict(@probe) == :live
 
         "#{File.basename(path)} was not gracefully closed; resuming from its last verified turn"
-      end
-
-      def writer_pid(path)
-        match = WRITER_PID.match(File.basename(path))
-        match && match[1].to_i
-      end
-
-      # Signal 0 asks only "does this pid exist", never delivering one -- the
-      # one question {Process.kill} answers with no side effect and no hang.
-      # ESRCH is the only case this reports as dead; EPERM means a pid exists
-      # that this process cannot itself signal, which this side does not spend
-      # -- claiming a foreign-owned pid is "alive" would be probing someone
-      # else's process for a fact this notice has no business asserting, and a
-      # reused pid (the fixture shape most of this file's specs use) would
-      # misreport a session that crashed years apart from the pid it names.
-      def alive?(pid)
-        Process.kill(0, pid)
-        true
-      rescue Errno::ESRCH, Errno::EPERM
-        false
       end
     end
   end

@@ -131,6 +131,43 @@ RSpec.describe Lain::CLI::Sessions do
       end
     end
 
+    # A `rewound` record moves the head backward, and the turns above its target
+    # stay in the file only because the journal is append-only: they are no
+    # longer the conversation, so a row naming them would list a discarded head.
+    context "with a session that rewound 3 turns" do
+      let(:five) { chain("one", "two", "three", "four", "five") }
+      let(:kept) { five.to_a[1] }
+      let(:name) { "20260101T000000-1.ndjson" }
+
+      def rewound_session(*after)
+        write_session(name, [header(started_at: "2026-01-01T00:00:00.000000Z")] +
+                            five.to_a.map { |turn| Lain::SessionRecord.turn(turn) } +
+                            [Lain::SessionRecord.rewound(from: five.head_digest, to: kept.digest), *after])
+      end
+
+      it "counts only the turns left on the chain and names the rewind's target as the head" do
+        rewound_session
+
+        expect(sessions.listing).to eq("#{name}  2026-01-01T00:00:00  2 turns  open  #{kept.digest[0, 19]}")
+      end
+
+      it "counts a turn committed after the rewind on top of what the rewind kept" do
+        after = five.checkout(kept.digest).commit(role: :user, content: text("instead"))
+        rewound_session(Lain::SessionRecord.turn(after.head))
+
+        expect(sessions.listing).to include("3 turns", after.head_digest[0, 19])
+        expect(sessions.listing).not_to include(five.head_digest[0, 19])
+      end
+
+      it "lists a session rewound to empty as holding no turns and no head" do
+        write_session(name, [header(started_at: "2026-01-01T00:00:00.000000Z")] +
+                            five.to_a.map { |turn| Lain::SessionRecord.turn(turn) } +
+                            [Lain::SessionRecord.rewound(from: five.head_digest, to: nil)])
+
+        expect(sessions.listing).to eq("#{name}  2026-01-01T00:00:00  0 turns  open  -")
+      end
+    end
+
     it "answers an honest empty-state line naming the directory" do
       expect(sessions.listing).to include("no sessions", paths.sessions_dir)
     end

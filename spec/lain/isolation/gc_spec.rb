@@ -141,8 +141,15 @@ RSpec.describe Lain::Isolation::Gc, :seam do
                                         a_string_starting_with("nothing has landed since it was cut")])
     end
 
+    # Unlocked, like the landing checkout above: a lease whose process is gone
+    # is reaped at its cut point, so only a checkout nothing leases shows
+    # what the reflog alone decides.
+    def unlocked_checkout(name)
+      File.join(@root, name).tap { |dir| run_git(@repo_root, "worktree", "add", "-q", "--detach", dir, "main") }
+    end
+
     it "is kept after a detached HEAD moves nowhere, and reaped as landed once HEAD moves on" do
-      dir = lease("w1")
+      dir = unlocked_checkout("w1")
       run_git(dir, "switch", "-q", "--detach")
 
       kept = record_for(gc, dir)
@@ -156,7 +163,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     # gc keeps what it cannot judge: with no reflog, nothing shows HEAD moved.
     # Detached, so git has no branch reflog to answer in its place.
     it "is kept when its HEAD reflog is gone, rather than reaped as landed" do
-      dir = lease("w1")
+      dir = unlocked_checkout("w1")
       FileUtils.rm_f(File.join(admin_of(dir), "logs", "HEAD"))
 
       record = record_for(gc, dir)
@@ -168,11 +175,38 @@ RSpec.describe Lain::Isolation::Gc, :seam do
 
     it "is kept when the repository keeps no reflogs at all" do
       run_git(@repo_root, "config", "core.logAllRefUpdates", "false")
-      dir = lease("w1")
+      dir = unlocked_checkout("w1")
 
       record = record_for(gc, dir)
 
       expect([File.directory?(dir), record.action]).to eq([true, :kept])
+    end
+
+    # A crash leaves its lease lock naming a process that is gone. Nothing is
+    # using the checkout, it holds nothing uncommitted, and a branch reaches its
+    # HEAD, so keeping it for retain_days would keep nothing at all.
+    it "is reaped at once when its lease names a process that has exited, being clean" do
+      dir = lease("w1")
+
+      record = record_for(gc, dir)
+
+      expect(File.exist?(dir)).to be(false)
+      expect(summary(record))
+        .to match([:reaped, :worktree, a_string_including("which is no longer the process that took it")])
+    end
+
+    it "is kept, not reaped, while the process its lease names is live" do
+      dir = lease("w1", table: Lain::Isolation::LeaseLock::ProcessTable.new)
+
+      expect(record_for(gc, dir).action).to eq(:kept)
+      expect(File.directory?(dir)).to be(true)
+    end
+
+    it "is kept when its lease's process has exited but its tree holds uncommitted work" do
+      dir = lease("w1")
+      File.write(File.join(dir, "README"), "edited\n")
+
+      expect(summary(record_for(gc, dir))).to match([:kept, :worktree, a_string_starting_with("uncommitted changes")])
     end
 
     it "is reaped once it expires, without being called landed" do

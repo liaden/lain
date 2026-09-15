@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "socket"
 require "stringio"
 require "thor"
 require "tmpdir"
@@ -282,13 +283,47 @@ RSpec.describe Lain::CLI::Resume do
     let(:two) { chain("hi", "hello") }
     let(:name) { "20260101T000000-#{Process.pid}.ndjson" }
 
-    before { write_session(name, [open_header] + turn_records(two)) }
+    before { write_session(name, [open_header.merge(Lain::Liveness::Writer.current.to_header)] + turn_records(two)) }
 
     it "says the session is still open in that process, not that it wasn't gracefully closed" do
       result = resume.call
 
       expect(result.notices.join).to include(name, "still open in process #{Process.pid}")
       expect(result.notices.join).not_to include("not gracefully closed")
+    end
+  end
+
+  # A pid is reused once its process exits, so a running process at the
+  # recorded pid proves nothing unless it has the start the header recorded.
+  describe "an open session whose writer's pid now belongs to a later process" do
+    let(:reused) { Lain::Liveness::Writer.current.with(start: "1") }
+
+    before do
+      write_session("20260101T000000-1.ndjson", [open_header.merge(reused.to_header)] + turn_records(chain("hi")))
+    end
+
+    it "says the session was not gracefully closed" do
+      expect(resume.call.notices.join).to include("not gracefully closed")
+    end
+  end
+
+  # Signal 0 on another user's process is refused with EPERM, which is still a
+  # process that exists; with the start the header recorded, it is the writer.
+  describe "an open session whose writer runs as another user" do
+    let(:name) { "20260101T000000-4242.ndjson" }
+    let(:writer) { Lain::Liveness::Writer.new(pid: 4242, start: "777", host: Socket.gethostname) }
+    let(:probe) do
+      instance_double(Lain::Liveness::Probe).tap do |probe|
+        allow(probe).to receive(:of).with(4242, started_at: "777").and_return(:live)
+      end
+    end
+
+    before { write_session(name, [open_header.merge(writer.to_header)] + turn_records(chain("hi", "hello"))) }
+
+    it "says the session is still open in that process" do
+      result = described_class.new(paths:, probe:).call
+
+      expect(result.notices.join).to include(name, "still open in process 4242")
     end
   end
 

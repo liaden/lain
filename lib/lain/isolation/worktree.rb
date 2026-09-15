@@ -89,6 +89,19 @@ module Lain
         end
       end
 
+      # `worktree add` writes the checkout's `.git` file and nothing rewrites
+      # it in place, so its mtime is when the checkout was cut. One that cannot
+      # be read counts as cut now, which errs towards keeping.
+      #
+      # @param path [String] a checkout
+      # @param clock [#call] answers now
+      # @return [Time]
+      def self.cut_at(path, clock)
+        File.mtime(File.join(path, ".git"))
+      rescue SystemCallError
+        clock.call
+      end
+
       # @param repo_root [String] the repository the worktrees branch from
       # @param root [String] the base directory per-worker worktrees live under
       #   (relocatable, injected -- the {Workspace::Snapshot} root idiom)
@@ -142,9 +155,13 @@ module Lain
       # @raise [WorkingBranch::Refused] if the base names no commit
       def acquire(worker_id)
         path = worktree_path(worker_id)
-        base = @monitor.synchronize { check_out(path, worker_id) }
+        base = @monitor.synchronize { check_out(path) }
         Lease.new(worker_env: worker_env_for(path, worker_id), on_release: -> { release_path(path) },
                   origin: Lease::Origin.new(path:, base:, branch: @base.name))
+      rescue Refused => e
+        # The path is a hash of the worker id, so a refusal naming only the
+        # path cannot say whose lease it was.
+        raise Refused, "worker #{worker_id}: #{e.message}"
       end
 
       # @param path [String] a lease's checkout, as its origin names it
@@ -166,8 +183,8 @@ module Lain
       # The tip is read before anything touches disk, so a backend with no base
       # refuses leaving nothing behind.
       # @return [String] the SHA the checkout was cut from
-      def check_out(path, worker_id)
-        raise Refused, "worktree path #{path} is already leased (worker #{worker_id})" if @leased.include?(path)
+      def check_out(path)
+        raise Refused, "worktree path #{path} is already leased" if @leased.include?(path)
 
         base = @base.tip
         FileUtils.mkdir_p(@root)

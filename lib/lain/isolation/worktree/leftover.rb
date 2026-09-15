@@ -9,7 +9,8 @@ module Lain
       # Whatever is registered at a path a new lease is about to take: a
       # crash's checkout, or one retained on release for its uncommitted work.
       # Neither is destroyed. It moves aside under {RETAINED}, locked as
-      # retained from when it first became nobody's, and the path is free. A
+      # retained from when it first became nobody's -- a crash's from when it
+      # was cut, never from the move -- and the path is free. A
       # leftover whose lock still holds -- a live process, another host, a
       # lock lain did not write -- is refused instead, since clearing it would
       # pull a checkout out from under whoever holds it.
@@ -29,7 +30,7 @@ module Lain
         # @param registry [Registry] the repository's worktree list
         # @param root [String] the worktree root the aside directory sits under
         # @param process_table [LeaseLock::ProcessTable] judges the leftover's lock
-        # @param clock [#call] answers now, for a leftover with no retention stamp
+        # @param clock [#call] answers now, for a leftover whose cut cannot be read
         def initialize(registry:, root:, process_table:, clock:)
           @registry = registry
           @root = root
@@ -52,7 +53,7 @@ module Lain
           return drop(entry) unless File.directory?(entry.path)
 
           detach(entry) unless entry.branch.empty?
-          relocate(entry.path, LeaseLock::Retained.at(entry.lock.aged_from(@clock.call)))
+          relocate(entry.path, LeaseLock::Retained.at(entry.lock.aged_from(Worktree.cut_at(entry.path, @clock))))
         end
 
         def refuse_held(entry)

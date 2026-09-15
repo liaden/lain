@@ -46,13 +46,18 @@ module Lain
     # `api_base`, `num_ctx`, `num_batch` -- the keys {Bench::Session}'s own
     # header already spells `provider` with, so one reader reads both. It is
     # what a resumed or forked chat defaults its backend to.
-    def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {})
+    #
+    # `writer:` is the process writing the file ({Liveness::Writer}), so a
+    # reader elsewhere can tell a crashed session from a quiet one; an
+    # unrecorded writer writes no field.
+    def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {},
+               writer: Liveness::Writer::UNRECORDED)
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), profile)
+      record = record.merge(context_pipeline(context), profile, writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 

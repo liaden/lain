@@ -161,6 +161,17 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
     ensure
       held&.release
     end
+
+    # The path is a hash of the worker id, so a refusal naming only the path
+    # leaves a reader unable to say whose lease it was.
+    it "names the worker whose lease was refused" do
+      held = backend.acquire("worker-1")
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
+
+      expect { restarted.acquire("worker-1") }.to raise_error(described_class::Refused, /worker-1/)
+    ensure
+      held&.release
+    end
   end
 
   describe "#acquire" do
@@ -198,6 +209,22 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       expect(lease.worker_env.cwd).to eq(path)
       expect(File.directory?(aside)).to be(true)
       expect(lock_line(aside)).to match(/\Alocked lain-retained since=\S+\z/)
+    ensure
+      lease&.release
+    end
+
+    # A crash's checkout has been nobody's since it was cut, not since the
+    # restart found it, so moving it aside must not hand it a fresh week.
+    it "stamps a crashed leftover moved aside as retained from when it was cut, not from the move" do
+      crashed = crashed_backend.acquire("worker-1").worker_env.cwd
+      cut = Time.utc(2026, 9, 1, 12)
+      File.utime(cut, cut, File.join(crashed, ".git"))
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:, clock: -> { Time.utc(2026, 9, 14) })
+
+      lease = restarted.acquire("worker-1")
+      aside = Dir.glob(File.join(@root, "retained", "*")).first
+
+      expect(lock_line(aside)).to eq("locked lain-retained since=2026-09-01T12:00:00Z")
     ensure
       lease&.release
     end

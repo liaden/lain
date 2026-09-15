@@ -140,8 +140,9 @@ module Lain
       #   duplicated bytes are the accepted price of not routing the wide one.
       # @param profile [Hash{String=>Object}] the run profile's header fields
       #   (`CLI::RunProfile#to_header`); empty writes none
+      # @param writer [Liveness::Writer] the process writing this session
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                     message_journal: nil, profile: {})
+                     message_journal: nil, profile: {}, writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal
         @written = WrittenChain.new(written)
@@ -149,7 +150,7 @@ module Lain
         # is the only question asked of it -- unlike {WrittenChain}, where the
         # ORDER is the claim.
         @spawned = Set.new
-        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:)
+        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:, writer:)
       end
 
       # The {Event::ChainWriter} observer duck: journal an off-render-chain

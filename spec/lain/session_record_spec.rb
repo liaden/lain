@@ -86,6 +86,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("turn")).to be_empty
   end
 
+  # A reader in another process can then tell a crashed session from a quiet
+  # one by asking after the process that wrote it.
+  it "records the process writing the session in that header" do
+    scribe
+
+    expect(Lain::Liveness::Writer.from_header(of_type("session").first)).to eq(Lain::Liveness::Writer.current)
+  end
+
   it "writes the recorded profile's fields into that header, and none it was not handed" do
     described_class.new(journal:, context:, toolset:, workspace:,
                         profile: { "provider" => "ollama", "api_base" => "http://127.0.0.1:11434" })
@@ -863,6 +871,10 @@ RSpec.describe Lain::SessionRecord, ".header" do
 
   it "writes no context_pipeline key for a context no name was given" do
     expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("context_pipeline")
+  end
+
+  it "records no writer unless handed one" do
+    expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("writer")
   end
 
   describe "on a real launch" do

@@ -19,7 +19,10 @@ module Lain
     # A CHECKOUT STILL WHERE IT WAS CUT HAS NOT LANDED. Cut at the trunk's
     # tip, its HEAD is reached from the trunk the moment it exists, which says
     # nothing of whether anyone is done with it. While young it is kept; once
-    # expired it goes, holding nothing a branch does not.
+    # expired it goes, holding nothing a branch does not. A lease whose process
+    # has exited does say: nobody is using that checkout, so it goes at once. A
+    # subprocess that outlived it may still be in there, but any file it left
+    # untracked keeps the tree, so what goes is only what a branch holds.
     #
     # A LIVE LEASE IS NEVER TOUCHED. Liveness is read off the checkout's own
     # {LeaseLock}, never off a journal, which a run may not have kept. A lock
@@ -292,7 +295,8 @@ module Lain
         end
 
         def age(entry)
-          Age.new(deadline: entry.lock.aged_from(created(entry.path)) + (@retain_days * DAY), now: @clock.call)
+          Age.new(deadline: entry.lock.aged_from(Worktree.cut_at(entry.path, @clock)) + (@retain_days * DAY),
+                  now: @clock.call)
         end
 
         def settle(entry, age)
@@ -302,9 +306,12 @@ module Lain
           return Records.kept(:worktree, entry.path, "uncommitted changes; retained until #{age}") if dirty
           return Records.kept(:worktree, entry.path, "unmerged commits; retained until #{age}") if landing.empty?
           return reap(entry, landing) if moved?(entry)
+          return reap(entry, "#{entry.lock.why(@table)}; clean, and a branch reaches its HEAD") if abandoned?(entry)
 
           unmoved(entry, age)
         end
+
+        def abandoned?(entry) = entry.lock.abandoned?(@table)
 
         # The branch pass's "nothing has landed on it since lain created it",
         # for a checkout: `worktree add` opens the checkout's HEAD reflog at
@@ -384,15 +391,6 @@ module Lain
           return Records.reaped(:worktree, path, GONE) if anchors.empty?
 
           Records.kept(:worktree, path, "#{GONE}; its commit is kept on #{anchors.join(", ")}", anchors)
-        end
-
-        # `worktree add` writes the checkout's `.git` file and nothing rewrites
-        # it, so its mtime is when the checkout was cut. One that cannot be
-        # read counts as cut now, which errs towards keeping.
-        def created(path)
-          File.mtime(File.join(path, ".git"))
-        rescue SystemCallError
-          @clock.call
         end
       end
 
