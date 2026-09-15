@@ -304,8 +304,18 @@ module Lain
     # permanently and silently. Known and deferred.
     def observe_consumption(event)
       return observe_commit(event) if turn_usage?(event)
+      return observe_refusal(event) if event.is_a?(Telemetry::WindowPressure)
 
       @inbox.retire(event.digests) if event.is_a?(Telemetry::QuestionsConsumed)
+    end
+
+    # A prompt the provider refused for not fitting its context, measured with
+    # its own tokenizer: the reading {Agent::Accounting#observe_refusal} takes
+    # for the prompt line, taken here too so the HUD and the prompt do not tell
+    # two stories about the context that just overflowed. Nothing was billed,
+    # so `run_tokens` is left alone.
+    def observe_refusal(event)
+      record_occupancy(occupancy_of(Usage.new(input_tokens: event.prompt_tokens), event.model))
     end
 
     # A committed turn's one record and the two unrelated debts it settles: what

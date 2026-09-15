@@ -539,9 +539,23 @@ module Lain
         # turn count, and one that re-resolved per READ would let a single
         # turn's three readers see three windows.
         window = backend.context_window
+        telemetry = mount.instrumentation
         { provider:, context_window: window,
-          instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle, board),
-                                                      turn_middleware: turn_phase(timeline, window)) }
+          instrumentation: telemetry.with(tool_middleware: ToolGuard.stack(chronicle, board),
+                                          turn_middleware: turn_phase(timeline, window),
+                                          model_middleware: model_phase(telemetry)) }
+      end
+
+      # The model stack, with the request budget OUTERMOST, so the refusal it
+      # translates is the one every other member has already let pass. Composed
+      # here rather than inside {Chronicle.instrumentation}, which has no model
+      # stack at all under --no-journal, and a refused prompt is no less
+      # refused for going unrecorded. Its record goes to the record journal --
+      # the tee in a cockpit -- because the {StatusFeed} takes its reading. It
+      # asks the run's compaction source whether compaction is a move to offer.
+      def model_phase(telemetry)
+        budget = Middleware::RequestBudget.new(journal: chronicle.record_journal, compaction: telemetry.pipeline_source)
+        Middleware::Stack.new([budget, *telemetry.model_middleware.to_a])
       end
 
       # The turn stack, with the window refresh OUTERMOST -- ahead of the

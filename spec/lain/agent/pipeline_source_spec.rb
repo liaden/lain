@@ -16,6 +16,12 @@ RSpec.describe Lain::Agent::PipelineSource::Null do
     expect(context_for).to be(base)
   end
 
+  # With compaction off there is nothing it could ever drop, so a refusal
+  # asking whether compaction could make room is told no.
+  it "never has anything to drop" do
+    expect(described_class.droppable?).to be(false)
+  end
+
   it "answers the base before any turn has reported usage" do
     expect(context_for(usage: nil)).to be(base)
   end

@@ -218,6 +218,14 @@ module Lain
     # its words: nothing here can say whether that call ran. Text committed on
     # top of an orphan is a chain every later request and derivation refuses.
     #
+    # A prompt the provider refused whole for not fitting its context
+    # ({Lain::WindowExceeded}) is WITHDRAWN: no model saw it, so the head goes
+    # back to where it stood before this ask's text, and a re-sent prompt does
+    # not stack on a turn nothing answered. The Timeline stays lossless -- the
+    # turn is still in the Store -- and only while that text is still the head:
+    # a tool round that ran before a later refusal in the same ask is work that
+    # happened, and stays.
+    #
     # @return [Lain::Response] the final assistant response
     # @raise [Tool::Cancellation::Unpairable] when the stranded call names no
     #   id, so nothing can answer it and nothing is committed over it
@@ -225,8 +233,9 @@ module Lain
       @dispatch_lock.synchronize do
         reopen! unless awaiting_user?
         answer_stranded(:unknown)
-        @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
-        run(on_stream_started:)
+        before = @timeline
+        @timeline = asked = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
+        withdrawing(before, asked) { run(on_stream_started:) }
       end
     end
 
@@ -323,6 +332,13 @@ module Lain
     end
 
     private
+
+    def withdrawing(before, asked)
+      yield
+    rescue WindowExceeded
+      @timeline = before if @timeline.equal?(asked)
+      raise
+    end
 
     # The repair every stranded head gets, through the one mint every repair
     # shares; a head with nothing stranded is left exactly as it is.
@@ -553,11 +569,18 @@ module Lain
     # bypasses the pure function rather than traveling through its inputs.
     # {RequestOverride#deliver} owns the one-shot's fine print: consumed on
     # success, restored on a raise so a retry re-sends the edit.
+    #
+    # A prompt refused for not fitting the context still leaves its measure:
+    # the provider's exact count becomes the reading the next render's
+    # compaction decision reads ({Accounting#observe_refusal}).
     def call_model(on_stream_started)
       dispatch!
       @request_override.deliver(render: -> { render_request }) do |request|
         model_caller.call(request, on_stream_started:)
       end
+    rescue WindowExceeded => e
+      accounting.observe_refusal(prompt_tokens: e.prompt_tokens)
+      raise
     end
 
     # Composing the Workspace with the session's live reminders per render keeps

@@ -1088,6 +1088,76 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  # The model phase's translator for a prompt the provider refused whole is
+  # composed HERE, beside the turn phase's window refresh, and not inside the
+  # chronicle's instrumentation: under --no-journal the chronicle has no model
+  # stack at all, and a refused prompt is no less refused for going unrecorded.
+  describe "the request budget a chat's model phase opens with" do
+    # Ollama's own refusal, raised the way the provider raises it, for any
+    # prompt carrying the marker.
+    let(:refusing_provider) do
+      Class.new(Lain::Provider::Mock) do
+        def context_window_tokens(_model) = 32_768
+
+        def complete(request, **)
+          if JSON.generate(request.messages).include?("DOES-NOT-FIT")
+            @requests << request
+            raise Lain::Provider::Ollama::WindowExceededError.new(
+              "request (80000 tokens) exceeds the available context size (32768 tokens)",
+              prompt_tokens: 80_000, window_tokens: 32_768, source: "ollama", status: 400
+            )
+          end
+
+          super
+        end
+      end.new(responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                             stop_reason: :end_turn)])
+    end
+
+    let(:served_backend) do
+      offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: refusing_provider)
+    end
+
+    def asker(over: chronicle)
+      wired = described_class.new(options: { grace: 5 }, chronicle: over, status_feed:)
+      recorder, session = wired.run_state(nil)
+      agent = wired.wire_agent(channel:, recorder:, session:, backend: served_backend)
+      Lain::CLI::Repl::Ask.new(agent:, tty: nil, chronicle: over)
+    end
+
+    context "when the chat started with --no-journal" do
+      it "ends the ask with the refusal naming the provider's numbers, and answers the next prompt" do
+        ask = asker
+
+        outcome = ask.attempt("DOES-NOT-FIT")
+
+        expect(outcome).to be_a(Lain::Middleware::RequestBudget::OverWindow)
+        expect(outcome.message).to include("80000", "32768", "/rewind")
+        expect(ask.attempt("ping").text).to eq("settled")
+        expect(refusing_provider.call_count).to eq(2)
+      end
+    end
+
+    context "when the chat is journaling" do
+      let(:journal_io) { StringIO.new }
+      let(:recording) do
+        Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "budget-spec.ndjson")
+      end
+
+      def journaled(type)
+        journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
+      end
+
+      it "records the refusal in the session record with the provider's exact figures" do
+        asker(over: recording).attempt("DOES-NOT-FIT")
+
+        expect(journaled("window_pressure"))
+          .to contain_exactly(include("kind" => "over_window", "source" => "ollama", "prompt_tokens" => 80_000,
+                                      "window_tokens" => 32_768))
+      end
+    end
+  end
+
   # The assembly, and the point the whole chunk converges on. A plain `lain
   # chat` compacts, which means the Agent gets three things Wiring never passed
   # before: the run's per-turn Context source, the eager-summary observer its

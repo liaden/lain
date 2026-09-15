@@ -68,6 +68,19 @@ module Lain
       include ErrorWrapping.under(Lain::Error)
       include Admitted
 
+      # Ollama's refusal of a prompt that does not fit the context its runner
+      # loaded, which it gives only because {Encoding#encode} asks it not to
+      # truncate. Still an {APIStatusError}, so a caller rescuing this arm's
+      # failures still catches it; also a {Lain::WindowExceeded}, so the readers
+      # that act on the exact figures need not know which provider spoke.
+      class WindowExceededError < APIStatusError
+        include Lain::WindowExceeded
+      end
+
+      # The `type` ollama 0.32.12 tags the refusal with, inside an `error`
+      # string that is itself JSON.
+      EXCEEDED = "exceed_context_size_error"
+
       DEFAULT_MODEL = "qwen3:4b"
 
       # Same refusal shape as {.deployment_free}: a keyword whose effect another
@@ -351,6 +364,30 @@ module Lain
       end
 
       private
+
+      # The one 400 this arm translates, and only when the body names both
+      # numbers: a refusal that cannot say how big the prompt was or how big
+      # the context is is not one a caller can act on, so it stays the plain
+      # status error it was. The vendored middleware has already reduced the
+      # body to its `error` string by here, on both paths.
+      def wrap_error(error)
+        wrapped = super
+        refusal = wrapped.is_a?(APIStatusError) && window_exceeded(wrapped.message)
+        refusal ? WindowExceededError.new(wrapped.message, status: wrapped.status, **refusal) : wrapped
+      end
+
+      # @return [Hash, nil] the refusal's figures, or nil for any other body
+      def window_exceeded(message)
+        detail = JSON.parse(message.to_s).then { |body| body.is_a?(Hash) ? body["error"] : nil }
+        return nil unless detail.is_a?(Hash) && detail["type"] == EXCEEDED
+
+        prompt_tokens, window_tokens = detail.values_at("n_prompt_tokens", "n_ctx")
+        return nil unless [prompt_tokens, window_tokens].all? { |count| count.is_a?(Integer) && count.positive? }
+
+        { prompt_tokens:, window_tokens:, source: "ollama" }
+      rescue JSON::ParserError
+        nil
+      end
 
       # {Admitted}'s collaborators. These are the CALLER's properties, which is
       # why they arrive at construction and not with a round trip.

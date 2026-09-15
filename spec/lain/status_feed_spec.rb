@@ -756,6 +756,36 @@ RSpec.describe Lain::StatusFeed do
       expect(published["occupancy"]).to eq(0.5)
     end
 
+    # A provider that refused a prompt for not fitting its context measured it
+    # exactly, and the run's own Agent takes that count as its reading -- so
+    # this surface takes it too, or the prompt line and the HUD tell a human two
+    # different stories about the one context that just overflowed.
+    context "when a prompt was refused for not fitting the context" do
+      def pressure(prompt_tokens:, model: "claude-opus-4-8")
+        Lain::Telemetry::WindowPressure.new(kind: :over_window, source: "ollama", model:,
+                                            request_digest: "blake3:refused", prompt_tokens:, window_tokens: 8192)
+      end
+
+      it "publishes the refused prompt's exact count as the occupancy" do
+        feed = described_class.new(path:, context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 }))
+        feed << sized_turn_usage(input_tokens: 4096, model: "qwen3:4b")
+
+        feed << pressure(prompt_tokens: 12_011, model: "qwen3:4b")
+
+        expect(published["occupancy"]).to eq(12_011.fdiv(8192))
+        expect(published["unmeasured_turns"]).to eq(0)
+      end
+
+      it "adds nothing to what the run spent, since nothing was generated" do
+        feed = described_class.new(path:)
+        feed << sized_turn_usage(input_tokens: 500_000)
+
+        feed << pressure(prompt_tokens: 900_000)
+
+        expect(published["run_tokens"]).to eq(500_005)
+      end
+    end
+
     it "counts every token billed on the way in, cached or not -- Usage#total_input_tokens" do
       feed = described_class.new(path:)
 

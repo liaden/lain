@@ -51,8 +51,18 @@ module Lain
         # ordering that depends on how the Request's Hashes were built. Ollama's
         # wire default for `stream` is `true`, so the flag is always sent
         # explicitly.
+        #
+        # `truncate: false` on every request, because ollama's default is to
+        # CUT a prompt that does not fit and evaluate the rest in silence: from
+        # the front when the last message alone overflows (reporting exactly
+        # `num_ctx/2 + 2` tokens), and by dropping whole older messages
+        # otherwise, reporting a count that looks honest. Either way the system
+        # prompt and the tool schemas can be what went, and nothing in the reply
+        # says so. Asked not to, 0.32.12 refuses with HTTP 400 naming the exact
+        # prompt count and the context it loaded, on the streaming and the
+        # non-streaming path alike -- see {Ollama#window_exceeded}.
         def encode(request)
-          { model: request.model, messages: encode_messages(request), stream: request.stream }
+          { model: request.model, messages: encode_messages(request), stream: request.stream, truncate: false }
             .merge(optional_fields(request))
         end
 

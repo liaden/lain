@@ -1913,6 +1913,23 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(decisions.first).to include("nothing_droppable" => false, "compacted" => true)
     end
+
+    # The same fact, asked live by a refusal that has to decide whether to
+    # offer compaction as a way to make room: offering it over an empty head
+    # sends a human after the one move that cannot happen.
+    it "answers whether the last render left anything to drop, as the decision recorded it" do
+      stuck = source(need: build_need(byte_threshold: 1), hard_cap: 1, keep_last: 6)
+      roomy = source
+
+      context_for(stuck, timeline(5))
+      context_for(roomy, timeline)
+
+      expect([stuck.droppable?, roomy.droppable?]).to eq([false, true])
+    end
+
+    it "offers nothing to drop before any render has measured a head" do
+      expect(source.droppable?).to be(false)
+    end
   end
 
   # The record above is written for a journal reader after the fact. A human

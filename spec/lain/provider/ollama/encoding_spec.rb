@@ -14,6 +14,25 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
                       messages: [{ role: "user", content: "hi" }], **overrides)
   end
 
+  # Left to its default, ollama cuts a prompt that does not fit its context and
+  # evaluates the remainder: from the front when the last message alone
+  # overflows, and by dropping whole older messages otherwise -- the system
+  # prompt and every tool schema among them, with nothing in the reply to say
+  # so. Asked not to, 0.32.12 refuses the request with HTTP 400 naming the exact
+  # prompt count and the context size, on both the streaming and the
+  # non-streaming path.
+  describe "truncation" do
+    it "asks ollama to refuse a prompt that does not fit rather than cut it" do
+      expect(encoder.encode(request)).to include(truncate: false)
+    end
+
+    it "asks it on every request, whatever else the request carries" do
+      encoded = encoder.encode(request(stream: true, extra: { "num_ctx" => 8192, "think" => true }))
+
+      expect(encoded).to include(truncate: false, think: true, options: { num_ctx: 8192 })
+    end
+  end
+
   describe "structured-answer format" do
     let(:schema) do
       { "type" => "object", "properties" => { "answer" => { "type" => "string" } }, "required" => ["answer"] }
@@ -30,7 +49,8 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     it "encodes byte-identically to today when no structured format is present" do
       encoded = encoder.encode(request)
 
-      expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false)
+      expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
+                            truncate: false)
       expect(encoded.key?(:format)).to be(false)
     end
 
@@ -52,7 +72,8 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     it "drops an extra key that is neither a sampler key nor a structured_output marker" do
       encoded = encoder.encode(request(extra: { "keep_alive" => "5m" }))
 
-      expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false)
+      expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
+                            truncate: false)
     end
 
     # Review SHOULD-FIX: a nil marker (key present, value nil) must no-op

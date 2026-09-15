@@ -41,6 +41,21 @@ module Lain
         @usage
       end
 
+      # A prompt the provider refused whole for not fitting its context, which
+      # it measured with its own tokenizer against the context it loaded: the
+      # most believable reading a run gets, and the only one a refused turn
+      # yields. Nothing was generated or billed, so nothing is summed and no
+      # record lands. Without it compaction's approaching-window signal goes on
+      # reading the last ANSWERED turn and never fires, and every later prompt
+      # is refused the same way.
+      #
+      # @param prompt_tokens [Integer] the provider's exact prompt count
+      # @return [Integer, nil] the current reading
+      def observe_refusal(prompt_tokens:)
+        take_reading(Usage.new(input_tokens: prompt_tokens))
+        @last_turn_usage
+      end
+
       # Current context occupancy: the billed-on-the-way-in tokens of the most
       # recent response that reported any, not the run's cumulative sum. `#usage`
       # answers "what has this run spent"; compaction's `Need` needs "how full is

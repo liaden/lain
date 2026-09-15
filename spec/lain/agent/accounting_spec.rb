@@ -171,4 +171,40 @@ RSpec.describe Lain::Agent::Accounting do
       end
     end
   end
+
+  # A provider that refuses a prompt for not fitting its context has measured
+  # it exactly, with its own tokenizer, against the context it loaded -- the
+  # most believable reading a run can get, and the only one a refused turn
+  # yields. Without it compaction's approaching-window signal keeps reading
+  # the last answered turn and never fires, so every later prompt is refused
+  # the same way.
+  describe "#observe_refusal" do
+    it "takes the provider's exact prompt count as the current reading" do
+      accounting = described_class.new
+      accounting.observe(response(input: 7_000, output: 5), digest: "blake3:one")
+
+      accounting.observe_refusal(prompt_tokens: 12_011)
+
+      expect(accounting.last_turn_usage).to eq(12_011)
+    end
+
+    it "spends nothing and records nothing, since nothing was generated or billed" do
+      accounting = described_class.new(journal:)
+      accounting.observe(response(input: 7_000, output: 5), digest: "blake3:one")
+
+      accounting.observe_refusal(prompt_tokens: 12_011)
+
+      expect(accounting.usage).to eq(Lain::Usage.new(input_tokens: 7_000, output_tokens: 5))
+      expect(records.size).to eq(1)
+    end
+
+    it "leaves the reading standing on a count that says nothing" do
+      accounting = described_class.new
+      accounting.observe(response(input: 7_000, output: 5), digest: "blake3:one")
+
+      accounting.observe_refusal(prompt_tokens: 0)
+
+      expect(accounting.last_turn_usage).to eq(7_000)
+    end
+  end
 end

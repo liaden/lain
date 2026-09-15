@@ -296,12 +296,17 @@ module Lain
           @journal = journal
           @sink = sink
           @stalled = false
+          @droppable = false
         end
+
+        # @return [Boolean] whether the last recorded decision had a head to drop
+        def droppable? = @droppable
 
         # @param diagnosis [Diagnosis] this turn's
         # @return [self]
         def record(diagnosis)
           @journal << diagnosis.decision
+          @droppable = !diagnosis.decision.nothing_droppable
           stalled = diagnosis.stalled?
           @sink.puts(diagnosis.line) if stalled && !@stalled
           @stalled = stalled
@@ -394,6 +399,14 @@ module Lain
         @idle.touch
         self
       end
+
+      # Whether the last render left anything older than `keep_last` that a
+      # compaction could drop -- the decision's own `nothing_droppable`, asked
+      # live by a refusal deciding whether compaction is a move worth offering.
+      # False before any render has measured a head.
+      #
+      # @return [Boolean]
+      def droppable? = @reporting.droppable?
 
       # {Agent::PipelineSource}'s duck.
       #

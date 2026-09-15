@@ -952,6 +952,88 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  # A provider can refuse a prompt whole for not fitting the context it loaded
+  # -- ollama does once it is asked not to truncate -- naming the exact prompt
+  # count. No model saw that prompt and nothing was generated, so the ask that
+  # sent it leaves the head where it stood, and the count becomes the reading
+  # compaction measures the next render against.
+  describe "a prompt refused for not fitting the context" do
+    let(:refusal_class) { Class.new(Lain::Error) { include Lain::WindowExceeded } }
+    let(:book) { Lain::ContextWindow.new(windows: { "opus" => 8192 }) }
+
+    def refusal = refusal_class.new("too long", prompt_tokens: 12_011, window_tokens: 8192, source: "spec")
+
+    # Answers each call with the next outcome, raising the ones that are errors.
+    def scripted(*outcomes)
+      Class.new do
+        define_method(:initialize) { |list| @list = list }
+        define_method(:complete) do |_request|
+          outcome = @list.shift || raise("script exhausted")
+          outcome.is_a?(Exception) ? raise(outcome) : outcome
+        end
+      end.new(outcomes)
+    end
+
+    def agent_over(*outcomes) = described_class.new(provider: scripted(*outcomes), toolset:, context:)
+
+    it "refuses the ask with the provider's refusal, so the caller can say it" do
+      a = agent_over(text_response("hello"), refusal)
+      a.ask("hi")
+
+      expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+    end
+
+    it "leaves the head where it stood before the refused prompt, keeping the turn in the store" do
+      a = agent_over(text_response("hello"), refusal)
+      a.ask("hi")
+      head = a.timeline.head_digest
+      stored = a.timeline.store.size
+
+      expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+
+      expect(a.timeline.head_digest).to eq(head)
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
+      expect(a.timeline.store.size).to be > stored
+    end
+
+    it "answers the next prompt on top of the head the refusal left, with no refused turn stacked under it" do
+      a = agent_over(text_response("hello"), refusal, text_response("answered"))
+      a.ask("hi")
+      expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+
+      expect(a.ask("a shorter one").text).to eq("answered")
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+      expect(a.timeline.to_a[2].content.first["text"]).to eq("a shorter one")
+    end
+
+    it "takes the refused prompt's exact count as the reading" do
+      a = agent_over(text_response("hello", usage: Lain::Usage.new(input_tokens: 4096, output_tokens: 1)), refusal)
+      a.ask("hi")
+      expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+
+      expect(a.occupancy(context_window: book)).to eq(12_011.fdiv(8192))
+    end
+
+    # The tool round before the refusal RAN, and its results are what the model
+    # asked for: moving the head back past them would unsay work that happened.
+    # Only the prompt this ask added is withdrawn, and only while it is still
+    # the head.
+    it "keeps a tool round that ran before a refusal later in the same ask" do
+      a = agent_over(tool_response(["tu_1", "echo", { "text" => "a" }]), refusal)
+
+      expect { a.ask("hi") }.to raise_error(refusal_class)
+
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+    end
+
+    it "leaves any other failure's prompt committed, as it always has" do
+      a = agent_over(Lain::Error.new("provider down"))
+
+      expect { a.ask("hi") }.to raise_error(Lain::Error, "provider down")
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user])
+    end
+  end
+
   describe "#rewind" do
     it "moves the head back and reopens the loop" do
       a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response])

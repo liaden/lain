@@ -498,6 +498,78 @@ RSpec.describe Lain::Provider::Ollama do
 
   # The sync path echoes request.stream onto the wire (Ollama's wire default is
   # true, so the flag is always sent explicitly); complete routes to sync_post.
+  # What ollama 0.32.12 answers a prompt that does not fit its context once it is
+  # asked not to truncate (the encoder always asks). The body is the REAL one,
+  # taken off localhost:11434 for a 12,011-token prompt against `num_ctx` 2048:
+  # the `error` string is itself JSON, carrying the exact prompt count and the
+  # context the runner was loaded with. Measured on both paths, and never
+  # retried -- one round trip, 0.25s.
+  describe "a prompt refused for not fitting the context", :webmock do
+    let(:refusal_body) do
+      JSON.generate(
+        "error" => JSON.generate(
+          "error" => { "code" => 400, "type" => "exceed_context_size_error",
+                       "message" => "request (12011 tokens) exceeds the available context size (2048 tokens), " \
+                                    "try increasing it",
+                       "n_prompt_tokens" => 12_011, "n_ctx" => 2048 }
+        )
+      )
+    end
+
+    def stub_refusal(body = refusal_body)
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_return(status: 400, headers: { "Content-Type" => "application/json" }, body:)
+    end
+
+    def refused(stream:)
+      described_class.new(config: zero_retry_config).complete(request(stream:))
+      raise "expected a refusal"
+    rescue Lain::Provider::Ollama::APIStatusError => e
+      e
+    end
+
+    [false, true].each do |stream|
+      context "when stream is #{stream}" do
+        it "raises one typed error carrying the exact prompt count and the context size" do
+          stub_refusal
+
+          error = refused(stream:)
+
+          expect(error).to be_a(Lain::Provider::Ollama::WindowExceededError)
+          expect(error).to be_a(Lain::WindowExceeded)
+          expect(error).to have_attributes(prompt_tokens: 12_011, window_tokens: 2048, source: "ollama", status: 400)
+        end
+
+        it "keeps ollama's own sentence as the message" do
+          stub_refusal
+
+          expect(refused(stream:).message).to include("request (12011 tokens) exceeds the available context size")
+        end
+
+        it "is asked once, since a prompt that did not fit will not fit again" do
+          stub = stub_refusal
+          refused(stream:)
+
+          expect(stub).to have_been_requested.times(1)
+        end
+      end
+    end
+
+    # Only the exact shape: any other 400 is ollama saying something else, and
+    # a refusal that cannot name both numbers is not one this can translate.
+    it "leaves every other 400 the plain status error it was" do
+      stub_refusal(JSON.generate("error" => "model is required"))
+
+      expect(refused(stream: false)).not_to be_a(Lain::WindowExceeded)
+    end
+
+    it "leaves a context-size refusal without its numbers the plain status error it was" do
+      stub_refusal(JSON.generate("error" => JSON.generate("error" => { "type" => "exceed_context_size_error" })))
+
+      expect(refused(stream: false)).not_to be_a(Lain::WindowExceeded)
+    end
+  end
+
   describe "#complete on the non-streaming path" do
     it "sends stream: false and routes to the sync transport" do
       provider = described_class.new(transport: (recorder = capturing_transport))

@@ -35,6 +35,9 @@ module Lain
         module_function
 
         def context_for(base:, **) = base
+
+        # Compaction is off, so there is never anything it could drop.
+        def droppable? = false
       end
     end
   end
