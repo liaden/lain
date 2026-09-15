@@ -56,47 +56,6 @@ module Lain
       # Mutable on purpose, and the one mutable thing here: an accumulator, not a
       # value. Nothing it holds is shared past the turn.
       class Answers
-        # The half of the notice BOTH repairs state, REFERENCED and never copied:
-        # {CLI::Resume::Cancellation} mints the same block when a torn session is
-        # loaded, and two shapes for one fact is how two repairs of one defect
-        # come to disagree.
-        #
-        # Resolved through a method and not a constant because `lain.rb` loads
-        # `agent` before `cli`, so the constant does not exist yet while this
-        # class body runs. That inversion is a LAYERING DEBT named here rather
-        # than hidden: the shared half belongs in a neutral home
-        # (`lib/lain/tool/cancellation.rb`), which is the recommendation on record.
-        def self.no_result = CLI::Resume::Cancellation::NO_RESULT
-
-        # Frozen, because an interpolated literal is mutable even under
-        # `frozen_string_literal` and this String is read straight into a
-        # deeply-frozen record. Composed per call rather than memoized: a memo
-        # would be class-level mutable state, and only a torn turn ever asks.
-        #
-        # It claims what the tear genuinely knows and no more -- {#dispatching}
-        # was never marked, so no effect was ever built for this call.
-        def self.never_dispatched
-          "#{no_result} The run was interrupted before this call was dispatched, " \
-          "so the tool did not run and had no effects.".freeze
-        end
-
-        # "May be" and not "were": {#dispatching} marks the call BEFORE the
-        # effect is built, so this over-claims in the safe direction, and the
-        # sentence tells the model to check rather than to assume either way.
-        def self.was_running
-          "#{no_result} The run was interrupted while this call was running, " \
-          "so its effects may be partly applied -- check before assuming they happened.".freeze
-        end
-
-        # A stranded call {Tool::ResultBlock}'s gate 4 refuses to build a result
-        # for, because it names no usable id. Translated rather than left as the
-        # builder's ArgumentError: a raw ArgumentError escaping a repair leaves
-        # its caller holding neither the repair nor the failure it was handling,
-        # and here that caller is unwinding from an interrupt it still has to
-        # re-raise. Named to match {CLI::Resume::Cancellation::Unpairable}, the
-        # same refusal on the load side.
-        class Unpairable < Error; end
-
         # @param response [Lain::Response]
         def self.for(response) = new(response.tool_uses)
 
@@ -146,17 +105,13 @@ module Lain
 
         def unanswered = @uses.reject { |tool_use| @blocks.key?(tool_use) }
 
-        # The same mint every real result comes through, so gates 3 and 4 hold
-        # for a cancellation exactly as they do for an answer.
-        def cancellation(tool_use)
-          Tool::ResultBlock.of(Tool::Result.error(notice(tool_use)), tool_use_id: tool_use.id).to_h
-        rescue ArgumentError => e
-          raise Unpairable, e.message
-        end
+        # The mint every repair shares, which comes through the same builder as
+        # every real result, so gates 3 and 4 hold for a cancellation exactly as
+        # they do for an answer. What a tear adds is the one thing it knows that
+        # a load cannot: whether {#dispatching} was ever marked for the call.
+        def cancellation(tool_use) = Tool::Cancellation.block(tool_use.id, notice(tool_use))
 
-        def notice(tool_use)
-          @dispatched.key?(tool_use) ? self.class.was_running : self.class.never_dispatched
-        end
+        def notice(tool_use) = @dispatched.key?(tool_use) ? :was_running : :never_dispatched
       end
 
       # Which capability set {#answered_questions} harvests from. Readable
@@ -436,7 +391,8 @@ module Lain
       # reads to tell "was running" from "never dispatched".
       def answer(tool_use, context, answers)
         answers.dispatching(tool_use)
-        answers.answered(tool_use, Tool::ResultBlock.of(dispatch(tool_use, context), tool_use_id: tool_use.id).to_h)
+        block = Tool::ResultBlock.of(dispatch(tool_use, context), tool_use_id: tool_use.id, tool: tool_use.name)
+        answers.answered(tool_use, block.to_h)
       end
 
       # The tool is resolved HERE and rides the env as `tool:`, so every layer

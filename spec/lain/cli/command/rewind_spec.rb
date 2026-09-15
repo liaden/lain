@@ -157,7 +157,20 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
 
     it "refuses a digest target that IS the tool_use turn, through the same guard" do
-      refuses(hex(agent.timeline.rewind(2).head_digest)[0, 12], /awaiting its tool results/)
+      refuses(hex(agent.timeline.rewind(2).head_digest)[0, 12], /tool_use turn/)
+    end
+
+    # The human typed a digest, so the refusal says that digest back: a count
+    # they never typed reads as a different command. And the results do exist
+    # -- the rewind would only move past them.
+    it "restates a digest target as typed, and says the results would be rewound past" do
+      prefix = hex(agent.timeline.rewind(2).head_digest)[0, 4]
+
+      expect { command.call(prefix, env) }.to raise_error(described_class::Refusal) do |error|
+        expect(error.message).to start_with("/rewind #{prefix} ")
+        expect(error.message).not_to include("/rewind 2")
+        expect(error.message).to include("rewound past")
+      end
     end
 
     it "still allows rewinding PAST the whole tool exchange" do
@@ -165,6 +178,132 @@ RSpec.describe Lain::CLI::Command::Rewind do
 
       expect(agent.timeline.head.role).to eq("user")
       expect(agent.timeline.length).to eq(1)
+    end
+  end
+
+  # A parked tool call belongs to a run that is still going to settle onto the
+  # Timeline it captured and hand that Timeline back, so a head moved now is
+  # re-committed over the moment the call is answered. The same in-flight
+  # predicate /undo refuses on.
+  describe "while a tool call is parked" do
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [text_response("one"),
+                                           tool_response(["tu_ask", "ask_human", { "question" => "which db?" }]),
+                                           text_response("settled")])
+    end
+    let(:asker) { Lain::Tools::AskHuman.new(parent: -> { parked_agent.timeline }) }
+    let(:parked_agent) do
+      Lain::Agent.new(provider:, toolset: Lain::Toolset.new([EchoTool.new, asker]), context:).tap do |built|
+        built.ask("first")
+        chronicle.catch_up(built.timeline)
+      end
+    end
+    let(:parked_env) { build_command_env(agent: parked_agent, chronicle:) }
+
+    def while_parked
+      [parked_agent, parked_env, asker, journal_io]
+      Sync do |task|
+        run = task.async { parked_agent.ask("second") }
+        yield
+        asker.reply("postgres", asker.last_question.digest)
+        run.wait
+      end
+    end
+
+    it "refuses, naming the parked call, and moves nothing" do
+      while_parked do
+        head = parked_agent.timeline.head_digest
+        journaled = journal_io.string.dup
+
+        expect { command.call("1", parked_env) }.to raise_error(described_class::Refusal) do |error|
+          expect(error.message).to include("ask_human", "tu_ask").and match(/nothing moved/i)
+          expect(error.message).to start_with("/rewind 1 ")
+        end
+        expect(parked_agent.timeline.head_digest).to eq(head)
+        expect(journal_io.string).to eq(journaled)
+      end
+    end
+
+    it "restates a digest target as typed" do
+      while_parked do
+        prefix = hex(parked_agent.timeline.head_digest)[0, 4]
+
+        expect { command.call(prefix, parked_env) }
+          .to raise_error(described_class::Refusal, %r{\A/rewind #{prefix} })
+      end
+    end
+
+    it "commits no rewound turn again once the question is answered" do
+      while_parked do
+        expect { command.call("1", parked_env) }.to raise_error(described_class::Refusal)
+      end
+
+      turns = parked_agent.timeline.to_a
+      expect(turns.map(&:role)).to eq(%w[user assistant user assistant user assistant])
+      expect(turns.map(&:digest).uniq.size).to eq(turns.size)
+      expect(turns.last.content.first["text"]).to eq("settled")
+    end
+  end
+
+  # The record lands before the machine moves, so a run taking the dispatch lock
+  # between the two would leave the file rewound and the machine not. Forced
+  # at exactly that instant: a racing thread tries to take and hold the lock
+  # while the `rewound` record is being written.
+  describe "a run arriving between the record and the move" do
+    let(:racing) do
+      Class.new(SimpleDelegator) do
+        attr_reader :raced
+
+        def initialize(chronicle, lock)
+          super(chronicle)
+          @lock = lock
+          @raced = []
+          @release = Queue.new
+        end
+
+        def rewound(**)
+          super
+          taken = Queue.new
+          @holder = Thread.new do
+            got = @lock.try_enter
+            taken.push(got)
+            @release.pop && @lock.exit if got
+          end
+          @raced << taken.pop
+        end
+
+        def finish
+          @release.push(:go)
+          @holder&.join
+        end
+      end.new(chronicle, agent.dispatch_lock)
+    end
+
+    it "cannot take the lock, so the record and the machine agree" do
+      target = agent.timeline.rewind(2).head_digest
+      racing_env = build_command_env(agent:, chronicle: racing)
+
+      begin
+        command.call("2", racing_env)
+      ensure
+        racing.finish
+      end
+
+      expect(racing.raced).to eq([false])
+      expect(agent.timeline.head_digest).to eq(target)
+      expect(of_type("rewound").last).to include("to" => target)
+    end
+
+    it "keeps today's refusal when a run holds the lock first" do
+      held = Queue.new
+      release = Queue.new
+      holder = Thread.new { agent.dispatch_lock.synchronize { held.push(:holding) && release.pop } }
+      held.pop
+
+      refuses("1", %r{\A/rewind 1 refused: a run is still in flight})
+    ensure
+      release&.push(:go)
+      holder&.join
     end
   end
 
@@ -198,7 +337,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
     it "journals the timeline this rewind moved FROM -- not whatever a later agent.timeline read answers" do
       pre = agent.timeline
       post = pre.rewind(1)
-      stub_agent = instance_double(Lain::Agent, rewind: nil)
+      stub_agent = instance_double(Lain::Agent, rewind: nil, dispatching?: false, dispatch_lock: Monitor.new)
       allow(stub_agent).to receive(:timeline).and_return(pre, post)
       stub_chronicle = instance_double(Lain::CLI::Chronicle, catch_up: nil, rewound: nil)
       stub_env = build_command_env(agent: stub_agent, chronicle: stub_chronicle)

@@ -193,7 +193,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
       # the shared notice both repairs mint, never a child's text.
       expect(cancellation.content.map { |block| block["is_error"] }).to eq([true, true, true])
       expect(cancellation.content.map { |block| block["content"] })
-        .to all(start_with(Lain::CLI::Resume::Cancellation::NO_RESULT))
+        .to all(start_with(Lain::Tool::Cancellation::NO_RESULT))
     end
 
     # Which side owns the record. The parent's calls are the parent's fact, so

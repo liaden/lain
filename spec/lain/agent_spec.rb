@@ -132,6 +132,54 @@ module T6Interrupts
   end
 end
 
+# A real Store that refuses any payload carrying its marker: a tool result the
+# Timeline cannot commit, whatever upstream made it so. In a module body for
+# the reason the fixtures above are.
+module UncommittableResults
+  class Store < Lain::Store
+    REFUSAL = "this store refuses that result"
+
+    attr_reader :refusals
+
+    def initialize(*markers)
+      super()
+      @markers = markers
+      @refusals = []
+    end
+
+    def put(object)
+      refuse(object) if object.is_a?(Lain::Event::Payload)
+
+      super
+    end
+
+    private
+
+    def refuse(payload)
+      body = JSON.generate(payload.body)
+      marker = @markers.find { |candidate| body.include?(candidate) }
+      return if marker.nil?
+
+      @refusals << marker
+      raise Lain::Error, @refusals.one? ? REFUSAL : "#{REFUSAL} (refusal #{@refusals.size})"
+    end
+  end
+
+  # A Store that runs a one-shot race on its next read. A rewind's first read
+  # is its walk back, the instant after any guard and before the move, which is
+  # where a check-then-act guard lets a racing run in.
+  class RacedStore < Lain::Store
+    def arm(&race) = @race = race
+
+    def fetch(digest)
+      race = @race
+      @race = nil
+      race&.call
+      super
+    end
+  end
+end
+
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -318,6 +366,147 @@ RSpec.describe Lain::Agent do
       expect(run).to be_cancelled
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
       expect(a).not_to be_done
+    end
+  end
+
+  # Any failure after the assistant turn commits its calls, other than an
+  # interrupt, used to leave those calls unanswered; the next ask committed user
+  # text over them and every later derivation refused the chain. Each repair
+  # answers through Tool::Cancellation, and the kind names which repair it was.
+  describe "a tool_use is never left unanswered" do
+    def conversation_of(agent)
+      Lain::Context::Conversation.new(context.render(timeline: agent.timeline, toolset:).messages)
+    end
+
+    def poisoned_results
+      Lain::Effect::Handler::Mock.new { |effect, _| Lain::Tool::Result.ok("poison #{effect.tool_use_id}") }
+    end
+
+    context "when the tool results cannot be committed" do
+      let(:raised) { [] }
+      let(:torn) do
+        agent([tool_response(["tu_1", "echo", { "text" => "a" }], ["tu_2", "echo", { "text" => "b" }]), text_response],
+              handler: poisoned_results,
+              timeline: CoreGraph.timeline(store: UncommittableResults::Store.new("poison")))
+      end
+
+      before do
+        torn.ask("hi")
+      rescue Lain::Error => e
+        raised << e
+      end
+
+      it "lets the commit's own refusal through to the caller" do
+        expect(raised.map(&:message)).to eq([UncommittableResults::Store::REFUSAL])
+      end
+
+      it "heads the timeline with a user turn answering every call with the errored notice" do
+        head = torn.timeline.head
+
+        expect(torn.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+        expect(head.content.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
+        expect(head.content.map { |block| block["content"] })
+          .to all(eq(Lain::Tool::Cancellation::NOTICES.fetch(:errored)))
+      end
+
+      it "carries none of the original result content" do
+        expect(JSON.generate(torn.timeline.head.content)).not_to include("poison")
+      end
+
+      it "leaves a conversation the Messages API check finds no violation in" do
+        expect(conversation_of(torn).violations).to be_empty
+      end
+    end
+
+    # A repair runs on the way out of another failure, so its own failure must
+    # never be what the caller sees: the original goes through, and the head is
+    # left for the next ask to answer.
+    context "when the repair is refused too" do
+      let(:notice) { Lain::Tool::Cancellation::NOTICES.fetch(:errored) }
+      let(:store) { UncommittableResults::Store.new("poison", notice) }
+      let(:doubly_torn) do
+        agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response("after")],
+              handler: poisoned_results, timeline: CoreGraph.timeline(store:))
+      end
+
+      it "lets the original refusal reach the caller, and the next ask answers the call once" do
+        expect { doubly_torn.ask("hi") }.to raise_error(Lain::Error, UncommittableResults::Store::REFUSAL)
+        expect(Lain::Event.pending_tool_use?(doubly_torn.timeline.head)).to be(true)
+
+        doubly_torn.ask("again")
+
+        expect(doubly_torn.timeline.to_a.map(&:role)).to eq(%w[user assistant user user assistant])
+        expect(conversation_of(doubly_torn).violations).to be_empty
+        expect(store.refusals).to eq(["poison", notice])
+      end
+
+      it "still surfaces the budget refusal when the budget stop's repair is refused" do
+        over = agent(Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                    "input" => { "text" => "x" } }],
+                                        stop_reason: :tool_use,
+                                        usage: Lain::Usage.new(input_tokens: 100, output_tokens: 100)),
+                     budget: Lain::Agent::Budget.new(max_total_tokens: 50),
+                     timeline: CoreGraph.timeline(store: UncommittableResults::Store.new(notice)))
+
+        expect { over.ask("hi") }.to raise_error(described_class::BudgetExceeded)
+        expect(Lain::Event.pending_tool_use?(over.timeline.head)).to be(true)
+      end
+    end
+
+    context "when the head is an assistant tool_use nobody answered" do
+      let(:stranded) do
+        CoreGraph.timeline
+                 .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                 .commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                       "input" => { "text" => "a" } }])
+      end
+      let(:provider) { CoreGraph.provider(text_response("fresh")) }
+      let(:resumed) { described_class.new(provider:, toolset:, context:, timeline: stranded) }
+
+      it "sends a tool_result for that call before the new user text" do
+        resumed.ask("something new")
+
+        blocks = provider.last_request.messages.flat_map { |message| message["content"] }
+        answer = blocks.index { |block| block["type"] == "tool_result" && block["tool_use_id"] == "tu_1" }
+        asked = blocks.index { |block| block["text"] == "something new" }
+        expect(answer).to be < asked
+        expect(Lain::Context::Conversation.new(provider.last_request.messages).violations).to be_empty
+      end
+
+      it "answers it with the same blocks a loaded session is repaired with" do
+        resumed.ask("something new")
+
+        expect(resumed.timeline.to_a[2].content).to eq(Lain::CLI::Resume::Cancellation.new(stranded.head).blocks)
+      end
+
+      it "leaves a settled head alone" do
+        settled = agent(text_response("again"))
+        settled.ask("one")
+        before = settled.timeline.to_a.map(&:digest)
+
+        settled.ask("two")
+
+        expect(settled.timeline.to_a.map(&:digest).first(2)).to eq(before)
+        expect(settled.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+      end
+    end
+
+    context "when the token budget is exceeded by the turn that emits a tool_use" do
+      let(:over_budget) do
+        agent(Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                             "input" => { "text" => "x" } }],
+                                 stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 100, output_tokens: 100)),
+              budget: Lain::Agent::Budget.new(max_total_tokens: 50))
+      end
+
+      it "stops with the budget refusal and a head that answers the call" do
+        expect { over_budget.ask("hi") }.to raise_error(described_class::BudgetExceeded)
+
+        expect(over_budget.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+        expect(over_budget.timeline.head.content)
+          .to eq(Lain::Tool::Cancellation.new(over_budget.timeline.to_a[1], kind: :errored).blocks)
+        expect(conversation_of(over_budget).violations).to be_empty
+      end
     end
   end
 
@@ -772,6 +961,48 @@ RSpec.describe Lain::Agent do
       a.rewind(2)
       expect(a.timeline.length).to eq(2)
       expect(a.state).to eq(:awaiting_user)
+    end
+
+    # A run in flight holds a Timeline it will settle onto and hand back, so a
+    # head moved under it is re-committed over when the run lands.
+    it "refuses while another caller's run is in flight, and moves nothing" do
+      a = agent([text_response("one"), text_response("two")])
+      a.ask("hi")
+      held = Queue.new
+      release = Queue.new
+      worker = Thread.new { a.dispatch_lock.synchronize { held.push(:holding) && release.pop } }
+      held.pop
+
+      expect { a.rewind(1) }.to raise_error(described_class::InFlight, /in flight/)
+      expect(a.timeline.length).to eq(2)
+    ensure
+      release&.push(:go)
+      worker&.join
+    end
+
+    # Forced at the instant between the guard and the move: a run that could
+    # take the lock there would settle over the head this rewind is moving.
+    it "holds the dispatch lock from its guard through the move" do
+      store = UncommittableResults::RacedStore.new
+      a = agent([text_response("one")], timeline: CoreGraph.timeline(store:))
+      a.ask("hi")
+      raced = []
+      store.arm { raced << Thread.new { a.dispatch_lock.try_enter.tap { |got| a.dispatch_lock.exit if got } }.value }
+
+      a.rewind(1)
+
+      expect(raced).to eq([false])
+      expect(a.timeline.length).to eq(1)
+    end
+
+    # A resend rewinds from INSIDE the lock it took to make its run exclusive.
+    it "moves the head for the caller that holds the dispatch lock itself" do
+      a = agent(text_response("one"))
+      a.ask("hi")
+
+      a.dispatch_lock.synchronize { a.rewind(1) }
+
+      expect(a.timeline.length).to eq(1)
     end
   end
 

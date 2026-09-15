@@ -25,21 +25,29 @@ module Lain
 
         def usage = "/rewind [N|digest] -- move this session back N turns (default 1), or to a recorded turn"
 
+        # Every refusal restates the command as the human typed it: a digest
+        # stays a digest, because a count they never typed reads as a different
+        # command.
         def call(args, env)
-          from = env.timeline
-          count = count_for(args.to_s.strip, from)
-          settled_target!(count, from)
-          moved(env, count, from:)
+          typed = ["/rewind", args.to_s.strip].reject(&:empty?).join(" ")
+          exclusively(env, typed) do
+            from = env.timeline
+            count = count_for(args.to_s.strip, from)
+            settled_target!(count, from, typed)
+            moved(env, count, from:)
+          end
         end
 
         private
 
         # Refusals all happened above, so from here the move is committed. Catch
         # up FIRST, then journal BEFORE the machine moves: {Timeline#rewind} on a
-        # validated count cannot fail, so nothing can raise between the record
-        # landing and the machine moving -- a chronicle failure here leaves the
-        # machine unmoved, never a machine-at-A/record-at-H wedge every later
-        # catch_up would report as Diverged, far from the actual bug.
+        # validated count cannot fail, and {Agent#rewind}'s in-flight refusal
+        # cannot fire because {#exclusively} holds the dispatch lock it asks
+        # for, so nothing can raise between the record landing and the machine
+        # moving -- a chronicle failure here leaves the machine unmoved, never a
+        # machine-at-A/record-at-H wedge every later catch_up would report as
+        # Diverged, far from the actual bug.
         #
         # `env.chronicle.catch_up(from)`, deliberately not {Env#checkpoint}:
         # `from` is THIS rewind's pre-move head, captured once in {#call}, while
@@ -53,6 +61,37 @@ module Lain
           env.chronicle.rewound(to: to.head_digest)
           env.agent.rewind(count)
           rendered(count, from:, to:)
+        end
+
+        # A run in flight settles onto the Timeline it captured and hands that
+        # back, so a head moved now is committed over the moment the parked
+        # call is answered. {Undo.in_flight?} is the predicate, shared so the
+        # two commands cannot disagree about what "in flight" means; it refuses
+        # even a caller already holding the lock. The lock is then HELD from
+        # resolution through the record and the move, because a check that is
+        # only read lets a run start between the record landing and the move.
+        def exclusively(env, typed)
+          lock = env.agent.dispatch_lock
+          raise Refusal, in_flight(typed, env.timeline) if Undo.in_flight?(env) || !lock.try_enter
+
+          begin
+            yield
+          ensure
+            lock.exit
+          end
+        end
+
+        def in_flight(typed, timeline)
+          "#{typed} refused: #{parked(timeline)} is still in flight, and settling it would commit " \
+            "its turns over a rewound head. Nothing moved -- answer or stop it, then rewind."
+        end
+
+        def parked(timeline)
+          head = timeline.head
+          return "a run" unless Event.pending_tool_use?(head)
+
+          calls = head.content.grep(Hash).select { |block| block["type"] == "tool_use" }
+          "the parked #{calls.map { |use| "#{use["name"]} (#{use["id"]})" }.join(", ")} call"
         end
 
         # The signed match is deliberate: "-1" must reach the RANGE refusal, not
@@ -97,8 +136,8 @@ module Lain
 
         # Shares {Event.pending_tool_use?} with the session-loading doors (see
         # {CLI::Resume::MidTool}): a target that is an assistant tool_use turn
-        # still awaiting its results must not become the head, because the next
-        # ask would render a dangling tool_use, which the real API rejects.
+        # must not become the head, because its results -- which exist, above
+        # it -- would be rewound past and the next request would dangle the call.
         #
         # A LOADED session now repairs that shape instead of refusing it. This
         # command is unaffected because it moves a LIVE head and projects
@@ -108,12 +147,12 @@ module Lain
         # off `env.replies.pending?`), which is why the live doors are the
         # conservative ones. Both forms funnel through the count, so both meet
         # the guard.
-        def settled_target!(count, timeline)
+        def settled_target!(count, timeline, typed)
           heads = timeline.ancestors.to_a
           return unless Event.pending_tool_use?(heads[count])
 
-          raise Refusal, "/rewind #{count} lands on an assistant tool_use turn still awaiting its tool " \
-                         "results; the next request would dangle it (nearest valid targets: " \
+          raise Refusal, "#{typed} lands on an assistant tool_use turn; its tool results would be rewound " \
+                         "past, and the next request would dangle the call (nearest valid targets: " \
                          "#{nearest_valid(count, heads).join(", ")})"
         end
 

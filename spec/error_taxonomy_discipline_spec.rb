@@ -43,8 +43,6 @@ module ErrorTaxonomyDiscipline
   TOLERATED = {
     "Lain::CLI::Command::Pin::Refusal" =>
       "six raise sites in /pin and /unpin, no caller and no spec that names it",
-    "Lain::CLI::Command::Rewind::Refusal" =>
-      "the same shape one command over; /rewind's own refusals are read as sentences",
     "Lain::CLI::Epic::UnreadableHome" =>
       "carries a body that composes its sentence, so its name is not the only thing it holds",
     "Lain::CLI::HumanReplies::Reply::UnknownArm" =>

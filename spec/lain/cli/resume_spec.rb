@@ -1100,6 +1100,48 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # A journal whose orphan already has user text committed on top of it is
+    # damaged history, not a torn head: answering it would mean rewriting a
+    # turn the file recorded. The door refuses rather than heals, and says
+    # WHERE, so the human can fork at that turn -- where the repair applies.
+    context "with user text committed on top of an unanswered tool_use" do
+      let(:buried) do
+        torn.commit(role: :user, content: text("never mind"))
+            .commit(role: :assistant, content: text("ok"))
+      end
+
+      before { write_closed("20260104T000000-1.ndjson", buried) }
+
+      it "refuses at both doors, naming the orphan's position and digest" do
+        orphan = buried.to_a[1]
+
+        [-> { resume.call(selector: "20260104") },
+         -> { resume.fork(selector: "20260104@#{digest_prefix(buried.head_digest)}") }].each do |door|
+          expect(&door).to raise_error(described_class::Refusal) do |error|
+            expect(error.message).to include("20260104T000000-1.ndjson", "turn 2 of 4", digest_prefix(orphan.digest))
+            expect(error.message).to include("tu_1")
+          end
+        end
+      end
+
+      it "names a fork at the orphan itself, which the repair can answer" do
+        expect { resume.call(selector: "20260104") }.to raise_error(described_class::Refusal) do |error|
+          expect(error.message).to include("--fork 20260104T000000-1.ndjson@#{digest_prefix(buried.to_a[1].digest)}")
+        end
+      end
+
+      it "says how many recorded turns that fork leaves behind" do
+        expect { resume.call(selector: "20260104") }
+          .to raise_error(described_class::Refusal, /drops the 2 turns recorded after it/)
+      end
+
+      it "forks below the damage without refusing" do
+        forked = resume.fork(selector: "20260104@#{digest_prefix(buried.to_a[1].digest)}")
+
+        expect(Lain::Context::Conversation.new(rendered(forked.timeline))).to be_valid
+      end
+    end
+
     # A repair that silently changes what the model sees, with no word to the
     # operator, is the invisible mutation the Journal doctrine exists against.
     # Open decision 5 defers the retry AFFORDANCE; disclosure is not that.

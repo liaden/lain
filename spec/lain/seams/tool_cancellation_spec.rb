@@ -101,8 +101,8 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     running, undispatched = results_turn(torn).content.values_at(1, 2)
 
     expect(running["content"]).not_to eq(undispatched["content"])
-    expect(running["content"]).to eq(Lain::Agent::ToolRunner::Answers.was_running)
-    expect(undispatched["content"]).to eq(Lain::Agent::ToolRunner::Answers.never_dispatched)
+    expect(running["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:was_running))
+    expect(undispatched["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:never_dispatched))
     expect([running, undispatched].map { |block| block["is_error"] }).to eq([true, true])
   end
 
@@ -181,8 +181,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
   # mechanically here rather than kept by eye.
   describe "agreement with the load-side repair" do
     let(:tear_side) do
-      [Lain::Agent::ToolRunner::Answers.never_dispatched,
-       Lain::Agent::ToolRunner::Answers.was_running]
+      Lain::Tool::Cancellation::NOTICES.values_at(:never_dispatched, :was_running)
     end
 
     # The one head both repairs answer: an assistant turn carrying a lone
@@ -228,19 +227,16 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       expect(ids.uniq).to eq(ids)
     end
 
-    # The seam a review round moved: the shared half states only that there is no
-    # result, and every inference about WHY sits in the half each side owns.
-    # Referenced, so a drift is impossible rather than merely caught.
-    it "states T3's shared half verbatim, and replaces only the half after it" do
-      expect(Lain::Agent::ToolRunner::Answers.no_result)
-        .to equal(Lain::CLI::Resume::Cancellation::NO_RESULT)
-      expect(tear_side).to all(start_with("#{Lain::CLI::Resume::Cancellation::NO_RESULT} "))
+    # The shared half states only that there is no result, and every inference
+    # about WHY sits in the half each side owns.
+    it "states the shared half verbatim, and replaces only the half after it" do
+      expect(tear_side).to all(start_with("#{Lain::Tool::Cancellation::NO_RESULT} "))
     end
 
     it "substitutes EFFECTS_UNKNOWN rather than appending to it" do
-      tails = tear_side.map { |notice| notice.delete_prefix("#{Lain::CLI::Resume::Cancellation::NO_RESULT} ") }
+      tails = tear_side.map { |notice| notice.delete_prefix("#{Lain::Tool::Cancellation::NO_RESULT} ") }
 
-      expect(tails).to all(satisfy { |tail| !tail.include?(Lain::CLI::Resume::Cancellation::EFFECTS_UNKNOWN) })
+      expect(tails).to all(satisfy { |tail| !tail.include?(Lain::Tool::Cancellation::EFFECTS_UNKNOWN) })
       expect(tails.uniq.size).to eq(2)
     end
 
@@ -248,6 +244,76 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       expect(tear_side).to all(be_frozen)
       expect(Lain::Telemetry::ToolCancelled.new(head: "blake3:x", cancelled: %w[tu_2]))
         .to(satisfy { |record| Ractor.shareable?(record) })
+    end
+  end
+
+  # A settle whose results cannot be committed answers the calls where it
+  # tore, and a session recorded with that head unanswered is repaired at load.
+  # The two must mint one shape: only the sentence may say which repair it was.
+  describe "agreement between a torn settle and a resumed session" do
+    let(:marker) { "unstorable result" }
+    let(:refusing_store) do
+      Class.new(Lain::Store) do
+        define_method(:put) do |object|
+          if object.is_a?(Lain::Event::Payload) && JSON.generate(object.body).include?("unstorable result")
+            raise Lain::Error, "refused"
+          end
+
+          super(object)
+        end
+      end.new
+    end
+    let(:calls) { [["tu_1", "echo", { "text" => "first" }], ["tu_2", "echo", { "text" => "second" }]] }
+    # The result is read into a local before the run: a `let` first read from
+    # inside the reactor parks on RSpec's memoization lock.
+    let(:settle_torn) do
+      unstorable = marker
+      agent = Lain::Agent.new(
+        provider: Lain::Provider::Mock.new(responses: [tool_response(*calls), text_response]),
+        handler: Lain::Effect::Handler::Mock.new { |_, _| Lain::Tool::Result.ok(unstorable) },
+        toolset:, context:, timeline: Lain::Timeline.empty(store: refusing_store)
+      )
+      refused_ask(agent)
+    end
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+
+    around do |example|
+      Dir.mktmpdir { |dir| @state_home = dir and example.run }
+    end
+
+    def refused_ask(agent)
+      agent.ask("hi")
+      raise "the ask was expected to be refused"
+    rescue Lain::Error => e
+      raise unless e.message == "refused"
+
+      agent
+    end
+
+    # The recorded session: the same calls, committed and never answered, closed
+    # the way a chat's exit closes it.
+    def recorded_stranded_session
+      stranded = Lain::Timeline.empty(store: Lain::Store.new)
+                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                               .commit(role: :assistant, content: tool_response(*calls).content)
+      [Lain::SessionRecord.header(context:, toolset:, head: nil),
+       *stranded.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+       Lain::Telemetry::SessionClosed.new(head: stranded.head_digest, reason: :exit).to_journal]
+    end
+
+    def resumed_head_blocks
+      lines = recorded_stranded_session.map { |record| "#{JSON.generate(record)}\n" }
+      File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), lines.join)
+      Lain::CLI::Resume.new(paths:).call.timeline.head.content
+    end
+
+    it "repairs a resumed head with the blocks a torn settle commits, apart from the notice kind" do
+      at_load = resumed_head_blocks
+      at_tear = settle_torn.timeline.head.content
+
+      expect(at_tear.map { |block| block.except("content") }).to eq(at_load.map { |block| block.except("content") })
+      expect(at_tear.map { |block| block["content"] }).to all(eq(Lain::Tool::Cancellation::NOTICES.fetch(:errored)))
+      expect(at_load.map { |block| block["content"] }).to all(eq(Lain::Tool::Cancellation::NOTICES.fetch(:unknown)))
     end
   end
 end

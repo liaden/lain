@@ -137,6 +137,18 @@ RSpec.describe Lain::Agent::ToolRunner do
     expect(block["content"]).to eq("boom")
   end
 
+  it "names the tool whose output was not text in the refusal it answers with" do
+    handler = Lain::Effect::Handler::Mock.new do |_effect, _context|
+      Lain::Tool::Result.ok("caf\xE9".b)
+    end
+    response = tool_response(["tu_1", "grep", {}])
+
+    block = described_class.new(handler:).run(response, context: nil).first
+
+    expect(block["is_error"]).to be(true)
+    expect(block["content"]).to include("grep's output was not text")
+  end
+
   # Gate 5: the Provider has already parsed `tool_use.input` into a Hash;
   # ToolRunner fetches it and hands it to the effect verbatim, performing no
   # String -> Hash re-parse of its own. So the effect sees a Hash, never a raw
@@ -321,8 +333,8 @@ RSpec.describe Lain::Agent::ToolRunner do
 
       blocks = content_of(answers).fetch(:content)
 
-      expect(blocks[1]["content"]).to eq(described_class::Answers.was_running)
-      expect(blocks[2]["content"]).to eq(described_class::Answers.never_dispatched)
+      expect(blocks[1]["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:was_running))
+      expect(blocks[2]["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:never_dispatched))
     end
 
     it "reports which calls were cancelled, which were running, and which completed" do
@@ -399,12 +411,12 @@ RSpec.describe Lain::Agent::ToolRunner do
     # Gate 4 refuses to name a result for an id no result can name. Translated,
     # not left as the builder's ArgumentError, so {Agent::ToolDelivery} can tell
     # it from a genuine bug and let the interrupt outrank it -- the same
-    # translation CLI::Resume::Cancellation makes on the load side.
+    # translation the load side makes, through the same Tool::Cancellation mint.
     it "names an unpairable stranded call rather than leaking the builder's ArgumentError" do
       unpairable = described_class::Answers.for(tool_response(["", "echo", {}]))
 
       expect { described_class.new(handler: echoing_handler).cancelled_delivery(unpairable) }
-        .to raise_error(described_class::Answers::Unpairable, /non-empty String id/)
+        .to raise_error(Lain::Tool::Cancellation::Unpairable, /non-empty String id/)
     end
 
     def handover_runner(digests)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "json"
 
 # The snapshot duck, plus a hook so a stop can be made to land ON the settled
 # path -- the case the `rescue`/`else` split exists to keep out of the
@@ -25,6 +26,24 @@ module ToolDeliverySpecSupport
       @trail << :write
       @written << [timeline, paths]
       @hook&.call
+    end
+  end
+
+  # A real Store that refuses to hold any payload carrying `marker`: a result
+  # the Timeline cannot commit, whatever made it so, without depending on
+  # which bytes a text boundary upstream happens to let through.
+  class RefusingStore < Lain::Store
+    REFUSAL = "this store refuses that result"
+
+    def initialize(marker)
+      super()
+      @marker = marker
+    end
+
+    def put(object)
+      raise Lain::Error, REFUSAL if object.is_a?(Lain::Event::Payload) && JSON.generate(object.body).include?(@marker)
+
+      super
     end
   end
 end
@@ -137,6 +156,127 @@ RSpec.describe Lain::Agent::ToolDelivery do
 
       expect(snapshots.written).to be_empty
     end
+  end
+
+  # A settle whose commit raises -- a result the Timeline refuses to store --
+  # used to leave the assistant turn's calls unanswered, and the next ask
+  # committed user text over them, so every later derivation refused the chain.
+  # The repair answers with a sentence of its own and none of the refused
+  # blocks: re-committing those would raise again.
+  describe "a turn whose results cannot be committed" do
+    let(:refusing_store) { ToolDeliverySpecSupport::RefusingStore.new("ran tu_2") }
+    let(:timeline) do
+      Lain::Timeline.empty(store: refusing_store)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                    .commit(role: :assistant, content: response.content)
+    end
+    let(:outcome) do
+      committed = nil
+      Sync do
+        delivery_over(echoing).perform(response, timeline:, session:) { |turn| committed = turn }
+      rescue Lain::Error => e
+        raised << e
+      end
+      committed
+    end
+
+    it "commits a user turn answering every call with the errored notice" do
+      expect(outcome.head.role).to eq("user")
+      expect(outcome.head.parent).to eq(timeline.head_digest)
+      expect(outcome.head.content).to eq(Lain::Tool::Cancellation.new(timeline.head, kind: :errored).blocks)
+    end
+
+    it "carries none of the refused results" do
+      expect(outcome.head.content.map { |block| block["content"] }).not_to include("ran tu_1", "ran tu_2")
+    end
+
+    it "lets the commit's own failure through" do
+      outcome
+
+      expect(raised.map(&:message)).to eq([ToolDeliverySpecSupport::RefusingStore::REFUSAL])
+    end
+
+    it "writes no snapshot and journals no cancellation" do
+      outcome
+
+      expect(snapshots.written).to be_empty
+      expect(journal.grep(Lain::Telemetry::ToolCancelled)).to be_empty
+    end
+
+    # The ordering the tear path already keeps: a repair that cannot be built
+    # never replaces the failure it was repairing.
+    it "lets the original failure through when the calls cannot be paired" do
+      unpairable = tool_response(["tu_1", "echo", { "text" => "a" }], ["", "echo", {}])
+      chain = Lain::Timeline.empty(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_1"))
+                            .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                            .commit(role: :assistant, content: unpairable.content)
+      committed = nil
+
+      Sync do
+        described_class.new(runner: unpaired_runner, snapshots:, journal:)
+                       .perform(unpairable, timeline: chain, session:) { |turn| committed = turn }
+      rescue Lain::Error => e
+        raised << e
+      end
+
+      expect(raised.map(&:message)).to eq([ToolDeliverySpecSupport::RefusingStore::REFUSAL])
+      expect(committed).to be_nil
+    end
+
+    # A runner whose delivery answers the id-less call with a block, so the
+    # refused commit -- not gate 4 -- is what the settle meets.
+    def unpaired_runner
+      runner = Lain::Agent::ToolRunner.new(handler: echoing)
+      runner.define_singleton_method(:delivery) do |_response, **|
+        { content: [Lain::Tool::ResultBlock.of(Lain::Tool::Result.ok("ran tu_1"), tool_use_id: "tu_1").to_h],
+          causal_parents: [] }
+      end
+      runner
+    end
+  end
+
+  # The repair keeps the delivery's citations, but a citation is also what can
+  # refuse a commit: the Store checks every causal edge. A settle refused over a
+  # missing edge must still get its calls answered.
+  it "answers the calls when the settle was refused over a causal edge the store does not hold" do
+    missing = "blake3:#{"0" * 64}"
+    citing = Lain::Agent::ToolRunner.new(handler: echoing)
+    citing.define_singleton_method(:delivery) do |response, context:, answers:|
+      { content: run(response, context:, answers:), causal_parents: [missing] }
+    end
+    committed = nil
+
+    Sync do
+      described_class.new(runner: citing, snapshots:, journal:)
+                     .perform(response, timeline:, session:) { |turn| committed = turn }
+    rescue Lain::Store::MissingObject => e
+      raised << e
+    end
+
+    expect(raised.map(&:class)).to eq([Lain::Store::MissingObject])
+    expect(committed.head.content).to eq(Lain::Tool::Cancellation.new(timeline.head, kind: :errored).blocks)
+    expect(committed.head.causal_parents).to be_empty
+  end
+
+  # A stop landing on the repair itself must not re-enter the cancellation arm:
+  # the errored commit sits in the settled branch, outside that rescue.
+  it "does not answer the calls a second time when a stop follows the errored commit" do
+    chain = Lain::Timeline.empty(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
+                          .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                          .commit(role: :assistant, content: response.content)
+    commits = []
+
+    Sync do
+      delivery_over(echoing).perform(response, timeline: chain, session:) do |turn|
+        commits << turn
+        raise Async::Stop
+      end
+    rescue Async::Stop, Lain::Error => e
+      raised << e
+    end
+
+    expect(commits.size).to eq(1)
+    expect(raised.map(&:class)).to eq([Async::Stop])
   end
 
   # The interrupt OUTRANKS a repair that cannot be built. A stranded call whose

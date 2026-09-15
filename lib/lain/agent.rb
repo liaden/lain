@@ -46,6 +46,14 @@ module Lain
     # Kept for callers that rescue the harness's own halt. See Agent::Budget.
     BudgetExceeded = Budget::Exceeded
 
+    # A rewind asked of an Agent whose run someone else holds. That run settles
+    # onto the Timeline it captured and hands it back, so a head moved under it
+    # is committed over the moment it lands.
+    class InFlight < Error; end
+
+    IN_FLIGHT = "cannot rewind while a run is in flight: it would commit its turns over the rewound head"
+    private_constant :IN_FLIGHT
+
     # The diagnostic each failing stop_reason records. A lookup table, not control
     # flow: every StopReason whose event transitions to :failed has an entry.
     FAILURE_REASONS = { StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
@@ -205,10 +213,18 @@ module Lain
     # hands each child Agent one to signal the stagger gate). Nil is INERT: the
     # whole plumb down to the provider is byte-identical with no observer wired.
     #
+    # A head still carrying an unanswered `tool_use` is answered BEFORE the new
+    # text lands, the in-process twin of {CLI::Resume}'s repair at load and in
+    # its words: nothing here can say whether that call ran. Text committed on
+    # top of an orphan is a chain every later request and derivation refuses.
+    #
     # @return [Lain::Response] the final assistant response
+    # @raise [Tool::Cancellation::Unpairable] when the stranded call names no
+    #   id, so nothing can answer it and nothing is committed over it
     def ask(text, on_stream_started: nil)
       @dispatch_lock.synchronize do
         reopen! unless awaiting_user?
+        answer_stranded(:unknown)
         @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
         run(on_stream_started:)
       end
@@ -286,13 +302,35 @@ module Lain
 
     # Time travel: the loop can be resumed from any earlier turn, which is what
     # makes speculative branching possible once a grader exists.
+    #
+    # Refused while a run this caller does not hold is in flight, and the lock
+    # is HELD for the move rather than read before it, so no run can start
+    # between the check and the act. The caller that already holds it is let
+    # through, because the lock is reentrant: {CLI::ResendBridge} rewinds from
+    # inside the very lock that makes its own run exclusive.
+    #
+    # @raise [InFlight] while another caller's run holds the dispatch lock
     def rewind(count = 1)
-      @timeline = @timeline.rewind(count)
-      reopen!
-      self
+      raise InFlight, IN_FLIGHT unless @dispatch_lock.try_enter
+
+      begin
+        @timeline = @timeline.rewind(count)
+        reopen!
+        self
+      ensure
+        @dispatch_lock.exit
+      end
     end
 
     private
+
+    # The repair every stranded head gets, through the one mint every repair
+    # shares; a head with nothing stranded is left exactly as it is.
+    def answer_stranded(kind)
+      return unless Event.pending_tool_use?(@timeline.head)
+
+      @timeline = @timeline.commit(role: :user, content: Tool::Cancellation.new(@timeline.head, kind:).blocks)
+    end
 
     # The loop itself, hosted inside the reactor {#run} establishes.
     #
@@ -449,6 +487,11 @@ module Lain
     # usage record vanished with an interrupt would silently price as free. The
     # deferred stop also preempts a raise from inside the region, so a
     # simultaneous stop and token-ceiling bust settles as the stop.
+    #
+    # A failure after the commit -- the token ceiling, or the usage record
+    # refusing to land -- comes before any {ToolDelivery} exists, so the calls
+    # this turn just committed are answered here, inside the same shield, and
+    # the failure goes on.
     def commit_and_account(response, inbox)
       Async::Task.current.defer_stop do
         # Commit the FULL content -- text, thinking, AND tool_use blocks.
@@ -459,8 +502,24 @@ module Lain
         # Commit BEFORE the token check: a turn that busts the ceiling was still
         # paid for, so it stays in the record rather than vanishing with the
         # raise.
-        @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
+        account(response)
       end
+    end
+
+    def account(response)
+      @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
+    rescue StandardError => e
+      answer_errored
+      raise e
+    end
+
+    # Whatever stops the repair -- an unpairable call, a store refusing this
+    # commit too -- leaves the failure being handled in charge, for
+    # {ToolDelivery}'s reason. The head is answered at the next ask instead.
+    def answer_errored
+      answer_stranded(:errored)
+    rescue StandardError
+      nil
     end
 
     # Fire the machine event named for the (already-normalized) stop_reason and

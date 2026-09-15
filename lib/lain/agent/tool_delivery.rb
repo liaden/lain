@@ -23,7 +23,7 @@ module Lain
     # trigger-agnostic and covers the SIGKILL, OOM and reactor-teardown cases
     # nothing here can see; this is the improvement on top, telling the
     # *running* model in the turn where it happened. The two commit the same
-    # block, from the same mint, deliberately.
+    # block, from the same mint ({Tool::Cancellation}), deliberately.
     class ToolDelivery
       # `journal:` defaults to the Null channel for {Accounting}'s reason: no
       # caller writes `if journal`.
@@ -54,6 +54,8 @@ module Lain
       # @yieldparam committed [Lain::Timeline] the commit this delivery produced
       # @raise [Async::Stop] re-raised after the cancellation commit, so an
       #   interrupt still ends the run it was asked to end
+      # @raise [StandardError] whatever refused the settled commit, re-raised
+      #   after the errored commit answers the calls
       def perform(response, timeline:, session:, &commit)
         answers = ToolRunner::Answers.for(response)
         @snapshots.prime
@@ -71,10 +73,51 @@ module Lain
       # happens BEFORE the tools run, so this is the earliest point where both
       # halves of the snapshot exist -- the written bytes on disk and the turn
       # digest the event names as its cause.
-      def settle(delivery, timeline, session)
-        committed = timeline.commit(role: :user, **delivery)
+      def settle(delivery, timeline, session, &commit)
+        committed = settled(delivery, timeline, &commit)
         yield committed
         @snapshots.write(timeline: committed, paths: session.writes)
+      end
+
+      # Only the commit is covered, never the yield or the snapshot after it:
+      # once this commit lands the calls ARE answered, and a failure past it
+      # repaired here would answer them twice.
+      #
+      # The repair rebuilds every block rather than committing `delivery`'s:
+      # those are the blocks whose commit just raised, and they would raise
+      # again.
+      def settled(delivery, timeline, &commit)
+        timeline.commit(role: :user, **delivery)
+      rescue StandardError => e
+        errored(timeline, delivery.fetch(:causal_parents), &commit)
+        raise e
+      end
+
+      # A repair runs on the way out of the failure being handled, and that
+      # failure outranks it, for {#cancel}'s reason: whatever stops the repair
+      # -- an unpairable call, a store refusing this commit too -- must never
+      # replace the error its caller is unwinding from. The head it leaves is
+      # answered at the next ask. Only the commit is covered; the yield is not.
+      def errored(timeline, causal_parents)
+        repaired = errored_commit(timeline, Tool::Cancellation.new(timeline.head, kind: :errored).blocks,
+                                  causal_parents)
+      rescue StandardError
+        nil
+      else
+        yield repaired
+      end
+
+      # The delivery's citations are kept first, because the harvest behind
+      # them is exactly-once: an answered question left uncited here can never
+      # be cited by a later turn. But a citation is also something the Store
+      # checks, so a commit refused with them is retried once without them --
+      # answering the calls outranks retiring the question.
+      def errored_commit(timeline, content, causal_parents)
+        timeline.commit(role: :user, content:, causal_parents:)
+      rescue StandardError
+        raise if causal_parents.empty?
+
+        timeline.commit(role: :user, content:)
       end
 
       # Shielded as ONE atom for {Agent#commit_and_account}'s reason and one
@@ -115,7 +158,7 @@ module Lain
           yield timeline.commit(role: :user, **delivery)
           record_cancellation(answers, torn)
         end
-      rescue ToolRunner::Answers::Unpairable
+      rescue Tool::Cancellation::Unpairable
         # An unpairable turn cannot be answered at all, and the INTERRUPT
         # OUTRANKS that: {#perform} re-raises the stop the moment this returns,
         # because losing a Ctrl-C is strictly worse than losing a repair, and a
@@ -124,7 +167,7 @@ module Lain
         # nothing is journalled -- the behaviour from before the cancellation
         # commit, for this one shape -- and the honest torn head it leaves is
         # what {CLI::Resume::Cancellation} still refuses namedly at load,
-        # through the same translation ({Cancellation::Unpairable}).
+        # through the same translation.
         nil
       end
 

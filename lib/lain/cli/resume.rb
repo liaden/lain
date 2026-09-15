@@ -223,7 +223,7 @@ module Lain
         built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
       end
 
-      # Held to {Cancellation::NO_RESULT}'s standard, and for its reason:
+      # Held to {Tool::Cancellation::NO_RESULT}'s standard, and for its reason:
       # "stopped with N unanswered" is an inference about the RUN and is false
       # on the fork-below-results door -- that file did not stop, and the call
       # it names returned. This side knows only what the CONTINUATION carries.
@@ -246,10 +246,41 @@ module Lain
       # The journal is not rewritten: this commit lands on the rebuilt in-memory
       # Timeline the NEW session starts from, and its own record journals it as
       # its own first turn.
+      #
+      # Only the HEAD is repaired. An orphan with turns already recorded on top
+      # of it is damaged history, and answering it would mean inventing a turn
+      # between two the journal holds, so that shape is refused where it sits.
       def settled(door, timeline)
+        refuse_buried_orphan(door, timeline)
         return timeline unless Event.pending_tool_use?(timeline.head)
 
         timeline.commit(role: :user, content: cancellation(door, timeline).blocks)
+      end
+
+      # The pairing rule is {Context::Conversation}'s, read over the recorded
+      # turns as the messages they render to. Every unanswered call but the
+      # head's is buried; the head's is the one {#settled} can still answer.
+      def refuse_buried_orphan(door, timeline)
+        turns = timeline.to_a
+        messages = turns.map { |turn| { "role" => turn.role, "content" => turn.content } }
+        buried = Context::Conversation.new(messages).violations.find do |violation|
+          violation.rule == :unanswered_tool_use && violation.positions.first < turns.length - 1
+        end
+        raise buried_refusal(door, turns, buried) if buried
+      end
+
+      # Named by place and digest, because the remedy is a fork AT that turn:
+      # there it is the head again, and the head is what the repair answers.
+      def buried_refusal(door, turns, violation)
+        position = violation.positions.first
+        digest = turns.fetch(position).digest.delete_prefix("blake3:")[0, 12]
+        later = turns.length - position - 1
+        dropped = "#{later} #{later == 1 ? "turn" : "turns"}"
+        door.refuse("its turn #{position + 1} of #{turns.length} (#{digest}) is an assistant tool_use whose call " \
+                    "#{violation.subject.inspect} is never answered, and later turns were recorded on top of " \
+                    "it, so it cannot be repaired without rewriting that history. Fork at that turn instead, " \
+                    "where the call can be answered -- which drops the #{dropped} recorded after it: " \
+                    "lain chat --fork #{door.file}@#{digest}")
       end
 
       # The rescue arm IS the knowledge: reaching it means the head is torn

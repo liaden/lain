@@ -462,6 +462,13 @@ RSpec.describe Lain::CLI::Command::Undo do
       expect(read("a.rb")).to eq("a v2\n")
     end
 
+    # /rewind refuses on the same predicate, so the two commands cannot come to
+    # disagree about whether a run is in flight.
+    it "answers the in-flight question /rewind shares off the agent's dispatch lock" do
+      expect([described_class.in_flight?(env(dispatching: true)), described_class.in_flight?(env)])
+        .to eq([true, false])
+    end
+
     it "refuses while a supervised worker is live, naming it" do
       worker = instance_double(Lain::Supervisor::Registration, state: :running, role: "coder", worker_id: "coder-1")
       supervisor = instance_double(Lain::Supervisor, each: [worker].each)
