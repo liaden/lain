@@ -35,6 +35,10 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
   let(:input_tokens) { 15_000 }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
+  # How long every `/api/ps` probe takes, as the window book's clock sees it.
+  # Injected rather than measured, so the budget it charges never depends on how
+  # loaded the box running the spec is.
+  let(:probe_seconds) { 0.0 }
 
   # Nothing resident: the ordinary state of a box whose runner has not loaded
   # yet, and the premise of the whole file. Registered per example so a later
@@ -65,8 +69,24 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
   end
 
   def backend
-    @backend ||= Lain::CLI::Backend.new(provider: "ollama", model:, max_tokens: 1024,
-                                        num_ctx:, compact_keep: 2)
+    @backend ||= priced(Lain::CLI::Backend).new(provider: "ollama", model:, max_tokens: 1024,
+                                                num_ctx:, compact_keep: 2)
+  end
+
+  # {Lain::CLI::Backend#context_window} exactly, with the probe clock injected.
+  # Every other part of the run -- the provider, the book, its sharing -- is the
+  # real one.
+  def priced(backend_class)
+    seconds = probe_seconds
+    Class.new(backend_class) do
+      define_method(:context_window) do
+        @context_window ||= begin
+          now = 0.0
+          book = Lain::CLI::Backend::WindowBook.new(backend: self, clock: -> { now += seconds })
+          Lain::CLI::Backend::WindowBook::Live.new(source: book)
+        end
+      end
+    end
   end
 
   # THE REAL TURN STACK, from the object that wires one for a live chat, over
@@ -86,7 +106,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
   # {Lain::CLI::Backend::WindowBook::Served} names in its own docstring, and the
   # one this file's last example is about.
   def scripted_model
-    Lain::Provider::Mock.new(responses: Array.new(8) do
+    Lain::Provider::Mock.new(responses: Array.new(16) do
       text_response("a considered answer " * 200, model:, usage: Lain::Usage.new(input_tokens:))
     end)
   end
@@ -151,18 +171,9 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
   # record as the guesses they were.
   #
   # TWO turns before the runner appears models a runner arriving one iteration
-  # LATE, and that is the point of the number. The minimal real sequence needs
-  # only one: ollama fixes a runner's context at LOAD time and this run's own
-  # first request is what loads it, so `converse(1)` would land the upgrade on
-  # the SECOND re-ask and would pass under a
-  # {Lain::CLI::Backend::WindowBook::Live::REASK_LIMIT} of 2. Waiting one turn
-  # longer lands it on the THIRD, which is exactly the slack that constant is
-  # sized for -- so this group is what holds the limit up from BELOW (drop it to
-  # 2 and these examples red), while the never-settle group holds it from above.
-  #
-  # An earlier edition of this comment called two turns "the real sequence".
-  # That was wrong, and worth leaving a marker on: this card's whole subject is
-  # comments that quietly stopped being true, and its fix round wrote one.
+  # late. A server answering "nothing resident" spends none of the re-asking
+  # budget, so how late it may arrive is unbounded; the group re-asked for ten
+  # turns below holds that up.
   describe "once the model becomes resident and reports its served window" do
     before do
       trained
@@ -208,22 +219,96 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
     end
   end
 
-  # The cost ceiling, which is the half of "it re-resolves" a user actually
-  # feels. `--num-ctx` alone is GUESSED and a model the shipped table does not
-  # carry can only ever settle by a runner answering -- so a box where ollama
-  # never answers has a book that can never settle, and the trigger fires once
-  # per ITERATION of the agent loop rather than once per user ask. Unbounded,
-  # that is a probe per tool call for the whole session: 2.003s each against a
-  # black-holed host, measured, so a ten-tool-call turn paid +20s.
-  describe "a book that can never settle" do
+  def resident_body(context_length)
+    { status: 200, headers: { "Content-Type" => "application/json" },
+      body: JSON.generate("models" => [{ "name" => model, "model" => model, "context_length" => context_length }]) }
+  end
+
+  # A server that answers "nothing resident" quickly is cheap to ask and may
+  # load the runner on any later turn: evicted by a summarizer on another model,
+  # or re-keyed by a sibling command. So it is asked for as long as the answer
+  # is a guess -- the measured failure was a session launched during a reload
+  # that asked four times, stopped, and divided by 8,192 while ollama served
+  # 32,768.
+  describe "a server with nothing resident, re-asked until a model loads" do
+    let(:num_ctx) { nil }
+    let(:served) { 32_768 }
+    let(:probe_seconds) { 0.001 }
+
+    before do
+      trained
+      stub_request(:get, %r{/api/ps})
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => [])).times(10)
+        .then.to_return(resident_body(served))
+      converse(11)
+    end
+
+    it "becomes authoritative at the window the runner reports" do
+      expect(backend.context_window.resolve(model)).to be_authoritative
+      expect(backend.context_window.window_tokens(model)).to eq(served)
+      expect(decisions.last).to include("window_tokens" => served, "provenance" => "probed")
+    end
+
+    it "rewrites no history off the guesses it made while waiting" do
+      expect(decisions.map { |record| record["compacted"] }.uniq).to eq([false])
+    end
+  end
+
+  # An ollama started after lain refuses the connection in about a millisecond,
+  # so those probes cost nothing and the window is learned once it is up.
+  describe "a refused connection, then a resident model" do
+    let(:num_ctx) { nil }
+    let(:probe_seconds) { 0.001 }
+
+    before do
+      trained
+      stub_request(:get, %r{/api/ps}).to_raise(Faraday::ConnectionFailed).times(4).then.to_return(resident_body(32_768))
+      converse(4)
+    end
+
+    it "learns the window after three turns of refusals" do
+      expect(backend.context_window.resolve(model)).to be_authoritative
+      expect(backend.context_window.window_tokens(model)).to eq(32_768)
+    end
+  end
+
+  # A server that answers, but slowly, costs every agent-loop iteration what
+  # it takes -- so it is charged like a host that never answers at all.
+  describe "a slow server with nothing resident" do
+    let(:probe_seconds) { 0.25 }
+
     before do
       trained
       nothing_resident
-      converse(5)
+      converse(10)
     end
 
-    it "stops probing rather than paying a round trip per turn forever" do
-      expect(a_request(:get, %r{/api/ps})).to have_been_made.times(4)
+    it "stops being asked after the launch probe and REASK_LIMIT slow re-asks" do
+      expect(a_request(:get, %r{/api/ps}))
+        .to have_been_made.times(1 + Lain::CLI::Backend::WindowBook::Live::REASK_LIMIT)
+    end
+  end
+
+  # The cost ceiling, which is the half of "it re-resolves" a user actually
+  # feels. `--num-ctx` alone is GUESSED and a model the shipped table does not
+  # carry can only ever settle by a runner answering -- so a host that never
+  # answers has a book that can never settle, and the trigger fires once per
+  # ITERATION of the agent loop rather than once per user ask. Unbounded, that
+  # is a probe per tool call for the whole session: 2.003s each against a
+  # black-holed host, measured, so a ten-tool-call turn paid +20s.
+  describe "a book that can never settle, on a host that never answers" do
+    let(:probe_seconds) { Lain::Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS }
+
+    before do
+      trained
+      stub_request(:get, %r{/api/ps}).to_timeout
+      converse(10)
+    end
+
+    it "stops probing after the launch probe and REASK_LIMIT timed-out re-asks" do
+      expect(a_request(:get, %r{/api/ps}))
+        .to have_been_made.times(1 + Lain::CLI::Backend::WindowBook::Live::REASK_LIMIT)
     end
 
     # It gave up on LEARNING, not on measuring: the run keeps dividing by the
@@ -233,11 +318,8 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
       expect(decisions.last["provenance"]).to eq("guessed")
     end
 
-    # The consequence that actually matters, asserted HERE rather than left to
-    # the first group -- which exhausts the budget only because it happens to
-    # converse three times, an incidental dependency between two groups that
-    # would break the moment either turn count moved. Exhausting the budget is
-    # giving up on learning, never a promotion: the window is still a guess, so
+    # The consequence that actually matters. Exhausting the budget is giving up
+    # on learning, never a promotion: the window is still a guess, so
     # `:approaching_window` is still withheld and no history is rewritten.
     it "still authorises no rewrite, however many times it gave up" do
       expect(decisions.map { |record| record["compacted"] }.uniq).to eq([false])
@@ -320,6 +402,94 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
 
     it "say the turn went unmeasured, since suppression is otherwise invisible" do
       expect(published["unmeasured_turns"]).to eq(1)
+    end
+  end
+
+  # A refusal for not fitting the context names the context the server loaded,
+  # so it vouches for the window the way `/api/ps` does. Over the wiring a live
+  # chat builds: the real ollama provider and its error mapping, the model phase
+  # and turn stack {Lain::CLI::Wiring} composes, a real {Lain::StatusFeed} on the
+  # tee. Nothing is resident, so until the refusal the window is a guess.
+  describe "an over-window refusal, over a guessed window" do
+    around { |example| Dir.mktmpdir("lain-window-seam") { |dir| @state_dir = dir and example.run } }
+
+    let(:refused_at) { 32_768 }
+    let(:state_path) { File.join(@state_dir, "state.json") }
+    let(:status_feed) { Lain::StatusFeed.new(path: state_path, context_window: backend.context_window) }
+    let(:chronicle) do
+      Lain::CLI::Chronicle.new(journal: Lain::CLI::JournalTee.new(journal, status_feed),
+                               journal_path: "window-vouch-seam.ndjson")
+    end
+
+    def backend
+      @backend ||= begin
+        provider = Lain::Provider::Ollama.new(config: zero_retry_config)
+        Class.new(priced(Lain::CLI::Backend)) { define_method(:provider) { |**| provider } }
+             .new({ provider: "ollama", model:, max_tokens: 64 })
+      end
+    end
+
+    def answer(body)
+      text = JSON.generate(body["messages"])
+      return refusal if text.include?("DOES-NOT-FIT")
+
+      reply = { "model" => model, "message" => { "role" => "assistant", "content" => "settled" }, "done" => true,
+                "done_reason" => "stop", "prompt_eval_count" => 2_000, "eval_count" => 1 }
+      { status: 200, headers: { "Content-Type" => "application/x-ndjson" }, body: "#{JSON.generate(reply)}\n" }
+    end
+
+    def refusal
+      inner = { "error" => { "code" => 400, "type" => "exceed_context_size_error", "n_prompt_tokens" => 40_000,
+                             "n_ctx" => refused_at, "message" => "request exceeds the available context size" } }
+      { status: 400, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("error" => JSON.generate(inner)) }
+    end
+
+    def ask
+      @ask ||= begin
+        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
+                                       status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+        recorder, session = wiring.run_state(nil)
+        agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
+        Lain::CLI::Repl::Ask.new(agent:, tty: nil, chronicle:)
+      end
+    end
+
+    def hud = JSON.parse(File.read(state_path))["hud"]
+
+    def critique_budget
+      Lain::Review::Critique::Budget.for(window: backend.context_window, model:, max_tokens: 512, prelude: "")
+    end
+
+    before do
+      nothing_resident
+      stub_request(:post, %r{/api/chat}).to_return { |request| answer(JSON.parse(request.body)) }
+    end
+
+    it "marks the HUD's occupancy as measured against a guess" do
+      ask.attempt("hello")
+
+      expect(hud).to match(/ ctx:~\d+% /)
+    end
+
+    it "makes the book authoritative at the refused window, and /critique is no longer unvouched" do
+      ask.attempt("hello")
+      expect { critique_budget }.to raise_error(Lain::Review::Critique::Refused, /guessed/)
+
+      ask.attempt("DOES-NOT-FIT")
+
+      expect(backend.context_window.resolve(model)).to be_authoritative
+      expect(backend.context_window.window_tokens(model)).to eq(refused_at)
+      expect(critique_budget.window_tokens).to eq(refused_at)
+    end
+
+    it "drops the HUD's guess mark on the next measured turn" do
+      ask.attempt("hello")
+      ask.attempt("DOES-NOT-FIT")
+
+      ask.attempt("and again")
+
+      expect(hud).to match(/ ctx:\d+% /)
     end
   end
 end

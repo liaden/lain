@@ -1129,6 +1129,72 @@ RSpec.describe Lain::Provider::Ollama do
         expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
       end
 
+      # nil above is one answer for two situations a window book must tell
+      # apart: a server that answered with nothing resident is cheap to ask
+      # again, and a host that never answered costs the probe's whole timeout
+      # every time.
+      describe "#window_probe" do
+        let(:probe) { Lain::Provider::WindowProbe }
+
+        def asked = described_class.new.window_probe("qwen3-coder:30b")
+
+        it "answers the resident window" do
+          stub_request(:get, "http://localhost:11434/api/ps")
+            .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                       body: JSON.generate("models" => [ps_entry("qwen3-coder:30b")]))
+
+          expect(asked).to eq(probe.resident(served))
+        end
+
+        it "answers nothing resident when the server lists no runner for the model" do
+          stub_request(:get, "http://localhost:11434/api/ps")
+            .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                       body: JSON.generate("models" => []))
+
+          expect(asked).to equal(probe::NONE_RESIDENT)
+        end
+
+        it "answers unreachable when the probe times out" do
+          stub_request(:get, "http://localhost:11434/api/ps").to_timeout
+
+          expect(asked).to equal(probe::UNREACHABLE)
+        end
+
+        it "answers unreachable when the connection is refused" do
+          stub_request(:get, "http://localhost:11434/api/ps").to_raise(Faraday::ConnectionFailed)
+
+          expect(asked).to equal(probe::UNREACHABLE)
+        end
+
+        it "answers unreachable when the read times out" do
+          stub_request(:get, "http://localhost:11434/api/ps").to_raise(Faraday::TimeoutError)
+
+          expect(asked).to equal(probe::UNREACHABLE)
+        end
+
+        # A server that answered at all was reached, whatever it said.
+        it "answers nothing resident on a non-2xx" do
+          stub_request(:get, "http://localhost:11434/api/ps")
+            .to_return(status: 500, headers: { "Content-Type" => "application/json" },
+                       body: JSON.generate("error" => "server error"))
+
+          expect(asked).to equal(probe::NONE_RESIDENT)
+        end
+
+        it "answers nothing resident on a body that is not JSON" do
+          stub_request(:get, "http://localhost:11434/api/ps")
+            .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "<html>")
+
+          expect(asked).to equal(probe::NONE_RESIDENT)
+        end
+
+        it "answers nothing resident, asking nothing, on an arm with no runners" do
+          expect(described_class.cloud(api_key: "sk-test").window_probe("qwen3-coder:30b"))
+            .to equal(probe::NONE_RESIDENT)
+          expect(a_request(:get, %r{/api/ps})).not_to have_been_made
+        end
+      end
+
       # A metadata probe must not inherit the COMPLETION path's retry budget.
       # `ServerError` and `ConnectionFailed` are both in MiddlewareStack's
       # retry_exceptions, so under the shipped config each of these costs three

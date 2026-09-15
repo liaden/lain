@@ -347,9 +347,13 @@ module Lain
         # lets it raise. A prompt is not the place to answer for a wiring bug:
         # absence is the only honest reading left, and the missing segment is
         # itself the signal.
+        #
+        # Whether the window was a guess is the state feed's to say, read through
+        # the same {StatusFeed::Reading} that marks the HUD, so the two surfaces
+        # cannot disagree about it.
         def occupancy
           ratio = @agent.occupancy
-          ratio && "#{(ratio.clamp(0.0, FULL) * 100).round}%"
+          ratio && "#{reading.guess_mark}#{(ratio.clamp(0.0, FULL) * 100).round}%"
         rescue ContextWindow::UnknownModel, ArgumentError
           nil
         end

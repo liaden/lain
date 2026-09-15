@@ -10,6 +10,22 @@
 # about, because `:approaching_window` spends a window on an irreversible lossy
 # rewrite and a guess must not be allowed to authorise one.
 RSpec.describe Lain::CLI::Backend::WindowBook do
+  def probed_by(*probes, num_ctx: nil)
+    provider = instance_double(Lain::Provider::Ollama)
+    allow(provider).to receive(:window_probe).and_return(*probes)
+    instance_double(Lain::CLI::Backend, model: "qwen3:4b", num_ctx:, provider:)
+  end
+
+  # A clock that moves `seconds` between any two readings, so every probe
+  # takes exactly that long without a spec ever waiting on one.
+  def clock_costing(seconds)
+    now = 0.0
+    -> { now += seconds }
+  end
+
+  let(:probe) { Lain::Provider::WindowProbe }
+  let(:costly) { Lain::CLI::Backend::WindowBook::Lookup::COSTLY_SECONDS }
+
   describe Lain::CLI::Backend::WindowBook::Served do
     # The narrower book underneath, carrying its own fallback, so an example can
     # tell "delegated and matched" from "delegated and guessed" without leaning
@@ -107,8 +123,41 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
   # exact wiring the guessed-window defect broke under.
   describe "#book" do
     def backend(served_window:, num_ctx: nil)
-      provider = instance_double(Lain::Provider::Ollama, context_window_tokens: served_window)
-      instance_double(Lain::CLI::Backend, model: "qwen3:4b", num_ctx:, provider:)
+      probe = served_window ? Lain::Provider::WindowProbe.resident(served_window) : Lain::Provider::WindowProbe::NONE_RESIDENT
+      probed_by(probe, num_ctx:)
+    end
+
+    # The re-asking budget is charged by what a probe COST, which only the
+    # lookup that timed it can say. What the probe answered decides the book;
+    # how long it took decides whether asking again is affordable.
+    describe "#lookup" do
+      it "charges a probe that took longer than the threshold, whatever it answered" do
+        lookup = described_class.new(backend: probed_by(probe::NONE_RESIDENT), clock: clock_costing(0.25)).lookup
+
+        expect(lookup).to be_costly
+      end
+
+      it "charges nothing for a fast refused connection, so an ollama started later is still learned" do
+        lookup = described_class.new(backend: probed_by(probe::UNREACHABLE), clock: clock_costing(0.001)).lookup
+
+        expect(lookup).not_to be_costly
+        expect(lookup.book).to equal(Lain::ContextWindow.default)
+      end
+
+      it "always charges a probe that ran out the probe timeout" do
+        timeout = Lain::Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS
+
+        expect(timeout).to be > costly
+        expect(described_class.new(backend: probed_by(probe::UNREACHABLE), clock: clock_costing(timeout)).lookup)
+          .to be_costly
+      end
+
+      it "keeps an unconfirmed --num-ctx as the guess, whoever failed to confirm it" do
+        lookup = described_class.new(backend: probed_by(probe::UNREACHABLE, num_ctx: 16_384)).lookup
+
+        expect(lookup.book.resolve("qwen3:4b").window_tokens).to eq(16_384)
+        expect(lookup.book.resolve("qwen3:4b")).not_to be_authoritative
+      end
     end
 
     it "answers the bench's own book when the provider reports no served window" do
@@ -133,7 +182,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # `authoritative?`, not merely non-nil: authority is what
     # {Lain::Compaction::Source} spends on an irreversible rewrite.
     def cloud_backend(num_ctx:)
-      provider = instance_double(Lain::Provider::Ollama, context_window_tokens: nil)
+      provider = instance_double(Lain::Provider::Ollama, window_probe: Lain::Provider::WindowProbe::NONE_RESIDENT)
       instance_double(Lain::CLI::Backend, model: "gpt-oss:120b-cloud", num_ctx:, provider:)
     end
 
@@ -220,19 +269,27 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # It counts the askings, because "it stopped asking" is the property, and a
     # book that merely happens to answer the same number twice would satisfy an
     # assertion about the number alone.
-    def source(*books, model: "qwen3:4b")
-      answers = books.dup
+    #
+    # An answer is a book a cheap probe found, or a {#slow} one, which charges
+    # the re-asking budget.
+    def source(*answers, model: "qwen3:4b")
+      lookups = answers.map { |answer| answer.is_a?(lookup_class) ? answer : cheap(answer) }
       Class.new do
         attr_reader :asked
 
         define_method(:initialize) { @asked = 0 }
         define_method(:model) { model }
-        define_method(:book) do
+        define_method(:lookup) do
           @asked += 1
-          answers.length > 1 ? answers.shift : answers.first
+          lookups.length > 1 ? lookups.shift : lookups.first
         end
       end.new
     end
+
+    def lookup_class = Lain::CLI::Backend::WindowBook::Lookup
+
+    def cheap(book) = lookup_class.new(book:, seconds: 0.0)
+    def slow(book) = lookup_class.new(book:, seconds: Lain::CLI::Backend::WindowBook::Lookup::COSTLY_SECONDS * 5)
 
     def guessed(window_tokens) = book_for(window_tokens, Lain::ContextWindow::GUESSED)
     def probed(window_tokens) = book_for(window_tokens, Lain::ContextWindow::PROBED)
@@ -297,17 +354,52 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       expect(blank.asked).to eq(1)
     end
 
-    # A behaviour change made deliberately. "Re-resolves until authoritative"
-    # silently means "never stops" for the users least able to diagnose it: an
-    # ollama model the shipped table does not carry resolves GUESSED through
+    # "Re-resolves until authoritative" means "never stops" for an ollama model
+    # the shipped table does not carry: it resolves GUESSED through
     # {ContextWindow::CONSERVATIVE_FALLBACK}, so no answer short of a runner can
-    # ever settle it. Measured against a black-holed host at
-    # 2.003s per re-resolution -- and {Middleware::ResolveWindow} fires once per
-    # ITERATION of the agent loop, so a ten-tool-call turn paid +20s for a number
-    # that was never going to arrive.
+    # settle it. That is affordable while a probe is cheap and ruinous while it
+    # is not -- measured against a black-holed host at 2.003s per re-resolution,
+    # and {Middleware::ResolveWindow} fires once per ITERATION of the agent loop,
+    # so a ten-tool-call turn paid +20s. So the budget counts costly probes only.
     describe "the budget on re-asking" do
-      it "gives up after a fixed few re-asks and keeps the answer it has" do
-        never_settles = source(guessed(16_384))
+      # The same budget over the real lookup, charged by a clock rather than
+      # by a scripted verdict: the three hosts it was argued over.
+      describe "over a timed lookup" do
+        def live_over(*probes, seconds:)
+          backend = probed_by(*probes)
+          book = Lain::CLI::Backend::WindowBook.new(backend:, clock: clock_costing(seconds))
+          [described_class.new(source: book), backend.provider]
+        end
+
+        it "stops asking a 250 ms nothing-resident server after 1 + REASK_LIMIT probes" do
+          live, provider = live_over(probe::NONE_RESIDENT, seconds: 0.25)
+
+          10.times { live.reresolve }
+
+          expect(provider).to have_received(:window_probe).exactly(1 + described_class::REASK_LIMIT).times
+        end
+
+        it "learns a model that loads after three turns of refused connections" do
+          live, = live_over(*Array.new(4, probe::UNREACHABLE), probe.resident(32_768), seconds: 0.001)
+
+          4.times { live.reresolve }
+
+          expect(live.resolve("qwen3:4b")).to be_authoritative
+          expect(live.window_tokens("qwen3:4b")).to eq(32_768)
+        end
+
+        it "still bounds a black-holed host" do
+          live, provider = live_over(probe::UNREACHABLE,
+                                     seconds: Lain::Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS)
+
+          10.times { live.reresolve }
+
+          expect(provider).to have_received(:window_probe).exactly(1 + described_class::REASK_LIMIT).times
+        end
+      end
+
+      it "gives up after a fixed few slow re-asks and keeps the answer it has" do
+        never_settles = source(slow(guessed(16_384)))
         live = described_class.new(source: never_settles)
 
         10.times { live.reresolve }
@@ -316,12 +408,10 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         expect(live.window_tokens("qwen3:4b")).to eq(16_384)
       end
 
-      # The budget must not cost the run the correction it exists for. Ollama
-      # fixes a runner's context at LOAD time and the first request is what
-      # loads it, so the answer -- if it is coming -- arrives within the first
-      # couple of iterations, which is what the limit is sized for.
+      # The budget must not cost the run the correction it exists for: an answer
+      # that arrives while some of it is left is taken.
       it "still upgrades a guess that arrives inside the budget" do
-        arriving = source(guessed(16_384), guessed(16_384), probed(32_768))
+        arriving = source(slow(guessed(16_384)), slow(guessed(16_384)), probed(32_768))
         live = described_class.new(source: arriving)
 
         3.times { live.reresolve }
@@ -330,13 +420,102 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         expect(arriving.asked).to eq(3)
       end
 
+      # The budget is for probes that cost something to repeat. A local server
+      # answering "nothing resident" does so in about a millisecond, and the
+      # runner it has not loaded yet -- evicted by a summarizer on another
+      # model, re-keyed by a sibling command -- may load on any later turn.
+      it "re-asks a cheap nothing-resident server for as long as it takes" do
+        answers = Array.new(10) { guessed(16_384) } << probed(32_768)
+        loading = source(*answers)
+        live = described_class.new(source: loading)
+
+        10.times { live.reresolve }
+
+        expect(live.resolve("qwen3:4b")).to be_authoritative
+        expect(live.window_tokens("qwen3:4b")).to eq(32_768)
+      end
+
+      it "spends nothing on a cheap re-ask" do
+        mixed = source(slow(guessed(16_384)), guessed(16_384), guessed(16_384), guessed(16_384),
+                       slow(guessed(16_384)), slow(guessed(16_384)))
+        live = described_class.new(source: mixed)
+
+        10.times { live.reresolve }
+
+        expect(mixed.asked).to eq(7)
+      end
+
       # Spending the budget is not the same as settling, and the difference is
       # what a later reader needs: the run kept a GUESS, and a guess still may
       # not authorise a rewrite.
       it "keeps the exhausted answer a guess, so it still authorises nothing" do
-        live = described_class.new(source: source(guessed(16_384)))
+        live = described_class.new(source: source(slow(guessed(16_384))))
 
         10.times { live.reresolve }
+
+        expect(live.resolve("qwen3:4b")).not_to be_authoritative
+      end
+    end
+
+    # An over-window refusal is the server counting the prompt against the
+    # context it actually loaded, and it names that context. That is the same
+    # fact `/api/ps` states, arriving by another road, so it vouches the same.
+    describe "a window an over-window refusal names" do
+      it "becomes the authoritative answer for the run's model" do
+        live = described_class.new(source: source(guessed(16_384)))
+
+        live.vouch(32_768)
+
+        expect(live.resolve("qwen3:4b")).to be_authoritative
+        expect(live.window_tokens("qwen3:4b")).to eq(32_768)
+      end
+
+      it "lifts the refusal /critique gives a guessed window" do
+        live = described_class.new(source: source(guessed(16_384)))
+        budget = -> { Lain::Review::Critique::Budget.for(window: live, model: "qwen3:4b", max_tokens: 512, prelude: "") }
+
+        expect { budget.call }.to raise_error(Lain::Review::Critique::Refused, /guessed/)
+        live.vouch(32_768)
+        expect(budget.call.window_tokens).to eq(32_768)
+      end
+
+      # A runner left small by a sibling session answers `/api/ps` with its own
+      # context, and the request that reloads it is refused against the new
+      # one. The refusal is the later fact.
+      it "replaces a stale probed window too" do
+        live = described_class.new(source: source(probed(8_192)))
+
+        live.vouch(16_384)
+
+        expect(live.window_tokens("qwen3:4b")).to eq(16_384)
+      end
+
+      it "settles the book, so nothing is asked again" do
+        asking = source(guessed(16_384))
+        live = described_class.new(source: asking)
+
+        live.vouch(32_768)
+        3.times { live.reresolve }
+
+        expect(asking.asked).to eq(1)
+      end
+
+      # The refusal answered one request, for one model. After a `/model`
+      # switch that is not the run's own, and the run's own keeps its answer.
+      it "vouches a switched model's window and leaves the launch model's book untouched" do
+        live = described_class.new(source: source(probed(32_768)))
+
+        live.vouch(65_536, model: "qwen3-coder:30b")
+
+        expect(live.resolve("qwen3-coder:30b")).to be_authoritative
+        expect(live.window_tokens("qwen3-coder:30b")).to eq(65_536)
+        expect(live.window_tokens("qwen3:4b")).to eq(32_768)
+      end
+
+      it "vouches for nothing when the run resolved no model" do
+        live = described_class.new(source: source(Lain::ContextWindow.default, model: nil))
+
+        live.vouch(32_768)
 
         expect(live.resolve("qwen3:4b")).not_to be_authoritative
       end

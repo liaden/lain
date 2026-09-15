@@ -23,7 +23,8 @@
 # What `Lain::Frontend::PromptComposer::RunState` supplies:
 #
 #   $model      the live model slot -- follows a /model switch mid-chat
-#   $occupancy  how full the context window is, a whole percent, clamped at 100%
+#   $occupancy  how full the context window is, a whole percent, clamped at 100%,
+#               prefixed `~` when nothing vouched for the window (`~61%`)
 #               (absent before the first turn, and absent when the model slot is
 #               blank -- a prompt is not the place to answer for a wiring bug)
 #   $fleet      how many subagents have spawned, absent when none have

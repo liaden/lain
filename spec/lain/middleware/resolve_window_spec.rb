@@ -54,6 +54,27 @@ RSpec.describe Lain::Middleware::ResolveWindow do
     expect(trail).to eq([:reresolved])
   end
 
+  # A refusal for not fitting the context names the context the server loaded,
+  # which is a better answer than a guess. The turn still fails: the book learns
+  # from the refusal, it does not answer for it.
+  describe "on an over-window refusal" do
+    before do
+      book.define_singleton_method(:vouch) { |window_tokens| @trail << [:vouched, window_tokens] }
+    end
+
+    def refusal
+      Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens: 40_000, window_tokens: 32_768,
+                                                                 source: "ollama")
+    end
+
+    it "vouches for the window the refusal names, and lets the refusal raise" do
+      failed = refusal
+
+      expect { described_class.new(book:).call({}) { raise failed } }.to raise_error(failed)
+      expect(trail).to eq([:reresolved, [:vouched, 32_768]])
+    end
+  end
+
   it "composes as a middleware, since the turn stack is where it is used" do
     stack = Lain::Middleware::Stack.new([described_class.new(book:)])
 

@@ -4,9 +4,11 @@ Puts lain's HUD in any tmux status bar and binds prefix keys for the two
 tmux-native lain gestures — without `lain up`'s managed session. It reads the
 same state feed `Lain::StatusFeed` publishes (`cache_deadline`, `fleet`,
 `inbox_count`, and the optional `approvals_pending`, `occupancy`,
-`mode_lighter`), resolved against the **active pane's** working directory, so
+`window_guessed`, `mode_lighter`), resolved against the **active pane's** working directory, so
 the segment describes the project that pane is in rather than a fixed one —
-with the exactness that implies, spelled out below.
+with the exactness that implies, spelled out below. The context segment reads
+`ctx:61%`, or `ctx:~61%` when `window_guessed` says nothing has vouched for the
+window it was divided by yet.
 
 That feed lives at
 

@@ -131,6 +131,17 @@ RSpec.describe Lain::StatusFeed::Reading do
       expect(hud(**warm(occupancy: 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100% ")
     end
 
+    # A guessed window is a floor somebody picked, so a percentage divided by
+    # it can read 61% on a context 15% full. The number stays; the mark says
+    # nobody vouched for its denominator.
+    it "marks an occupancy measured against a guessed window" do
+      expect(hud(**warm(occupancy: 0.61, window_guessed: true))).to eq("🔥 fleet:2 inbox:3 ctx:~61% ")
+    end
+
+    it "leaves an occupancy against a vouched window unmarked" do
+      expect(hud(**warm(occupancy: 0.61, window_guessed: false))).to eq("🔥 fleet:2 inbox:3 ctx:61% ")
+    end
+
     it "names the run's token spend" do
       expect(hud(**warm(run_tokens: 27_997))).to eq("🔥 fleet:2 inbox:3 run:27997 ")
     end

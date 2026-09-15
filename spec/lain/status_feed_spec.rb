@@ -786,6 +786,36 @@ RSpec.describe Lain::StatusFeed do
       end
     end
 
+    # The HUD's `~` is decided by what vouched for the denominator, and only
+    # this sink holds the book when it takes the reading.
+    context "when saying whether the window was a guess" do
+      it "publishes a reading against a guessed window as guessed" do
+        feed = described_class.new(path:, context_window: Lain::ContextWindow.new(windows: {}, fallback: 8192))
+
+        feed << sized_turn_usage(input_tokens: 4096, model: "qwen3:4b")
+
+        expect(published["window_guessed"]).to be(true)
+        expect(Lain::StatusFeed::Reading.new(published).hud(now: Time.now)).to include("ctx:~50%")
+      end
+
+      it "publishes a reading against a vouched window as not guessed" do
+        feed = described_class.new(path:, context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 }))
+
+        feed << sized_turn_usage(input_tokens: 4096, model: "qwen3:4b")
+
+        expect(published["window_guessed"]).to be(false)
+      end
+
+      it "keeps the last reading's answer through a turn it could not measure" do
+        feed = described_class.new(path:, context_window: Lain::ContextWindow.new(windows: {}, fallback: 8192))
+        feed << sized_turn_usage(input_tokens: 4096, model: "qwen3:4b")
+
+        feed << sized_turn_usage(input_tokens: 0, model: "qwen3:4b")
+
+        expect(published["window_guessed"]).to be(true)
+      end
+    end
+
     it "counts every token billed on the way in, cached or not -- Usage#total_input_tokens" do
       feed = described_class.new(path:)
 
@@ -1531,7 +1561,7 @@ RSpec.describe Lain::StatusFeed do
       feed << turn_usage(cache_read: 1)
 
       expect(published.keys).to contain_exactly("cache_deadline", "fleet", "inbox_count", "approvals_pending",
-                                                "occupancy", "unmeasured_turns", "compactions",
+                                                "occupancy", "window_guessed", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
                                                 "run_tokens", "scope", "approval", "layers", "mode_lighter",
                                                 "elapsed", "idle", "since_compaction", "hud")
@@ -1550,7 +1580,8 @@ RSpec.describe Lain::StatusFeed do
       feed << spawn_event("a")
       feed << message_event("q1", to: "human")
 
-      expect(published["hud"]).to eq("\u{1F525} fleet:1 inbox:1 ctx:0% run:16 ")
+      # `claude-x` is in no book, so its window is the fallback guess and says so.
+      expect(published["hud"]).to eq("\u{1F525} fleet:1 inbox:1 ctx:~0% run:16 ")
     end
 
     it "renders the cold marker into the published line once the deadline has passed" do

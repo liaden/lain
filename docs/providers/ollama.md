@@ -126,6 +126,11 @@ mistaking one for the other is a silent 8x error.
   `DEBUGGING_OLLAMA.md`). `/api/ps` states the served figure or nobody does, so `nil` — no
   resident runner, or an unreachable server — is the **ordinary** answer and leaves
   `ContextWindow`'s conservative fallback in charge.
+- **An over-window 400's `n_ctx`** is the same served figure, stated by the runner that just
+  refused a prompt against it. `Middleware::ResolveWindow` adopts it as an authoritative window
+  (`WindowBook::Live#vouch`), which also corrects a book that probed a stale, smaller runner
+  before the request reloaded it. The turn stack cannot see the refused request, so today the
+  vouch names the run's own `--model`; `#vouch` takes a `model:` for a caller that can.
 
 **A caller that sends `num_ctx` owns the `min`.** Ollama reloads a runner whose `NumCtx` differs
 from the request's (`sched.go`'s `needsReload`), so a runner left at 32,768 by `ollama run`, by a
@@ -143,9 +148,36 @@ The case that does bite is a **black-holed host**. `--api-base http://10.255.255
 the full `Transport::PROBE_TIMEOUT_SECONDS`, measured **2,002 ms per call**, and
 `Middleware::ResolveWindow` re-asks at the top of every agent-loop iteration for as long as the
 window book stays a guess — measured at **+20 s on a ten-tool-call turn** before it was bounded.
-`CLI::Backend::WindowBook::Live::REASK_LIMIT` bounds it now, at `1 + REASK_LIMIT` probes per
-session. A merely *down* ollama is unaffected: it answers ECONNREFUSED in ~0.3 ms rather than
-dropping packets.
+
+So the budget is charged by what a probe **cost**, not by what it answered.
+`CLI::Backend::WindowBook#lookup` times each `Provider#window_probe` on an injected monotonic clock,
+and a probe slower than `WindowBook::Lookup::COSTLY_SECONDS` (50 ms) spends one of
+`WindowBook::Live::REASK_LIMIT` re-asks. 50 ms is well above a local `/api/ps`, which answers or
+refuses in about a millisecond, and well below what one agent-loop iteration can absorb. A timeout
+always exceeds it, because `PROBE_TIMEOUT_SECONDS` is 2 s.
+
+| host | typical probe | charged |
+|---|---|---|
+| local ollama, nothing resident | ~1 ms | no: re-asked every iteration while the book is a guess |
+| ollama not started yet (`ECONNREFUSED`) | ~1 ms | no: learned once it starts |
+| a slow remote or proxy, answering anything | 250 ms – 1.8 s | yes: at most `1 + REASK_LIMIT` probes per session |
+| black-holed or silent host | 2 s timeout | yes: the same bound |
+
+What the probe answered is still typed, for what it means rather than for what it costs:
+`Provider::WindowProbe.resident(n)` when `/api/ps` names a runner for the model, `NONE_RESIDENT`
+when the server answered without one (no runner, a non-2xx, a body that is not ollama's) or the arm
+has no runners to ask, and `UNREACHABLE` when nothing answered — a refused connection or a timeout
+(`Faraday::ConnectionFailed`/`TimeoutError` as the cause), or an `--api-base` no request can be
+built for. Faraday gives a refusal and a connect timeout the same class, `ConnectionFailed`; their
+own causes differ (`Errno::ECONNREFUSED` against `Net::OpenTimeout`), and so does their cost, which
+is what the charge reads.
+
+"Nothing resident" stays re-askable because the runner can load on any later turn — evicted by a
+summarizer on another model, re-keyed by a sibling command — and a session launched during a
+reload that stopped asking divided by 8,192 for its whole life while ollama served 32,768.
+
+A window that is still a guess is marked on both surfaces that show occupancy: the HUD reads
+`ctx:~61%` and the prompt line `ctx ~61%`, from the state feed's `window_guessed` field.
 
 ## Running the integration specs
 

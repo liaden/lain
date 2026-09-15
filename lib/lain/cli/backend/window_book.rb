@@ -26,6 +26,20 @@ module Lain
       # necessary: `ollama.com` has no resident runner to probe, a local one
       # does, and only {Served} can state what it is actually serving.
       class WindowBook
+        Lookup = Data.define(:book, :seconds)
+
+        # A book, and how long the probe behind it took.
+        class Lookup
+          # A probe slower than this charges {Live::REASK_LIMIT}. Well above a
+          # local `/api/ps`, measured at about a millisecond answering or
+          # refusing, and well below what a turn can absorb once per agent-loop
+          # iteration. A probe that runs out
+          # {Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS} is always over it.
+          COSTLY_SECONDS = 0.05
+
+          def costly? = seconds > COSTLY_SECONDS
+        end
+
         # A book that answers for ONE model and delegates every other name.
         #
         # It is NOT a {ContextWindow} built by merging the served window into
@@ -141,47 +155,47 @@ module Lain
         # which is what keeps a hosted run from opening a round trip per turn,
         # and is asserted mechanically by `spec/lain/seams/recorded_run_spec.rb`,
         # whose cassette records exactly ONE `/api/ps` for a two-turn run.
-        # {REASK_LIMIT} is the second way, bounding the WORST case.
+        # {REASK_LIMIT} is the second way, bounding what probes that COST something
+        # may add: a slow or silent host is asked at most `1 + REASK_LIMIT` times.
         class Live
-          # How many times a run re-asks before keeping the answer it has, NOT
-          # counting the resolution at launch.
+          # How many COSTLY re-asks ({Lookup#costly?}) a run tolerates before
+          # keeping the answer it has, not counting the resolution at launch.
           #
-          # A limit is needed because "stops when authoritative" does not stop
-          # at all for an ollama model the shipped table does not carry: it
-          # resolves GUESSED, only a runner answering can settle it, and
-          # {Middleware::ResolveWindow} fires once per ITERATION of the agent
-          # loop, not once per user ask. Against a host that DROPS packets each
-          # probe costs the full
-          # {Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS}: measured
-          # 2.003s per re-resolution, so a ten-tool-call turn paid +20 seconds,
-          # every turn, for a number that was never going to arrive.
+          # Against a host that DROPS packets each probe costs the full
+          # {Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS}: measured 2.003s
+          # per re-resolution, and {Middleware::ResolveWindow} fires once per
+          # ITERATION of the agent loop, so a ten-tool-call turn paid +20
+          # seconds, every turn, for a number that was never going to arrive. A
+          # slow host that does answer costs the same way, answer or not.
           #
-          # THREE, because ollama fixes a runner's context at LOAD time and the
-          # first request is what loads it, so an answer that is coming arrives
-          # by the second iteration's refresh; the third is slack for a first
-          # request that failed.
+          # A cheap probe spends none of it, whatever it found. The runner may
+          # load on any later turn -- evicted by a summarizer on another model,
+          # re-keyed by a sibling command, or an ollama started after lain -- and
+          # charging every guess left a session launched during a reload dividing
+          # by 8,192 for good: four `/api/ps` asks, then never again, while
+          # ollama served 32,768.
           #
-          # Giving up is not settling: the book keeps whatever it has, which for
-          # the case above is the operator's `--num-ctx` still tagged GUESSED,
-          # so an exhausted budget still authorises no rewrite.
+          # Giving up is not settling: the book keeps whatever it has, still
+          # tagged GUESSED, so an exhausted budget authorises no rewrite.
           REASK_LIMIT = 3
 
-          # @param source [#book, #model] resolves a fresh book, and names the
+          # @param source [#lookup, #model] looks a fresh book up, and names the
           #   model whose answer decides whether asking again could help
           def initialize(source:)
             @source = source
-            @book = source.book
-            @reasks = 0
+            @book = source.lookup.book
+            @charged = 0
+            @vouched = {}
           end
 
           # @return [Integer]
-          def window_tokens(model) = @book.window_tokens(model)
+          def window_tokens(model) = book_for(model).window_tokens(model)
 
           # @return [ContextWindow::WindowResolution]
-          def resolve(model) = @book.resolve(model)
+          def resolve(model) = book_for(model).resolve(model)
 
           # @return [ContextWindow::Occupancy, ContextWindow::Occupancy::None]
-          def occupancy(used_tokens, model:) = @book.occupancy(used_tokens, model:)
+          def occupancy(used_tokens, model:) = book_for(model).occupancy(used_tokens, model:)
 
           # Ask again, if asking could still help.
           #
@@ -189,24 +203,53 @@ module Lain
           def reresolve
             return self unless asking_can_help?
 
-            @reasks += 1
-            @book = @source.book
+            lookup = @source.lookup
+            @charged += 1 if lookup.costly?
+            @book = lookup.book
+            self
+          end
+
+          # Adopt the window a provider named while refusing a prompt for not
+          # fitting it. The server counted that prompt against the context it
+          # had actually loaded, so the number is measured, not requested -- the
+          # same fact `/api/ps` states, and it vouches the same way. A runner
+          # left smaller by a sibling session is the case this also covers:
+          # the request that reloads it is refused against the context it
+          # reloaded at, which is later news than any probe.
+          #
+          # The vouch answers for the model the refused request named, and for
+          # that model only: a {Served} book carries one name for the reason its
+          # own doc gives, so a refusal after a `/model` switch leaves the run's
+          # own model with the answer it had.
+          #
+          # @param window_tokens [Integer] the refusal's context size
+          # @param model [String, nil] the refused request's model; the run's
+          #   own when the caller cannot see the request
+          # @return [self]
+          def vouch(window_tokens, model: @source.model)
+            return self if model.nil?
+
+            served = Served.new(model:, window_tokens:)
+            @vouched[model.to_s] = served
+            @vouched["#{model}:latest"] = served
             self
           end
 
           private
 
+          def book_for(model) = @vouched.fetch(model.to_s, @book)
+
           # Two independent reasons not to ask, and they answer different
           # questions: {#settled?} is "a better answer is not possible",
           # {REASK_LIMIT} is "a better answer is not worth waiting for".
-          def asking_can_help? = @reasks < REASK_LIMIT && !settled?
+          def asking_can_help? = @charged < REASK_LIMIT && !settled?
 
           # A blank or unresolvable model settles rather than raising: the book
           # is already loud about that wiring bug at READ time, and a turn that
           # was not about the window must not die here.
           def settled?
             model = @source.model
-            model.nil? || @book.resolve(model).authoritative?
+            model.nil? || resolve(model).authoritative?
           rescue ContextWindow::UnknownModel
             true
           end
@@ -217,8 +260,11 @@ module Lain
         #   option hash naming no `--provider` at all (a bench arm, a spec)
         #   makes `#provider` AND `#model` raise {UnknownProvider}, and a
         #   denominator lookup is not where that refusal belongs
-        def initialize(backend:)
+        # @param clock [#call] monotonic seconds, read either side of a probe to
+        #   price it
+        def initialize(backend:, clock: RunClock::MONOTONIC)
           @backend = backend
+          @clock = clock
         end
 
         # The run's book, or the bench's own when nothing better resolved --
@@ -233,15 +279,20 @@ module Lain
         # construction, before a WindowBook can exist.
         #
         # @return [Served, ContextWindow]
-        def book
-          model = @backend.model
-          reported = @backend.provider.context_window_tokens(model)
-          window = narrowest(reported)
-          return ContextWindow.default if window.nil?
+        def book = lookup.book
 
-          Served.new(model:, window_tokens: window, provenance: vouched_by(reported))
+        # {#book}, with what the probe behind it cost -- which is what {Live}
+        # spends its re-asking budget on.
+        #
+        # @return [Lookup]
+        def lookup
+          model = @backend.model
+          provider = @backend.provider
+          started = @clock.call
+          probe = provider.window_probe(model)
+          Lookup.new(book: book_from(model, probe.window_tokens), seconds: @clock.call - started)
         rescue UnknownProvider, Backend::MissingAPIKey, URI::Error
-          ContextWindow.default
+          Lookup.new(book: ContextWindow.default, seconds: 0.0)
         end
 
         # The run's own model, or nil when no `--provider` resolved one. Asked
@@ -257,6 +308,13 @@ module Lain
         end
 
         private
+
+        def book_from(model, reported)
+          window = narrowest(reported)
+          return ContextWindow.default if window.nil?
+
+          Served.new(model:, window_tokens: window, provenance: vouched_by(reported))
+        end
 
         # WHO VOUCHES for the number, a different question from what the number
         # is. A `--num-ctx` the provider did not confirm is a REQUEST: plausible

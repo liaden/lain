@@ -21,6 +21,27 @@ module Lain
     class Unsupported < Error; end
     include Inspectable
 
+    WindowProbe = Data.define(:window_tokens, :unreachable)
+
+    # What asking a server for its served window found: a resident window,
+    # nothing resident, or no answer at all.
+    class WindowProbe
+      # @param window_tokens [Integer, nil] a served window, or nil for none
+      # @return [WindowProbe]
+      def self.of(window_tokens) = window_tokens.nil? ? NONE_RESIDENT : resident(window_tokens)
+
+      # @param window_tokens [Integer]
+      # @return [WindowProbe]
+      def self.resident(window_tokens) = new(window_tokens:, unreachable: false)
+
+      NONE_RESIDENT = new(window_tokens: nil, unreachable: false)
+      UNREACHABLE = new(window_tokens: nil, unreachable: true)
+
+      def unreachable? = unreachable
+
+      private :unreachable
+    end
+
     # Every capability any provider may declare. Naming them in one place is what
     # lets `Compare` refuse to compare two runs whose degraded sets differ.
     CAPABILITIES = %i[
@@ -70,6 +91,18 @@ module Lain
     def context_window_tokens(_model)
       nil
     end
+
+    # {#context_window_tokens} as one of three typed answers, because its nil
+    # covers two situations that cost differently to ask about again: a server
+    # that answered with nothing resident answers again in well under a
+    # millisecond, and a host that never answered costs the probe's whole
+    # timeout every time. A provider with no server to ask can never be
+    # unreachable, so this answers from {#context_window_tokens}, and an arm
+    # that overrides only that still answers here.
+    #
+    # @param model [String]
+    # @return [WindowProbe]
+    def window_probe(model) = WindowProbe.of(context_window_tokens(model))
 
     # The largest window this model could EVER be served, or nil when the
     # provider cannot say.

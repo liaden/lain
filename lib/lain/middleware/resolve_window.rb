@@ -20,8 +20,12 @@ module Lain
     # OUTERMOST in the turn stack, ahead of {JournalTurns}: the refresh has to
     # land before anything downstream reads a window, and re-resolving is not part
     # of the turn a journal records.
+    #
+    # A prompt refused for not fitting the context raises through here, and the
+    # refusal names the context the server loaded. That is a measured window, so
+    # the book adopts it before the refusal goes on up; the turn still fails.
     class ResolveWindow < Base
-      # @param book [#reresolve] the run's one window book
+      # @param book [#reresolve, #vouch] the run's one window book
       def initialize(book:)
         @book = book
         super()
@@ -31,6 +35,9 @@ module Lain
       def call(env, &app)
         @book.reresolve
         downstream(env, &app)
+      rescue Lain::WindowExceeded => e
+        @book.vouch(e.window_tokens)
+        raise
       end
     end
   end

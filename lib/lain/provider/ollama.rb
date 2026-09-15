@@ -83,6 +83,11 @@ module Lain
 
       DEFAULT_MODEL = "qwen3:4b"
 
+      # The transport failures that mean no server answered. Faraday's net_http
+      # adapter reports a connect timeout as `ConnectionFailed`, so both are
+      # needed to cover a black-holed host.
+      UNANSWERED = [Faraday::ConnectionFailed, Faraday::TimeoutError].freeze
+
       # Same refusal shape as {.deployment_free}: a keyword whose effect another
       # keyword silently swallows is refused rather than resolved, because the
       # resolution is invisible from every assertion the caller could write.
@@ -316,16 +321,26 @@ module Lain
       #
       # @param model [String]
       # @return [Integer, nil]
-      def context_window_tokens(model)
-        return nil unless @deployment.runner_status?
+      def context_window_tokens(model) = window_probe(model).window_tokens
 
-        served_context_length(model, wrapping_errors { @transport.process_status.body })
-      rescue APIError
-        nil
+      # The same probe, typed. Only a round trip that got NO answer is
+      # {WindowProbe::UNREACHABLE}: a refused connection or a timeout, and the
+      # typo'd `--api-base` above, which can never be reached at all. A non-2xx
+      # or an unreadable body came from a server that answered, and answers
+      # again just as cheaply, so it is nothing resident.
+      #
+      # @param model [String]
+      # @return [WindowProbe]
+      def window_probe(model)
+        return WindowProbe::NONE_RESIDENT unless @deployment.runner_status?
+
+        WindowProbe.of(served_context_length(model, wrapping_errors { @transport.process_status.body }))
+      rescue APIError => e
+        UNANSWERED.any? { |failure| e.cause.is_a?(failure) } ? WindowProbe::UNREACHABLE : WindowProbe::NONE_RESIDENT
       rescue NoMethodError => e
         raise if e.receiver.equal?(@transport)
 
-        nil
+        WindowProbe::UNREACHABLE
       end
 
       # The GGUF's trained maximum for `model`, or nil.

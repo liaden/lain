@@ -184,7 +184,7 @@ module Lain
     #   {CLI::Conductor} records a user prompt on the same instance, so an
     #   `idle` published from a private one would never reset. Defaulted anyway,
     #   so a directly constructed feed still publishes an honest elapsed.
-    # @param context_window [#occupancy] the book resolving a model name into
+    # @param context_window [#occupancy, #resolve] the book resolving a model name into
     #   the denominator, the same duck {Agent#occupancy} takes.
     # @param store [Store] where a committed turn's causal chain is resolved --
     #   {Inbox}'s collaborator. Defaulted to an EMPTY one rather than required,
@@ -206,6 +206,7 @@ module Lain
     def start_empty
       @cache_deadline = nil
       @occupancy = nil
+      @window_guessed = nil
       @unmeasured_turns = 0
       @run_tokens = nil
       @mode = ModeState::NONE
@@ -409,10 +410,16 @@ module Lain
     #   caller rescues per prompt. This sink has no such caller: it rides the
     #   {CLI::JournalTee}, which re-raises a sink's failure, so a raise here
     #   would cost the agent its turn over a status line.
+    #
+    #   Whether the book vouched for that window is noted beside the reading,
+    #   and only when there is one, so the HUD's guess mark stays with the ratio
+    #   it describes.
     def occupancy_of(usage, model)
       return nil unless usage.total_input_tokens.positive?
 
-      @context_window.occupancy(usage.total_input_tokens, model:).ratio
+      ratio = @context_window.occupancy(usage.total_input_tokens, model:).ratio
+      @window_guessed = !@context_window.resolve(model).authoritative?
+      ratio
     rescue ContextWindow::UnknownModel, ArgumentError
       nil
     end
@@ -496,7 +503,7 @@ module Lain
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.digests, "inbox_count" => @inbox.pending_size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
-        "unmeasured_turns" => @unmeasured_turns,
+        "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
         "run_tokens" => @run_tokens }
         .merge(@mode.published)

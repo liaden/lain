@@ -94,6 +94,7 @@ RSpec.describe Lain::Provider::Journaled do
       expect(provider.encode(request)).to eq(inner.encode(request))
       expect(provider.to_s).to eq(inner.to_s)
       expect(provider.context_window_tokens("qwen3:4b")).to eq(inner.context_window_tokens("qwen3:4b"))
+      expect(provider.window_probe("qwen3:4b")).to eq(inner.window_probe("qwen3:4b"))
       expect(provider.trained_context_tokens("qwen3:4b")).to eq(inner.trained_context_tokens("qwen3:4b"))
     end
 

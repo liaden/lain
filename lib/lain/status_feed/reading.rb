@@ -68,6 +68,8 @@ module Lain
       # human can act on.
       FULL_PERCENT = 100
 
+      GUESS = "~"
+
       # @param path [String] a published state file, absent or unreadable as
       #   often as not
       # @return [Reading] over whatever was there, or over nothing
@@ -128,6 +130,16 @@ module Lain
       # this object deliberately does not.
       def derivation_refusal_streak = @state["derivation_refusal_streak"].to_i
 
+      # Only an explicit `true` marks a guess: a state written before the field
+      # existed has nothing to say about its window, and a mark it never earned
+      # would read as a claim.
+      def window_guessed? = @state["window_guessed"] == true
+
+      # The mark a percentage carries when its denominator was a guess. A
+      # guessed window is a floor somebody picked, so 61% of it can be 15% of
+      # the context the server really loaded.
+      def guess_mark = window_guessed? ? GUESS : ""
+
       private
 
       def cache_deadline
@@ -150,7 +162,7 @@ module Lain
       # silent, which is what distinguishes a fresh session from a measured one.
       def occupancy
         ratio = @state["occupancy"]
-        ratio && " ctx:#{[(ratio * FULL_PERCENT).floor, FULL_PERCENT].min}%"
+        ratio && " ctx:#{guess_mark}#{[(ratio * FULL_PERCENT).floor, FULL_PERCENT].min}%"
       end
 
       # `run:` and both halves are load-bearing. "usage:" would read as the

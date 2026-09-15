@@ -61,6 +61,31 @@ RSpec.describe Lain::Provider do
     end
   end
 
+  # The typed form of the same question, which a window book needs because
+  # "nothing is resident" and "nobody answered" cost differently to ask again.
+  # A provider with no server to ask can never be unreachable, so the base
+  # answers from {#context_window_tokens} and an override of that still counts.
+  describe "#window_probe" do
+    it "answers nothing resident from the abstract surface" do
+      expect(described_class.new.window_probe("claude-opus-4-8")).to equal(Lain::Provider::WindowProbe::NONE_RESIDENT)
+    end
+
+    it "answers a resident window from a provider that overrides the untyped question" do
+      provider = Class.new(Lain::Provider::Mock) { def context_window_tokens(_model) = 32_768 }.new
+
+      expect(provider.window_probe("m")).to eq(Lain::Provider::WindowProbe.resident(32_768))
+      expect(provider.window_probe("m").window_tokens).to eq(32_768)
+    end
+
+    it "answers values that are frozen and shareable" do
+      probes = [Lain::Provider::WindowProbe.resident(8_192), Lain::Provider::WindowProbe::NONE_RESIDENT,
+                Lain::Provider::WindowProbe::UNREACHABLE]
+
+      expect(probes).to all(satisfy { |probe| Ractor.shareable?(probe) })
+      expect(probes.map(&:unreachable?)).to eq([false, false, true])
+    end
+  end
+
   # to_s is the human-facing capability list; inspect keeps the class-tagged,
   # debug-oriented form -- the DegradedSet convention (see
   # capability/degraded_set_spec.rb). Uses Provider::Mock because the abstract

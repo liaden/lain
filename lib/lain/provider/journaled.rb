@@ -76,9 +76,9 @@ module Lain
       end
 
       # Everything this decorator does NOT record. Declared rather than written
-      # out as eight bodies, so the one message it does decorate (`#complete`)
+      # out as nine bodies, so the one message it does decorate (`#complete`)
       # is the only method in the class and a reader cannot miss it.
-      delegate :capabilities, :supports?, :require!, :cache_profile, :context_window_tokens,
+      delegate :capabilities, :supports?, :require!, :cache_profile, :context_window_tokens, :window_probe,
                :trained_context_tokens, :encode, :to_s, to: :@inner
     end
   end
