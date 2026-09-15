@@ -136,7 +136,7 @@ RSpec.describe Lain::Event::ChainWriter do
       seen = []
       lineage = Lain::Tools::Subagent::Lineage.new(policy:, log:, observer: seen.method(:push))
 
-      spawn = lineage.spawn(parent)
+      spawn = lineage.spawn(parent, prompt: "go")
       message = lineage.message(parent, spawn, child, Data.define(:text).new(text: "done"))
 
       expect(seen).to eq([spawn, message])
@@ -147,7 +147,7 @@ RSpec.describe Lain::Event::ChainWriter do
       log = Lain::Tools::Subagent::Log.new
       lineage = Lain::Tools::Subagent::Lineage.new(policy:, log:)
 
-      spawn = lineage.spawn(parent)
+      spawn = lineage.spawn(parent, prompt: "go")
 
       expect(log.to_a).to eq([spawn])
     end
@@ -161,7 +161,7 @@ RSpec.describe Lain::Event::ChainWriter do
       log = Lain::Tools::Subagent::Log.new
       lineage = Lain::Tools::Subagent::Lineage.new(policy:, log:, observer: ->(_event) { raise "scribe down" })
 
-      expect { lineage.spawn(parent) }.to raise_error("scribe down")
+      expect { lineage.spawn(parent, prompt: "go") }.to raise_error("scribe down")
 
       expect(log.to_a.size).to eq(1)
       expect(log.to_a.first.kind).to eq(:spawn)

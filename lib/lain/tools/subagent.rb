@@ -240,7 +240,7 @@ module Lain
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
         parent = parent_timeline
-        spawn = lineage.spawn(parent)
+        spawn = lineage.spawn(parent, prompt:)
         child, response = run_child(prompt, parent, on_stream_started:)
         lineage.message(parent, spawn, child, response)
         Tool::Result.ok(response.text)

@@ -33,32 +33,38 @@ module Lain
         # with the parent's. Put into the SHARED Store, where H already lives,
         # so referential integrity holds.
         #
-        # `lifecycle`, `adoption` and `unattended` are written CONDITIONALLY, so
-        # only the actor path pays a byte change and every one-shot digest on
-        # disk stays as it was. `unattended` is in the record because without it
-        # a recorded spawn no longer determines the child's toolset, the one
-        # property a bench reader replays a spawn to check.
+        # This event's digest is an ADDRESS: an actor's `tell` names it, and so
+        # do the window `--windows` opens and `lain watch` for a one-shot too.
+        # Two calls in one assistant turn spawn from one head, so without the
+        # work in the body the fleet, the journal and a watch read the pair as
+        # one. `task` is the DIGEST of the prompt, not its text: the prompt is
+        # already the child's first turn, and the record should not grow by it.
+        # Content-derived, so identity survives a resumed run and a role spawn's
+        # per-call writer. Identical twins keep sharing one address because the
+        # same work from one head IS the same spawn -- a ruling, not a
+        # dependency: the session record dedupes a child's turns on their own
+        # digests, which never cite the spawn.
         #
-        # `adoption` is the identity two live children cannot share: an adopted
-        # actor's ADDRESS is this event's digest, and two launches of one arm
-        # from one head are otherwise byte-identical, so the fleet, the journal
-        # and a `tell` would read the twins as one. A one-shot is adopted by
-        # nobody and addressed by nobody, hence the condition above.
+        # `lifecycle`, `adoption` and `unattended` are written CONDITIONALLY.
+        # `unattended` is in the record because without it a recorded spawn no
+        # longer determines the child's toolset, the one property a bench reader
+        # replays a spawn to check.
         #
-        # A COUNTER, not a nonce, and that is the binding constraint: a nonce
-        # would not break replay (a record rebuilds from its own recorded body)
-        # but would break CROSS-RUN reproducibility, and two runs of one bench
-        # arm could then not be joined on a spawn digest.
+        # `adoption` separates what `task` cannot: two launches of one arm on
+        # the same work from one head, which as live actors must not share an
+        # address. A COUNTER, not a nonce, and that is the binding constraint: a
+        # nonce would not break replay (a record rebuilds from its own recorded
+        # body) but would break CROSS-RUN reproducibility, and two runs of one
+        # bench arm could then not be joined on a spawn digest.
         #
         # Its scope is this WRITER; {#next_adoption} says what that leaves open.
         # A named `lane` closes the part of it two issues' actors meet: each
         # issue's writer counts from 1 over the chat's one head, and the lane
-        # is what their spawns then differ by. The run's own lane writes none,
-        # so its digests stay as they were.
-        def spawn(parent, lifecycle: nil)
+        # is what their spawns then differ by. The run's own lane writes none.
+        def spawn(parent, prompt:, lifecycle: nil)
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
-                   "only" => @policy.only, "spawned_from" => head }
+                   "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
           body.merge!(adopted(head, lifecycle)) unless lifecycle.nil?
           body["unattended"] = true if @policy.unattended
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
@@ -120,7 +126,8 @@ module Lain
         # Scoped to THIS writer, which is what it leaves open. A cockpit builds
         # one {Tools::Subagent} and memoizes its Lineage, so every actor it
         # launches counts off this one sequence -- but a SECOND writer over the
-        # same head starts again and re-collides, as a resumed run does. Both
+        # same head starts again and re-collides on the same work, as a resumed
+        # run does. Both
         # want an identity minted outside this object.
         #
         # Unsynchronized, and safe only because nothing between the read and the

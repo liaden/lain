@@ -668,6 +668,32 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # Two subagent calls in one assistant turn spawn from one head, through the
+  # real loop and the real tool. What separates their addresses is the prompt
+  # each CALL carried reaching the spawn record, which no example that builds
+  # its spawns straight from a Lineage can see.
+  describe "a spawn's address" do
+    it "differs for two calls of different work in one assistant turn, each naming its own prompt" do
+      parent_agent = nil
+      tool = build_subagent(provider: mock(text_response("aspirin done"), text_response("statin done")),
+                            parent: -> { parent_agent.timeline })
+      calls = tool_response(["call_1", "subagent", { "prompt" => "survey the aspirin trials" }],
+                            ["call_2", "subagent", { "prompt" => "survey the statin trials" }])
+      parent_agent = Lain::Agent.new(provider: mock(calls, text_response("parent done")),
+                                     toolset: Lain::Toolset.new([tool]),
+                                     context: Lain::Context.new(model: "parent", max_tokens: 256),
+                                     timeline: Lain::Timeline.empty(store:))
+
+      parent_agent.ask("please spawn")
+
+      expect(record.spawns.map { |spawn| spawn.body.fetch("spawned_from") }.uniq.size).to eq(1)
+      expect(record.spawns.map(&:digest).uniq.size).to eq(2)
+      expect(record.spawns.map { |spawn| spawn.body.fetch("task") })
+        .to contain_exactly(Lain::Canonical.digest("survey the aspirin trials"),
+                            Lain::Canonical.digest("survey the statin trials"))
+    end
+  end
+
   # ---- Scenario: attenuation under each posture (5-1.2) ----------------------
 
   describe "attenuation postures" do

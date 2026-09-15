@@ -81,10 +81,9 @@ module Lain
         # for a non-yielding prefix -- a synchronously-raising provider has
         # already set `@failure` by the time launch returns.
         def launch(prompt)
-          # "launched" marks the actor path ONLY: a one-shot's :spawn keeps its
-          # original bytes, so addresses change only where the lifecycle marker
-          # exists to be read.
-          @spawn = @lineage.spawn(@parent, lifecycle: "launched")
+          # "launched" marks the actor path ONLY, and brings the adoption
+          # ordinal that separates twins launched on the same work.
+          @spawn = @lineage.spawn(@parent, prompt:, lifecycle: "launched")
           @address = @spawn.digest
           @parent_correlation = @lineage.correlation_of(@parent)
           @task = Async::Task.current.async { run(prompt) }

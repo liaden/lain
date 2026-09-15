@@ -4,11 +4,12 @@ module Lain
   module CLI
     class Watch
       # Decides, from the NDJSON fields alone, whether a journal record chains
-      # to the watched spawn S. Only {Telemetry::Message} records are ever
-      # admitted: `turn` records are the PARENT's render chain (a child actor's
-      # turns never reach this journal at all -- the scribe walks only the
-      # parent Timeline), and every actor exchange is a message record carrying
-      # its lineage explicitly as `from`/`to`/`causal_parents`. No Store is
+      # to the watched spawn S, an actor or a one-shot alike. Only
+      # {Telemetry::Message} records are ever admitted: `turn` records are the
+      # PARENT's render chain, a child's own turns arrive as `child_turn`
+      # records this view does not render, and every spawn, exchange and
+      # completion is a message record carrying its lineage explicitly as
+      # `from`/`to`/`causal_parents`. No Store is
       # reconstructed and no digest is re-derived -- the record's own fields
       # are the whole truth this filter consults.
       #

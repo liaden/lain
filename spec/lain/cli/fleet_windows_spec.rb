@@ -152,6 +152,27 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(rename_argvs.size).to eq(1)
     end
 
+    # Two subagent calls in one assistant turn spawn from one head, so the
+    # records come from the REAL writer: hand-written digests would separate
+    # the pair whether or not the spawn body does.
+    it "opens a window per one-shot of different work from one head, and marks only the one that completed" do
+      store = Lain::Store.new
+      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      child = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "work" }])
+      lineage = Lain::Tools::Subagent::Lineage.new(
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
+      )
+      aspirin = lineage.spawn(head, prompt: "survey the aspirin trials")
+      statin = lineage.spawn(head, prompt: "survey the statin trials")
+      done = lineage.message(head, aspirin, child, Data.define(:text).new(text: "three trials"))
+      [aspirin, statin, done].each { |event| fleet << Lain::Telemetry::Message.from_event(event) }
+      fleet.drain_pending
+
+      aspirin_window = "researcher-#{aspirin.digest.split(":").last[0, 8]}"
+      expect(open_argvs.size).to eq(2)
+      expect(rename_argvs).to eq([["tmux", "rename-window", "-t", "=#{aspirin_window}", "#{aspirin_window} [done]"]])
+    end
+
     it "does not mark on a plain tell -- conversation is not a lifecycle transition" do
       fleet << spawn_record
       fleet << tell_record

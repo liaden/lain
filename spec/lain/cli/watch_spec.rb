@@ -136,7 +136,7 @@ RSpec.describe Lain::CLI::Watch do
       lineage = Lain::Tools::Subagent::Lineage.new(policy:)
       child = Lain::Timeline.empty(store: parent_chain.store)
                             .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-      lineage.message(parent_chain, lineage.spawn(parent_chain), child,
+      lineage.message(parent_chain, lineage.spawn(parent_chain, prompt: "go"), child,
                       Data.define(:text).new(text: "child answer")).body
     end
 
@@ -153,6 +153,38 @@ RSpec.describe Lain::CLI::Watch do
       watch.run
 
       expect(output.string).to include("(stopped) child answer")
+    end
+  end
+
+  # The address `--windows` hands a pane: two subagent calls in one assistant
+  # turn spawn from one head, and a watch given one of them has to follow that
+  # child alone. Every record comes from the real writer, since what separates
+  # the two is the spawn body it writes and nothing a fixture could stamp.
+  describe "one of two one-shots spawned from one head" do
+    let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
+    let(:lineage) { Lain::Tools::Subagent::Lineage.new(policy:) }
+    let(:answer) { Data.define(:text) }
+
+    def child_of(prompt)
+      Lain::Timeline.empty(store: parent_chain.store)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => prompt }])
+    end
+
+    def journaled(event) = Lain::Telemetry::Message.from_event(event).to_journal
+
+    it "renders only the watched child's result" do
+      aspirin = lineage.spawn(parent_chain, prompt: "survey the aspirin trials")
+      statin = lineage.spawn(parent_chain, prompt: "survey the statin trials")
+      completions = [lineage.message(parent_chain, aspirin, child_of("aspirin"), answer.new(text: "ASPIRIN-RESULT")),
+                     lineage.message(parent_chain, statin, child_of("statin"), answer.new(text: "STATIN-RESULT"))]
+      records = [header_record] + parent_chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) } +
+                [aspirin, statin, *completions].map { |event| journaled(event) } + [closed_record]
+      path = write_journal(records)
+
+      described_class.new(selector: aspirin.digest, path:, sink: output, paths:).run
+
+      expect(output.string).to include("ASPIRIN-RESULT")
+      expect(output.string).not_to include("STATIN-RESULT")
     end
   end
 

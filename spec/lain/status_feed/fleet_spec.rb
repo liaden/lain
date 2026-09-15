@@ -202,6 +202,28 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.digests).to eq([second.digest])
     end
 
+    # The one-shot twins: two subagent calls in one assistant turn spawn from
+    # one head. Written by the REAL writer, for the reason {#adoption} hashes a
+    # real body -- the work is only a separator if the digest carries it here.
+    it "counts two one-shots of different work from one head as two, and retires each on its own completion" do
+      store = Lain::Store.new
+      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      child = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "work" }])
+      lineage = Lain::Tools::Subagent::Lineage.new(
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
+      )
+      fleet = described_class.new
+      aspirin = lineage.spawn(head, prompt: "survey the aspirin trials")
+      statin = lineage.spawn(head, prompt: "survey the statin trials")
+      [aspirin, statin].each { |spawn| fleet.launched(spawn) }
+
+      expect(fleet.digests).to eq([aspirin.digest, statin.digest])
+
+      fleet.completed(lineage.message(head, aspirin, child, Data.define(:text).new(text: "three trials")))
+
+      expect(fleet.digests).to eq([statin.digest])
+    end
+
     it "leaves a member alone when the completion names some other spawn" do
       fleet = described_class.new
       launch = spawn_event("a")

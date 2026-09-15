@@ -43,4 +43,22 @@ RSpec.describe Lain::Tools::Subagent::Actor do
       expect(stops.size).to eq(1)
     end
   end
+
+  # The actor keeps its adoption ordinal for twins on the same work, and names
+  # the work beside it, so its address is derived from what it was given as a
+  # one-shot's is.
+  describe "#launch" do
+    it "records the digest of the prompt it was launched with in its :spawn" do
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("watch the build", worker_env:) }
+        supervisor.stop
+      ensure
+        supervisor&.stop
+      end
+
+      spawn = records.find { |record| record["type"] == "message" && record["kind"] == "spawn" }
+      expect(spawn.fetch("payload")).to include("task" => Lain::Canonical.digest("watch the build"), "adoption" => 1)
+    end
+  end
 end
