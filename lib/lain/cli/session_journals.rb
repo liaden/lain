@@ -54,6 +54,9 @@ module Lain
       # A damaged line is refused under the same name: either way this reader
       # cannot say what the directory holds, and the remedy is the human's.
       class Unreadable < Error
+        include RefusedBeforeActing
+        include JournalUnreadable
+
         def self.io(path, cause) = new("cannot read the session journal #{path}: #{cause.message}")
 
         def self.damaged(line) = new("the session journal #{line.path} #{line.where} (#{line.what}) -- #{line.remedy}")

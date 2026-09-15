@@ -337,6 +337,75 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     # ends the run in words instead.
     def torn_record = Lain::Approval::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")
 
+    it "declares both damaged-journal refusals by one marker" do
+      expect([Lain::CLI::SessionJournals::Unreadable, Lain::Approval::SignoffQueue::UnreadableRecord])
+        .to all(be < Lain::JournalUnreadable)
+    end
+
+    # The same damage is the run's wherever it is met: the plan read, the gate
+    # and the landing each fold the same journals.
+    def reading_b_torn(gate: RunSpecGate.new, landing: nil)
+      statuses = { "a" => "in_flight", "b" => "in_flight" }
+      run_over(issues: [issue("a", blocks: ["b"]), issue("b")], statuses:, width: 1, gate:,
+               reports: { "a" => anchored("sha-a"), "b" => anchored("sha-b") },
+               landing: landing&.call(RunSpecLanding.new(statuses)))
+    end
+
+    def gate_torn_for(id) = ->(issue_id, sha:) { issue_id == id ? raise(torn_record) : !sha.nil? }
+
+    it "ends the run in words, keeping what already landed, when a later gate meets it" do
+      run, _actors, landing = reading_b_torn(gate: gate_torn_for("b"))
+
+      result = run.call
+
+      expect(landing.landed).to eq([%w[a sha-a]])
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.map(&:issue_id)).to eq(["b"])
+      expect(result.stopped).to include("the gate_decision record cannot be read")
+    end
+
+    it "ends the run in words, keeping what already landed, when a later landing meets it" do
+      torn = lambda do |real|
+        lambda do |issue_id, sha:, ref:|
+          issue_id == "b" ? raise(torn_record) : real.call(issue_id, sha:, ref:)
+        end
+      end
+      run, = reading_b_torn(landing: torn)
+
+      result = run.call
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.map(&:issue_id)).to eq(["b"])
+      expect(result.reported.first.reason).not_to include("--resume")
+      expect(result.stopped).to include("the gate_decision record cannot be read")
+    end
+
+    # The landing reads the session journals before it merges, so a damaged
+    # one met there is a refusal: nothing was merged, and there is nothing to resume.
+    it "reports an unreadable session journal met at a later landing as refused, never as a resume" do
+      torn = Lain::CLI::SessionJournals::Unreadable.new("the session journal x.ndjson is damaged at line 1")
+      tearing = lambda do |real|
+        lambda do |issue_id, sha:, ref:|
+          issue_id == "b" ? raise(torn) : real.call(issue_id, sha:, ref:)
+        end
+      end
+      run, = reading_b_torn(landing: tearing)
+
+      result = run.call
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.map(&:issue_id)).to eq(["b"])
+      expect(result.reported.first.reason).to include("damaged at line 1")
+      expect(result.reported.first.reason).not_to include("--resume")
+      expect(result.stopped).to include("damaged at line 1")
+    end
+
+    it "still refuses the whole run when a gate meets it before anything landed" do
+      run, = reading_b_torn(gate: gate_torn_for("a"))
+
+      expect { run.call }.to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord)
+    end
+
     it "ends the run in words, keeping what already landed, when a later plan read meets it" do
       statuses = { "a" => "in_flight", "b" => "in_flight" }
       run, actors, landing = run_over(issues: [issue("a", blocks: ["b"]), issue("b")], statuses:,
@@ -706,6 +775,39 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
       expect(reason).to include("already on epic/demo")
       expect(reason).not_to include("--resume")
+    end
+
+    # The run reads the declaration on the refusal's class, so a refusal class
+    # added later needs no second edit here to be told apart from a stranding.
+    it "reports any refusal whose class declares it was raised before acting, without offering a resume" do
+      declared = Class.new(Lain::Error) { include Lain::RefusedBeforeActing }
+
+      reason = refused_by(declared.new("a refusal no list here has heard of"))
+
+      expect(reason).to include("a refusal no list here has heard of")
+      expect(reason).not_to include("--resume")
+    end
+
+    def errors_declared_under(namespace)
+      namespace.constants.map { |name| namespace.const_get(name) }
+                         .select { |constant| constant.is_a?(Class) && constant < StandardError }
+    end
+
+    # Everything the landing and its queue declare they raise is raised before
+    # either merges, so a class declared there without the marker would send a
+    # human to `--resume` over a refusal.
+    it "finds every error class the landing and its queue declare marked as raised before acting" do
+      declared = [Lain::Forge::LocalLanding, Lain::Isolation::LandingQueue].flat_map { |ns| errors_declared_under(ns) }
+
+      expect(declared).not_to be_empty
+      expect(declared.reject { |error| error < Lain::RefusedBeforeActing }).to be_empty
+    end
+
+    it "finds the refusals the landing borrows for its gate, plan and journal checks marked the same way" do
+      borrowed = [Lain::Approval::Gate::NotApproved, Lain::CLI::EpicSubmit::PlanNotApproved,
+                  Lain::Approval::SignoffQueue::UnreadableRecord, Lain::CLI::SessionJournals::Unreadable]
+
+      expect(borrowed.reject { |error| error < Lain::RefusedBeforeActing }).to be_empty
     end
 
     # The genuine stranding: the merge was under way and something broke, so the

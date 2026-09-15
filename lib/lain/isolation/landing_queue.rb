@@ -24,7 +24,9 @@ module Lain
     class LandingQueue
       # A queue that cannot run at all: no branch to land onto, or a parent
       # checkout standing somewhere else.
-      class Refused < Error; end
+      class Refused < Error
+        include RefusedBeforeActing
+      end
 
       NOTHING_LANDED = "nothing landed, so there was nothing to verify"
 

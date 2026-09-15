@@ -3,6 +3,20 @@
 module Lain
   class Error < StandardError; end
 
+  # A refusal raised before the command refusing changed anything. Its message
+  # names its own remedy, so a caller never sends a human on to resume work
+  # that never started -- the epic driver reads it to tell a refused landing
+  # from one whose merge broke part-way.
+  #
+  # Declared on the refusal class itself, never listed by its readers: a list
+  # misses the class added after it.
+  module RefusedBeforeActing; end
+
+  # The records a decision rests on cannot be read. Every decision over the
+  # same journals fails alike, so a loop over many subjects stops at the first
+  # rather than blaming the damage on each subject in turn.
+  module JournalUnreadable; end
+
   # A prompt refused WHOLE for not fitting the context it was sent to, carrying
   # the refuser's exact figures: `prompt_tokens` counted by the provider's own
   # tokenizer, `window_tokens` the context it actually loaded, and `source`

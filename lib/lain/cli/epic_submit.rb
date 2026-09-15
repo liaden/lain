@@ -39,7 +39,9 @@ module Lain
       # An implementation is built to an approved plan, so its gate refuses to
       # open until the issue's plan AS IT STANDS -- criteria included -- carries
       # an approval. Its own class because the remedy is a different command.
-      class PlanNotApproved < Error; end
+      class PlanNotApproved < Error
+        include RefusedBeforeActing
+      end
 
       # The y/n prompt this command owns, on the streams it was handed. Both are
       # INJECTED and neither defaults to the process's own, because only the

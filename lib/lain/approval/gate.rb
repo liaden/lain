@@ -187,7 +187,9 @@ module Lain
 
       # Names the digest, so the edited-artifact case reads as a different,
       # un-approved address rather than a mysterious miss.
-      class NotApproved < Error; end
+      class NotApproved < Error
+        include RefusedBeforeActing
+      end
 
       # Raised in place of `async`'s bare `RuntimeError: No async task
       # available!`, which names neither the caller that broke the precondition

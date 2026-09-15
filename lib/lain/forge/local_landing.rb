@@ -29,10 +29,21 @@ module Lain
       # {Telemetry::Handback}'s journal type: the record a landing writes as it merges.
       LANDED = "handback"
 
-      class NotInFlight < Error; end
-      class MisplacedTests < Error; end
-      class Ambiguous < Error; end
-      class AlreadyOnBranch < Error; end
+      class NotInFlight < Error
+        include RefusedBeforeActing
+      end
+
+      class MisplacedTests < Error
+        include RefusedBeforeActing
+      end
+
+      class Ambiguous < Error
+        include RefusedBeforeActing
+      end
+
+      class AlreadyOnBranch < Error
+        include RefusedBeforeActing
+      end
 
       # An issue whose commit passed every check, as the worker the queue lands.
       Admission = Data.define(:issue_id, :worker)

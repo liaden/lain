@@ -79,6 +79,9 @@ module Lain
       # through {.for} too, so one damaged line reads the same whichever fold
       # reaches it first.
       class UnreadableRecord < Error
+        include RefusedBeforeActing
+        include JournalUnreadable
+
         # @param record [Hash{String=>Object}] the damaged journal record
         # @param cause [ArgumentError] the carrier's refusal of it
         # @return [UnreadableRecord] one line, naming the record by digest and partition

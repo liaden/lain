@@ -848,15 +848,15 @@ module Lain
           @asking = Asking.new(gate:, interrupt:)
         end
 
-        # A session journal that cannot be read ends the whole run, whether the
-        # fold or a plan read meets it. Before anything has landed that is a
-        # refusal, raised; after, the landings are on the branch and the reply
-        # has to say so, so the run stops in words instead.
+        # A session journal that cannot be read ends the whole run, wherever it
+        # is met: the fold, a plan read, a gate or a landing. Before anything has
+        # landed that is a refusal, raised; after, the landings are on the branch
+        # and the reply has to say so, so the run stops in words instead.
         #
         # @return [Result] what landed, what was reported, and why the loop
         #   stopped when it stopped early
-        # @raise [CLI::SessionJournals::Unreadable, Approval::SignoffQueue::UnreadableRecord]
-        #   when the run meets one before it has landed anything
+        # @raise [JournalUnreadable] when the run meets one before it has landed
+        #   anything
         def call
           @landed = []
           @reported = []
@@ -864,7 +864,7 @@ module Lain
           @stopped = nil
           drive
           result
-        rescue CLI::SessionJournals::Unreadable, Approval::SignoffQueue::UnreadableRecord => e
+        rescue JournalUnreadable => e
           unreadable(e)
         end
 
@@ -946,7 +946,7 @@ module Lain
         # or it declares no subject to write tests for, and either way a human
         # has to look. The rest of the run keeps moving.
         #
-        # A sign-off journal that cannot be read is not this issue's: every plan
+        # A session journal that cannot be read is not this issue's: every plan
         # read after it meets the same damage, so it goes to {#call} to end the
         # run, rather than being reported once per issue.
         def launch(issue)
@@ -954,7 +954,7 @@ module Lain
           launched = @actors.call(issue.id, subject: subject.subject, level: subject.level,
                                             attempt: @attempts.call(issue.id))
           @live << Live.new(issue_id: issue.id, launch: launched)
-        rescue CLI::SessionJournals::Unreadable, Approval::SignoffQueue::UnreadableRecord
+        rescue JournalUnreadable
           raise
         rescue StandardError => e
           @reported << Reported.new(issue_id: issue.id, reason: e.message)
@@ -977,14 +977,16 @@ module Lain
         #
         # A grader that raises is caught by the same rescue as everything else
         # here: it stops THAT issue and leaves the run carrying whatever already
-        # landed.
+        # landed. A journal that cannot be read is reported against the issue
+        # too, then goes on to {#call}: the next issue's gate reads the same one.
         def settle_one
           entry = @live.shift
           row = row_of(entry)
           @grading.call(entry.issue_id, row)
           judge(entry, @supervisor.retire(row))
         rescue StandardError => e
-          reported(entry, "#{UNCARRIED}: #{e.class}: #{e.message}")
+          reported(entry, "#{UNCARRIED}: #{e.class}: #{e.message}") if untouched?(entry.issue_id)
+          raise if e.is_a?(JournalUnreadable)
         end
 
         def row_of(entry) = @supervisor.find { |row| row.actor.equal?(entry.launch.actor) }
@@ -1019,6 +1021,7 @@ module Lain
           reported(entry, stood(moved))
         rescue StandardError => e
           reported(entry, unlanded(entry, report, e))
+          raise if e.is_a?(JournalUnreadable)
         end
 
         # `--resume` finishes a merge that HAPPENED and was journaled, so it is
@@ -1032,16 +1035,7 @@ module Lain
           format(STRANDED, sha: report.sha, issue: entry.issue_id, why: "#{error.class}: #{error.message}")
         end
 
-        # Spelled in a method body: this unit loads before `lain/forge`, so a
-        # constant list in the class body would be a NameError at boot.
-        def refused_before_merging?(error)
-          [Lain::Forge::LocalLanding::NotInFlight, Lain::Forge::LocalLanding::MisplacedTests,
-           Lain::Forge::LocalLanding::AlreadyOnBranch, Lain::Forge::LocalLanding::Ambiguous,
-           Lain::Isolation::LandingQueue::Refused, Lain::Approval::Gate::NotApproved,
-           Lain::Approval::SignoffQueue::UnreadableRecord, EpicSubmit::PlanNotApproved].any? do |refusal|
-            error.is_a?(refusal)
-          end
-        end
+        def refused_before_merging?(error) = error.is_a?(RefusedBeforeActing)
 
         def stood(moved)
           stalled = moved.reject(&:done).first
