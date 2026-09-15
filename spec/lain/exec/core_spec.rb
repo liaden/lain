@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
+require "tmpdir"
 
 # The out-of-process arm of the exec seam. Everything here is asserted at the
 # WIRE, with a recording client duck rather than the real daemon, because what
@@ -43,6 +45,15 @@ RSpec.describe Lain::Exec::Core do
 
       expect(capture).to have_attributes(exit_status: 3, stdout: "out", stderr: "err")
     end
+
+    # This arm holds everything the daemon replied with, so what it counts is
+    # what it holds; the in-process arm counts past what it holds.
+    it "counts the whole reply as the capture's size" do
+      capture = run(with: recorder.new({ "exit_status" => 0, "stdout" => "x" * 70_000, "stderr" => "err",
+                                         "timed_out" => false }))
+
+      expect(capture.size).to eq(70_003)
+    end
   end
 
   # The out-of-process half of exec. The daemon is lain's OWN child, so it
@@ -71,16 +82,15 @@ RSpec.describe Lain::Exec::Core do
 
     # The differential that matters here: both backends have to decide the
     # SAME environment, or the transport becomes observable in what a command
-    # can see. Compared against the map the local arm hands mixlib.
+    # can see. Compared against the map the local arm hands its runner.
     it "decides the same environment as the local backend, key for key" do
       with_env("BUNDLE_GEMFILE" => "/lain/Gemfile", "RSPEC_OPTS" => "--seed 1") do
         captured = nil
-        factory = lambda do |*argv, **options|
-          captured = options.fetch(:environment)
-          Mixlib::ShellOut.new(*argv, **options)
+        pipeline = lambda do |_term, env:, capture:, **|
+          captured = env
+          capture.finish(0)
         end
-        Lain::Exec::Local.new(shell_out_factory: factory)
-                         .call(command: "true", cwd: "/tmp", env: ENV.to_h, timeout: 5)
+        Lain::Exec::Local.new(pipeline:).call(command: "true", cwd: "/tmp", env: ENV.to_h, timeout: 5)
         run(env: ENV.to_h)
 
         expect(client.params.fetch("env")).to eq(captured)
@@ -128,6 +138,38 @@ RSpec.describe Lain::Exec::Core do
     it "is a Timeout, so one rescue still covers a caller that need not tell them apart" do
       expect { run(command: "sleep 9", with: mute, timeout: 1, grace: 0.1) }
         .to raise_error(Lain::Exec::Timeout)
+    end
+  end
+
+  # Parity with the in-process arm is a property of the one renderer, and it
+  # has to survive the in-process arm holding only part of what it counts.
+  describe "against the real daemon", :core do
+    let(:runtime_base) { Dir.mktmpdir("lain-exec-core") }
+
+    let(:invocation) { Lain::Tool::Invocation.new(tool_use_id: "tu_1") }
+
+    after { FileUtils.rm_rf(runtime_base) }
+
+    def through_daemon(command)
+      Sync do
+        child = Lain::Core::Child.new(paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime_base }))
+        client = Lain::Core::Client.start(transport: child)
+        begin
+          Lain::Tools::Bash.new(exec: described_class.new(client:)).call({ command: }, invocation)
+        ensure
+          client.stop
+        end
+      end
+    end
+
+    it "refuses output over the ceiling byte-identically to the in-process arm" do
+      command = "head -c 1048576 /dev/zero | tr '\\0' x; exit 3"
+
+      daemon = through_daemon(command)
+      local = Lain::Tools::Bash.new.call({ command: }, invocation)
+
+      expect(daemon.content).to eq(local.content)
+      expect(daemon.content).to include("is 1048576 bytes", "exit status: 3")
     end
   end
 

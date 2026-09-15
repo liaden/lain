@@ -66,6 +66,33 @@ module StdinRegularFile
   end
 end
 
+# The same shared offset one layer down, with no chat and nothing re-seating
+# descriptor 0: a process that has read stdin buffered runs a command through
+# the string arm, then reads on. A runner that reopened stdin in a forked child
+# would seek the shared offset back, and the lines after the first would be
+# read twice.
+module StdinRegularFileArm
+  CHILD = <<~RUBY
+    require "json"
+    require "lain"
+
+    lines = [$stdin.gets]
+    Lain::Exec::Local.new.call(command: ARGV.fetch(0), cwd: Dir.pwd, env: ENV.to_h, timeout: 10)
+    File.write(ARGV.fetch(1), JSON.generate(lines + $stdin.each_line.to_a))
+  RUBY
+
+  def self.run(dir, command)
+    path = File.join(dir, "lines.txt")
+    File.write(path, "one\ntwo\nthree\n")
+    read = File.join(dir, "read.json")
+    log = File.join(dir, "output.log")
+    pid = Process.spawn(RbConfig.ruby, "-I", StdinRegularFile::LIB, "-e", CHILD, command, read,
+                        in: path, %i[out err] => log)
+    _, status = Process.wait2(pid)
+    [File.exist?(read) ? JSON.parse(File.read(read)) : nil, File.read(log), status]
+  end
+end
+
 RSpec.describe "a chat whose stdin is a regular file", :seam do
   it "asks each prompt exactly once, in file order, across a bash call through the string arm" do
     Dir.mktmpdir do |dir|
@@ -74,6 +101,15 @@ RSpec.describe "a chat whose stdin is a regular file", :seam do
       expect(status).to be_success, output
       expect(asked).to eq(["first prompt", "run the command", "third prompt"]), output
       expect(output).to include("ran")
+    end
+  end
+
+  it "leaves the shared offset where the reader left it, across a command through the string arm" do
+    Dir.mktmpdir do |dir|
+      read, output, status = StdinRegularFileArm.run(dir, %(echo "$(printf ran)"))
+
+      expect(status).to be_success, output
+      expect(read).to eq(%W[one\n two\n three\n]), output
     end
   end
 end

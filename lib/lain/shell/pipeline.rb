@@ -19,6 +19,13 @@ module Lain
     # command string, only a path already resolved. The property survives; the
     # absolute does not.
     #
+    # The string arm runs here too, as the one-stage term `["/bin/sh", "-c", command]`
+    # that {Exec::Local} builds from the model's own string, so one runner owns
+    # the session, the kill, the capture and the child's stdin for both
+    # arms. Whether a shell reads the model's bytes is therefore decided by the
+    # term a caller hands over, never here -- and an allow's term cannot name
+    # `sh`, which {Verdict} abstains on by name.
+    #
     # There is deliberately NO path from here back to a string. A caller that
     # holds an allow holds a term and nothing else ({Verdict::Decision} does not
     # carry the source), and this object never falls back to `sh -c` when a term
@@ -30,8 +37,9 @@ module Lain
     # `Process.spawn("ls")` is not `exec("ls")`: a lone String argument gets
     # re-split on whitespace, and one holding a metacharacter goes through
     # `/bin/sh` outright. Every stage is therefore spawned in the
-    # `[program, argv0]` form, which cannot do either. `[["echo hi"]]` looks for
-    # a program literally named `echo hi` and fails, which is the correct answer.
+    # `[program, argv0]` form, which cannot do either, and reaches its own
+    # program as argv through {SETSID}. `[["echo hi"]]` looks for a program
+    # literally named `echo hi` and fails, which is the correct answer.
     #
     # == The predicate downstream of a pipe, and why it defaults to refusing
     #
@@ -48,7 +56,7 @@ module Lain
     # == Refusals are shaped like a shell's, not like an exception
     #
     # Nothing to run, a NUL byte, an unresolvable program, a missing cwd, a stage
-    # refused downstream: each comes back as a {Result} carrying a non-zero
+    # refused downstream: each comes back as a capture carrying a non-zero
     # status and one line on stderr, because the consumer is a model reading tool
     # output and a second result shape would only be a second thing to handle. A
     # timeout is the one exception, and it is an exception because the caller has
@@ -65,13 +73,13 @@ module Lain
     # for. Everything else in the accepted subset renders byte-identically
     # through {Tools::Bash.render_output}, and there is a spec.
     class Pipeline
-      # What ran, in the shape both exec arms render through.
-      Result = Data.define(:exit_status, :stdout, :stderr)
-
       # The command outlived its deadline and its process groups were killed.
-      # Carries the pre-kill capture, as `Mixlib::ShellOut::CommandTimeout` does,
-      # so neither arm discards what the command said before it died.
+      # Carries the capture's report of what the command said before it died.
       class Timeout < Lain::Error; end
+
+      # This host cannot start a command in a session of its own, so no command
+      # is run at all: raised when the runner is built, not once per command.
+      class SessionUnavailable < Lain::Error; end
 
       # A reason not to run, and the status a shell would report it under.
       Refusal = Data.define(:status, :message)
@@ -118,10 +126,37 @@ module Lain
       NOT_FOUND = 127
       NOT_PERMITTED = 126
 
-      # What `Mixlib::ShellOut` produces when the child cannot enter its cwd: the
-      # failure happens in the forked child, which dies with 1. Refusing up front
-      # keeps this arm's posture identical rather than raising out of `spawn`.
+      # What a shell reports when it cannot enter its cwd. Refusing up front
+      # answers with it rather than raising out of `spawn`.
       CHDIR_FAILED = 1
+
+      # What starts every stage in a session of its own. Ruby's `spawn` has no
+      # session option, and `pgroup:` alone leaves a stage on lain's controlling
+      # terminal: a command opening /dev/tty then writes into the chat pane and
+      # stops on a read until its deadline, where in a new session the open fails
+      # at once. Spawned WITHOUT `pgroup:`, so it is not a group leader and calls
+      # `setsid()` itself rather than forking -- the session, its group and the
+      # stage then share one pid, which is what the kill signals. Absolute, so a
+      # child PATH the caller curated cannot lose it; util-linux, and Linux only.
+      SETSID = "/usr/bin/setsid"
+
+      # How often a running command is asked whether its stages have exited,
+      # while a pipe it left open still has nothing to read.
+      POLL = 0.05
+
+      # Once every stage has exited, everything they wrote is already queued in
+      # the pipes and is taken first, without waiting; this long is then allowed
+      # for more from a background child still holding a pipe open, which past
+      # it is its own business, neither waited on nor killed.
+      DRAIN = 0.1
+
+      # Linux's ioctl for how many bytes a pipe holds right now. The queue is
+      # measured rather than read until empty, so a background child that keeps
+      # writing cannot hold the drain open.
+      FIONREAD = 0x541B
+
+      # What `IO.select` answers with when nothing became readable in time.
+      NOTHING_READY = [[].freeze].freeze
 
       # A killed stage has no exit status; a shell reports 128 + the signal.
       SIGNAL_BASE = 128
@@ -130,9 +165,8 @@ module Lain
       # not turn into thousands of channel events, small enough to stay live.
       CHUNK = 65_536
 
-      # Seconds between TERM and KILL. Mixlib hardcodes 3 with no option, so the
-      # figure matches; unlike mixlib's, this one is injectable, because a spec
-      # that has to wait it out pays for it in wall clock.
+      # Seconds between TERM and KILL. Injectable, because a spec that has to wait
+      # it out pays for it in wall clock.
       DEFAULT_GRACE = 3.0
 
       # Everything a refusal writes is prefixed as a shell prefixes its own name,
@@ -150,9 +184,21 @@ module Lain
       # so its inter-stage pipes are closed by the GC rather than promptly.
       PARTIALLY_STARTED = "a stage could not be started, and an earlier stage may already have run"
 
-      def initialize(grace: DEFAULT_GRACE, clock: RunClock::MONOTONIC)
+      # @param grace [Numeric] seconds between TERM and KILL
+      # @param clock [#call] the monotonic seconds deadlines are measured on
+      # @param setsid [String] the {SETSID} every stage is started through,
+      #   checked here so a host without one fails once and by name
+      # @raise [SessionUnavailable] when it is not an executable file
+      def initialize(grace: DEFAULT_GRACE, clock: RunClock::MONOTONIC, setsid: SETSID)
+        unless File.file?(setsid) && File.executable?(setsid)
+          raise SessionUnavailable, "#{setsid} is not an executable file, and every tool command starts through " \
+                                    "it: it gives the command a session of its own, so the command never shares " \
+                                    "lain's terminal -- install util-linux, which provides it"
+        end
+
         @grace = grace
         @clock = clock
+        @setsid = setsid
         freeze
       end
 
@@ -163,12 +209,11 @@ module Lain
       #   a nil value scrubbing a key -- the {WorkerEnv} contract, which `spawn`
       #   implements natively.
       # @param timeout [Numeric] seconds before the process groups are killed
-      # @param stdout_sink [#<<] where each stage's stdout bytes are pumped as
-      #   they arrive; default is {Sink::Null}, which drops them
-      # @param stderr_sink [#<<] where each stage's stderr bytes are pumped as
-      #   they arrive, and where a refusal's own message is written when the
-      #   term never runs at all; default is {Sink::Null}, which drops them
-      # @return [Result] for every TERM, including every one that cannot run --
+      # @param capture [Exec::Capture::Bounded] what each stage's bytes are
+      #   taken into as they arrive, and where a refusal's own line is written
+      #   when the term never runs at all. The caller's, so what a run holds is
+      #   bounded by what the caller chose to retain.
+      # @return [Exec::Capture] for every TERM, including every one that cannot run --
       #   which is the totality that matters, because a term is built from a
       #   {Tool::Input} the model wrote. NOT for every OBJECT: a term that is not
       #   an Array of Arrays (a bare String, nil) raises `NoMethodError`, loudly,
@@ -176,23 +221,19 @@ module Lain
       # @raise [Timeout] when the deadline passes, after the groups are killed
       # @raise [StandardError] whatever a caller's sink raises mid-pump, after
       #   the groups are killed -- see {Run#collect}
-      def call(term, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new)
+      def call(term, cwd:, env:, timeout:, capture:)
         refusals = Refusals.new(term:, cwd:, env:).causes
-        return refuse(refusals.first, stderr_sink) unless refusals.empty?
+        return refuse(refusals.first, capture) unless refusals.empty?
 
-        Run.new(term:, cwd:, env:, timeout:, grace: @grace, clock: @clock,
-                sinks: { stdout: stdout_sink, stderr: stderr_sink }).call
+        Run.new(term:, cwd:, env:, timeout:, grace: @grace, clock: @clock, setsid: @setsid, capture:).call
       rescue SystemCallError, ArgumentError => e
-        refuse(Refusal.new(status: NOT_FOUND, message: "#{PARTIALLY_STARTED}: #{e.class}: #{e.message}"),
-               stderr_sink)
+        refuse(Refusal.new(status: NOT_FOUND, message: "#{PARTIALLY_STARTED}: #{e.class}: #{e.message}"), capture)
       end
 
       private
 
-      def refuse(refusal, stderr_sink)
-        line = "#{PREFIX}#{refusal.message}\n"
-        stderr_sink << line
-        Result.new(exit_status: refusal.status, stdout: "", stderr: line)
+      def refuse(refusal, capture)
+        capture.take(:stderr, "#{PREFIX}#{refusal.message}\n").finish(refusal.status)
       end
 
       # Why a term will not be run, asked before anything is spawned. Up front
@@ -311,19 +352,19 @@ module Lain
         def not_found(message) = Refusal.new(status: NOT_FOUND, message:)
       end
 
-      # One execution: the spawn, the pump, the kill. Holds the only mutable
-      # state in this file -- two buffers filling as bytes arrive -- which is why
-      # it is a per-call object and {Pipeline} itself is frozen.
+      # One execution: the spawn, the pump, the kill, filling a capture as bytes
+      # arrive -- which is why it is a per-call object and {Pipeline} itself is
+      # frozen.
       class Run
-        def initialize(term:, cwd:, env:, timeout:, grace:, clock:, sinks:)
+        def initialize(term:, cwd:, env:, timeout:, grace:, clock:, setsid:, capture:)
           @term = term
           @cwd = cwd
           @env = env
           @timeout = timeout
           @grace = grace
           @clock = clock
-          @sinks = sinks
-          @buffers = { stdout: +"", stderr: +"" }
+          @setsid = setsid
+          @capture = capture
         end
 
         # Every stage's stderr shares ONE pipe, as `sh -c "a | b"` gives them one
@@ -335,7 +376,7 @@ module Lain
           Open3.pipeline_r(*commands, options(err_write)) do |out, threads|
             err_write.close
             collect({ out => :stdout, err_read => :stderr }, threads)
-            Result.new(exit_status: exit_status(threads), stdout: @buffers[:stdout], stderr: @buffers[:stderr])
+            @capture.finish(exit_status(threads))
           end
         ensure
           [err_read, err_write].each { |io| io.close unless io.nil? || io.closed? }
@@ -344,19 +385,27 @@ module Lain
         private
 
         # `[program, argv0]` rather than a bare String: see the class comment on
-        # why a one-word stage would otherwise be re-split.
+        # why a one-word stage would otherwise be re-split. `setsid` hands the
+        # program to `execvp` as its own argv, so the stage is still never
+        # re-split, and `--` keeps a program named like an option from being read
+        # as one.
         def commands
-          @term.map { |argv| [@env, [argv.first, argv.first], *argv.drop(1)] }
+          @term.map { |argv| [@env, [@setsid, "setsid"], "--", *argv] }
         end
 
-        # `pgroup: true` makes each stage a group leader, which is what lets a
-        # timeout kill the command's own descendants rather than just the stage.
-        # `in:` is `/dev/null` because the first stage would otherwise inherit
-        # lain's stdin and read the human's keystrokes -- mixlib hands its child
-        # an immediately-closed pipe, and `crates/lain-core/src/exec.rs:202` sets
-        # `Stdio::null()`, so all three arms agree.
+        # Each stage leads its own session, and so its own group ({SETSID}),
+        # which is what lets a timeout kill the command's own descendants rather
+        # than just the stage. `in:` is `/dev/null` because the first stage would
+        # otherwise inherit lain's stdin and read the human's keystrokes, and
+        # `crates/lain-core/src/exec.rs:202` sets `Stdio::null()`, so every arm
+        # agrees. The redirect happens in the spawned child at the descriptor, so
+        # nothing reopens this process's own stdin, whose offset a regular file
+        # shares with every child holding it. `close_others:` because a
+        # descriptor this process holds without close-on-exec -- inherited from
+        # whatever launched lain, or opened by native code -- would otherwise
+        # reach every command, and a leaked pipe end keeps a reader from EOF.
         def options(err_write)
-          { in: File::NULL, err: err_write, chdir: @cwd, pgroup: true, unsetenv_others: false }
+          { in: File::NULL, err: err_write, chdir: @cwd, unsetenv_others: false, close_others: true }
         end
 
         # EVERY raise kills first, not just a Timeout. A sink is the caller's
@@ -366,58 +415,105 @@ module Lain
         # timeout was measured still blocked at 8 seconds on a 30-second stage.
         # The kill has to happen INSIDE the block for the same reason.
         def collect(streams, threads)
-          pump(streams)
+          pump(streams, threads)
         rescue Timeout
           terminate(threads)
-          raise Timeout, captured
+          raise Timeout, @capture.report
         rescue StandardError
           terminate(threads)
           raise
         end
 
-        def pump(streams)
+        # The command is over when every stage has exited, not when every pipe
+        # has closed: a child a stage put in the background can hold a pipe open
+        # for as long as it likes. Pipes that closed first leave only the exits
+        # to wait for, under the same deadline.
+        def pump(streams, threads)
           deadline = clock + @timeout
           open = streams.keys
-          open = read_ready(open, streams, deadline) until open.empty?
-        end
-
-        def read_ready(open, streams, deadline)
-          finished = ready(open, deadline).select { |io| read_chunk(io, streams.fetch(io)).nil? }
-          open - finished
+          open = read_ready(open, streams, ready(open, deadline)) until open.empty? || threads.none?(&:alive?)
+          open.empty? ? reap(threads, deadline) : drain(open, streams)
         end
 
         def ready(open, deadline)
           remaining = deadline - clock
-          selected = remaining.positive? ? IO.select(open, nil, nil, remaining) : nil
-          raise Timeout if selected.nil?
+          raise Timeout unless remaining.positive?
 
-          selected.first
+          readable(open, remaining.clamp(0, POLL))
         end
 
-        # `readpartial` returns ASCII-8BIT, and an empty buffer adopts the
-        # encoding of the first thing appended to it -- the same mechanics
-        # `Mixlib::ShellOut` accumulates through, which is what keeps a binary
-        # payload byte-identical across the two arms.
+        def drain(open, streams)
+          open.each { |io| take_queued(io, streams.fetch(io)) }
+          window = clock + DRAIN
+          while open.any? && clock < window
+            open = read_ready(open, streams, readable(open, (window - clock).clamp(0, DRAIN)))
+          end
+        end
+
+        def take_queued(io, stream)
+          remaining = queued(io)
+          remaining -= take_now(io, stream, remaining) while remaining.positive?
+        end
+
+        # At most `most` bytes, never blocking; nothing to read, or EOF, ends the
+        # take by answering for all of it.
+        def take_now(io, stream, most)
+          chunk = io.read_nonblock(most.clamp(1, CHUNK), exception: false)
+          return most unless chunk.is_a?(String)
+
+          @capture.take(stream, chunk)
+          chunk.bytesize
+        end
+
+        def queued(io)
+          count = [0].pack("i")
+          io.ioctl(FIONREAD, count)
+          count.unpack1("i")
+        end
+
+        def reap(threads, deadline)
+          threads.each { |thread| thread.join((deadline - clock).clamp(0, @timeout)) }
+          raise Timeout if threads.any?(&:alive?)
+        end
+
+        def readable(open, seconds) = (IO.select(open, nil, nil, seconds) || NOTHING_READY).first
+
+        def read_ready(open, streams, ready)
+          finished = ready.select { |io| read_chunk(io, streams.fetch(io)).nil? }
+          open - finished
+        end
+
         def read_chunk(io, stream)
           chunk = io.readpartial(CHUNK)
-          @buffers[stream] << chunk
-          @sinks.fetch(stream) << chunk
+          @capture.take(stream, chunk)
           chunk
         rescue EOFError
           nil
         end
 
+        # One grace for every stage together, ending early once no stage's group
+        # has a member left. The KILL then goes to every group whatever became
+        # of its leader: a leader that died on TERM says nothing about a child in
+        # its group that ignores it.
         def terminate(threads)
           signal(threads, "TERM")
-          threads.each { |thread| thread.join(@grace) }
-          signal(threads.select(&:alive?), "KILL")
+          grace_ends = clock + @grace
+          sleep(POLL) while clock < grace_ends && threads.any? { |thread| populated?(thread.pid) }
+          signal(threads, "KILL")
+        end
+
+        def populated?(group)
+          Process.kill(0, -group)
+          true
+        rescue Errno::ESRCH, Errno::EPERM
+          false
         end
 
         def signal(threads, name)
           threads.each do |thread|
             Process.kill(name, -thread.pid)
           rescue Errno::ESRCH, Errno::EPERM
-            nil # already reaped, or no longer ours to signal
+            nil # already empty, or no longer ours to signal
           end
         end
 
@@ -426,12 +522,6 @@ module Lain
         def exit_status(threads)
           status = threads.map(&:value).last
           status.exitstatus || (SIGNAL_BASE + status.termsig)
-        end
-
-        def captured
-          "---- Begin captured output ----\n" \
-            "STDOUT: #{@buffers[:stdout]}\nSTDERR: #{@buffers[:stderr]}\n" \
-            "---- End captured output ----"
         end
 
         def clock = @clock.call

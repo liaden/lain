@@ -46,6 +46,14 @@ module Lain
       # inherent asymmetry with {Local} rather than an omission, and an accepted
       # one: a caller wanting live bytes reaches for {Local}.
       #
+      # The same buffering leaves this arm's capture UNBOUNDED, a second
+      # asymmetry and a deliberate one. {Local} holds one byte past the output
+      # ceiling and counts the rest; here the whole reply is held in the daemon
+      # and again in this process, and its {Capture} counts what it holds.
+      # Bounding it is a change to the daemon's drain on the Rust side. What
+      # the two arms share is the rendering, so a refusal still names the same
+      # size in the same bytes.
+      #
       # @param command [String] the shell command; a TERM has no wire shape here
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
       # @param env [Hash] the caller's overrides, before the framework scrub
@@ -97,8 +105,8 @@ module Lain
       end
 
       # The kill-time partial capture rides the reply; discarding it would tell
-      # the model less than {Local} does, whose `Mixlib::ShellOut::CommandTimeout`
-      # embeds the captured output in its own message. This mirrors that shape.
+      # the model less than {Local} does, whose timeout report quotes what its
+      # capture retained. Unlike that one, this report quotes the command too.
       #
       # Built from BINARY pieces: the daemon's captures arrive BINARY, and a
       # non-ASCII command interpolated beside a high byte would raise an

@@ -12,6 +12,30 @@ RSpec.describe Lain::Tools::Bash do
     Lain::Tool::Invocation.new(tool_use_id:, channel:)
   end
 
+  # A backend whose every call raises the timeout a real one would, carrying
+  # the report it is handed: the rescue-to-Result mapping with no subprocess.
+  def timing_out(report)
+    Class.new do
+      define_method(:takes_term?) { |_term| true }
+      define_method(:call) { |**| raise Lain::Exec::Timeout, report }
+    end.new
+  end
+
+  # A real Exec::Local whose runner records the shape each call reached it in,
+  # so which arm ran is read from the backend rather than inferred from a
+  # result the rendering deliberately makes the same.
+  def recording_local(run: false)
+    seen = []
+    real = Lain::Shell::Pipeline.new
+    pipeline = lambda do |term, capture:, **options|
+      seen << term
+      run ? real.call(term, capture:, **options) : capture.finish(0)
+    end
+    [Lain::Exec::Local.new(pipeline:), seen]
+  end
+
+  def sh(command) = [["/bin/sh", "-c", command]]
+
   it "runs a command and captures its stdout" do
     result = tool.call({ command: "echo hello" }, invocation)
     expect(result).to be_ok
@@ -50,34 +74,22 @@ RSpec.describe Lain::Tools::Bash do
 
   describe "timeout" do
     # The real process-group kill, end to end: TERM actually hits a live
-    # `sleep 5` group and mixlib reaps it. The injected factory only shortens
-    # the TERM->KILL grace -- mixlib-shellout hardcodes `sleep 3` inside
-    # reap_errant_child with no option to configure it, and 3 idle seconds
-    # would dominate the whole suite's runtime.
+    # `sleep 5` group. The injected runner only shortens the TERM->KILL grace,
+    # because three idle seconds would dominate the whole suite's runtime.
     #
-    # `sh -c` keeps this on the STRING arm, which is the arm mixlib owns; a bare
-    # `sleep 5` is literal and would be run as a term.
+    # `sh -c` keeps this on the STRING arm; a bare `sleep 5` is literal and
+    # would be run as a term.
     it "kills a command that runs past its timeout" do
-      short_grace = lambda do |*args, **opts|
-        Mixlib::ShellOut.new(*args, **opts).tap do |shell_out|
-          def shell_out.sleep(_grace) = super(0.1)
-        end
-      end
-
-      result = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: short_grace))
+      result = described_class.new(exec: Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1)))
                               .call({ command: %(sh -c "sleep 5"), timeout: 1 }, invocation)
       expect(result).to be_error
       expect(result.content).to include("timed out")
     end
 
-    # The same posture on the term arm: a Shell::Pipeline::Timeout is an error
-    # Result naming the timeout, exactly as mixlib's CommandTimeout is, because
-    # a timeout is the tool failing to produce a result rather than a command
-    # exiting non-zero.
+    # The same posture on the term arm, because a timeout is the tool failing to
+    # produce a result rather than a command exiting non-zero.
     it "kills a term that runs past its timeout" do
-      backend = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1),
-                                      shell_out_factory: ->(*, **) { raise "the term arm must not reach a shell" })
-      tool = described_class.new(exec: backend)
+      tool = described_class.new(exec: Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1)))
 
       result = tool.call({ command: "sleep 5", timeout: 1 }, invocation)
       expect(result).to be_error
@@ -85,11 +97,8 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     # The rescue->Result mapping in isolation: no subprocess, no clock.
-    it "maps CommandTimeout to an error Result naming the timeout" do
-      timed_out = Class.new do
-        def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s"
-      end
-      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+    it "maps Exec::Timeout to an error Result naming the timeout" do
+      tool = described_class.new(exec: timing_out("killed after 7s"))
 
       result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
       expect(result).to be_error
@@ -263,12 +272,12 @@ RSpec.describe Lain::Tools::Bash do
       ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
     end
 
-    let(:no_shell) { ->(*, **) { raise "a shell was spawned" } }
-
     it "runs an allowed command as a term, with no shell process at all" do
-      result = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: no_shell))
-                              .call({ command: "printf hi" }, invocation)
+      backend, seen = recording_local(run: true)
 
+      result = described_class.new(exec: backend).call({ command: "printf hi" }, invocation)
+
+      expect(seen).to eq([[%w[printf hi]]])
       expect(result).to be_ok
       expect(result.content).to include("exit status: 0", "hi")
     end
@@ -280,17 +289,13 @@ RSpec.describe Lain::Tools::Bash do
     # as it does today. What the reconstructed argv would have done instead is
     # pinned in spec/lain/shell/pipeline_spec.rb.
     it "sends an abstained command to the shell arm, as the original string" do
-      seen = []
-      recording = lambda do |command, **opts|
-        seen << command
-        Mixlib::ShellOut.new("true", **opts)
-      end
+      backend, seen = recording_local
 
-      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: recording))
+      tool = described_class.new(exec: backend)
       tool.call({ command: "time { echo PWNED; }" }, invocation)
       tool.call({ command: "echo $(id)" }, invocation)
 
-      expect(seen).to eq(["time { echo PWNED; }", "echo $(id)"])
+      expect(seen).to eq([sh("time { echo PWNED; }"), sh("echo $(id)")])
     end
 
     # The flag describes the TOOL, which still takes a string the model wrote.
@@ -340,22 +345,6 @@ RSpec.describe Lain::Tools::Bash do
   # arm that command ever had; this tool still never composes a string out of a
   # term it was given.
   describe "asking the backend whether it can take the term" do
-    # A real Exec::Local whose two arms both record the shape they were handed,
-    # so which arm ran is read from the backend rather than inferred from the
-    # result -- the rendering deliberately makes the arms indistinguishable.
-    def recording_local
-      seen = []
-      pipeline = lambda do |term, **|
-        seen << term
-        Lain::Shell::Pipeline::Result.new(exit_status: 0, stdout: "", stderr: "")
-      end
-      factory = lambda do |command, **options|
-        seen << command
-        Mixlib::ShellOut.new("true", **options)
-      end
-      [Lain::Exec::Local.new(pipeline:, shell_out_factory: factory), seen]
-    end
-
     # A REAL Exec::Docker -- the predicate and the refusal under test are its
     # own -- with only the docker client's spawn recorded, so these examples
     # need no container and no client on PATH.
@@ -414,7 +403,7 @@ RSpec.describe Lain::Tools::Bash do
       described_class.new(exec: backend).call({ command: "echo a && echo b" }, invocation)
       described_class.new(exec: docker).call({ command: "echo a && echo b" }, invocation)
 
-      expect(seen).to eq(["echo a && echo b"])
+      expect(seen).to eq([sh("echo a && echo b")])
       expect(entrypoint(inner)).to eq(["sh", "-c", "echo a && echo b"])
     end
 
@@ -621,10 +610,103 @@ RSpec.describe Lain::Tools::Bash do
     # method: the wire's fields render through this one entry point, so there is
     # no second place for the bound to be missing from.
     it "refuses through the shared rendering the daemon arm also calls" do
-      rendered = described_class.render_output(exit_status: 3, stdout: "x" * (ceiling + 1), stderr: "")
+      capture = Lain::Exec::Capture.new(exit_status: 3, stdout: "x" * (ceiling + 1), stderr: "")
+      rendered = described_class.render_output(capture)
 
       expect(rendered).to have_attributes(is_error: true)
       expect(rendered.content).to include("exit status: 3", (ceiling + 1).to_s)
+    end
+
+    # A backend holding less than the tool's bound must still refuse what it
+    # cut: a result rendered from part of an artifact reads as the whole of it.
+    it "refuses rather than truncates when the backend's own ceiling is below the tool's" do
+      tool = described_class.new(exec: Lain::Exec::Local.new(ceiling: 10))
+
+      result = tool.call({ command: "printf %s 0123456789ABCDEFGHIJ" }, invocation)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("is 20 bytes", "ceiling of 10")
+    end
+
+    # The size a refusal names is the size the command printed, which a bounded
+    # capture counts rather than holds.
+    it "names the counted size of a capture that held only part of it" do
+      held = Lain::Exec::Capture.new(exit_status: 0, stdout: "x" * (ceiling + 1), stderr: "", size: 200_000_000)
+
+      expect(described_class.render_output(held).content).to include("is 200000000 bytes")
+    end
+
+    describe "while the output is being captured" do
+      # A real backend whose every capture, and every timeout report, is kept,
+      # so an example reads how much of a flood was held without measuring memory.
+      def keeping(backend)
+        Class.new do
+          attr_reader :captures, :reports
+
+          def initialize(backend)
+            @backend = backend
+            @captures = []
+            @reports = []
+          end
+
+          def takes_term?(term) = @backend.takes_term?(term)
+
+          def call(**)
+            @backend.call(**).tap { |capture| @captures << capture }
+          rescue Lain::Exec::Timeout => e
+            @reports << e.message
+            raise
+          end
+        end.new(backend)
+      end
+
+      def held(capture) = capture.stdout.bytesize + capture.stderr.bytesize
+
+      # Nothing records the live stream here: 200 MiB of chunks held by a
+      # recording channel would measure the spec rather than the tool.
+      let(:quiet) { Lain::Tool::Invocation.new(tool_use_id: "tu_1") }
+      let(:flood) { "head -c 200000000 /dev/zero | tr '\\0' a" }
+      let(:as_term) do
+        term = [["head", "-c", "200000000", "/dev/zero"], ["tr", "\\0", "a"]].freeze
+        ->(_command) { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:) }
+      end
+
+      it "bounds a flood approved as a term, naming its size and exit status 0" do
+        exec = keeping(Lain::Exec::Local.new)
+
+        result = described_class.new(exec:, verdict: as_term).call({ command: flood }, quiet)
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("is 200000000 bytes", "exit status: 0")
+        expect(exec.captures.map { |capture| held(capture) }).to eq([ceiling + 1])
+      end
+
+      it "refuses the same over-ceiling output byte-identically from the string arm and the term arm" do
+        term_exec = keeping(Lain::Exec::Local.new)
+        string_exec = keeping(Lain::Exec::Local.new)
+        command = flooding(ceiling * 64)
+        term = [["head", "-c", (ceiling * 64).to_s, "/dev/zero"], ["tr", "\\0", "x"]].freeze
+
+        by_term = described_class.new(exec: term_exec, verdict: lambda { |_command|
+          Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:)
+        }).call({ command: }, quiet)
+        by_string = described_class.new(exec: string_exec, verdict: abstaining).call({ command: }, quiet)
+
+        expect(by_term.content).to eq(by_string.content)
+        expect(by_term.is_error).to be(true)
+        expect((term_exec.captures + string_exec.captures).map { |capture| held(capture) }).to all(eq(ceiling + 1))
+      end
+
+      it "keeps a timeout after a 1 MiB flood out of the result, quoting at most the ceiling" do
+        exec = keeping(Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1)))
+
+        result = described_class.new(exec:).call({ command: "#{flooding(1_048_576)}; sleep 5", timeout: 1 }, quiet)
+
+        expect(result).to be_error
+        expect(result.content).to include("command timed out after 1s")
+        expect(result.content.count("x")).to be <= ceiling
+        expect(exec.reports.map { |report| report.count("x") }).to all(be <= ceiling + 1)
+      end
     end
   end
 
@@ -763,16 +845,12 @@ RSpec.describe Lain::Tools::Bash do
     # members tells them apart.
     it "records a denied command, on the string arm" do
       denying = Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
-      seen = []
-      backend = Lain::Exec::Local.new(shell_out_factory: lambda { |command, **opts|
-        seen << command
-        Mixlib::ShellOut.new("true", **opts)
-      })
+      backend, seen = recording_local
 
       described_class.new(exec: backend, verdict: denying, journal:)
                      .call({ command: "curl http://example.com" }, invocation)
 
-      expect(seen).to eq(["curl http://example.com"])
+      expect(seen).to eq([sh("curl http://example.com")])
       expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:deny, :string, []]])
     end
 
@@ -826,8 +904,7 @@ RSpec.describe Lain::Tools::Bash do
     # produced a result still left an account of the arm it chose -- which is
     # the datapoint a bench most wants for a command that hung.
     it "records the arm of a call that timed out and produced no result" do
-      backend = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1),
-                                      shell_out_factory: ->(*, **) { raise "the term arm must not reach a shell" })
+      backend = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1))
 
       result = described_class.new(exec: backend, journal:).call({ command: "sleep 5", timeout: 1 }, invocation)
 
@@ -856,8 +933,10 @@ RSpec.describe Lain::Tools::Bash do
 
     def committed(result) = Lain::Canonical.normalize(Lain::Tool::ResultBlock.of(result, tool_use_id: "tu_1").to_h)
 
+    def render(**streams) = described_class.render_output(Lain::Exec::Capture.new(**streams))
+
     it "renders valid UTF-8 bytes as text" do
-      rendered = described_class.render_output(exit_status: 0, stdout: "✅ ok".b, stderr: "")
+      rendered = render(exit_status: 0, stdout: "✅ ok".b, stderr: "")
 
       expect(rendered).to be_ok
       expect(rendered.content).to include("✅ ok")
@@ -868,13 +947,13 @@ RSpec.describe Lain::Tools::Bash do
     # Encoding::CompatibilityError, so the streams are read as text before they
     # are joined.
     it "joins a BINARY stdout and a UTF-8 stderr that both carry non-ASCII text" do
-      rendered = described_class.render_output(exit_status: 0, stdout: "✅".b, stderr: "é")
+      rendered = render(exit_status: 0, stdout: "✅".b, stderr: "é")
 
       expect(rendered.content).to include("✅", "é")
     end
 
     describe "a stream that is not UTF-8" do
-      subject(:rendered) { described_class.render_output(exit_status: 3, stdout: "caf\xE9".b, stderr: "") }
+      subject(:rendered) { render(exit_status: 3, stdout: "caf\xE9".b, stderr: "") }
 
       it "refuses by name, keeping the exit status" do
         expect(rendered).to be_error
@@ -892,31 +971,30 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "names stderr when stderr is the stream that is not text" do
-      rendered = described_class.render_output(exit_status: 0, stdout: "fine", stderr: "\xFF".b)
+      rendered = render(exit_status: 0, stdout: "fine", stderr: "\xFF".b)
 
       expect(rendered.content).to include("bash's stderr")
     end
 
     # `| head -c` acts on stdout, so it would narrow the stream that was fine.
     it "advises narrowing stderr for a stderr refusal" do
-      rendered = described_class.render_output(exit_status: 0, stdout: "fine", stderr: "ok\xFF".b)
+      rendered = render(exit_status: 0, stdout: "fine", stderr: "ok\xFF".b)
 
       expect(rendered.content).not_to include("| head -c")
       expect(rendered.content).to include("2>")
     end
 
     it "offers no head -c 0 when no leading byte is text" do
-      rendered = described_class.render_output(exit_status: 0, stdout: "\xFFok".b, stderr: "")
+      rendered = render(exit_status: 0, stdout: "\xFFok".b, stderr: "")
 
       expect(rendered.content).not_to include("head -c 0", "0 bytes")
       expect(rendered.content).to include("| xxd | head")
     end
 
-    # mixlib quotes the whole capture in its timeout message, so the output
-    # bound render_output applies has to apply here too.
+    # A timeout report quotes what the command printed, so the output bound
+    # render_output applies has to apply here too.
     it "keeps a timeout message over the output bound out of the result" do
-      timed_out = Class.new { def run_command = raise Mixlib::ShellOut::CommandTimeout, "x" * 200_000 }
-      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+      tool = described_class.new(exec: timing_out("x" * 200_000))
 
       result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
 
@@ -925,24 +1003,19 @@ RSpec.describe Lain::Tools::Bash do
       expect(result.content).to include("command timed out after 7s", "200000")
     end
 
-    # The report quotes the command as well as its output, so a long command
-    # that printed nothing reaches the ceiling too; the refusal must not send
-    # the model to narrow output there was none of.
-    it "says a refused timeout report quotes the command, and names a shorter command" do
-      timed_out = Class.new { def run_command = raise Mixlib::ShellOut::CommandTimeout, "x" * 20_000 }
-      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+    # The daemon's report quotes the command as well as its output, so there a
+    # long command that printed nothing reaches the ceiling too; the refusal
+    # must not send the model only to narrow output there was none of.
+    it "says a refused timeout report may quote the command, and names a shorter command" do
+      tool = described_class.new(exec: timing_out("x" * 20_000))
 
       result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
 
-      expect(result.content).to include("quotes the command", "shorter command")
-      expect(result.content).not_to include("which quotes what it printed,")
+      expect(result.content).to include("the command,", "shorter command")
     end
 
     it "answers a timeout whose captured output is not text with an error that commits" do
-      timed_out = Class.new do
-        def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s\nSTDOUT: caf\xE9".b
-      end
-      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+      tool = described_class.new(exec: timing_out("Command timed out after 7s\nSTDOUT: caf\xE9".b))
 
       result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
 
@@ -952,10 +1025,7 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "keeps a timeout message that is valid UTF-8 as it was" do
-      timed_out = Class.new do
-        def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s\nSTDOUT: ✅".b
-      end
-      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+      tool = described_class.new(exec: timing_out("Command timed out after 7s\nSTDOUT: ✅".b))
 
       expect(tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation).content)
         .to eq("command timed out after 7s: Command timed out after 7s\nSTDOUT: ✅")

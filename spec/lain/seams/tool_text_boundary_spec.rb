@@ -88,18 +88,11 @@ RSpec.describe "a tool result's bytes reaching a commit", :seam do
     end
   end
 
-  # mixlib embeds the partial capture in its CommandTimeout message, so the
-  # bytes that tore a completed command reach the timeout path too. The injected
-  # factory only shortens mixlib's hardcoded three-second TERM->KILL grace.
+  # A timeout's report quotes the partial capture, so the bytes that tore a
+  # completed command reach the timeout path too. The injected runner only
+  # shortens the three-second TERM->KILL grace.
   describe "a command that times out after printing invalid UTF-8" do
-    let(:short_grace) do
-      lambda do |*args, **opts|
-        Mixlib::ShellOut.new(*args, **opts).tap do |shell_out|
-          def shell_out.sleep(_grace) = super(0.1)
-        end
-      end
-    end
-    let(:tool) { Lain::Tools::Bash.new(exec: Lain::Exec::Local.new(shell_out_factory: short_grace)) }
+    let(:tool) { Lain::Tools::Bash.new(exec: Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1))) }
     # The `: ✅` is what makes the command itself non-ASCII, the shape whose
     # timeout message used to raise before it could say it was a timeout.
     let(:agent) { agent_for(tool, %(sh -c "printf 'caf\\351'; : ✅; sleep 5"), "timeout" => 1) }

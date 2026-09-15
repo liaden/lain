@@ -3634,11 +3634,17 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
     # handler and `bash_spec` constructs the tool alone, so sharing the
     # session's instance has to stay an INJECTION rather than a dependency.
     it "still runs the term arm with no verdict wired, and spawns no shell" do
-      no_shell = ->(*, **) { raise "a shell was spawned" }
-      floor = described_class.build(recorder, exec: Lain::Exec::Local.new(shell_out_factory: no_shell))
+      seen = []
+      real = Lain::Shell::Pipeline.new
+      pipeline = lambda do |term, **options|
+        seen << term
+        real.call(term, **options)
+      end
+      floor = described_class.build(recorder, exec: Lain::Exec::Local.new(pipeline:))
 
       result = bash_in(floor).call({ command: "ls -la" }, Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:))
 
+      expect(seen).to eq([[%w[ls -la]]])
       expect(result).to be_ok
       expect(result.content).to include("exit status: 0")
     end

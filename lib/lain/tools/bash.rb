@@ -2,11 +2,10 @@
 
 module Lain
   module Tools
-    # Tier 3 (free-form): runs a shell command via `sh -c`. Passing
-    # Mixlib::ShellOut a STRING command rather than an argv Array is exactly
-    # what makes this tier 3 rather than tier 2 -- an Array `exec`s with no
-    # shell at all, while a String goes through the shell and the model fully
-    # controls that string.
+    # Tier 3 (free-form): runs a shell command via `sh -c`. Handing the backend
+    # a STRING command rather than an argv Array is exactly what makes this tier
+    # 3 rather than tier 2 -- an Array `exec`s with no shell at all, while a
+    # String goes through the shell and the model fully controls that string.
     #
     # == Two arms, chosen by {Shell::Verdict}, and one rendering
     #
@@ -44,12 +43,13 @@ module Lain
     # and the rendering of what came back.
     #
     # A PROCESS BOUNDARY IS NOT A SECURITY BOUNDARY. The child inherits our
-    # uid, filesystem and network; Mixlib::ShellOut adds no seccomp, landlock,
+    # uid, filesystem and network; {Shell::Pipeline} adds no seccomp, landlock,
     # namespace or chroot confinement of its own. What it DOES make correct:
-    # capture, attribution, timeout and reaping -- it calls `setsid`, so a
-    # timeout kills the whole process group and not just the shell. Real safety
-    # is {#requires_approval?} plus a human or policy on the other end of
-    # {Middleware::Gate}, and eventually OS confinement in the
+    # capture, attribution, timeout and reaping -- each stage leads its own
+    # session, so it never shares lain's terminal, and a timeout kills its whole
+    # group and not just the shell.
+    # Real safety is {#requires_approval?} plus a human or policy on the other
+    # end of {Middleware::Gate}, and eventually OS confinement in the
     # out-of-process Rust exec boundary. NEVER this tool's input validation,
     # which checks only that `timeout` is a sane number.
     class Bash < Tool
@@ -71,8 +71,9 @@ module Lain
         "redirect it to a file and read one window of that with read_file"
       ].freeze
 
-      # A timeout's report quotes the command as well as what it printed, so a
-      # long command alone can put it over the ceiling.
+      # A timeout's report quotes what the command printed, and the daemon's
+      # quotes the command too, so there a long command alone can put it over
+      # the ceiling.
       TIMEOUT_NARROWER = [
         "re-run it as a shorter command -- put a long one in a script file and run that",
         "narrow its output through head, tail or grep"
@@ -152,6 +153,10 @@ module Lain
       # dropped, because it is the one fact a truncation would have preserved
       # and the model usually asked the question to learn it.
       #
+      # The size is the one the capture COUNTED, which the in-process arm keeps
+      # past the bytes it retains, so a 200 MiB flood is refused naming 200 MiB
+      # while only a byte past the ceiling of it was ever held.
+      #
       # The HUMAN still sees every byte: both arms stream through
       # {Sink::IOAdapter} as output is produced, which is right for a live
       # terminal -- a refusal is about what the MODEL is handed. It does mean
@@ -165,16 +170,19 @@ module Lain
       # is not text is refused naming this tool and the stream, where the block
       # builder downstream could name neither.
       #
+      # @param capture [Exec::Capture] what ran
       # @return [Tool::Result] ok with the rendered output, or a refusal
       #   carrying none of it
-      def self.render_output(exit_status:, stdout:, stderr:)
-        size = stdout.bytesize + stderr.bytesize
-        unless OUTPUT_BOUND.admits?(size)
-          return OUTPUT_BOUND.refusal(subject: "the command's output (exit status: #{exit_status})",
-                                      size:, narrower: NARROWER)
+      def self.render_output(capture)
+        exit_status = capture.exit_status
+        bound = bound_for(capture)
+        unless bound.admits?(capture.size)
+          return bound.refusal(subject: "the command's output (exit status: #{exit_status})",
+                               size: capture.size, narrower: NARROWER)
         end
 
-        streams = { stdout:, stderr: }.transform_values { |bytes| Tool::ResultBlock::Text.new(bytes) }
+        streams = { stdout: capture.stdout, stderr: capture.stderr }
+                  .transform_values { |bytes| Tool::ResultBlock::Text.new(bytes) }
         refused = streams.reject { |_stream, text| text.text? }
         return refused_stream(*refused.first, exit_status) unless refused.empty?
 
@@ -182,6 +190,14 @@ module Lain
                         "--- stdout ---\n#{streams.fetch(:stdout)}" \
                         "--- stderr ---\n#{streams.fetch(:stderr)}")
       end
+
+      # The lower of this tool's bound and the capture's own ceiling: a backend
+      # that held less than the tool admits must still be refused past what it
+      # held, or part of an artifact renders as the whole of it.
+      def self.bound_for(capture)
+        capture.ceiling < OUTPUT_BOUND.limit ? Tool::Bounds::Artifact.new(limit: capture.ceiling) : OUTPUT_BOUND
+      end
+      private_class_method :bound_for
 
       # The exit status rides here for the reason it rides the size refusal.
       def self.refused_stream(stream, text, exit_status)
@@ -257,8 +273,7 @@ module Lain
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         capture = @exec.call(command: on_arm(arm, input.command, decision), **runtime(input, invocation))
-        self.class.render_output(exit_status: capture.exit_status,
-                                 stdout: capture.stdout, stderr: capture.stderr)
+        self.class.render_output(capture)
       rescue Exec::Timeout => e
         timed_out(input, e)
       end
@@ -324,11 +339,11 @@ module Lain
       def seconds(input) = input.timeout || DEFAULT_TIMEOUT
 
       # The backend's message quotes whatever the command printed before it was
-      # killed, so it crosses the same two checks the output does: the output
-      # bound first, so a huge capture is never copied or validated, then the
-      # text boundary. The boundary's own refusal is not used: its byte count
-      # would measure the backend's report, and `head -c` at that count cuts
-      # the command's output somewhere else.
+      # killed, as far as its capture retained it, so it crosses the same two
+      # checks the output does: the output bound first, then the text boundary.
+      # The boundary's own refusal is not used: its byte count would measure the
+      # backend's report, and `head -c` at that count cuts the command's output
+      # somewhere else.
       def timed_out(input, error)
         Tool::Result.error("command timed out after #{seconds(input)}s: #{timeout_report(error.message)}")
       end
@@ -336,8 +351,8 @@ module Lain
       def timeout_report(message)
         size = message.bytesize
         unless OUTPUT_BOUND.admits?(size)
-          return OUTPUT_BOUND.message(subject: "its report, which quotes the command and what it printed,", size:,
-                                      narrower: TIMEOUT_NARROWER)
+          return OUTPUT_BOUND.message(subject: "its report, which quotes what it printed and on some backends " \
+                                               "the command,", size:, narrower: TIMEOUT_NARROWER)
         end
 
         text = Tool::ResultBlock::Text.new(message)

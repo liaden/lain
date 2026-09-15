@@ -28,8 +28,39 @@ end
 RSpec.describe Lain::Shell::Pipeline do
   subject(:pipeline) { described_class.new(grace: 0.2) }
 
-  def run(term, cwd: Dir.pwd, env: {}, timeout: 10, **sinks)
-    pipeline.call(term, cwd:, env:, timeout:, **sinks)
+  def run(term, cwd: Dir.pwd, env: {}, timeout: 10, ceiling: 1_048_576, **sinks)
+    pipeline.call(term, cwd:, env:, timeout:, capture: Lain::Exec::Capture::Bounded.new(ceiling:, **sinks))
+  end
+
+  def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+  # A killed process handed to init stays a zombie until init reaps it, and
+  # signal 0 still reaches a zombie, so "gone" is polled against a deadline
+  # and a zombie counts as gone.
+  def gone_within?(pid, seconds: 3)
+    deadline = monotonic + seconds
+    sleep 0.02 until dead?(pid) || monotonic > deadline
+    dead?(pid)
+  end
+
+  def dead?(pid)
+    %w[Z X].include?(File.read("/proc/#{pid}/stat")[/\) (\S)/, 1])
+  rescue Errno::ENOENT, Errno::ESRCH
+    true
+  end
+
+  def reap(pid)
+    Process.kill("KILL", pid)
+  rescue Errno::ESRCH
+    nil
+  end
+
+  # A shell script that ignores TERM, written where a spec can name it.
+  def stubborn(dir, name, body = "exec sleep 30")
+    File.join(dir, name).tap do |path|
+      File.write(path, "#!/bin/sh\ntrap '' TERM\n#{body}\n")
+      File.chmod(0o755, path)
+    end
   end
 
   # THE contract of this object, and the reason it exists: a term is a list of
@@ -347,9 +378,53 @@ RSpec.describe Lain::Shell::Pipeline do
     end
   end
 
+  # Tool commands never share lain's terminal, and a session of their own is
+  # how; a runner that cannot give them one says so when it is built, rather
+  # than failing every command it is handed.
+  describe "the session each stage runs in" do
+    it "refuses to be built without setsid, naming it and why a command needs it" do
+      expect { described_class.new(setsid: "/nonexistent/lain/setsid") }
+        .to raise_error(described_class::SessionUnavailable, %r{/nonexistent/lain/setsid.*terminal}m)
+    end
+  end
+
+  describe "the descriptors a stage inherits" do
+    it "closes every descriptor this process holds that the stage was not handed" do
+      File.open(__FILE__) do |held|
+        held.close_on_exec = false
+
+        expect(run([%w[ls /proc/self/fd]]).stdout.split).not_to include(held.fileno.to_s)
+      end
+    end
+  end
+
+  # The capture is the caller's, and this object fills it rather than keeping
+  # buffers of its own, so what a run holds is bounded by what it was handed.
+  describe "the capture it fills" do
+    it "holds no more than the capture retains, and counts the rest" do
+      result = run([["head", "-c", "100000", "/dev/zero"], ["tr", "\\0", "a"]], ceiling: 63)
+
+      expect(result).to have_attributes(stdout: "a" * 64, size: 100_000, exit_status: 0)
+    end
+
+    it "writes a refusal's line into the capture, as it would have printed it" do
+      result = run([%w[echo hi], ["sh"]], ceiling: 63)
+
+      expect(result.stderr).to eq("lain: sh: not permitted downstream of a pipe\n")
+      expect(result.size).to eq(result.stderr.bytesize)
+    end
+  end
+
   describe "timeout" do
     it "raises Timeout when the term outlives its deadline" do
       expect { run([%w[sleep 5]], timeout: 0.3) }.to raise_error(described_class::Timeout)
+    end
+
+    it "quotes only what the capture retained of a flood before the kill" do
+      flood = [["/bin/sh", "-c", "head -c 1000000 /dev/zero | tr '\\0' a; sleep 30"]]
+
+      expect { run(flood, timeout: 1, ceiling: 63) }
+        .to raise_error(described_class::Timeout) { |error| expect(error.message.count("a")).to be < 100 }
     end
 
     # Mixlib embeds the pre-kill capture in its CommandTimeout message, and the
@@ -377,6 +452,56 @@ RSpec.describe Lain::Shell::Pipeline do
       expect { run([["/bin/sh", "-c", "echo x; sleep 30"]], timeout: 30, stdout_sink: exploding) }
         .to raise_error(IOError)
       expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 5
+    end
+
+    # The command leads a session of its own, and the kill still reaches every
+    # process in its group: a shell that ignores TERM, and the grandchild it is
+    # waiting on, both end once the grace runs out.
+    it "kills a TERM-ignoring command and its grandchild within the grace" do
+      Dir.mktmpdir do |dir|
+        pidfile = File.join(dir, "grandchild")
+        started = monotonic
+
+        expect { run([["/bin/sh", "-c", "trap '' TERM; sleep 30 & echo $! > #{pidfile}; wait"]], timeout: 0.5) }
+          .to raise_error(described_class::Timeout)
+
+        expect(monotonic - started).to be < 0.5 + 0.2 + 1
+        expect(gone_within?(Integer(File.read(pidfile)))).to be(true)
+      end
+    end
+
+    # The leader dying on TERM says nothing about the rest of its group, so the
+    # KILL after the grace goes to every stage's group whether its leader lives.
+    it "kills a TERM-ignoring grandchild whose own leader died on TERM" do
+      Dir.mktmpdir do |dir|
+        pidfile = File.join(dir, "grandchild")
+        script = stubborn(dir, "stubborn", "echo $$ > #{pidfile}\nwhile :; do sleep 0.05; done")
+        grandchild = nil
+
+        expect { run([["/bin/sh", "-c", "#{script} & wait"]], timeout: 0.5) }.to raise_error(described_class::Timeout)
+
+        grandchild = Integer(File.read(pidfile))
+        expect(gone_within?(grandchild)).to be(true)
+      ensure
+        reap(grandchild) if grandchild
+      end
+    end
+
+    it "waits the grace once for every stage together, not once per stage" do
+      Dir.mktmpdir do |dir|
+        %w[cat tr].each { |name| stubborn(dir, name) }
+        patient = described_class.new(grace: 1.0)
+        started = monotonic
+
+        shimmed = { "PATH" => "#{dir}:#{ENV.fetch("PATH")}" }
+        capture = Lain::Exec::Capture::Bounded.new(ceiling: 63)
+
+        expect do
+          patient.call([%w[sleep 30], %w[cat], %w[tr a b]], cwd: dir, env: shimmed, timeout: 0.5, capture:)
+        end.to raise_error(described_class::Timeout)
+
+        expect(monotonic - started).to be < 0.5 + 1.0 + 0.5
+      end
     end
 
     it "kills the whole process group rather than leaving it running" do

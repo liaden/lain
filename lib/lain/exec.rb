@@ -2,7 +2,7 @@
 
 module Lain
   # How a command becomes a process -- {Local} in process through
-  # `Mixlib::ShellOut`, {Core} out of process through the lain-core daemon.
+  # {Shell::Pipeline}, {Core} out of process through the lain-core daemon.
   # Naming the seam is what gives {FRAMEWORK_ENV} one home: lain runs
   # under `bundle exec`, so every child inherits BUNDLE_GEMFILE, BUNDLER_SETUP,
   # RUBYOPT and the rest, naming LAIN's OWN toolchain, and a model asking for
@@ -53,17 +53,11 @@ module Lain
   # override with one removal lever, an explicit nil value. Real safety is the
   # tool's `#requires_approval?` plus Middleware::Gate.
   module Exec
-    # What ran, in the shape {Tools::Bash.render_output} reads. Both backends
-    # return this rather than their transport's own object (mixlib's ShellOut,
-    # the daemon's reply Hash), which keeps the rendering -- and so the output
-    # ceiling -- one decision instead of one per transport.
-    Capture = Data.define(:exit_status, :stdout, :stderr)
-
     # The command outlived its deadline and was killed. One type wrapping
-    # `Mixlib::ShellOut::CommandTimeout` and {Shell::Pipeline::Timeout}, so a
-    # caller writes one rescue rather than one per transport. The message carries
-    # whatever the command said before it died: neither source discards the
-    # pre-kill capture, and neither does this.
+    # {Shell::Pipeline::Timeout} and the daemon's server-side kill, so a caller
+    # writes one rescue rather than one per transport. The message carries
+    # whatever the command said before it died, as far as the backend retained
+    # it: neither source discards the pre-kill capture, and neither does this.
     class Timeout < Lain::Error; end
 
     # The backend never learned whether the command finished: its OWN deadline
@@ -105,6 +99,7 @@ module Lain
   end
 end
 
+require_relative "exec/capture"
 require_relative "exec/local"
 require_relative "exec/core"
 require_relative "exec/docker"
