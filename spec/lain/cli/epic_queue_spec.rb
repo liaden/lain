@@ -436,17 +436,77 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
 
     it "aborts the listing rather than rendering a shorter one" do
-      expect { queue.listing }.to raise_error(ArgumentError, /policy/)
+      expect { queue.listing }.to raise_error(described_class::UnreadableRecord, /policy/)
     end
 
     it "aborts approve rather than reporting the digest unknown" do
-      expect { queue.approve(digest_a) }.to raise_error(ArgumentError, /policy/)
+      expect { queue.approve(digest_a) }.to raise_error(described_class::UnreadableRecord, /policy/)
     end
 
     it "journals no decision when the rebuild aborted" do
-      expect { queue.approve(digest_a) }.to raise_error(ArgumentError)
+      expect { queue.approve(digest_a) }.to raise_error(described_class::UnreadableRecord)
 
       expect(gate_decisions.none? { |record| record["policy"] == "signoff" }).to be(true)
+    end
+  end
+
+  # Scenario: a malformed but parseable gate_decision refuses by name
+  describe "a gate_decision whose approved field is not a verdict" do
+    before do
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred"),
+                     decision(digest: digest_a, at: "2026-07-28T06:30:00.000000Z", policy: "signoff",
+                              answered_by: "human").merge("approved" => "maybe")])
+    end
+
+    it "refuses the listing and the approval as a Lain::Error, in one line naming the record" do
+      [-> { queue.listing }, -> { queue.approve(digest_a) }].each do |command|
+        expect(&command).to raise_error(Lain::Error) { |error|
+          expect(error.message).to include("gate_decision", digest_a, "alpha/research", "approved")
+          expect(error.message).not_to include("\n")
+        }
+      end
+    end
+  end
+
+  # A torn line under a sign-off: the listing is the one reader that goes on
+  # rendering over damage, because it says so; a decision refuses to be made
+  # over a fold it could not read whole.
+  describe "a torn gate_decision line" do
+    let(:torn) do
+      JSON.generate(decision(digest: digest_b, at: "2026-07-28T06:30:00.000000Z", policy: "deferred",
+                             answered_by: "deferred")).then { |line| line[0, line.size / 2] }
+    end
+
+    before do
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred"), torn])
+    end
+
+    it "still lists, warning that the listing is not proven complete" do
+      expect(queue.listing).to include(digest_a, "1 line could not be parsed", "not proven")
+    end
+
+    it "refuses approve, naming the file and the line, and journals nothing" do
+      expect { queue.approve(digest_a) }
+        .to raise_error(Lain::CLI::SessionJournals::Unreadable, /20260728T060000-100\.ndjson.*line 2/)
+      expect(gate_decisions.none? { |record| record["policy"] == "signoff" }).to be(true)
+    end
+
+    # The listing's tolerance is its own read, not a cache the deciding verbs
+    # fall back on: one instance listing first and approving second must
+    # still refuse.
+    it "refuses approve on the same instance that just listed" do
+      queue.listing
+
+      expect { queue.approve(digest_a) }.to raise_error(Lain::CLI::SessionJournals::Unreadable)
+      expect(gate_decisions.none? { |record| record["policy"] == "signoff" }).to be(true)
+    end
+
+    it "refuses deny the same way" do
+      expect { queue.deny(digest_a) }.to raise_error(Lain::CLI::SessionJournals::Unreadable, /nothing was decided/)
     end
   end
 

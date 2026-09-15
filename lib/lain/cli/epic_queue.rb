@@ -22,7 +22,9 @@ module Lain
     # == A failed rebuild ABORTS
     #
     # {Approval::SignoffQueue.from_journal} raises on a record it cannot read
-    # whole, and NOTHING here rescues that. The ergonomic response -- an empty
+    # whole, {SessionJournals} on a torn line a sign-off could rest on, and
+    # NOTHING here rescues either. Only the listing reads past a torn line, and
+    # it says so on every rendering. The ergonomic response -- an empty
     # queue on failure -- is maximally fail-open: an empty queue reads as drained,
     # drained opens the next stage, and the stage opens over work nobody signed
     # off. {Approval::Gate::Policy::Drained} legitimizes "this caller has no
@@ -41,8 +43,9 @@ module Lain
 
       # Held apart from {UnknownDigest}: that one says "you named the wrong
       # thing", this one says "the record is damaged", and the remedies are
-      # nothing alike.
-      class UnreadableRecord < Error; end
+      # nothing alike. The fold's own refusal, so a damaged record reads the
+      # same whether the fold or this surface found it.
+      UnreadableRecord = Approval::SignoffQueue::UnreadableRecord
 
       # An approved issue plan's issue status is folded from the epic's own
       # document, and the queue -- global to the sessions directory -- can be
@@ -81,9 +84,10 @@ module Lain
       # @param slug [String, nil] narrow to one epic; every epic when omitted
       # @return [String] the parked items, reviewable-first
       def listing(slug = nil)
-        rows = review.rows(slug)
-        body = rows.empty? ? empty_listing(slug) : [headline(rows), *rows.map(&:to_s)].join("\n\n")
-        [body, unparsed_warning].compact.join("\n\n")
+        read = walk(SessionJournals::Tolerate)
+        rows = Review.new(read.to_a, now: @clock.call).rows(slug)
+        body = rows.empty? ? empty_listing(slug, read.tally) : [headline(rows), *rows.map(&:to_s)].join("\n\n")
+        [body, unparsed_warning(read.tally)].compact.join("\n\n")
       end
 
       # @param digest [String] the artifact address to sign off
@@ -112,8 +116,14 @@ module Lain
       # or in what order -- they would disagree about what is parked, and neither
       # would raise. This class contributes only its two record types, which also
       # bounds the materialization that ordering forces.
-      def journals
-        @journals ||= SessionJournals.new(dir:, types: [Approval::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE])
+      def journals = @journals ||= walk(SessionJournals::Refuse)
+
+      # A decision refuses over a torn line; the listing alone tolerates one,
+      # because {#unparsed_warning} tells the reader it is unproven. The
+      # listing's read is its own and never cached, so its tolerance cannot
+      # reach the {#review} the deciding verbs read.
+      def walk(damage)
+        SessionJournals.new(dir:, types: [Approval::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
       end
 
       def drain(digest, approved:, reason:)
@@ -179,25 +189,24 @@ module Lain
 
       # Names what was UNDERSTOOD, not how many files were opened: a line nobody
       # could parse might BE the deferral, and a lost deferral reads as drained.
-      def empty_listing(slug)
+      def empty_listing(slug, counts)
         about = slug.to_s.empty? ? "" : " for epic #{slug.to_s.inspect}"
-        counts = journals.tally
         "nothing parked for sign-off#{about} (folded #{counted(counts.files, "journal")} under #{dir}: " \
           "#{counted(counts.lines, "line")}, #{counted(counts.records, "gate record")})"
       end
 
-      # REPORTED, not refused: {Journal.records} skips what it cannot read,
-      # because this fd can be shared with other writers, and refusing would make
-      # one damaged byte take the whole surface down. Silence is the false
-      # all-clear this screen must never give, so the count rides along on every
-      # rendering -- a listing with items can be missing one just as easily as an
-      # empty one can.
+      # REPORTED, not refused: this is the one reader that tolerates a torn
+      # line, because refusing would make one damaged byte take down the screen
+      # a human reads to find it -- and every decision taken from here refuses.
+      # Silence is the false all-clear this screen must never give, so the count
+      # rides along on every rendering -- a listing with items can be missing
+      # one just as easily as an empty one can.
       #
       # A FOREIGN record does not count: a Rust `tracing` span is valid JSON and
       # simply is not ours, so counting it would cry wolf on every shared
       # journal.
-      def unparsed_warning
-        unreadable = journals.tally.unreadable
+      def unparsed_warning(counts)
+        unreadable = counts.unreadable
         return nil unless unreadable.positive?
 
         "WARNING: #{counted(unreadable, "line")} could not be parsed as journal records. A parked sign-off " \

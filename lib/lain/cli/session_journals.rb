@@ -25,9 +25,11 @@ module Lain
     # 2. `Dir.children`, never `Dir.glob`. A directory NAME carrying glob
     #    metacharacters is a name, not a pattern: `Dir.glob` finds nothing under
     #    a `$XDG_STATE_HOME` containing `[`, and finds it silently.
-    # 3. Parsed through {Journal.records}, never `JSON.parse` directly, so a
+    # 3. Parsed through {Journal.parse}, never `JSON.parse` directly, so a
     #    foreign line -- a Rust `tracing` span sharing the fd -- is skipped
-    #    rather than raised on.
+    #    rather than raised on. A line that parses to nothing is not foreign:
+    #    spans are whole JSON lines, so it is DAMAGE, and {Refuse} (the
+    #    default) refuses it when a sign-off could rest on it. See {Torn}.
     # 4. Ordered by the `ts` field ASCENDING, compared as a String, with a
     #    STABLE tiebreak. See {#ordered} for what that compare depends on.
     # 5. A file that cannot be READ is named ({Unreadable}), never skipped. A
@@ -46,10 +48,87 @@ module Lain
       # nothing wrong at this tier -- and a raw `Errno::EISDIR` escapes
       # `exe/lain`'s `rescue Lain::Error` and prints a backtrace at someone who
       # asked for a status report.
+      #
+      # A torn line is refused under the same name: either way this reader
+      # cannot say what the directory holds, and the remedy is the human's.
       class Unreadable < Error
-        def initialize(path, cause)
-          super("cannot read the session journal #{path}: #{cause.message}")
+        def self.io(path, cause) = new("cannot read the session journal #{path}: #{cause.message}")
+
+        def self.torn(torn) = new("the session journal #{torn.path} #{torn.where} (#{torn.what}) -- #{torn.remedy}")
+      end
+
+      Torn = Data.define(:path, :line, :type, :within, :tail)
+
+      # One line {Journal.parse} made nothing of, and what can still be read
+      # off it.
+      #
+      # The type comes off the prefix {Journal#record} writes -- `ts`, then the
+      # record's own `type` first -- because a torn line cannot be parsed. That
+      # order is a convention; spec/journalable_surface_spec.rb pins where it
+      # comes from and the two records a sign-off rests on.
+      #
+      # EVERY prefix in the line is read, not only the leading one: a writer
+      # that appends after an unterminated tear fuses its next record onto the
+      # torn one, so a torn `turn` can be carrying a whole deferral. JSON
+      # escapes a quote inside a string, so a record's text cannot fake one.
+      class Torn
+        # JSON.generate escapes nothing a timestamp or a snake_case type holds,
+        # so neither value can carry a quote.
+        RECORD = /\{"ts":"[^"\\]*","type":"([^"\\]*)"/
+        LEADING = /\A#{RECORD}/
+        REMEDY = "move the damaged file aside or repair the line; nothing was decided"
+        private_constant :RECORD, :LEADING, :REMEDY
+
+        # @param path [String] the journal the line was read from
+        # @param line [Integer] its line number
+        # @param text [String] the raw line
+        def self.of(path:, line:, text:)
+          text = text.to_s.scrub
+          type = sniff(text)
+          new(path: -path, line:, type: type && -type, within: text.scan(RECORD).flatten.map(&:-@).freeze,
+              tail: !text.end_with?("\n"))
         end
+
+        # @param text [String] one raw journal line
+        # @return [String, nil] its record type, or nil when the prefix is gone
+        def self.sniff(text) = text.to_s.scrub[LEADING, 1]
+
+        # The records a gate or a stage rests on. A method, not a constant:
+        # {Epic::StageTransition} loads after this unit.
+        def self.decisive_types = [Approval::SignoffQueue::JOURNAL_TYPE, Lain::Epic::StageTransition::JOURNAL_TYPE]
+
+        # A torn line whose type cannot be read could have been anything, so it
+        # is treated as the worst thing it could have been.
+        def decisive? = type.nil? || within.intersect?(self.class.decisive_types)
+
+        def what
+          return "no record type can be read from it" if type.nil?
+
+          fused = (within - [type]) & self.class.decisive_types
+          ["a torn #{type} record", *fused.map { |held| "fused with a #{held} record" }].join(" ")
+        end
+
+        def where = tail ? "has an incomplete last line at line #{line}" : "is damaged at line #{line}"
+
+        # An unterminated last line is also what a fold sees while a session is
+        # still writing, and moving THAT file aside would hide what it writes next.
+        def remedy = tail ? "run again if a session is still writing; otherwise #{REMEDY}" : REMEDY
+      end
+
+      # The default: a torn line a sign-off could rest on refuses the read. A
+      # fold that skipped one read a lost deferral as drained, and drained
+      # opened the next stage. Strict by default so a fold nobody thought to
+      # name is safe without being named.
+      module Refuse
+        def self.call(torn)
+          raise Unreadable.torn(torn) if torn.decisive?
+        end
+      end
+
+      # For a reader that renders over damage and SAYS so, from {#tally} --
+      # never for one that decides.
+      module Tolerate
+        def self.call(_torn) = nil
       end
 
       # What was read versus what was understood. "Folded 2 journals" counts
@@ -69,9 +148,12 @@ module Lain
       #   REQUIRED, and deliberately so: every caller knows which records it is
       #   about, and a "keep everything" default would quietly make the
       #   materialization above unbounded.
-      def initialize(dir:, types:)
+      # @param damage [#call] handed each {Torn} line; {Refuse} unless this
+      #   reader only reports
+      def initialize(dir:, types:, damage: Refuse)
         @dir = dir
         @types = types
+        @damage = damage
       end
 
       # Public because a report that prints a fold has to say where the fold
@@ -146,16 +228,43 @@ module Lain
       # The rescue wraps the whole enumeration, not just the open: `File.foreach`
       # without a block is lazy, so EISDIR and EACCES both surface on the first
       # iteration here rather than at the call.
-      def reading_of(path)
-        counted = File.foreach(path).each_with_object({ records: [], lines: 0, unreadable: 0 }) do |line, acc|
-          acc[:lines] += 1
-          record = Journal.parse(line)
-          acc[:unreadable] += 1 if record.nil?
-          acc[:records] << record if record && @types.include?(record["type"].to_s)
-        end
+      #
+      # An unterminated last line is judged only once the walk is over, against
+      # the size the file had when it began: a size that moved means a writer
+      # was mid-record, so the file is read ONCE more before anything refuses.
+      def reading_of(path, again: true)
+        began = File.size(path)
+        counted = counted_in(path)
+        tails = counted.delete(:tails)
+        return reading_of(path, again: false) if again && written_since?(path, began, tails)
+
+        tails.each { |tail| @damage.call(tail) }
         Reading.new(**counted)
       rescue SystemCallError => e
-        raise Unreadable.new(path, e)
+        raise Unreadable.io(path, e)
+      end
+
+      def counted_in(path)
+        lines_of(path).each_with_object({ records: [], lines: 0, unreadable: 0, tails: [] }) do |line, acc|
+          acc[:lines] += 1
+          record = Journal.parse(line)
+          torn(path, acc, line) if record.nil?
+          acc[:records] << record if record && @types.include?(record["type"].to_s)
+        end
+      end
+
+      def written_since?(path, began, tails) = tails.any?(&:decisive?) && File.size(path) != began
+
+      # `IO#gets` at the end of a file a live writer is mid-`write` on returns
+      # the visible part unterminated, and the next call the rest: rejoined
+      # here, those two reads are the one line they are, so only a file's LAST
+      # line can arrive without its newline.
+      def lines_of(path) = File.foreach(path).slice_after { |line| line.end_with?("\n") }.lazy.map(&:join)
+
+      def torn(path, acc, text)
+        acc[:unreadable] += 1
+        torn = Torn.of(path:, line: acc[:lines], text:)
+        torn.tail ? acc[:tails] << torn : @damage.call(torn)
       end
     end
   end

@@ -297,7 +297,22 @@ RSpec.describe Lain::Approval::SignoffQueue do
       lines = journaled(deferral) + [%({"type":"gate_decision","artifact_digest":"d","epic_slug":"alpha",) +
                                      %("stage":"research"}\n)]
 
-      expect { described_class.from_journal(lines) }.to raise_error(ArgumentError, /policy/)
+      expect { described_class.from_journal(lines) }.to raise_error(described_class::UnreadableRecord, /policy/)
+    end
+
+    # The carriers refuse with ArgumentError, which the executable does not map:
+    # a damaged line reached a human as a backtrace. The fold is where a record
+    # becomes a decision, so the fold is where the refusal gets its name.
+    it "refuses a parseable but malformed gate_decision as a named Lain::Error, in one line naming the record" do
+      line = decision(policy: "signoff").to_journal.merge("approved" => "maybe")
+
+      expect { described_class.from_journal(journaled(deferral) + [line]) }
+        .to raise_error(Lain::Error) { |error|
+          expect(error).to be_a(described_class::UnreadableRecord)
+          expect(error.message).to include("gate_decision", "blake3:plan", "alpha/research", "approved",
+                                           "nothing was decided")
+          expect(error.message).not_to include("\n")
+        }
     end
 
     it "folds a live decision in one record at a time, so a session can stay in step" do
@@ -386,7 +401,7 @@ RSpec.describe Lain::Approval::SignoffQueue do
       it "refuses a deferral whose issue_id is #{damaged.inspect}, rather than parking it out of sight" do
         line = deferral(stage: "issue_plan").to_journal.merge("issue_id" => damaged)
 
-        expect { described_class.from_journal([line]) }.to raise_error(ArgumentError, /issue_id/)
+        expect { described_class.from_journal([line]) }.to raise_error(described_class::UnreadableRecord, /issue_id/)
       end
     end
 
@@ -408,7 +423,7 @@ RSpec.describe Lain::Approval::SignoffQueue do
       lines = journaled(deferral(stage: "issue_plan", issue_id: "a", digest: "blake3:a")) +
               ["#{JSON.generate(damaged_approval)}\n"]
 
-      expect { described_class.from_journal(lines) }.to raise_error(ArgumentError, /approved/)
+      expect { described_class.from_journal(lines) }.to raise_error(described_class::UnreadableRecord, /approved/)
     end
   end
 

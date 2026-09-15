@@ -272,6 +272,20 @@ RSpec.describe Lain::CLI::EpicMount do
         .to raise_error(Lain::Epic::Home::Journaled::ReviewPending)
     end
 
+    # The claims fold reads the same directory a sign-off lives in, and a torn
+    # sign-off there refuses every fold by default. A chat does not die of it:
+    # the mount's refusal costs the review tool and says why, naming the line.
+    it "mounts no review over a torn sign-off in the session journals, and says which line" do
+      create_epic("alpha")
+      File.write(File.join(sessions_dir, "prior.ndjson"),
+                 %({"ts":"2026-01-01T00:00:00.000000Z","type":"gate_decision","artifact_digest":"bla))
+
+      mount, said = notices_from
+
+      expect(mount).to be(described_class::NoEpic)
+      expect(said.join).to include("prior.ndjson", "line 1")
+    end
+
     # The fold is scoped to THIS epic: another epic's open claim must not hold
     # this one's document.
     it "ignores a claim belonging to another epic" do

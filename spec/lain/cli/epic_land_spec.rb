@@ -169,6 +169,25 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     end
   end
 
+  # Scenario: landing and finishing refuse over a torn sign-off too. A skipped
+  # line is a decision nobody made, and this fold was never named in the list
+  # of sign-off readers -- it is safe because refusing is the default.
+  describe "a torn implementation sign-off" do
+    it "refuses, naming the file and the line, and leaves epic/demo alone" do
+      sha = worker("a", "README" => "a's work\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      path = File.join(sessions_dir, "fixture.ndjson")
+      lines = File.readlines(path)
+      File.write(path, lines[0] + lines[1][0, lines[1].size / 2])
+      before = tip
+
+      expect { command.land("a", "demo") }
+        .to raise_error(Lain::CLI::SessionJournals::Unreadable, /fixture\.ndjson.*line 2/)
+      expect(tip).to eq(before)
+      expect(contains?(sha)).to be(false)
+    end
+  end
+
   describe "a crash mid-landing resumes" do
     it "moves the issue to done and does not merge again" do
       sha = worker("a", "README" => "a's work\n")

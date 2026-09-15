@@ -323,6 +323,58 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
   end
 
+  # A sign-off the fold could not read whole is a decision nobody made. Skipped,
+  # a torn deferral folded the queue empty, drained opened the next stage, and
+  # the stage opened over work nobody signed off.
+  describe "a sign-off journal it could not read whole" do
+    before do
+      write_research
+      write_epic
+    end
+
+    def halve_last_line(name)
+      path = File.join(sessions_dir, name)
+      lines = File.readlines(path)
+      File.write(path, [*lines[0...-1], lines.last[0, lines.last.size / 2]].join)
+    end
+
+    # Scenario: a torn sign-off line blocks the next stage instead of opening it
+    it "refuses the next stage over a halved deferral, naming the file and line, and journals nothing" do
+      session("parked.ndjson", stage_event("research"), decision(digest: research_digest, stage: "research"))
+      halve_last_line("parked.ndjson")
+
+      expect { command.submit("epic_plan") }
+        .to raise_error(Lain::CLI::SessionJournals::Unreadable, /parked\.ndjson.*line 2.*nothing was decided/m)
+      expect(gate_decisions).to be_empty
+      expect(stage_events).to eq([%w[research started]])
+    end
+
+    # Scenario: a torn line of an unrelated type does not block a gate
+    it "proceeds when the only damaged line is a torn turn record" do
+      File.write(File.join(sessions_dir, "chat.ndjson"),
+                 %({"ts":"2026-01-01T00:00:00.000000Z","type":"turn","digest":"blake3:\n))
+
+      said = command(gates: { "research" => "hands_off" }).submit("research")
+
+      expect(said).to include("approved", research_digest)
+      expect(gate_decisions.map { |record| record["stage"] }).to eq(["research"])
+    end
+
+    # Scenario: a malformed but parseable gate_decision refuses by name
+    it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
+      File.write(File.join(sessions_dir, "damaged.ndjson"),
+                 "#{JSON.generate(decision(digest: research_digest, stage: "research").to_journal
+                                    .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
+
+      expect { command.submit("epic_plan") }.to raise_error(Lain::Error) { |error|
+        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error.message).to include("gate_decision", research_digest, "approved")
+        expect(error.message).not_to include("\n")
+      }
+      expect(stage_transitions).to be_empty
+    end
+  end
+
   # Scenario: an unconstructable policy refuses loudly.
   #
   # The seam exercised here is the `interactive` recipe's `asker`, which a

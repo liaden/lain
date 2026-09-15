@@ -165,7 +165,18 @@ RSpec.describe Lain::Epic::Progress do
                   "stage" => "research", "approved" => false }
       entries = journaled(transition(issue_id: "a"), damaged)
 
-      expect { fold(entries, graph: chain) }.to raise_error(ArgumentError, /policy/)
+      expect { fold(entries, graph: chain) }.to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /policy/)
+    end
+
+    # What `lain epic status` folds: refused as a Lain::Error, which the
+    # executable prints as one line, rather than a bare ArgumentError it does
+    # not map and prints as a backtrace.
+    it "refuses a gate_decision whose approved field is not a verdict as a Lain::Error naming the record" do
+      damaged = { "type" => "gate_decision", "artifact_digest" => "blake3:plan", "epic_slug" => "alpha",
+                  "stage" => "research", "approved" => "maybe", "policy" => "signoff" }
+
+      expect { fold(journaled(transition(issue_id: "a"), damaged), graph: chain) }
+        .to raise_error(Lain::Error, /gate_decision.*blake3:plan.*approved/)
     end
 
     # The epic filter must not become the silent skip the rules above forbid. A
@@ -184,7 +195,8 @@ RSpec.describe Lain::Epic::Progress do
                           { "type" => "gate_decision", "artifact_digest" => "blake3:plan",
                             "stage" => "research", "approved" => false, "policy" => "deferred" })
 
-      expect { fold(entries, graph: chain) }.to raise_error(ArgumentError, /epic_slug/)
+      expect { fold(entries, graph: chain) }
+        .to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /epic_slug/)
     end
   end
 

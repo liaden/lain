@@ -376,6 +376,23 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(log).to be_empty
     end
 
+    # Scenario: the driver will not start issues over an unreadable sign-off.
+    # Torn after the chat mounted: a mount over the torn line already costs
+    # the chat its epic, and says which line, at startup.
+    it "refuses to start over a torn issue_plan sign-off, naming the file, and launches nothing" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+      factory = factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub) },
+                                    record: chronicle)
+      path = File.join(paths.sessions_dir, "fixture.ndjson")
+      File.write(path, File.read(path).then { |line| line[0, line.size / 2] })
+
+      expect { factory.run(width: 1) }
+        .to raise_error(Lain::CLI::SessionJournals::Unreadable, /fixture\.ndjson.*line 1/)
+      expect(log).to be_empty
+    end
+
     # One writer for pending -> in_flight, and it is the plan approval. An
     # issue the fold still calls pending is reported, never launched -- the
     # landing would refuse it anyway.

@@ -141,6 +141,24 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     end
   end
 
+  # Scenario: landing and finishing refuse over a torn sign-off too. Finishing
+  # folds forge records, not sign-offs, but it reads the same directory -- and
+  # a torn sign-off there is exactly as undecided.
+  describe "a torn implementation sign-off in the session journals" do
+    it "refuses, naming the file and the line, before anything reaches the remote" do
+      decision = Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "demo",
+                                                  stage: "implementation", approved: true, answered_by: "human",
+                                                  policy: "hands_off", latency: 0.0, issue_id: "a")
+      line = JSON.generate({ "ts" => "2026-01-01T00:00:00.000000Z" }.merge(decision.to_journal))
+      File.write(File.join(paths.sessions_dir, "fixture.ndjson"), line[0, line.size / 2])
+
+      expect { command.finish("demo") }
+        .to raise_error(Lain::CLI::SessionJournals::Unreadable, /fixture\.ndjson.*line 1/)
+      expect(github).not_to have_received(:pr_create)
+      expect(remote_ref("refs/heads/epic/demo")).to be_empty
+    end
+  end
+
   describe "an unfinished one is refused" do
     it "names the issue that is not done, before anything reaches the remote" do
       expect { command.finish("other") }.to raise_error(described_class::Unfinished) { |error|

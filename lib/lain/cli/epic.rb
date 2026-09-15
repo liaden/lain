@@ -94,7 +94,9 @@ module Lain
       # status report.
       #
       # Named, not skipped: a journal that cannot be read may hold this epic's
-      # transitions, and walking past it reports stale progress as current.
+      # transitions, and walking past it reports stale progress as current. A
+      # torn sign-off or stage line refuses under the same name, for the same
+      # reason.
       # The refusal belongs to {SessionJournals}, which owns the read; kept as a
       # name here because this command's specs rescue it by this constant.
       UnreadableJournal = SessionJournals::Unreadable

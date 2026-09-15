@@ -59,6 +59,12 @@ module Lain
       # {Approval::GateDecision}).
       JOURNAL_TYPE = "gate_decision"
 
+      # A journaled record the fold could not read as a decision. Named, and a
+      # {Lain::Error}, because the carriers below refuse with ArgumentError --
+      # right for a caller that built the value wrong, a backtrace for a human
+      # whose journal holds a damaged line.
+      class UnreadableRecord < Error; end
+
       # SignoffQueue's OWN construction contracts, not {Approval::Contracts}.
       module Contracts
         # An empty partition key is worse than a wrong one: it still constructs,
@@ -279,13 +285,27 @@ module Lain
 
       # Rebuild from journaled decisions: the definition of "parked", executed.
       #
+      # The fold is where a record becomes a decision, so it is where a
+      # record's refusal becomes the reader's: {#apply} keeps its ArgumentError
+      # for a live caller, and a journal gets one line naming the record.
+      #
       # @param entries [Enumerable<Hash, String>] journal lines or records; foreign
       #   lines are skipped by {Journal.records}, as every reader here does
+      # @raise [UnreadableRecord] naming the record and the field it lacks
       def self.from_journal(entries)
         Journal.records(entries, type: JOURNAL_TYPE).each_with_object(new) do |record, queue|
           queue.apply(record)
+        rescue ArgumentError => e
+          raise UnreadableRecord, unreadable(record, e)
         end
       end
+
+      def self.unreadable(record, cause)
+        address = record.values_at("epic_slug", "stage", "issue_id").compact.join("/")
+        "the #{JOURNAL_TYPE} record for #{record["artifact_digest"].inspect} in #{address.inspect} cannot be read " \
+          "(#{cause.message}) -- repair the line or move its session file aside; nothing was decided"
+      end
+      private_class_method :unreadable
 
       # A deferral parks; anything else is terminal and drains the address it
       # answers -- a DENIAL included, since a refused artifact is not awaiting

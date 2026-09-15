@@ -214,10 +214,12 @@ module Lain
       # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted
       # while a human still holds a file goes on refusing to overwrite it.
       #
-      # It fails OPEN: {Journal.records} skips any line it cannot parse -- its fd
-      # is shared with Rust tracing spans -- so a `review_opened` torn by a crash
-      # is simply gone, and `open?(path) == false` means only that no readable
-      # claim says otherwise.
+      # It fails OPEN on its own records: {SessionJournals} counts and skips a
+      # torn line of a type no sign-off rests on, so a `review_opened` torn by a
+      # crash is simply gone, and `open?(path) == false` means only that no
+      # readable claim says otherwise. A torn sign-off in the same directory
+      # refuses the read, which {.for} turns into a chat with no review tool and
+      # a notice naming the line.
       def rebuilt_review
         Lain::Epic::Review.from_journal(prior_claims, journal: notes, epic_slug: slug)
       end
