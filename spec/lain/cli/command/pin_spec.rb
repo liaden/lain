@@ -52,6 +52,128 @@ RSpec.describe Lain::CLI::Command::Pin do
         .to raise_error(Lain::Error, /no committed turns/)
       expect(session.pins).to eq([])
     end
+
+    # Scenario: bare /pin at a parked question pins an answered turn
+    it "skips an unanswered parked head and pins the previous answered assistant turn, naming it" do
+      answered = Lain::Timeline.empty(store: Lain::Store.new)
+                               .commit(role: "user", content: [{ "type" => "text", "text" => "go" }])
+                               .commit(role: "assistant", content: [{ "type" => "text", "text" => "answered" }])
+      parked = answered.commit(role: "user", content: [{ "type" => "text", "text" => "another question" }])
+                       .commit(role: "assistant",
+                               content: [{ "type" => "tool_use", "id" => "ask1", "name" => "ask_human",
+                                           "input" => {} }])
+      target = answered.head_digest
+      parked_env = build_command_env(agent: instance_double(Lain::Agent, timeline: parked, session:))
+
+      text = command.call("", parked_env)
+
+      expect(session.pinned?(target)).to be(true)
+      expect(session.pins).to eq([target])
+      expect(text).to include(hex(target)[0, 8])
+    end
+  end
+
+  # Scenario: a pinned tool_use turn survives a cut with its answer
+  describe "a tool_use or tool_result turn" do
+    def tool_pair_timeline
+      Lain::Timeline.empty(store: Lain::Store.new)
+                    .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
+                    .commit(role: "assistant",
+                            content: [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep", "input" => {} }])
+                    .commit(role: "user",
+                            content: [{ "type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok" }])
+    end
+
+    it "drags the answering tool_result along and names it in the reply" do
+      line = tool_pair_timeline
+      use_digest = line.ancestors.to_a[1].digest
+      result_digest = line.head_digest
+      tool_env = build_command_env(agent: instance_double(Lain::Agent, timeline: line, session:))
+
+      text = command.call(use_digest.delete_prefix("blake3:")[0, 8], tool_env)
+
+      expect(session.pinned?(use_digest)).to be(true)
+      expect(session.pinned?(result_digest)).to be(true)
+      expect(session.pins).to contain_exactly(use_digest, result_digest)
+      expect(text).to include(hex(use_digest)[0, 8], hex(result_digest)[0, 8])
+    end
+
+    it "drags the asking tool_use along when the tool_result is named instead" do
+      line = tool_pair_timeline
+      use_digest = line.ancestors.to_a[1].digest
+      result_digest = line.head_digest
+      tool_env = build_command_env(agent: instance_double(Lain::Agent, timeline: line, session:))
+
+      command.call(result_digest.delete_prefix("blake3:")[0, 8], tool_env)
+
+      expect(session.pins).to contain_exactly(use_digest, result_digest)
+    end
+
+    it "pins a parked tool_use alone -- there is nothing yet to drag" do
+      line = Lain::Timeline.empty(store: Lain::Store.new)
+                           .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
+                           .commit(role: "assistant",
+                                   content: [{ "type" => "tool_use", "id" => "toolu_2", "name" => "grep",
+                                               "input" => {} }])
+      tool_env = build_command_env(agent: instance_double(Lain::Agent, timeline: line, session:))
+
+      command.call(line.head_digest.delete_prefix("blake3:")[0, 8], tool_env)
+
+      expect(session.pins).to eq([line.head_digest])
+    end
+  end
+
+  # Scenario: a pin inside a collapsed range says so
+  describe "a digest a held compaction cut already collapsed" do
+    it "says the turn is already compacted and pins nothing" do
+      built = Lain::Agent.new(provider:, toolset:, context:, session:).tap do |run|
+        run.ask("first")
+        run.ask("second")
+      end
+      turns = built.timeline.to_a
+      target = turns[1].digest
+      cut = Lain::Telemetry::CompactionCut.new(
+        digest: turns[2].digest, head: built.timeline.head_digest, strategy: "identity", parent: nil,
+        collapses: [{ "span" => [turns[0].digest, turns[1].digest],
+                      "content" => [{ "type" => "text", "text" => "summary" }] }],
+        plan_step_completions: 0
+      )
+      session.record_compaction_cut(cut)
+      held_env = build_command_env(agent: instance_double(Lain::Agent, timeline: built.timeline, session:))
+
+      text = command.call(target.delete_prefix("blake3:")[0, 8], held_env)
+
+      expect(text).to include("already compacted")
+      expect(session.pinned?(target)).to be(false)
+      expect(session.pins).to eq([])
+    end
+
+    # A cut's span endpoints are always ancestors of its own (already
+    # chain-checked) `head` in every cut this codebase commits -- but nothing
+    # states that at `Compacted#held`'s call site, so a cut naming a digest
+    # this chain has never seen must answer "does not cover" rather than
+    # raise a raw `KeyError` up through an ordinary /pin call.
+    it "answers not-covered, rather than raising, when a cut's span names a digest off this chain" do
+      built = Lain::Agent.new(provider:, toolset:, context:, session:).tap do |run|
+        run.ask("first")
+        run.ask("second")
+      end
+      turns = built.timeline.to_a
+      target = turns[1].digest
+      foreign = "blake3:#{"a" * 64}"
+      cut = Lain::Telemetry::CompactionCut.new(
+        digest: turns[2].digest, head: built.timeline.head_digest, strategy: "identity", parent: nil,
+        collapses: [{ "span" => [foreign, turns[1].digest],
+                      "content" => [{ "type" => "text", "text" => "summary" }] }],
+        plan_step_completions: 0
+      )
+      session.record_compaction_cut(cut)
+      held_env = build_command_env(agent: instance_double(Lain::Agent, timeline: built.timeline, session:))
+
+      text = nil
+      expect { text = command.call(target.delete_prefix("blake3:")[0, 8], held_env) }.not_to raise_error
+      expect(text).to include("pinned")
+    end
   end
 
   # /pin with a digest prefix pins that turn.
@@ -202,6 +324,45 @@ RSpec.describe Lain::CLI::Command::Unpin do
       command.call("", wired)
 
       expect(journal_io.string).to be_empty
+    end
+  end
+
+  # /pin and /unpin accept the same selectors and release what a pin dragged
+  # along together, so a pair never half-strands on the way back out.
+  describe "a pinned tool_use/tool_result pair" do
+    def tool_pair_timeline
+      Lain::Timeline.empty(store: Lain::Store.new)
+                    .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
+                    .commit(role: "assistant",
+                            content: [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep", "input" => {} }])
+                    .commit(role: "user",
+                            content: [{ "type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok" }])
+    end
+
+    it "releases both turns and names the companion in the reply" do
+      line = tool_pair_timeline
+      use_digest = line.ancestors.to_a[1].digest
+      result_digest = line.head_digest
+      session.record_pin(use_digest)
+      session.record_pin(result_digest)
+      tool_env = build_command_env(agent: instance_double(Lain::Agent, timeline: line, session:))
+
+      text = command.call(use_digest.delete_prefix("blake3:")[0, 8], tool_env)
+
+      expect(session.pins).to eq([])
+      expect(text).to include(use_digest.delete_prefix("blake3:")[0, 8], result_digest.delete_prefix("blake3:")[0, 8])
+    end
+
+    it "leaves an unpinned companion alone -- the reply names only the release that happened" do
+      line = tool_pair_timeline
+      use_digest = line.ancestors.to_a[1].digest
+      session.record_pin(use_digest)
+      tool_env = build_command_env(agent: instance_double(Lain::Agent, timeline: line, session:))
+
+      text = command.call(use_digest.delete_prefix("blake3:")[0, 8], tool_env)
+
+      expect(session.pinned?(use_digest)).to be(false)
+      expect(text).not_to include("tool counterpart")
     end
   end
 

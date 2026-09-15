@@ -382,6 +382,18 @@ RSpec.describe Lain::CLI::Command::Undo do
         expect(read("a.txt")).to eq("a\n")
       end
 
+      # Skipping the ONLY undoable turn leaves nothing earlier to reach -- the
+      # old wording claimed "/undo now reaches the turn before it" regardless,
+      # which was false exactly here: there is no turn before it.
+      it "says there is no earlier turn left, rather than claiming /undo reaches one" do
+        turn(shell: { "a.txt" => "a\n" })
+
+        text = skip_turn
+
+        expect(text).to include("skipped the only undoable file-changing turn")
+        expect(text).not_to include("reaches the turn before it")
+      end
+
       it "refuses a symlink the turn planted, and never touches what it points at" do
         outside = File.join(@state, "outside.txt").tap { |path| File.write(path, "outside\n") }
         turn { File.symlink(outside, in_root("link")) }

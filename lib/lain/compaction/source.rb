@@ -448,9 +448,17 @@ module Lain
       #
       # `#pinned?` and never `#pins`: the latter sorts the whole set on every
       # call and this is a per-turn membership test.
+      #
+      # `candidates: walk.messages` is what lets {Context::PinnedMessages}
+      # close a pin over its tool counterpart even when only one digest was
+      # ever recorded -- a turn pinned while its `tool_use` was still parked,
+      # or an old session file's pin from before that pairing existed. The
+      # counterpart need not be pinned itself; it only needs to be somewhere
+      # on the very chain this turn renders.
       def pinned(walk, session)
         Context::PinnedMessages.new(
-          walk.turns.zip(walk.messages).filter_map { |turn, message| message if session.pinned?(turn.digest) }
+          walk.turns.zip(walk.messages).filter_map { |turn, message| message if session.pinned?(turn.digest) },
+          candidates: walk.messages
         )
       end
 

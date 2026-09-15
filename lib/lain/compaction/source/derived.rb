@@ -33,13 +33,19 @@ module Lain
       # unreachable: the derivation writes retained turns in source order and
       # can do nothing else.
       #
-      # A pinned turn whose tool counterpart is inside a collapsed range is
-      # still a hole, but on this path it does NOT ship the 400 the projection
-      # path ships: {Derivation} validates its own projection through
+      # A pin that would strand its tool counterpart no longer reaches this
+      # object at all: {Context::PinnedMessages} protects a `tool_use`/
+      # `tool_result` pair together or not at all, and {CLI::Command::Pin}
+      # records both halves of a pin at once, so the pin set this class is
+      # handed is either complete or empty on that pair. If some OTHER
+      # strategy still manages to strand a range -- an operator-supplied one,
+      # say -- this path does not ship the 400 the projection path would:
+      # {Derivation} validates its own projection through
       # {Context::Conversation} and raises {Derivation::Invalid}, so the turn
-      # falls back to the uncompacted render and says so on the record. That is
-      # not the repair -- a session pinned that way stops compacting for as
-      # long as the pin stands -- which is why the record carries the streak.
+      # falls back to the uncompacted render and says so on the record. That
+      # is not a repair -- a session refusing that way stops compacting for as
+      # long as the strategy keeps refusing -- which is why the record carries
+      # the streak.
       class Derived
         # The streak at which "one awkward turn" has become "this session has
         # stopped compacting".

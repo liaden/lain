@@ -1843,21 +1843,48 @@ RSpec.describe Lain::Compaction::Source do
       expect(decisions.first).to include("compacted" => false, "would_not_shrink" => false)
     end
 
-    # FOLLOW-UP 14, CHARACTERIZED ON THIS PATH. A pin whose tool counterpart is
-    # inside a collapsed range strands it -- the hole measured through
-    # `Context::Compact`, where it renders and 400s. Here the same hole exists
-    # and does NOT ship: the derivation validates its own projection, refuses,
-    # and the turn renders the full history instead. That is not the repair --
-    # the session stops compacting for as long as the pin stands, which is what
-    # the streak count above is for -- and the repair is still a decision about
-    # what a pin MEANS ({Context::PinnedMessages}), not a compaction-path fix.
-    it "refuses rather than shipping a pinned tool_use whose answer was collapsed" do
+    # FOLLOW-UP 14, REPAIRED. A pin whose tool counterpart is inside a
+    # collapsed range used to strand it here too: the derivation validated its
+    # own projection, refused, and the turn deferred to the uncompacted
+    # history for as long as the pin stood (the streak count above is what
+    # that state left behind). Only ONE digest is pinned below -- as it would
+    # be for a turn pinned while parked, or an old record from before the
+    # counterpart drag existed -- and `Context::PinnedMessages` still finds
+    # and protects the tool_result too: `Compaction::Source#pinned` hands it
+    # `candidates: walk.messages`, the WHOLE chain, not only what got pinned,
+    # so the pairing closes over the counterpart whether or not its own digest
+    # was ever recorded. Both survive verbatim -- the same outcome as pinning
+    # both digests explicitly, below -- and there is nothing to refuse.
+    it "protects a lone-pinned tool_use's answer too, once it exists on the rendered chain" do
       line = stranded_pin_timeline
       pinning = session_pinning(line.to_a[1].digest)
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
-      expect(context_for(built, line, session: pinning)).to equal(base)
-      expect(refusals.first["violations"]).to include("call-1")
+      messages = render(context_for(built, line, session: pinning), line).messages
+
+      expect(refusals).to be_empty
+      expect(messages).to include(
+        hash_including("role" => "assistant", "content" => line.to_a[1].content),
+        hash_including("role" => "user", "content" => line.to_a[2].content)
+      )
+    end
+
+    # THE OTHER HALF: {Cli::Command::Pin} also drags a pin's tool counterpart
+    # along explicitly at pin time, so an operator pinning either turn ends up
+    # with BOTH RECORDED -- redundant with the closure above once the answer
+    # exists, but what makes `/unpin` find both and a replay stay explicit.
+    it "renders both halves of a pinned tool_use/tool_result pair, with no refusal" do
+      line = stranded_pin_timeline
+      pinning = session_pinning(line.to_a[1].digest, line.to_a[2].digest)
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+      messages = render(context_for(built, line, session: pinning), line).messages
+
+      expect(refusals).to be_empty
+      expect(messages).to include(
+        hash_including("role" => "assistant", "content" => line.to_a[1].content),
+        hash_including("role" => "user", "content" => line.to_a[2].content)
+      )
     end
 
     # A pinned `tool_use` at index 1 whose answering `tool_result` sits at index

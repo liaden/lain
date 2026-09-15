@@ -191,28 +191,22 @@ RSpec.describe Lain::Context::Compact do
       expect(Lain::Canonical.dump(rendered)).to eq(Lain::Canonical.dump(history))
     end
 
-    # CHARACTERIZATION OF A KNOWN DEFECT, not a desired behaviour. Every other
-    # example in this block runs with pins OFF, and that is the honest scope of
-    # the validity claim: {Compaction::Boundary} protects the CUT, but a pin
-    # punches a hole in the MIDDLE of the span and nothing looks at that hole.
-    # Pin a `tool_use` turn and it survives while the `tool_result` answering it
-    # is summarized away -- the original split-pair defect reconstituted, on the
-    # pinned path only.
-    # Measured through the real {Compaction::Source} at the shipped
-    # `keep_last: 20`; swept at this level, 780 introduced `unanswered_tool_use`
-    # and 780 `orphaned_tool_result` across 20,060 cells.
-    #
-    # It is pinned rather than fixed because the fix is a decision about what a
-    # PIN MEANS -- a pin that would strand its counterpart either drags the
-    # counterpart along or is dropped with it -- and that decision is out of
-    # scope here. This is the repo's own idiom for a property that cannot yet be made
-    # structural (`chunk-compaction-tiers-pins-isolation.md`). It is not a
-    # regression: the rule this replaced never covered the pinned path either.
-    #
-    # WHEN THE PIN SEMANTICS ARE DECIDED, this example must go red and be
-    # deleted -- a characterization spec that keeps passing after its defect is
-    # fixed has become a spec FOR the defect.
-    it "still strands a tool_result whose pinned tool_use survives -- a known defect, characterized" do
+    # THE FORMER DEFECT, RESOLVED UPSTREAM. Pinning only the `tool_use` half of
+    # a pair used to strand its `tool_result` -- summarized away while the
+    # `tool_use` survived alone -- because this combinator only ever sees
+    # whichever messages `protected_patterns` names, with no notion of a pair.
+    # `Context::PinnedMessages` now drops a pin that would strand its
+    # counterpart rather than handing it to `Compact` alone -- PROVIDED it is
+    # given no wider chain to search, which is exactly what happens here: this
+    # example builds the set by hand with no `candidates:`, so the pool IS the
+    # one-message set it names. (`Compaction::Source#pinned`, the production
+    # caller, hands it the whole rendered chain instead, which is what lets
+    # the counterpart be found even though only the `tool_use` was pinned --
+    # see `pinned_messages_spec.rb`'s "pairing against the rendered chain".)
+    # Naming only the `tool_use` here ends up protecting NOTHING -- the render
+    # is the plain unpinned compaction, valid exactly like every other example
+    # in this block.
+    it "renders a lone tool_use pin as an ordinary, unpinned compaction rather than stranding its answer" do
       history = [message("user", "ask"),
                  { "role" => "assistant",
                    "content" => [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep", "input" => {} }] },
@@ -220,10 +214,28 @@ RSpec.describe Lain::Context::Compact do
                    "content" => [{ "type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok" }] },
                  message("assistant", "reply"), message("user", "next"), message("assistant", "fin")]
       pins = Lain::Context::PinnedMessages.new([history[1]])
-      found = violations(compacting(2, pins).call(history)).map(&:rule)
 
-      expect(found).to include(:unanswered_tool_use)
-      expect(violations(compacting(2).call(history))).to be_empty
+      expect(pins).to be_none
+      expect(violations(compacting(2, pins).call(history))).to be_empty
+      expect(compacting(2, pins).call(history)).to eq(compacting(2).call(history))
+    end
+
+    # THE REPAIR'S OTHER HALF: pinning BOTH turns of a pair keeps them both,
+    # adjacent, between the summaries either side -- the shape {Cli::Command::Pin}
+    # produces once it drags a pin's counterpart along.
+    it "keeps both turns of a pinned tool_use/tool_result pair, adjacent and unsummarized" do
+      history = [message("user", "ask"),
+                 { "role" => "assistant",
+                   "content" => [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep", "input" => {} }] },
+                 { "role" => "user",
+                   "content" => [{ "type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok" }] },
+                 message("assistant", "reply"), message("user", "next"), message("assistant", "fin")]
+      pins = Lain::Context::PinnedMessages.new(history.values_at(1, 2))
+
+      rendered = compacting(2, pins).call(history)
+
+      expect(violations(rendered)).to be_empty
+      expect(rendered).to include(history[1], history[2])
     end
 
     # Scenario: Head and Compact still agree on what is droppable -- the other

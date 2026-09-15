@@ -102,17 +102,14 @@ module Lain
       # takes the position of the FIRST message it subsumes: the only placement
       # that is order-preserving for a single replacement.
       #
-      # KNOWN DEFECT, characterized in `compact_spec.rb` and NOT fixed here.
       # {Compaction::Boundary} protects the CUT, but a pin punches a hole in the
-      # MIDDLE of the span and nothing looks at that hole. A pinned `tool_use`
-      # turn survives while the `tool_result` answering it is summarized away
-      # (and vice versa), and a pinned assistant turn can end up adjacent to the
-      # retained tail's assistant -- measured through the real
-      # `Compaction::Source` at the shipped `keep_last: 20`. The fix is a
-      # decision about what a PIN MEANS (does a pin that would strand its
-      # counterpart drag it along, or get dropped with it), which is not this
-      # combinator's to make. The unpinned path -- every render with no pins
-      # configured -- is exhaustively valid.
+      # MIDDLE of the span, and this combinator only ever sees whichever
+      # messages `protected_patterns` names -- it has no notion of a
+      # `tool_use`/`tool_result` pair. What used to strand one half of such a
+      # pair here is now decided upstream, in `Context::PinnedMessages`: a pin
+      # that would strand its counterpart is dropped there before this method
+      # ever sees it, so `exempt` never names a lone half. This combinator
+      # stays exactly as ignorant of pairing as it always was.
       def surviving(span, exempt, summary)
         first = (span.each_index.to_a - exempt).first
 

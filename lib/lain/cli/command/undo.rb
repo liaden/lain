@@ -107,8 +107,17 @@ module Lain
         def skipped(env)
           skip = env.snapshots.skip
           journal(env, WorkspaceUndoSkipped.new(turn: skip.turn, snapshot: skip.snapshot))
-          "skipped #{place(skip)} without restoring anything: its changes stay on disk, and /undo now " \
-            "reaches the turn before it"
+          "skipped #{place(skip)} without restoring anything: its changes stay on disk#{next_undo(skip)}"
+        end
+
+        # `remaining` counts the skipped turn itself, so ONE means it was the
+        # last undoable turn there was -- claiming "/undo now reaches the turn
+        # before it" over that is a promise with nothing behind it, since there
+        # is no earlier undoable turn to reach.
+        def next_undo(skip)
+          return "; no earlier undoable turn remains" if skip.remaining == 1
+
+          ", and /undo now reaches the turn before it"
         end
 
         def journal(env, record) = env.chronicle.record_journal << record
