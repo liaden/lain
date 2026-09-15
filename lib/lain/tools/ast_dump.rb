@@ -7,6 +7,12 @@ module Lain
     # pattern under-matched, and this is how the model finds the real node kind
     # (`singleton_method`) rather than guessing at syntax.
     class AstDump < Tool
+      # A dump lists the outer structure first, which is the half that answers
+      # "what node kind is this?", so it keeps whole lines from the top and
+      # says what it withheld rather than refusing.
+      BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("ast_dump"), unit: "nodes",
+                                     narrower: ["dump a smaller snippet, one construct at a time"])
+
       # The wire shape: a code snippet plus which grammar to parse it with.
       class Input < Tool::Input
         field :code, :string, description: "The source snippet to parse.", required: true
@@ -26,9 +32,9 @@ module Lain
           "an ast-grep pattern needs -- especially after test_pattern reports " \
           "fewer matches than expected, which usually means a construct you " \
           "assumed shared a node kind (e.g. a singleton method def) actually " \
-          "parses to a different one. A large tree is truncated to the outer " \
-          "structure and says so on its last line; a source nested past the " \
-          "depth cap is refused outright, naming that cap."
+          "parses to a different one. A large tree is truncated to its first " \
+          "#{BOUND.limit} bytes, the outer structure, and says so on its last " \
+          "line; a source nested past the depth cap is refused outright, naming that cap."
       end
 
       # Audited: parses the given `code` String in-memory via a fresh,
@@ -40,7 +46,9 @@ module Lain
 
       def perform(input, _invocation)
         dumped = Structural::Matcher.new.dump(source: input.code, language: language_of(input))
-        Tool::Result.ok(dumped)
+        return Tool::Result.ok(dumped) if BOUND.admits?(dumped.bytesize)
+
+        Tool::Result.ok(BOUND.fit(dumped.lines(chomp: true)).join("\n"))
       rescue Structural::Matcher::UnknownLanguage, Structural::Matcher::DumpCapped => e
         Tool::Result.error(e.message)
       end

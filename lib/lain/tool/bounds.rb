@@ -63,7 +63,8 @@ module Lain
     # `spec/lain/middleware/withhold_secret_paths_spec.rb` and
     # `spec/lain/sensitivity/filter_spec.rb`, which the count-bearing wording
     # here does not contain. Do not unify the two formats, and do not add an
-    # unknown-total mode to make them fit.
+    # unknown-total mode to make them fit. Their rows still meet {Fill}, which
+    # counts bytes rather than rows and needs no total it did not take.
     #
     # == Deciding before the bytes exist
     #
@@ -180,6 +181,45 @@ module Lain
       # build it.
       def self.payload(content) = text(content).dup.freeze
 
+      # What one result may cost, in bytes, for every tool whose result is a
+      # whole artifact or a handback. One figure, static and the same whatever
+      # model runs, because a ceiling that moved with the model would make the
+      # same call's answer depend on who asked.
+      #
+      # Sized to the smallest window a supported local model runs in, 32,768
+      # tokens. Bytes per token were measured from real requests against their
+      # prompt token counts: ordinary source ran 3.26 at the fewest, prose 3.33,
+      # and a digit-heavy line of SVG path data only 1.31, because such a
+      # tokenizer spends a token per digit. At 16 KiB a result costs about 15%
+      # of that window for ordinary content and at most about 40% in the worst
+      # case measured.
+      #
+      # All of that is per result: several results in one turn add up, and
+      # nothing here bounds their sum.
+      #
+      # A row per tool rather than one constant, so moving one tool is one
+      # number. Every tool that returns content has a row; a row cap such as
+      # {Enumeration} is a second bound beside it, never a substitute.
+      RESULT_BYTES = 16 * 1024
+
+      CEILINGS = {
+        "read_file" => RESULT_BYTES,
+        "bash" => RESULT_BYTES,
+        "memory_read" => RESULT_BYTES,
+        "memory_write" => RESULT_BYTES,
+        "run_skill" => RESULT_BYTES,
+        "ask_human" => RESULT_BYTES,
+        "subagent" => RESULT_BYTES,
+        "grep" => RESULT_BYTES,
+        "glob" => RESULT_BYTES,
+        "list_files" => RESULT_BYTES,
+        "file_symbols" => RESULT_BYTES,
+        "test_pattern" => RESULT_BYTES,
+        "web_search" => RESULT_BYTES,
+        "ast_search" => RESULT_BYTES,
+        "ast_dump" => RESULT_BYTES
+      }.freeze
+
       # The disclosing shape: cap the rows, say so in the rows.
       Enumeration = Data.define(:limit, :unit) do
         def initialize(limit:, unit:)
@@ -229,6 +269,62 @@ module Lain
         # @param total [Integer] the true row count
         # @return [String]
         def notice(total) = "... capped at #{limit} of #{total} #{unit}"
+      end
+
+      # The disclosing shape in bytes. A row cap counts rows, and one row can be
+      # a 400 KiB minified line, so rows are also held to a byte ceiling: whole
+      # rows from the front while they fit, then one row saying how many were
+      # kept, how many bytes were withheld, and where to go instead. A row is
+      # never cut, since half a match reads like a whole one.
+      Fill = Data.define(:limit, :unit, :narrower) do
+        def initialize(limit:, unit:, narrower:)
+          super(limit: Bounds.ceiling(limit), unit: Bounds.unit(unit), narrower: Bounds.offer(narrower))
+        end
+
+        # @param size [Integer] a byte count
+        # @return [Boolean] whether it fits under the ceiling
+        def admits?(size) = size <= limit
+
+        # The notice and the lines `beside` count against the same ceiling as
+        # the rows, because the model is handed all of them. The notice is
+        # reserved at its widest -- every row kept, every byte withheld -- so
+        # the count it finally states can only make it shorter.
+        #
+        # @param rows [Array<String>] rendered rows, in order
+        # @param beside [Array<String>] the lines the rows travel with, such as
+        #   a header or a trailer, placed by the caller
+        # @param separator [String] what the caller joins every line with
+        # @return [Array<String>] a frozen copy of the rows when all fit;
+        #   otherwise the rows that fit followed by one {#notice} row
+        def fit(rows, beside: [], separator: "\n")
+          return rows.dup.freeze if admits?(joined(rows + beside, separator))
+
+          kept = kept(rows, budget(rows, beside, separator), separator.bytesize)
+          (kept + [notice(kept.size, rows.size, rows.drop(kept.size).sum(&:bytesize))]).freeze
+        end
+
+        # @param kept [Integer] rows handed back
+        # @param total [Integer] rows there were
+        # @param withheld [Integer] bytes of the rows not handed back
+        # @return [String]
+        def notice(kept, total, withheld)
+          "... truncated to #{kept} of #{total} #{unit}, withholding #{withheld} bytes over the " \
+            "#{limit}-byte ceiling -- instead, #{narrower.join(", or ")}"
+        end
+
+        private
+
+        def joined(lines, separator) = lines.sum(&:bytesize) + (separator.bytesize * [lines.size - 1, 0].max)
+
+        def budget(rows, beside, separator)
+          widest = notice(rows.size, rows.size, rows.sum(&:bytesize)).bytesize
+          limit - widest - beside.sum { |line| line.bytesize + separator.bytesize }
+        end
+
+        def kept(rows, budget, separator)
+          spent = 0
+          rows.take_while { |row| (spent += row.bytesize + separator) <= budget }
+        end
       end
 
       # The refusing shape: name the size, the ceiling and a narrower action,

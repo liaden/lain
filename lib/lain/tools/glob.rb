@@ -60,6 +60,11 @@ module Lain
       # return different 200s of the same tree.
       BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "paths")
 
+      # The row cap is a count, and a path's length is the world's, so the
+      # rows also meet a byte ceiling.
+      BYTE_BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("glob"), unit: "paths",
+                                          narrower: ["narrow the pattern or the path"])
+
       # The wire shape: a required glob pattern, plus an optional base
       # directory it is matched from.
       class Input < Tool::Input
@@ -86,8 +91,8 @@ module Lain
       def description
         "Finds paths matching a glob pattern (e.g. \"**/*.rb\") relative to " \
           "an optional base directory, returned one per line in sorted " \
-          "order. Output is capped at #{BOUND.limit} paths; a capped result " \
-          "says so and names the true match count rather than truncating " \
+          "order. Output is capped at #{BOUND.limit} paths and #{BYTE_BOUND.limit} bytes; a capped " \
+          "result says so and names the true match count rather than truncating " \
           "silently. No matches is not an error -- the result names the " \
           "pattern and says there were no matches, not an empty string."
       end
@@ -115,11 +120,15 @@ module Lain
 
       private
 
-      # {BOUND} is applied after `.sort` and never by stopping the walk: `cap`
-      # reads the true count off the collection it is handed, and the surviving
-      # rows are decided by the ordering rather than by the filesystem.
+      # {BOUND} is applied after `.sort` and never by stopping the walk: its
+      # notice reads the true count off the collection, and the surviving rows
+      # are decided by the ordering rather than by the filesystem. That notice
+      # rides beside {BYTE_BOUND} as a trailer, so the byte ceiling cannot
+      # withhold it.
       def matches(base, pattern)
-        BOUND.cap(Dir.glob(pattern, base:).sort)
+        sorted = Dir.glob(pattern, base:).sort
+        trailers = BOUND.admits?(sorted.size) ? [] : [BOUND.notice(sorted.size)]
+        [*BYTE_BOUND.fit(sorted.first(BOUND.limit), beside: trailers), *trailers]
       end
     end
   end

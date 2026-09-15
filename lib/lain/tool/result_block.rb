@@ -233,7 +233,7 @@ module Lain
 
         # Character by character, and only on the refusal path: Ruby has no
         # call that answers where validity ends. Its cost is a few objects per
-        # character, which bash's output bound caps at 128 KiB before this runs.
+        # character, which bash's row in Tool::Bounds::CEILINGS caps before this runs.
         def kept_bytes
           return 0 unless byte_transparent?
 

@@ -361,4 +361,19 @@ RSpec.describe Lain::Tools::FileSymbols do
         .to eq("DEFINITIONS\n  L1  class  Thing\n\nREFERENCES\n  (none)")
     end
   end
+
+  # A symbol table has two sections with their own counts, so a cut would leave
+  # one of them reading complete; over the ceiling it is refused instead.
+  describe "refusing a symbol table over its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("file_symbols") }
+
+    it "refuses, naming the size, the ceiling and narrower moves" do
+      path = write("wide.rb", (1..190).map { |n| "def method_#{n}_#{"named" * 20}; end\n" }.join)
+
+      result = tool.call(path:, language: "ruby")
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("ceiling of #{ceiling}", "grep", "ast_search")
+    end
+  end
 end

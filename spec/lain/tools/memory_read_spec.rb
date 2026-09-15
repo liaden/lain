@@ -96,6 +96,15 @@ RSpec.describe Lain::Tools::MemoryRead do
       expect(Lain::Tools::MemoryRead::NARROWER.join(" ")).not_to match(/supersede|write a smaller|replace it/)
     end
 
+    it "refuses a 20 KiB body, over the one result ceiling" do
+      large = Lain::Memory::Item.new(id: "notes", description: "Long notes", body: "n" * (20 * 1024))
+
+      result = described_class.new(index: Lain::Memory::Index.empty.write(large)).call(id: "notes")
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("ceiling of 16384")
+    end
+
     it "leaves every item under the ceiling readable" do
       expect(tool.call(id: "dosage")).to eq(Lain::Tool::Result.ok(item.body))
     end

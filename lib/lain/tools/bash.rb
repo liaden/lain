@@ -58,17 +58,24 @@ module Lain
 
       # A command's output is a WHOLE ARTIFACT in {Tool::Bounds}' sense -- its
       # first N bytes read like the answer and are not -- so it is refused over
-      # the ceiling rather than truncated. 128 KiB is the tightest ceiling here
-      # for a reason: command output is the only artifact the caller SHAPES
-      # BEFORE IT EXISTS. A file's size is a fact to be worked around; `| tail
-      # -n 200` is one edit to the command already being written.
-      OUTPUT_BOUND = Tool::Bounds::Artifact.new(limit: 128 * 1024)
+      # the ceiling rather than truncated. Stdout and stderr count together,
+      # because both ride the one result.
+      OUTPUT_BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("bash"))
 
       # Both are available to EVERY command, which keeps the refusal from
-      # being a dead end.
+      # being a dead end: command output is the one artifact the caller shapes
+      # before it exists, so `| tail -n 200` is one edit to the command already
+      # being written.
       NARROWER = [
         "re-run it with the output narrowed through head, tail or grep",
         "redirect it to a file and read one window of that with read_file"
+      ].freeze
+
+      # A timeout's report quotes the command as well as what it printed, so a
+      # long command alone can put it over the ceiling.
+      TIMEOUT_NARROWER = [
+        "re-run it as a shorter command -- put a long one in a script file and run that",
+        "narrow its output through head, tail or grep"
       ].freeze
 
       # What a timeout reports in place of captured output that was not text.
@@ -329,7 +336,8 @@ module Lain
       def timeout_report(message)
         size = message.bytesize
         unless OUTPUT_BOUND.admits?(size)
-          return OUTPUT_BOUND.message(subject: "its report, which quotes what it printed,", size:, narrower: NARROWER)
+          return OUTPUT_BOUND.message(subject: "its report, which quotes the command and what it printed,", size:,
+                                      narrower: TIMEOUT_NARROWER)
         end
 
         text = Tool::ResultBlock::Text.new(message)

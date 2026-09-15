@@ -310,4 +310,19 @@ RSpec.describe Lain::Tools::AstSearch do
       expect(result).to have_attributes(is_error: true, content: "no such file or directory: #{tmpdir}/nope")
     end
   end
+
+  describe "holding the result to its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("ast_search") }
+
+    it "keeps whole matches up to the ceiling and says how many it kept and withheld" do
+      write("wide.rb", (1..150).map { |n| "def method_#{n}(#{"a" * 200}); end\n" }.join)
+
+      result = tool.call(pattern: "def $NAME($$$A); end", language: "ruby", path: tmpdir)
+
+      expect(result.content.bytesize).to be <= ceiling
+      expect(result.content).to match(/\.\.\. truncated to \d+ of 150 matches, withholding \d+ bytes/)
+      expect(result.content).to include("over the #{ceiling}-byte ceiling")
+      expect(result.content).to include("narrow the pattern or the path")
+    end
+  end
 end

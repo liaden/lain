@@ -146,11 +146,11 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     it "returns only the requested window, and one line saying it is a window" do
-      path = write("big.txt", numbered(5000))
+      path = write("big.txt", numbered(500))
 
-      result = tool.call(path:, offset: 2001, limit: 2000)
+      result = tool.call(path:, offset: 201, limit: 200)
 
-      expect(result).to eq(Lain::Tool::Result.ok(span(2001, 4000) + notice("lines 2001-4000")))
+      expect(result).to eq(Lain::Tool::Result.ok(span(201, 400) + notice("lines 201-400")))
     end
 
     it "takes an offset alone as 'from here to the end'" do
@@ -198,10 +198,10 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     it "records a PARTIAL read when the window leaves lines unseen" do
-      path = write("big.txt", numbered(5000))
+      path = write("big.txt", numbered(500))
       session = Lain::Session.new
 
-      tool.call({ path:, offset: 2001, limit: 2000 }, invocation_with(session))
+      tool.call({ path:, offset: 201, limit: 200 }, invocation_with(session))
 
       expect(session.read?(path)).to be(false)
       expect(session.partially_read?(path)).to be(true)
@@ -421,7 +421,9 @@ RSpec.describe Lain::Tools::ReadFile do
     # read, it would have been a one-keyword bypass of that bound at the highest
     # memory cost of the three spellings.
     describe "an offset of one with no limit" do
-      let(:many) { numbered(20_000) }
+      # As many lines as fit under the ceiling, so the whole read is served and
+      # a line-by-line walk would still allocate visibly more.
+      let(:many) { numbered(1700) }
 
       it "returns bytes identical to the unwindowed read" do
         path = write("many.txt", many)
@@ -587,7 +589,7 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     context "when read unwindowed, which is what every other caller in the repo does" do
-      def read_ceiling = Lain::Tools::ReadFile::WHOLE_BOUND.limit
+      def read_ceiling = Lain::Tools::ReadFile::BOUND.limit
 
       def read_of(bytes) = tool.call(path: file_of(bytes))
 
@@ -595,10 +597,11 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     # `limit` is what routes to Window rather than Whole, and it is deliberately
-    # far past any row here so the WINDOW's own ceiling is the one being tested
-    # rather than the line count.
+    # far past any row here so the limit is what is being tested rather than
+    # the line count. Every row is one line or a few, so a window's own limit
+    # is the longest line it serves.
     context "when read through a window" do
-      def read_ceiling = Lain::Tools::ReadFile::WINDOW_BOUND.limit
+      def read_ceiling = Lain::Tools::ReadFile::LINE_LIMIT
 
       def read_of(bytes) = tool.call(path: file_of(bytes), offset: 1, limit: 10_000_000)
 
@@ -855,25 +858,54 @@ RSpec.describe Lain::Tools::ReadFile do
       file
     end
 
-    let(:whole_ceiling) { Lain::Tools::ReadFile::WHOLE_BOUND.limit }
-    let(:window_ceiling) { Lain::Tools::ReadFile::WINDOW_BOUND.limit }
+    let(:ceiling) { Lain::Tools::ReadFile::BOUND.limit }
 
     it "refuses an unwindowed read of a file over the ceiling" do
-      path = sparse("huge.bin", whole_ceiling + 1)
+      path = sparse("huge.bin", ceiling + 1)
 
       result = tool.call(path:)
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to include(path, (whole_ceiling + 1).to_s, whole_ceiling.to_s)
+      expect(result.content).to include(path, (ceiling + 1).to_s, ceiling.to_s)
+    end
+
+    it "refuses a 30 KiB source file read whole, naming the ceiling and windows that add up" do
+      path = write("service.rb", "  def call = nil # #{"x" * 40}\n" * (30 * 1024 / 60))
+
+      result = tool.call(path:)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include(File.size(path).to_s, "ceiling of 16384",
+                                        "offset and limit", "windows that together cover every line")
+    end
+
+    it "refuses the same file read through one window that covers it" do
+      path = write("service.rb", "  def call = nil # #{"x" * 40}\n" * (30 * 1024 / 60))
+
+      expect(tool.call(path:, offset: 1, limit: 10_000)).to have_attributes(is_error: true)
+    end
+
+    # Windows add up, and that is the only way a file over the ceiling becomes
+    # editable: two windows, each under it, that together cover every line.
+    it "leaves a file over the ceiling editable through windows that add up" do
+      path = filled("over.txt", (ceiling * 2) - 4096)
+      session = Lain::Session.new
+      half = File.foreach(path).count / 2
+
+      top = tool.call({ path:, offset: 1, limit: half }, invocation_with(session))
+      bottom = tool.call({ path:, offset: half + 1 }, invocation_with(session))
+
+      expect([top, bottom]).to all(have_attributes(is_error: false))
+      expect(session.read?(path)).to be(true)
     end
 
     # The same mechanism, restated for the one-line case rather than relaxed.
     # The DECISION is still reached from File.size -- what changed is that
-    # composing the ADVICE for a file over the WINDOW ceiling now costs a
+    # composing the ADVICE for a file over the ceiling now costs a
     # separator probe, so "it is never read" is no longer the true statement and
     # asserting it would be asserting the wrong thing. The bound is what carries
     # the memory claim now: every block the probe asks for is one block, and the
-    # whole probe is at most the window ceiling, against a 2 MiB file.
+    # whole probe is at most the ceiling, against a file eight times its size.
     #
     # `not_to be_empty` FIRST, and it is not a formality -- it is what stops
     # the two bounds below being vacuous. `all` and `sum` are both true of an
@@ -888,7 +920,7 @@ RSpec.describe Lain::Tools::ReadFile do
     # `File.read(path, n)`. The bounds above are what forbid the length-taking
     # slurp.
     it "reads at most a bounded probe of the file it refuses, and never slurps it" do
-      path = sparse("huge.bin", whole_ceiling * 8)
+      path = sparse("huge.bin", ceiling * 8)
       allow(File).to receive(:read).and_call_original
       blocks = probe_blocks(path)
 
@@ -897,14 +929,14 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(File).not_to have_received(:read).with(path)
       expect(blocks).not_to be_empty
       expect(blocks).to all(be_between(1, Lain::Tools::ReadFile::PROBE_BLOCK))
-      expect(blocks.sum).to be <= window_ceiling
+      expect(blocks.sum).to be <= ceiling
     end
 
     # ... and the walk stops at the first separator, so the ordinary file --
     # one that has newlines in it -- costs exactly one block however large it
     # is. This is the half that keeps the probe off the hot path's budget.
     it "stops the probe at the first newline" do
-      path = filled("many.txt", window_ceiling * 2)
+      path = filled("many.txt", ceiling * 2)
       blocks = probe_blocks(path)
 
       tool.call(path:)
@@ -912,8 +944,75 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(blocks.size).to eq(1)
     end
 
+    # The one route a file whose line no read can cover still has: it is
+    # uneditable through edit_file, so every refusal that meets such a line says
+    # so and names an in-place edit through bash, which goes to approval.
+    it "names an in-place bash edit in every refusal that meets a line over the ceiling" do
+      one_line = sparse("one.json", ceiling + 3)
+      lines = (1..200).map { |n| "line #{n}\n" }
+      lines[40] = "#{"B" * (ceiling + 1024)}\n"
+      blocked = write("blocked.txt", lines.join)
+
+      refusals = [tool.call(path: one_line), tool.call(path: one_line, offset: 1, limit: 5),
+                  tool.call(path: blocked, offset: 1, limit: 100), tool.call(path: blocked, offset: 100, limit: 10)]
+
+      expect(refusals).to all(have_attributes(is_error: true))
+      expect(refusals.map(&:content)).to all(include("sed -i", "ruby -i", "approval", "edit_file"))
+    end
+
+    # The notice a partial window carries is part of what the model is handed,
+    # so it counts against the same ceiling as the lines.
+    it "counts a partial window's notice inside the ceiling" do
+      path = write("hundreds.txt", "#{"w" * 99}\n" * 400)
+
+      nearly = tool.call(path:, offset: 1, limit: 163)
+      under = tool.call(path:, offset: 1, limit: 150)
+
+      expect(nearly).to have_attributes(is_error: true)
+      expect(nearly.content).to include("ceiling of #{ceiling}")
+      expect(under).to have_attributes(is_error: false)
+      expect(under.content.bytesize).to be <= ceiling
+    end
+
+    # `offset` and `limit` count lines, so a byte figure alone cannot be
+    # followed without a round trip; the refusal turns it into lines from what
+    # the separator probe already read.
+    it "names an approximate limit in lines that one window can hold" do
+      path = filled("over.txt", ceiling * 3)
+
+      content = tool.call(path:).content
+      limit = content[/a limit of about (\d+) lines/, 1]
+
+      expect(limit).not_to be_nil
+      expect(tool.call(path:, offset: 1, limit: Integer(limit))).to have_attributes(is_error: false)
+    end
+
+    # A line past the first can be the uncoverable one. Windows cannot cover the
+    # file then, so the refusal offers none, only the bash route.
+    it "offers no windows for a file whose later line is over the line limit" do
+      path = write("later.txt", "#{"short\n" * 20}#{"L" * (ceiling + 1024)}\n#{"short\n" * 20}")
+
+      content = tool.call(path:).content
+
+      expect(content).to include("sed -i", "approval")
+      expect(content).not_to include(Lain::Tools::ReadFile::WINDOWS)
+      expect(content).not_to include("a limit of about")
+    end
+
+    it "never advises a limit of about one line" do
+      path = write("wide_lines.txt", "#{"w" * 9000}\n" * 3)
+
+      expect(tool.call(path:).content).not_to include("about 1 lines")
+    end
+
+    it "tells a refused window that windows add up" do
+      path = filled("vast.txt", ceiling * 3)
+
+      expect(tool.call(path:, offset: 1, limit: 10_000).content).to include("windows add up")
+    end
+
     it "names a window and the structural tools as the narrower actions" do
-      path = sparse("huge.rb", whole_ceiling + 1)
+      path = filled("huge.rb", ceiling * 2)
 
       content = tool.call(path:).content
 
@@ -925,20 +1024,30 @@ RSpec.describe Lain::Tools::ReadFile do
     # is ONE line is advice the model cannot act on -- QA spent a round trip on
     # a 1,200,003-byte one-line JSON being told to window a file that refuses
     # every window in turn. The branch is exactly the one where the advice is
-    # wrong: a file the WINDOW ceiling cannot admit either.
-    describe "a file whose first line alone is over the window ceiling" do
-      it "sends a one-line file over the window ceiling to a byte range instead" do
-        path = sparse("one.json", window_ceiling + 3)
+    # wrong: a file whose first line no window can admit.
+    describe "a file whose first line alone is over the ceiling" do
+      it "sends a one-line file over the ceiling to a byte range instead" do
+        path = sparse("one.json", ceiling + 3)
 
         content = tool.call(path:).content
 
-        expect(content).to include("head -c", "one line alone is over the ceiling")
-        expect(content).not_to include(Lain::Tools::ReadFile::PART_ONLY)
-        expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
+        expect(content).to include("head -c",
+                                   "one line alone is over the #{Lain::Tools::ReadFile::LINE_LIMIT}-byte line limit")
+        expect(content).not_to include(Lain::Tools::ReadFile::WINDOWS)
+      end
+
+      # The byte range is advice for bash, so it has to fit bash's own ceiling
+      # or the model is sent from one refusal straight into another.
+      it "sizes the byte range it names to bash's ceiling" do
+        path = sparse("one.json", ceiling + 3)
+
+        content = tool.call(path:).content
+
+        expect(content).to include("head -c #{Lain::Tools::Bash::OUTPUT_BOUND.limit} ")
       end
 
       it "still names the structural tools alongside the byte range" do
-        path = sparse("one.json", window_ceiling + 3)
+        path = sparse("one.json", ceiling + 3)
 
         content = tool.call(path:).content
 
@@ -947,83 +1056,53 @@ RSpec.describe Lain::Tools::ReadFile do
       end
 
       # The boundary is LongLine's own, and it is one byte off the obvious
-      # reading of it. Window#read chunks at `WINDOW_BOUND.limit + 1` and
-      # LongLine refuses any chunk OVER the ceiling, so a first line of exactly
+      # reading of it. Window#read chunks at `LINE_LIMIT + 1` and LongLine
+      # refuses any chunk OVER that limit, so a first line of exactly
       # `limit + 1` bytes INCLUDING its newline arrives whole and IS refused --
       # a probe asking "is there a newline within limit + 1 bytes" answers yes
-      # for this file and reopens the very loop this card closes.
-      it "sends a first line of exactly the ceiling plus its newline to a byte range too" do
-        path = write("edge.json", "#{"x" * window_ceiling}\n")
+      # for this file and reopens the very loop this closes.
+      it "sends a first line of exactly the line limit plus its newline to a byte range too" do
+        path = write("edge.json", "#{"x" * Lain::Tools::ReadFile::LINE_LIMIT}\n#{"y" * ceiling}\n")
 
         content = tool.call(path:).content
 
         expect(content).to include("head -c")
-        expect(content).not_to include(Lain::Tools::ReadFile::PART_ONLY)
-        expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
+        expect(content).not_to include(Lain::Tools::ReadFile::WINDOWS)
       end
 
       # ... and it does not over-reach by one in the other direction: a first
       # line of exactly the ceiling INCLUDING its newline is the largest one a
       # window can still serve, so that file keeps the window advice, and the
       # window is asserted to work rather than assumed to.
-      it "keeps the window advice for a first line of exactly the ceiling, and that window works" do
-        path = write("fits.json", "#{"x" * (window_ceiling - 1)}\nrest\n")
+      it "keeps the window advice for a first line of exactly the line limit, and that window works" do
+        path = write("fits.json", "#{"x" * (Lain::Tools::ReadFile::LINE_LIMIT - 1)}\nrest\n#{"short\n" * 100}")
 
         content = tool.call(path:).content
 
-        expect(content).to include(Lain::Tools::ReadFile::PART_ONLY)
+        expect(content).to include(Lain::Tools::ReadFile::WINDOWS)
         expect(content).not_to include("head -c")
         expect(tool.call(path:, offset: 1, limit: 1)).to have_attributes(is_error: false)
       end
 
-      # The FULL_COVER branch has no bug and must not be widened into: a
-      # newline-free file UNDER the window ceiling has a line 1 under the
-      # ceiling, so LongLine never fires and a full-cover window serves it.
-      it "leaves a newline-free file under the window ceiling on its full-cover advice" do
-        path = sparse("wide.bin", whole_ceiling + 1024)
+      # A line-structured file keeps the window advice however large it is: its
+      # line 1 is short, so windows reach it and add up to the whole.
+      it "offers windows for a line-structured file far over the ceiling" do
+        path = filled("vast.txt", ceiling * 64)
 
         content = tool.call(path:).content
 
-        expect(content).to include(Lain::Tools::ReadFile::FULL_COVER)
-        expect(content).not_to include("head -c")
-      end
-
-      it "serves that same file through the full-cover window it was advised to use" do
-        path = sparse("wide.bin", whole_ceiling + 1024)
-
-        result = tool.call(path:, offset: 1, limit: 10_000_000)
-
-        expect(result).to have_attributes(is_error: false)
-        expect(result.content.bytesize).to eq(whole_ceiling + 1024)
-      end
-
-      it "still offers a window for a line-structured file under the window ceiling" do
-        path = filled("many.txt", whole_ceiling * 2)
-
-        expect(tool.call(path:).content).to include(Lain::Tools::ReadFile::FULL_COVER)
-      end
-
-      # ... and a line-structured file OVER the window ceiling keeps the
-      # partial-window advice: its line 1 is short, so a window narrow enough
-      # does reach it and the byte range would be the wrong ceiling to send it
-      # down.
-      it "still offers a partial window for a line-structured file over the window ceiling" do
-        path = filled("vast.txt", window_ceiling * 2)
-
-        content = tool.call(path:).content
-
-        expect(content).to include(Lain::Tools::ReadFile::PART_ONLY)
+        expect(content).to include(Lain::Tools::ReadFile::WINDOWS)
         expect(content).not_to include("head -c")
       end
 
       it "carries none of the one-line file's bytes into the refusal" do
-        path = write("one.json", "SENTINEL" * ((window_ceiling / 8) + 2))
+        path = write("one.json", "SENTINEL" * ((ceiling / 8) + 2))
 
         expect(tool.call(path:).content).not_to include("SENTINEL")
       end
 
       it "records nothing on the session for the one-line file it refused" do
-        path = sparse("one.json", window_ceiling + 3)
+        path = sparse("one.json", ceiling + 3)
         session = Lain::Session.new
 
         tool.call({ path: }, invocation_with(session))
@@ -1034,13 +1113,13 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     it "carries none of the refused file's bytes" do
-      path = write("huge.txt", "SENTINEL\n" * ((whole_ceiling / 9) + 2))
+      path = write("huge.txt", "SENTINEL\n" * ((ceiling / 9) + 2))
 
       expect(tool.call(path:).content).not_to include("SENTINEL")
     end
 
     it "records nothing on the session for a read it refused" do
-      path = sparse("huge.bin", whole_ceiling + 1)
+      path = sparse("huge.bin", ceiling + 1)
       session = Lain::Session.new
 
       tool.call({ path: }, invocation_with(session))
@@ -1050,42 +1129,27 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     it "still reads a file exactly at the ceiling" do
-      path = filled("edge.txt", whole_ceiling)
+      path = filled("edge.txt", ceiling)
 
       expect(tool.call(path:)).to have_attributes(is_error: false)
     end
 
-    # The deadlock this card must not create. A file over the whole-read
-    # ceiling is still reachable end to end through a window, and a window that
-    # covers it records a COMPLETE read -- which is the one predicate
-    # Tools::EditFile and Tools::WriteFile both ask.
-    it "leaves a file over the whole ceiling editable through a full-cover window" do
-      path = filled("over.txt", whole_ceiling * 2)
-      session = Lain::Session.new
-
-      result = tool.call({ path:, offset: 1, limit: 10_000_000 }, invocation_with(session))
-
-      expect(result).to have_attributes(is_error: false)
-      expect(result.content).to eq(File.read(path))
-      expect(session.read?(path)).to be(true)
-    end
-
-    # ... but a window is not an unbounded escape from the bound: a limit large
-    # enough to cover a huge file is a whole-artifact read wearing a window's
-    # clothes, so the bytes a window HANDS BACK carry their own ceiling.
-    it "refuses a window that hands back more than the window ceiling" do
-      path = filled("vast.txt", window_ceiling + 65_536)
+    # A window is not an unbounded escape from the bound: a limit large enough
+    # to cover a huge file is a whole-artifact read wearing a window's clothes,
+    # so the bytes a window HANDS BACK carry the same ceiling.
+    it "refuses a window that hands back more than the ceiling" do
+      path = filled("vast.txt", ceiling + 65_536)
 
       result = tool.call(path:, offset: 1, limit: 10_000_000)
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to include(path, window_ceiling.to_s)
+      expect(result.content).to include(path, ceiling.to_s)
     end
 
     it "names the span it measured, and its true size, when it refuses a window" do
       line = "#{"x" * 63}\n"
-      over = (window_ceiling / line.bytesize) + 1
-      path = filled("vast.txt", window_ceiling + 65_536)
+      over = (ceiling / line.bytesize) + 1
+      path = filled("vast.txt", ceiling + 65_536)
 
       content = tool.call(path:, offset: 1, limit: 10_000_000).content
 
@@ -1093,13 +1157,13 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     it "carries none of the refused window's bytes" do
-      path = write("vast.txt", "SENTINEL\n" * ((window_ceiling / 9) + 2))
+      path = write("vast.txt", "SENTINEL\n" * ((ceiling / 9) + 2))
 
       expect(tool.call(path:, offset: 1, limit: 10_000_000).content).not_to include("SENTINEL")
     end
 
     it "records nothing on the session for a window it refused" do
-      path = filled("vast.txt", window_ceiling + 65_536)
+      path = filled("vast.txt", ceiling + 65_536)
       session = Lain::Session.new
 
       tool.call({ path:, offset: 1, limit: 10_000_000 }, invocation_with(session))
@@ -1109,7 +1173,7 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     it "leaves a narrower window of the same file readable" do
-      path = filled("vast.txt", window_ceiling + 65_536)
+      path = filled("vast.txt", ceiling + 65_536)
 
       expect(tool.call(path:, offset: 1, limit: 100)).to have_attributes(is_error: false)
     end
@@ -1127,13 +1191,13 @@ RSpec.describe Lain::Tools::ReadFile do
     # materialised the line would have had to say the whole 8 MiB to say
     # anything at all.
     it "weighs a separatorless file one chunk at a time, never as one line" do
-      path = sparse("oneline.bin", window_ceiling * 8)
+      path = sparse("oneline.bin", ceiling * 8)
 
       result = tool.call(path:, offset: 1, limit: 1)
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to include("the first #{window_ceiling + 1} bytes")
-      expect(result.content).not_to include((window_ceiling * 8).to_s)
+      expect(result.content).to include("the first #{Lain::Tools::ReadFile::LINE_LIMIT + 1} bytes")
+      expect(result.content).not_to include((ceiling * 8).to_s)
     end
 
     # The measured half, in a CHILD so the reading is order-independent: VmHWM
@@ -1145,20 +1209,20 @@ RSpec.describe Lain::Tools::ReadFile do
     it "costs a chunk of memory, not a file's worth" do
       skip "fork and procfs are what this measures with" unless Process.respond_to?(:fork) &&
                                                                 File.exist?("/proc/self/status")
-      big = sparse("oneline.bin", window_ceiling * 8)
+      big = sparse("oneline.bin", 8 * 1024 * 1024)
       small = write("small.txt", "x\n")
 
       control = peak_rss_in_child { tool.call(path: small, offset: 1, limit: 1) }
       measured = peak_rss_in_child { tool.call(path: big, offset: 1, limit: 1) }
 
-      expect(measured - control).to be < (window_ceiling * 4 / 1024)
+      expect(measured - control).to be < 4096
     end
 
     # ... and it must not tell such a file's reader to narrow a window, because
     # no offset and no limit reaches inside one line. The subject names a byte
     # prefix of the line, which is the only thing that was measured.
     it "sends a single over-long line somewhere other than a narrower window" do
-      path = write("minified.js", "x" * (window_ceiling + 1024))
+      path = write("minified.js", "x" * (ceiling + 1024))
 
       content = tool.call(path:, offset: 1, limit: 1).content
 
@@ -1173,9 +1237,9 @@ RSpec.describe Lain::Tools::ReadFile do
     # 512 KB of line 1's TAIL labelled "lines 2-4". A wrong answer returned as
     # a success is the one outcome the whole-artifact doctrine exists to
     # prevent, so the file refuses whatever the offset.
-    describe "a file holding a line over the window ceiling" do
+    describe "a file holding a line over the ceiling" do
       let(:path) do
-        write("mixed.txt", "#{"A" * (window_ceiling + (window_ceiling / 2))}\nsecond\nthird\nfourth\n")
+        write("mixed.txt", "#{"A" * (ceiling + (ceiling / 2))}\nsecond\nthird\nfourth\n")
       end
 
       [{ offset: 2, limit: 3 }, { offset: 3, limit: 2 }, { offset: 4, limit: 2 }, { offset: 2 }].each do |window|
@@ -1195,11 +1259,11 @@ RSpec.describe Lain::Tools::ReadFile do
       # exception for the ONE line past the window that decides completeness --
       # so a short line followed by a huge one is refused too, naming the huge
       # one. That is a real loss and it is the honest simple rule: the
-      # alternative is a second notion of which chunks count, and the deadlock
-      # is untouched either way, because a file holding a line over the window
-      # ceiling is over that ceiling itself and was never in the editable band.
+      # alternative is a second notion of which chunks count, and no file is
+      # made uneditable by it, because a line over the ceiling can reach no
+      # window at all.
       it "refuses even a window whose only oversized line is the one past its end" do
-        short = write("head.txt", "first\n#{"A" * (window_ceiling + 1024)}\n")
+        short = write("head.txt", "first\n#{"A" * (ceiling + 1024)}\n")
 
         result = tool.call(path: short, offset: 1, limit: 1)
 
@@ -1207,17 +1271,17 @@ RSpec.describe Lain::Tools::ReadFile do
         expect(result.content).to include("of line 2 of #{short}")
       end
 
-      it "leaves every file in the editable band untouched by that rule" do
-        band = filled("band.txt", whole_ceiling * 3)
+      it "leaves a file of short lines untouched by that rule" do
+        band = filled("band.txt", ceiling * 3)
 
-        expect(tool.call(path: band, offset: 1, limit: 10_000_000)).to have_attributes(is_error: false)
+        expect(tool.call(path: band, offset: 1, limit: 100)).to have_attributes(is_error: false)
       end
 
       # The line number is counted from COMPLETED lines, so it is the file's
       # own numbering rather than the walk's: a separatorless file is one line
       # however far past its end the offset reaches.
       it "names line 1 of a separatorless file whatever offset was asked for" do
-        separatorless = sparse("oneline.bin", window_ceiling * 4)
+        separatorless = sparse("oneline.bin", ceiling * 4)
 
         expect(tool.call(path: separatorless, offset: 500).content).to include("of line 1 of")
       end
@@ -1231,7 +1295,7 @@ RSpec.describe Lain::Tools::ReadFile do
       describe "the narrower action it names" do
         let(:blocked) do
           lines = (1..200).map { |n| "line #{n}\n" }
-          lines[40] = "#{"B" * (window_ceiling + 1024)}\n"
+          lines[40] = "#{"B" * (ceiling + 1024)}\n"
           write("blocked.txt", lines.join)
         end
 
@@ -1257,7 +1321,7 @@ RSpec.describe Lain::Tools::ReadFile do
         # Nothing before line 1 or 2 can be read, so there the only honest
         # advice really is to leave read_file.
         it "falls back to a byte range when the very first line is the long one" do
-          first = write("first.txt", "B" * (window_ceiling + 1024))
+          first = write("first.txt", "B" * (ceiling + 1024))
 
           content = tool.call(path: first, offset: 1, limit: 5).content
 
@@ -1273,7 +1337,7 @@ RSpec.describe Lain::Tools::ReadFile do
     # offset 1/limit 1 returned byte-identical refusals. Any single chunk over
     # the ceiling is now the long-line case, whether or not it ends in one.
     it "never advises narrowing a window that has only one line in it" do
-      path = write("exact.txt", "#{"x" * window_ceiling}\n")
+      path = write("exact.txt", "#{"x" * ceiling}\n")
 
       one = tool.call(path:, offset: 1, limit: 1)
       two = tool.call(path:, offset: 1, limit: 2)
@@ -1310,30 +1374,28 @@ RSpec.describe Lain::Tools::ReadFile do
     # 262,144-byte ceiling. Stubbing the stat is the deterministic stand-in
     # for that race -- the read itself must be capped too.
     it "caps the read as well as the stat, so a file that grew is still refused" do
-      path = filled("grew.txt", whole_ceiling * 2)
+      path = filled("grew.txt", ceiling * 2)
       allow(File).to receive(:size).and_call_original
       allow(File).to receive(:size).with(path).and_return(10)
 
       result = tool.call(path:)
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to include(whole_ceiling.to_s)
+      expect(result.content).to include(ceiling.to_s)
     end
 
     # ... and it says only what it measured. Having just learned the stat was
     # wrong, this branch knows a PREFIX and not a total, so it names the prefix
-    # and offers only a partial window -- promising a full-cover one would be
-    # promising a size it cannot check.
+    # rather than a size it cannot check.
     it "names the prefix it measured, not a total it does not know, when a file grew" do
-      path = filled("grew.txt", whole_ceiling * 2)
+      path = filled("grew.txt", ceiling * 2)
       allow(File).to receive(:size).and_call_original
       allow(File).to receive(:size).with(path).and_return(10)
 
       content = tool.call(path:).content
 
-      expect(content).to include("the first #{whole_ceiling + 1} bytes of #{path}")
-      expect(content).to include(Lain::Tools::ReadFile::PART_ONLY)
-      expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
+      expect(content).to include("the first #{ceiling + 1} bytes of #{path}")
+      expect(content).to include(Lain::Tools::ReadFile::WINDOWS)
     end
 
     # The read NAMES its encoding rather than inheriting the locale's
@@ -1349,13 +1411,6 @@ RSpec.describe Lain::Tools::ReadFile do
 
       expect(result.content).to eq(File.binread(utf8).force_encoding(Encoding::UTF_8))
       expect(result.content.encoding).to eq(Encoding::UTF_8)
-    end
-
-    # The window ceiling sits above the whole-read ceiling on purpose: were
-    # they equal, every file between them would be unreadable end to end and so
-    # permanently uneditable.
-    it "keeps the window ceiling above the whole-read ceiling" do
-      expect(window_ceiling).to be > whole_ceiling
     end
   end
 end

@@ -215,4 +215,18 @@ RSpec.describe Lain::Tools::ListFiles do
       expect(result).to have_attributes(is_error: true, content: "no such directory: #{tmpdir}/nope")
     end
   end
+
+  describe "holding the result to its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("list_files") }
+
+    it "keeps whole entries up to the ceiling and names a subdirectory as the narrower move" do
+      400.times { |n| touch("app", "components", "feature_#{n / 50}", "a_component_with_a_long_name_#{n}.tsx") }
+
+      result = tool.call(path: tmpdir, recursive: true)
+
+      expect(result.content.bytesize).to be <= ceiling
+      expect(result.content.lines.last).to match(/\A\.\.\. truncated to \d+ of \d+ paths, withholding \d+ bytes/)
+      expect(result.content).to include("list a subdirectory")
+    end
+  end
 end

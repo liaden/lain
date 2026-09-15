@@ -58,6 +58,15 @@ module Lain
       # that was impossible to perform. The exist?-then-write is a
       # check-then-act, NOT a lock -- sound for the one-call-at-a-time model
       # this harness runs today, not in general against a concurrent writer.
+      # Before the plain refusal, whose remedy -- read it -- cannot work here.
+      requires("%<subject>s exists and was never read in full in this conversation's current history, and " \
+               "cannot be: it holds a line over the #{ReadFile::LINE_LIMIT} bytes read_file " \
+               "serves in one line, which no read covers -- #{ReadFile::BASH_EDIT}",
+               subject: SUBJECT) do |input, invocation|
+        path = target(invocation, input.path)
+        !File.exist?(path) || session_of(invocation).read?(path) || !ReadFile.uncoverable?(path)
+      end
+
       requires("%<subject>s exists and was never read in full in this conversation's current history",
                subject: SUBJECT) do |input, invocation|
         path = target(invocation, input.path)

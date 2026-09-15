@@ -361,6 +361,39 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(announced).to be_empty
     end
 
+    # The reply is a tool result like any other, so it answers to the same
+    # static ceiling as every other result rather than a figure of its own.
+    it "hands back a 20 KiB reply, over the one result ceiling" do
+      confirmations << "config.rb"
+
+      asked_and_answered("x" * (20 * 1024))
+
+      expect(announced.size).to eq(1)
+      expect(announced.first).to include("ceiling of 16384")
+    end
+
+    # A structured answer reaches the tool already rendered, so the row measures
+    # what the model would read -- the comment together with the grammar around
+    # it -- rather than the comment alone, whose own bound is four times the row.
+    it "hands back a structured answer whose comment pushes the rendered result over the ceiling" do
+      database = Lain::Question.new(id: "db", body: "Which database?",
+                                    options: [Lain::Question::Option.new(id: "pg", label: "PostgreSQL")])
+      set = Lain::Question::Set.new(questions: [database])
+      comment = Lain::Question::Answer.new(question_id: "db", option_ids: ["pg"], comment: "c" * (16 * 1024))
+      rendered = Lain::Question::AnswerSet.new(questions: set, answers: [comment]).render
+      confirmations << "config.rb"
+
+      Sync do |task|
+        run = task.async { tool.call({ "questions" => set.to_body.fetch("questions") }, invocation) }
+        answered(tool, rendered)
+        run.wait
+      end
+
+      expect(rendered.bytesize).to be > ceiling
+      expect(announced.size).to eq(1)
+      expect(announced.first).to include("ceiling of #{ceiling}")
+    end
+
     it "hands an oversized answer back with its size, the ceiling and their own words" do
       confirmations << "config.rb"
 

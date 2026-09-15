@@ -567,6 +567,13 @@ RSpec.describe Lain::Tools::Bash do
       expect(result.content).to include("exit status: 3")
     end
 
+    it "refuses 30 KiB of output, naming the exact size and exit status 3" do
+      result = tool.call({ command: "#{flooding(30 * 1024)}; exit 3" }, invocation)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("is #{30 * 1024} bytes", "ceiling of 16384", "exit status: 3")
+    end
+
     it "carries none of the refused output" do
       result = tool.call({ command: flooding(ceiling + 1024, "S") }, invocation)
 
@@ -916,6 +923,19 @@ RSpec.describe Lain::Tools::Bash do
       expect(result).to be_error
       expect(result.content.bytesize).to be < 1024
       expect(result.content).to include("command timed out after 7s", "200000")
+    end
+
+    # The report quotes the command as well as its output, so a long command
+    # that printed nothing reaches the ceiling too; the refusal must not send
+    # the model to narrow output there was none of.
+    it "says a refused timeout report quotes the command, and names a shorter command" do
+      timed_out = Class.new { def run_command = raise Mixlib::ShellOut::CommandTimeout, "x" * 20_000 }
+      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+
+      result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
+
+      expect(result.content).to include("quotes the command", "shorter command")
+      expect(result.content).not_to include("which quotes what it printed,")
     end
 
     it "answers a timeout whose captured output is not text with an error that commits" do

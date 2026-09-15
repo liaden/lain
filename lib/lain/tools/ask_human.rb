@@ -39,7 +39,7 @@ module Lain
     # == An answer that costs more than it is worth
     #
     # A reply lands straight in the asker's context, so an unmeasured one is
-    # the largest thing a turn can spend. {ANSWER_BOUND} measures it, and
+    # the largest thing a turn can spend. {Ceiling::BOUND} measures it, and
     # because this is the one tool with somebody there to be asked, an overrun
     # is HANDED BACK rather than refused: the human is shown the measurement
     # and their own words and decides. The handback re-opens the set already in
@@ -94,12 +94,9 @@ module Lain
       # refuses without ever calling {AskHuman#perform}, so nothing there
       # measures anything -- and nothing there can park on a confirm either.
       module Ceiling
-        # {Question::Answer::MAX_COMMENT}, and taking it from there rather than
-        # picking a number is the argument: the STRUCTURED answer path already
-        # refuses past that byte count, so free text was one arm of one tool
-        # where a human could put a megabyte into a parent's context with
-        # nothing to say so. Read from the constant, the two arms cannot drift.
-        BOUND = Tool::Bounds::Handback.new(limit: Question::Answer::MAX_COMMENT)
+        # A reply lands in the context as this tool's result, so it answers to
+        # the same row as every other result.
+        BOUND = Tool::Bounds::Handback.new(limit: Tool::Bounds::CEILINGS.fetch("ask_human"))
 
         # What the human is told overran, in their own terms.
         SUBJECT = "your reply"

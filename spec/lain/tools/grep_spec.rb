@@ -426,4 +426,32 @@ RSpec.describe Lain::Tools::Grep do
       expect(client).not_to have_received(:call)
     end
   end
+
+  # Two hundred matches is a row cap, not a byte one: one match inside a
+  # minified line is a single row of hundreds of kilobytes.
+  describe "holding the result to its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("grep") }
+
+    it "does not hand back a 400 KiB minified line, and says what it withheld" do
+      write("bundle.min.js", "var a=1;#{"x" * 200_000}needle#{"y" * 200_000}\n")
+
+      result = tool.call(pattern: "needle", path: tmpdir)
+
+      expect(result.content.bytesize).to be <= ceiling
+      expect(result.content).to include("truncated to 0 of 1 matches", "withholding", "#{ceiling}-byte ceiling")
+      expect(result.content).to include("narrow the pattern or the path", "grep -oE")
+      expect(result.content).not_to include("xxxx")
+    end
+
+    it "keeps whole matches up to the ceiling and says how many it kept" do
+      write("log.txt", (1..200).map { |n| "hit #{n} #{"z" * 1000}\n" }.join)
+
+      result = tool.call(pattern: "hit", path: File.join(tmpdir, "log.txt"))
+
+      kept = result.content.lines.count { |line| line.start_with?("#{File.join(tmpdir, "log.txt")}:") }
+      expect(result.content.bytesize).to be <= ceiling
+      expect(kept).to be_between(1, 199)
+      expect(result.content.lines.last).to start_with("... truncated to #{kept} of 200 matches, withholding ")
+    end
+  end
 end

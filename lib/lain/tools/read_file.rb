@@ -20,48 +20,37 @@ module Lain
     # never saw -- and a partial window's result carries one line saying so,
     # ahead of the refusal.
     #
-    # Windows adding up is load-bearing: it is the only path by which a file too
-    # large to read unwindowed becomes editable at all. {Tools::WriteFile} is not
-    # an alternative -- its overwrite contract asks {Lain::Session#read?} too.
+    # Windows adding up is load-bearing: it is the only path by which a file
+    # over the ceiling becomes editable at all. {Tools::WriteFile} is not an
+    # alternative -- its overwrite contract asks {Lain::Session#read?} too. A
+    # file holding one line over the ceiling never becomes editable here, since
+    # no window can cover that line, so every refusal meeting one names an
+    # in-place edit through bash instead ({BASH_EDIT}).
     #
-    # == The two ceilings, and why there are two
+    # == One ceiling, whole read and window alike
     #
     # A file's contents are a WHOLE ARTIFACT in {Tool::Bounds}' sense: the
     # first N bytes of one are not a partial answer, they are an answer that
     # reads complete and is wrong. So an oversized read is refused and told
     # where to go instead, never truncated.
     #
-    # {WHOLE_BOUND} governs the unwindowed read, decided from `File.size`
-    # before the file is opened. {WINDOW_BOUND} governs the bytes a WINDOW
-    # hands back, because `limit: 50_000_000` is a whole-artifact read wearing
-    # a window's clothes.
-    #
-    # The two numbers DIFFER, and the gap is load-bearing. For a file over
-    # {WHOLE_BOUND} the only complete read available is a window covering it,
-    # so equal ceilings would make every file between them permanently
-    # uneditable. The window ceiling therefore sits above: the unwindowed read
-    # is bounded against spending a context window by ACCIDENT, the window
-    # against spending one deliberately without limit.
+    # {BOUND} governs the unwindowed read, decided from `File.size` before the
+    # file is opened, and the bytes a window hands back, because
+    # `limit: 50_000_000` is a whole-artifact read wearing a window's clothes.
+    # One number serves both because windows add up: a file over it is read in
+    # windows under it, and those make it editable.
     class ReadFile < Tool
       include Tool::FileTarget
 
-      # 256 KiB for a whole read, measured against this repository rather than
-      # guessed: the largest hand-written file tracked here is 231 KB, so
-      # nothing a person authored is refused, while the one tracked file above
-      # it -- a 659 KB embeddings blob, ~65k tokens -- is exactly the artifact
-      # no whole read should hand back.
-      #
-      # The margin is closing: `planning/specs/chunk-review-surface.md` is
-      # 213,211 bytes, 81% of this ceiling, and plan docs are exactly what an
-      # agent reads whole. The next one past 262,144 becomes window-only --
-      # still readable and editable through a full-cover window, but a
-      # behaviour change a reader should meet here rather than discover.
-      WHOLE_BOUND = Tool::Bounds::Artifact.new(limit: 256 * 1024)
+      BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("read_file"))
 
-      # 1 MiB, four times the whole-read ceiling, so every file tracked here
-      # stays readable end to end -- and therefore editable -- through a window
-      # that covers it, while a genuinely unbounded file still meets a wall.
-      WINDOW_BOUND = Tool::Bounds::Artifact.new(limit: 1024 * 1024)
+      # The longest line a window serves. A partial window's notice counts
+      # against {BOUND} too, and the notice at its widest -- two line numbers of
+      # sixteen digits -- is under this room, so a window refused for its notice
+      # always holds two lines or more and "narrow the window" can be followed.
+      NOTICE_ROOM = 256
+      LINE_LIMIT = BOUND.limit - NOTICE_ROOM
+      LINE_BOUND = Tool::Bounds::Artifact.new(limit: LINE_LIMIT)
 
       # Named unconditionally rather than by extension: a second notion of "is
       # this code" would be one more thing to drift, and these tools already
@@ -71,32 +60,36 @@ module Lain
         "grep it for the lines you actually need"
       ].freeze
 
-      # Offered only when it exists: a full-cover window records a complete
-      # read, but only if the file is small enough for that window to be
-      # admitted. Advice that would itself be refused is a loop, not a move.
-      FULL_COVER = "read it with read_file's offset and limit (windows that together cover the whole file " \
-                   "count as a complete read, so edit_file still accepts it)"
-
-      # For a file past even a full-cover window that still HAS lines a window
-      # can land between. One enormous line gets {LONG_LINE_NARROWER} instead,
-      # because `offset` and `limit` count lines and cannot narrow it at all.
-      PART_ONLY = "read part of it with read_file's offset and limit"
+      # For any file with lines a window can land between, however large. One
+      # enormous line gets {LONG_LINE_NARROWER} instead, because `offset` and
+      # `limit` count lines and cannot narrow it at all.
+      WINDOWS = -"read it in pieces with read_file's offset and limit, each under #{BOUND.limit} bytes " \
+                 "(windows that together cover every line count as a complete read, so edit_file still accepts it)"
 
       # Naming the narrower form is what keeps the model from re-issuing the
       # same call.
-      WINDOW_NARROWER = ["narrow the window with a smaller limit or a later offset", *STRUCTURAL].freeze
+      WINDOW_NARROWER = ["narrow the window with a smaller limit or a later offset -- windows add up, so several " \
+                         "narrower ones still count as a complete read", *STRUCTURAL].freeze
+
+      # The route left for a file no read can cover. Approval-gated, which is
+      # the point: the edit is made without the model having seen the whole
+      # file, so a human says whether that is acceptable.
+      BASH_EDIT = -"to change the file, edit it in place with bash (`sed -i` or `ruby -i -pe`), which asks for " \
+                   "approval -- no read_file call can cover a line over #{LINE_LIMIT} bytes, so edit_file and " \
+                   "write_file cannot"
 
       # ONE line over the ceiling by itself -- a minified bundle, one-line
       # JSON, a binary. No offset or limit reaches inside a line, so the only
       # narrower read is a byte range, which this tool does not take.
       #
-      # The byte COUNT is named rather than left to be guessed, and it sits
-      # under {Tools::Bash}'s own ceiling: this advice steps the model DOWN a
-      # ceiling (1 MiB here, 128 KiB there) onto an approval-gated tier-3 tool,
-      # so a `head -c` sized from this number would be refused on arrival.
+      # The byte COUNT is named rather than left to be guessed, and it is
+      # {Tools::Bash}'s own ceiling, read from the same table: a `head -c` sized
+      # past it would be refused on arrival.
       LONG_LINE_NARROWER = [
-        "take a byte range with bash (`head -c 100000 PATH`, or tail -c, or cut) -- one line alone is over the ceiling",
-        *STRUCTURAL
+        -"take a byte range with bash (`head -c #{Tool::Bounds::CEILINGS.fetch("bash")} PATH`, or tail -c, or cut) " \
+         "-- one line alone is over the #{LINE_LIMIT}-byte line limit",
+        *STRUCTURAL,
+        BASH_EDIT
       ].freeze
 
       # Neither `offset` nor `limit` can make invalid bytes valid, and the
@@ -109,15 +102,15 @@ module Lain
       ].freeze
 
       # 16 KiB, the block {ReadFile.separator_within?} reads in. Two numbers
-      # meet here and neither is the ceiling: what a single refusal may
-      # ALLOCATE, and how much of an ordinary file has to be read before a
-      # newline turns up. A file with lines in it answers on block one, while a
-      # separatorless megabyte is 64 of these read one after another and never
-      # held together.
+      # meet here and neither is the ceiling, though today they agree: what a
+      # single refusal may ALLOCATE, and how much of an ordinary file has to be
+      # read before a newline turns up. A file with lines in it answers on block
+      # one, and a larger ceiling would be read in these one after another,
+      # never held together.
       PROBE_BLOCK = 16 * 1024
 
-      # Not a bound on how much may be READ -- {WHOLE_BOUND} and {WINDOW_BOUND}
-      # own that -- but on what a line number can MEAN: past 2^53 a JSON number
+      # Not a bound on how much may be READ -- {BOUND} owns that -- but on what
+      # a line number can MEAN: past 2^53 a JSON number
       # no longer carries an integer exactly, so the value the model sent and
       # the value received stop being the same number. It also keeps
       # `offset`/`limit` away from Ruby's allocator, where the failure is a bare
@@ -236,8 +229,8 @@ module Lain
         # same message having already paid the cost the message exists to avoid.
         #
         # But a stat is a DECISION, not a guarantee. `File.size` answers a
-        # moment before the open, and an appender writing in between handed back
-        # 1,309,696 bytes through a 262,144-byte ceiling (measured). So the read
+        # moment before the open, and an appender writing in between once handed
+        # back 1,309,696 bytes through a 262,144-byte ceiling. So the read
         # itself takes a length: one byte past the ceiling is enough to know it
         # was exceeded, and costs one byte. Cheap first, then correct.
         #
@@ -246,12 +239,12 @@ module Lain
         # never held; {Read#settled} asks the descriptor again afterwards.
         def read(path)
           size = File.size(path)
-          return ReadFile.too_large(path, size) unless WHOLE_BOUND.admits?(size)
+          return ReadFile.too_large(path, size) unless BOUND.admits?(size)
 
           File.open(path, "rb") do |file|
             identity = Session::FileIdentity.from_stat(file.stat)
             contents = capped(file)
-            return ReadFile.grew_past(path, contents.bytesize) unless WHOLE_BOUND.admits?(contents.bytesize)
+            return ReadFile.grew_past(path, contents.bytesize) unless BOUND.admits?(contents.bytesize)
 
             Read.new(contents:, lines: Session::WHOLE_FILE, identity:).settled(file)
           end
@@ -283,7 +276,7 @@ module Lain
         # `FrozenError` past this class's `rescue SystemCallError, IOError` and
         # reached the model as a refusal naming a frozen String.
         def capped(file)
-          (file.read(WHOLE_BOUND.limit + 1) || +"").force_encoding(Encoding::UTF_8)
+          (file.read(BOUND.limit + 1) || +"").force_encoding(Encoding::UTF_8)
         end
       end
 
@@ -386,8 +379,8 @@ module Lain
           # at N or happens to be exactly N long, which is why one phrasing
           # covers both and neither has to be distinguished.
           def refusal(path)
-            Refused.new(result: WINDOW_BOUND.refusal(subject: "the first #{@size} bytes of line #{@number} of #{path}",
-                                                     size: @size, narrower:))
+            Refused.new(result: LINE_BOUND.refusal(subject: "the first #{@size} bytes of line #{@number} of #{path}",
+                                                   size: @size, narrower:))
           end
 
           private
@@ -411,9 +404,9 @@ module Lain
             stop = @number - 1 - @offset
             if stop.positive?
               return ["stop the window before line #{@number}: offset #{@offset} with limit at most #{stop}",
-                      *STRUCTURAL]
+                      *STRUCTURAL, BASH_EDIT]
             end
-            return [outside_window, *STRUCTURAL] if @number >= 3
+            return [outside_window, *STRUCTURAL, BASH_EDIT] if @number >= 3
 
             LONG_LINE_NARROWER
           end
@@ -476,8 +469,8 @@ module Lain
         def read(path)
           File.open(path, "r", encoding: Encoding::UTF_8) do |file|
             identity = Session::FileIdentity.from_stat(file.stat)
-            watch = LongLine.new(WINDOW_BOUND.limit, offset: @offset)
-            lines = watch.through(file.each_line(WINDOW_BOUND.limit + 1).lazy).drop(@offset - 1)
+            watch = LongLine.new(LINE_LIMIT, offset: @offset)
+            lines = watch.through(file.each_line(LINE_LIMIT + 1).lazy).drop(@offset - 1)
             read = @limit ? bounded(lines, path, identity) : to_eof(lines, path, identity)
             # Consulted AFTER the force, because the walk is lazy: nothing has
             # been read at the point the watcher is built. A long line inside the
@@ -490,18 +483,31 @@ module Lain
         private
 
         def bounded(lines, path, identity)
-          budget = Budget.new(WINDOW_BOUND.limit, keep: @limit).fill(lines.take(@limit + 1))
+          budget = Budget.new(BOUND.limit, keep: @limit).fill(lines.take(@limit + 1))
           return refused(budget, path) if budget.over?
 
           taken = budget.lines
-          disclosed(taken.take(@limit), identity, eof: taken.size <= @limit)
+          within(disclosed(taken.take(@limit), identity, eof: taken.size <= @limit), taken.take(@limit).size, path)
         end
 
         def to_eof(lines, path, identity)
-          budget = Budget.new(WINDOW_BOUND.limit).fill(lines)
+          budget = Budget.new(BOUND.limit).fill(lines)
           return refused(budget, path) if budget.over?
 
-          disclosed(budget.lines, identity, eof: true)
+          within(disclosed(budget.lines, identity, eof: true), budget.lines.size, path)
+        end
+
+        # The notice a partial window carries is handed to the model with the
+        # lines, so it is weighed against the same ceiling. Only a partial
+        # window can fail here: a complete one carries no notice, and {Budget}
+        # has already held its lines under the ceiling.
+        def within(read, count, path)
+          size = read.contents.bytesize
+          return read if BOUND.admits?(size)
+
+          Refused.new(result: BOUND.refusal(subject: "the window over #{covered(count)} of #{path}, with the line " \
+                                                     "saying it is partial,",
+                                            size:, narrower: WINDOW_NARROWER))
         end
 
         # Names the span it MEASURED and that span's true size, so the sentence
@@ -514,7 +520,7 @@ module Lain
         # the ceiling is {LongLine}'s case -- so "narrow the window with a
         # smaller limit" always has somewhere to go.
         def refused(budget, path)
-          Refused.new(result: WINDOW_BOUND.refusal(
+          Refused.new(result: BOUND.refusal(
             subject: "the window over #{covered(budget.lines.size)} of #{path}",
             size: budget.size, narrower: WINDOW_NARROWER
           ))
@@ -522,13 +528,8 @@ module Lain
 
         # A complete window withheld nothing, so it says nothing -- and stays
         # byte-identical to the unwindowed read, which is what lets a full-cover
-        # window stand in for one.
-        #
-        # The notice is added AFTER {Budget} weighed the lines, so a partial
-        # window at the ceiling hands back the ceiling plus ~94 bytes. Charging
-        # it would need the count the notice states, which is not known until
-        # the count is final, so the overshoot is bounded and named rather than
-        # chased.
+        # window stand in for one. The notice is weighed by {#within}, once the
+        # count it states is final.
         def disclosed(seen, identity, eof:)
           lines = eof ? (@offset..) : (@offset..(@offset + seen.size - 1))
           return Read.new(contents: seen.join, lines:, identity:) if eof && from_the_top?
@@ -566,34 +567,81 @@ module Lain
       # @param size [Integer] `File.size`, measured before any open
       # @return [Refused]
       def self.too_large(path, size)
-        Refused.new(result: WHOLE_BOUND.refusal(subject: path, size:, narrower: narrower_for(path, size)))
+        Refused.new(result: BOUND.refusal(subject: path, size:, narrower: narrower_for(path)))
       end
 
-      # Three answers, and only the third costs anything. "Read part of it" is
-      # unfollowable for a file that IS one line, since `offset` and `limit`
-      # count LINES, and the model spends a round trip discovering that -- QA
-      # hit it on a 1,200,003-byte one-line JSON.
+      # Two answers. Windows are unfollowable for a file that IS one line,
+      # since `offset` and `limit` count LINES, and the model spends a round
+      # trip discovering that -- QA hit it on a 1,200,003-byte one-line JSON.
       #
       # The probe is here rather than in {Whole#read} because it is about what
-      # to SAY, not what to decide: the decision above still costs a stat and
-      # the {FULL_COVER} branch still costs nothing at all.
+      # to SAY, not what to decide: the decision above still costs a stat, and
+      # the probe reads at most one ceiling's worth. The block it stops on also
+      # turns the byte ceiling into lines, which is what `limit` counts.
       #
-      # @param path [String] the resolved path, opened only on the branch where
-      #   the advice depends on the file's shape rather than on its size
-      # @param size [Integer] `File.size`, measured before any open
-      # @return [Array<String>] the actions that would work on a file this big
-      def self.narrower_for(path, size)
-        return [FULL_COVER, *STRUCTURAL] if WINDOW_BOUND.admits?(size)
-        return LONG_LINE_NARROWER if one_long_line?(path)
+      # @param path [String] the resolved path, already known to be over {BOUND}
+      # @return [Array<String>] the actions that would work on this file
+      def self.narrower_for(path)
+        block = File.open(path, "rb") { |file| first_separated(file, LINE_LIMIT)&.then { Sample.of(_1) } }
+        return LONG_LINE_NARROWER if block.nil?
+        return UNCOVERABLE_NARROWER if uncoverable?(path)
 
-        [PART_ONLY, *STRUCTURAL]
+        [WINDOWS, *block.advice, *STRUCTURAL]
       end
 
-      # Whether {Window} would refuse this file's first line however it is
-      # windowed. Exact rather than heuristic, and the boundary is one byte off
-      # its obvious reading.
+      # A line past the first is the one no window covers, so no windows are
+      # offered and the byte range is not sent to the head of the file.
+      UNCOVERABLE_NARROWER = [
+        -"a line of it is over the #{LINE_LIMIT}-byte line limit, so no windows cover it -- read around that line " \
+         "with bash (`grep -n` to find it, `cut -c` to take part of it), and #{BASH_EDIT}"
+      ].freeze
+
+      # What the probe's block says about line lengths. Three quarters of the
+      # ceiling rather than all of it, because lines further in may run longer
+      # than the sample and a partial window's notice counts too.
+      Sample = Data.define(:bytes, :lines) do
+        def self.of(block) = new(bytes: block.bytesize, lines: block.count("\n"))
+
+        def average = bytes.fdiv(lines).ceil
+
+        def per_window = (BOUND.limit * 3 / 4) / average
+
+        # Nothing to say when lines run so long that a window holds one or
+        # none: "about 1 lines" is not advice anyone can size a window by.
+        #
+        # @return [Array<String>]
+        def advice
+          return [] if per_window < 2
+
+          ["this file's first lines average about #{average} bytes, so a limit of about #{per_window} lines " \
+           "fits one window"]
+        end
+      end
+
+      # Whether some line of the file is over the ceiling, which no window can
+      # cover and so no read can license an edit of. Asked only on a refusal
+      # path by {Tools::EditFile} and {Tools::WriteFile}, whose messages then
+      # name {BASH_EDIT}. Binary chunks one byte past the ceiling are
+      # {LongLine}'s own rule, and a file that cannot be opened has no line to
+      # blame.
       #
-      # {Window#read} chunks at `WINDOW_BOUND.limit + 1` and {LongLine} refuses
+      # Anything but a regular file is not opened at all: a FIFO or a terminal
+      # would block the refusal this is asked on.
+      #
+      # @param path [String] a resolved path
+      # @return [Boolean]
+      def self.uncoverable?(path)
+        return false unless File.file?(path)
+
+        File.open(path, "rb") { |file| file.each_line(LINE_LIMIT + 1).any? { |chunk| chunk.bytesize > LINE_LIMIT } }
+      rescue SystemCallError, IOError
+        false
+      end
+
+      # Nil is the first-line half of {LongLine}'s question, exact rather than
+      # heuristic, and the boundary is one byte off its obvious reading.
+      #
+      # {Window#read} chunks at `LINE_LIMIT + 1` and {LongLine} refuses
       # any chunk strictly OVER the ceiling, so a first line of exactly
       # `limit + 1` bytes INCLUDING its newline arrives whole and IS refused.
       # That line's newline sits at byte index `limit`, so the question
@@ -602,18 +650,12 @@ module Lain
       # `limit + 1`, that file is offered a window that then refuses it, which
       # is the round trip this exists to remove.
       #
-      # @param path [String] a file already known to be over {WINDOW_BOUND}
-      # @return [Boolean]
-      def self.one_long_line?(path)
-        File.open(path, "rb") { |file| !separator_within?(file, WINDOW_BOUND.limit) }
-      end
-
-      # Blocks, and never a slurp: the answer here is one Boolean, so
-      # {Whole#capped}'s single `File.read(path, N)` would allocate a megabyte
-      # per refusal on a tier-1 hot path -- the cost {Whole#read}'s stat-first
-      # ordering exists to avoid, reintroduced one line below it. The ordinary
-      # file costs one block; the worst case has read a megabyte while holding
-      # 16 KiB.
+      # Blocks, and never a slurp: the answer here is one block, so
+      # {Whole#capped}'s single `File.read(path, N)` would allocate the whole
+      # budget per refusal on a tier-1 hot path -- the cost {Whole#read}'s
+      # stat-first ordering exists to avoid, reintroduced one line below it. The
+      # ordinary file costs one block; the worst case has read the budget while
+      # holding one block.
       #
       # Binary, so a block is bytes and `\n` is a byte. `read` answers nil at
       # EOF, which ends the walk: a file that shrank out from under the stat has
@@ -632,33 +674,37 @@ module Lain
       # `map`) would leave every element aliasing the same String, so keep it
       # lazy or give the buffer up.
       #
+      # The block handed back is that reused buffer, so it is read before the
+      # file is touched again.
+      #
       # @param file [File] positioned at the start
       # @param budget [Integer] how many bytes may be looked at
-      # @return [Boolean]
-      def self.separator_within?(file, budget)
+      # @return [String, nil] the first block holding a newline, or nil when
+      #   none within the budget does
+      def self.first_separated(file, budget)
         block = +""
         Enumerator.produce(budget) { |left| left - PROBE_BLOCK }
                   .lazy
                   .take_while(&:positive?)
                   .map { |left| file.read([left, PROBE_BLOCK].min, block) }
                   .take_while { |filled| !filled.nil? }
-                  .any? { |filled| filled.include?("\n") }
+                  .find { |filled| filled.include?("\n") }
       end
-      private_class_method :one_long_line?, :separator_within?
+      private_class_method :first_separated
 
       # The SECOND check's refusal: the read came back one byte past the
       # ceiling, so the file is bigger than the stat claimed by an unknown
       # amount. Both halves answer to that -- the subject names the PREFIX
-      # measured rather than asserting a total nobody read, and the advice
-      # offers only a partial window, because this branch has just learned it
-      # cannot trust a size.
+      # measured rather than asserting a total nobody read, and the advice is
+      # windows without a probe, because this branch has just learned it cannot
+      # trust what it would be probing.
       #
       # @param path [String] the resolved path
       # @param size [Integer] bytes actually read, always the ceiling plus one
       # @return [Refused]
       def self.grew_past(path, size)
-        Refused.new(result: WHOLE_BOUND.refusal(subject: "the first #{size} bytes of #{path}", size:,
-                                                narrower: [PART_ONLY, *STRUCTURAL]))
+        Refused.new(result: BOUND.refusal(subject: "the first #{size} bytes of #{path}", size:,
+                                          narrower: [WINDOWS, *STRUCTURAL]))
       end
 
       # `Canonical` asks this same question later and answers it with a raise
@@ -684,8 +730,8 @@ module Lain
           "A window that does not cover the whole file is labelled as partial; windows add up, so " \
           "edit_file's read-before-write requirement is met once the windows you have read cover " \
           "every line of one version of the file. A read is refused rather than truncated when it would hand back " \
-          "more than #{WHOLE_BOUND.limit} bytes whole or #{WINDOW_BOUND.limit} bytes through a " \
-          "window, and the refusal names what to do instead. Returns an error result if the path " \
+          "more than #{BOUND.limit} bytes, whole or through a window, and the refusal names what to do " \
+          "instead. Returns an error result if the path " \
           "does not exist, is a directory, cannot be read, or holds bytes that are not valid UTF-8 " \
           "text and so could not be recorded."
       end

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "timeout"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::EditFile do
@@ -413,5 +414,47 @@ RSpec.describe Lain::Tools::EditFile do
 
       expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
     end
+  end
+
+  # A line longer than read_file's ceiling can be covered by no read, so the
+  # refusal has to say that re-reading will not help and name the route that
+  # does: an in-place edit through bash, which goes to approval.
+  describe "a file holding a line over read_file's ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("read_file") }
+
+    def long_line_file = write("bundle.min.js", "#{"q" * (ceiling + 1024)}\nshort\n")
+
+    it "refuses as never read, saying no read can cover it and naming an in-place bash edit" do
+      path = long_line_file
+      session = Lain::Session.new
+      Lain::Tools::ReadFile.new.call({ path:, offset: 2, limit: 1 }, invocation_with(session))
+
+      expect do
+        tool.call({ path:, old_string: "short", new_string: "SHORT" }, invocation_with(session))
+      end.to raise_error(Lain::Tool::ContractViolation,
+                         a_string_including("never read in full", "sed -i", "ruby -i", "approval",
+                                            "over the #{Lain::Tools::ReadFile::LINE_LIMIT} bytes read_file serves"))
+      expect(File.read(path)).to end_with("short\n")
+    end
+
+    it "keeps the plain never-read refusal for a file of ordinary lines" do
+      path = write("plain.txt", "one\ntwo\n")
+
+      expect do
+        tool.call({ path:, old_string: "one", new_string: "ONE" }, invocation_with(Lain::Session.new))
+      end.to raise_error(Lain::Tool::ContractViolation, satisfy { |message| !message.include?("sed -i") })
+    end
+  end
+
+  # Asking whether a file holds an uncoverable line must not open what is not
+  # a regular file: a FIFO would block the refusal forever.
+  it "refuses an edit of a FIFO without opening it" do
+    path = File.join(tmpdir, "pipe").tap { |fifo| File.mkfifo(fifo) }
+
+    expect do
+      Timeout.timeout(3) do
+        tool.call({ path:, old_string: "a", new_string: "b" }, invocation_with(Lain::Session.new))
+      end
+    end.to raise_error(Lain::Tool::ContractViolation, /never read/)
   end
 end

@@ -129,7 +129,7 @@ RSpec.describe Lain::Tools::RunSkill do
 
   describe "AC: an oversized expansion is bounded" do
     # A tiny ceiling, so an oversized fixture costs a few bytes rather than the
-    # 64 KiB the shipped one would need. The bound is injected as the tool takes
+    # ceiling the shipped one would need. The bound is injected as the tool takes
     # it, so the seam the wiring would use is the seam under test.
     def bounded(renderer, limit)
       ceiling = described_class::Ceiling.new(bound: Lain::Tool::Bounds::Handback.new(limit:))
@@ -242,6 +242,15 @@ RSpec.describe Lain::Tools::RunSkill do
 
         expect(result).to have_attributes(is_error: true)
         expect(result.content).to include("ceiling of #{limit}")
+      end
+    end
+
+    it "refuses a 20 KiB scaffold, over the one result ceiling" do
+      with_renderer(shipped: critique(body: "y" * (20 * 1024))) do |renderer|
+        result = described_class.new(renderer:).call({ name: "critique" })
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("ceiling of 16384")
       end
     end
 

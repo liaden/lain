@@ -126,4 +126,18 @@ RSpec.describe Lain::Tools::Glob do
       expect(tool.call(pattern: "*.rb", path: tmpdir).content).to eq("a.rb\nb.rb")
     end
   end
+
+  describe "holding the result to its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("glob") }
+
+    it "keeps whole paths up to the ceiling and says how many it kept and withheld" do
+      400.times { |n| touch("app", "components", "feature_#{n / 50}", "a_component_with_a_long_name_#{n}.tsx") }
+
+      result = tool.call(pattern: "**/*.tsx", path: tmpdir)
+
+      expect(result.content.bytesize).to be <= ceiling
+      expect(result.content.lines.last).to match(/\A\.\.\. truncated to \d+ of 400 paths, withholding \d+ bytes/)
+      expect(result.content).to include("narrow the pattern or the path")
+    end
+  end
 end

@@ -39,6 +39,13 @@ module Lain
       # touching one that behaves.
       BOUND = Tool::Bounds::Enumeration.new(limit: 20, unit: "results")
 
+      # A snippet is as long as the backend makes it, so the hits also meet a
+      # byte ceiling.
+      BYTE_BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("web_search"), unit: "results",
+                                          narrower: ["search a narrower query"])
+
+      HIT_SEPARATOR = "\n\n"
+
       # One ranked hit: what a backend yields and what the tool renders.
       Result = Data.define(:title, :url, :snippet) do
         def initialize(title:, url:, snippet: nil)
@@ -121,12 +128,14 @@ module Lain
         "web_search failed for #{query.inspect}: #{error.message}"
       end
 
-      # Rendered BEFORE capping: `cap` derives the true count from the
-      # collection it is handed, and a backend has already materialised every
-      # hit by the time it returns -- so rendering all of them buys the count
-      # the notice needs and costs nothing the backend did not already spend.
+      # A backend has already materialised every hit by the time it returns, so
+      # the true count the notice needs is its size, and only the hits the row
+      # cap lets through are rendered. The notice rides beside {BYTE_BOUND} as
+      # a trailer, so the byte ceiling cannot withhold it.
       def render(results)
-        BOUND.cap(results.each_with_index.map { |hit, i| render_hit(hit, i + 1) }).join("\n\n")
+        hits = results.first(BOUND.limit).each_with_index.map { |hit, i| render_hit(hit, i + 1) }
+        trailers = BOUND.admits?(results.size) ? [] : [BOUND.notice(results.size)]
+        [*BYTE_BOUND.fit(hits, beside: trailers, separator: HIT_SEPARATOR), *trailers].join(HIT_SEPARATOR)
       end
 
       def render_hit(hit, rank)

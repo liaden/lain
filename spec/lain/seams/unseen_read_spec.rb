@@ -116,4 +116,52 @@ RSpec.describe "a read the model no longer sees", :seam do
     expect(result_of(run, "tu_edit")["content"]).to include("only part of #{path} was read")
     expect(File.read(path)).to include("line 900\n")
   end
+
+  # Through the ceiling: a file too large for one result is refused whole, and
+  # two windows under the ceiling that cover it are what license the edit.
+  describe "a file over the result ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("read_file") }
+
+    def source(lines = 900)
+      File.join(dir, "service.rb").tap do |path|
+        rows = (1..lines).map { |number| format("line %<number>-3d %<padding>s\n", number:, padding: "x" * 24) }
+        File.write(path, rows.join)
+      end
+    end
+
+    def edit_last(id, path)
+      tool_response([id, "edit_file", { "path" => path, "old_string" => "line 900 ",
+                                        "new_string" => "line nine hundred " }])
+    end
+
+    it "refuses the whole read and the edit that follows it alone" do
+      path = source
+      run = agent([read("tu_whole", path), text_response("refused"),
+                   edit_last("tu_edit", path), text_response("tried")])
+      run.ask("read service.rb")
+
+      run.ask("now edit it")
+
+      expect(File.size(path)).to be_between(ceiling + 1, 2 * ceiling)
+      expect(result_of(run, "tu_whole")).to include("is_error" => true)
+      expect(result_of(run, "tu_edit")).to include("is_error" => true)
+      expect(File.read(path)).not_to include("line nine hundred")
+    end
+
+    it "applies the edit over two delivered windows, each under the ceiling, that cover the file" do
+      path = source
+      expect(File.readlines(path).first(450).join.bytesize).to be < ceiling
+      run = agent([read("tu_top", path, offset: 1, limit: 450), text_response("top"),
+                   read("tu_bottom", path, offset: 451, limit: 450), text_response("bottom"),
+                   edit_last("tu_edit", path), text_response("done")])
+      run.ask("read the top half")
+      run.ask("read the bottom half")
+
+      run.ask("now edit it")
+
+      expect([result_of(run, "tu_top"), result_of(run, "tu_bottom")]).to all(include("is_error" => false))
+      expect(result_of(run, "tu_edit")).to include("is_error" => false)
+      expect(File.read(path)).to include("line nine hundred")
+    end
+  end
 end

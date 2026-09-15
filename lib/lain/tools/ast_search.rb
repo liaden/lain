@@ -28,6 +28,10 @@ module Lain
       # {Grep}'s without either file re-deriving the other's number.
       WALK_CAP = Tool::Bounds::WalkCap.new(limit: MAX_MATCHES)
 
+      # {Grep::BOUND}'s reason: the row cap does not bound a row's size.
+      BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("ast_search"), unit: "matches",
+                                     narrower: ["narrow the pattern or the path"])
+
       # So a directory walk parses only the files that could plausibly be that
       # language, rather than feeding a `.py` file to the Ruby grammar.
       EXTENSIONS = {
@@ -221,8 +225,9 @@ module Lain
       # Metrics cop). Stateless past its one `walk_cap` policy value, so a
       # single frozen instance is shared rather than built per call.
       class ResultFormatter
-        def initialize(walk_cap:)
+        def initialize(walk_cap:, bound:)
           @walk_cap = walk_cap
+          @bound = bound
           freeze
         end
 
@@ -232,18 +237,14 @@ module Lain
         # sentence as much as beside rows: "no matches" alone claims files
         # nobody parsed.
         def call(found, patterns:, path:, notices:)
-          [*body(found, patterns, path), *notices].join("\n")
+          return ["no matches for #{patterns.join(" / ").inspect} under #{path}", *notices].join("\n") if
+            found.rows.empty?
+
+          trailers = [*(@walk_cap.notice("matches") if found.capped), *notices]
+          [*@bound.fit(found.rows.map { |match| format_line(*match) }, beside: trailers), *trailers].join("\n")
         end
 
         private
-
-        def body(found, patterns, path)
-          return ["no matches for #{patterns.join(" / ").inspect} under #{path}"] if found.rows.empty?
-
-          lines = found.rows.map { |match| format_line(*match) }
-          lines << @walk_cap.notice("matches") if found.capped
-          lines
-        end
 
         def format_line(file, line_no, text, captures)
           return "#{file}:#{line_no}:#{text}" if captures.empty?
@@ -253,7 +254,7 @@ module Lain
         end
       end
 
-      RESULT_FORMATTER = ResultFormatter.new(walk_cap: WALK_CAP).freeze
+      RESULT_FORMATTER = ResultFormatter.new(walk_cap: WALK_CAP, bound: BOUND).freeze
       private_constant :ResultFormatter, :RESULT_FORMATTER
     end
   end

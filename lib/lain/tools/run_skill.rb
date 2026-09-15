@@ -30,18 +30,15 @@ module Lain
     # what actually stops a runaway self-calling loop, so the default sits well
     # above realistic composition and trips only on a genuine runaway.
     class RunSkill < Tool
-      # 64 KiB. An order of magnitude above the largest scaffold that ships
-      # (7,452 bytes composed, 38.6 KiB for all eight together), so nothing an
-      # author writes on purpose meets it, while a runaway include chain or a
-      # pasted corpus does. Deliberately below {Tools::Bash}'s 128 KiB output
-      # ceiling -- guidance that long has stopped being guidance, whereas a
-      # command's output has no such natural size.
+      # The largest scaffold that ships, `plan-epic`, composes to 8,759 bytes:
+      # under this, though by less than two to one, while a runaway include
+      # chain or a pasted corpus is over it.
       #
       # A class constant like every other bounded tool's ({Tools::Bash}'s
-      # `OUTPUT_BOUND`, {Tools::ReadFile}'s `WHOLE_BOUND`), so the ceiling is
+      # `OUTPUT_BOUND`, {Tools::ReadFile}'s `BOUND`), so the ceiling is
       # discoverable by reading the class rather than by constructing one, and
       # so a sweep over the toolset can see that this tool declares a bound.
-      EXPANSION_BOUND = Tool::Bounds::Handback.new(limit: 64 * 1024)
+      EXPANSION_BOUND = Tool::Bounds::Handback.new(limit: Tool::Bounds::CEILINGS.fetch("run_skill"))
 
       # The moves that are available whatever overran. Audience-bound, and the
       # audience is a MODEL being refused rather than a human being offered a

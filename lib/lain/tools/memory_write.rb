@@ -20,10 +20,16 @@ module Lain
     # Bounded no higher than the read's, it makes that one unreachable through
     # the toolset -- which is what lets it be the runaway guard it claims to be.
     class MemoryWrite < Tool
-      # Matched to {Tools::MemoryRead::BOUND}: a write this tool accepts must
-      # be a read that tool can serve, and the pair is ASSERTED rather than
+      # No higher than {Tools::MemoryRead::BOUND}: a write this tool accepts
+      # must be a read that tool can serve, and the pair is ASSERTED rather than
       # remembered.
-      BOUND = Tool::Bounds::Artifact.new(limit: 256 * 1024)
+      BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("memory_write"))
+
+      # The id and the description render into the manifest every Request
+      # carries, one line per item, so each is bounded at a line's worth rather
+      # than at a result's.
+      ID_BOUND = Tool::Bounds::Artifact.new(limit: 128)
+      DESCRIPTION_BOUND = Tool::Bounds::Artifact.new(limit: 512)
 
       # Both are non-destructive and available while the bytes are still in
       # hand, which is the whole reason this ceiling is on the write.
@@ -32,13 +38,19 @@ module Lain
         "split it across several ids, one subject each, so the manifest can point at the right one"
       ].freeze
 
+      # A manifest line has nowhere narrower to go than shorter.
+      ID_NARROWER = ["use a shorter id -- a few words naming the subject"].freeze
+      DESCRIPTION_NARROWER = ["shorten it to one short line -- the body is where the detail belongs"].freeze
+
       # The wire shape: an id to key the item, a one-line description for the
       # manifest, and the body itself. Mirrors {Memory::Item}'s fields.
       class Input < Tool::Input
-        field :id, :string, description: "Id under which to store the item. Overwrites any prior item at this id.",
+        field :id, :string, description: "Id under which to store the item, at most #{ID_BOUND.limit} bytes. " \
+                                         "Overwrites any prior item at this id.",
                             required: true
         field :description, :string,
-              description: "One-line summary shown in the memory manifest.", required: true
+              description: "One-line summary shown in the memory manifest, at most #{DESCRIPTION_BOUND.limit} bytes.",
+              required: true
         field :body, :string, description: "The full content to store.", required: true
       end
 
@@ -67,7 +79,7 @@ module Lain
       # rescue is a multi-line id or description, reported as an error Result
       # the model can act on rather than a raise.
       def perform(input, _invocation)
-        refusal = too_large(input)
+        refusal = oversized(input)
         return refusal if refusal
 
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body)
@@ -79,14 +91,19 @@ module Lain
 
       private
 
-      # Asked BEFORE {Memory::Item}, so an oversized body is never hashed and
-      # never reaches the store: the refusal costs a `bytesize`, and nothing it
-      # refuses is recorded.
-      def too_large(input)
-        size = input.body.bytesize
-        return nil if BOUND.admits?(size)
+      # Asked BEFORE {Memory::Item}, so nothing oversized is ever hashed or
+      # reaches the store: each refusal costs a `bytesize`. The id is judged
+      # first because the body's refusal names it.
+      def oversized(input)
+        refusal(ID_BOUND, input.id, ID_NARROWER) { "the id" } ||
+          refusal(DESCRIPTION_BOUND, input.description, DESCRIPTION_NARROWER) { "the description" } ||
+          refusal(BOUND, input.body, NARROWER) { "the body for memory item #{input.id.inspect}" }
+      end
 
-        BOUND.refusal(subject: "the body for memory item #{input.id.inspect}", size:, narrower: NARROWER)
+      # The subject is a block because the body's names the id, and an id that
+      # was itself refused is not worth building a sentence around.
+      def refusal(bound, text, narrower)
+        bound.refusal(subject: yield, size: text.bytesize, narrower:) unless bound.admits?(text.bytesize)
       end
 
       attr_reader :recorder

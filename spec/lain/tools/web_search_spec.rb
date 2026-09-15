@@ -160,4 +160,19 @@ RSpec.describe Lain::Tools::WebSearch do
       end
     end
   end
+
+  describe "holding the result to its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("web_search") }
+
+    it "keeps whole hits up to the ceiling and says how many it kept and withheld" do
+      hits = Array.new(20) { |n| result(title: "Hit #{n}", url: "https://example.com/#{n}", snippet: "s" * 1500) }
+      tool = described_class.new(backend: ->(_query) { hits })
+
+      content = tool.call(query: "wide").content
+
+      expect(content.bytesize).to be <= ceiling
+      expect(content).to match(/\.\.\. truncated to \d+ of 20 results, withholding \d+ bytes/)
+      expect(content).to include("search a narrower query")
+    end
+  end
 end

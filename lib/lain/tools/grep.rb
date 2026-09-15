@@ -55,6 +55,14 @@ module Lain
       # {Tool::Bounds} itself records.
       WALK_CAP = Tool::Bounds::WalkCap.new(limit: MAX_MATCHES)
 
+      # Two hundred matches is a row cap, and one match inside a minified line
+      # is a single row of any size, so the rows also meet a byte ceiling.
+      BOUND = Tool::Bounds::Fill.new(
+        limit: Tool::Bounds::CEILINGS.fetch("grep"), unit: "matches",
+        narrower: ["narrow the pattern or the path",
+                   "take a short excerpt of a long line with bash (`grep -oE '.{0,200}PATTERN.{0,200}' FILE`)"]
+      )
+
       # The wire shape: a required pattern, a required path (a file OR a
       # directory -- a directory is walked recursively), and an optional
       # case-insensitivity flag.
@@ -337,15 +345,13 @@ module Lain
       # A skipped name is reported beside the no-match sentence too: "no
       # matches" alone claims files nobody searched.
       def format_matches(searched, input)
-        [*matches(searched.found, input), *searched.notices].join("\n")
-      end
+        found = searched.found
+        return [self.class.no_matches_message(input.pattern, input.path), *searched.notices].join("\n") if
+          found.rows.empty?
 
-      def matches(found, input)
-        return [self.class.no_matches_message(input.pattern, input.path)] if found.rows.empty?
-
-        lines = found.rows.map { |file, line_no, line| "#{file}:#{line_no}:#{line}" }
-        lines << WALK_CAP.notice("matches") if found.capped
-        lines
+        trailers = [*(WALK_CAP.notice("matches") if found.capped), *searched.notices]
+        rows = found.rows.map { |file, line_no, line| "#{file}:#{line_no}:#{line}" }
+        [*BOUND.fit(rows, beside: trailers), *trailers].join("\n")
       end
     end
   end

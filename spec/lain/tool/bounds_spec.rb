@@ -544,4 +544,86 @@ RSpec.describe Lain::Tool::Bounds do
         .to respond_to(:admits?)
     end
   end
+
+  # Rows are independent answers, so the first ones that fit are a usable
+  # partial answer -- but only if the result says it is partial, and by how much.
+  describe Lain::Tool::Bounds::Fill do
+    subject(:fill) { described_class.new(limit: 400, unit: "matches", narrower: ["narrow the pattern"]) }
+
+    it "returns the rows untouched when they fit beside what they travel with" do
+      rows = %w[a b c]
+
+      expect(fill.fit(rows, beside: ["header"])).to eq(rows)
+    end
+
+    it "keeps whole rows from the front and says how many it kept and how many bytes it withheld" do
+      rows = Array.new(30) { |i| "row #{i.to_s.rjust(2)} #{"x" * 20}" }
+
+      fitted = fill.fit(rows)
+
+      expect(rows).to start_with(*fitted[0...-1])
+      expect(fitted.last).to eq("... truncated to #{fitted.size - 1} of 30 matches, withholding " \
+                                "#{rows.drop(fitted.size - 1).sum(&:bytesize)} bytes over the 400-byte ceiling " \
+                                "-- instead, narrow the pattern")
+    end
+
+    it "keeps the whole result, notice and companions included, within the ceiling" do
+      rows = Array.new(30) { |i| "row #{i.to_s.rjust(2)} #{"x" * 20}" }
+
+      fitted = fill.fit(rows, beside: ["a header line"])
+
+      expect([*fitted, "a header line"].join("\n").bytesize).to be <= 400
+    end
+
+    it "keeps no row at all when the first is larger than the ceiling on its own" do
+      fitted = fill.fit(["x" * 400_000, "short"])
+
+      expect(fitted.size).to eq(1)
+      expect(fitted.first).to include("truncated to 0 of 2 matches", "withholding 400005 bytes")
+    end
+
+    it "measures rows in bytes, joined by the separator it is given" do
+      rows = Array.new(12) { "é" * 15 }
+
+      expect(fill.fit(rows, separator: "\n\n")).to eq(rows)
+      expect(fill.fit(rows + rows, separator: "\n\n").last).to include("truncated")
+    end
+
+    it "is deeply frozen, and freezes what it hands back" do
+      expect(Ractor.shareable?(fill)).to be(true)
+      expect(fill.fit(["x" * 200]).frozen?).to be(true)
+    end
+  end
+
+  # One table rather than a constant per tool, so the figure a result may cost
+  # is read in one place and moved in one place.
+  describe "CEILINGS" do
+    let(:ceilings) { Lain::Tool::Bounds::CEILINGS }
+
+    it "names every tool that returns content" do
+      expect(ceilings.keys).to contain_exactly("read_file", "bash", "memory_read", "memory_write",
+                                               "run_skill", "ask_human", "subagent", "grep", "glob",
+                                               "list_files", "file_symbols", "test_pattern", "web_search",
+                                               "ast_search", "ast_dump")
+    end
+
+    it "gives every row the one static figure, with no per-model variation" do
+      expect(ceilings.values).to all(eq(16 * 1024))
+    end
+
+    # The derivation the table's comment states, checked against the numbers it
+    # names: the smallest supported window, and the fewest bytes per token
+    # measured -- a digit-heavy SVG path line.
+    it "keeps a result at the ceiling within 40% of the smallest window at the fewest bytes per token" do
+      expect(ceilings.values.map { |bytes| bytes / 1.31 }).to all(be <= 0.4 * 32_768)
+    end
+
+    it "holds only ceilings Bounds itself would accept" do
+      expect(ceilings.values.map { |bytes| described_class.ceiling(bytes) }).to eq(ceilings.values)
+    end
+
+    it "is deeply frozen" do
+      expect(Ractor.shareable?(ceilings)).to be(true)
+    end
+  end
 end

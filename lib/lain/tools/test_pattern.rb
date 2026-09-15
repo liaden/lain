@@ -20,6 +20,11 @@ module Lain
       # the rows are what fits.
       BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "matches")
 
+      # A capture is as long as the snippet the model sent, so the rows also
+      # meet a byte ceiling.
+      BYTE_BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("test_pattern"), unit: "matches",
+                                          narrower: ["test a smaller snippet"])
+
       # The wire shape: the pattern under test, the source to run it against,
       # and which grammar to parse both with.
       class Input < Tool::Input
@@ -73,7 +78,9 @@ module Lain
         return "0 matches." if matches.empty?
 
         header = "#{matches.size} match#{"es" unless matches.size == 1}:"
-        [header, *BOUND.cap(matches.each_with_index.map { |match, index| describe(match, index) })].join("\n")
+        rows = matches.first(BOUND.limit).each_with_index.map { |match, index| describe(match, index) }
+        trailers = BOUND.admits?(matches.size) ? [] : [BOUND.notice(matches.size)]
+        [header, *BYTE_BOUND.fit(rows, beside: [header, *trailers]), *trailers].join("\n")
       end
 
       def describe(match, index)

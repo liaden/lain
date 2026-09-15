@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "timeout"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::WriteFile do
@@ -323,5 +324,28 @@ RSpec.describe Lain::Tools::WriteFile do
 
       expect(result).to have_attributes(is_error: true)
     end
+  end
+
+  describe "overwriting a file holding a line over read_file's ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("read_file") }
+
+    it "refuses as never read in full, saying no read can cover it and naming a bash route" do
+      path = write("bundle.min.js", "#{"q" * (ceiling + 1024)}\nshort\n")
+
+      expect do
+        tool.call({ path:, content: "replaced\n" }, invocation_with(Lain::Session.new))
+      end.to raise_error(Lain::Tool::ContractViolation,
+                         a_string_including("never read in full", "sed -i", "ruby -i", "approval",
+                                            "over the #{Lain::Tools::ReadFile::LINE_LIMIT} bytes read_file serves"))
+      expect(File.read(path)).to end_with("short\n")
+    end
+  end
+
+  it "refuses an overwrite of a FIFO without opening it" do
+    path = File.join(tmpdir, "pipe").tap { |fifo| File.mkfifo(fifo) }
+
+    expect do
+      Timeout.timeout(3) { tool.call({ path:, content: "b" }, invocation_with(Lain::Session.new)) }
+    end.to raise_error(Lain::Tool::ContractViolation, /never read/)
   end
 end

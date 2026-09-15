@@ -26,8 +26,8 @@
 # == Matching a shape, not a name
 #
 # The naming across the tree is already non-uniform -- `OUTPUT_BOUND`,
-# `WHOLE_BOUND`/`WINDOW_BOUND`, `DEFINITIONS_BOUND`/`REFERENCES_BOUND`,
-# `ANSWER_BOUND`, `EXPANSION_BOUND`, and a bare `BOUND` at six tools -- so a
+# `DEFINITIONS_BOUND`/`REFERENCES_BOUND`, `ANSWER_BOUND`, `EXPANSION_BOUND`,
+# and a bare `BOUND` at seven tools -- so a
 # sweep keyed on the constant's NAME would be wrong before it reached its
 # second tool. What is asked instead is whether a constant's VALUE is one of
 # {Lain::Tool::Bounds}' shapes, which is the thing the rule is actually about.
@@ -97,6 +97,59 @@ module ToolBoundsDiscipline
 
   def bound?(value) = shapes.any? { |shape| value.is_a?(shape) }
 
+  # The shapes that count BYTES of one result, which are what
+  # {Lain::Tool::Bounds::CEILINGS} sizes. An {Lain::Tool::Bounds::Enumeration}
+  # caps rows, a unit a byte figure cannot be compared against, so a tool whose
+  # only bound counts rows has no byte ceiling at all.
+  BYTE_SHAPES = [Lain::Tool::Bounds::Artifact, Lain::Tool::Bounds::Handback, Lain::Tool::Bounds::Fill].freeze
+
+  # @return [Array<Integer>] the limit of every byte-counting bound the tool
+  #   declares or inherits, own constants and one level of nesting
+  def byte_limits(klass)
+    declared(klass).map(&:last)
+                   .select { |value| BYTE_SHAPES.any? { |shape| value.is_a?(shape) } }
+                   .map(&:limit)
+  end
+
+  # The table rule over any set of tools and any table, factored out for the
+  # same reason as {.unaccounted}: a synthetic tool goes through the code that
+  # judges the real ones. Every tool not exempt has a row and a byte bound. A
+  # tool may declare smaller byte bounds beside its ceiling -- an input field,
+  # say -- but its largest is its row, so a result ceiling of its own cannot
+  # sit beside the table's.
+  #
+  # @param named [Array<Array(String, Class)>] each tool beside the model-facing
+  #   name it answers to; a name may appear more than once
+  # @param ceilings [Hash{String => Integer}]
+  # @param exempt [Array<String>] fully-qualified names the rule skips
+  # @return [Array<String>] one line per tool that breaks the rule
+  def off_table(named, ceilings, exempt: [])
+    named.reject { |_, klass| exempt.include?(klass.name) }
+         .filter_map { |name, klass| breach(name, byte_limits(klass).max, ceilings[name]) }
+  end
+
+  def breach(name, largest, row)
+    return "#{name}: returns content and has no row in CEILINGS" if row.nil?
+    return "#{name}: has a row in CEILINGS and declares no byte bound" if largest.nil?
+
+    "#{name}: its largest byte ceiling is #{largest}, its row says #{row}" unless largest == row
+  end
+
+  # Each shipped tool under its name, and beside it every other `Lain::` tool
+  # answering to that name: a delivery variant that subclasses it, or a tool
+  # nested inside it that the model calls by the same name.
+  #
+  # @return [Array<Array(String, Class)>]
+  def shipped_by_name
+    registry = ToolRegistry.names.map { |name| [name, ToolRegistry.build(name).class] }
+    registry + tools.filter_map do |klass|
+      match = registry.find { |_, shipped| klass != shipped && answers_as?(klass, shipped) }
+      [match.first, klass] if match
+    end
+  end
+
+  def answers_as?(klass, shipped) = klass < shipped || klass.name.start_with?("#{shipped.name}::")
+
   # Every tool the suite can enumerate, named under `Lain::` so the set does not
   # depend on which spec files a worker happened to load.
   def tools
@@ -109,8 +162,12 @@ module ToolBoundsDiscipline
 
   # @return [Array<String>] the fully-qualified path of every bound this tool
   #   declares or inherits, own constants and one level of nesting
-  def declarations(klass)
-    tool_ancestors(klass).flat_map { |ancestor| declared_on(ancestor) }.uniq
+  def declarations(klass) = declared(klass).map(&:first)
+
+  # @return [Array<Array(String, Object)>] each bound's path beside the bound
+  #   itself, since an anonymous tool's path does not resolve back to it
+  def declared(klass)
+    tool_ancestors(klass).flat_map { |ancestor| declared_on(ancestor) }.uniq(&:first)
   end
 
   def declares_bound?(klass) = !declarations(klass).empty?
@@ -137,7 +194,7 @@ module ToolBoundsDiscipline
   def declared_on(owner)
     owner.constants(false).flat_map do |name|
       value = read(owner, name)
-      if bound?(value) then ["#{owner}::#{name}"]
+      if bound?(value) then [["#{owner}::#{name}", value]]
       elsif nested_in?(owner, value) then declared_on_nested(value)
       else []
       end
@@ -150,7 +207,8 @@ module ToolBoundsDiscipline
   # there is none.
   def declared_on_nested(owner)
     owner.constants(false).filter_map do |name|
-      "#{owner}::#{name}" if bound?(read(owner, name))
+      value = read(owner, name)
+      ["#{owner}::#{name}", value] if bound?(value)
     end
   end
 
@@ -192,14 +250,6 @@ class ToolExemption
   # a ceiling on.
   FIXED_RESULT = :fixed_result
 
-  # A cap applied DURING the walk, disclosed in band with the tool's own
-  # trailer. {Lain::Tool::Bounds::Enumeration} cannot express these: its `#cap`
-  # derives the true total from `rows.size`, and these tools stop walking
-  # precisely so they never build the whole collection. Their wording is pinned
-  # by other specs and the class doc on `lib/lain/tool/bounds.rb` says not to
-  # unify the two formats.
-  PRE_BOUNDS_TRAILER = :pre_bounds_trailer
-
   # The tool renders its result through another tool's declared bound, so it
   # holds no constant of its own by design -- one ceiling, not two that could
   # drift. The row names the constant, and the sweep resolves it.
@@ -212,7 +262,7 @@ class ToolExemption
   # added quietly.
   AWAITING_RULING = :awaiting_ruling
 
-  GROUNDS = [FIXED_RESULT, PRE_BOUNDS_TRAILER, DELEGATED, AWAITING_RULING].freeze
+  GROUNDS = [FIXED_RESULT, DELEGATED, AWAITING_RULING].freeze
 
   def initialize(tool:, grounds:, reason:, delegates_to: nil)
     raise ArgumentError, "#{tool}: unknown grounds #{grounds.inspect}, want one of #{GROUNDS.inspect}" unless
@@ -273,21 +323,6 @@ module ToolBoundsRegistry
               "the toolset a run was configured with and not by anything the model or the world supplies"
     ),
     ToolExemption.new(
-      tool: "Lain::Tools::Grep", grounds: ToolExemption::PRE_BOUNDS_TRAILER,
-      reason: "pulls one match past its cap off a lazy walk so it never scans the rest, and the " \
-              "daemon arm returns only a capped boolean -- neither can report the true total an " \
-              "Enumeration notice names, and the existing trailer's wording is pinned elsewhere"
-    ),
-    ToolExemption.new(
-      tool: "Lain::Tools::AstSearch", grounds: ToolExemption::PRE_BOUNDS_TRAILER,
-      reason: "caps during the walk exactly as grep does, and discloses it with the same trailer"
-    ),
-    ToolExemption.new(
-      tool: "Lain::Tools::AstDump", grounds: ToolExemption::PRE_BOUNDS_TRAILER,
-      reason: "the extension caps the dump as it emits and ends the output with its own capped-at " \
-              "line; a source nested past the depth cap is refused outright, naming that cap"
-    ),
-    ToolExemption.new(
       tool: "Lain::Bench::DisclosureSweep::FixtureTool", grounds: ToolExemption::FIXED_RESULT,
       reason: "a bench fixture carrying a name and a description read from a committed YAML file; " \
               "it is never routed through Tool#call and returns no result at all"
@@ -311,7 +346,9 @@ module ToolBoundsRegistry
       reason: "quotes every human annotation verbatim into its result with no ceiling. Its INPUTS " \
               "are bounded by Review::Bounds, but that bounds the changeset a reviewer is shown " \
               "and says nothing about how much a reviewer then types, so bounded-at-one-remove " \
-              "does not reach the bytes this tool actually returns. Recorded as found, not endorsed"
+              "does not reach the bytes this tool actually returns. It returns content and has no byte " \
+              "ceiling, and stays exempt for this chunk only: giving it a row is a follow-up card " \
+              "recorded in the chunk's Execution log. Recorded as found, not endorsed"
     )
   ].freeze
 
@@ -336,7 +373,8 @@ RSpec.describe "tool bounds discipline" do
   it "derives the ceiling shapes without listing them, and does not mistake a result for one" do
     expect(ToolBoundsDiscipline.shapes).to contain_exactly(Lain::Tool::Bounds::Enumeration,
                                                            Lain::Tool::Bounds::Artifact,
-                                                           Lain::Tool::Bounds::Handback)
+                                                           Lain::Tool::Bounds::Handback,
+                                                           Lain::Tool::Bounds::Fill)
   end
 
   it "has every tool either declaring a bound or named on the exempt list" do
@@ -430,6 +468,28 @@ RSpec.describe "tool bounds discipline" do
         "A tool ADDED here was found unbounded -- bound it, or get the ruling and update this list. " \
         "A tool REMOVED was ruled on -- update the list in the same commit as the ruling."
     }
+  end
+
+  it "has every shipped tool that returns content holding a byte ceiling equal to its row in the one table" do
+    broken = ToolBoundsDiscipline.off_table(ToolBoundsDiscipline.shipped_by_name, Lain::Tool::Bounds::CEILINGS,
+                                            exempt: ToolBoundsRegistry.names)
+
+    expect(broken).to be_empty, lambda {
+      "Every tool result has a byte ceiling: a row in Lain::Tool::Bounds::CEILINGS, sized by the derivation " \
+        "written there, and a byte bound the tool builds from that row. A row cap alone is not one:\n" \
+        "#{broken.map { |line| "  #{line}" }.join("\n")}"
+    }
+  end
+
+  it "sweeps a delivery variant and a nested tool under the name each answers to" do
+    swept = ToolBoundsDiscipline.shipped_by_name
+
+    expect(swept).to include(["ask_human", Lain::Tools::AskHuman::Unattended],
+                             ["subagent", Lain::Tools::Subagent::Choice])
+  end
+
+  it "keeps no row in the table for a tool that does not ship" do
+    expect(Lain::Tool::Bounds::CEILINGS.keys - ToolRegistry.names).to be_empty
   end
 
   # The gap the module comment names, asserted so it stays a decision rather
@@ -560,6 +620,52 @@ RSpec.describe "tool bounds discipline" do
       end
 
       expect(ToolBoundsDiscipline.declares_bound?(outer)).to be(false)
+    end
+
+    it "names a tool with a byte ceiling that is absent from the table (self-test)" do
+      unlisted = Class.new(Lain::Tool) { const_set(:BOUND, Lain::Tool::Bounds::Artifact.new(limit: 8)) }
+
+      expect(ToolBoundsDiscipline.off_table([["unlisted_tool", unlisted]], {}))
+        .to contain_exactly(a_string_including("unlisted_tool", "no row in CEILINGS"))
+    end
+
+    it "names a tool whose only bound counts rows, even with a row in the table (self-test)" do
+      rows = Class.new(Lain::Tool) { const_set(:BOUND, Lain::Tool::Bounds::Enumeration.new(limit: 500, unit: "paths")) }
+
+      expect(ToolBoundsDiscipline.off_table([["rows", rows]], { "rows" => 16 }))
+        .to contain_exactly(a_string_including("rows", "declares no byte bound"))
+    end
+
+    it "names a tool whose ceiling is not its row (self-test)" do
+      drifted = Class.new(Lain::Tool) { const_set(:BOUND, Lain::Tool::Bounds::Handback.new(limit: 64)) }
+
+      expect(ToolBoundsDiscipline.off_table([["drifted", drifted]], { "drifted" => 16 }))
+        .to contain_exactly(a_string_including("drifted", "64", "16"))
+    end
+
+    it "judges a second tool answering to the same name against the same row (self-test)" do
+      shipped = Class.new(Lain::Tool) { const_set(:BOUND, Lain::Tool::Bounds::Artifact.new(limit: 16)) }
+      variant = Class.new(Lain::Tool) { const_set(:BOUND, Lain::Tool::Bounds::Artifact.new(limit: 32)) }
+
+      expect(ToolBoundsDiscipline.off_table([["same", shipped], ["same", variant]], { "same" => 16 }))
+        .to contain_exactly(a_string_including("same", "32"))
+    end
+
+    it "accepts smaller byte bounds and a row cap beside the row (self-test)" do
+      fielded = Class.new(Lain::Tool) do
+        const_set(:BOUND, Lain::Tool::Bounds::Fill.new(limit: 16, unit: "paths", narrower: ["narrow it"]))
+        const_set(:FIELD_BOUND, Lain::Tool::Bounds::Artifact.new(limit: 4))
+        const_set(:ROWS, Lain::Tool::Bounds::Enumeration.new(limit: 500, unit: "paths"))
+      end
+
+      expect(ToolBoundsDiscipline.off_table([["fielded", fielded]], { "fielded" => 16 })).to be_empty
+    end
+
+    it "skips a tool the exempt list carries (self-test)" do
+      fixed = Class.new(Lain::Tool)
+      allow(fixed).to receive(:name).and_return("Lain::Tools::Fixed")
+
+      expect(ToolBoundsDiscipline.off_table([["fixed", fixed]], {}, exempt: ["Lain::Tools::Fixed"])).to be_empty
     end
 
     it "does not mistake an overrun for a ceiling (self-test)" do

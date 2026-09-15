@@ -101,6 +101,13 @@ RSpec.describe Lain::Tools::MemoryWrite do
       expect(content).to match(/split|write less/)
     end
 
+    it "refuses a 20 KiB body, over the one result ceiling" do
+      result = tool.call(id: "notes", description: "Long notes", body: "n" * (20 * 1024))
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("ceiling of 16384")
+    end
+
     it "accepts a body exactly at the ceiling" do
       expect(tool.call(id: "edge", description: "At the line", body: "x" * ceiling).is_error).to be(false)
     end
@@ -116,6 +123,50 @@ RSpec.describe Lain::Tools::MemoryWrite do
       tool.call(id: "edge", description: "At the line", body: "x" * ceiling)
 
       expect(Lain::Tools::MemoryRead.new(index: recorder).call(id: "edge").is_error).to be(false)
+    end
+  end
+
+  # The id and the description both render into the manifest every Request
+  # carries, so neither may be a second body. Refused at the tool, before an
+  # Item is built, so nothing oversized is hashed or stored.
+  describe "refusing an id or a description too large for the manifest" do
+    it "refuses a 300 KiB description and writes nothing" do
+      result = tool.call(id: "notes", description: "d" * (300 * 1024), body: "b")
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("description", (300 * 1024).to_s, "512")
+      expect(recorder.root).to be_nil
+    end
+
+    it "carries none of the refused description" do
+      expect(tool.call(id: "notes", description: "SENTINEL" * 100, body: "b").content).not_to include("SENTINEL")
+    end
+
+    it "refuses an id over 128 bytes and writes nothing" do
+      result = tool.call(id: "i" * 129, description: "d", body: "b")
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("id", "129", "128")
+      expect(recorder.root).to be_nil
+    end
+
+    it "tells an oversized id to be a shorter id, not a shorter line" do
+      content = tool.call(id: "i" * 129, description: "d", body: "b").content
+
+      expect(content).to include("shorter id")
+      expect(content).not_to include("one short line")
+    end
+
+    # Bytes, not characters: a manifest line costs what it encodes to.
+    it "measures the description in bytes" do
+      result = tool.call(id: "notes", description: "é" * 257, body: "b")
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("514")
+    end
+
+    it "accepts an id and a description exactly at their ceilings" do
+      expect(tool.call(id: "i" * 128, description: "d" * 512, body: "b").is_error).to be(false)
     end
   end
 end

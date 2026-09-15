@@ -70,6 +70,17 @@ module Lain
       # too large to read in one go is still reachable and still editable
       # through windows. {Tools::WriteFile} is not the escape hatch -- its
       # overwrite contract asks {Lain::Session#read?} too.
+      # Before the partial read, since windows short of a line over the ceiling
+      # are a partial read that more windows cannot finish. Only a file that
+      # was not read in full pays for the scan.
+      requires("%<subject>s was never read in full in this conversation's current history, and cannot be: it " \
+               "holds a line over the #{ReadFile::LINE_LIMIT} bytes read_file serves in one line, which no read " \
+               "covers -- #{ReadFile::BASH_EDIT}",
+               subject: SUBJECT) do |input, invocation|
+        path = target(invocation, input.path)
+        session_of(invocation).read?(path) || !ReadFile.uncoverable?(path)
+      end
+
       requires("only part of %<subject>s was read in this conversation's current history -- the windows you " \
                "read do not cover every line of one version of the file, so editing it would clobber lines you " \
                "never saw. Windows add up: read the lines you have not seen with offset and limit, or " \

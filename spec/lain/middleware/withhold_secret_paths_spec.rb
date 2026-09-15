@@ -334,6 +334,27 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # The byte ceiling's notice is a row like the cap notice, and survives for the
+  # same two reasons: grep's reader finds no `path:lineno:text` split in it, and
+  # the listing reader offers it as a path the classifier rules ordinary.
+  describe "a listing held to its byte ceiling, that also withholds" do
+    before do
+      FileUtils.mkdir_p(File.join(dir, "wide"))
+      400.times { |i| write("wide/a_component_with_a_long_descriptive_name_#{i}.tsx", "hit #{"z" * 100}\n") }
+      write("wide/credentials.json", "{\"token\":\"#{secret}\"} hit\n")
+    end
+
+    it "keeps the truncation line on glob, list_files and grep" do
+      shown = { glob: content(glob("wide/*", path: dir)), list_files: content(list(File.join(dir, "wide"))),
+                grep: content(grep("hit", path: File.join(dir, "wide"))) }
+
+      shown.each do |tool, text|
+        expect(text.lines.map(&:chomp)).to include(a_string_starting_with("... truncated to ")), tool.to_s
+        expect(text).not_to include(secret), tool.to_s
+      end
+    end
+  end
+
   describe "a row this class cannot even join" do
     # A matched line carrying `\0:12:` makes the SECOND reading of the row hold
     # a NUL byte, and `File.join` raises on one before the classifier is ever

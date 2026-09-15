@@ -33,6 +33,10 @@ module Lain
       # of thousands of entries.
       BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "paths")
 
+      # {Glob::BYTE_BOUND}'s reason, with the narrower move a listing has.
+      BYTE_BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("list_files"), unit: "paths",
+                                          narrower: ["list a subdirectory", "list without recursive"])
+
       class << self
         # Public and class-level so {Middleware::WithholdSecretPaths} can
         # recognize this exact sentinel STRUCTURALLY -- rebuilding it from this
@@ -49,7 +53,7 @@ module Lain
       def description
         "Lists the entries of a directory at the given path, one per line, " \
           "sorted. Set recursive: true to descend into subdirectories. " \
-          "Output is capped at #{BOUND.limit} paths; a capped listing says so " \
+          "Output is capped at #{BOUND.limit} paths and #{BYTE_BOUND.limit} bytes; a capped listing says so " \
           "and names the true entry count rather than truncating silently. " \
           "Returns an error result if the path does not exist, is not a " \
           "directory, or cannot be read. An empty directory is not an error " \
@@ -90,15 +94,18 @@ module Lain
       # listing to real children.
       #
       # {BOUND} is applied at the END of this chain rather than in `#perform`,
-      # and the position is the point: `cap` reads the true count off the
-      # collection it is handed, after `.sort`, so the surviving rows are
-      # decided by the ordering rather than by the walk.
+      # and the position is the point: its notice reads the true count off the
+      # collection, after `.sort`, so the surviving rows are decided by the
+      # ordering rather than by the walk. The notice rides beside {BYTE_BOUND}
+      # as a trailer, so the byte ceiling cannot withhold it.
       def entries(path, recursive)
         pattern = recursive ? File.join(path, "**", "*") : File.join(path, "*")
-        BOUND.cap(Dir.glob(pattern, File::FNM_DOTMATCH)
-                     .reject { |entry| DOTS.include?(File.basename(entry)) }
-                     .map { |entry| entry.delete_prefix("#{path}/") }
-                     .sort)
+        sorted = Dir.glob(pattern, File::FNM_DOTMATCH)
+                    .reject { |entry| DOTS.include?(File.basename(entry)) }
+                    .map { |entry| entry.delete_prefix("#{path}/") }
+                    .sort
+        trailers = BOUND.admits?(sorted.size) ? [] : [BOUND.notice(sorted.size)]
+        [*BYTE_BOUND.fit(sorted.first(BOUND.limit), beside: trailers), *trailers]
       end
     end
   end

@@ -26,10 +26,7 @@ module Lain
     # stands as a runaway guard for an item that predates it or arrived from a
     # seeded index -- which is why {NARROWER} says what it says and no more.
     class MemoryRead < Tool
-      # Matching {Tools::ReadFile}'s whole-read ceiling, because it is the same
-      # question about the same kind of payload and two different answers would
-      # be a number to remember rather than a rule to know.
-      BOUND = Tool::Bounds::Artifact.new(limit: 256 * 1024)
+      BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("memory_read"))
 
       # Two things the model can ACTUALLY do. Neither of the first draft's
       # entries survived being followed: "read the memory manifest" named a tool

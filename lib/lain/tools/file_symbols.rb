@@ -42,6 +42,12 @@ module Lain
       DEFINITIONS_BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "definitions")
       REFERENCES_BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "references")
 
+      # Refused rather than cut past this: the two sections carry their own
+      # counts, so a cut would leave one of them reading complete.
+      BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("file_symbols"))
+
+      NARROWER = ["grep the file for the names you need", "ast_search it for one kind of construct"].freeze
+
       # Built FROM the two bounds rather than written out beside them, so the
       # numbers the model is told and the numbers enforced cannot drift.
       CAP_NOTE = "Each section caps separately, at #{DEFINITIONS_BOUND.limit} definitions and " \
@@ -94,12 +100,18 @@ module Lain
         # sees. To the model that is the same answer as any other "this file
         # cannot be read", which is why it is handed to {#failing} rather than
         # rescued apart.
-        failing("read", path, EncodingError) { Tool::Result.ok(render(occurrences(utf8_source(path), language))) }
+        failing("read", path, EncodingError) { bounded(path, render(occurrences(utf8_source(path), language))) }
       rescue Structural::Queries::Unsupported, Structural::Queries::Missing, Ext::TreeSitter::BadQuery => e
         Tool::Result.error(e.message)
       end
 
       private
+
+      def bounded(path, table)
+        return Tool::Result.ok(table) if BOUND.admits?(table.bytesize)
+
+        BOUND.refusal(subject: "the symbol table of #{path}", size: table.bytesize, narrower: NARROWER)
+      end
 
       # A 1-based line, its kind, the role within that kind, and the identifier
       # text. Ext::TreeSitter returns a capture name of "<kind>.<role>", which

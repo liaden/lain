@@ -104,4 +104,19 @@ RSpec.describe Lain::Tools::TestPattern do
       expect(result.content).to eq("1 match:\n  1. line 1: NAME=\"total\"")
     end
   end
+
+  describe "holding the result to its byte ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("test_pattern") }
+
+    it "keeps the true count in the header and whole rows up to the ceiling, saying what it withheld" do
+      code = (1..150).map { |n| "def method_#{n}_#{"named" * 20}(a); end\n" }.join
+
+      result = tool.call(pattern: "def $NAME($$$A); end", code:, language: "ruby")
+
+      expect(result.content.bytesize).to be <= ceiling
+      expect(result.content.lines.first).to eq("150 matches:\n")
+      expect(result.content).to match(/\.\.\. truncated to \d+ of 150 matches, withholding \d+ bytes/)
+      expect(result.content).to include("test a smaller snippet")
+    end
+  end
 end
