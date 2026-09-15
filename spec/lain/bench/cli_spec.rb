@@ -60,6 +60,24 @@ class IsolationRecordingArm < Lain::Arm::SingleThread
   end
 end
 
+# Stands in for the operator's Ctrl-C arriving mid-run. The single-thread arm
+# runs first in {Lain::Bench::LiveArms.build}'s roster and asks the provider
+# exactly once per task (the canned response ends the turn with no tool
+# call), so raising on the (n+1)th call leaves exactly n runs graded -- the
+# same n this provider was told to let through.
+class InterruptingProvider < Lain::Provider::Mock
+  def initialize(allow:, **rest)
+    super(**rest)
+    @allow = allow
+  end
+
+  def complete(request, **rest)
+    raise Interrupt if call_count >= @allow
+
+    super
+  end
+end
+
 # Two altitude tasks at ONE size, which is the smallest suite that folds a
 # distribution (Altitude's own n >= 2 rule). A constant rather than a heredoc
 # inside the helper: the body is what pushed that method over MethodLength, and
@@ -558,6 +576,42 @@ RSpec.describe Lain::Bench::CLI do
       arms(journal:)
 
       expect(journal.drain.grep(Lain::Telemetry::CapabilityDegraded).map(&:capability)).to eq([:prompt_caching])
+    end
+  end
+
+  # Ctrl-C reaching a live arm comparison mid-run: the money already spent on
+  # the runs that finished must not be thrown away with the report that would
+  # have summarized every arm, so an interrupt answers with the table so far.
+  describe "#arms_report, interrupted" do
+    let(:journal) { Lain::Channel.new }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }) }
+
+    def arms(**)
+      cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"), backend:,
+                      tools: Lain::Bench::Harness::NO_TOOLS, isolation: "none", journal:, **)
+    end
+
+    it "returns the PARTIAL table over the runs graded before the interrupt, instead of raising" do
+      provider = InterruptingProvider.new(allow: 2, responses: [text_response("FILE lib/widget.rb\nEND")])
+      allow(backend).to receive(:provider).and_return(provider)
+
+      report = arms
+
+      expect(report).to start_with("Arm driver -- PARTIAL, interrupted after 2 graded runs")
+      expect(report.lines.count { |line| line.match?(/\A\d+\s/) }).to eq(2)
+    end
+
+    # A run graded BEFORE the interrupt still journals its own
+    # Telemetry::GradeRecord into the real `--journal` -- the observing wrap
+    # {Bench::CLI#arms_report} builds changes nothing about what {Arm::Driver}
+    # itself records.
+    it "still journals every grade that landed before the interrupt" do
+      provider = InterruptingProvider.new(allow: 1, responses: [text_response("FILE lib/widget.rb\nEND")])
+      allow(backend).to receive(:provider).and_return(provider)
+
+      arms
+
+      expect(journal.drain.grep(Lain::Telemetry::GradeRecord).size).to eq(1)
     end
   end
 

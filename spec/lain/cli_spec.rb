@@ -373,6 +373,73 @@ RSpec.describe LainCLI do
     end
   end
 
+  # `.lain/services.rb` is the user's own Ruby, instance_eval'd with no
+  # sandbox (Lain::DslCatalog.read); `--isolation none` still reads it, since
+  # every backend -- containing or not -- decorates with the project's
+  # declared services. A typo in it used to reach the operator's terminal as
+  # a raw Ruby backtrace, naming this gem's own frames; {Lain::DslCatalog}
+  # translates it into a Lain::Error now, so `chat`'s ordinary `rescue
+  # Lain::Error` is what an operator meets.
+  describe "a broken .lain/services.rb" do
+    around { |example| Dir.mktmpdir("lain-chat-broken-services") { |dir| (@dir = dir) && example.run } }
+
+    def write_broken_services(source)
+      FileUtils.mkdir_p(File.join(@dir, ".lain"))
+      File.write(File.join(@dir, ".lain", "services.rb"), source)
+    end
+
+    # `debug: true` for the reason every other example in this file uses it:
+    # RSpec does not rescue SystemExit inside an example, so an unexpected
+    # refusal elsewhere would truncate the run and still report a pass.
+    it "refuses in one line naming services.rb:LINE, with no backtrace" do
+      write_broken_services("postgres bogus_kwarg: 1\n")
+
+      with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        expect { described_class.start(%W[chat --isolation none --root #{@dir} --no-journal], debug: true) }
+          .to raise_error(Thor::Error) { |error|
+            expect(error.message).to eq("#{File.join(@dir, ".lain", "services.rb")}:1: unknown keyword: :bogus_kwarg")
+            expect(error.message).not_to match(/\.rb:\d+:in /)
+          }
+      end
+    end
+
+    # Without `debug:` the same refusal is what an operator actually meets:
+    # one line on stderr and exit 1, never a raw Ruby backtrace over a typo
+    # in their own project's file.
+    it "prints the refusal and exits 1, rather than a Ruby backtrace" do
+      write_broken_services("postgres bogus_kwarg: 1\n")
+
+      with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        expect { described_class.start(%W[chat --isolation none --root #{@dir} --no-journal]) }
+          .to output(/services\.rb:1/).to_stderr
+          .and raise_error(SystemExit) { |error| expect(error.status).to eq(1) }
+      end
+    end
+  end
+
+  # Ctrl-C reaching a REPORT command -- `epic submit` among them, every
+  # command built on {LainCLI::Boundary#render} -- rather than `watch`'s own
+  # {LainCLI::Boundary#exit_status}. Driven against a throwaway Thor class on
+  # the same rule `probe_class` below uses: the claim is about the shared
+  # `render` shape, not about any one command's own assembly.
+  describe "Ctrl-C during a report command" do
+    def interrupting_class
+      Class.new(Thor) do
+        include LainCLI::Boundary
+
+        def self.exit_on_failure? = true
+        desc "go", "raises Interrupt, standing in for a Ctrl-C mid-report"
+        define_method(:go) { render { raise Interrupt } }
+      end
+    end
+
+    it "prints 'interrupted' and exits 130, never a backtrace over a signal sent on purpose" do
+      expect { interrupting_class.start(%w[go], debug: true) }
+        .to output("interrupted\n").to_stdout
+        .and raise_error(SystemExit) { |error| expect(error.status).to eq(130) }
+    end
+  end
+
   # `--yolo` is gone: every posture it bought is reachable through `/mode auto`,
   # and the branches only it could reach went with it. What matters at this seam
   # is that the removal is LOUD -- a flag silently ignored would start a session

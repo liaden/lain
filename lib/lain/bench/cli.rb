@@ -202,7 +202,9 @@ module Lain
       #   teaches the arms the FILE/END trajectory format the gold graders
       #   parse -- untaught, every arm scores near zero, floored only by one
       #   task's vacuously-passing `excludes:`
-      # @return [String] the Driver's report; never printed here
+      # @return [String] the Driver's report; never printed here. INTERRUPTED
+      #   (Ctrl-C), it is instead the PARTIAL report over whatever runs graded
+      #   before the interrupt arrived -- see {#partial_arms_report}
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt
       # @raise [LiveArms::UnroutableBackend] when the resolved model has no
@@ -214,6 +216,10 @@ module Lain
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
                       decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil, cheap_model: nil,
                       price_book: PriceBook.default, **spawn_options)
+        # Declared before anything that could be interrupted, so the rescue
+        # below always has an Array to report on rather than the bare local a
+        # Ctrl-C before the first grade would otherwise leave nil.
+        graded = []
         refuse_unisolated_writes!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: isolating_flag)
         suite = ArmTasks.new(fixture_path:)
         # Named rather than inlined, because the header's `model:` has to be THE
@@ -224,9 +230,22 @@ module Lain
         spawn_options = journaled_provider(backend, journal, spawn_options)
         LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
         spawn_seam = SpawnSeam.new(backend:, **spawn_options)
+        # {Grader::Journaling} REUSED rather than a bespoke observer: it already
+        # does exactly what an interrupt handler needs -- pass the {Grade}
+        # through unchanged and journal a {Telemetry::GradeRecord} beside it --
+        # so wrapping {SuiteGrader} in one, with `graded` standing in for a
+        # journal, is what lets `graded` grow one entry per run AS THE DRIVER
+        # completes it. {Arm::Driver} wraps whatever `grader:` it is handed in
+        # a SECOND {Grader::Journaling} of its own, over the real `journal:`
+        # from {#lease_options} -- so this changes nothing about what that
+        # journal records.
+        grader = Grader::Journaling.new(inner: SuiteGrader.new(suite), journal: graded,
+                                        subject_digest: :head_digest.to_proc)
         arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
-                   grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
+                   grader:, **lease_options(isolation:, journal:))
+      rescue Interrupt
+        partial_arms_report(graded)
       end
 
       # The four-arm DECOMPOSITION comparison ({Altitude}): the same work entered
@@ -347,6 +366,24 @@ module Lain
       end
 
       private
+
+      # What {#arms_report} says instead of the comparison when Ctrl-C
+      # arrives mid-run: every run in `graded` finished and was scored before
+      # the interrupt, so the money already spent buys a table rather than
+      # nothing -- and PARTIAL says outright that no arm past this point ran.
+      #
+      # A plain run/pass/score table, not {Arm::Driver}'s per-metric one: a
+      # {Telemetry::GradeRecord} carries no arm name (the Driver folds THAT
+      # in only once every arm's every task has finished), so a row here is a
+      # completed GRADE, in the order it landed, rather than a completed arm.
+      def partial_arms_report(graded)
+        rows = graded.each_with_index.map do |record, index|
+          [(index + 1).to_s, record.pass.to_s,
+           format("%.3f", record.score)]
+        end
+        "Arm driver -- PARTIAL, interrupted after #{graded.size} graded run#{"s" unless graded.size == 1}\n" \
+          "#{Compare::Table.new(headers: %w[run pass score], rows:)}"
+      end
 
       # The isolation half of the {#arm_report} call, and the one place the
       # unset name stays unset: nil with nothing to journal passes NO keyword at

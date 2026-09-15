@@ -33,8 +33,40 @@ module Lain
     # loads a catalog from a throwaway tree.
     def self.load(root: Dir.pwd)
       path = File.join(root, dsl_path)
-      new(File.exist?(path) ? builder.build(File.read(path), path) : [])
+      # `builder` resolved HERE, outside {.read}'s rescue: a subclass that
+      # names none raises NotImplementedError, which -- being a ScriptError --
+      # would otherwise be caught and misreported as a broken DSL FILE rather
+      # than the subclass's own missing declaration.
+      new(File.exist?(path) ? read(builder, path) : [])
     end
+
+    # Both Builders `instance_eval` the user's own file with no sandbox, so a
+    # typo raises straight out of Ruby -- a bad constant, a bad keyword
+    # argument, unbalanced `do`/`end` -- naming this gem's OWN frames rather
+    # than the one file a project author can fix. Translated here, once, so
+    # `exe/lain`'s ordinary `rescue Lain::Error` is what a broken `.lain/*.rb`
+    # ever reaches, instead of a fourteen-frame backtrace.
+    def self.read(evaluator, path)
+      evaluator.build(File.read(path), path)
+    # NoMethodError is a NameError, so naming it too would only shadow it.
+    rescue ScriptError, ArgumentError, NameError => e
+      raise Error, refusal_message(e, path)
+    end
+    private_class_method :read
+
+    # A SyntaxError's own message already names `path:line` -- Ruby embeds it
+    # while parsing, before any backtrace exists -- so that message is used
+    # verbatim. Everything else raises from somewhere inside the Builder
+    # itself, so the location is read off the first backtrace frame the
+    # EVALUATED file left behind, the one instance_eval's own `path`/`lineno`
+    # arguments stamped.
+    def self.refusal_message(error, path)
+      return error.message if error.message.start_with?("#{path}:")
+
+      frame = Array(error.backtrace).find { |line| line.start_with?("#{path}:") }
+      frame ? "#{frame[/\A#{Regexp.escape(path)}:\d+/]}: #{error.message}" : "#{path}: #{error.message}"
+    end
+    private_class_method :refusal_message
 
     # Frozen at both levels: a session-fixed SNAPSHOT, not a mutable registry
     # something can register into after load.

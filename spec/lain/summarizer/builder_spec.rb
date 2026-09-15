@@ -226,9 +226,13 @@ RSpec.describe Lain::Summarizer::Builder do
       .to raise_error(described_class::Unwound)
   end
 
+  # {DslCatalog.read} translates a raw ArgumentError raised from inside the
+  # evaluated file into a Lain::Error naming where -- `exe/lain`'s ordinary
+  # `rescue Lain::Error` is what a broken `.lain/summarizers.rb` reaches, not
+  # a bare ArgumentError with no `rescue` between here and a Thor backtrace.
   it "refuses a summarizer declared without a block, naming what a block must define" do
     expect { load_catalog(%(summarizer "bodyless"\n)) }
-      .to raise_error(ArgumentError, /bodyless.*suitable\?.*compact/m)
+      .to raise_error(Lain::Error, /summarizers\.rb:1.*bodyless.*suitable\?.*compact/m)
   end
 
   # Pins the contract the model tier has to build against: #for CALLS user
