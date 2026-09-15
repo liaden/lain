@@ -43,6 +43,16 @@ module Lain
       class MissingArtifact < Error; end
       class EscapesHome < Error; end
 
+      # A declared issue id that parses cleanly against {Document}'s own
+      # grammar -- {Epic::ID_RESERVED}, which an author owns and is free to
+      # spell however the markdown allows -- but that this Home could never
+      # write as `issues/<id>.md`. Read-side rather than a write-time surprise:
+      # without this, such an id parses, is folded, and is reported `ready` by
+      # every reader that never happens to write it, and only `lain epic
+      # submit`'s attempt to create the file names the problem, far from the
+      # `epic.md` that actually holds it.
+      class UnwritableId < Error; end
+
       # The read-side counterpart of {Paths::Unwritable} and a separate class
       # rather than a reuse: "cannot create" is a lie about a read that found a
       # directory or was denied permission.
@@ -108,6 +118,24 @@ module Lain
         -value
       end
 
+      # Every issue id in +graph+ against the same grammar {.checked_name}
+      # already holds every write to -- {#read_epic}'s own gate, and the one
+      # {CLI::Epic#apply} asks too over the graph it parses outside
+      # {#read_epic} (its read keeps the preamble {#read_epic} drops, so it
+      # cannot call that method, but it owes the graph it does parse the same
+      # question). One id fails the grammar the same way {.checked_name} would
+      # fail it; +graph+'s own id-uniqueness already rules out two failing
+      # ids sharing one message.
+      #
+      # @raise [UnwritableId] naming the first id {Document} accepted that
+      #   this Home could not, and the rule it broke
+      def self.refuse_unwritable_ids!(graph)
+        broken = graph.find { |issue| !filesystem_name?(issue.id) }
+        return unless broken
+
+        raise UnwritableId, filesystem_name_failure(broken.id, "issue id")
+      end
+
       def research = artifact("research.md")
       def epic = artifact("epic.md")
       def issue(id) = artifact(File.join("issues", filename(id)))
@@ -127,7 +155,16 @@ module Lain
       # truncated mid-write parses cleanly to the issues that survived and an
       # empty file parses to an empty graph. What this guarantees is a
       # well-formed {Graph} -- not that it is the graph someone wrote.
-      def read_epic = Document.parse_markdown(epic.read)
+      #
+      # {Document}'s own grammar is wider than this Home's on purpose (an
+      # issue author owns their id's markdown shape), so a graph that parses
+      # here can still name an id {.refuse_unwritable_ids!} refuses -- checked
+      # on every read rather than left for `issues/<id>.md` to fail on later.
+      def read_epic
+        graph = Document.parse_markdown(epic.read)
+        Home.refuse_unwritable_ids!(graph)
+        graph
+      end
 
       private
 

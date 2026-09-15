@@ -731,6 +731,89 @@ RSpec.describe Lain::CLI::Epic do
       expect(epic_home.read_epic.fetch("ab").blocks).to eq(["c"])
     end
 
+    # A Gherkin fence around one named scenario, so two issues merged in a
+    # test can be told apart by which scenario each contributed.
+    def criteria_for(name)
+      <<~GHERKIN
+        ```gherkin
+        Scenario: #{name}
+          Given a
+          Then b
+        ```
+      GHERKIN
+    end
+
+    # Scenario: merge keeps both criteria
+    it "merges two issues, keeping both descriptions and both criteria as one emittable issue" do
+      write_epic("alpha", graph_of(issue("a", description: "First.", criteria: criteria_for("a's scenario")),
+                                   issue("b", description: "Second.", criteria: criteria_for("b's scenario"))))
+
+      command.merge("a", "b", "alpha", as: "ab")
+
+      merged = epic_home.read_epic.fetch("ab")
+      expect(merged.description).to eq("First.\n\nSecond.")
+      expect(Lain::Gherkin::Criteria.parse(merged.criteria).map(&:name))
+        .to contain_exactly("a's scenario", "b's scenario")
+      expect(merged).to be_emittable
+    end
+
+    # Scenario: merging a done issue refuses
+    it "refuses to merge a done issue, naming it as done" do
+      write_epic("alpha", graph_of(issue("a", status: "done"), issue("b")))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::UnmergeableIssue, /"a".*done/m)
+      expect(graph_revisions).to be_empty
+    end
+
+    it "refuses to merge an in_flight issue, naming it" do
+      write_epic("alpha", graph_of(issue("a"), issue("b", status: "in_flight")))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::UnmergeableIssue, /"b".*in_flight/m)
+    end
+
+    def gate_decision(stage:, issue_id:, approved:, policy: approved ? "interactive" : "deferred",
+                      digest: "blake3:#{"a" * 64}")
+      Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:, approved:,
+                                       answered_by: "human", policy:, latency: 1.0, issue_id:)
+    end
+
+    # Scenario: an edit over a parked gate refuses
+    it "refuses to split an issue holding a parked implementation gate, naming the gate" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false))
+
+      expect { command.split("a", "a1,a2", "alpha") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*parked.*implementation/m)
+      expect(graph_revisions).to be_empty
+    end
+
+    it "refuses to merge an issue holding an approved issue_plan gate, naming the gate" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "b", approved: true))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*approved.*issue_plan/m)
+    end
+
+    it "does not refuse add, which removes no issue, even while another issue holds a parked gate" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false))
+
+      expect { command.add("d", "the d issue", "alpha") }.not_to raise_error
+    end
+
+    it "lets an edit through once a parked gate is denied rather than left standing" do
+      write_epic("alpha", chain)
+      session("park.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false),
+              at: "2026-01-01T00:00:00Z")
+      session("deny.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false,
+                                           policy: "interactive"), at: "2026-01-01T00:00:01Z")
+
+      expect { command.split("a", "a1,a2", "alpha") }.not_to raise_error
+    end
+
     # Scenario: a graph edit keeps the preamble
     it "keeps an epic's preamble through an edit" do
       home = epic_home
@@ -789,6 +872,28 @@ RSpec.describe Lain::CLI::Epic do
       before_bytes = epic_home.epic.read
 
       expect { command.split("z", "z1,z2", "alpha") }.to raise_error(Lain::Error, /no issue "z" in the epic graph/)
+      expect(epic_home.epic.read).to eq(before_bytes)
+      expect(graph_revisions).to be_empty
+    end
+
+    # Scenario: an unwritable id refuses at parse. `issue("a_b")` constructs
+    # cleanly -- the document grammar has no quarrel with an underscore -- so
+    # this epic.md is one only a hand edit or an older writer could have
+    # produced; the refusal has to be {Epic::Home}'s own read catching it,
+    # never Issue's construction.
+    it "refuses lain epic status over an epic.md declaring an id Home::NAME cannot write" do
+      write_epic("alpha", graph_of(issue("a_b"), issue("c")))
+
+      expect { command.status("alpha") }
+        .to raise_error(Lain::Epic::Home::UnwritableId, /"a_b".*filesystem name/m)
+    end
+
+    it "refuses an edit verb's own read the same way, before anything is written" do
+      write_epic("alpha", graph_of(issue("a_b"), issue("c")))
+      before_bytes = epic_home.epic.read
+
+      expect { command.add("d", "the d issue", "alpha") }
+        .to raise_error(Lain::Epic::Home::UnwritableId, /"a_b"/)
       expect(epic_home.epic.read).to eq(before_bytes)
       expect(graph_revisions).to be_empty
     end

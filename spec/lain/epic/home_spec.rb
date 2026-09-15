@@ -84,6 +84,22 @@ RSpec.describe Lain::Epic::Home do
     end
   end
 
+  # AC: an unwritable id refuses at parse. {Document}'s own grammar
+  # ({Epic::ID_RESERVED}) has no quarrel with an underscore, so `issue(id:
+  # "a_b")` constructs and writes cleanly -- the epic.md this produces is one
+  # only Home's own read can catch as unwritable.
+  describe ".refuse_unwritable_ids!" do
+    it "raises naming the id and the filesystem rule it breaks" do
+      expect { described_class.refuse_unwritable_ids!(graph_of(issue(id: "a_b"))) }
+        .to raise_error(described_class::UnwritableId, /"a_b".*filesystem name.*lowercase/m)
+    end
+
+    it "does nothing for a graph whose every id is already a legal filesystem name" do
+      expect { described_class.refuse_unwritable_ids!(graph_of(issue(id: "a"), issue(id: "b-2"))) }
+        .not_to raise_error
+    end
+  end
+
   describe "the epic artifact round-trips through the home" do
     it "reads back a graph with the digest it was written with" do
       Dir.mktmpdir do |tmp|
@@ -113,6 +129,15 @@ RSpec.describe Lain::Epic::Home do
 
         expect { home.write_epic(unemittable_graph) }.to raise_error(Lain::Epic::MalformedDocument)
         expect(File).not_to exist(home.path)
+      end
+    end
+
+    it "refuses to read back an epic.md declaring an id it could never write" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+        home.write_epic(graph_of(issue(id: "a_b")))
+
+        expect { home.read_epic }.to raise_error(described_class::UnwritableId, /"a_b"/)
       end
     end
 

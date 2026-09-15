@@ -64,6 +64,19 @@ module Lain
       # A slug was given and the home holds no such epic.
       class UnknownEpic < Error; end
 
+      # `merge` was asked to fold in a side that has already finished, or is in
+      # flight: silently reopening it under the merged id would erase that
+      # progress, so the caller is told which side and what it already is.
+      class UnmergeableIssue < Error; end
+
+      # `add`, `split` or `merge` would edit an issue the Journal still has a
+      # question open about -- a sign-off parked awaiting a human, or one
+      # already approved. {CLI::Epic#apply} reads no runtime state otherwise
+      # ({Epic::Graph} is a pure document-level value), so this is the one
+      # place a structural edit is checked against what a session actually did
+      # with the issue it is about to rewrite.
+      class GatedIssue < Error; end
+
       # No slug was given and the home holds more than one epic. Loud rather
       # than a guess: the alphabetically-first would report on work the caller
       # never asked about, in a command whose job is telling the truth about
@@ -283,11 +296,17 @@ module Lain
       # @param title [String, nil] the merged issue's title; defaults to
       #   combining both sides' so the command is usable without it
       # @return [String] the applied edit, rendered
+      # @raise [UnmergeableIssue] naming a side already done or in_flight
       # @raise [Lain::Error] any refusal from {Epic::Issue} or {Epic::Graph},
       #   before anything is written
       def merge(left, right, slug = nil, as:, title: nil)
         apply(slug, command: "epic merge LEFT RIGHT") do |graph|
-          arrival = Lain::Epic::Issue.new(id: as, title: title || merged_title(graph, left, right))
+          left_issue = graph.fetch(left)
+          right_issue = graph.fetch(right)
+          refuse_finished_side!(left_issue, right_issue)
+          arrival = Lain::Epic::Issue.new(id: as, title: title || merged_title(left_issue, right_issue),
+                                          description: merged_description(left_issue, right_issue),
+                                          criteria: merged_criteria(left_issue, right_issue))
           fiber = nil
           revised = graph.merge(left, right, as: arrival) { |cut| fiber = cut }
           [revised, fiber]
@@ -375,7 +394,42 @@ module Lain
           "(this command never edits .gitignore)."
       end
 
-      def merged_title(graph, left, right) = "#{graph.fetch(left).title} / #{graph.fetch(right).title}"
+      def merged_title(left, right) = "#{left.title} / #{right.title}"
+
+      # Both sides' prose, kept rather than dropped: a merge with `title:`
+      # given still lost the departing issues' descriptions before this, one
+      # blank paragraph away from disappearing for good. Empty defaults drop
+      # out rather than leaving a stray blank paragraph for a side nobody wrote
+      # anything on.
+      def merged_description(left, right) = [left.description, right.description].reject(&:empty?).join("\n\n")
+
+      # Both sides' acceptance criteria as scenarios in ONE fence -- the
+      # document grammar Issue enforces allows exactly one criteria block per
+      # issue, so two fences could not both survive the round trip. Re-rendered
+      # from the parsed IR rather than string-spliced, which is what lets two
+      # criteria blocks that disagree only in an already-refused way (a bad
+      # fence, say) still combine into one that is genuinely well-formed.
+      def merged_criteria(left, right)
+        scenarios = [left, right].filter_map(&:criteria)
+                                 .flat_map { |source| Lain::Gherkin::Criteria.parse(source).to_a }
+        return nil if scenarios.empty?
+
+        fence = Lain::Gherkin::Parse::FENCE
+        "#{fence}#{Lain::Gherkin::Parse::TAG}\n#{scenarios.map(&:render).join("\n\n")}\n#{fence}\n"
+      end
+
+      # Reopening a side that already finished, or that is mid-flight, under a
+      # merged id would erase the work it recorded -- {Epic::DONE} and
+      # `"in_flight"` are the two statuses a merge must never silently fold in.
+      # `abandoned` is deliberately not here: it is unfinished work, exactly
+      # the shape a merge exists to fold.
+      def refuse_finished_side!(left, right)
+        finished = [left, right].find { |issue| [Lain::Epic::DONE, "in_flight"].include?(issue.status) }
+        return unless finished
+
+        raise UnmergeableIssue, "issue #{finished.id.inspect} is #{finished.status} -- a merge cannot fold in a " \
+                                "side that is already done or in_flight"
+      end
 
       def comma_ids(value) = value.to_s.split(",").map(&:strip)
 
@@ -408,10 +462,63 @@ module Lain
         home = home_for(resolved)
         source = home.epic.read
         preamble = Lain::Epic::Document.preamble_of(source)
-        revised, fiber = yield(Lain::Epic::Document.parse_markdown(source))
+        parsed = Lain::Epic::Document.parse_markdown(source)
+        # Read outside {Epic::Home#read_epic} for the preamble's sake (see
+        # above), so this owes the graph it parsed the same question that
+        # method asks its own -- an id {Document} accepted that this epic's
+        # Home could never write.
+        Lain::Epic::Home.refuse_unwritable_ids!(parsed)
+        revised, fiber = yield(parsed)
+        refuse_gated_edit!(resolved, fiber)
         home.epic.write(Lain::Epic::Document.to_markdown(revised, preamble:))
         journal_revision(resolved, fiber)
         Applied.new(resolved, fiber).to_s
+      end
+
+      # Every id the fiber's revision is about to remove -- empty for `add`,
+      # which removes nothing -- checked against what the Journal says about
+      # it. Run after the edit already validated structurally ({Epic::Graph}'s
+      # own id, dangling-edge and cycle refusals) and before either write, so a
+      # gated id leaves both `epic.md` and the Journal exactly as they were.
+      #
+      # @param slug [String] the epic being edited
+      # @param fiber [Epic::GraphFiber] the edit about to be journaled
+      # @raise [GatedIssue] naming the id and the gate holding it
+      def refuse_gated_edit!(slug, fiber)
+        records = records_for(slug)
+        fiber.preimage.each { |issue_id| refuse_if_gated!(slug, records, issue_id) }
+      end
+
+      def refuse_if_gated!(slug, records, issue_id)
+        state, stage, digest = held_gate(records, slug, issue_id)
+        return unless state
+
+        remedy = state == "parked" ? "approve or deny it" : "discard or re-approve it"
+        raise GatedIssue, "issue #{issue_id.inspect} holds a #{state} #{stage} gate (#{digest}) -- " \
+                          "#{remedy} before editing this epic's graph"
+      end
+
+      # Parked first -- {Approval::SignoffQueue} is the live fold and answers
+      # from the same records {SessionJournals} already walked for this epic --
+      # and only once nothing is parked does a raw scan ask whether the issue
+      # ever carried a terminal APPROVAL: the queue itself forgets an address
+      # the moment a decision drains it, so an approved plan or implementation
+      # has no other place left to ask.
+      #
+      # @return [Array(String, String, String), nil] state, stage and digest,
+      #   or nil when the issue holds no gate at all
+      def held_gate(records, slug, issue_id)
+        queue = Approval::SignoffQueue.from_journal(records)
+        parked = Lain::Epic::ISSUE_STAGES.filter_map { |stage| queue.parked(slug, stage, issue_id:).first }.first
+        return ["parked", parked.stage, parked.artifact_digest] if parked
+
+        approved = Journal.records(records, type: Approval::SignoffQueue::JOURNAL_TYPE).find do |record|
+          record["issue_id"] == issue_id && Lain::Epic::ISSUE_STAGES.include?(record["stage"].to_s) &&
+            record["approved"] == true
+        end
+        return unless approved
+
+        ["approved", approved["stage"], approved["artifact_digest"]]
       end
 
       # Opened and closed around this one write, the way {EpicSubmit} opens one
