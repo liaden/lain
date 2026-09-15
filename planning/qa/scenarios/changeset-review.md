@@ -25,9 +25,9 @@ to post rather than reaching for a network it has no business touching.
 ## 0 — The subject: a repository the driver builds
 
 Outside the project, so nothing here is a fixture another scenario has moved. The shape matters:
-**three commits, on two directories, with one file that exists only on the branch and one that is
-deleted by it** — that is the minimum that tells `by_commit` from `by_directory` and gives the
-note rail an OLD side to anchor against.
+**three commits, on three directories, with one file that exists only on the branch and one that is
+deleted by it** — that is the minimum that tells `commits` from `by_directory` and gives the note
+rail an OLD side to anchor against.
 
 ```bash
 R="$(mktemp -d)/changeset"; mkdir -p "$R/lib" "$R/bin"; cd "$R"; git init -q .
@@ -40,23 +40,33 @@ class Tally
 end
 RB
 printf '#!/usr/bin/env ruby\nputs "tally"\n' > bin/tally
+printf '#!/usr/bin/env ruby\nputs "old"\n'   > bin/legacy
 git add -A; git commit -qm 'seed'
+BASE=$(git symbolic-ref --short HEAD)
 git switch -qc feature
 
 # commit 1 -- lib/ only
 printf '  def total = @counts.values.sum\n' >> lib/tally.rb
 git commit -qam 'lib: a total'
 # commit 2 -- bin/ only, and a deletion
-printf 'puts Tally.new.total\n' >> bin/tally; git rm -q bin/../bin/tally 2>/dev/null || true
+printf 'puts Tally.new.total\n' >> bin/tally; git rm -q bin/legacy
 git add -A; git commit -qm 'bin: use it'
 # commit 3 -- a new file, in a third directory
 mkdir -p doc; printf '# Tally\n\nCounts words.\n' > doc/README.md
 git add -A; git commit -qm 'doc: say what it is'
 ```
 
-**Do not hard-code `main`.** `git init` gives `master` on some boxes (it does on this one), and every
-`git rev-parse main` in this section then fails. Capture it: `BASE=$(git symbolic-ref --short HEAD)`
-before the `git switch -c feature`.
+**Corrected by round 17: the recipe's deletion deleted nothing.** Commit 2 used to run
+`git rm -q bin/../bin/tally 2>/dev/null || true` over a file it had just modified; `git rm` refuses a
+file with local modifications, the `|| true` swallowed it, and the subject had no deleted file at
+all. The seed now carries `bin/legacy` for commit 2 to delete. *Driven 2026-09-14*:
+`git diff --name-status $BASE feature` reads `D bin/legacy`, `M bin/tally`, `A doc/README.md`,
+`M lib/tally.rb` — the four changed paths §2 counts.
+
+**Do not hard-code `main` in your own commands** — `git init`'s default branch is a per-box setting
+(`init.defaultBranch`); this box now gives `main`, and it gave `master` when this was written. The
+recipe captures `BASE` before `git switch -c feature`; use `$BASE` everywhere below. **Lain's own
+default base, though, IS hard-coded `main`** — §1 drives what that costs in a `master` repository.
 
 **Record `git rev-parse $BASE feature` in the findings.** Every line number and every hunk count
 below is against these three commits; a round that regenerates the subject differently cannot
@@ -67,7 +77,7 @@ compare against the last one.
 ```bash
 lain review feature                  # the default: base is the default base, head is `feature`
 lain review open feature             # identical -- `open` is the escape, not a different command
-lain review feature --base main
+lain review feature --base "$BASE"
 lain review no-such-branch           # UnknownRef
 lain review feature --base no-such   # UnknownRef, naming the BASE role
 ```
@@ -83,6 +93,19 @@ The `: <detail>` tail is load-bearing. `rev-parse --verify --quiet` silences "un
 **not** "not a git repository" or "cannot change to …", and those two are exactly the ones a caller
 needs. Run `lain review feature` from **outside any repository** and confirm the detail survives
 rather than being swallowed into a bare "does not resolve".
+
+**And in a repository with no `main`.** The default base is the literal `main`, so a `master`
+repository cannot review a branch without `--base` (round 17's V2). The two entry points now answer
+differently, and a round should drive both:
+
+- **`/review <branch>` names the way out** since 2026-09-14 — `… -- this repository has no default
+  base to review a branch against; name one with --base <ref>`. *(Prediction, not yet driven: a
+  headless chat refuses `/review` for having no editor before it resolves any ref, so this needs the
+  cockpit.)*
+- **`lain review <branch>` still does not.** *Driven 2026-09-14* in a `git init -b master`
+  repository: `base ref "main" does not resolve to a commit in <repo>`, exit 1, no mention of
+  `--base`. That is the one-shot's wording today, not a regression; file it as V2's remainder if a
+  round wants it changed.
 
 ### 1b — two roots, no merge base
 
@@ -119,17 +142,22 @@ printing help.
 ## 2 — The three scopes, and where the enum comes from
 
 ```bash
-for s in whole by_commit by_directory; do lain review feature --scope "$s"; done
+for s in cumulative commits by_directory; do lain review feature --scope "$s"; done
 lain review feature --scope by_files      # Thor rejects: not in the enum
 ```
 
-`whole` is the default. Against §0's subject:
+**Corrected by round 17: the scopes are `cumulative`, `commits` and `by_directory`**, not `whole` and
+`by_commit` (those are the partition CLASS names, `Whole` and `ByCommit`; the scope a human types is
+each strategy's `name`). `cumulative` is the default. *Driven 2026-09-14* against §0's subject:
 
-| scope | expected grouping |
+| scope | grouping |
 |---|---|
-| `whole` | one group, four changed paths |
-| `by_commit` | **three** groups, in topo order, each naming its subject line |
-| `by_directory` | **three** groups — `lib/`, `bin/`, `doc/` |
+| `cumulative` | one group, four changed paths: `bin/legacy`, `bin/tally`, `doc/README.md`, `lib/tally.rb` |
+| `commits` | **three** groups, in topo order, each headed by its subject line — `lib: a total` / `lib/tally.rb`, `bin: use it` / `bin/legacy`, `bin/tally`, `doc: say what it is` / `doc/README.md` |
+| `by_directory` | **three** groups — `lib/`, `bin/`, `doc/` *(not re-driven)* |
+
+and `--scope by_files` exits 1 with `Expected '--scope' to be one of cumulative, commits,
+by_directory; got by_files`.
 
 **The enum is read off `Review::Partition::STRATEGIES`, not written by hand in the exe**, and that
 is a real past defect rather than tidiness: Thor validates `enum:` *before* it dispatches, so a
@@ -143,11 +171,11 @@ the valid set named.
 `base` is not the ref the diff is taken from — **the MERGE BASE of base and head is**. Prove it:
 
 ```bash
-git switch -q main; git commit -q --allow-empty -m 'main moved on'
-lain review feature --base main
+git switch -q "$BASE"; git commit -q --allow-empty -m 'base moved on'
+lain review feature --base "$BASE"
 ```
 
-The changeset must be unchanged by that empty commit on `main`. A review that grows a "main moved
+The changeset must be unchanged by that empty commit on the base. A review that grows a "base moved
 on" entry is anchoring to the base **tip** rather than the merge base, which is the classic way a
 review starts showing other people's work as yours.
 
@@ -190,7 +218,7 @@ Piggyback on the subject session's cockpit, and drive the **same rails `cockpit-
 drives over a survey** — the point is that they behave differently when there is an OLD side.
 
 ```
-you> /review feature --base main --scope by_commit
+you> /review feature --base <the $BASE branch> --scope commits
 ```
 
 Then, over RPC (`method.md`'s socket recipe — never a screen scrape):
@@ -230,18 +258,50 @@ you> /review feature --base --permissive
 ```
 
 must refuse rather than resolving against a ref literally named `--permissive` and quietly dropping
-the switch.
+the switch. Round 17 found it refused for the wrong reason — `--base is not a flag /review can read`,
+of a flag it reads (F121). *Driven 2026-09-14* (a headless chat parses the line before it looks for
+an editor), for both `/review feature --base --permissive` and a bare trailing `/review feature
+--base`:
 
-## 6 — The one model turn
+    error: --base takes a ref -- /review <pull-request|branch> [--base <ref>] [--scope cumulative|commits|by_directory] [--permissive] -- open a changeset review in the attached editor
 
-Ask the model to critique the open changeset. What is being checked is not the critique's quality:
+## 6 — `/critique` over the held review
 
-- the `/critique` ceiling is **7,000 lines** and is the only bound set against the window, so
-  confirm the chunking actually chunks — a critique that silently sends one oversized block is the
-  regression;
-- the model is shown the **changeset**, not the working tree. Dirty the working tree after opening
-  the review (`echo junk >> lib/tally.rb`, uncommitted) and confirm the critique does not mention
-  it.
+**Round 17 found this section's premise had no path that made it true** (F108): the 7,000-line
+critique chunker had no caller outside `spec/`, and `/critique the changeset currently open for
+review` ran `git status --porcelain` and `git diff lib/tally.rb` — the model read an uncommitted
+`JUNKMARKER_UNCOMMITTED` straight out of the working tree. **Since 2026-09-14, with a `/review` held,
+`/critique [focus]` no longer runs the skill inline.** It critiques the held changeset from git
+objects: one fresh-root `diff_critic` child per chunk, each child's prompt carrying that chunk's
+hunks as the reviewed revisions show them, the child's working directory a detached checkout of the
+reviewed head, and the findings merged in chunk order. With no review held, `/critique` is the skill
+exactly as before.
+
+What is being checked is not the critique's quality *(predictions, not yet driven — this is the
+discharging chunk's integration check 8)*:
+
+- **the working tree never reaches a child.** Open the review, then dirty the tree with a marker
+  (`echo JUNKMARKER >> lib/tally.rb`, uncommitted), then `/critique`. No child request may contain
+  the marker, and each must contain hunks from the reviewed revisions. The children's read tools do
+  not confine paths — an absolute path still reaches the project's tree, and each child's brief says
+  so — so the check is on what the model was *handed*, and a child that chose to read the tree by
+  absolute path is a model finding to record, not this defect;
+- **chunks are sized to the CHILD's served window, not to 7,000 lines.** 7,000 lines is ~99k tokens
+  against a 32k local window, which would recreate round 17's silent truncation in every child. The
+  line ceiling is derived from the window `WindowBook` reports for the child's model, less the
+  instructions and a response reserve; read `ollama ps` and each child's `prompt_eval_count`, which
+  must not be truncated;
+- **it refuses before spending when it cannot fit or cannot know.** Each refusal starts `/critique
+  refused before spawning anything:` — a single file whose hunks estimate over the room a chunk may
+  take names the file, its estimate, the room and the window; a window nothing the server has
+  reported vouches for (a fresh session before any turn, or `--num-ctx` alone) says to send one turn
+  first; a review changing no file says so. A review opened over a tree rather than commits (a
+  `/survey`) refuses as having no reviewed revision to critique from;
+- **the merged findings name every chunk**, headed `critique of <base>..<head> in <n> chunk(s), each
+  read by the diff_critic role`, and each chunk's result is journaled;
+- **Ctrl-C stops a running `/critique`.** Its children run in the middleware phase, which is now
+  supervised; the discharging chunk's own review found it ignoring Ctrl-C and SIGTERM. Record wall-clock
+  and token counts per child — the "cost and latency" gap `README.md` names.
 
 ## 7 — `/review-submit` must refuse, not reach for the network
 

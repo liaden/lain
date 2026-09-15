@@ -71,6 +71,15 @@ Headline format is `surveying <root> at <scope> scope: <n> files`. **`lain surve
 submits nothing** — it has no `--permissive`, because there is no verdict to judge. Confirm the
 flag is refused rather than silently accepted.
 
+**Both surfaces name a row from the same base since 2026-09-14.** Round 17 (V1): outside the chat's
+cwd, `lain survey` listed `anchor.rb` where `/survey` listed `dev/lain/lib/lain/review/anchor.rb` for
+the same file. *Driven 2026-09-14*, the one-shot side: from a sibling directory,
+`lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
+1 file` and listed `[ ] cs/changeset/lib/tally.rb`; run from inside the repository as
+`lain survey lib` it listed `[ ] lib/tally.rb`. Survey the same absolute path with `/survey` from
+the same cwd and confirm the rows read identically. *(Prediction, not yet driven: the `/survey` side
+needs the cockpit.)*
+
 ## 2. The ceilings, at a size no round has driven
 
 Every `/survey` ever driven has been over three or four files. `Bounds` refuses past **300 files**
@@ -85,10 +94,13 @@ with `git ls-files --cached --others --exclude-standard` before trusting a count
 
 | target | files | lines | |
 |---|---:|---:|---|
-| `lib` | ~750 | ~153,000 | **over both** — 742/161,963 (r11), 748 (r14), **749 / 152,909 (r15)**; RE-COUNT, never copy |
-| `lib/lain/frontend` | 53 | 13,801 | fits |
-| `lib/lain/review` | 45 | 9,663 | fits |
-| `lib/lain/survey` | 9 | 1,278 | fits |
+| `lib` | ~780 | ~164,000 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), **778 / 163,904 (r17)**; RE-COUNT, never copy |
+| `lib/lain/frontend` | 56 | 14,199 | fits (r17) |
+| `lib/lain/review` | 39 | 8,520 | fits (r17) |
+| `lib/lain/survey` | 9 | 1,274 | fits (r17) |
+
+Round 17 timed the `lib` refusal at 1,668 ms against a do-nothing `lain help` at 1,451 ms — the
+comparative form `method.md` prescribes, and a refusal that still does not walk the tree.
 
 ```
 you> /survey ./lib
@@ -130,8 +142,8 @@ you> /survey ./lib/lain/survey --scope by_directory
 - **`commmits`** → the unknown-scope sentence, listing the **whole** registry.
 - **`by_directory`** → opens, grouped by directory. Confirm the grouping is visible in the sidebar,
   not merely accepted. Round 11: it renders as `~927 lines  <dir>` group headers with the files
-  nested under each — and the group header and the file rows use DIFFERENT path bases (F68), which
-  is a finding rather than a reading error.
+  nested under each — and the group header and the file rows used DIFFERENT path bases (F68).
+  **Round 17 found F68 fixed**; different bases again is that finding back.
 
 ## 4. What the walk admits, and what it keeps out
 
@@ -188,6 +200,11 @@ checked, the corpus digest, the journal, and anything a docent question sends to
 `<redacted:1>` there, not raw bytes, and that is the highest-severity finding this scenario can
 produce if it goes wrong.
 
+**A name that is not UTF-8 is listed, not withheld, by the walk** — round 17 cross-checked this
+against the listing tools' old whole-listing withholding (F103) and the walk was never on that path.
+Opening such a row gives an empty `nowrite` buffer, which is documented (`corpus.rb`) and was withdrawn
+as a finding in round 17; do not re-file it.
+
 **Then open `deploy.pem`'s row anyway, and expect the raw key.** A corpus has no old side, so a
 survey's row always opens on the diff's `new` slot — the buffer that opens is a REAL file buffer
 read straight from disk (`review_diff.new_side`, `47_diff.lua:184-191`) — not a rendering this
@@ -201,10 +218,10 @@ checked in the paragraph above carries the raw key, not if the opened buffer doe
 
 ## 5. One review surface per chat
 
-**DRIVE THIS BEFORE ANY SURVEY IS OPENED IN THE CHAT.** Round 11 (F67): a chat that has surveyed can
-never open a changeset review again — not even after the survey is SETTLED by a verdict — and there
-is no release command, so the first leg below is unreachable in a chat that has already surveyed.
-The only exit is a fresh chat.
+**Round 17 found F67 fixed.** Round 11's F67 was a chat that had surveyed never being able to open a
+changeset review again — not even after the survey was settled — with no release command, so this
+section had to be driven before any survey was opened. Drive it first anyway: if F67 is back, the
+first leg is unreachable in a chat that has already surveyed, and only a fresh chat gets past it.
 
 A chat holds one outbox and one set of gesture rails. The guard asks about the **kind**, not merely
 `open?`:
@@ -223,8 +240,8 @@ you> /review-submit                -- over the survey, once one is open
   after the draw returns, precisely so a ceiling raised mid-present does not lock the cockpit out
   for the rest of the session. Drive §2's ceiling refusal and then `/review` to prove it.
 - **`/review-submit` over a survey** → `Outbox::Nowhere`'s sentence: a perfectly good review with
-  nowhere to post. **Known and already filed as F56** — it names the survey and then reasons about
-  *a branch*, the local-branch wording reused unchanged. Re-check, do not re-file.
+  nowhere to post. Round 11's F56 was that sentence naming the survey and then reasoning about *a
+  branch*; **round 17 found F56 fixed**. The branch wording back is the regression.
 
 ## 6. `--permissive`, and what it does not buy
 

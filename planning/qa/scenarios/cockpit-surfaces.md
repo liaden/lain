@@ -9,16 +9,21 @@ driver can notice that the buffer disagrees with the pane beside it.
 **What it exercises:** `Frontend::Neovim` and its `Surfaces`/`Buffers`/`JournalView`/`RequestBuffer`
 projections, the review flow (`/survey` → `<CR>` → `x` → `:LainReviewVerdict`), the **note rail** on
 a survey of a dummy app the round writes itself (§4b — kinds, placement order, the keys, the
-thread), the approval surfaces (chat prompt, `lain://approval`, `:LainApprove`, and the desktop
-notifier that shares their queue), the RPC transport's one-line-per-record contract, and the prompt
-composer's HUD segments.
+thread), the approval and question surfaces (the chat's one-line arrival notes and its `command>`
+reader, `/approve`, `/inbox`, `lain://approval`, `:LainApprove`, `lain://inbox`, `:LainReply`), the
+RPC transport's one-line-per-record contract, and the prompt composer's HUD segments.
+
+**There is no desktop notifier any more, for any OS.** `Lain::Notify`, `--desktop` and
+`LAIN_DESKTOP` were deleted in `c40ab419` (2026-09-12); round 17 proved the negative (a parked
+gated call with `dunstify` on `PATH` raised nothing). Every passage here that used to drive it is
+gone, and a round that finds a notification on screen has found something else.
 
 **All four of round 4's surface defects were fixed in the 2026-08-18 chunk, and every one of them
 was fixed somewhere other than where it appeared** — the frozen timeline in the RPC transport, the
-unrendered approval in the desktop notifier, the traceback in a Lua return path, the missing
-placeholder in a view's `initial`. So each section below now carries *what wrong looks like* for the
-new mechanism, not just the old symptom: a symptom-only check can pass while the fix has been
-reverted into a different failure.
+unrendered approval in the (since deleted) desktop notifier, the traceback in a Lua return path, the
+missing placeholder in a view's `initial`. So each section below now carries *what wrong looks
+like* for the new mechanism, not just the old symptom: a symptom-only check can pass while the fix
+has been reverted into a different failure.
 
 **Cost:** cheap in model calls — most checks are RPC reads. **Piggyback it on whatever subject
 scenario is already running** rather than driving a session just for it.
@@ -435,27 +440,98 @@ free. Run the note checks even when the bench has no model up.
 | `<leader>Ln` does nothing in the NEW window | the keys bind off the review STAMP, not a buffer name. If the stamp was withdrawn (you moved to another file and back) the keys are removed on purpose — reopen the row from the sidebar |
 | the refusal arrives with `stack traceback:` | §4's delivery rule, one rail over |
 
-## 5 — The approval surfaces must agree
+## 5 — The approval surfaces must agree, and in a cockpit nvim is where they are answered
 
-Force a turn with **three** gated `bash` calls, the first producing streamed stdout (`echo HELLO`,
-`echo WORLD`, `echo AGAIN` is enough). Two is the historical minimum — it is what reproduced the
-wedge — but three is what the notifier checks below need, and one turn can serve both. Compare all
-the surfaces for the *second* call:
+**The human's ruling, landed 2026-09-14: nvim-first.** With an editor attached, the chat pane
+**opens no `[y/N]` reader and no reader whose line can become an answer**. It announces a parked
+call in one line, turns its prompt into a **command-only** `command>` reader, and leaves the answer
+to `lain://approval` (`:LainApprove` / `:LainDeny`) or to a `/approve` typed on purpose. Round 17's
+three chat-pane defects — the ghost `human>` (F101), typeahead signed as a human denial (F102) and
+the live-looking stale `[y/N]` (F106) — are gone **in the cockpit** by construction, because the
+reader they raced no longer exists there. The plain `--no-nvim` chat keeps its inline prompt, with
+guards; the last part of this section drives it.
+
+Force a gated call the approval rule does not approve — `ls -la` is enough, since `ls` is not on
+`ComposedTerm`'s allowlist (`shell-terms.md` §4) — and compare the surfaces:
 
 | surface | check |
 |---|---|
-| chat pane | does an `<requester> asks: approve …? [y/N]` prompt render at all? |
-| chat pane | does typing `y` get **consumed**, or merely echoed? |
+| chat pane | **one** arrival line naming the requester, the call and both answer routes, and **no** `[y/N]` |
+| chat pane | the prompt becomes `command>`; a `/`-command runs there, prose does not answer anything |
 | `lain://approval` | the `y approve, n deny` affordance, and the full command — read from `b:lain_approval_calls`, **not** from the rendered rows, which are elided and wrapped on purpose (see *Reading a long command back*, below) |
-| `.lain/state.json` | `approvals_pending` |
+| the status feed (`$XDG_STATE_HOME/lain/status/<hash>/state.json`, **not** `.lain/state.json` since round 13) | `approvals_pending` |
 | journal | `approval_pending` with `requester` |
-| journal | the `escalation` ladder — see below; it is the surface that settles F40 |
+| journal | the `escalation` ladder — see below; it is the surface that says WHICH surface answered |
+
+Driven against the built binary 2026-09-14 (`main` at `70c0782f`, a `lain up` cockpit over a
+scratch git tree, local `qwen3-coder:30b`), verbatim from the chat pane:
+
+    ! agent asks to run bash({"command" => "ls -la"})  -- answer in lain://approval, or /approve
+    command>
+
+and `b:lain_approval_calls` held `bash({"command" => "ls -la"})`. Then, at that `command>`:
+
+| typed | pane | journal |
+|---|---|---|
+| `yes please` | `held as your next prompt: yes please` | **no** `approval_decision`; after the line settled, `yes please` was committed as the next user turn |
+| `/approve` | `agent asks: approve bash({"command" => "ls -la"})? [y/N]` — `/approve` owns the terminal for its line | — |
+| `y` (at that prompt) | the dispatching line continues | `approval_decision surface=tty verdict=approve`, then `escalation rung=surfaces … (tty)` |
+
+**What wrong looks like:** a `[y/N]` drawn in the cockpit chat pane without `/approve`; an
+`approval_decision` from `tty` that nobody typed `/approve` for; a prose line at `command>` that
+vanishes instead of being held (the held line must survive to `you>`, including across a Ctrl-C of
+the dispatching line); or an arrival line printed twice for one parked call (a call is announced
+once, however many lines it outlives). **Nothing is dropped by not reading it inline**: the parked
+call stays in the queue, so `/approve`, `lain://approval` and the journal all still see it.
+
+**A `/`-line typed at a drawn `[y/N]` is never a decision** — at the one `/approve` draws in a
+cockpit, and at every inline one in a `--no-nvim` chat. It is held for `you>` and the same prompt is
+drawn again, empty; round 17 typed `/goal off` at a drawn approval, the call was denied, and the goal
+ran on. *Driven 2026-09-14* in a `--no-nvim` chat (the same prompt class `/approve` draws):
+
+    agent asks: approve bash({"command" => "ls -la"})? [y/N] /status
+    held as your next prompt: /status
+    agent asks: approve bash({"command" => "ls -la"})? [y/N]
+
+no `approval_decision` until the window closed, and the held `/status` ran at the next `you>`. A
+`/`-line recorded as a `tty` denial is round 17's shape back. *(Prediction, not yet driven: the same
+line at the `[y/N]` `/approve` draws inside a cockpit.)*
+
+**The `notify` layer rings the terminal on an arrival, and nothing else runs.** Its lighter is
+`BELL`. While it stands, a question, approval or review arrival writes **one** BEL byte (`\a`) to
+the chat pane and, inside `$TMUX`, runs `tmux display-message` with the arrival line (scrubbed,
+200 characters at most, on a 2 s timeout that never blocks the render). There is no desktop
+notifier behind it. Read the bell off a `pipe-pane` capture of the chat pane rather than by ear, and
+the message off a `tmux` wrapper on the chat's `PATH` that logs its arguments (a detached test
+server has no client to show it on). *Driven 2026-09-14* in a `--no-nvim` chat inside tmux with
+`/mode +notify` (`accept_edits: no layers active -> accept_edits: notify (BELL)`), for the parent's
+own `ask_human`:
+
+- the pane stream carried `? lain What is your favourite colour?  -- answer in lain://inbox, or
+  /inbox` followed by exactly one `\a`;
+- the wrapper logged `display-message ? lain What is your favourite colour?  -- answer in
+  lain://inbox, or /inbox`.
+
+**And an inline `[y/N]` does not ring.** In the same kind of chat, with the layer up, a parked
+`ls -la` drew its `[y/N]` and wrote no BEL and ran no `display-message` (driven 2026-09-14): the
+approval bell rides the one-line approval ARRIVAL, which only a cockpit draws. So check the approval
+bell in the cockpit — the `! <requester> asks to run …` line followed by one `\a` *(prediction,
+not yet driven)* — and record the plain chat's silent `[y/N]` as the current shape rather than as a
+pass. With the layer down, an arrival must write no BEL and run no `tmux` command at all.
+
+**Now drive three gated calls in one turn.** The house model **does emit parallel tool calls** now
+— round 17 saw six `tool_use` blocks in one message when it asked for one per turn, and two
+`subagent` calls in one message — so the multi-pending shape this section could never reach before
+is drivable. Ask for `ls -la`, `ls -l` and `ls` as three calls in one message, then check: three
+arrival lines, three rows in `lain://approval`, and answering **one** in nvim decides that call and
+leaves the other two parked and still listed. *(Prediction, not yet driven: the three-at-once
+shape was not re-driven after the nvim-first change.)*
 
 **The `escalation` records are the sixth surface, and the only one that says WHICH surface
 answered.** Round 9 used them to settle round 8's F40 in a way no pane capture could: every gated
 call journals a triage → rules → surfaces ladder, and the final rung names the answering surface.
-So a round can prove that answering at nvim did not orphan the TTY reader, from the record rather
-than from a screenshot:
+So a round can prove which surface decided each call — nvim, or a `/approve` typed on purpose —
+from the record rather than from a screenshot:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
@@ -469,14 +545,49 @@ Check the `approval_pending` and `approval_decision` COUNTS match too — round 
 both surfaces represented, no pending left unanswered. That is the shape F40's
 eleven-pendings-to-one-prompt violated, and it is cheaper to read than the panes.
 
-The prompt must **name the requester** (`agent asks:` / `researcher asks:` / `subagent asks:`) —
-with `fleet 2` on the status line you otherwise cannot tell a parent from its child. The whole line:
+Both the arrival line and the `[y/N]` must **name the requester** (`agent` / `researcher` /
+`subagent`) — with `fleet 2` on the status line you otherwise cannot tell a parent from its child.
+The whole prompt, as `/approve` draws it in a cockpit and as the plain chat draws it inline:
 
     <requester> asks: approve <tool>(<input>)? [y/N]
 
-**Run this on `--no-nvim` too.** In the cockpit `:LainApprove` is a recovery path; on plain
-`lain chat` there is no second surface, and round 4 found that neither `y` nor `/approve` was
-consumed — a permanent wedge. The plain path is where this defect is fatal.
+### The plain chat keeps its inline prompt, with three guards
+
+**Run this on `--no-nvim` too.** There is no second surface there, round 4 found a permanent wedge
+there, and it is the one path where the chat still reads a `[y/N]` itself. Since 2026-09-14 that
+read is guarded three ways, and each guard is a check:
+
+1. **Typeahead is never an answer, and never lost.** Just before a `[y/N]` or `human>` read opens,
+   the terminal's buffered input is drained. A **complete** line is held for `you>`; a trailing
+   **partial** line is shown back and dropped from this prompt. Driven 2026-09-14 in a `--no-nvim`
+   chat: `yes please` and Enter typed while the turn dispatched, then `ls -la` parked, and the pane
+   read
+
+       yes please
+       held as your next prompt: yes please
+       agent asks: approve bash({"command" => "ls -la"})? [y/N]
+
+   with **no** `approval_decision` until a human typed at the prompt. The partial case was driven in
+   the same session — a `y` typed with no Enter, then drained when the next read (a `human>`) opened:
+   `discarded: y -- finish that line and it is held as your next prompt`. Round 17's F102 was
+   exactly such a line becoming a `tty` denial 19 ms after the prompt appeared. **What the guard
+   does not do:** a line typed while a `[y/N]` is already drawn is read by it, as it should be — the
+   drain runs only as a read opens, so the driver's own "do not type at a live prompt" rule
+   (`method.md`) still binds.
+2. **A prompt decided elsewhere is closed in words.** When the timeout, `--secret-oracle` or
+   another surface decides the pending the TTY is reading, the read stops and the prompt line ends
+   with `-- decided by <surface>: <verdict>`. *Driven 2026-09-14* by leaving `ls -la` parked for the
+   300 s window: the prompt line became
+
+       agent asks: approve bash({"command" => "ls -la"})? [y/N] -- decided by timeout: denied
+
+   and the journal read `approval_decision surface=timeout verdict=deny timed_out=true
+   latency=300.0…`. A `n` typed after that line is not an approval decision — round 17's F106 turned
+   it into a chat prompt under a prompt that still looked live.
+3. **A question answered elsewhere retires.** A subagent question settled by another surface is
+   retired rather than re-queued, so no `human>` is drawn on the next dispatched lines. *(Prediction,
+   not yet driven: round 17's F101 ghost was three `human>` prompts drawn mid-dispatch after an nvim
+   answer.)*
 
 ### Reading a long command back: the rows are cut on purpose
 
@@ -559,74 +670,19 @@ Two things to know before matching on the result:
 absent or empty while `b:lain_approval_rows` is positive; an entry that does not carry the command
 in full; or a `b:lain_approval_call_index` whose length disagrees with `b:lain_approval_rows`.
 
-### The precondition that decides whether this test tests anything
+### The second queue consumer is gone, and the notifier with it
 
-**T15's cause was not stdin ownership** — three PTY probes ruled that out — **it was a second
-consumer of the approval queue.** `Approval::Queue#dequeue` hands each arrival to exactly ONE
-waiter. The TTY surface takes the first call and then *leaves the queue* to ask a human, while the
-desktop notifier re-parks immediately — so the notifier sat ahead in the waiter FIFO, took the
-second call, and held it for `dunstify`'s blocking 300s window.
+**Retired, recorded so a driver who remembers it knows it was lifted on purpose.** Round 4's wedge
+on a second gated call was never stdin ownership — it was a **second consumer** of the approval
+queue: the desktop notifier re-parked immediately, took the second call ahead of the TTY and held it
+for `dunstify`'s blocking 300 s window. That notifier was deleted in `c40ab419` (2026-09-12), and
+with it `--desktop`, `LAIN_DESKTOP`, the `dunstify -r`/`-C` replace-and-withdraw correlation and the
+`dunstctl count displayed` check this section used to drive. There is nothing to withdraw and no
+popup to count; `spec/approval_consumer_discipline_spec.rb` pins exactly one approval consumer.
 
-**Two separate things have since been fixed there, and a driver needs both in mind.** The notifier
-sweeps the parked set and **never consumes** it (T15) — that is what unwedged the second prompt. And
-the sweep no longer **blocks**: it used to spawn one shellout and immediately park the fiber on
-`Thread::Queue#pop`, so element *N+1* was unreachable until element *N*'s `dunstify` exited, which
-is why "it notifies every approval" was true of the design and false of the code. The shellout thread
-now only runs the command and pushes its result; the sweep drains finished results and applies each
-verdict itself, on the reactor fiber. So **every parked approval raises its own notification at
-once**.
-
-Three consequences for how this section is driven, and the third is new:
-
-- **`--desktop` must be ON and `dunstify` must be on `PATH`, or the bug cannot reproduce.** It is on
-  by default (`--no-desktop` silences one run, `LAIN_DESKTOP=0` a whole shell), but the sandbox's
-  `PATH` is rebuilt by the shim — so check `command -v dunstify` before the act and **record the
-  answer**. With no notifier there is only one consumer, the second prompt renders, and the check
-  passes while asserting nothing. That is the most likely way this section produces a false green.
-- **⚠️ The house model cannot produce this shape, and round 6 burned turns discovering that.**
-  `qwen3-coder:30b` does **not** emit parallel tool calls: asked explicitly, twice, for three
-  `bash` calls as three `tool_use` blocks in one message, it emitted them strictly one per turn, so
-  two pendings never coexist and the check below asserts nothing. The single-pending path and the
-  withdrawal path *are* drivable and were verified; **the "all at once" property was not, and
-  remains an open half of F24.** Before spending turns here, check whether the model in use does
-  parallel tool use at all — and if it does not, say so in the findings rather than reporting the
-  section passed. Settling it properly needs a seeded multi-pending fixture or a model that batches;
-  that fixture does not exist yet and is worth building.
-- **Drive THREE gated calls in one turn, not two, and expect three notifications at once.** Two
-  cannot tell "raises concurrently" from "raises the next one as soon as the first is answered" —
-  the old behaviour would show a second popup the moment you answered the first, which looks
-  identical to a pass if you only ever look at two. With three, all three must be on screen
-  *together*, before any of them is answered. Answering one on the desktop must decide that call and
-  leave the other two undecided.
-- **Answering elsewhere must WITHDRAW the popup.** Answer one of the three at the chat prompt or
-  through `:LainApprove` instead of on the desktop. That pending's notification must disappear on
-  its own, and the other two must stay up:
-
-      dunstctl count displayed     # 3 before, 2 shortly after the sibling answers
-
-  The sweep runs every **50 ms** and closes a raised popup whose pending reports `decided?`, so the
-  withdrawal lands about that long after the answer, not on the next turn. Correlation is a
-  self-assigned replace id (`dunstify -r <id>`, allocated at or above 1,000,000 so it can never
-  collide with the human's own notifications) and the close is `dunstify -C <id>` through the same
-  binary — so a desktop with `dunstify` can always withdraw, with no dependency on `dunstctl` being
-  installed.
-
-**Why the withdrawal is load-bearing rather than a nicety, which is worth knowing before judging a
-stale popup as cosmetic.** The queue's window is 300 s and this dunst is configured with
-`idle_threshold = 120`, which **pauses expiry entirely** while nobody has touched the keyboard —
-and an unanswered approval is, by construction, an idle desktop. So in the only case this surface
-exists for, an un-withdrawn popup never expires at all, and once the shellout is reaped nothing left
-in the system can close it. A popup still naming a command that was already decided is therefore a
-real finding here, not a cosmetic one.
-
-**And the degrade must hold.** A desktop where the close fails or closes nothing must leave the
-surface exactly as it was — a stale popup is a worse UX, but a notifier that *raises* out of a
-withdrawal is a session with no desktop approvals at all. Failures are journalled by the sweep, not
-dropped; check the journal rather than assuming silence means success.
-
-Also read the guard's own record: a notifier that dies mid-sweep now journals a **`tty_fault`**
-rather than signing a denial as though a person typed `n`. A `denied` decision with no human at the
-keyboard is the shape to watch for in the journal.
+What survives of the old section is the journal shape to watch for: a surface that dies mid-read
+journals a **`tty_fault`** rather than signing a denial as though a person typed `n`. A `denied`
+decision with no human at the keyboard is still the shape to look for.
 
 ## 5b — Command dispatch at the `human>` prompt, and inside `/inbox`'s own drain
 
@@ -641,6 +697,23 @@ drain, and `Reply#drained` (`human_replies.rb`) used to read with no registry of
 so the *very next line typed* — even a registered `/command` — was swallowed as the answer to the
 parked question rather than dispatched. The round-7 chunk gives the drain the same classification the
 outer prompt uses. Drive this section to confirm that fix holds, not to re-file the withdrawn finding.
+
+**Drive the table below in a `--no-nvim` chat: since 2026-09-14 a cockpit has no `human>` read.**
+With an editor attached, a parked question is announced in one line and the chat reads `command>`,
+the same command-only reader §5 drives — a `/`-command runs, prose is held for `you>` and never
+becomes the answer, and the answer goes through `lain://inbox` or a deliberate `/inbox`. Driven
+2026-09-14 in a `lain up` cockpit, with the parent's own `ask_human` parked:
+
+    ? lain What is your favourite colour?  -- answer in lain://inbox, or /inbox
+    qwen3-coder:30b ctx 17%
+    command>
+
+`:LainReply blue` on the row in `lain://inbox` journaled the answer (`message` payload
+`{"answer" => "blue"}`), the turn continued, and the chat came back to `you>` with no prompt drawn in
+between. **What wrong looks like in the cockpit:** a prose line at `command>` recorded as the answer,
+or a `human>` drawn in the chat pane at all. In the cockpit, steps 2–5 below are driven inside
+`/inbox`'s own drain, which owns the terminal for its line; step 1's `/status` is typed at
+`command>`. *(Prediction, not yet driven: `/inbox` typed at `command>` in a cockpit.)*
 
 Spawn a subagent (`method.md`, "Making a session with `message` and `child_turn` records") and wait
 for the prompt to become `human>`. Then, at that prompt, in order:
@@ -738,12 +811,33 @@ snapshot in scrollback, not a live widget, so a value that does not tick is not 
 What is worth checking:
 
 - At `you>` between turns: `<model> ctx N% idle Ns`.
-- At the `human>` prompt of a parked `ask_human`: **the `idle` segment must be absent entirely**
-  (a dispatch is in flight, so the segment has nothing to say and elides).
+- At the prompt of a parked `ask_human` — `human>` in a `--no-nvim` chat, `command>` in a cockpit
+  (§5b): **the `idle` segment must be absent entirely** (a dispatch is in flight, so the segment has
+  nothing to say and elides). Driven 2026-09-14 in a cockpit: `qwen3-coder:30b ctx 17%` above
+  `command>`, no `idle`.
+- **No prompt is drawn mid-dispatch after a question was answered elsewhere.** Round 17's F101 drew
+  `<model> ctx 80% idle 0s` / `human>` on every later ask after an nvim answer; a surface now retires
+  a question settled on another one. In a cockpit there is no `human>` to draw; in a `--no-nvim`
+  chat answer a subagent's question from a second surface and watch the next three asks.
+  *(Prediction, not yet driven in the plain chat.)*
 - After a **torn** turn (a provider error, a budget refusal): `idle` must come **back**. A version
   of this fix read `Agent#state` and left the machine parked at `:awaiting_model`, suppressing the
   reading for the rest of the session — silence that is just as dishonest.
-- `ctx N%` must agree with `.lain/state.json` `occupancy` and the journal's `compaction_decision`.
+- `ctx N%` must agree with the status feed's `occupancy` (`$XDG_STATE_HOME/lain/status/<hash>/state.json`,
+  not `.lain/state.json` since round 13) and the journal's `compaction_decision`.
+- **The layer lighters, all four of which now mean something** (round 17's F104 found them lighters
+  and nothing else). Each is checked against the behaviour it names, not just its letters:
+  - `AA` means the automatic approver is really on. `method.md` bans raising that layer during a
+    round, so check it off a launch: `lain chat --auto-approve --prompt /mode` answered
+    `accept_edits: auto_approve (AA)` (driven 2026-09-14).
+  - `GOAL` stands exactly while a goal drives. *Driven 2026-09-14*: `/goal <objective>` journaled
+    `mode_switch … to_layers: ["goal"] surface: goal`, `/mode` typed mid-drive answered
+    `accept_edits: goal (GOAL)`, and `/goal off` journaled the matching `from_layers: ["goal"],
+    to_layers: []`. `/mode +goal` with no goal refuses (`repl-commands.md` §1).
+  - `VI` switches the line editor at the next read. *Driven 2026-09-14* in a tmux pane: the prompt
+    after `/mode +vi` read `qwen3-coder:30b VI idle 0s` over `[ins]you>`, `Escape` made it
+    `[cmd]you>`, and `/mode -vi` gave back a plain `you>`.
+  - `BELL` rings on arrivals (§5).
 
 ## 8 — Fold state on the approval and inbox rows
 
@@ -772,7 +866,9 @@ nvim --server "$S" --remote-expr "foldclosedend(<row's first line>)"  # how far 
 
 `$QA/nv.sh fold <lnum>` wraps all three against the current window.
 
-Drive it against **two parked approvals**, matching the integration check's own wording:
+Drive it against **two parked approvals**, matching the integration check's own wording. **This is
+drivable now**: round 17 found the house model emits parallel tool calls, so two pendings coexist
+without a fixture.
 
 1. Force two gated calls so two rows exist in `lain://approval` (§5's three-call recipe works;
    answer one to leave two, or just read both before answering either).

@@ -132,6 +132,17 @@ any expression in `lib/` that recomposes the old one. `lain up` prints the resol
 looks for `.lain/state.json` finds nothing and has no reader to cross-check against.
 *Disagreement between them is the real failure;* a uniformly wrong number is the known one.
 
+**A fourth reading since 2026-09-14, and the one that used to lie low.** Round 17 found ollama
+silently truncating an over-window prompt and every reader believing the truncated count (F90:
+50%, then 16%, on a request that had lost its system prompt and tools). Lain now asks ollama not to
+truncate, so an over-window prompt is **refused** and journals `window_pressure kind=over_window`
+with the server's own `prompt_tokens` and `window_tokens`; that count becomes the run's reading, so
+compaction can fire on it (`rails-blog.md` §1b has the driven refusal). On an ordinary session
+`window_pressure` must be **absent**, and `input_tokens` must never fall below the previous turn's
+without one. **Known and not a finding:** the window book can keep a stale smaller runner's context
+after ollama reloads a bigger one, so occupancy can read near 100% and compaction fire early — a
+follow-up the discharging chunk recorded, not this section's defect.
+
 Cross-check the denominator too -- **but mind the LAG, which round 9 measured and which the old
 wording here got wrong.** `compaction_decision.used_tokens` equals the **PRECEDING**
 `turn_usage.usage.input_tokens`, not the following one: the decision is made *before* the turn and
@@ -383,6 +394,16 @@ Read the last one carefully: `default+reminder` repeats no WORD, and is refused 
 repeats, because `default` *is* `reminder+cache-breakpoints` and the workspace would be sent twice.
 A launch that accepts it is the regression.
 
+**The `default` tail is said only when `default` was typed** (since 2026-09-14; round 17's F123 found
+it on every repeated-part refusal). *Driven 2026-09-14*, `--context-pipeline prune+prune`, exit 1:
+
+```
+repeated part "prune" in --context-pipeline "prune+prune", expected one of ["default", "reminder", "cache-breakpoints", "prune", "dedupe-tool-calls", "purge-failed-inputs"], or several joined by "+"; each stage renders once
+```
+
+and `default+reminder` still ends `; each stage renders once, and "default" is
+reminder+cache-breakpoints` (driven the same day).
+
 **A word REPLACES the default; it does not add to it.** `prune` alone sends no workspace reminders
 and marks no cache breakpoints, and nothing degrades loudly, because nothing it requires is
 missing. A driver who launches `prune` into a real session and files "the todo list stopped
@@ -413,8 +434,8 @@ regression; a refusal for the second is too.
 - **`--resume` / `--fork`.** They do **not** inherit the recorded name: the resumed header carries
   whatever the new launch was given. Documented behaviour today, not a finding.
 - **`lain up PATH -- --context-pipeline <typo>`** refuses in the pre-flight, on the operator's own
-  terminal rather than in a dead tmux pane. Written from the code and **not yet driven**; a first
-  drive should expect to correct this line as much as to find a defect.
+  terminal rather than in a dead tmux pane, and creates no session. **Driven by round 17** — it held
+  as written.
 
 ## What this scenario does not cover
 

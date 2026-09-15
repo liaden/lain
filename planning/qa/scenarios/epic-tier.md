@@ -19,8 +19,12 @@ drive it against a local model on a two-issue fixture.
 **Needs:** a project directory and `git`. A throwaway GitHub repo for §12 (`finish`) only —
 everything up to and including local landing pushes nothing. nvim and tmux for §11 only.
 
-**This scenario has never been driven end to end.** Sections 0–9 were driven at the gate; §10–§13
-are new with the epic loop closing, and are the ones most likely to find something.
+**Rounds 13–17 have driven it, round 17 most of the way** (in a fork context: `finish` was a
+capability gap, and `--width 2`, Ctrl-C between issues and a stale attach token were not reached).
+Round 17's corrections are applied below, and the chunk that discharged its findings changed the
+fold, the gate's question, the advance rule, graph edits, the driver and gc — each section says
+where. Strings marked *driven 2026-09-14* were read off the built binary at `70c0782f` over a
+hand-written two-issue epic; everything else is a claim about the checkout it was written against.
 
 ---
 
@@ -33,18 +37,39 @@ and one that is `abandoned` — which is the case §2 turns on). For §10 you wa
 can actually be implemented by a small model in a fixture project: keep them tiny and independent.
 
 ```bash
-export QA_PROJ="$QA/epic-subject"; mkdir -p "$QA_PROJ"; cd "$QA_PROJ"
+export QA_PROJ="$QA/epic-subject"; mkdir -p "$QA_PROJ/.lain"; cd "$QA_PROJ"   # .lain too -- round 17
+git init -q .; git config user.email qa@example.invalid; git config user.name QA  # §10 commits here
 cat > .lain/config.toml <<'TOML'
 [epics]
 home = "xdg"
 TOML
 ```
 
+(Round 17's corrections: the `cat >` above failed with no `.lain/` to write into, and §10's red step
+failed "Author identity unknown" under the sandbox's redirected `XDG_CONFIG_HOME`, which hides the
+operator's git identity — `qa-sandbox.sh` now seeds one, and a subject repository should set its own.)
+
 **The issues live INSIDE `epic.md`, in that document's own markdown grammar — NOT as
 `issues/<id>.md` files with status frontmatter.** This paragraph said otherwise until round 13,
 which hand-wrote the layout as described, got a silent **zero** issues out of a non-empty `epic.md`,
 and then read `Epic::Document.parse_markdown` — `Graph.new(issues: Reader.new(source).issues)`,
-parsed from the epic document, with everything above the first heading dropped as preamble. Write
+parsed from the epic document. Everything above the first heading is **preamble**: it is not part of
+the graph or its digest, and since 2026-09-14 it is **kept** when a graph edit rewrites `epic.md`
+(§8). An issue is a heading of the shape ``### [ ] `id` Title``, with its criteria in a ```gherkin
+fence under it — the shape the driven subject used:
+
+````markdown
+Preamble: why this epic exists, in prose.
+
+### [ ] `greet` Greeting.hello returns hello
+
+```gherkin
+Scenario: the greeting says hello
+  Given the Greeting module
+  When hello is called
+  Then it returns "hello"
+```
+```` Write
 `epic.md` to that grammar and verify the count in `lain epic status` before building anything on top
 of it: a driver following the old wording gets `0/0 done` and `remaining: nothing -- every issue is
 done`, which reads like a finished epic rather than an unparsed one.
@@ -54,8 +79,10 @@ write into the path it names rather than reconstructing `<state_home>/epics/<pro
 hand. That path is a hash; a driver that guesses it writes a second epic nobody reads and then files
 "status shows nothing" as a defect.
 
-Runtime state is deliberately **absent** from that tree: an issue's status is the journal fold,
-never a file. If a round finds a status file there, that is the finding.
+**Corrected by round 17: part of an issue's status IS in that tree.** `done` and `abandoned` are the
+heading marks `[x]` and `[!]` in `epic.md` — §2 and §8 set them by editing the mark. What is
+deliberately absent is **runtime** state: `pending -> in_flight` and every gate decision are
+journal folds, never a file, so a status or queue file appearing beside `epic.md` is the finding.
 
 ## 1 — Where the home is, and the trap in `repo` mode
 
@@ -138,12 +165,15 @@ on a gate nobody is there to answer.
 ```bash
 printf '[epics.gates]\nreserch = "deferred"\n'        # "has no stages", naming the pipeline
 printf '[epics.gates]\nresearch = "defered"\n'        # "unknown gate policies", naming the known set
-printf '[epics]\ngates = "deferred"\n'                # "must be a table" -- note [epics], NOT [epics.gates]
+printf '[epics]\ngates = "deferred"\n'                # "must be a table", naming [epics.gates]
 ```
 
-Expected: `[epics.gates] has no stages "reserch"; the pipeline is research -> epic_plan ->
-issue_plan -> implementation`, and a policy refusal naming `interactive, hands_off, deferred,
-adjudicated`. **Every unknown key is reported in one pass**, not just the first — put two typos in
+*Driven 2026-09-14*, the third: `<path>: [epics.gates] must be a table, got String: "deferred"` —
+round 17 corrected this comment, which used to say the refusal names `[epics]`.
+
+Expected for the first two: `[epics.gates] has no stages "reserch"; the pipeline is research ->
+epic_plan -> issue_plan -> implementation`, and a policy refusal naming `interactive, hands_off,
+deferred, adjudicated`. **Every unknown key is reported in one pass**, not just the first — put two typos in
 and check both are named.
 
 **Then the property that makes this worth doing at launch at all:** `Policies.for_all` resolves
@@ -152,8 +182,9 @@ adjudication pair whenever ANY stage is configured `adjudicated`, and builds no 
 otherwise. So configure `implementation = "adjudicated"`, unset the provider's API key, and submit
 **`research`** — an entirely different stage. It must still refuse at wiring, before anything is
 journaled, naming the missing key. Then set every stage `interactive` and submit again with the key
-still unset: that must succeed, because a session with nothing to adjudicate never constructs a
-provider.
+still unset, **from a terminal**: that must succeed, because a session with nothing to adjudicate
+never constructs a provider. (From a pipe or `< /dev/null` it meets §5a's "stdin is not a terminal"
+refusal instead — a different wiring refusal, and not this one.)
 
 A run that submits `research` happily and only discovers the broken `implementation` wiring at 3am
 on the overnight gate is the regression. This check is the whole reason `for_all` exists, and it
@@ -171,8 +202,11 @@ lain epic submit issue_plan                          # NeedsIssue
 lain epic submit issue_plan --issue export-stream
 lain epic submit implementation --issue export-stream            # NeedsDigest
 lain epic submit implementation --issue export-stream --digest sha256:...
-lain epic submit reserch                             # UnknownStage
+lain epic submit reserch                             # unknown stage
 ```
+
+*Driven 2026-09-14*, the last (round 17 corrected the text this section expected):
+`name must be one of research -> epic_plan -> issue_plan -> implementation, got "reserch"`, exit 1.
 
 Exact refusals, and each **ends with the command that would work**:
 
@@ -204,25 +238,35 @@ peek(){ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 
 ### 5a — `interactive` (the default)
 
-A `y/N` prompt on the streams the command was handed. `y`, `yes` and `approve` are affirmative;
-**everything else including EOF is a refusal**, which is the fail-closed default.
+A `y/N` prompt on the command's terminal. `y`, `yes` and `approve` are affirmative; **everything
+else is a refusal**, which is the fail-closed default.
 
-```bash
-printf 'y\n'  | lain epic submit research
-printf 'n\n'  | lain epic submit research
-printf ''     | lain epic submit research      # EOF -> denied
+**Corrected by round 17: the answers cannot be piped.** This section used to drive `printf 'y\n' |
+lain epic submit research`; an interactive gate refuses a stdin that is not a terminal before it
+asks anything, so every piped line tests the refusal below and none tests an answer. **Drive `y`,
+`n` and end-of-input in a tmux pane** (type `y`, `n`, and Ctrl-D at the prompt, one submit each),
+and read the `gate_decision` after each. **End-of-input is not a human's answer** since 2026-09-14:
+it journals `answered_by: eof`, where round 17 found `answered_by: human` (fork E3). *(Prediction, not
+yet driven.)*
+
+Then the refusal, which is what a pipe or `< /dev/null` reaches. It used to print a backtrace, then
+the jargon `… but this session is missing asker` (round 17). *Driven 2026-09-14*, both
+`lain epic submit research < /dev/null` and `printf 'y\n' | lain epic submit research`, exit 1:
+
+```
+epic stage "research" is configured for the "interactive" gate policy, but stdin is not a terminal, so nobody can answer it; set research = "hands_off" or "deferred" in [epics.gates] to decide it unattended
 ```
 
-Then the case that used to print a backtrace: **a non-interactive session configured `interactive`**.
-`Prompt.on` judges BOTH streams, so a half-wired session must refuse by name rather than reach
-`nil.write` from inside the reactor.
+**And an unattended submit of a stage that is NOT interactive proceeds**, even when another stage
+still is. Round 17 found `research = "hands_off"` refused because `implementation` was left
+interactive (fork E2). *Driven 2026-09-14*, `[epics.gates] research = "hands_off"` and nothing
+else, `< /dev/null`, exit 0:
 
-```bash
-lain epic submit research < /dev/null > /dev/null   # neither stream a tty
 ```
-
-Expect a named `Lain::Error` through the exe's mapping — one clean line, exit 1, **no backtrace**. A
-`NoMethodError` here is the round's finding.
+approved blake3:…
+  research for epic demo (42 bytes)
+  research completed, epic_plan started
+```
 
 ### 5b — `hands_off`
 
@@ -244,7 +288,11 @@ lain epic submit research
 ```
 
 Expected: a `gate_evidence` record for the spike, and a terminal `gate_decision` with `policy:
-"adjudicated"`. **The uncertain branch is what to push on** — an adjudicated gate that never parks
+"adjudicated"`. **Corrected by round 17: a gate the adjudicator parks is journaled with `policy:
+"deferred"` and `answered_by: "gate_adjudicator"`**, and the command says so the way any deferred
+submit does — `deferred blake3:… / parked in <epic>/research -- nothing advanced / review it: lain
+epic queue <epic>`. Read both fields; a parked adjudication reading `policy: adjudicated` would be
+the collapse §5 warns about. **The uncertain branch is what to push on** — an adjudicated gate that never parks
 anything is one that has stopped adjudicating. Drive it a second time against a deliberately
 ambiguous artifact (a `research.md` holding one sentence and no acceptance criteria) and confirm it
 parks rather than approving.
@@ -263,6 +311,9 @@ printf '[epics.gates]\nresearch = "deferred"\n' > .lain/config.toml
 lain epic submit research          # parks
 lain epic submit epic_plan         # MUST refuse: StageBlocked
 ```
+
+*Driven 2026-09-14*, exit 1: `epic "demo" cannot open its epic_plan stage -- research still holds
+sign-offs parked (approve or deny them before the boundary opens)`.
 
 Then the half that proves the key is a **pair** and not a global:
 
@@ -284,8 +335,38 @@ let the next fold see the partition drained.
 lain epic queue
 lain epic approve <digest> --reason 'read it, it is fine'
 lain epic queue                                   # the row is gone
+lain epic status                                  # and the epic ADVANCED
 lain epic deny <unknown-digest>                   # UnknownDigest, and it LISTS what IS parked
 ```
+
+**An approval from the queue advances the epic** since 2026-09-14. Round 17 found approving
+`research` or `epic_plan` here wrote no `stage_transition`, so `lain epic status` stayed at `stage
+research` forever and no command could repair it (F112). One rule now decides what an approval
+advances, whichever surface approved it, and a standing approval with no transition is repaired by
+the next `lain epic submit` of that stage. *Driven 2026-09-14*:
+
+```
+$ lain epic queue
+1 gate parked for sign-off, ready-to-review first
+research  epic demo  waiting 3s
+  question:  <not recoverable from the journal>
+  artifact:  blake3:3ad9c6cb…
+  evidence:  <none -- no spike ran>
+$ lain epic approve blake3:3ad9c6cb… --reason 'read it, it is fine'
+signed off blake3:3ad9c6cb…
+  demo/research — approved by human after 36s
+  research completed, epic_plan started
+$ lain epic status
+epic `demo` — stage epic_plan — 0/3 done, 0 in flight, 0 gates parked
+```
+
+(Three issues because the status was read after §8's `add`; the stage is the assertion.)
+
+**Issue-scoped rows name their issue** (round 17's fork E15 found implementation rows that did not):
+two parked `issue_plan` gates listed as `issue_plan  epic demo  issue greet  waiting 3s` and
+`issue_plan  epic demo  issue shout  waiting 1s` (driven the same day). And the evidence cell says
+`<none -- no spike ran>` when the policy gathered nothing, where round 17 read `<none gathered -- the
+spike did not answer>` for a spike that never ran.
 
 **The honest empty is the check nobody thinks to make.** The empty rendering must name the directory
 it read **and what it understood there** — lines seen, records kept, lines it could parse nothing
@@ -314,11 +395,18 @@ lain epic merge left-id right-id --as=merged-id --title="One issue instead of tw
 
 What to check, because the edge rewrite is the whole point:
 
+- **the preamble survives.** Round 17 found `add`, `split` and `merge` deleting everything above
+  the first heading (F117). *Driven 2026-09-14*: after `lain epic add late-discovery "Something the
+  work turned up" --discovered-from=greet` (`add applied to epic \`demo\`: (none) -> \`late-discovery\``),
+  `epic.md` still opened with its preamble line. The graph digest ignores the preamble, so editing
+  only the prose never moves a digest;
+
 - after a **split**, every part carries the original's outbound edges, **every part's provenance is
   the split issue** even if it declared its own, and the original is gone from the graph while its
   id survives in `Discovered from:`;
 - after a **merge**, the result carries both sides' edge sets minus the self-references the rewrite
-  would otherwise create;
+  would otherwise create, **and a `Discovered from:` both sides share** — round 17 found merge
+  dropping it (fork E7) *(prediction, not yet driven)*;
 - after each, `lain epic status` shows a graph with **no dangling `Blocks:` edge**.
 
 Then the trap that fails silently: **abandoning a blocker does not unblock what it blocked.** Mark a
@@ -326,22 +414,45 @@ blocker `[!]` and confirm its dependents are still not `ready`. Unblocking is an
 
 ## 9 — The fold must abort, never read empty
 
-`SignoffQueue.from_journal` raises on a record it cannot read whole, and **nothing in `EpicQueue`
-rescues that**. The ergonomic response — an empty queue on failure — is maximally fail-open: an
+The ergonomic response to a record nobody can read — an empty queue — is maximally fail-open: an
 empty queue reads as drained, drained opens the next stage, and the stage opens over work nobody
-signed off.
+signed off. **Round 17 found exactly that** (F93): the fold read through `Journal.records`, which
+skips an unparseable line, so with the parked `research` line halved `lain epic submit epic_plan`
+returned **0** and parked `epic_plan` beside a research gate nobody had decided, while `lain epic
+queue` said "nothing parked" with a warning. (This paragraph used to claim the fold raised and
+nothing rescued it; it did not.) A parseable but malformed record died with ~30 frames of
+`ArgumentError` instead (F114).
+
+**Since 2026-09-14 every sign-off fold is strict by default, and only the queue LISTING is lenient.**
+A torn line whose type is unreadable, `gate_decision` or `stage_transition` refuses the fold, naming
+the file and the line; a torn line of any other type is counted and skipped.
 
 Park something, then damage its `gate_decision` record — truncate the line mid-object, and
-separately flip one byte of `artifact_digest`:
+separately make it parse with a bad value:
 
 ```bash
-lain epic queue              # MUST refuse by name, exit 1, no backtrace
-lain epic submit epic_plan   # and the boundary check must refuse too, not silently pass
+lain epic submit epic_plan   # MUST refuse by name, exit 1, no backtrace -- the one that proves it
+lain epic status             # refuses too
+lain epic queue              # the LISTING warns; it does not claim the queue is complete
 ```
 
-The second command is the one that proves it. A queue that refuses on the read but a **boundary
-check that quietly treats an unreadable partition as drained** is the same fail-open bug one layer
-down, and it only shows if the round drives a submit after the damage.
+*Driven 2026-09-14*, the line halved:
+
+```
+$ lain epic submit epic_plan        (exit 1; lain epic status the same)
+the session journal <sessions>/<file>.ndjson is damaged at line 1 (a torn gate_decision record) -- move the damaged file aside or repair the line; nothing was decided
+$ lain epic queue                   (exit 0)
+nothing parked for sign-off (folded 1 journal under <sessions>: 1 line, 0 gate records)
+WARNING: 1 line could not be parsed as journal records. A parked sign-off could be among them, so this listing is not proven complete.
+```
+
+and with `"approved":"maybe"` in place of `false`, `queue`, `submit epic_plan` and `status` each
+exit 1 with the one line
+`the gate_decision record for "blake3:…" in "demo/research" cannot be read (approved must be true or false, got maybe) -- repair the line or move its session file aside; nothing was decided`.
+`lain epic land` and `finish` over a torn implementation `gate_decision` refuse the same way
+*(prediction, not yet driven)*. **The listing's rc=0 is correct; a SUBMIT at rc=0 is F93 back.**
+(Round 17 withdrew the flipped-digest-byte variant: it fails closed as an unknown partition, not as
+a drained one.)
 
 Restore the journal afterwards and confirm both commands come back — a scenario that leaves the
 subject broken cannot tell a fix from a corpse next round.
@@ -350,6 +461,13 @@ subject broken cannot tell a fix from a corpse next round.
 
 This is the new half, and it has never been driven. It needs the epic's issues **approved**, a
 `[tests]` table (§13), and a `Subject:` line in each issue's plan.
+
+**Two things round 17 had to learn before §10 worked, both preconditions rather than findings.** The
+subject repository needs a git identity the red step can commit under (§0), and the `[tests]` table
+may live in a **gitignored** `.lain/config.toml` — the conventional place — since 2026-09-14: the
+driver reads the layout once from the project root, where round 17's driver read it from each
+issue's worktree and blocked every issue for want of a file git never checked out (F115). A
+`[tests]`-missing refusal naming the worktree rather than the project is that defect back.
 
 ### 10a — what an issue needs before it can start
 
@@ -408,6 +526,10 @@ What to watch for:
   the failing-test commit exists and that the tests in it actually fail;
 - **generated tests that already pass are refused** — if the red step reports examples ran and none
   failed, nothing is committed, because tests that pass before any work check nothing;
+- **an actor that committed nothing opens no gate.** Round 17 found the implementation gate opening
+  over the red commit alone (F111). The issue is now reported as `its actor settled having committed
+  no work beyond its failing tests at <sha>, so there was no implementation to submit`, and no
+  implementation gate opens *(prediction, not yet driven)*;
 - **a per-issue refusal stops that issue, never the run.** Break one issue deliberately (an
   unsatisfiable criterion) and confirm the other still lands;
 - **Ctrl-C stops between issues**, not mid-merge. Work still in flight is reported as unsettled.
@@ -419,11 +541,30 @@ At most **one** gate may be outstanding at a time, and a gate that is denied or 
 withdrawn question that was left outstanding killed the following gate, and it is invisible until
 the second issue.
 
+**The gate's question arrives as an inbox question in the chat** (round 17's correction): in a
+cockpit that is the one-line `? … -- answer in lain://inbox, or /inbox` arrival and the `command>`
+reader (`cockpit-surfaces.md` §5b); in a `--no-nvim` chat, `human>`. **And a settled gate retires its
+question from EVERY reader** since 2026-09-14. Round 17's timed-out implementation gate (`answered_by:
+timeout`) left `lain://inbox` listing the question, `inbox_count` at 1, `:LainReply` answering
+"stale", `/inbox` saying none pending while `/status` said 1, and `fleet 1` long after the run said
+`0 landed` (F100). Drive one timeout (the window is 300 s) and one answer, and after each confirm
+`lain://inbox` is empty, the status feed's `inbox_count` is 0, and `/inbox` and `/status` agree.
+*(Prediction, not yet driven.)* An answer given in nvim is journaled as the human's words, not as a
+denial.
+
 ### 10e — retries
 
 The attempt is derived from the anchors already in the repository. Stop a run mid-issue, then drive
 `/implement-epic` again: the issue must **launch a new attempt** rather than being refused because
 the first attempt's anchor still stands.
+
+**Round 17 found the retry WEDGED, and not on the anchor** (F99): the failed issue's lease was retained
+dirty for 7 days and still had `lain/issue/<slug>/<id>` checked out, so the retry died with `… could
+not be checked out … already used by worktree at …/retained/…`, `lain worktrees gc` kept it, and only
+`git worktree remove -f -f` got past. Since 2026-09-14 a retained checkout anchors its HEAD and
+**detaches**, keeping its files and letting go of the branch. Drive a per-issue refusal, then the
+retry: it must launch, and `git -C <retained path> status` must still show the uncommitted work.
+*(Prediction, not yet driven.)*
 
 ## 11 — The `lain://status` buffer
 
@@ -482,12 +623,26 @@ branch. Check that a re-run over an already-`MERGED` PR reads as done rather tha
 and that moving the `epic/<slug>` tip and finishing again is treated as a **new** finish.
 
 **Known gap, and not a finding:** a merge whose handback record never reached the journal refuses
-both `land` and `--resume`, and there is no command to adopt it. If you hit it, record it; it is a
-recorded follow-up.
+both `land` and `--resume` — **with the same refusal** (round 17) — and there is no command to adopt
+it. If you hit it, record it; it is a recorded follow-up.
+
+**The landing checkout is locked while a run holds it** since 2026-09-14 (round 17's F116 found gc
+reaping a fresh, unlocked landing worktree as "landed on main" while an `--epic` cockpit was live).
+A landing that finds its checkout held by something else refuses rather than merging in it, naming
+the holder — `lain's landing checkout at <path> is leased by live process <pid> on <host>, so this
+run will not merge in it -- stop whatever holds it, or `git worktree unlock` it …` *(prediction, not
+yet driven)*; the run's end releases the lock, Ctrl-C included.
 
 ## 13 — Test layout, and worktree GC
 
 ### 13a — `[tests]` is opt-in
+
+**Deferred by the human, and not a finding: `lain chat` WARNS where `lain epic` and `lain worktrees gc`
+REFUSE.** Round 17 (fork E16) found a `[tests]` or `[isolation]` typo launching a chat with a warning
+while the epic commands refuse the same file, against `TestLayout`'s docstring that a typo "is
+refused". Which way to settle it is Open decision 1 of the discharging chunk, not taken. Drive the
+refusals below through `lain epic status` or `lain worktrees gc`, and record what `lain chat` does
+with the same file as the known asymmetry.
 
 **With no `[tests]` table, nothing is refused.** Confirm that first, because it is the default every
 target project starts in: drive a write to a badly-placed test file and check it goes through, with
@@ -526,12 +681,20 @@ lain worktrees gc
 - a stray claim file keeps the tree;
 - a second concurrent `gc` does nothing and says so.
 
-Then the launch-gated run: remove the stamp under `$XDG_STATE_HOME/lain/gc/` and start `lain` — it
-must spawn exactly **one** detached gc run and renew the stamp. Start `lain` twice in quick
-succession with a stale stamp and confirm only one run starts.
+- **a checkout still at the commit lain cut it at is not "landed"** (since 2026-09-14): gc keeps it
+  as `nothing has landed since it was cut; retained until <date>`, where round 17 reaped a fresh
+  landing checkout as landed on `main` *(prediction, not yet driven)*;
+- **a live run's landing checkout is kept as held**, by its lock.
+
+Then the launch-gated run: remove the stamp under `$XDG_STATE_HOME/lain/gc/` and start **`lain chat`**
+— round 17's correction: it is the chat that schedules gc, not any `lain` command — it must spawn
+exactly **one** detached gc run and renew the stamp. Start two chats in quick succession with a
+stale stamp and confirm only one run starts (round 17 saw the loser print `another lain worktrees gc
+is running for <project>; this run did nothing`).
 
 ### 13c — `[isolation]`
 
 Drive the refusals, each naming the key and what would have been legal: `retain_days = 0`,
 `rebase_retries = -1`, `diff_algorithm = "histogram "`, `conflict_style = "zdiff"`, and an unknown
-key. Then set `rebase_retries = 0` and confirm worker self-sync is genuinely off.
+key — through `lain epic` or `lain worktrees gc`, since `lain chat` only warns (the deferred
+asymmetry in §13a). Then set `rebase_retries = 0` and confirm worker self-sync is genuinely off.

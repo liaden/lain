@@ -85,7 +85,11 @@ session-killer worth stopping the round for.
 - **The wedge needs the right grammar.** `Skill::Invocation` parses `/skill` as *inline* and
   `@role[/skill]` as a *fresh-context spawn*, and **only the second reproduces it.** Type literally
   `@researcher[/critique] <path>`. An inline `/execute-plan` does not exercise this.
-  Expect the arrival note, a `human>` prompt, an answer taken, and a return to `you>`.
+  Expect the arrival note, a `human>` prompt, an answer taken, and a return to `you>` — **in a
+  `--no-nvim` chat**. In a cockpit (since 2026-09-14) the arrival note is one line,
+  `? <asker> <question>  -- answer in lain://inbox, or /inbox`, the chat reads `command>` rather than
+  `human>`, and the answer goes in through `lain://inbox` (`:LainReply`) or `/inbox`; prose typed at
+  `command>` is held as the next prompt, never taken as the answer (`cockpit-surfaces.md` §5b).
 - A gated tool **inside** a spawn must reach the approval surface, and `/inbox` must still work.
 - **Take one ordinary turn BEFORE typing the wedge.** A session whose only activity is a wedge
   journals no `turn` records at all — only `child_turn` — so `lain sessions` shows `0 turns` and
@@ -108,9 +112,13 @@ So drive **both doors**, and both must exit 0:
 
 ```bash
 lain sessions                                    # take the head digest of the spawned session
-lain chat --fork SESSION@DIGEST   < /dev/null    # exit 0   (banner: SESSION@DIGEST)
+lain chat --fork SESSION@DIGEST   < /dev/null    # exit 0
 lain chat --resume SESSION        < /dev/null    # exit 0   (bare --resume picks the newest)
 ```
+
+**Corrected by round 17: `--fork` prints no `SESSION@DIGEST` banner.** The line above used to expect
+one; judge the door by its exit status and by the forked session's header in `lain sessions`, not by
+a banner.
 
 **Keep the control, and run it in the same act:** a session with **no `message` records** -- one
 that never spawned -- which has always forked at its head. The pair is what distinguishes "the
@@ -154,6 +162,10 @@ neither should ever appear here. Driving that one deliberately belongs in
 plain turns links via `parent`. Round 4's journals had no `causal_parents` at all.
 
 ## 3 — Grade it, then `/critique` it
+
+**`/critique` here is the skill, inline**, because no `/review` is held in this act. With a review
+held, `/critique` critiques the held changeset in window-sized chunks instead
+(`changeset-review.md` §6); do not open a review first and expect this act's behaviour.
 
 Run the oracles. Then ask: are the model's own specs meaningful or vacuous? Does the code read like
 something a person would keep?

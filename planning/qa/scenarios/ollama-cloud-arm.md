@@ -92,6 +92,15 @@ said 262,144. Enumerate `CLOUD_WINDOWS.keys`; do **not** sample one tag per mode
 dated and `preview` tags are genuinely different builds. That assumption is exactly what hid the
 third row.
 
+**A row can also go stale the other way: the tag is retired.** Round 17 enumerated 23 rows, found
+none over-claiming its `context_length` (21 checked), and found two — `deepseek-v4-flash:preview-cloud`
+and `deepseek-v4-pro:preview-cloud` — whose `/api/show` answers "was retired at …" (F126). Both rows
+were removed on 2026-09-14. *Driven 2026-09-14* through `/ruby`: `CLOUD_WINDOWS.size` is **21**, and
+the remaining `deepseek` keys are `deepseek-v4-flash:cloud`, `deepseek-v4-flash:0731-cloud`,
+`deepseek-v4-pro:cloud` and `deepseek-v4-pro:0813-cloud`. So a refresh reads `/api/show` for retirement
+as well as for the bound; a retired tag must resolve as not published rather than as its old window.
+§3's 128,000-token published window was confirmed by round 17.
+
 ## 5. One real turn, and the WAL behind it *(costs ~2 completions)*
 
 ```bash

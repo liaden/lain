@@ -113,10 +113,13 @@ lain chat --root "$(pwd)" --provider ollama --model qwen3-coder:30b < /dev/null
 Must refuse:
 
 ```
-unknown role slot file ".../.lain/slots/role/chef.md"; known roles: dev, test-engineer, ...
+unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto-approver, court-clerk, dev, diff-critic, diff-docent, gate-adjudicator, harness-improver, issue-orchestrator, merge-resolver, meta-harness, meta-summarizer, researcher, reviewer-code, reviewer-dba, reviewer-security, reviewer-sre, test-engineer
 ```
 
-naming all 14 shipped roles, not a truncated sample. Delete the fixture and confirm the session
+naming **all 17** shipped roles, alphabetically, not a truncated sample. *Driven 2026-09-14*, exit 1,
+verbatim above. **The count moves; re-derive it** from `Lain::Role::Catalog.names.size` through
+`/ruby` rather than from this line — it read 14 until round 17 counted 16, and `diff-critic` (the
+read-only role `/critique` spawns per chunk over a held review) joined on 2026-09-14. Delete the fixture and confirm the session
 launches clean again before moving on — a refusal that leaves the tree in a state the NEXT launch
 also refuses from is its own small finding.
 

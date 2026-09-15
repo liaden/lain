@@ -17,11 +17,19 @@ launch-level and needs no model.
 **Needs:** `git` (§3), `docker` on PATH (§4 only — skip it by name if absent, do not silently pass).
 `bench.md` up. tmux for §6.
 
-**One hard precondition, from `IsolationBackend`'s own doc:** `--isolation worktree` keys its
-checkout root on the **repository**, and worker ids restart from 1 per process. Two concurrent
-worktree runs of one project therefore target identical paths, and the second run's reap would
-force-remove the first's **live** checkout. **One isolated run per project at a time** — check
-nothing else is running before §3, the way `method.md` has the driver check for `parallel_rspec`.
+**The precondition this section used to state is corrected by round 17.** It said
+`--isolation worktree` keys checkouts on the worker id, that ids restart per process, and that a
+second run's reap would force-remove the first's live checkout. Round 17 measured otherwise:
+**leases land at random-id paths** (`…/worktrees/<repo hash>/<random id>`), so two runs do not
+target one path and there is no reap-before-add. Keep one isolated run per project anyway — it is
+what keeps `git worktree list` readable — but do not drive a collision this section no longer
+predicts.
+
+**And the chat's `subagent` tool is ONE-SHOT only** (round 17): actor mode is wired for the epic
+orchestrator alone, so every check below that needs a model-dispatched actor — §3's adoption,
+nested-spawn-at-a-third-path and the depth cap, §5's live-actor tail — has **no chat path**. Mark
+those *unreachable from chat* in the findings rather than dropping them silently; `epic-tier.md`
+§10 is where an actor runs.
 
 ---
 
@@ -80,20 +88,37 @@ Read the journal for the causal edges — this is the record round 5 produced 29
 into and never saw rendered anywhere:
 
 ```bash
-ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-  puts "#{r["type"]}\t#{(r["spawn_digest"]||r["parent"]||"")[0,12]}" if %w[spawn child_turn message].include?(r["type"])}' "$JOURNAL"
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  next unless %w[message child_turn].include?(r["type"])
+  puts "#{r["type"]}/#{r["kind"]}\t#{r["digest"].to_s[0,19]}\tcauses=#{Array(r["causal_parents"]).map{|d| d[0,19]}}"}' "$JOURNAL"
 ```
 
-A `spawn` must precede its `child_turn`s, and every `child_turn` must name a `spawn` present in the
-file. A dangling parent is `failure-injection.md` §3's damage, occurring naturally.
+**There is no `spawn` record type** — a spawn is a `message` record of `kind: spawn`, its completion
+a `message` of `kind: message`, and each child turn a `child_turn` record. (The reduction here used
+to grep a `spawn` type and printed nothing.) A spawn must precede its `child_turn`s, and every
+completion must cite its spawn among its `causal_parents`. A dangling edge is `failure-injection.md`
+§3's damage, occurring naturally.
+
+**Two parallel spawns doing different work take different addresses** since 2026-09-14: a one-shot
+spawn's body carries `task`, a digest of its prompt, beside `prefix`, `posture`, `only` and
+`spawned_from`. Round 17 journaled two identical `message kind=spawn` records for two different
+prompts in one turn (F97), and `--windows` and `lain watch` collapsed the twins. Ask for two
+subagents with different prompts in one message and confirm two distinct spawn digests. **Two spawns
+of an IDENTICAL prompt from one head still share one address, by decision** (the discharging chunk's
+Open decision 5) — do not file that. *(Prediction, not yet driven.)*
 
 Then the depth cap: ask for a subagent that spawns a subagent that spawns a subagent. The refusal
 **emits no event and touches no Store** — so check both halves. A depth refusal that journals a
-`spawn` record has created a child that does not exist, and every later fold counts it.
+spawn has created a child that does not exist, and every later fold counts it. **Unreachable from
+chat as of round 17** (a one-shot child's toolset does not spawn); record it so.
 
-**The subagent gets a FRESH root** whose `meta["spawned_from"]` names the parent's head. Confirm
-both directions: the lineage survives (the field is there and resolves), and the child **never
-inherits the parent's prompt**. Put a distinctive sentence in the parent's context — a `/btw`-worthy
+**The subagent's chain starts at a FRESH root, and its lineage lives beside the chain, never in
+turn `meta`.** This paragraph used to say the child's root carries `meta["spawned_from"]`; that
+shape was never written in production, and every lineage reader that walked it found nothing (round
+17's F98). The `:spawn` message's payload names the parent's head as `spawned_from`, the completion
+`message` names the spawn and the child's final turn, and the session file holds each child turn as
+a `child_turn` record. Confirm both directions: the lineage survives (the spawn's `spawned_from`
+resolves to a parent turn), and the child **never inherits the parent's prompt**. Put a distinctive sentence in the parent's context — a `/btw`-worthy
 aside, a memory item — and confirm it is absent from the child's request.
 
 ## 3 — `actor` mode, and `--isolation worktree`
@@ -127,7 +152,10 @@ What to check, in order:
    release — that appear/disappear pair is the whole of what "actually leased" means to a driver
    watching from outside the process, and it is the check that catches a lease acquired but never
    reclaimed as cleanly as one never taken at all.
-3. **The `isolation_lease` records.** They must name the concrete backend that actually isolated the
+3. **The `isolation_lease` records — which reach the session file only since 2026-09-14.** Round 17
+   watched a lease appear and disappear in `git worktree list` in a session holding **zero**
+   `isolation_lease` records: they went to the chat's display channel and were dropped (F92). A zero
+   here is that defect back. They must name the concrete backend that actually isolated the
    worker (`Isolation::Worktree`) rather than a decorator over it — the journal wraps **nearest** the
    concrete backend, exactly **once**. A doubled lease record is the second-wrap bug, and it corrupts
    lease accounting silently. Confirm one acquire/release pair per dispatch, and that an ordinary
@@ -141,18 +169,29 @@ What to check, in order:
    decoration is a legibility policy: what it buys is that an undecorated run stays identifiable.
    Check the two runs' records differ in shape, not just in a name field.
 
-Then the reap, which is where the real-`git` seams are:
+Then the crash, which is where the real-`git` seams are:
 
 ```bash
 # kill the session hard, mid-lease
-lain chat ... &  # then SIGKILL it while the actor holds a worktree
+lain chat ... &  # then SIGKILL it while a one-shot child holds a worktree
 git worktree list                      # a leftover checkout
-lain chat --isolation worktree ...     # the NEXT run must reap it before its own add
+lain worktrees gc                      # what happens to it
 ```
 
-**Reaping a crashed run's leftovers before the next add is exactly the trade the repo-keyed root
-buys**, and it is the only thing that stops the checkouts leaking forever. Confirm it happens, and
-confirm it discards uncommitted work in the leftover (documented) rather than refusing.
+**Corrected by round 17: nothing reaps a crashed lease before the next add, and gc KEEPS a dirty
+one.** Leases are random-id paths, so the next run adds beside the leftover rather than over it, and
+`lain worktrees gc` reports `kept worktree <path>: uncommitted changes; retained until <date>` — a
+dirty crashed checkout is retained for 7 days (`[isolation] retain_days`), never discarded. That is
+the design: nothing a worker made is thrown away unasked.
+
+**Since 2026-09-14 a retained checkout also lets go of its branch.** Round 17's epic driver could
+not retry an issue because the retained dirty lease still had `lain/issue/<slug>/<id>` checked out
+(F99). A retained or moved-aside checkout now anchors its HEAD and **detaches** it; the files stay.
+Check `git -C <retained path> symbolic-ref -q HEAD` exits non-zero and `git switch <that branch>`
+works in a fresh worktree. And gc no longer calls a fresh checkout "landed" just because its HEAD is
+reachable from `main`: a checkout still at the commit lain cut it at is kept as `nothing has landed
+since it was cut; retained until <date>`. *(Prediction, not yet driven: strings read from
+`isolation/gc.rb`.)*
 
 Finally the loud case: `Refused` when `git worktree add` fails or the path is already leased. Create
 the target path by hand before the acquire and check the refusal names the path and the worker id.
@@ -181,22 +220,29 @@ Then the backend's own behaviour:
 - `--exec-image` selects the image; the default is `alpine:latest`. Drive a command that exists in
   one image and not another (`bash --version` under `alpine` vs a debian image) and confirm the
   result differs. A `--exec-image` that changes nothing is a flag being read and dropped.
-- **A pipe is refused, by name.** `docker run` takes one argv and a pipe needs a shell, so the
-  backend has no way to serve one: `run: cat lib.rb | wc -l` must produce the named `Unsupported`
-  refusal, not a shell error from inside the container and not a silent single-command run.
+- **A pipe runs, through `sh -c` inside the container.** This bullet used to expect a named
+  `Unsupported` refusal; that was replaced when the term arm learned to fall back to the model's own
+  string (`shell-terms.md` §7 drives it, and its `shell_arm` record reads
+  `"verdict":"allow","arm":"string"`). Round 17 ran `cat lib/b/b.rb | wc -l` under `--exec docker`
+  at exit 0, and the `--exec` help now says so (*driven 2026-09-14*: "`docker` takes one argv, so a
+  pipeline it cannot reconstruct falls back to the model's own string, run as `sh -c` INSIDE the
+  container").
 - **The timeout kills the client.** Drive `sleep 600` against the deadline and confirm the named
   `Timeout` rather than a hang. This is the same shape as `rust-cli.md`'s long-running-command
   section, one backend over.
 - **A stopped daemon surfaces as a tool error**, named in the class doc rather than pretended away.
   Stop the daemon mid-session and confirm the model gets a legible tool error and the session
-  survives. A session that dies because docker did is worse than the error.
+  survives. A session that dies because docker did is worse than the error. **On this box `docker`
+  is podman's emulation, which has no daemon to stop** (round 17) — say so rather than marking the
+  bullet passed.
 
 And the control that makes the section mean anything: run the **same three commands** under
 `--exec local` and diff the results. Different toolchains, same gate, same refusal vocabulary.
 
 ## 5 — `lain watch`
 
-The one surface that renders a single actor's lineage, and it has never been driven.
+The one surface that renders a single spawn's lineage. Round 17 drove it over one-shot spawns (a
+live actor has no chat path, see the top of this file).
 
 ```bash
 lain watch                        # no selector -- EmptySelector
@@ -205,6 +251,13 @@ lain watch zzzz                   # a prefix matching nothing
 lain watch <spawn-digest-prefix>  # from §2 or §3
 lain watch <prefix> --session <path>
 ```
+
+**A bare hex prefix works since 2026-09-14**, as it does for `/pin`, `/rewind` and `--fork`; round
+17 found only the `blake3:` spelling matched (F119). *Driven 2026-09-14* against a recorded chat
+session: `lain watch bfc36418ae69 --session <file>` rendered
+`[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
+same as the full digest. **A no-match names the file it searched**: `lain watch zzzz --session
+<file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1.
 
 `EmptySelector` must say what a selector is: `selector must be a spawn-digest prefix, got ""`. With
 no sessions at all, `NoSession` must name the directory it read **and what it skipped** — the
@@ -232,12 +285,20 @@ session journal, so the combination is incoherent and is documented as incompati
 produces windows that tail nothing.
 
 Outside `$TMUX` it must also refuse, at launch, naming the requirement — not open zero windows and
-say nothing.
+say nothing. Round 17 found it launched silently (F118). *Driven 2026-09-14*, `env -u TMUX lain chat
+--windows`, exit 1:
+
+    --windows opens panes in the tmux session this process is already inside, and $TMUX is not set -- start tmux first, or drop --windows
+
+`lain up`'s own pre-flight, run from a shell outside tmux, must **not** refuse the same flag — the
+chat it launches will be inside the session `lain up` creates.
 
 Then, inside tmux, spawn two subagents and check:
 
-- **one window per spawn**, named by the actor's handle rather than by an index (an index makes two
-  concurrent spawns indistinguishable);
+- **one window per spawn**, named by the spawn's digest (round 17: `subagent-a6bd8454`) rather than
+  by an index. Two concurrent spawns of **different** prompts must now open **two** windows — round
+  17's F97 opened one for both — and the HUD's `fleet` must count two until each completes.
+  *(Prediction, not yet driven.)*
 - a window whose actor **finished** says so rather than sitting on a dead tail;
 - **closing a window does not kill the actor.** The window is an observer; if closing it stops the
   work, `lain watch`'s read-only claim is false in the one place it is easiest to break.

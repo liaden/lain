@@ -1,7 +1,7 @@
 # Scenario: the arm driver
 
-**What it exercises:** `lain bench arms` — the orchestration arms (single-thread,
-orchestrator-worker, dual-ledger), the grader, the token ledger, and since 2026-08-18 the **cost
+**What it exercises:** `lain bench arms` — the **four** orchestration arms (single-thread control,
+orchestrator-worker, dual-ledger, adaptive-router), the grader, the token ledger, and since 2026-08-18 the **cost
 column and the attribution header**: whether the report says what produced it, and whether it
 refuses to quote a price it cannot stand behind.
 
@@ -13,12 +13,35 @@ GPU evicts the first, which is a measured 84.0s against 7.5s.
 ---
 
 ```bash
-lain bench arms spec/fixtures/arms/tasks.yml --provider ollama --model qwen3-coder:30b
+lain bench arms spec/fixtures/arms/tasks.yml --provider ollama --model qwen3-coder:30b \
+     --cheap-model qwen3:4b --isolation worktree --journal "$QA/records/arms.ndjson"
 ```
+
+**Run it from a scratch git repository, not from lain's checkout** — `--isolation worktree` needs a
+repository to branch checkouts from, and the sandbox's is the one to lend it (the 2026-09-14 drives
+below ran from an empty-commit repository with the fixture named by absolute path).
 
 `--provider` defaults to the literal `"anthropic"` rather than through `EnvDefaults`, so `.envrc`'s
 `LAIN_PROVIDER` does **not** reach it and the command refuses on a missing key. `--isolation` unset
 is not `none`, and `--journal` without `--isolation` refuses.
+
+**Round 17 could not run this scenario at all, and two corrections came out of trying.** Both
+refusals below are pre-spend, and both were *driven 2026-09-14* against the built binary:
+
+- **The arms have a tool floor, so they need a checkout to write in.** Without `--isolation
+  worktree --journal PATH`, exit 1:
+  `this run's tools can write (bash, edit_file, write_file) and nothing isolates where they write, so they would act in the working tree this command was run from; add --isolation worktree --journal PATH`.
+- **The routing arm needs a cheap model the operator names, on any backend but Anthropic's.**
+  Round 17's refusal said a local model was "no cheaper than" Claude Haiku and pointed at a Ruby
+  method argument no CLI user can pass (F110). Since 2026-09-14 `--cheap-model ID` names the routing
+  arm's cheap sibling; unset on a non-Claude model, exit 1:
+  `the adaptive-router arm routes narrow tasks to a cheaper model, and this run resolved "qwen3-coder:30b", which is not a Claude model -- so this roster has no cheaper sibling to name for it. Give `bench arms` an Anthropic --model, or a --cheap-model naming a model this backend can serve`.
+  Equal to `--model`, exit 1:
+  `the adaptive-router arm would send both branches to "qwen3:4b", running the control twice under two names. Name a --cheap-model different from --model`.
+
+Note the second model on one GPU: `--cheap-model qwen3:4b` beside `qwen3-coder:30b` evicts the
+resident model whenever the router switches (`bench.md`'s 84.0 s against 7.5 s), so read the
+wall-time table with that cost in mind. *(The full run was not driven on 2026-09-14.)*
 
 ## "Non-zero" is not a usable oracle
 
@@ -33,7 +56,7 @@ timeline. Use three conjoined checks:
 
 **A 1.000 grade beside a collapsed spend row is the known follow-up reproducing, not a pass.**
 
-Round 4's reading, for comparison:
+Round 4's reading, for comparison — three arms then, before adaptive-router joined the roster:
 
     grader score          n   mean  median    min    max
     single-thread         8  0.812   1.000  0.000  1.000
@@ -54,11 +77,14 @@ Since T12 the report opens with attribution, not just counts — because a dolla
 naming no model is exactly the lie `PriceBook` refuses to tell:
 
 ```
-Arm driver — 3 arms over 8 tasks
+Arm driver — 4 arms over 8 tasks
   fixture:   spec/fixtures/arms/tasks.yml
   model:     qwen3-coder:30b
-  isolation: unset — Arm::NoIsolation leased nothing
+  isolation: worktree
 ```
+
+*(Prediction, not yet driven: the header shape above was measured with three arms and no isolation;
+the arm count and the `worktree` word are what the current roster and the required flag imply.)*
 
 Check all four lines:
 
@@ -67,7 +93,8 @@ Check all four lines:
   was lost, and an unattributable bench report is a weak experiment record.
 - **the model is the SEAM's own answer**, so it is what actually ran rather than a second resolution
   of the flags. If it disagrees with `--model`, that disagreement is the finding.
-- **an unset backend says `unset — Arm::NoIsolation leased nothing`**, not a blank and not `none`. A
+- **an unset backend says `unset — Arm::NoIsolation leased nothing`**, not a blank and not `none` —
+  reachable now only by a toolless run, since the tool floor refuses an unset backend. A
   blank field reads as "there was none"; this says the run leased nothing, which is a fact about the
   experiment. With `--isolation` set, the header prints **the operator's own word** (`none`,
   `worktree`) rather than a class name — a header reading `Isolation::Journal` means it fell back to
@@ -97,8 +124,14 @@ Three things this is checking, and the first is the one that actually broke:
    report where a `not priced` line belongs is a serious regression, not a cosmetic one.
 2. **It refuses rather than printing `0.000000`.** A silently-free model is the lie this whole object
    exists to prevent; a zero cost row beside non-zero tokens is the failure.
-3. **One refused arm refuses the SECTION, not just its row.** A table with figures for two arms and a
-   gap for the third invites exactly the comparison the missing number cannot support.
+3. **One refused arm refuses the SECTION, not just its row.** A table with figures for three arms and
+   a gap for the fourth invites exactly the comparison the missing number cannot support.
+
+**`lain bench variance` degrades the same way since 2026-09-14.** Round 17 found it refusing every
+local recording that had turns (`no price for model "qwen3-coder:30b"; configure a fallback to
+degrade`, exit 1), while this report degraded only its cost section (F109). Its cost row now reads
+`not priced` with the ledger's reason and the rest of the comparison renders. *(Prediction, not yet
+driven: needs two `lain bench record` recordings of a local model.)*
 
 To see real figures, run one small sweep against a priced model — and note what the number excludes:
 **LLM-judge tokens are not on the arms' ledgers**, so a rubric-graded run's cost omits the judge. That
@@ -164,8 +197,8 @@ omission is now *visible* for the first time; it is recorded, not fixed.
 
 ## What the arms cannot do today
 
-Recorded here so a future round does not read a clean null as a result: **bench arm agents run with
-an empty toolset** (`Bench::SpawnSeam` is constructed with `Toolset.new([])`) and **arm runs are
-single-turn** (`Arm::SingleThread#run` does one `agent.ask`). A one-turn transcript never reaches
-`Compaction::Need`'s threshold, so nothing about compaction or tool volume can be measured here —
-use `rails-blog.md` for that.
+**Corrected by round 17: the "empty toolset, single-turn" note this section carried is stale.** The
+arms now run with a tool floor that can write (`bash`, `edit_file`, `write_file`, per the refusal
+above), which is why a run needs `--isolation worktree`. What stays true is that nothing here is
+built to reach compaction or tool **volume** — a fixture task is small by design — so use
+`rails-blog.md` for that, and do not read an arms run's lack of a compaction as a result.

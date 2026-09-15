@@ -143,7 +143,24 @@ quietly reach a model. Verify the negative: unset every provider credential in t
 confirm the dry report still runs. A dry run that refuses on a missing key is reaching for a provider
 it promised not to.
 
-It must name the lineages that WOULD be clerked. Then the live pass, local:
+It must name the lineages that WOULD be clerked. **Round 17 found it named none, ever** (F98):
+`Consolidation` walked `turn` records for a `meta.spawned_from` no chat session writes, so a session
+manufactured exactly as above answered `consolidate: no completed subagent lineages found.`, dry and
+live, at exit 0 — this document's own "a consolidation pass that spawns nothing still exits 0"
+warning, live. Since 2026-09-14 every lineage reader walks the records production writes (the
+`:spawn` message, its completion, the `child_turn`s). *Driven 2026-09-14* against round 17's own
+manufactured session (two spawns, 14 `child_turn` records):
+
+    consolidate: 2 lineage(s) would each get one court_clerk pass
+      - lineage blake3:bfc36418ae6957abdbfc98be448656c03369fc91d257f1837d1c7a933cf18ccb (4 turns)
+      - lineage blake3:b583f4b31a7f64b8bbd1747329def42287b3088130c5b106d34b8348ad9fabb9 (10 turns)
+
+**A torn session refuses by name instead of reading as empty.** Halve one `child_turn` line and
+re-run: *driven 2026-09-14*, exit 1,
+`<file>: line 58 is torn: "{\"ts\":…,\"type\":\"child_turn\",\"dig" does not parse, and whole records follow it`.
+A `no completed subagent lineages found` over a session that plainly spawned is F98 back.
+
+Then the live pass, local:
 
 ```bash
 lain consolidate <session> --provider ollama --model qwen3-coder:30b
@@ -183,15 +200,19 @@ The honest-empty rule applies here as it does to `lain epic queue` (`epic-tier.m
 report must name **the path it read**, so "nothing has been recorded" cannot be confused with "I
 read the wrong directory". Point it at an empty state home and check.
 
-Also drive `improvement_write` directly from a live session, since it is the only writer:
+**Corrected by round 17: `improvement_write` is not in a chat's toolset.** This section used to
+say to drive it from a live session "since it is the only writer"; the only thing that hands a model
+`improvement_write` is `lain improve`'s own pass. So the cross-project check rides on that pass: run
+`lain improve <session>` live from one project and confirm its notes appear in `lain improvements`
+from a **different project directory**. That cross-project visibility is the feature; a note only
+visible from the project that wrote it is the defect, and it cannot be seen from inside one project.
 
-```
-you> record a dogfood note, kind `knob`, about the summarizer's max_tokens default
-```
-
-and confirm it appears in `lain improvements` from a **different project directory**. That
-cross-project visibility is the feature; a note only visible from the project that wrote it is the
-defect, and it cannot be seen from inside one project.
+**A kind filter that matches nothing must not claim an empty store.** Round 17's
+`lain improvements --kind knob` over a store holding only `doc` notes said `no improvements recorded
+yet` (F120). *Driven 2026-09-14*: over a store holding three `doc` notes,
+`no knob improvements among 3 recorded`; over an empty store, `no improvements recorded yet --
+looked for <XDG_STATE_HOME>/lain/improvements.ndjson`; and `--kind nonsense` exits 1 with
+`--kind must be one of ["knob", "bug", "missing-feature", "doc"], got "nonsense"`.
 
 ## 6 — `lain bench sweep`: the offline retrieval eval
 
@@ -207,7 +228,8 @@ lain bench sweep -k 0        # must refuse
 lain bench sweep -k -3       # must refuse
 ```
 
-Deterministic, so run it twice and `diff`. Then the two refusals that exist because a silent version
+Deterministic, so run it twice and `diff`. (Round 17's numbers were identical to round 15's, which is
+the determinism claim holding across rounds, not a stale reading.) Then the two refusals that exist because a silent version
 of either would lie:
 
 - **`StaleEmbeddings`** — the committed embeddings were recorded under a different model than the

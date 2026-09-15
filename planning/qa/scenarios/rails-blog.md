@@ -52,8 +52,10 @@ started.** This is the step that is easy to miss and silent when missed: `PaneCo
 an eleven-name `LAIN_*` allowlist, so a `GEM_HOME` exported in the shell that runs `lain up` does
 **not** reach the chat pane — the model's very first `bash` call comes back
 `rails: command not found`, which reads like a model failure or a broken tool layer and is neither.
-It is the same mechanism as `LAIN_DESKTOP` (`method.md`), one variable over. The `$QA/gems/bin` entry
-goes **before** `$QA/shim`, and the gate to run beside the `XDG_*` one:
+It is the same `PANE_ENV` mechanism `method.md` describes for `XDG_*`, one variable over. (This
+sentence used to compare it to `LAIN_DESKTOP`, a variable deleted with the desktop notifier in
+`c40ab419`.) The `$QA/gems/bin` entry goes **before** `$QA/shim`, and the gate to run beside the
+`XDG_*` one:
 
 ```bash
 for p in $(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_pid}'); do
@@ -67,6 +69,12 @@ assuming:** a C toolchain (`gcc`/`make`) because `sqlite3` is a native gem, `sql
 inferred — a full `rails new t2 --minimal` completed in **19s**, the native gems built, and
 `bin/rails runner 'puts Rails.version'` printed **8.1.3.1**. `rails new t1 --minimal --skip-bundle`
 generates **80 files**, which is the volume floor this scenario is built on.
+
+**Round 17's two refinements, both measured.** Rails 8.1.3.1 installed in **26 s**. And a
+`.bundle/config` with a `path` inside the subject app makes `bin/rails` work with **no `GEM_HOME` in
+lain's environment at all** — the app's own bundler finds its gems — which sidesteps P9 (a sandbox
+`GEM_HOME` reaching `exe/lain` and re-locking lain's `Gemfile.lock`) rather than guarding against it.
+Prefer it to exporting `GEM_HOME` into the tmux server.
 
 *(One incidental: gem installs on this box fire a global `ctags` post-install hook that emits several
 `ctags: Warning: … TOML parser is broken` lines per gem. Harmless, but it pads any `bash` result that
@@ -105,6 +113,17 @@ that has already cost this chunk real time.
 lain chat --provider ollama --model qwen3-coder:30b \
      --compact-strategy elide-tools+summarize-conversation --summarizer-provider ollama
 ```
+
+**Round 17 could not reach this act, and the two defects that stopped it are fixed as of
+2026-09-14.** Session 1 stalled for good on F89: a `bash` result carrying one non-ASCII byte (a
+test runner's `✅`) tore the ask after the command ran (F88), left an unanswered `tool_use` on the
+chain, and every later derivation refused it (`derivation_refused … the tool_use "call_…" in
+messages[28] is never answered`, `compaction stalled ctx 94%`). Now a result's bytes are made
+committable before commit (valid UTF-8 is re-tagged; invalid bytes refuse by name), and a tear
+answers every call before the next ask commits on top. **Re-check both before trusting §1:** a
+`run_interrupted reason=torn` whose head is a `tool_use`, or any `derivation_refused` naming an
+unanswered call, is F89 back. **Already-damaged journals are not healed** (the chunk's Open decision
+3): do not resume round 17's first `rails-blog` session and expect it to compact — start fresh.
 
 That pair is the one to reach for because the two strategies are **exact complements by
 construction** — both ask one predicate which messages carry a tool block — so they partition a span
@@ -182,6 +201,50 @@ too (one predicate answered inconsistently); and the quiet one — `compaction =
 `oracle_answer` climbing, which is §0's paid-and-discarded shape and means the act is measuring
 nothing while spending on every turn.
 
+### 1b. The cut is sticky, the history never un-compacts, and an over-window prompt is refused
+
+**New 2026-09-14, and the part of this act round 17 most wanted.** Round 17 measured compaction
+latching on a completed to-do step and then **un-compacting** — a `todo_write` that completed
+nothing took the next request from 22 to **109** messages (F94). The fix keeps the Timeline
+lossless and makes the *decision* sticky: a committed compaction records a **cut** (the source digest
+it collapsed up to), the replacement spans that range turn after turn, and only a new signal over a
+droppable span after the cut advances it. Drive, once a cut has committed *(predictions, not yet
+driven — this is integration check 7 of the discharging chunk)*:
+
+- **`todo_write` completing nothing does not un-compact.** The next `request_sent`'s message count is
+  not greater than the previous one's plus the new turns. A jump back to the full history is F94.
+- **One `compaction_cut` record per advance**, carrying the cut digest, the span endpoints and the
+  replacement's summary text; every later `context_derived` names the same cut and span, and the
+  replacement's bytes are identical across renders once its summary has landed.
+  `plan_step_completion` fires on ONE decision per rising `todo_write`, not on every render after it.
+- **`/rewind` below the cut retreats it.** The next request carries no replacement for the abandoned
+  range and the next `context_derived` names no cut (or an earlier recorded one still on the chain).
+- **`--resume` renders the recorded replacement without re-summarizing.** The first resumed request
+  carries the same replacement bytes as the recording's last derived render, and no summarizer
+  request precedes it.
+- **An over-window prompt is refused, not truncated.** Lain now asks ollama not to truncate, so a
+  prompt past the loaded context comes back refused with the server's own count. *Driven
+  2026-09-14* against the built binary (a 160 KB prompt, 32,768-token context):
+  `error: not answered: ollama refused this prompt at 164997 tokens against the 32768-token context
+  it loaded, so no model saw it, and it was withdrawn. Nothing older can be compacted yet, so make
+  room with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read.` — with one
+  `window_pressure` record (`kind: over_window`, `source: ollama`, `prompt_tokens`,
+  `window_tokens`) and `run_interrupted`. When the refused render left something droppable, the tail
+  reads `. Make room with compaction (that count is now the reading it measures), /rewind, /unpin a
+  pinned turn, or a narrower read` instead *(prediction, not yet driven)*, and the refused count
+  becomes the reading compaction fires on. `window_pressure` must be **absent** on every ordinary
+  turn. Round 17's F90 was the opposite: a 330 KB request silently truncated to 16,386 tokens, read
+  as 50% then 16% occupancy, and a model that had lost its tools.
+- **Summaries no longer re-key the runner.** Round 17 measured every summarized tool result
+  reloading ollama twice under `LAIN_NUM_BATCH=2048` (29.4 s against 1.6 s, F95). A secondary call on
+  the chat's own model now carries the chat's `num_batch`/`num_ctx`, visible in its journaled
+  `request_sent.extra`. *(Prediction, not yet driven.)* A ~30 s `provider_wait` per summary is F95
+  back.
+
+Two open decisions the chunk left standing, so do not file them here: held replacements never
+re-collapse (ten cuts under `summarize-conversation` render ten summaries), and a `/pin` on a turn
+inside a held range is silently ignored.
+
 ### 2. Tool-result volume
 
 Capture the size of the largest tool results in the session:
@@ -208,9 +271,11 @@ app, or a directive that reads large generated files back, is what would actuall
 ### 3. The approval gate under volume
 
 A `rails new` run and a `bundle install` are both gated `bash`. Expect several approvals per turn —
-which is the trigger shape for a second-approval wedge. If a prompt does not render, read
-`lain://approval` over RPC (`method.md`) rather than answering blind, and record whether
-`:LainApprove` is the only recovery.
+which is the trigger shape for a second-approval wedge. **In a cockpit the chat pane no longer draws
+a `[y/N]` for them** (since 2026-09-14): each parked call is one arrival line, and the answer is
+`:LainApprove` in `lain://approval` or a deliberate `/approve` (`cockpit-surfaces.md` §5). Read
+`b:lain_approval_calls` over RPC (`method.md`) before approving, and check every arrival line has
+a row — a parked call with no row, or a row with no arrival line, is the wedge's new shape.
 
 Check `.lain/config.toml` between acts. A model that talks you into "always" for `bash` in a Rails
 tree has just pre-approved arbitrary shell for the rest of the session.

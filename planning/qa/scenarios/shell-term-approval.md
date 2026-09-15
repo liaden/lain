@@ -47,15 +47,11 @@ copy of the sweep.
 
 ## ⚠️ Read this before recording anything as a defect
 
-**`planning/specs/chunk-shell-term-approval.md` is `status: draft` and unlanded.** This document is
-written against the tree as it stands, and it splits every section into one of two kinds:
-
-- **DRIVABLE NOW** — the behaviour is shipped, the expected strings below were **measured** against
-  the real objects on 2026-08-27, and a disagreement is a finding.
-- **BLOCKED ON <card>** — the behaviour is what the chunk *plans*. The section states what is true
-  today (which is usually "it does not happen"), names the card it waits on, and says what to
-  drive once that card lands. **Driving a blocked section against today's tree and filing the
-  absence as a defect is the single most likely way to waste this scenario's first round.**
+**Corrected: `planning/specs/chunk-shell-term-approval.md` is `status: done`, and every card this
+document once waited on has landed.** It was written while that chunk was a draft, so its sections
+were split into **DRIVABLE NOW** (shipped, strings measured on 2026-08-27) and **BLOCKED ON <card>**
+(planned). Every section below now reads DRIVABLE NOW; a surviving `BLOCKED ON` or "used to"
+sentence is history, never licence to file an absence as a defect. Rounds 15 and 17 both drove it.
 
 `README.md`'s standing warning applies to every literal in here regardless: a scenario written from
 the code rather than from a round makes every expected string, every record name and every ceiling
@@ -72,9 +68,15 @@ finding, and the shapes are close enough that it is easy.
 
 | posture | what adjudicates | what this scenario's subject does there |
 |---|---|---|
-| **attended** (`plan`, `accept_edits`, `accept_all`) | the `[Triage, Rules, Surfaces]` ladder (`escalation.rb:145`) | everything here is live |
+| **attended** (`manual`, `accept_edits`) | the `[Triage, Rules, Surfaces]` ladder (`escalation.rb:145`) | everything here is live |
 | **`/mode auto`** | `Middleware::Gate::ApproveAll` (`middleware/gate.rb:35-37`), which **replaces** the ladder | the ladder never runs, so **no rung is journalled at all** — see §11 |
 | **unattended** (no queue) | a one-rung `Unattended` deny-all ladder (`switchboard.rb:265,385-396`) | every gated call is denied before any of this is consulted |
+
+**There is no `accept_all` posture** — round 17 corrected this table, which used to list one. The
+postures are exactly `[:plan, :manual, :accept_edits, :auto]` (*driven 2026-09-14*:
+`/mode nosuchposture` answered `unknown posture "nosuchposture", expected one of [:plan, :manual,
+:accept_edits, :auto]`). The `auto_approve` **layer** is not a posture either: it leaves the ladder
+in place and adds the `auto_approver` surface at its last rung.
 
 `plan` is a fourth thing worth stating separately: it is `deny_all` over a read-only permit set
 **that does not contain `bash`**, so a command typed at the floor is refused by the *posture* and
@@ -390,7 +392,18 @@ files those three as defects has misread the predicate; say so once, as a known 
 ### 4a — what the rung answers, measured
 
 **DRIVABLE NOW, zero model calls** — but only through a constructed rung, since building an
-`Effect::ToolCall` by hand is what it takes to ask the rung directly. Measured 2026-08-27 with a
+`Effect::ToolCall` by hand is what it takes to ask the rung directly. **Build it the way wiring does
+(round 17's correction): `Triage` takes a classifier FACTORY, not a `Sensitivity`**, because a bash
+call names its own cwd:
+
+```ruby
+fac = Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: H, cwd: CWD, rules: Lain::Sensitivity::Rules.empty)
+tr  = Lain::Approval::Escalation::Triage.new(sensitivity: fac)
+tr.call(Lain::Effect::ToolCall.new(name: "bash", input: { "command" => C, "cwd" => CWD }, tool_use_id: "p"), nil)
+```
+
+(The triage rung needs no `root:`; that keyword confines `ComposedTerm` at the rules rung, and
+`shell-terms.md` §4 is where omitting it silently abstains everything.) Measured 2026-08-27 with a
 real `Sensitivity` anchored on a scratch `HOME` holding `.ssh/id_qa` and `.netrc`:
 
 | command | rung verdict | the note in the reason |
@@ -407,6 +420,12 @@ reason and then `Shell::Verdict::CLAIM`:
 **That claim rides on every record this subsystem writes**, and a record that has lost it is a
 finding on its own — it is the only thing stopping a journal reader from reading an allow as a
 safety judgement.
+
+**What the MODEL is told of a `deny` changed on 2026-09-14.** The journal reason above stays as it
+is; the `tool_result` a deny hands back no longer reads `approval denied for tool "bash"` but names
+the path and says it is final — *driven 2026-09-14*:
+`refused tool "bash": the command names a path this session protects: "<P>" is a protected path; no approval will lift this, so do not re-send the same command in another form`.
+An `abstain` that a human then denies keeps the old `approval denied for tool "bash"`.
 
 The `deny`/`abstain` split on `.netrc` is `PATHLIKE` (`escalation.rb:437`, `%r{/|\A~}`) and it is
 deliberate, with the reasoning at `escalation.rb:420-426`. **The model controls the `./`.** Note
@@ -558,9 +577,12 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
 
 - **The positive is `shell-terms.md` §5's headline claim** — `cat README.md | head -20` running
   with no prompt and the journal showing a `rules` rung `allow` is driven there, over the real
-  local model, with the negative `dunstctl` check `shell-terms.md` §5 adds beside it. Do not
+  local model, and the journal's missing `approval_pending` is its negative. (The `dunstctl`
+  check that used to sit beside it read a desktop notifier deleted in `c40ab419`.) Do not
   redrive it here; `/approve` answering `no pending approvals` afterward is the one addition
-  worth confirming if this section is driven standalone.
+  worth confirming if this section is driven standalone. **Since 2026-09-14 the rule approves
+  only inside the project root**, and a session rooted at `$HOME` or at an undetected root
+  approves nothing automatically — `shell-terms.md` §4 drives that predicate.
 - **The negative controls, which matter more, are this section's own** — each ties to a design
   reason named elsewhere in *this* document rather than to a general allowlist audit, and none of
   them is `shell-terms.md`'s ground. Each must still reach a human, and for its own stated reason:

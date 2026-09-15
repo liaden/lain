@@ -141,6 +141,15 @@ all is not that regression.
 contract (the fd can be shared with Rust tracing spans), so tearing an arbitrary line proves nothing
 — it is invisible by design. Halve an actual `turn` record and the loss becomes legible.
 
+**Three readers no longer skip, since 2026-09-14, and each is a check worth one torn line.** The
+discharging chunk found the shared-fd contract has no production caller, so an unparseable line is
+always damage, and made the readers where a skipped line decides something refuse instead:
+`lain epic submit`/`status`/`land`/`finish` over a torn `gate_decision` or `stage_transition`
+(`epic-tier.md` §9, *driven 2026-09-14*), and `lain consolidate` over a torn `child_turn`
+(`memory-and-dogfood.md` §4, *driven 2026-09-14*: `<file>: line 58 is torn: "…" does not parse,
+and whole records follow it`, exit 1). `lain sessions` and the fork/resume doors below still count
+and skip; the `1 line unparsed` note is their contract.
+
 ```bash
 ruby -rjson -e '
 src, dst = ARGV
@@ -370,10 +379,14 @@ $QA/drive.sh '/ruby Lain::Tools::ReadFile::STRUCTURAL' 6 30 >/dev/null
 $QA/peek.sh 6
 ```
 
-```
-./big.txt is 3000000 bytes, over the ceiling of 262144 -- instead, read part of it with read_file's offset and limit, or outline it with file_symbols or ast_search, or grep it for the lines you actually need
+**Corrected by round 17: the refusals name the RESOLVED ABSOLUTE path, not `./`.** The two below
+used to read `./big.txt` and `./mid.rb`; match on the size, the ceiling and the advice, with `<abs>`
+standing for the project directory.
 
-./mid.rb is 300000 bytes, over the ceiling of 262144 -- instead, read it with read_file's offset and limit (a window covering the whole file counts as a complete read, so edit_file still accepts it), or outline it with file_symbols or ast_search, or grep it for the lines you actually need
+```
+<abs>/big.txt is 3000000 bytes, over the ceiling of 262144 -- instead, read part of it with read_file's offset and limit, or outline it with file_symbols or ast_search, or grep it for the lines you actually need
+
+<abs>/mid.rb is 300000 bytes, over the ceiling of 262144 -- instead, read it with read_file's offset and limit (a window covering the whole file counts as a complete read, so edit_file still accepts it), or outline it with file_symbols or ast_search, or grep it for the lines you actually need
 
 the command's output (exit status: 1) is 200000 bytes, over the ceiling of 131072 -- instead, re-run it with the output narrowed through head, tail or grep, or redirect it to a file and read one window of that with read_file
 ```
@@ -383,6 +396,20 @@ smaller file is offered a *full-cover window* — advice that leads somewhere �
 covering it would itself be admitted. The 3 MB one is not, because that advice would be refused in
 turn, and a refusal that names a move which is itself refused is a loop. **Both files offered the
 same advice is the finding**, whichever way round.
+
+**Bytes that are not text refuse by name too, in both tools, and neither tears the ask.** Round 17's
+F88: `bash` output carrying any byte ≥ 0x80 — a valid `✅` included — died with `error: string is
+not convertible to UTF-8` after the command ran, and the unanswered call it left disabled compaction
+for the rest of the session (F89). *Driven 2026-09-14*, two one-turn sessions:
+
+```
+bash's stdout (exit status: 0) was not text: only its first 3 bytes are valid UTF-8, so it cannot be recorded as part of this conversation -- instead, keep only the text with `| head -c 3`, or look at its bytes with `| xxd | head`, or identify it with `| file -`
+
+<abs>/latin1.txt is not valid UTF-8, so its contents cannot be recorded as part of this conversation -- instead, identify it with bash (`file PATH`), or look at its bytes with bash (`xxd PATH | head`)
+```
+
+and `cat` of a file holding `✅ ok` committed `✅ ok` as ordinary output. Neither session journaled
+`run_interrupted`. A `run_interrupted reason=torn` whose head is a `tool_use` is F88/F89 back.
 
 Five more things to check, because each is a way the shape can be right and the behaviour wrong:
 
@@ -457,7 +484,22 @@ this order:
        limit, or with a window covering the whole file, then edit
 
 4. `read_file offset: 1, limit: <lines beyond the end>` — a window covering the whole file → the
-   read is recorded as **complete**.
+   read is recorded as **complete**. **On a 32k window this step is also round 17's F90 trigger**:
+   the 300 KB window made a 330,522-byte request, and ollama truncated the prompt to 16,386 tokens
+   from the front — system prompt and tools gone — while lain journaled the truncated count as 50%
+   occupancy. Since 2026-09-14 lain asks ollama not to truncate, so this request is **refused**, and
+   the step's expected outcome on a 32,768-token window is that refusal, not a completed read. The
+   refusal is the provider's count against the context it loaded (*driven 2026-09-14* over a 160 KB
+   prompt, a different vehicle for the same wall):
+
+       error: not answered: ollama refused this prompt at 164997 tokens against the 32768-token context it loaded, so no model saw it, and it was withdrawn. Nothing older can be compacted yet, so make room with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read.
+
+   with one `window_pressure` record (`kind: over_window`). To reach step 5 on this box, raise
+   `--num-ctx` past the file (and the server's `OLLAMA_CONTEXT_LENGTH` with it) or use a smaller
+   `mid.rb`. Silent truncation — `input_tokens` falling below the previous turn's with no
+   `window_pressure` — is F90 back. **The per-tool ceilings are still not window-relative** (the
+   discharging chunk's Open decision 2): a read the tool admits can still overrun the window, and the
+   refusal above is what catches it.
 5. `edit_file` on `mid.rb` again → **must be permitted**.
 
 **Step 5 is the deadlock guard and the reason this sequence exists.** If a full-cover window did not
@@ -653,10 +695,16 @@ of milliseconds of the first. On a server with one slot they serialize, the lose
 server* with **zero bytes**, and if that wait exceeds `stream_stall_timeout` (30s) the turn is torn
 down with `stalled stream: no bytes for N.Ns` on a completely healthy endpoint.
 
-**The oracle's call is not journaled**, so this is invisible from the journal alone: you will see one
-`request_sent`, then `run_interrupted`, and nothing explaining the gap. **Do not attempt this probe
-without a proxy** — without one there is no way to distinguish contention from a slow model, and a
-driver will reasonably file the wrong cause.
+**Corrected by round 17: the oracle's call IS journaled now** — an `oracle_answer` record and a
+`provider_wait` beside it — so the gap is readable from the journal as well as from the proxy. Keep
+the proxy anyway: it is what separates a wait at the server from a slow model. **And the ~30 s waits
+round 17 read there were not contention.** They were F95: under `LAIN_NUM_BATCH=2048` the summarizer's
+request dropped the chat's `num_batch`, so ollama reloaded the runner at `-b 512` for the oracle and
+back at `-b 2048` for the next turn (29.4 s against 1.6 s without the variable). Since 2026-09-14 a
+secondary call on the chat's own model carries the chat's `num_batch`/`num_ctx`, visible in its
+`request_sent.extra`; a different model (the secret oracle's `qwen3:4b`) gets none. So before reading
+a `provider_wait` as starvation, check the runner did not reload — `method.md`'s runner-argv read — and
+check the tier request's `extra`. *(Prediction, not yet driven.)*
 
 ### The instrument
 
@@ -679,9 +727,9 @@ command grep -E 'START|FIRST-BYTE' "$QA/records/proxy.log"
 ```
 
 - **Two `START`s within ~50ms** is the dispatch shape. One is journaled, one is not.
-- **Count the proxy's `/api/chat` requests against the journal's `request_sent`.** A surplus is the
-  unjournaled internal call; round 6 measured **8 against 7**. Equality means either no oracle fired
-  this turn or the call is now journaled — check which before recording it as a fix.
+- **Count the proxy's `/api/chat` requests against the journal's `request_sent` and `oracle_answer`
+  together.** Round 6 measured **8 against 7** when the oracle's call was unjournaled; the internal
+  call is on the record now, so a surplus over the two counts together is a call still hidden.
 - **`FIRST-BYTE` minus `START` for the journaled request is the starvation.** Round 6 measured
   **35.8s** and **64.8s** on a healthy resident model. Anything over `stream_stall_timeout` will have
   torn the turn down; correlate with `run_interrupted` in the journal.

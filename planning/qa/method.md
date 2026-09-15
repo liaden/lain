@@ -204,9 +204,12 @@ only worth having if it is read rather than skimmed:
 3. **A convincing rationale for a destructive command is a worse sign, not a better one.**
 4. **Start at `accept_edits`, the default.** Postures: `plan` (reads only, `deny_all`), `manual`
    (everything, `queue`), `accept_edits` (everything, `queue`, `shadow_git`), `auto` (`approve_all`).
-   Confirm with `/mode`. **Never `/mode auto` or `/mode +auto_approve`** — the posture and the layer
-   are two ways to the same approve-all gate, and either one silently answers every question this
-   method exists to ask. `/mode !` resets to the floor.
+   Confirm with `/mode`. **Never `/mode auto` or `/mode +auto_approve`.** They are not the same gate
+   — the posture replaces the ladder with approve-all, while the layer (wired since 2026-09-14; it was
+   a lighter that approved nothing before) leaves the ladder and adds the `auto_approver` model judge
+   at its last rung — but either one answers the questions this method exists to ask **without the
+   driver reading the command**, and the layer's judge is a model that has approved a key read
+   spelled around the triage rung (`secret-boundary.md` §5b). `/mode !` resets to the floor.
 
    **What sanctions a section is three conditions, not its appearance on a list.** A section may
    raise the posture only if it (a) names an approve-all gate as its own subject in its heading,
@@ -234,10 +237,10 @@ only worth having if it is read rather than skimmed:
    and this list was never updated, so the rule forbade what two shipped sections
    instruct — which is how a standing rule stops being read at all.
 
-   **`shell-terms.md` §6 does not carry (b) or (c) in its own text**: it raises the posture for the
-   second half of its `shell_arm` comparison, never says to reset, and states a throwaway tree only
-   for its §2/§3. Scope it and type `/mode !` at the end of it anyway — the conditions bind the
-   driver, not the document — and the two missing lines are owed as a correction to that scenario.
+   **`shell-terms.md` §6 used to lack (b) and (c) in its own text** — it raised the posture for the
+   second half of its `shell_arm` comparison, never said to reset, and stated a throwaway tree only
+   for its §2/§3. The two lines were added on 2026-09-14. The conditions bind the driver regardless
+   of what a document carries.
 
    **RECOMMENDATION, pending the human's ruling: bind harder rather than keep sanctioning.** Four
    exceptions across eighteen scenarios is a list growing by accretion, and a hand-maintained roster
@@ -252,9 +255,13 @@ only worth having if it is read rather than skimmed:
    with no mode support at all — you cannot tell the posture by looking.
 5. **Answering "always" writes durable state.** `Approval::Remembered` persists a pre-approval into
    `.lain/config.toml`. Check that file between acts; a non-empty approvals table is itself a finding.
-6. **If a gated call never renders a prompt, read `lain://approval` over RPC before answering.**
-   Round 4 (F18) found a pending approval the chat pane never drew; approving it blind would have
-   been approving an unread command. The nvim buffer held the full command text.
+6. **Read the command in `lain://approval` over RPC before answering, every time.** In a cockpit the
+   chat pane no longer draws a `[y/N]` at all (since 2026-09-14): a parked call is one arrival line,
+   `! <requester> asks to run <tool>(<input>)  -- answer in lain://approval, or /approve`, and the
+   answer is `:LainApprove`/`:LainDeny` in that buffer or a deliberate `/approve` in the chat pane
+   (`cockpit-surfaces.md` §5). The arrival line `inspect`s the input and a long command is cut in the
+   buffer's rows, so read `b:lain_approval_calls`, which holds each call whole. Round 4 (F18) found
+   a pending the chat pane never drew; approving blind is approving an unread command.
 
 ## Driving the cockpit
 
@@ -331,6 +338,38 @@ only worth having if it is read rather than skimmed:
   rendered text and the journal, **never by `$?`**. A launch-level refusal is the opposite case and
   does exit 1 — the split is construction (exits nonzero) versus a turn that failed (exits 0).
 
+### Where a typed line goes, since 2026-09-14
+
+The human ruled **nvim-first** for the cockpit, and it changes what every send below can do. Know
+which reader is open before you type:
+
+| state | chat prompt | what a line typed there becomes |
+|---|---|---|
+| idle | `you>` | the next prompt |
+| cockpit, a call or a question parked on the dispatching line | `command>` | a `/`-command runs; **prose is held** (`held as your next prompt: <text>`) and dispatched after the line settles — never an answer |
+| `--no-nvim`, a call parked | `<requester> asks: approve …? [y/N]` | **the answer** — a bare Enter denies — **unless it starts with `/`**: a `/`-line is never a decision; it is held (`held as your next prompt: /status`) and the same `[y/N]` is drawn again, empty |
+| `--no-nvim`, a question parked | `human>` | a registered `/`-command runs; anything else is **the answer** |
+| cockpit, after `/approve` | the `[y/N]` `/approve` drew | the answer, as `--no-nvim` |
+
+So in a cockpit the old danger — a driver's next prompt consumed as a denial — is gone by
+construction, and the answer goes through nvim. In a `--no-nvim` chat it is still live at a drawn
+`[y/N]` or `human>`, and the rules below still bind.
+**One exception at a drawn `[y/N]`, since the discharging chunk's last cards landed: a line that
+starts with `/` is not an answer.** It was meant for the chat — `/goal off` typed while a goal's
+iteration waits on that call, above all — and read as a verdict it was a denial nobody gave and a
+command lost (round 17 typed `/goal off` at a drawn approval, the call was denied, and the goal ran
+on). It is now held for `you>` and the prompt is drawn again, empty. *Driven 2026-09-14* in a
+`--no-nvim` chat, `/status` typed at `agent asks: approve bash({"command" => "ls -la"})? [y/N]`:
+
+    agent asks: approve bash({"command" => "ls -la"})? [y/N] /status
+    held as your next prompt: /status
+    agent asks: approve bash({"command" => "ls -la"})? [y/N]
+
+with **no** `approval_decision` journaled. Prose (`n`, `y`, or anything else not starting with `/`)
+is still read as the answer. And **while a goal drives and no prompt is drawn at all**, a whole line
+typed into the pane is held the same way and runs before the next iteration — so a `/goal off` typed
+mid-drive is how a goal is stopped from the terminal (`repl-commands.md` §7).
+
 ### Send Enter ONCE, then poll the JOURNAL — never the status line
 
 The 2026-08-17 edition said the opposite ("retry until the status leaves `idle`") and that rule is a
@@ -339,10 +378,12 @@ defect **generator**: one intended prompt became **4 `turn` records, 4 `request_
 
 Round 4 drove every act this way and produced **zero** duplicated turns. Keep the rule.
 
-**And do not type at all while an approval is parked -- the Enter IS the answer, and it denies.**
-The rule above bounds how many times you send; this one bounds *when*. At an `[y/N]` prompt the
-newline a driver sends to submit its next PROMPT is consumed as the approval's answer, and the
-default is **deny**. Round 6 lost a `bash` call that way and then spent three turns watching the
+**And do not type at all while an approval is drawn -- the Enter IS the answer, and it denies.**
+The rule above bounds how many times you send; this one bounds *when*. At a drawn `[y/N]` prompt —
+every parked call in a `--no-nvim` chat, and the one `/approve` drew in a cockpit — the newline a
+driver sends to submit its next PROMPT is consumed as the approval's answer, and the default is
+**deny**. (In a cockpit's `command>` state a stray prompt is held instead, which costs a mis-ordered
+prompt rather than a denial — still a probe to discard.) Round 6 lost a `bash` call that way and then spent three turns watching the
 model recover from a denial nobody intended -- which reads exactly like a model failure and is the
 driver's. **The rule governs HAND-TYPED sends too, not only `drive.sh` ones** -- round 7 sent a
 `/mode` by raw `send-keys` without checking, and had to discard the probe as invalid.
@@ -457,8 +498,10 @@ ruby -rjson -e 'c=Hash.new(0); File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue 
   p c.select{|k,_| %w[message child_turn].include?(k)}' "$LAIN_QA_JOURNAL"
 ```
 
-Expect the HUD to gain a `fleet N` segment and the prompt to become `human>`. **Answering there is
-its own hazard — see the `human>` note below.**
+Expect the HUD to gain a `fleet N` segment and the prompt to become `human>` in a `--no-nvim` chat,
+or `command>` in a cockpit (where the question arrives as
+`? <asker> <question>  -- answer in lain://inbox, or /inbox` and is answered with `:LainReply` in
+`lain://inbox`). **Answering at `human>` is its own hazard — see the note below.**
 
 **This recipe parks the CHILD's question, so it cannot exercise the HUD's idle-elision check**
 (`cockpit-surfaces.md` §7: "at the `human>` prompt of a parked `ask_human` the `idle` segment must be
@@ -470,6 +513,10 @@ OWN `ask_human` parked — ask the top-level agent a question it must put to a h
 spawn.
 
 ### At the `human>` prompt: commands run, but `/inbox` opens a drain where the next line is an answer
+
+**A `--no-nvim` rule since 2026-09-14.** A cockpit draws no `human>`; its `command>` reader runs
+commands and holds prose, and `/inbox` typed there opens the same drain described below, owning the
+terminal for its line.
 
 **Round 6's F27 ("every command but `/inbox` is silently delivered to the subagent as a prose
 answer") is WITHDRAWN — round 7 re-tested it and it does not reproduce.** With a subagent's question
@@ -594,20 +641,25 @@ wrong surface returns plausible text rather than an error.
     | command grep -qE '\[y/N\][[:space:]]*$'
   ```
 
-  **The converse is round 17's, and it is the more dangerous half: a last-line `[y/N]` is not proof
-  the prompt is LIVE.** When another surface decides the pending — `:LainApprove` in nvim, or
-  `--secret-oracle` — the TTY's prompt stays drawn with nothing written after it, and a `n` typed
-  there is delivered as a **chat prompt** rather than a denial (findings F106). Before answering a
-  `[y/N]` by hand, confirm it is still parked: `lain://approval`'s `b:lain_approval_calls` over RPC in
-  a cockpit, or the journal's last `approval_pending` having no later `approval_decision` for the
-  same `tool_use_id`.
-- **A helper that refuses only on `[y/N]` still types into `human>`.** A line sent while the model
-  has parked an `ask_human` is taken as the answer, and a line sent while a turn is still
-  DISPATCHING is typeahead that the next reader consumes — which, when that reader is an approval,
-  is recorded as a human denial 19 ms after the prompt appeared (F102). `drive.sh`'s quiet window is
-  the only guard, and a summarizer reload (F95: ~30 s of journal silence per summarized tool result
-  while `LAIN_NUM_BATCH` is set) outlasts a 25–30 s window. Use >= 60 s, and check the last line is
-  `you>` before sending.
+  **The converse is round 17's: a last-line `[y/N]` is not proof the prompt is LIVE.** When another
+  surface decided the pending — `:LainApprove`, the timeout, `--secret-oracle` — round 17's TTY left
+  the prompt drawn with nothing after it, and a `n` typed there became a **chat prompt** (F106). Since
+  2026-09-14 a cockpit draws no inline `[y/N]` to go stale, and a `--no-nvim` chat ends a decided
+  prompt's line with `-- decided by <surface>: <verdict>` *(prediction, not yet driven)*. Before
+  answering a `[y/N]` by hand, still confirm it is parked: the line does not end in `decided by`,
+  and the journal's last `approval_pending` has no later `approval_decision` for the same
+  `tool_use_id` (or `b:lain_approval_calls` still lists it).
+- **A helper that refuses only on `[y/N]` still types into `human>`.** In a `--no-nvim` chat a line
+  sent while the model has parked an `ask_human` is taken as the answer. A line sent while a turn is
+  still DISPATCHING used to be typeahead the next reader consumed — recorded as a human denial 19 ms
+  after an approval prompt appeared (F102). Since 2026-09-14 it is drained as the next read opens: a
+  complete line is shown `held as your next prompt: <text>` and runs after the turn, a partial one
+  `discarded: <text> -- finish that line and it is held as your next prompt` (both driven
+  2026-09-14, `cockpit-surfaces.md` §5). So a stray send now costs a **mis-ordered prompt** rather
+  than a denial — which still voids the probe it lands in. The quiet window is still the guard: use
+  >= 60 s, and check the last line is `you>` before sending. (Round 17's other reason for 60 s, the
+  ~30 s summarizer runner reload under `LAIN_NUM_BATCH` — F95 — is fixed for a summarizer on the
+  chat's own model; a model reload still costs 27–40 s.)
 - **A review's thread pane opens by itself** when the cursor rests on an anchored line
   (`51_thread.lua` `review_thread.refresh`), which renumbers the review tab's windows: NEW moves
   from 2 to 3. A `:2wincmd w` recipe then lands in `lain://thread/<id>`, and the next text keys are
