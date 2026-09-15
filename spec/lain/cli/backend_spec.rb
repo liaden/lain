@@ -1083,8 +1083,13 @@ RSpec.describe Lain::CLI::Backend do
   describe "compaction wiring" do
     let(:journal) { RecordingChannel.new }
     # `pinned?` too: the per-turn path asks the Session which turns compaction
-    # may not elide, and a verifying double answers only what it declares.
-    let(:session) { instance_double(Lain::Session, plan_step_completed?: false, pinned?: false) }
+    # may not elide, and a verifying double answers only what it declares --
+    # as it does the cuts a committed compaction holds, and the count its plan
+    # step signal latches on.
+    let(:session) do
+      instance_double(Lain::Session, plan_step_completed?: false, pinned?: false, plan_step_completions: 0,
+                                     compaction_cuts: [], record_compaction_cut: nil)
+    end
     let(:profile) { Lain::CacheProfile::ANTHROPIC }
     let(:toolset) { Lain::Toolset.new([]) }
 

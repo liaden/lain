@@ -466,7 +466,10 @@ RSpec.describe "lain chat's flag surface" do
   # the turn rather than the span).
   describe "a turn taken through the executable's own parsed options" do
     let(:journal) { RecordingChannel.new }
-    let(:session) { instance_double(Lain::Session, plan_step_completed?: false, pinned?: false) }
+    let(:session) do
+      instance_double(Lain::Session, plan_step_completed?: false, pinned?: false, plan_step_completions: 0,
+                                     compaction_cuts: [], record_compaction_cut: nil)
+    end
 
     let(:surface) { RecordingChannel.new }
 

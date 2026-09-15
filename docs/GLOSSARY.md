@@ -117,6 +117,17 @@ affordable is that the derived chain is bounded by `keep_last`, not by history l
 (`spec/lain/compaction/derivation_spec.rb` pins 21 events and 22 store objects at 50, 200 and 800
 source turns alike).
 
+The negative is about a derivation taken with **no compaction cut held**. A committed compaction
+records a cut (`Telemetry::CompactionCut`: a source digest, the head it was committed at, and the
+replacement of each range it newly collapsed), and later derivations on a chain containing that
+commit head hold it: still from the source root, still with no derived head kept, but with the
+ranges at or before the cut written from the record. Between two advances of a held cut
+the map *is* monotone, since the replacement's bytes and parent chain do not move, and that is the
+point of holding one: the prefix a provider caches stops changing. The derivation spec's "extends
+its derived chain as the source extends, while the cut holds and nothing new collapses" and the
+source spec's "extends the derived chain turn by turn while a committed cut holds and nothing new
+collapses" pin the positive beside the two negatives.
+
 ### Fiber (preimage)
 
 > The fiber of a map `f` over a point `y` is `f⁻¹(y)`, the set of inputs that map to it. The fibers

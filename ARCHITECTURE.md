@@ -324,6 +324,41 @@ error anywhere). Both now receive the same object. A `Head` paired with a `Compa
 `protected_patterns` at `ProtectedPatterns::NONE`; a real policy makes the head a superset of
 what is removed and reintroduces exactly that silent disagreement.
 
+**A committed compaction is held, not re-decided.** The Timeline is never rewritten: a compacting
+turn renders a derived chain, and what it commits is **policy state**, a `Telemetry::CompactionCut`
+(`lib/lain/telemetry/compaction_cut.rb`) naming the source digest it collapsed up to, the source
+head it was committed at, the arm that collapsed it, and the ranges this advance *newly* collapsed
+with their replacements. Earlier ranges are its `parent`'s, linked by the parent record's content
+address, so a record's size stays flat however many advances precede it.
+`Session#record_compaction_cut` keeps and journals it beside the pin-set, refusing a cut whose
+parent it never recorded, and `SessionRecord::Replay` folds it back.
+
+Every later turn, `Compaction::Source::HeldCut` picks the latest recorded cut that meets three
+conditions: its commit head is on the head's chain, it was committed by this run's arm, and its
+seam falls short of the keep_last boundary. The Source then derives from the source root with that
+cut's lineage held. Its ranges are written from the records, the strategy is offered only the span
+after it, and `Head` measures only that span. So a signal that clears renders the same replacement
+bytes rather than the full history, a summary is paid for once and survives `--resume` (the
+strategy's memo does not), and the cached prefix stops moving.
+
+The cut **advances** only when a later compaction's pipeline is chosen past it; a summary that
+failed collapses nothing, cannot shrink the render, and commits nothing. It **retreats** when
+`/rewind`, `/fork`, a resend or a resume moves the head below its commit head. Such a head is a
+forward run from there, so it renders what that forward run sent, and the next `context_derived`
+names no cut, or the one that does hold. A cut freezes the replacement it committed, so an eager
+summary landing later inside its range changes nothing already sent.
+
+A completed plan step stays **pending** until a compaction commits. `Session#plan_step_completed?`
+is a level that stays up until the next `todo_write`, and the render right after that write is
+usually warm and defers. So a step fires on every render until a commit consumes it: a timing
+defer keeps it pending and the first cold render compacts. The commit records the
+`Session#plan_step_completions` it consumed on its cut, which is how a resume sees a consumed step
+as consumed.
+
+Two consequences are open decisions rather than behaviour: held replacements are never
+re-collapsed, so summaries accumulate one per advance; and a pin placed inside a range a held cut
+already collapsed does not bring that turn back.
+
 `Compaction::Prepared` (`lib/lain/compaction/prepared.rb`) is the third policy, separate from
 both: what happens across repeated **idle ticks**. Idle time is a series of ticks, so a naive
 compact-on-idle would re-run and re-pay the summarizer once per tick at an unchanged head. The
@@ -1279,7 +1314,14 @@ different digest, and the `keep_last` window slides. (In the glossary's categori
 derivation is not a [functor](docs/GLOSSARY.md#functor) between the prefix orders.) The wrong
 model has a name, `Derivation#extend` holding the last derived head, and 2 specs go red if
 anyone "fixes" the code toward it. Full re-derivation stays affordable because the derived
-chain is bounded by `keep_last`, not by history length.
+chain is bounded by `keep_last`, not by history length. A **held compaction cut** changes what
+the negative means without making it false: the cut is a source digest passed in, not a derived
+head held, and while it holds with nothing new collapsing the derived chain *does* extend as the
+source does, because the replacement's bytes and parent chain are identical turn to turn. That
+monotonicity between advances is the cut's purpose, and `derivation_spec.rb` and
+`source_spec.rb` pin it beside the uncut negative. With a cut held, the derived chain is bounded
+by the held replacements plus the turns since the cut, not by `keep_last` alone; the
+content-addressed Store writes only the new ones.
 
 **The preimage is the record.** A compaction maps source turns to derived events, and a
 replacement's `causal_parents` records which source turns collapsed into it: the

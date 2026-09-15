@@ -22,6 +22,10 @@ module Lain
   # {SessionRecord::Replay} folds a record back through a journal-less Session
   # rather than re-journaling every line it just read.
   class Session
+    # A compaction cut naming a parent this session never recorded: a delta
+    # record read without the records it extends.
+    class UnrecordedParent < Error; end
+
     # Added HERE rather than inside {Memory::Manifest#to_reminder}, which stays
     # bare: naming memory_read as the way to open an id is the session's
     # presentation decision, as the todo block's own heading is.
@@ -53,6 +57,9 @@ module Lain
       @todo_reminder = nil
       @todo_items = []
       @plan_step_completed = false
+      @plan_step_completions = 0
+      @compaction_cuts = [].freeze
+      @cuts_by_address = {}
       @memory = memory
       @manifest_root = nil
       @manifest_reminders = [].freeze
@@ -272,6 +279,7 @@ module Lain
     def write_todos(todos)
       list = todos.to_a
       @plan_step_completed = completed_count(list) > completed_count(@todo_items)
+      @plan_step_completions += 1 if @plan_step_completed
       @todo_items = list
       @todo_reminder = list.empty? ? nil : render_todos(list).freeze
       @journal << Telemetry::TodoSnapshot.from(list)
@@ -291,6 +299,52 @@ module Lain
     def plan_step_completed?
       @plan_step_completed
     end
+
+    # How many {#write_todos} calls have raised the completed count, ever: the
+    # count {#plan_step_completed?} is the level of. Monotone, so a consumer
+    # can say how far it has consumed with one Integer -- a compaction records
+    # this count on the cut it commits, and a step is pending while this
+    # exceeds the latest such record.
+    #
+    # @return [Integer]
+    attr_reader :plan_step_completions
+
+    # Remember a committed compaction advance, and journal it. The Timeline is
+    # never rewritten by a compaction; what a compaction commits is POLICY
+    # state, and it lives here beside the pin-set for the pin-set's reason --
+    # it is journaled and {SessionRecord::Replay} folds it back, so a resumed
+    # session renders the replacement a recorded one did rather than asking a
+    # model for it again.
+    #
+    # Every cut is kept, in commit order, and none is ever retracted: which cut
+    # holds on a given chain is the compaction source's question, asked of
+    # {#compaction_cuts}. A cut carries only what its advance newly collapsed
+    # and names its parent by address, so a cut whose parent was never
+    # recorded -- a truncated or hand-edited record -- is refused HERE, where
+    # it is folded, rather than rendered as a seam with a hole in it.
+    #
+    # @param cut [Telemetry::CompactionCut]
+    # @return [self]
+    # @raise [UnrecordedParent] when `cut.parent` names no cut recorded here
+    def record_compaction_cut(cut)
+      unless cut.parent.nil? || @cuts_by_address.key?(cut.parent)
+        raise UnrecordedParent,
+              "compaction_cut at #{cut.digest} names parent #{cut.parent}, which is not a cut this session recorded"
+      end
+
+      @cuts_by_address[cut.address] = cut
+      @compaction_cuts = [*@compaction_cuts, cut].freeze
+      @journal << cut
+      self
+    end
+
+    # @return [Array<Telemetry::CompactionCut>] every cut, oldest first
+    attr_reader :compaction_cuts
+
+    # @param address [String] a recorded cut's {Telemetry::CompactionCut#address}
+    # @return [Telemetry::CompactionCut]
+    # @raise [KeyError] when no cut was recorded at that address
+    def compaction_cut(address) = @cuts_by_address.fetch(address)
 
     # What the Agent renders into the Workspace tail each turn. Never a Timeline
     # entry, so rewinding or forking the Timeline has no bearing on either
@@ -531,6 +585,20 @@ module Lain
 
       # @return [false]
       def plan_step_completed? = false
+
+      # @return [Integer]
+      def plan_step_completions = 0
+
+      # @return [self]
+      def record_compaction_cut(_cut) = self
+
+      # @return [Array]
+      def compaction_cuts = [].freeze
+
+      # Nothing is ever recorded here, so no address can name a cut.
+      #
+      # @raise [KeyError]
+      def compaction_cut(address) = raise(KeyError, "no compaction cut at #{address}")
 
       # @return [Array]
       def reads = [].freeze

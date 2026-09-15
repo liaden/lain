@@ -26,6 +26,15 @@ module Lain
     # graph in SILENCE. The derivation therefore runs here, off the pipeline,
     # and only a frozen array of finished messages crosses into it.
     #
+    # A committed compaction is HELD. The session records its cut -- the
+    # source digest it collapsed up to, the head it was committed at, and each
+    # newly collapsed range's replacement -- and every later turn derives from
+    # the source root with those ranges held at their recorded bytes, so a
+    # signal that clears renders the same replacement rather than the full
+    # history, and the prefix a provider caches stops moving. A cut advances
+    # only when a later compaction commits past it, and retreats when the
+    # head's chain stops containing its commit head ({HeldCut}).
+    #
     # This object is NOT `Ractor.shareable?` and must not become so: it holds
     # the mutable {Cold} and the live {Oracle::Eager}. What it hands BACK is
     # shareable, and {SummarySnapshot} keeps the two compatible -- the
@@ -238,14 +247,16 @@ module Lain
 
         def warranted? = @decision.signals.include?(Need::ApproachingWindow::KIND)
 
-        # {Head#empty?} is true for THREE unrelated reasons and this object can
+        # {Head#empty?} is true for FOUR unrelated reasons and this object can
         # only establish one of them. A declined boundary says so itself; the
-        # other two -- a history shorter than `keep_last`, and a droppable span
-        # every message of which was pinned -- are indistinguishable from a
-        # {Head}, which exposes no count of what it had before the pin filter.
-        # So they are named as the disjunction they are. Asserting either would
-        # be a sentence the measurement does not support, and the pinned case
-        # is the one whose remedy the other sentence points away from.
+        # other three -- a history shorter than `keep_last`, a droppable span
+        # every message of which was pinned, and a history a held compaction
+        # cut has already collapsed up to keep_last -- are indistinguishable
+        # from a {Head}, which exposes no count of what it had before the pin
+        # filter or the cut. So they are named as the disjunction they are.
+        # Asserting any one would be a sentence the measurement does not
+        # support, and the pinned case is the one whose remedy the others
+        # point away from.
         #
         # A decline is unreachable through a {Derivation} today ({Boundary}
         # argues why), so that clause is written for a {Head} taken over a raw
@@ -253,7 +264,7 @@ module Lain
         def cause
           return "but the boundary declined the only legal cut -- it would split a tool-use pair" if @declined
 
-          "and nothing is droppable -- every earlier turn is either inside keep_last or pinned"
+          "and nothing is droppable -- every earlier turn is inside keep_last, pinned, or already compacted"
         end
 
         # `--` for an unmeasured numerator is {ContextWindow::Occupancy}'s own
@@ -393,11 +404,12 @@ module Lain
       #   cumulative total here would latch the signal on permanently, and a
       #   zero would read as an empty context on a resumed session.
       # @param session [Session] the run's Session, for its plan-step signal
+      #   and the compaction cuts it has recorded -- and records a new one
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline
       def context_for(base:, timeline:, usage:, session:)
         observe_idle
-        walk = Derivation::Walk.of(timeline)
-        decide(base:, timeline:, walk:, usage:, session:, pins: pinned(walk, session))
+        held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
+        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session))
       end
 
       private
@@ -441,15 +453,18 @@ module Lain
       # the parameter it names. {Need::ApproachingWindow} measures this exact
       # value internally, so what travels on to {#record} is what the signal
       # was decided on.
-      def decide(base:, timeline:, walk:, usage:, session:, pins:)
-        head = Head.new(messages: walk.messages, keep_last: @derived.keep_last, pins:)
+      #
+      # The head is taken past the held cut: what a cut already collapsed is
+      # not droppable again, so a threshold measures only what it has not.
+      def decide(base:, held_cut:, usage:, session:, pins:)
+        head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:)
         resolution = window_for(base)
         need = need_for(head:, usage:, session:, resolution:)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
         provenance = resolution.provenance
-        return defer(base:, need:, head:, occupancy:, provenance:) if head.empty? || !need.needed?
+        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) if head.empty? || !need.needed?
 
-        weigh(base:, timeline:, walk:, head:, need:, pins:, occupancy:, provenance:)
+        weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:)
       end
 
       # Which signals fired AND are allowed to have fired -- one question, so
@@ -479,7 +494,7 @@ module Lain
       def need_for(head:, usage:, session:, resolution:)
         need = @need.check(head_bytes: head.bytesize, used_tokens: usage,
                            window_tokens: resolution.window_tokens,
-                           plan_step_completed: session.plan_step_completed?)
+                           plan_step_completed: PlanSteps.pending?(session))
         resolution.authoritative? ? need : need.without(Need::ApproachingWindow::KIND)
       end
 
@@ -523,20 +538,27 @@ module Lain
       # of history size, so a completed plan step on a short history with a
       # cold cache reaches it in an ordinary chat, with compaction on by
       # default.
-      def weigh(base:, timeline:, walk:, head:, need:, pins:, occupancy:, provenance:)
-        return defer(base:, need:, head:, occupancy:, provenance:) unless timely?(need, head)
+      #
+      # Once a cut holds, the rewrite is measured against the HELD render and
+      # not the full history, which any cut already beats: an advance has to
+      # shrink what the turn would otherwise send. The held render is taken
+      # FIRST, so on a turn that advances, the last edge journaled is the chain
+      # the turn actually sends.
+      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:)
+        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) unless timely?(need, head)
 
+        unadvanced = held_cut.messages
         snapshot = SummarySnapshot.take(messages: head.messages, eager: @eager)
-        outcome = @derived.over(timeline, walk:, pins:, snapshot:)
-        return defer(base:, need:, head:, occupancy:, provenance:, outcome:) if outcome.refused?
+        outcome = @derived.over(held_cut.timeline, walk: held_cut.walk, pins:, snapshot:, cut: held_cut.seam)
+        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome:) if outcome.refused?
 
         scheduler = scheduler_for(outcome.replay)
-        rewrite = scheduler.measure(walk.messages)
+        rewrite = scheduler.measure(unadvanced)
         unless rewrite.shrinks?
-          return defer(base:, need:, head:, occupancy:, provenance:, outcome:, would_not_shrink: true)
+          return defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome:, would_not_shrink: true)
         end
 
-        commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
+        commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
       end
 
       # {Scheduler#evaluate} is the PURE half of the policy and never reads the
@@ -554,10 +576,12 @@ module Lain
                                                   history_size: head.bytesize).compact?
       end
 
-      def defer(base:, need:, head:, occupancy:, provenance:, outcome: Derived::Outcome::NOTHING,
+      # A turn that compacts no FURTHER still renders the cut that holds: the
+      # base itself only while none does.
+      def defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome: Derived::Outcome::NOTHING,
                 would_not_shrink: false)
         record(need:, head:, compacted: false, outcome:, occupancy:, provenance:, would_not_shrink:)
-        base
+        holding(base, held_cut)
       end
 
       # `head.bytesize` to {Need} and to the hard-cap comparison -- the count
@@ -579,14 +603,31 @@ module Lain
       # for a sonnet turn. `collapse_strategy:` rides beside it for the mirror
       # reason: the scheduler is handed a PIPELINE and can name no policy, so
       # the accounting can be grouped by arm with no launch command to hand.
-      def commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
+      #
+      # The advance is recorded only HERE, once this turn's pipeline is chosen:
+      # a summary that failed collapsed nothing and cannot shrink the render,
+      # so no cut exists until its replacement text does.
+      def commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
         pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
                                       base: provider, rewrite:, ran_under: base.model,
                                       collapse_strategy: @collapse_strategy)
         compacted = !pipeline.equal?(provider)
         record(need:, head:, compacted:, outcome:, occupancy:, provenance:)
-        compacted ? base.with_pipeline(pipeline) : base
+        return holding(base, held_cut) unless compacted
+
+        held_cut.advance(outcome)
+        base.with_pipeline(pipeline)
+      end
+
+      # The held render onto the live base, through the same flattened twin a
+      # compacting turn composes over, and WITHOUT a {Scheduler}: nothing was
+      # decided this turn, so there is no compaction for one to journal.
+      def holding(base, held_cut)
+        held = held_cut.outcome
+        return base if held.refused?
+
+        base.with_pipeline(HOLD.call(held.replay, BASE_PROVIDER.call(flattened_twin(base))))
       end
 
       # The MAIN chat Context is deliberately not `Ractor.shareable?`: `/model`
@@ -645,10 +686,22 @@ module Lain
         Ractor.make_shareable(->(workspace) { base.pipeline_for(workspace) })
       end
       private_constant :BASE_PROVIDER
+
+      # {Scheduler::COMPOSE}'s shape, for a held render no scheduler decided:
+      # the replay rides ahead of the base, and it is a module-scope lambda for
+      # that constant's reason -- a Proc built in a method would carry this
+      # object into a pipeline that must be shareable.
+      HOLD = lambda do |replay, provider|
+        Ractor.make_shareable(->(workspace) { replay >> Context.combinator_for(provider, workspace) })
+      end
+      private_constant :HOLD
     end
   end
 end
 
-# AFTER the class body: {Derived} reopens {Lain::Compaction::Source} and names
-# {Source::DerivationRefused}, so the class it hangs off has to exist first.
+# AFTER the class body: each of these reopens {Lain::Compaction::Source}, and
+# {Derived} names {Source::DerivationRefused}, so the class they hang off has
+# to exist first.
 require_relative "source/derived"
+require_relative "source/held_cut"
+require_relative "source/plan_steps"

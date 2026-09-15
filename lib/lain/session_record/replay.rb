@@ -12,7 +12,11 @@ module Lain
     # `#completeness`); the read-set's own add-only monotonicity then folds a
     # partial-then-complete pair to complete however the two are ordered. A
     # {Telemetry::TodoSnapshot} folds into {Session#write_todos} in RECORDED
-    # order, so its replace-not-merge semantics do the rest.
+    # order, so its replace-not-merge semantics do the rest. A
+    # {Telemetry::CompactionCut} folds into {Session#record_compaction_cut} in
+    # recorded order too, which is how a resumed session renders a committed
+    # cut's replacement byte for byte instead of asking a model for it again,
+    # and does not fire a plan step a recorded commit already consumed.
     #
     # The manifest needs no third record type: a run's `turn` / `memory_root`
     # chain is already what {Bench::Session::MemoryReplay} reconstructs a
@@ -30,6 +34,9 @@ module Lain
       SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       MEMORY_ROOT_TYPE = "memory_root"
+      COMPACTION_CUT_TYPE = "compaction_cut"
+      CUT_FIELDS = Telemetry::CompactionCut.members.freeze
+      private_constant :CUT_FIELDS
 
       # A private value satisfying {Session#write_todos}'s
       # `#content`/`#status` duck: {Tools::TodoWrite}'s own Item is
@@ -47,13 +54,14 @@ module Lain
 
       # @return [Session] a fresh Session carrying the recorded read-set, the
       #   pin-set the recorded transitions fold to, the LAST recorded todo
-      #   list, and the manifest reminders the recorded memory chain
-      #   reconstructs
+      #   list, every committed compaction cut, and the manifest reminders the
+      #   recorded memory chain reconstructs
       def session
         Session.new(memory:).tap do |fresh|
           restore_reads(fresh)
           restore_pins(fresh)
           restore_todos(fresh)
+          restore_cuts(fresh)
         end
       end
 
@@ -84,6 +92,24 @@ module Lain
       def restore_pins(fresh) = pins.each { |record| apply_pin(fresh, record) }
 
       def restore_todos(fresh) = todo_records.each { |record| fresh.write_todos(items(record)) }
+
+      # Recorded order puts every parent ahead of its child, and the Session
+      # refuses a child whose parent it has not folded -- so a truncated record
+      # fails here, loudly, instead of resuming onto a seam with a hole in it.
+      # As {Bench::Session::Corrupt}, because that is the damage it is, and the
+      # refusal resume and fork already turn into "cannot resume <file>".
+      def restore_cuts(fresh)
+        Journal.records(@records, type: COMPACTION_CUT_TYPE).each do |record|
+          fresh.record_compaction_cut(Telemetry::CompactionCut.new(**cut_fields(record)))
+        end
+      rescue Session::UnrecordedParent => e
+        raise Bench::Session::Corrupt, "the compaction_cut record chain is incomplete: #{e.message}; " \
+                                       "a cut's parent record is missing from the session file"
+      end
+
+      def cut_fields(record)
+        CUT_FIELDS.to_h { |field| [field, record.fetch(field.to_s)] }
+      end
 
       def reads
         Journal.records(@records, type: SESSION_READ_TYPE)

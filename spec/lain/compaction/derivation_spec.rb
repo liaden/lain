@@ -322,7 +322,7 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(journal.last.to_journal).to eq(
         "type" => "context_derived", "source_head" => source.head_digest, "derived_head" => derived.head_digest,
         "strategy" => "(anonymous strategy)", "spans" => [[source.to_a.first.digest, source.to_a[5].digest]],
-        "cut" => :offered, "moved" => 0, "keep_last" => 3
+        "cut" => :offered, "moved" => 0, "keep_last" => 3, "compaction_cut" => nil
       )
     end
 
@@ -432,6 +432,145 @@ RSpec.describe Lain::Compaction::Derivation do
       derived = described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(source)
 
       expect(derived.to_a).to all(be_deeply_frozen)
+    end
+
+    # The cut is the seam a committed compaction froze: the source digest it
+    # collapsed up to, and what every range at or before it was replaced with.
+    # The derivation is still taken from the SOURCE root every time -- it holds
+    # no derived head -- but the ranges at or before the cut are not the
+    # strategy's to answer again.
+    describe "a held cut" do
+      def seam_of(source, strategy: fixtures.summarizing, cut: described_class::UNCUT)
+        described_class.new(strategy:, keep_last: 3).derive(source, cut:) { |_derived, seam| seam }
+      end
+
+      def extended(timeline, by)
+        (0...by).inject(timeline) do |line, index|
+          line.commit(role: (timeline.length + index).even? ? "user" : "assistant",
+                      content: [fixtures.text("later #{index}")])
+        end
+      end
+
+      it "yields the seam it froze: the last collapsed source turn and the replacement of every range" do
+        source = fixtures.history(9)
+
+        seam = seam_of(source)
+
+        expect(seam.digest).to eq(source.to_a[5].digest)
+        expect(seam.collapses).to eq([{ "span" => [source.to_a[0].digest, source.to_a[5].digest],
+                                        "content" => [fixtures.text("[6 messages summarized]")] }])
+      end
+
+      it "answers the block's value, and the derived chain without one" do
+        source = fixtures.history(9)
+        derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
+
+        expect(derivation.derive(source) { |derived, _seam| derived.length }).to eq(4)
+        expect(derivation.derive(source)).to be_a(Lain::Timeline)
+      end
+
+      it "renders the held replacement verbatim, whatever the strategy would answer over the longer span now" do
+        earlier = fixtures.history(9)
+        later = extended(earlier, 3)
+        derivation = described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3)
+
+        derived = derivation.derive(later, cut: seam_of(earlier)).to_a
+
+        expect(derived.first.content).to eq([fixtures.text("[6 messages summarized]")])
+        expect(derived.first.causal_parents).to match_array(earlier.to_a[0..5].map(&:digest))
+        expect(derived.drop(1).map(&:content)).to eq(later.to_a.drop(6).map(&:content))
+      end
+
+      it "offers the strategy only the span after the cut, and yields the later seam" do
+        earlier = fixtures.history(9)
+        later = extended(earlier, 3)
+
+        derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
+        derived, seam = derivation.derive(later, cut: seam_of(earlier)) { |chain, frozen| [chain.to_a, frozen] }
+
+        expect(derived.map(&:content).first(2))
+          .to eq([[fixtures.text("[6 messages summarized]")], [fixtures.text("[3 messages summarized]")]])
+        expect(derived[1].causal_parents).to match_array(later.to_a[6..8].map(&:digest))
+        expect(seam.digest).to eq(later.to_a[8].digest)
+        expect(seam.spans).to eq([[later.to_a[0].digest, later.to_a[5].digest],
+                                  [later.to_a[6].digest, later.to_a[8].digest]])
+      end
+
+      it "yields the held cut back unchanged when nothing after it collapsed" do
+        earlier = fixtures.history(9)
+        cut = seam_of(earlier)
+
+        expect(seam_of(extended(earlier, 3), strategy: Lain::Compaction::Strategy::Identity.new, cut:)).to equal(cut)
+      end
+
+      # CONFIRMS what the characterization example below means under a cut. With
+      # no cut, derivation is not a functor on the prefix order, and that is
+      # still pinned. Between two advances of a HELD cut the derived chain
+      # extends turn by turn -- which is the whole point of holding one: the
+      # prefix a provider caches stops moving.
+      it "extends its derived chain as the source extends, while the cut holds and nothing new collapses" do
+        earlier = fixtures.history(9)
+        cut = seam_of(earlier)
+        derivation = described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3)
+
+        shorter = derivation.derive(extended(earlier, 1), cut:)
+        longer = derivation.derive(extended(earlier, 2), cut:)
+
+        expect(shorter.ancestor_of?(longer)).to be(true)
+      end
+
+      it "names the cut it derived from on the edge, beside every held span" do
+        journal = []
+        earlier = fixtures.history(9)
+        cut = seam_of(earlier)
+
+        described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3, journal:)
+                       .derive(extended(earlier, 3), cut:)
+
+        expect(journal.last).to have_attributes(compaction_cut: cut.digest, spans: cut.spans, cut: :offered)
+      end
+
+      # A cut holds only on a chain containing the head it was committed at, and
+      # on such a chain its floor never passes the keep_last boundary. Handed
+      # one that does anyway, the derivation refuses rather than collapse turns
+      # keep_last would have retained: no forward run ever sent that request.
+      it "refuses a held cut that reaches past the keep_last boundary" do
+        earlier = fixtures.history(9)
+        cut = seam_of(earlier)
+        rewound = Lain::Timeline.new(head_digest: earlier.to_a[6].digest, store: earlier.store)
+
+        expect { described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(rewound, cut:) }
+          .to raise_error(ArgumentError, /past the keep_last boundary/)
+      end
+
+      it "yields a seam that is a plain value, carrying no record of its own" do
+        seam = seam_of(fixtures.history(9))
+
+        expect(seam).to be_a(described_class::Seam)
+        expect(Ractor.shareable?(seam)).to be(true)
+      end
+
+      it "drops a range again whose recorded replacement was DROP" do
+        source = fixtures.history(9)
+        cut = seam_of(source, strategy: fixtures.dropping([2..3]))
+
+        derived = described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3)
+                                 .derive(extended(source, 2), cut:).to_a
+
+        expect(cut.collapses.map { |collapse| collapse["content"] }).to eq([[]])
+        expect(derived.map(&:content)).to eq((source.to_a.values_at(0, 1) + source.to_a.drop(4)).map(&:content) +
+                                             extended(source, 2).to_a.last(2).map(&:content))
+      end
+
+      # Content addressing makes a same-content history in another store the
+      # SAME chain, so the stranger here has to differ in its bytes.
+      it "refuses a cut that is not on the chain it is asked to derive" do
+        cut = seam_of(fixtures.history(9))
+
+        expect do
+          described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(fixtures.tool_history, cut:)
+        end.to raise_error(ArgumentError, /not on the chain/)
+      end
     end
   end
 

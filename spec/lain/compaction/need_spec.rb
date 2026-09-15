@@ -183,6 +183,15 @@ RSpec.describe Lain::Compaction::Need do
 
       expect(result.signals).not_to include(:plan_step_completion)
     end
+
+    # The edge is the CALLER's to make, and this pins why: the detector keeps no
+    # memory, so a level handed twice fires twice. A plan step that fired on
+    # every render until the next todo_write came from exactly this.
+    it "keeps no memory of having fired, so it relays a level as a level" do
+      expect([check(plan_step_completed: true), check(plan_step_completed: true)].map(&:signals))
+        .to all(include(:plan_step_completion))
+      expect(need).to be_frozen
+    end
   end
 
   # Deliberately REQUIRED, and pinned so it stays that way: a defaulted window

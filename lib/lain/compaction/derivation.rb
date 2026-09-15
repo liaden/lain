@@ -44,8 +44,21 @@ module Lain
     # prefix order (`A <= B` does not imply `derive(A) <= derive(B)`), pinned
     # as a characterization example in the spec. The source is the SESSION
     # timeline, never a previously derived one, which is what keeps a derived
-    # head a pure content address of (source head, strategy) and so makes
+    # head a pure content address of (source head, strategy, cut) and so makes
     # re-derivation exact and the artifact diffable.
+    #
+    # == A held cut
+    #
+    # A {Seam} is what a committed compaction froze: a SOURCE digest and the
+    # replacement every range at or before it collapsed into. Handed one, a
+    # derivation still starts from the source root, but those ranges are not
+    # the strategy's to answer again -- they are written from the record --
+    # and the strategy is offered only the span after the cut. So the cut is
+    # policy state its owner passes in, never a derived head held here, and
+    # while it holds with nothing new collapsing the derived chain DOES extend
+    # as the source does: the replacement's bytes and its parent chain are the
+    # same turn to turn. That monotonicity is the cut's purpose, and it is
+    # pinned beside the negative above.
     #
     # == What this object does not decide
     #
@@ -75,6 +88,25 @@ module Lain
       NO_RANGES = [].freeze
       private_constant :NO_RANGES
 
+      # A seam as a derivation reads one: the source digest the held ranges
+      # reach up to, and every held range with its replacement, root first. A
+      # plain value, carrying no record of its own -- where it was committed,
+      # by which arm and after which parent are its owner's to know.
+      Seam = Data.define(:digest, :collapses) do
+        # `make_shareable` and not `Canonical.normalize`: the collapses arrive
+        # either from records already normalized or from replacements already
+        # vetted, so freezing is what is missing, and re-normalizing a whole
+        # lineage every turn would be the cost.
+        def initialize(digest:, collapses:) = super(digest:, collapses: Ractor.make_shareable(collapses))
+
+        def spans = collapses.map { |collapse| collapse.fetch("span") }
+      end
+
+      # The seam before any compaction has committed: nothing held, and the
+      # strategy offered the whole droppable span. A Null Object, so a
+      # derivation with no cut and one with a cut are the same code path.
+      UNCUT = Seam.new(digest: nil, collapses: NO_RANGES)
+
       # @param strategy [Strategy::Base] which sub-spans collapse, and into what
       # @param keep_last [Integer] the trailing messages the derivation retains
       #   verbatim. Validated by {Boundary}, which owns that refusal for every
@@ -101,15 +133,24 @@ module Lain
       #   refusal: `walk: Walk.of(source)` as a default argument is evaluated
       #   before the method body, so a foreign-store call would walk the entire
       #   chain and only then raise.
-      # @return [Timeline] the derived chain, in `into`
-      def derive(source, into: source.store, walk: nil)
+      # @param cut [Seam] the seam to hold. Its digest must be on `source`'s
+      #   chain and short of the keep_last boundary -- the caller decides which
+      #   cut still holds, and holding one anywhere else would collapse either
+      #   the wrong range or turns a forward run sent verbatim
+      # @yieldparam derived [Timeline] the derived chain
+      # @yieldparam seam [Seam] the seam this derivation froze: `cut` itself
+      #   when nothing after it collapsed, and otherwise a later one holding
+      #   every range this chain collapsed. It is the caller's to commit or
+      #   discard -- a derivation does not know whether its chain will be sent.
+      # @return [Timeline, Object] the derived chain, in `into`; or the block's
+      #   value when a block is given
+      def derive(source, into: source.store, walk: nil, cut: UNCUT)
         refuse_foreign(source, into)
-        plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last)
-        writes = plan.writes
-        refuse_invalid(writes)
-        derived = writes.inject(Timeline.empty(store: into)) { |chain, write| write.onto(chain) }
+        plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last, cut:)
+        collapsed = plan.collapsed
+        derived = committed(plan.writes(collapsed), into)
         @journal << edge(plan, source, derived)
-        derived
+        block_given? ? yield(derived, plan.seam(collapsed)) : derived
       end
 
       # {Head}'s projection verbatim: the derived chain has to be validated in
@@ -159,6 +200,11 @@ module Lain
 
       private
 
+      def committed(writes, into)
+        refuse_invalid(writes)
+        writes.inject(Timeline.empty(store: into)) { |chain, write| write.onto(chain) }
+      end
+
       def refuse_foreign(source, into)
         return if source.empty? || into.key?(source.head_digest)
 
@@ -187,7 +233,8 @@ module Lain
       def edge(plan, source, derived)
         Telemetry::ContextDerived.new(source_head: source.head_digest, derived_head: derived.head_digest,
                                       strategy: @strategy.name, spans: plan.spans, cut: plan.cut,
-                                      moved: plan.boundary.moved, keep_last: @keep_last)
+                                      moved: plan.boundary.moved, keep_last: @keep_last,
+                                      compaction_cut: plan.held.digest)
       end
 
       # One event the derived chain will carry, and the only place a role is
@@ -212,21 +259,45 @@ module Lain
       private_constant :Write
 
       # The per-source half of a derivation, as a value: which source turns,
-      # their projection, where the span was cut, and which sub-spans the
-      # strategy answered over it. {Derivation} is the POLICY, held across many
-      # turns; these four travel together for exactly ONE source.
+      # their projection, where the span was cut, the cut it holds, and which
+      # sub-spans were collapsed -- the held ranges first, then the strategy's
+      # answer over the span after them. {Derivation} is the POLICY, held
+      # across many turns; these travel together for exactly ONE source.
       #
       # The ranges are asked for ONCE and held, never recomputed: a strategy
-      # may hold an oracle, and asking it twice is a second payment.
-      Plan = Data.define(:strategy, :walk, :boundary, :ranges) do
-        def self.over(strategy:, walk:, keep_last:)
+      # may hold an oracle, and asking it twice is a second payment. For the
+      # same reason each range is COLLAPSED once ({#collapsed}), and both the
+      # writes and the seam read that one answer.
+      Plan = Data.define(:strategy, :walk, :boundary, :held, :floor, :held_ranges, :live_ranges) do
+        def self.over(strategy:, walk:, keep_last:, cut:)
           boundary = Boundary.new(messages: walk.messages, keep_last:)
-          new(strategy:, walk:, boundary:, ranges: proposed(strategy, walk.messages, boundary))
+          at = walk.turns.each_with_index.to_h { |turn, index| [turn.digest, index] }
+          floor = cut.digest.nil? ? 0 : held_index(at, cut.digest) + 1
+          refuse_past(boundary, floor)
+          new(strategy:, walk:, boundary:, held: cut, floor:,
+              held_ranges: cut.spans.map { |first, last| held_index(at, first)..held_index(at, last) },
+              live_ranges: proposed(strategy, walk.messages, boundary, floor))
         end
 
-        def turns = walk.turns
+        # Raised rather than skipped: a cut whose digest is not on this chain
+        # would collapse whatever happens to sit at the wrong indices, and
+        # deciding which cut still holds is the caller's, before it gets here.
+        def self.held_index(at, digest)
+          at.fetch(digest) do
+            raise ArgumentError, "the held compaction cut names #{digest}, which is not on the chain being derived"
+          end
+        end
 
-        def messages = walk.messages
+        # A cut holds only on a chain containing the head it was committed at,
+        # and there its floor never passes the boundary. One that does would
+        # collapse turns keep_last retains -- a request no forward run sent --
+        # so it is refused rather than rendered.
+        def self.refuse_past(boundary, floor)
+          return if boundary.declined? || floor <= boundary.index
+
+          raise ArgumentError, "the held compaction cut ends at message #{floor}, past the keep_last boundary at " \
+                               "#{boundary.index}; a cut holds only on a chain containing the head it was committed at"
+        end
 
         # The two reasons a span may hold nothing to collapse are asked
         # SEPARATELY, never as `index.zero?`, which is the one spelling that
@@ -237,42 +308,63 @@ module Lain
         # raise inside the render path is not a bargain. The derivation still
         # runs -- a chain with no collapsed range is the identity derivation --
         # and {#cut} records WHY nothing collapsed.
-        def self.proposed(strategy, messages, boundary)
-          return NO_RANGES if boundary.empty? || boundary.declined?
+        #
+        # `floor` is where a held cut ends, so a boundary AT it offers nothing
+        # past the cut -- the same vacuous request an empty boundary is.
+        def self.proposed(strategy, messages, boundary, floor)
+          return NO_RANGES if boundary.declined? || boundary.index <= floor
 
-          strategy.ranges(messages, span: 0...boundary.index)
+          strategy.ranges(messages, span: floor...boundary.index)
         end
-        private_class_method :proposed
+        private_class_method :proposed, :held_index, :refuse_past
+
+        def turns = walk.turns
+
+        def messages = walk.messages
+
+        def ranges = held_ranges + live_ranges
 
         # Why the span was what it was, as the journalled edge's diagnosis:
-        # `:empty` (the request was vacuous), `:declined` (no valid cut
-        # existed) or `:offered` (the strategy was handed a real span). Only
-        # the last means an empty `spans` is the STRATEGY's answer, and the
-        # three are otherwise indistinguishable on the record.
+        # `:empty` (nothing was droppable past the held cut), `:declined` (no
+        # valid cut existed) or `:offered` (the strategy was handed a real
+        # span). Only the last means an empty live answer is the STRATEGY's,
+        # and the three are otherwise indistinguishable on the record.
         #
         # ASKED, never reconstructed: deriving the answer from `moved`, from
         # the naive split, or from `index.zero?` re-implements a rule that
         # lives in {Boundary} and goes quietly wrong the next time the cut rule
-        # is relaxed.
+        # is relaxed. With no cut held the floor is 0, and `index <= 0` off a
+        # boundary that did not decline is exactly {Boundary#empty?}.
         def cut
-          return :empty if boundary.empty?
           return :declined if boundary.declined?
+          return :empty if boundary.index <= floor
 
           :offered
         end
 
+        # Every range paired with what replaces it: a held range with the
+        # replacement its cut recorded, a live one with the strategy's collapse.
+        # The range travels WITH its slice because {Strategy::Composed} needs
+        # it to route the collapse to whichever operand proposed it -- the one
+        # fact about a range the slice cannot carry. Others ignore it.
+        def collapsed
+          recorded = held.collapses.map { |collapse| Strategy::Replacement.of(collapse.fetch("content")) }
+          held_ranges.zip(recorded) + live_ranges.map { |range| [range, strategy.collapse(messages[range], range:)] }
+        end
+
         # One write per retained turn and one per collapsed range, in source
         # order. {Strategy::Base#ranges} guarantees an ascending,
-        # non-overlapping partition, and this fold is what that guarantee BUYS:
+        # non-overlapping partition of the live span, every held range ends at
+        # or before the floor it starts at, and this fold is what that BUYS:
         # the derived chain is exactly the gaps between the ranges, so there is
         # no per-index membership test and no set of collapsed indices to hold.
         #
         # A range whose collapse answers DROP contributes no write at all --
         # the unit of the monoid {Strategy::Base#collapse} maps into, and how a
         # range vanishes leaving no replacement event.
-        def writes
-          folded, cursor = ranges.inject([[], 0]) do |(events, from), range|
-            [events + retained(from...range.first) + [replacement(range)].compact, range.max + 1]
+        def writes(collapsed)
+          folded, cursor = collapsed.inject([[], 0]) do |(events, from), (range, replacement)|
+            [events + retained(from...range.first) + replacing(range, replacement), range.max + 1]
           end
           folded + retained(cursor...turns.size)
         end
@@ -285,20 +377,31 @@ module Lain
         # `#max`, never `#last`: `(0...5).last` is 5 -- the EXCLUDED end -- and a
         # strategy may answer either kind of Range, so the naive spelling names
         # a turn the range does not cover (or runs off the end of the chain).
-        def spans = ranges.map { |range| [digest(range.first), digest(range.max)] }
+        def spans = ranges.map { |range| endpoints(range) }
+
+        # The seam this derivation froze. The held one when nothing after it
+        # collapsed -- the SAME object, so a caller can tell no advance by
+        # identity -- and otherwise a seam at the last turn any range collapsed,
+        # carrying every range's replacement, held ranges first. A turn in the
+        # live span that no range covered stays past the seam, to be offered
+        # again.
+        def seam(collapsed)
+          return held if live_ranges.empty?
+
+          Seam.new(digest: digest(live_ranges.last.max), collapses: collapsed.map { |pair| recorded(*pair) })
+        end
 
         private
 
         def retained(indices) = turns[indices].map { |turn| Write.retaining(turn) }
 
-        # The range travels WITH its slice because {Strategy::Composed} needs
-        # it to route the collapse to whichever operand proposed it -- the one
-        # fact about a range the slice cannot carry. Others ignore it.
-        def replacement(range)
-          collapse = strategy.collapse(messages[range], range:)
-
-          Write.replacing(collapse.content, subsumed(range)) unless collapse.drop?
+        def replacing(range, replacement)
+          replacement.drop? ? NO_RANGES : [Write.replacing(replacement.content, subsumed(range))]
         end
+
+        def endpoints(range) = [digest(range.first), digest(range.max)]
+
+        def recorded(range, replacement) = { "span" => endpoints(range), "content" => replacement.content }
 
         def subsumed(range) = range.map { |index| digest(index) }
 

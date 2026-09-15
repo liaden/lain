@@ -113,10 +113,27 @@ RSpec.describe Lain::Compaction::Source do
   # A Session that pins the turn digests it is handed. `pinned?` is the O(1)
   # membership test the per-turn path asks (session.rb:153); `#pins` sorts on
   # every call and is deliberately NOT what a hot loop reaches for.
+  #
+  # It holds NO compaction cut and keeps none it is handed, so every render
+  # through it is a decision over the uncut history -- which is what the
+  # examples using it are about. A cut that sticks is a real Session's, and
+  # the group that holds one builds one (see {#recording_session}).
   def session_pinning(*digests, plan_step_completed: false)
-    instance_double(Lain::Session, plan_step_completed?: plan_step_completed).tap do |double|
+    instance_double(Lain::Session, plan_step_completed?: plan_step_completed, compaction_cuts: [],
+                                   plan_step_completions: plan_step_completed ? 1 : 0).tap do |double|
       allow(double).to receive(:pinned?) { |digest| digests.include?(digest) }
+      allow(double).to receive(:record_compaction_cut).and_return(double)
     end
+  end
+
+  # A real Session journaling into the example's own journal, so the cuts it
+  # records land beside the decisions and edges that led to them.
+  def recording_session = Lain::Session.new(journal:)
+
+  def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+  def complete_a_step(session, count = 1)
+    session.write_todos(Array.new(count) { |index| todo("step #{index}", "completed") })
   end
 
   def records
@@ -273,7 +290,9 @@ RSpec.describe Lain::Compaction::Source do
 
   def render(context, line) = context.render(timeline: line, toolset:, workspace:)
 
-  describe "deferring is a true no-op" do
+  # Before the first cut commits. Once one has, a deferring turn renders the
+  # cut's replacement rather than the base -- see "a committed compaction cut".
+  describe "deferring, before any cut has committed, is a true no-op" do
     it "answers the base Context ITSELF, not a copy carrying an equivalent pipeline" do
       line = timeline
       expect(context_for(source, line)).to equal(base)
@@ -1294,6 +1313,10 @@ RSpec.describe Lain::Compaction::Source do
     # model this exists to prevent is "derivation is incremental" -- if it ever
     # fails because someone made derivation prefix-preserving, that is a real
     # achievement and needs confirming, not deleting.
+    #
+    # It holds for a derivation taken with NO cut held, which is what the
+    # stand-in session gives it. A held cut changes the meaning, confirmed
+    # below: between two advances the derived chain does extend.
     it "is not a functor on the prefix order" do
       shorter = timeline(6)
       longer = shorter.commit(role: role_at(7), content: [block(7)])
@@ -1306,6 +1329,22 @@ RSpec.describe Lain::Compaction::Source do
       expect(first).not_to eq(second)
       expect(chain_at(second, longer.store).ancestor_digests).not_to include(first)
       expect(chain_at(first, shorter.store).ancestor_digests).not_to include(second)
+    end
+
+    it "extends the derived chain turn by turn while a committed cut holds and nothing new collapses" do
+      session = recording_session
+      complete_a_step(session)
+      built = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1)
+      line = timeline(6)
+      context_for(built, line, session:)
+      shorter = line.commit(role: role_at(7), content: [block(7)])
+      longer = shorter.commit(role: role_at(8), content: [block(8)])
+
+      context_for(built, shorter, session:)
+      context_for(built, longer, session:)
+
+      _, first, second = derivations.map { |record| record["derived_head"] }
+      expect(chain_at(second, longer.store).ancestor_digests).to include(first)
     end
 
     # The derived chain is bounded by `keep_last` plus the number of ranges,
@@ -1404,6 +1443,353 @@ RSpec.describe Lain::Compaction::Source do
           .to eq([[1, 1], [2, 2]])
         expect(oracle.asks).to eq(2)
       end
+    end
+  end
+
+  # The cut is POLICY STATE, not a derived head: the Source re-derives from the
+  # source root every turn, with the ranges a committed compaction collapsed
+  # held at their recorded replacement and everything after them kept. A signal
+  # that clears therefore never renders the full history again.
+  describe "a committed compaction cut" do
+    let(:session) { recording_session }
+
+    def derivations = records.select { |record| record["type"] == "context_derived" }
+
+    def cuts = records.select { |record| record["type"] == "compaction_cut" }
+
+    def extend_by(line, count)
+      (1..count).inject(line) do |grown, _|
+        grown.commit(role: role_at(grown.length + 1), content: [block(grown.length + 1)])
+      end
+    end
+
+    # Plan steps compact and nothing else does: the byte threshold is out of
+    # reach, and a hard cap of 1 forces whatever is warranted even while warm.
+    def stepping(**overrides) = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1, **overrides)
+
+    def forcing(**overrides) = source(need: build_need(byte_threshold: 100), hard_cap: 100, **overrides)
+
+    def failing_oracle
+      Class.new do
+        attr_reader :asks
+
+        def initialize = (@asks = 0)
+
+        def ask(_inputs = {})
+          @asks += 1
+          raise Lain::Error, "the summarizer is down"
+        end
+      end.new
+    end
+
+    it "is not undone when its signal clears" do
+      built = stepping
+      line = timeline(6)
+      complete_a_step(session)
+      compacted = render(context_for(built, line), line).messages
+
+      complete_a_step(session)
+      later = extend_by(line, 2)
+      held = render(context_for(built, later), later).messages
+
+      expect(decisions.map { |record| [record["signals"], record["compacted"]] })
+        .to eq([[%w[plan_step_completion], true], [[], false]])
+      expect(held.first).to eq(compacted.first)
+      expect(held.size).to be <= compacted.size + 2
+    end
+
+    it "spans the same events turn after turn once the summary has landed" do
+      oracle = SourceSpecSpanOracle.new("a span summary")
+      built = stepping(strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+      line = timeline(6)
+      complete_a_step(session)
+      context_for(built, line)
+
+      renders = (1..3).map do |turns|
+        grown = extend_by(line, turns)
+        render(context_for(built, grown), grown).messages.first
+      end
+
+      expect(derivations.drop(1).map { |record| [record["spans"], record["compaction_cut"]] })
+        .to eq([[cuts.first["collapses"].map { |collapse| collapse["span"] }, cuts.first["digest"]]] * 3)
+      expect(renders.map { |message| Lain::Canonical.dump(message) }.uniq.size).to eq(1)
+      expect(oracle.asks).to eq(1)
+    end
+
+    it "leaves the lossless record untouched through two compactions" do
+      built = forcing
+      line = timeline(6)
+      context_for(built, line)
+      longer = extend_by(line, 2)
+      context_for(built, longer)
+
+      expect(cuts.size).to eq(2)
+      expect(longer.to_a.map(&:content)).to eq((1..8).map { |index| [block(index)] })
+      expect(longer.to_a.map(&:role)).to eq((1..8).map { |index| role_at(index) })
+    end
+
+    def at(line, index) = Lain::Timeline.new(head_digest: line.to_a[index].digest, store: line.store)
+
+    # The render an ordinary forward run sends at `line`: a fresh Source and a
+    # fresh Session, with nothing ever committed.
+    def forward_render(line, need: build_need(byte_threshold: 1_000_000), hard_cap: 1_000_000)
+      fresh = described_class.new(need:, cold: build_cold, hard_cap:, keep_last:, eager:, clock:)
+      render(fresh.context_for(base:, timeline: line, usage: nil, session: Lain::Session.new), line).messages
+    end
+
+    it "carries a completed plan step on the first compaction that commits, and not after" do
+      built = stepping
+      line = timeline(6)
+      complete_a_step(session)
+
+      context_for(built, line)
+      context_for(built, extend_by(line, 2))
+
+      expect(decisions.map { |record| [record["signals"], record["compacted"]] })
+        .to eq([[%w[plan_step_completion], true], [[], false]])
+    end
+
+    # The render right after a completing todo_write is the next iteration of
+    # the same tool loop, and its cache is warm: the scheduler defers. The step
+    # must still be pending when the cache goes cold, or a plan step never
+    # compacts in a live loop at all.
+    it "keeps a completed plan step pending through a warm defer, so the first cold render compacts" do
+      built = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1_000_000)
+      line = timeline(6)
+      complete_a_step(session)
+      context_for(built, line)
+      clock.advance(600)
+      context_for(built, line)
+      built << turn_usage(cache_read: 0)
+
+      context_for(built, extend_by(line, 2))
+
+      expect(decisions.map { |record| [record["signals"], record["compacted"]] })
+        .to eq([[%w[plan_step_completion], false], [%w[plan_step_completion], false],
+                [%w[plan_step_completion], true]])
+      expect(compactions.map { |record| record["cache_state"] }).to eq(%w[cold])
+    end
+
+    it "fires again on the next write that raises the completed count" do
+      built = stepping
+      line = timeline(6)
+      complete_a_step(session)
+      context_for(built, line)
+      complete_a_step(session, 2)
+
+      context_for(built, extend_by(line, 2))
+
+      expect(decisions.map { |record| [record["signals"], record["compacted"]] })
+        .to eq([[%w[plan_step_completion], true], [%w[plan_step_completion], true]])
+      expect(cuts.map { |record| record["plan_step_completions"] }).to eq([1, 2])
+    end
+
+    it "journals the cut once, when it commits, carrying the replacement it froze" do
+      built = forcing
+      line = timeline(6)
+      rendered = render(context_for(built, line), line).messages
+
+      3.times { context_for(built, line) }
+
+      expect(cuts.size).to eq(1)
+      expect(cuts.first).to include("digest" => line.to_a[3].digest, "head" => line.head_digest,
+                                    "strategy" => built.collapse_strategy, "parent" => nil)
+      expect(cuts.first["collapses"].map { |collapse| collapse["content"] }).to eq([rendered.first["content"]])
+    end
+
+    it "retreats to no cut when the human rewinds below it, and says so on the record" do
+      built = stepping
+      line = timeline(8)
+      complete_a_step(session)
+      replacement = render(context_for(built, line), line).messages.first
+      context_for(built, extend_by(line, 1))
+      edges = derivations.size
+      rewound = at(line, 2)
+
+      messages = render(context_for(built, rewound), rewound).messages
+
+      expect(derivations[edges - 1]["compaction_cut"]).to eq(session.compaction_cuts.last.digest)
+      expect(messages).not_to include(replacement)
+      expect(derivations.size).to eq(edges + 1)
+      expect(derivations.last["compaction_cut"]).to be_nil
+    end
+
+    # The common rewind: straight after the compacting reply, before any held
+    # render. The file's last edge is the commit edge, which collapsed to the
+    # new cut, so the retreat must still be written down.
+    it "journals a retreat on a rewind straight after the compaction that committed the cut" do
+      built = stepping
+      line = timeline(8)
+      complete_a_step(session)
+      context_for(built, line)
+      edges = derivations.size
+
+      render(context_for(built, at(line, 3)), at(line, 3))
+
+      expect(derivations.size).to eq(edges + 1)
+      expect(derivations.last).to include("compaction_cut" => nil, "spans" => [])
+    end
+
+    it "retreats to the latest cut whose commit head is still on the chain, not past it" do
+      built = forcing
+      line = timeline(6)
+      context_for(built, line)
+      longer = extend_by(line, 2)
+      context_for(built, longer)
+      first_cut, second_cut = cuts.map { |record| record["digest"] }
+
+      context_for(built, at(longer, 6))
+
+      expect(longer.to_a.map(&:digest).index(second_cut)).to be <= 6
+      expect(derivations.last["compaction_cut"]).to eq(first_cut)
+    end
+
+    # A cut committed at head 8 collapsed turns the original run still sent
+    # verbatim at head 6. Rewinding there and prompting again is a forward run
+    # from head 6, and it must be sent as one: the turn the human rewound TO is
+    # not theirs to lose to a summary committed later in time.
+    it "renders a rewind below the commit head plus a new prompt as an ordinary forward run would" do
+      built = stepping
+      line = timeline(8)
+      complete_a_step(session)
+      context_for(built, line)
+      prompted = at(line, 5).commit(role: "user", content: [block(99)])
+
+      expect(render(context_for(built, prompted), prompted).messages).to eq(forward_render(prompted))
+    end
+
+    it "renders the head exactly at the cut as the full request, never a one-message one" do
+      built = stepping
+      line = timeline(8)
+      complete_a_step(session)
+      context_for(built, line)
+      cut_index = line.to_a.map(&:digest).index(session.compaction_cuts.last.digest)
+
+      messages = render(context_for(built, at(line, cut_index)), at(line, cut_index)).messages
+
+      expect(messages.size).to eq(cut_index + 1)
+      expect(messages).to eq(forward_render(at(line, cut_index)))
+    end
+
+    it "inherits no later cut through a fork onto a turn between the cut and its commit head" do
+      built = stepping
+      line = timeline(8)
+      complete_a_step(session)
+      context_for(built, line)
+      forked_session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      forked = at(line, 6)
+      fresh = stepping
+
+      messages = render(fresh.context_for(base:, timeline: forked, usage: nil, session: forked_session),
+                        forked).messages
+
+      expect(forked_session.compaction_cuts.size).to eq(1)
+      expect(messages).to eq(forward_render(forked))
+      expect(derivations.last["compaction_cut"]).to be_nil
+    end
+
+    # Each advance carries only what it newly collapsed, and names the record
+    # it advanced past by content address. A whole-seam record grows with every
+    # advance, which is quadratic over a long session.
+    it "writes cut records whose size does not grow with the number of cuts, and resumes to the same bytes" do
+      built = forcing
+      line = timeline(4)
+      renders = (1..8).map do
+        line = extend_by(line, 2)
+        render(context_for(built, line), line).messages
+      end
+      sizes = journal_io.string.each_line.select { |entry| entry.include?(%("type":"compaction_cut")) }.map(&:bytesize)
+      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+
+      replayed = render(forcing.context_for(base:, timeline: line, usage: nil, session: resumed), line).messages
+
+      expect(sizes.size).to eq(8)
+      expect(sizes.drop(1).max - sizes.drop(1).min).to be < sizes.drop(1).min / 4
+      expect(cuts.map { |record| record["collapses"].size }).to all(eq(1))
+      expect(cuts.drop(1).map { |record| record["parent"] }).to eq(session.compaction_cuts.first(7).map(&:address))
+      expect(Lain::Canonical.dump(replayed)).to eq(Lain::Canonical.dump(renders.last))
+    end
+
+    # A bench compares arms, so a prefix one arm collapsed must never be sent
+    # under another: a cut from a different --compact-strategy retreats, and
+    # the edge says no cut held.
+    it "does not hold a cut another arm committed, and journals the retreat" do
+      line = timeline(6)
+      context_for(forcing, line)
+      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      other = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1_000_000,
+                     strategy: Lain::Compaction::Strategy::Summarizing.new(oracle: SourceSpecSpanOracle.new("b")))
+
+      messages = render(other.context_for(base:, timeline: line, usage: nil, session: resumed), line).messages
+
+      expect(cuts.size).to eq(1)
+      expect(messages).to eq(forward_render(line))
+      expect(derivations.last["compaction_cut"]).to be_nil
+    end
+
+    it "does not commit a cut while the summarizer fails, and retries on the next render" do
+      oracle = failing_oracle
+      built = forcing(strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+      line = timeline(6)
+
+      2.times { expect(context_for(built, line)).to equal(base) }
+
+      expect(cuts).to be_empty
+      expect(session.compaction_cuts).to be_empty
+      expect(oracle.asks).to eq(2)
+    end
+
+    # The eager tier replaces a tool result with its summary as the summary
+    # lands, which is independent of the cut. The cut freezes the replacement it
+    # committed, so a summary landing later inside the collapsed range changes
+    # nothing a provider has already cached.
+    it "keeps the replacement it froze when an eager summary lands inside its range afterwards" do
+      line = tool_timeline
+      live = SourceSpecEager.new
+      built = forcing(eager: live)
+      before = render(context_for(built, line), line).messages.first
+      live.instance_variable_get(:@summaries)[Lain::Canonical.digest(tool_body(2))] = "a late summary"
+
+      after = render(context_for(built, line), line).messages.first
+
+      expect(after).to eq(before)
+      expect(Lain::Canonical.dump(after)).not_to include("a late summary")
+    end
+
+    # An advancing turn derives twice -- the held render it must beat, and the
+    # advance -- and a reader pairing a render with its edge takes the last one.
+    it "journals the chain it sends as the last edge on a turn that advances past a held cut" do
+      built = forcing
+      line = timeline(6)
+      context_for(built, line)
+      longer = extend_by(line, 2)
+
+      messages = render(context_for(built, longer), longer).messages
+      sent = Lain::Timeline.new(head_digest: derivations.last["derived_head"], store: longer.store).to_a
+
+      expect(cuts.size).to eq(2)
+      expect(sent.map(&:role)).to eq(messages.map { |message| message["role"] })
+      expect(sent.first(2).map(&:content)).to eq(messages.first(2).map { |message| message["content"] })
+    end
+
+    it "hands the scheduler a shareable Context on a turn that only holds its cut" do
+      built = forcing
+      line = timeline(6)
+      context_for(built, line)
+
+      expect(context_for(built, line)).to be_deeply_frozen
+    end
+
+    it "renders a conversation the Messages API would accept while it holds the cut" do
+      built = stepping
+      line = timeline(6)
+      complete_a_step(session)
+      context_for(built, line)
+      later = extend_by(line, 4)
+
+      messages = render(context_for(built, later), later).messages
+
+      expect(Lain::Context::Conversation.new(messages).violations.map(&:message)).to be_empty
     end
   end
 

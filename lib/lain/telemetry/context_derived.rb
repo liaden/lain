@@ -50,7 +50,8 @@ module Lain
     # are not interchangeable:
     #
     #   `:empty`    -- the request was vacuous; `keep_last` covered the whole
-    #     history, so nothing was ever droppable.
+    #     history, or everything it left droppable was already held by
+    #     `compaction_cut`, so nothing new was ever offered.
     #   `:declined` -- {Compaction::Boundary} found no legal cut but 0. Under
     #     the shipped cut rule this is unreachable through a DERIVATION: every
     #     declining shape is one {Context::Conversation} refuses before an edge
@@ -88,21 +89,30 @@ module Lain
     # learn it -- guessing wrong reads as drift, a confident, wrong "the chain
     # disagrees" from noise.
     #
+    # `compaction_cut` is the seam the derivation was taken FROM: the digest of
+    # the {CompactionCut} whose ranges it held at their recorded replacement,
+    # or nil when none was held. It is the other half of what a re-derivation
+    # needs, and the half an audit reads to see a cut hold: while one holds,
+    # every edge names the same cut and carries its spans first.
+    #
     # Emitted by {Compaction::Derivation}. Nothing re-derives against it today
     # -- this subsystem's own drift-checking reader was unreachable and has
     # been deleted -- which makes the record write-only in practice, exactly
     # the default failure mode a field nobody consumes drifts into silently.
-    ContextDerived = Data.define(:source_head, :derived_head, :strategy, :spans, :cut, :moved, :keep_last) do
+    ContextDerived = Data.define(:source_head, :derived_head, :strategy, :spans, :cut, :moved, :keep_last,
+                                 :compaction_cut) do
       include Journalable
 
-      def initialize(source_head:, derived_head:, strategy:, spans:, cut:, moved: 0, keep_last: nil)
+      def initialize(source_head:, derived_head:, strategy:, spans:, cut:, moved: 0, keep_last: nil,
+                     compaction_cut: nil)
         strategy = named(strategy)
         spans = Canonical.normalize(spans)
         cut = cut.to_sym
         Carriers::ContextDerived.check!(strategy:, spans:, cut:)
 
         super(source_head: source_head&.dup&.freeze, derived_head: derived_head&.dup&.freeze,
-              strategy:, spans:, cut:, moved: Integer(moved), keep_last: keep_last&.then { |n| Integer(n) })
+              strategy:, spans:, cut:, moved: Integer(moved), keep_last: keep_last&.then { |n| Integer(n) },
+              compaction_cut: compaction_cut&.then { |digest| -digest.to_s })
       end
 
       private

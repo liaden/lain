@@ -112,6 +112,11 @@ module Lain
       # transition is detected upstream, so this detector only relays the
       # boolean it is handed and never reaches into a Session -- which is what
       # keeps Need decoupled from run-state storage.
+      #
+      # The boolean must be an EDGE, and making it one is the caller's: this
+      # detector is frozen and has nowhere to remember that it already fired,
+      # so handed a level it fires on every check until the level drops. The
+      # compaction source latches on {Session#plan_step_completions}.
       class PlanStepCompletion
         KIND = :plan_step_completion
 
@@ -143,7 +148,8 @@ module Lain
       #   no head at all, which no configurable threshold can cross.
       # @param used_tokens [Integer, nil] current usage against the context window
       # @param manual [Boolean] an explicit, on-demand trigger
-      # @param plan_step_completed [Boolean] {Session#plan_step_completed?}'s signal
+      # @param plan_step_completed [Boolean] whether a plan step completed since
+      #   the last check -- an edge, see {PlanStepCompletion}
       # @return [Result]
       def check(window_tokens:, head_bytes: 0, used_tokens: nil, manual: false, plan_step_completed: false)
         state = State.new(head_bytes:, used_tokens:, window_tokens: window!(window_tokens),

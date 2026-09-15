@@ -65,10 +65,23 @@ module Lain
         # prompt line and a status bar reading a published number back.
         def self.stalled?(streak) = streak >= STALLED_STREAK
 
-        Outcome = Data.define(:replay, :hits, :misses) do
+        # The policy a held render derives under. Named on the edge as what it
+        # is -- nothing new was collapsed -- rather than as the run's arm,
+        # which did not run.
+        HOLDING = Strategy::Identity.new
+        private_constant :HOLDING
+
+        # What {#stale_edge?} reads before this object has journaled any edge.
+        UNJOURNALED = Object.new.freeze
+        private_constant :UNJOURNALED
+
+        Outcome = Data.define(:replay, :seam, :hits, :misses) do
           # The derivation refused this turn's chain; the caller renders
           # uncompacted.
           def refused? = replay.nil?
+
+          # The derived chain's projection: what a render through it sends.
+          def messages = replay.call(nil)
         end
 
         # What this turn renders through, and what finding out cost.
@@ -86,7 +99,7 @@ module Lain
           # are honest zeros rather than the last derivation's, which is what
           # keeps a bench reading `summary_hits` from folding warm defers into
           # the hit rate.
-          NOTHING = new(replay: nil, hits: 0, misses: 0)
+          NOTHING = new(replay: nil, seam: Derivation::UNCUT, hits: 0, misses: 0)
         end
 
         # @param keep_last [Integer] the trailing messages the derivation
@@ -101,6 +114,7 @@ module Lain
           @strategy = strategy
           @journal = journal
           @consecutive = 0
+          @named = UNJOURNALED
         end
 
         # Held here and asked back for the {Head}: the cut a derivation makes
@@ -117,20 +131,36 @@ module Lain
         #   value {Head} was measured with
         # @param snapshot [SummarySnapshot] the eager tier, frozen for this
         #   turn; read only by the un-flagged default policy
-        # @return [Outcome]
-        def over(timeline, walk:, pins:, snapshot:)
-          policy = PinCuts.new(inner: @strategy || Held.new(snapshot), pins:)
-          # BOUND FIRST, DELIBERATELY. `#replayed` is the only thing that runs
-          # the strategy, so it is the only thing that moves its counters.
-          # Reading them in the same argument list would make the figures
-          # correct purely because Ruby evaluates keyword arguments in source
-          # order: put `hits:` ahead of `replay:` there and every journalled
-          # rate shifts back one turn, permanently and silently, with the whole
-          # suite still green.
-          replay = replayed(policy, timeline, walk)
-
-          Outcome.new(replay:, hits: policy.hits, misses: policy.misses)
+        # @param cut [Derivation::Seam] the seam still holding on this chain;
+        #   the policy is offered only what follows it
+        # @return [Outcome] whose `seam` is the cut this chain would commit
+        def over(timeline, walk:, pins:, snapshot:, cut:)
+          replayed(PinCuts.new(inner: @strategy || Held.new(snapshot), pins:), timeline, walk, cut)
         end
+
+        # This turn's chain with `cut` held and NOTHING new collapsed: what a
+        # turn renders once a compaction has committed and no signal warrants
+        # another. The policy is never asked, so a model-backed one is never
+        # paid -- the held ranges are written from the record.
+        #
+        # @return [Outcome]
+        def held(timeline, walk:, cut:) = replayed(HOLDING, timeline, walk, cut)
+
+        # Whether the record's last `context_derived` could describe a cut other
+        # than `digest`, so that a turn holding `digest` WITHOUT deriving would
+        # leave the record describing a render it did not send -- a retreat
+        # back to the full history, the largest change in what is sent, and
+        # invisible to anyone reading the file.
+        #
+        # Only ever when the session has `recorded` a cut, since no edge can
+        # describe a cut that was never committed. Before this object has
+        # journaled an edge, an earlier process may have, so a recorded cut is
+        # enough on its own.
+        #
+        # @param digest [String, nil] the cut this turn holds
+        # @param recorded [Boolean] whether the session records any cut at all
+        # @return [Boolean]
+        def stale_edge?(digest, recorded:) = recorded && (@named.equal?(UNJOURNALED) || @named != digest)
 
         private
 
@@ -138,13 +168,25 @@ module Lain
         # method-level `rescue` sees a local as nil whenever anything ahead of
         # it raises, and the handler then dies of `NoMethodError` while
         # reporting -- the real error lost behind the reporting of it.
-        def replayed(policy, timeline, walk)
-          derived = derivation(policy).derive(timeline, walk:)
+        #
+        # The counters are read INSIDE the block, after `#derive` has run the
+        # strategy, and that order is load-bearing: read alongside the call
+        # instead, and every journalled rate shifts back one turn, permanently
+        # and silently, with the whole suite still green.
+        def replayed(policy, timeline, walk, cut)
+          outcome = derivation(policy).derive(timeline, walk:, cut:) do |derived, seam|
+            Outcome.new(replay: Replay.new(Derivation.projected(derived.to_a)), seam:,
+                        hits: policy.hits, misses: policy.misses)
+          end
           @consecutive = 0
-          Replay.new(Derivation.projected(derived.to_a))
+          # The seam the edge COLLAPSED to, not the cut it held: a commit edge
+          # over no cut still describes a compacted render, and a rewind right
+          # after it has to be written down.
+          @named = outcome.seam.digest
+          outcome
         rescue Derivation::Invalid => e
           refused(policy, e)
-          nil
+          Outcome.new(replay: nil, seam: cut, hits: policy.hits, misses: policy.misses)
         end
 
         # A fresh {Derivation} per turn, because the policy it is frozen around

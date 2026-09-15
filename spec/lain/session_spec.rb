@@ -479,6 +479,87 @@ RSpec.describe Lain::Session do
     end
   end
 
+  # The edge a compaction source latches on: a LEVEL stays up until the next
+  # write, so a reader polling it every render would see one completed step as
+  # a completion on every turn until the model writes its list again.
+  describe "#plan_step_completions" do
+    def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+    it "is zero before any todo_write lands" do
+      expect(session.plan_step_completions).to eq(0)
+    end
+
+    it "counts each write that raised the completed count, once per write" do
+      session.write_todos([todo("a", "completed"), todo("b", "pending")])
+      session.write_todos([todo("a", "completed"), todo("b", "pending")])
+      session.write_todos([todo("a", "completed"), todo("b", "completed")])
+
+      expect(session.plan_step_completions).to eq(2)
+    end
+
+    it "does not count a write that lowered or held the completed count" do
+      session.write_todos([todo("a", "completed")])
+      session.write_todos([todo("a", "pending")])
+
+      expect(session.plan_step_completions).to eq(1)
+    end
+
+    it "is the count the level agrees with on the write that raised it" do
+      session.write_todos([todo("a", "completed")])
+
+      expect([session.plan_step_completed?, session.plan_step_completions]).to eq([true, 1])
+    end
+  end
+
+  # Policy state, not a derived head: the Timeline stays the lossless record,
+  # and the cut rides here beside the pin-set for the pin-set's reason -- it is
+  # journaled and replayed, so a resume renders the replacement a recorded
+  # session rendered instead of re-asking for it.
+  describe "the compaction cuts it records" do
+    def cut(digest, parent: nil)
+      Lain::Telemetry::CompactionCut.new(
+        digest:, head: "#{digest}-head", strategy: "eager", parent:, plan_step_completions: 0,
+        collapses: [{ "span" => ["blake3:root", digest], "content" => [{ "type" => "text", "text" => "s" }] }]
+      )
+    end
+
+    it "holds none before a compaction commits" do
+      expect(session.compaction_cuts).to eq([])
+    end
+
+    it "holds every cut in the order it was committed, frozen" do
+      one = cut("blake3:one")
+      session.record_compaction_cut(one).record_compaction_cut(cut("blake3:two", parent: one.address))
+
+      expect(session.compaction_cuts.map(&:digest)).to eq(%w[blake3:one blake3:two])
+      expect(session.compaction_cuts).to be_frozen
+    end
+
+    it "answers a recorded cut by its address, which is what a child's parent link names" do
+      one = cut("blake3:one")
+      session.record_compaction_cut(one)
+
+      expect(session.compaction_cut(one.address)).to equal(one)
+    end
+
+    # A delta record is unreadable without its parent, so a truncated record
+    # must fail where it is folded rather than render a seam with a hole in it.
+    it "refuses a cut whose parent it does not hold" do
+      expect { session.record_compaction_cut(cut("blake3:two", parent: cut("blake3:one").address)) }
+        .to raise_error(Lain::Session::UnrecordedParent, /parent .* is not a cut this session recorded/)
+      expect(session.compaction_cuts).to eq([])
+    end
+
+    it "journals each cut as it is recorded" do
+      journal = []
+      journaled = described_class.new(journal:)
+
+      journaled.record_compaction_cut(cut("blake3:one"))
+
+      expect(journal).to eq([cut("blake3:one")])
+    end
+  end
+
   describe "#reminders with a memory source" do
     def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
@@ -567,6 +648,16 @@ RSpec.describe Lain::Session do
 
     it "has no reminders" do
       expect(null.reminders).to eq([])
+    end
+
+    it "records no compaction cut and counts no completed plan step" do
+      cut = Lain::Telemetry::CompactionCut.new(digest: "blake3:one", head: "blake3:one", strategy: "eager",
+                                               parent: nil, plan_step_completions: 0,
+                                               collapses: [{ "span" => %w[blake3:one blake3:one], "content" => [] }])
+
+      expect(null.record_compaction_cut(cut)).to be(null)
+      expect(null.compaction_cuts).to eq([])
+      expect(null.plan_step_completions).to eq(0)
     end
 
     it "is a shared, frozen instance" do
