@@ -99,12 +99,17 @@ module Lain
       # The kill-time partial capture rides the reply; discarding it would tell
       # the model less than {Local} does, whose `Mixlib::ShellOut::CommandTimeout`
       # embeds the captured output in its own message. This mirrors that shape.
+      #
+      # Built from BINARY pieces: the daemon's captures arrive BINARY, and a
+      # non-ASCII command interpolated beside a high byte would raise an
+      # encoding error in place of the timeout. Whether the message is text is
+      # {Tools::Bash}'s decision.
       def killed(command, outcome)
         "killed server-side by lain-core\n" \
-          "---- Begin output of #{command} ----\n" \
-          "STDOUT: #{outcome.fetch("stdout")}\n" \
-          "STDERR: #{outcome.fetch("stderr")}\n" \
-          "---- End output of #{command} ----"
+          "---- Begin output of #{command.b} ----\n" \
+          "STDOUT: #{outcome.fetch("stdout").b}\n" \
+          "STDERR: #{outcome.fetch("stderr").b}\n" \
+          "---- End output of #{command.b} ----"
       end
     end
   end

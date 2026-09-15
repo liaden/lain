@@ -51,14 +51,21 @@ module Lain
       # make the lens `Ractor.shareable?`: the freeze is shallow and a {Result}'s
       # content String is mutable. Shareability arrives after
       # `Canonical.normalize` deep-freezes the block, the shape {.wrap} sees.
-      def self.of(result, tool_use_id:)
+      #
+      # It is also the TEXT BOUNDARY: every String in a result's content, at
+      # any depth, passes {Text.committable} here, so bytes `Canonical` would
+      # refuse at commit -- after the tool ran and after its tool_use turn
+      # committed -- become a refusal the ask can carry on past instead of a
+      # raise that tears it. `tool` is the name that refusal gives the output.
+      def self.of(result, tool_use_id:, tool: "this tool")
         refuse_unpaired(tool_use_id)
+        committable = Text.committable(result, subject: "#{tool}'s output")
 
         new({
           "type" => "tool_result",
           "tool_use_id" => tool_use_id,
-          "content" => result.content,
-          "is_error" => result.error?
+          "content" => committable.content,
+          "is_error" => committable.error?
         }.freeze)
       end
 
@@ -141,6 +148,137 @@ module Lain
       def brief
         text = @hash.inspect
         text.length <= INSPECT_LIMIT ? text : "#{text[0, INSPECT_LIMIT]}... (#{text.length} chars)"
+      end
+
+      # One String a tool handed back, read as the UTF-8 text a commit can
+      # take: bytes under a byte-transparent tag are text when they are valid
+      # UTF-8. A subprocess buffer turns ASCII-8BIT at its first high byte,
+      # valid UTF-8 included, so that tag says nothing about the bytes. Any other
+      # tag is refused rather than transcoded -- the narrowing `ReadFile` makes,
+      # since a value nobody converts would reach the model in one encoding and
+      # the Timeline in another.
+      #
+      # This DEPARTS from the Rust `read_text` rule on one tag: `read_text`
+      # refuses a US-ASCII tag over high bytes as mislabelled, and this reads
+      # its bytes. A C locale tags whatever it reads US-ASCII, so a command's
+      # perfectly good UTF-8 arrives in exactly that shape, and refusing it
+      # would refuse ordinary output for the locale it ran under.
+      #
+      # Invalid bytes are refused, never scrubbed: a replacement character is a
+      # byte the tool never produced.
+      class Text
+        BYTE_TRANSPARENT = [Encoding::UTF_8, Encoding::US_ASCII, Encoding::BINARY].freeze
+
+        # What a refusal names when nothing closer to the bytes named them.
+        SUBJECT = "this tool's output"
+
+        # What a refusal advises when nothing closer to the bytes knows a
+        # narrower command. Given the count of leading bytes that are text.
+        ADVICE = ->(_kept) { "call the tool again for a narrower result, or for one that is text" }
+
+        # @param result [Tool::Result]
+        # @param subject [String] what a refusal calls the content
+        # @return [Tool::Result] `result` itself when nothing needed re-tagging,
+        #   a copy carrying UTF-8 text, or a refusal
+        def self.committable(result, subject: SUBJECT)
+          content = result.content
+          texts = content.is_a?(String) ? new(content) : Content.new(content)
+          texts.result_for(result, subject)
+        end
+
+        # @param string [String] never mutated: `force_encoding` would raise on a
+        #   frozen literal and rewrite a String its tool still holds
+        def initialize(string)
+          @string = string
+          @reading = string.encoding == Encoding::UTF_8 ? string : String.new(string, encoding: Encoding::UTF_8)
+          freeze
+        end
+
+        def text? = byte_transparent? && @reading.valid_encoding?
+
+        # The UTF-8 reading, which is the given String itself when it was one.
+        def to_s = @reading
+
+        def changed? = !@reading.equal?(@string)
+
+        def result_for(result, subject = SUBJECT)
+          return refusal(subject) unless text?
+
+          changed? ? result.with(content: @reading) : result
+        end
+
+        # @param subject [String] what the bytes were, as the model would name them
+        # @param advice [#call] `Integer -> String`, the narrower action, handed
+        #   the count of leading bytes that are text (0 when none, or when the
+        #   tag rules counting out)
+        # @return [Tool::Result] an error carrying the verdict and none of the bytes
+        def refusal(subject = SUBJECT, advice: ADVICE)
+          kept = kept_bytes
+          Tool::Result.error("#{subject} #{verdict(kept)}, so it cannot be recorded as part of this " \
+                             "conversation -- instead, #{advice.call(kept)}")
+        end
+
+        private
+
+        def byte_transparent? = BYTE_TRANSPARENT.include?(@string.encoding)
+
+        # A foreign tag gets no count: Latin-1 "café" is good text under its own
+        # tag, and "0 valid bytes" would misdescribe it.
+        def verdict(kept)
+          return "is tagged #{@string.encoding}, not UTF-8" unless byte_transparent?
+          return "was not text: it does not begin with valid UTF-8" if kept.zero?
+
+          "was not text: only its first #{kept} bytes are valid UTF-8"
+        end
+
+        # Character by character, and only on the refusal path: Ruby has no
+        # call that answers where validity ends. Its cost is a few objects per
+        # character, which bash's output bound caps at 128 KiB before this runs.
+        def kept_bytes
+          return 0 unless byte_transparent?
+
+          @reading.each_char.lazy.take_while(&:valid_encoding?).sum(&:bytesize)
+        end
+      end
+
+      # Array content, judged as one answer: every String in it -- a text part,
+      # a document title, image data, a bare element, a key -- is read as
+      # {Text}, because `Canonical` checks every one at commit. One that is not
+      # text refuses the whole result.
+      class Content
+        def initialize(content)
+          @content = content
+          @texts = enum_for(:each_string, content).each_with_object({}.compare_by_identity) do |string, texts|
+            texts[string] = Text.new(string)
+          end
+          freeze
+        end
+
+        def result_for(result, subject)
+          refused = @texts.values.reject(&:text?)
+          return refused.first.refusal(subject) unless refused.empty?
+
+          @texts.values.any?(&:changed?) ? result.with(content: retagged(@content)) : result
+        end
+
+        private
+
+        def each_string(node, &)
+          case node
+          when String then yield node
+          when Hash then node.each { |key, value| [key, value].each { |child| each_string(child, &) } }
+          when Array then node.each { |child| each_string(child, &) }
+          end
+        end
+
+        def retagged(node)
+          case node
+          when String then @texts.fetch(node).to_s
+          when Hash then node.to_h { |key, value| [retagged(key), retagged(value)] }
+          when Array then node.map { |child| retagged(child) }
+          else node
+          end
+        end
       end
     end
   end

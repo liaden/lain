@@ -71,6 +71,25 @@ module Lain
         "redirect it to a file and read one window of that with read_file"
       ].freeze
 
+      # What a timeout reports in place of captured output that was not text.
+      TIMEOUT_OUTPUT_NOT_TEXT = "what it printed before then was not valid UTF-8 text, so none of it is " \
+                                "recorded -- re-run it with the output narrowed through `| head -c`, " \
+                                "`| xxd | head` or `| file -`"
+
+      # How to narrow a stream that was not text, handed the count of its
+      # leading bytes that were. Per stream, because `| head -c` acts on stdout
+      # and would narrow the stream that was fine; no `head -c 0` when nothing
+      # leading was text, since that keeps nothing.
+      STREAM_ADVICE = {
+        stdout: lambda do |kept|
+          [*("keep only the text with `| head -c #{kept}`" if kept.positive?),
+           "look at its bytes with `| xxd | head`", "identify it with `| file -`"].join(", or ")
+        end,
+        stderr: lambda do |_kept|
+          "discard stderr with `2>/dev/null`, or look at its bytes with `2>&1 >/dev/null | xxd | head`"
+        end
+      }.freeze
+
       # The wire shape: a required command String, plus optional cwd and timeout.
       #
       # `command`'s description is where the two-arm rule is written. It states
@@ -132,8 +151,15 @@ module Lain
       # the cockpit and the transcript diverge above this ceiling, which matters
       # on a bench whose product is the comparison of the two.
       #
-      # @return [Tool::Result] ok with the rendered output, or the bound's
-      #   refusal carrying none of it
+      # Both streams are read through {Tool::ResultBlock::Text} before they are
+      # joined. A capture turns ASCII-8BIT at its first high byte, so joining
+      # first would raise `Encoding::CompatibilityError` beside a UTF-8 stream
+      # and hand a commit bytes it refuses otherwise; asked here, a stream that
+      # is not text is refused naming this tool and the stream, where the block
+      # builder downstream could name neither.
+      #
+      # @return [Tool::Result] ok with the rendered output, or a refusal
+      #   carrying none of it
       def self.render_output(exit_status:, stdout:, stderr:)
         size = stdout.bytesize + stderr.bytesize
         unless OUTPUT_BOUND.admits?(size)
@@ -141,10 +167,20 @@ module Lain
                                       size:, narrower: NARROWER)
         end
 
+        streams = { stdout:, stderr: }.transform_values { |bytes| Tool::ResultBlock::Text.new(bytes) }
+        refused = streams.reject { |_stream, text| text.text? }
+        return refused_stream(*refused.first, exit_status) unless refused.empty?
+
         Tool::Result.ok("exit status: #{exit_status}\n" \
-                        "--- stdout ---\n#{stdout}" \
-                        "--- stderr ---\n#{stderr}")
+                        "--- stdout ---\n#{streams.fetch(:stdout)}" \
+                        "--- stderr ---\n#{streams.fetch(:stderr)}")
       end
+
+      # The exit status rides here for the reason it rides the size refusal.
+      def self.refused_stream(stream, text, exit_status)
+        text.refusal("bash's #{stream} (exit status: #{exit_status})", advice: STREAM_ADVICE.fetch(stream))
+      end
+      private_class_method :refused_stream
 
       # @param exec [#call] the {Lain::Exec} backend a command is run through,
       #   injected so the transport is a run's choice and a spec can substitute
@@ -280,8 +316,24 @@ module Lain
 
       def seconds(input) = input.timeout || DEFAULT_TIMEOUT
 
+      # The backend's message quotes whatever the command printed before it was
+      # killed, so it crosses the same two checks the output does: the output
+      # bound first, so a huge capture is never copied or validated, then the
+      # text boundary. The boundary's own refusal is not used: its byte count
+      # would measure the backend's report, and `head -c` at that count cuts
+      # the command's output somewhere else.
       def timed_out(input, error)
-        Tool::Result.error("command timed out after #{seconds(input)}s: #{error.message}")
+        Tool::Result.error("command timed out after #{seconds(input)}s: #{timeout_report(error.message)}")
+      end
+
+      def timeout_report(message)
+        size = message.bytesize
+        unless OUTPUT_BOUND.admits?(size)
+          return OUTPUT_BOUND.message(subject: "its report, which quotes what it printed,", size:, narrower: NARROWER)
+        end
+
+        text = Tool::ResultBlock::Text.new(message)
+        text.text? ? text.to_s : TIMEOUT_OUTPUT_NOT_TEXT
       end
 
       # Bytes are attributed to their tool_use_id AT THE SOURCE, as produced,

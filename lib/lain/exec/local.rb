@@ -63,9 +63,14 @@ module Lain
 
       private
 
+      # The command goes to mixlib as BINARY. Its timeout message interpolates
+      # the command beside a BINARY capture, which raises
+      # `Encoding::CompatibilityError` -- not a timeout -- once a non-ASCII
+      # command meets a high byte. The bytes exec'd are the same either way;
+      # whether the message is text is {Tools::Bash}'s decision.
       def shell(command, cwd:, env:, timeout:, stdout_sink:, stderr_sink:)
-        shell_out = @shell_out_factory.call(command, cwd:, environment: env, timeout:,
-                                                     live_stdout: stdout_sink, live_stderr: stderr_sink)
+        shell_out = @shell_out_factory.call(command.b, cwd:, environment: env, timeout:,
+                                                       live_stdout: stdout_sink, live_stderr: stderr_sink)
         shell_out.run_command
         Capture.new(exit_status: shell_out.exitstatus, stdout: shell_out.stdout, stderr: shell_out.stderr)
       rescue Mixlib::ShellOut::CommandTimeout => e

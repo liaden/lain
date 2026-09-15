@@ -116,6 +116,29 @@ RSpec.describe Lain::Exec::Local do
       end.to raise_error(Lain::Exec::Timeout, /timed out/i)
     end
 
+    # mixlib builds its timeout message by interpolating the command beside a
+    # BINARY capture, which raises on a non-ASCII command once the capture holds
+    # a high byte -- and an encoding error is not a timeout to any caller.
+    it "raises Exec::Timeout, not an encoding error, for a non-ASCII command that printed non-ASCII" do
+      short_grace = lambda do |*args, **opts|
+        Mixlib::ShellOut.new(*args, **opts).tap do |shell_out|
+          def shell_out.sleep(_grace) = super(0.1)
+        end
+      end
+
+      expect do
+        described_class.new(shell_out_factory: short_grace)
+                       .call(command: %(sh -c "printf '\\342\\234\\205'; : ✅; sleep 5"), cwd: Dir.pwd,
+                             env: ENV.to_h, timeout: 1)
+      end.to raise_error(Lain::Exec::Timeout) { |error| expect(error.message.b).to include("✅".b) }
+    end
+
+    it "hands the shell the command's own bytes" do
+      capture = run(%(sh -c "printf '%s' '✅ café'"))
+
+      expect(capture.stdout.b).to eq("✅ café".b)
+    end
+
     it "raises the SAME Exec::Timeout when a term outlives its timeout" do
       slow_grace = described_class.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1))
 

@@ -96,6 +96,16 @@ RSpec.describe Lain::Exec::Core do
       expect { run(command: "sleep 9", with: killed) }
         .to raise_error(Lain::Exec::Timeout, /killed server-side by lain-core.*partial.*noise/m)
     end
+
+    # The daemon's captures arrive BINARY, so a non-ASCII command interpolated
+    # beside a high byte would raise an encoding error in place of the timeout.
+    it "raises Exec::Timeout for a non-ASCII command whose capture holds non-ASCII bytes" do
+      killed = recorder.new({ "exit_status" => nil, "stdout" => "✅\n".b, "stderr" => "caf\xE9".b,
+                              "timed_out" => true })
+
+      expect { run(command: "echo ✅; sleep 9", with: killed) }
+        .to raise_error(Lain::Exec::Timeout) { |error| expect(error.message.b).to include("✅".b, "caf\xE9".b) }
+    end
   end
 
   # A deadline the daemon did NOT enforce is a different fact, and the backend

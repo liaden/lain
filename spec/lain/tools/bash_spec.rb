@@ -841,4 +841,122 @@ RSpec.describe Lain::Tools::Bash do
       expect(channel.events.grep(Lain::Telemetry::ShellArm)).to be_empty
     end
   end
+
+  # A subprocess buffer turns ASCII-8BIT at its first high byte, valid UTF-8
+  # included, and the daemon arm is always ASCII-8BIT. Every such result has to
+  # become text the commit can take, or a refusal that names this tool.
+  describe "output bytes and the text boundary" do
+    let(:abstaining) do
+      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
+    end
+
+    def committed(result) = Lain::Canonical.normalize(Lain::Tool::ResultBlock.of(result, tool_use_id: "tu_1").to_h)
+
+    it "renders valid UTF-8 bytes as text" do
+      rendered = described_class.render_output(exit_status: 0, stdout: "✅ ok".b, stderr: "")
+
+      expect(rendered).to be_ok
+      expect(rendered.content).to include("✅ ok")
+      expect { committed(rendered) }.not_to raise_error
+    end
+
+    # Interpolating a BINARY high byte next to a UTF-8 one raises
+    # Encoding::CompatibilityError, so the streams are read as text before they
+    # are joined.
+    it "joins a BINARY stdout and a UTF-8 stderr that both carry non-ASCII text" do
+      rendered = described_class.render_output(exit_status: 0, stdout: "✅".b, stderr: "é")
+
+      expect(rendered.content).to include("✅", "é")
+    end
+
+    describe "a stream that is not UTF-8" do
+      subject(:rendered) { described_class.render_output(exit_status: 3, stdout: "caf\xE9".b, stderr: "") }
+
+      it "refuses by name, keeping the exit status" do
+        expect(rendered).to be_error
+        expect(rendered.content).to include("bash's stdout", "exit status: 3", "not text", "first 3 bytes")
+      end
+
+      it "advises keeping the text with head at the valid count, or looking at the bytes" do
+        expect(rendered.content).to include("| head -c 3", "| xxd | head", "| file -")
+      end
+
+      it "carries none of the stream's bytes, and commits" do
+        expect(rendered.content.b).not_to include("\xE9".b)
+        expect { committed(rendered) }.not_to raise_error
+      end
+    end
+
+    it "names stderr when stderr is the stream that is not text" do
+      rendered = described_class.render_output(exit_status: 0, stdout: "fine", stderr: "\xFF".b)
+
+      expect(rendered.content).to include("bash's stderr")
+    end
+
+    # `| head -c` acts on stdout, so it would narrow the stream that was fine.
+    it "advises narrowing stderr for a stderr refusal" do
+      rendered = described_class.render_output(exit_status: 0, stdout: "fine", stderr: "ok\xFF".b)
+
+      expect(rendered.content).not_to include("| head -c")
+      expect(rendered.content).to include("2>")
+    end
+
+    it "offers no head -c 0 when no leading byte is text" do
+      rendered = described_class.render_output(exit_status: 0, stdout: "\xFFok".b, stderr: "")
+
+      expect(rendered.content).not_to include("head -c 0", "0 bytes")
+      expect(rendered.content).to include("| xxd | head")
+    end
+
+    # mixlib quotes the whole capture in its timeout message, so the output
+    # bound render_output applies has to apply here too.
+    it "keeps a timeout message over the output bound out of the result" do
+      timed_out = Class.new { def run_command = raise Mixlib::ShellOut::CommandTimeout, "x" * 200_000 }
+      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+
+      result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
+
+      expect(result).to be_error
+      expect(result.content.bytesize).to be < 1024
+      expect(result.content).to include("command timed out after 7s", "200000")
+    end
+
+    it "answers a timeout whose captured output is not text with an error that commits" do
+      timed_out = Class.new do
+        def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s\nSTDOUT: caf\xE9".b
+      end
+      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+
+      result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("timed out after 7s", "not valid UTF-8 text")
+      expect { committed(result) }.not_to raise_error
+    end
+
+    it "keeps a timeout message that is valid UTF-8 as it was" do
+      timed_out = Class.new do
+        def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s\nSTDOUT: ✅".b
+      end
+      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
+
+      expect(tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation).content)
+        .to eq("command timed out after 7s: Command timed out after 7s\nSTDOUT: ✅")
+    end
+
+    # The block-level half of the byte-identity rule: which arm ran is no more
+    # observable in what commits than in the Result.
+    it "builds byte-identical UTF-8 blocks from either arm over non-ASCII output" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "check.txt").tap { |file| File.write(file, "✅ café\n") }
+        blocks = [described_class.new, described_class.new(verdict: abstaining)].map do |tool|
+          Lain::Tool::ResultBlock.of(tool.call({ command: "cat #{path}" }, invocation), tool_use_id: "tu_1")
+        end
+
+        expect(blocks.map(&:content).uniq.size).to eq(1)
+        expect(blocks.map { |block| block.content.encoding }).to all(eq(Encoding::UTF_8))
+        expect(blocks.first.content).to include("✅ café")
+      end
+    end
+  end
 end

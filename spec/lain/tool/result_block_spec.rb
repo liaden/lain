@@ -84,6 +84,166 @@ RSpec.describe Lain::Tool::ResultBlock do
     end
   end
 
+  # The one place a result's text is made committable. `Canonical` stays strict
+  # and runs at commit, which is after the tool ran; answering here is what lets
+  # the ask continue instead of tearing.
+  describe ".of, as the text boundary" do
+    def block_for(content, error: false)
+      result = error ? Lain::Tool::Result.error(content) : Lain::Tool::Result.ok(content)
+      described_class.of(result, tool_use_id: "tu_1")
+    end
+
+    def commits?(block) = Lain::Canonical.normalize(block.to_h).is_a?(Hash)
+
+    it "re-tags ASCII-8BIT bytes that are valid UTF-8, and they commit" do
+      block = block_for("✅ ok".b)
+
+      expect(block.content).to eq("✅ ok")
+      expect(block.content.encoding).to eq(Encoding::UTF_8)
+      expect(block.error?).to be(false)
+      expect(commits?(block)).to be(true)
+    end
+
+    it "re-tags a US-ASCII tag over valid UTF-8 bytes, the shape a C locale reads" do
+      block = block_for(String.new("café".b, encoding: Encoding::US_ASCII))
+
+      expect(block.content).to eq("café")
+      expect(commits?(block)).to be(true)
+    end
+
+    it "keeps an error result an error when its text is re-tagged" do
+      expect(block_for("✅ failed".b, error: true).error?).to be(true)
+    end
+
+    # `force_encoding` would raise FrozenError on a frozen literal, and on an
+    # unfrozen one would rewrite a String the tool still holds.
+    it "leaves a frozen tool string unchanged" do
+      bytes = "✅ ok".b.freeze
+      block = block_for(bytes)
+
+      expect(block.content.encoding).to eq(Encoding::UTF_8)
+      expect(bytes.encoding).to eq(Encoding::BINARY)
+      expect(bytes).to be_frozen
+    end
+
+    describe "bytes that are not UTF-8" do
+      subject(:block) { block_for("caf\xE9 au lait".b) }
+
+      it "answers an error result rather than raising" do
+        expect(block.error?).to be(true)
+        expect(commits?(block)).to be(true)
+      end
+
+      it "says the output was not text and how many leading bytes were" do
+        expect(block.content).to include("not text", "first 3 bytes")
+      end
+
+      it "suggests a narrower call" do
+        expect(block.content).to include("instead, ")
+      end
+
+      # Only bash can pipe its output through `head`; a model told to do it to
+      # another tool's output is handed advice it cannot follow.
+      it "prescribes no bash pipeline for a tool that is not bash" do
+        expect(block.content).not_to include("head -c", "xxd", "bash")
+      end
+
+      # Replacement characters would be bytes the command never printed.
+      it "carries none of the bytes, scrubbed or otherwise" do
+        expect(block.content.b).not_to include("\xE9".b)
+        expect(block.content).not_to include("au lait", "�")
+      end
+    end
+
+    it "names the tool it is told" do
+      named = described_class.of(Lain::Tool::Result.ok("caf\xE9".b), tool_use_id: "tu_1", tool: "grep")
+
+      expect(named.content).to include("grep's output was not text")
+    end
+
+    it "says no valid prefix exists rather than counting zero bytes" do
+      expect(block_for("\xFFok".b).content).not_to include("0 bytes")
+    end
+
+    it "refuses a truncated multi-byte sequence at the end" do
+      expect(block_for("ok ✅".b.byteslice(0, 5)).error?).to be(true)
+    end
+
+    it "refuses a UTF-8 tag over invalid bytes" do
+      expect(block_for(String.new("caf\xE9".b, encoding: Encoding::UTF_8)).error?).to be(true)
+    end
+
+    # Only a byte-transparent tag can be read as UTF-8 bytes. Re-tagging UTF-16
+    # would commit NUL-riddled text the tool never meant.
+    it "refuses a tag that is not byte-transparent" do
+      expect(block_for("hi".encode(Encoding::UTF_16LE)).error?).to be(true)
+    end
+
+    # Latin-1 "café" is good text under its own tag, so a count of valid UTF-8
+    # bytes would misdescribe it.
+    it "names a foreign tag and gives no byte count" do
+      content = block_for("café".encode(Encoding::ISO_8859_1)).content
+
+      expect(content).to include("tagged ISO-8859-1, not UTF-8")
+      expect(content).not_to match(/\d+ bytes/)
+    end
+
+    describe "Array content" do
+      let(:image) { { "type" => "image", "source" => { "type" => "base64", "data" => "AAAA" } } }
+
+      it "re-tags each text part and leaves other parts as they were" do
+        block = block_for([{ "type" => "text", "text" => "✅".b }, image])
+
+        expect(block.content.first["text"].encoding).to eq(Encoding::UTF_8)
+        expect(block.content.last).to eq(image)
+        expect(commits?(block)).to be(true)
+      end
+
+      it "refuses the whole result when one text part is not UTF-8" do
+        block = block_for([{ "type" => "text", "text" => "fine" }, { "type" => "text", "text" => "caf\xE9".b }])
+
+        expect(block.error?).to be(true)
+        expect(commits?(block)).to be(true)
+      end
+
+      it "reads a symbol-keyed text part too" do
+        expect(block_for([{ type: "text", text: "caf\xE9".b }]).error?).to be(true)
+      end
+
+      # Canonical checks every String it is handed, so the boundary does too: a
+      # document title, image data and a bare element tear a commit as surely as
+      # a text part does.
+      it "re-tags valid UTF-8 in a part that is not a text part" do
+        block = block_for([{ "type" => "document", "title" => "✅".b, "source" => { "data" => "✅".b } }])
+
+        expect(block.content.first.dig("source", "data").encoding).to eq(Encoding::UTF_8)
+        expect(commits?(block)).to be(true)
+      end
+
+      it "refuses bytes that are not text anywhere in the content" do
+        expect(block_for([{ "type" => "image", "source" => { "data" => "\xFF".b } }]).error?).to be(true)
+        expect(block_for(["caf\xE9".b]).error?).to be(true)
+      end
+
+      it "re-tags a key as well as a value" do
+        expect(commits?(block_for([{ "✅".b => "fine" }]))).to be(true)
+      end
+
+      it "names the tool it is told" do
+        named = described_class.of(Lain::Tool::Result.ok([{ "type" => "text", "text" => "caf\xE9".b }]),
+                                   tool_use_id: "tu_1", tool: "grep")
+
+        expect(named.content).to include("grep's output was not text")
+      end
+
+      it "carries an Array needing nothing through by identity" do
+        parts = [{ "type" => "text", "text" => "fine" }, image]
+
+        expect(block_for(parts).content).to be(parts)
+      end
+    end
+  end
+
   describe ".wrap" do
     it "wraps a plain Hash into a lens" do
       expect(described_class.wrap(hash)).to be_a(described_class)
