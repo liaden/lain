@@ -44,7 +44,7 @@ module Lain
           directory: "has a file or directory in the way that the turn did not make",
           outside_root: "is outside the project root",
           ignored: "is .gitignore'd, so nothing recorded what it held before",
-          unrecorded: "was first written in that turn, and nothing recorded what it held before",
+          unrecorded: "was written by that turn, but nothing recorded what it held before lain first wrote it",
           nested_repository: "is inside a nested repository, which undo cannot put back"
         }.freeze
 

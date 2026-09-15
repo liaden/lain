@@ -159,15 +159,16 @@ RSpec.describe Lain::Agent::SnapshotSlot do
   it "measures the next write-set turn from the state an undo put back" do
     filled = slot
     path = put("a.rb", "1")
-    filled.write(timeline: turn("one"), paths: [path])
+    filled.write(timeline: turn("one"), paths: [path], pre_images: { path => Lain::Session::PreImage.new(bytes: nil) })
     File.binwrite(path, "2")
-    filled.write(timeline: turn("two"), paths: [path])
+    filled.write(timeline: turn("two"), paths: [path], pre_images: { path => Lain::Session::PreImage.new(bytes: "1") })
     undo = log.undo(store:)
     Lain::Workspace::Revert.new(root:).apply(undo.moves)
     filled.undone(undo)
 
     File.binwrite(path, "2")
-    filled.write(timeline: turn("three"), paths: [path])
+    filled.write(timeline: turn("three"), paths: [path],
+                 pre_images: { path => Lain::Session::PreImage.new(bytes: "1") })
 
     expect(log.count).to eq(2)
     expect(log.to_a.last.turn).to eq(turn("three").head_digest)

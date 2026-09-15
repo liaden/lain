@@ -113,12 +113,14 @@ module Lain
         occurrences = occurrences_of(input.old_string, contents)
         return Tool::Result.error(ambiguity_message(occurrences, path)) unless occurrences == 1
 
-        File.write(path, contents.sub(input.old_string) { input.new_string })
+        session = session_of(invocation).record_pre_image(path) { contents }
+        edited = contents.sub(input.old_string) { input.new_string }
+        File.write(path, edited)
         # The read-set entry is refreshed so a later edit_file call still sees
         # this path as read, and the write-set records it as this session's
         # snapshot scope ({Workspace::Snapshot}: write-set only, the documented
         # bash gap).
-        session_of(invocation).record_read(path).record_write(path)
+        session.record_read(path).record_write(path, wrote: edited)
         Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
       end
 

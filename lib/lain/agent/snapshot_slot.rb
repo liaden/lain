@@ -81,22 +81,26 @@ module Lain
       end
 
       # The writer duck, so {ToolDelivery} holds one object either way.
-      def write(timeline:, paths:)
+      # `pre_images:` is what the turn's tools captured before their first
+      # writes, handed to the log beside the snapshot and never written into it.
+      def write(timeline:, paths:, pre_images: {})
         prime unless @writer || @degraded
-        land(@degraded ? fallback : @writer, timeline:, paths:)
+        land(@degraded ? fallback : @writer, timeline:, paths:, pre_images:)
       rescue *DEGRADABLE => e
         degrade(:settle, e)
-        land(fallback, timeline:, paths:)
+        land(fallback, timeline:, paths:, pre_images:)
       end
 
       # After an undo moved disk back: the log forgets the turn, and every
-      # writer is told what disk holds now, so a turn that makes the undone
-      # change again lands a snapshot rather than matching stale memory.
+      # writer is told what the undo left on disk, so a turn that makes the
+      # undone change again lands a snapshot rather than matching stale memory.
+      # Not the earlier record's map: a restored pre-image can differ from it,
+      # and a writer resumed from it would take the next turn for that change.
       #
       # @return [self]
       def undone(undo)
         @log.undone(undo)
-        [@writer, @fallback].compact.each { |writer| writer.resume(@log.to_a.last&.files) }
+        [@writer, @fallback].compact.each { |writer| writer.resume(undo.left) }
         self
       end
 
@@ -122,8 +126,17 @@ module Lain
 
       private
 
-      def land(writer, timeline:, paths:)
-        writer.write(timeline:, paths:).tap { |event| @log.record(event, pair: writer.pair) if event }
+      def land(writer, timeline:, paths:, pre_images:)
+        event = writer.write(timeline:, paths:) || rewritten(writer, timeline:, paths:, pre_images:)
+        @log.record(event, pair: writer.pair, pre_images:) if event
+        event
+      end
+
+      # A writer matches its map against its memory, and a turn that wrote a
+      # human's edit back to the bytes lain last recorded repeats that map. The
+      # pre-images show the change, so the writer forgets and writes again.
+      def rewritten(writer, timeline:, paths:, pre_images:)
+        writer.resume(nil).write(timeline:, paths:) if pre_images.any? { |path, image| image.replaced?(path) }
       end
 
       def degrade(phase, error)

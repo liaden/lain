@@ -167,6 +167,40 @@ RSpec.describe Lain::Tools::EditFile do
     end
   end
 
+  describe "the pre-image a turn's undo puts back" do
+    it "records the bytes it read before replacing, once per turn" do
+      path = write("hello.txt", "hello world")
+      session = Lain::Session.new.record_read(path).open_pre_images
+
+      tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+      tool.call({ path:, old_string: "world", new_string: "moon" }, invocation_with(session))
+
+      expect([File.read(path), session.pre_images.fetch(path).bytes]).to eq(["goodbye moon", "hello world".b])
+    end
+
+    # What the edit left is what a carried pre-image is checked against, so an
+    # untouched path keeps the pre-image from before the torn turn.
+    it "keeps a carried pre-image while the path still holds what the edit left" do
+      path = write("hello.txt", "hello world")
+      session = Lain::Session.new.record_read(path).open_pre_images
+      tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+
+      session.open_pre_images
+      tool.call({ path:, old_string: "world", new_string: "moon" }, invocation_with(session))
+
+      expect(session.pre_images.fetch(path).bytes).to eq("hello world".b)
+    end
+
+    it "records nothing for an edit it refused as ambiguous" do
+      path = write("hello.txt", "hello hello")
+      session = Lain::Session.new.record_read(path).open_pre_images
+
+      tool.call({ path:, old_string: "hello", new_string: "bye" }, invocation_with(session))
+
+      expect(session.pre_images).to eq({})
+    end
+  end
+
   describe "problems reported as an error Result, not a raise" do
     it "reports a missing file" do
       session = Lain::Session.new

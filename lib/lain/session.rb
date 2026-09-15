@@ -53,6 +53,7 @@ module Lain
       @journal = journal
       @reads = ReadSet.new
       @writes = Set.new
+      @pre_images = PreImages::Closed
       @pins = Set.new
       @todo_reminder = nil
       @todo_items = []
@@ -197,9 +198,19 @@ module Lain
     # replayed session rebuilds with an empty write-set. Deliberate: a journal
     # line here alone would be a half-copy naming blobs no replay can fetch.
     #
+    # A write the open turn holds no pre-image for is marked unrecorded, so an
+    # undo refuses it by name rather than guessing nothing stood there.
+    #
+    # `wrote:` is the bytes the tool left at the path, so a pre-image carried
+    # past a torn turn can tell whether someone else has changed the path
+    # since. Without it, a carried pre-image is taken as changed: dropped or
+    # recaptured, which is the direction that loses no one's bytes.
+    #
     # @return [self]
-    def record_write(path)
-      @writes << normalize(path)
+    def record_write(path, wrote: nil)
+      target = normalize(path)
+      @writes << target
+      @pre_images.written(target, wrote)
       self
     end
 
@@ -215,6 +226,48 @@ module Lain
     def writes
       @writes.sort.freeze
     end
+
+    # Opens a turn's pre-images. Only an open turn captures: a session whose
+    # tools run with no delivery behind them never takes a snapshot, so
+    # holding the bytes would be memory spent on nothing.
+    #
+    # A set no snapshot settled stays open and carries into the next turn: a
+    # torn turn writes no snapshot, so the next one's map spans both turns,
+    # and its undo has to put back what stood before the first of them.
+    #
+    # @return [self]
+    def open_pre_images
+      @pre_images = @pre_images.opened
+      self
+    end
+
+    # A snapshot has taken the open turn's pre-images; the next turn starts
+    # its own.
+    #
+    # @return [self]
+    def settle_pre_images
+      @pre_images = PreImages::Closed
+      self
+    end
+
+    # What `path` held before the open turn first wrote it. The block reads it
+    # -- its bytes, or nil where nothing stood -- and runs only on that first
+    # write, so a second write in the turn neither re-reads the file nor takes
+    # the first write's bytes for the pre-image.
+    #
+    # Called BEFORE the write, and not journaled, for {#record_write}'s reason:
+    # the bytes belong to the in-memory snapshot record.
+    #
+    # @yieldreturn [String, nil]
+    # @return [self]
+    def record_pre_image(path, &read)
+      @pre_images.capture(normalize(path), &read)
+      self
+    end
+
+    # @return [Hash{String => PreImage, PreImage::Unrecorded}] every path the
+    #   open turn wrote, by normalized path
+    def pre_images = @pre_images.to_h
 
     # Pin a turn digest: "compaction may not elide this one". A digest is
     # already a content address, so unlike a path there is nothing to
@@ -376,6 +429,95 @@ module Lain
 
       @journal = journal
       self
+    end
+
+    PreImage = Data.define(:bytes)
+
+    # What a path held before a turn first wrote it: its bytes, or nil for a
+    # path with nothing there, which an undo puts back by deleting.
+    #
+    # Reopened, rather than documented on the Data.define above, so the module
+    # below lands on PreImage itself and YARD keeps this one docstring.
+    class PreImage
+      def initialize(bytes:) = super(bytes: bytes&.b&.freeze)
+
+      def recorded? = true
+
+      # Whether disk no longer holds these bytes at `path`.
+      def replaced?(path) = bytes != (File.file?(path) ? File.binread(path) : nil)
+
+      # A path the turn wrote with no pre-image captured first -- a tool that
+      # records its write without reading what it replaced. Distinct from an
+      # absent path: nothing says whether a human's file stood there.
+      module Unrecorded
+        def self.recorded? = false
+
+        def self.replaced?(_path) = false
+
+        def self.bytes = nil
+      end
+    end
+
+    # One turn's pre-images, by normalized path. The first answer for a path
+    # wins: a later write in the turn, or the write's own record after its
+    # capture, never replaces what stood there before the turn reached it.
+    #
+    # A set reopened without a settle carries its pre-images into the next
+    # turn. A carried path whose disk no longer holds what lain last wrote there
+    # was changed by someone else -- a hand fix after an interrupt -- so its
+    # pre-image no longer stands before the next change: a capture replaces
+    # it, and a turn that does not write the path again leaves it out.
+    class PreImages
+      def initialize
+        @images = {}
+        @left = {}
+        @carried = Set.new
+      end
+
+      def opened
+        @carried.merge(@images.keys)
+        self
+      end
+
+      # The read inside the block can suspend the fiber between the check and
+      # the assignment. That is safe only while every capturing tool runs
+      # alone, as write_file and edit_file do by not being parallel_safe?.
+      def capture(path)
+        forget(path) if stale?(path)
+        @images[path] ||= PreImage.new(bytes: yield)
+      end
+
+      def written(path, bytes)
+        @images[path] ||= PreImage::Unrecorded
+        @left[path] = bytes && digest(bytes)
+        @carried.delete(path)
+      end
+
+      def to_h = @images.reject { |path, _| stale?(path) }.freeze
+
+      private
+
+      def stale?(path) = @carried.include?(path) && @left[path] != on_disk(path)
+
+      def forget(path)
+        @images.delete(path)
+        @carried.delete(path)
+      end
+
+      def on_disk(path) = File.file?(path) ? digest(File.binread(path)) : nil
+
+      def digest(bytes) = Workspace::Snapshot::Blob.new(bytes:).digest
+
+      # No turn open: nothing is captured, and nothing is held.
+      module Closed
+        def self.opened = PreImages.new
+
+        def self.capture(_path) = nil
+
+        def self.written(_path, _bytes) = nil
+
+        def self.to_h = {}.freeze
+      end
     end
 
     private
@@ -546,8 +688,24 @@ module Lain
       # @return [self]
       def record_masked_read(_path) = self
 
+      # Takes the real one's `wrote:` and holds nothing of it.
+      #
       # @return [self]
-      def record_write(_path) = self
+      def record_write(_path, **) = self
+
+      # @return [self]
+      def open_pre_images = self
+
+      # @return [self]
+      def settle_pre_images = self
+
+      # The block is never run: nothing here would hold what it read.
+      #
+      # @return [self]
+      def record_pre_image(_path) = self
+
+      # @return [Hash]
+      def pre_images = {}.freeze
 
       # @return [self]
       def record_pin(_digest) = self

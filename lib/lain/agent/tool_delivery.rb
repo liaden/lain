@@ -46,7 +46,9 @@ module Lain
       # interrupt the commit exists to survive.
       #
       # The slot is primed before the tools run: a shadow scope's before-tree
-      # has to predate the first write the turn's undo will put back.
+      # has to predate the first write the turn's undo will put back. The
+      # session's pre-images open at the same moment, for the write-set
+      # scope's undo, which has no tree to read that from.
       #
       # @param response [Lain::Response] the assistant turn carrying the calls
       # @param timeline [Lain::Timeline] the timeline as of the assistant commit
@@ -59,6 +61,7 @@ module Lain
       def perform(response, timeline:, session:, &commit)
         answers = ToolRunner::Answers.for(response)
         @snapshots.prime
+        session.open_pre_images
         delivery = @runner.delivery(response, context: session, answers:)
       rescue Async::Stop => e
         cancel(answers, timeline, &commit)
@@ -76,7 +79,8 @@ module Lain
       def settle(delivery, timeline, session, &commit)
         committed = settled(delivery, timeline, &commit)
         yield committed
-        @snapshots.write(timeline: committed, paths: session.writes)
+        @snapshots.write(timeline: committed, paths: session.writes, pre_images: session.pre_images)
+        session.settle_pre_images
       end
 
       # Only the commit is covered, never the yield or the snapshot after it:

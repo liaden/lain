@@ -218,6 +218,89 @@ RSpec.describe Lain::Tools::WriteFile do
     end
   end
 
+  # Under the write-set scope nothing else knows what a path held before lain
+  # wrote it, so an undo of a created file or a first overwrite reads it here.
+  describe "the pre-image a turn's undo puts back" do
+    it "records a path it creates as absent before the turn's first write" do
+      path = File.join(tmpdir, "new.rb")
+      session = Lain::Session.new.open_pre_images
+
+      tool.call({ path:, content: "x" }, invocation_with(session))
+
+      expect(session.pre_images.fetch(path)).to have_attributes(recorded?: true, bytes: nil)
+    end
+
+    it "records the bytes an overwrite replaced, keeping the first across later writes in the turn" do
+      path = write("existing.rb", "original")
+      session = Lain::Session.new.record_read(path).open_pre_images
+
+      tool.call({ path:, content: "second" }, invocation_with(session))
+      tool.call({ path:, content: "third" }, invocation_with(session))
+
+      expect(session.pre_images.fetch(path).bytes).to eq("original".b)
+    end
+
+    it "captures afresh once a snapshot settled the last turn" do
+      path = write("existing.rb", "original")
+      session = Lain::Session.new.record_read(path).open_pre_images
+      tool.call({ path:, content: "turn one's" }, invocation_with(session))
+
+      session.settle_pre_images.open_pre_images
+      tool.call({ path:, content: "turn two's" }, invocation_with(session))
+
+      expect(session.pre_images.fetch(path).bytes).to eq("turn one's".b)
+    end
+
+    # A torn turn settles no snapshot, so the next settle spans both turns and
+    # must put back what stood before the first of them.
+    it "carries an unsettled turn's pre-images into the next, the first capture winning" do
+      path = write("existing.rb", "original")
+      session = Lain::Session.new.record_read(path).open_pre_images
+      tool.call({ path:, content: "torn turn's" }, invocation_with(session))
+
+      session.open_pre_images
+      tool.call({ path:, content: "next turn's" }, invocation_with(session))
+
+      expect(session.pre_images.fetch(path).bytes).to eq("original".b)
+    end
+
+    # Someone other than lain changed the path after the torn turn's write, so
+    # what stood before the torn write is not what stands before the next one.
+    it "captures afresh over a carried pre-image once the path no longer holds what the tool wrote" do
+      path = write("existing.rb", "original")
+      session = Lain::Session.new.record_read(path).open_pre_images
+      tool.call({ path:, content: "torn turn's" }, invocation_with(session))
+      File.write(path, "fixed by hand")
+
+      session.open_pre_images
+      tool.call({ path:, content: "next turn's" }, invocation_with(session))
+
+      expect(session.pre_images.fetch(path).bytes).to eq("fixed by hand".b)
+    end
+
+    it "drops a carried pre-image whose path was changed by hand and not written again" do
+      path = write("existing.rb", "original")
+      other = File.join(tmpdir, "other.rb")
+      session = Lain::Session.new.record_read(path).open_pre_images
+      tool.call({ path:, content: "torn turn's" }, invocation_with(session))
+      File.write(path, "fixed by hand")
+
+      session.open_pre_images
+      tool.call({ path: other, content: "next turn's" }, invocation_with(session))
+
+      expect(session.pre_images.keys).to eq([other])
+    end
+
+    it "holds no bytes while no turn is open" do
+      path = write("existing.rb", "original")
+      session = Lain::Session.new.record_read(path)
+
+      tool.call({ path:, content: "y" }, invocation_with(session))
+
+      expect(session.pre_images).to eq({})
+    end
+  end
+
   describe "problems reported as an error Result, not a raise" do
     it "reports a write to an undreadable location" do
       session = Lain::Session.new

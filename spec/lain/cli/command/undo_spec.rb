@@ -3,6 +3,28 @@
 require "tmpdir"
 require "mixlib/shellout"
 
+# Parks on an `Async::Variable` nobody resolves, announcing on another that it
+# has entered, so a spec can tear a turn while a tool is genuinely running.
+module UndoSpecSupport
+  class Parking < Lain::Tool
+    def initialize(entered:, release:)
+      super()
+      @entered = entered
+      @release = release
+    end
+
+    def name = "park"
+    def description = "Parks until released."
+    def input_schema = { type: :object, properties: {} }
+
+    def perform(_input, _context)
+      @entered.resolve(true) unless @entered.resolved?
+      @release.wait
+      Lain::Tool::Result.ok("released")
+    end
+  end
+end
+
 RSpec.describe Lain::CLI::Command::Undo do
   around do |example|
     Dir.mktmpdir("lain-undo-root") do |root|
@@ -23,9 +45,10 @@ RSpec.describe Lain::CLI::Command::Undo do
   let(:scope) { :shadow_git }
   let(:slot) { Lain::Agent::SnapshotSlot.new(root:, scope:, paths:) }
 
+  let(:session) { Lain::Session.new }
+
   before do
     @timeline = Lain::Timeline.empty(store:)
-    @write_set = []
   end
 
   def in_root(name) = File.join(root, name)
@@ -39,18 +62,29 @@ RSpec.describe Lain::CLI::Command::Undo do
 
   def exist?(name) = File.exist?(in_root(name))
 
-  # One tool turn as the delivery runs it: prime, the writes (a tool's join the
-  # write-set, a shell's do not), anything else the turn did, the tool-result
-  # commit, the snapshot.
-  def turn(tools: {}, shell: {})
+  # One tool turn as the delivery runs it: prime and open the turn's
+  # pre-images, the writes (a tool's capture what they replace and join the
+  # write-set, a shell's do neither), anything else the turn did, the
+  # tool-result commit, the snapshot that settles the pre-images. `captured: false` is a tool that records
+  # its write without capturing what it replaced.
+  def turn(tools: {}, shell: {}, captured: true)
     slot.prime
+    session.open_pre_images
+    tools.each_key { |name| capture(in_root(name)) } if captured
     tools.merge(shell).each { |name, bytes| write(name, bytes) }
     yield if block_given?
-    @write_set |= tools.keys.map { |name| in_root(name) }
+    tools.each_key { |name| session.record_write(in_root(name)) }
+    settle
+  end
+
+  def settle
     @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => "tool results" }])
-    slot.write(timeline: @timeline, paths: @write_set)
+    slot.write(timeline: @timeline, paths: session.writes, pre_images: session.pre_images)
+    session.settle_pre_images
     @timeline.head_digest
   end
+
+  def capture(path) = session.record_pre_image(path) { File.file?(path) ? File.binread(path) : nil }
 
   def env(dispatching: false, snapshots: slot, timeline: @timeline, **overrides)
     agent = instance_double(Lain::Agent, timeline:, dispatching?: dispatching)
@@ -425,12 +459,12 @@ RSpec.describe Lain::CLI::Command::Undo do
       expect(read("c.txt")).to eq("made by bash\n")
     end
 
-    # A first-time write's earlier state was never recorded: it may have been a
-    # human's file, so guessing "absent" could delete their work.
+    # A write no tool captured a pre-image for: it may have been a human's
+    # file, so guessing "absent" could delete their work.
     it "refuses by name when nothing recorded a path's state before the turn, moving nothing" do
-      turn(tools: { "a.rb" => "a v1\n" })
+      turn(tools: { "a.rb" => "a v1\n" }, captured: false)
 
-      expect { undo }.to raise_error(described_class::Refusal, /a\.rb/)
+      expect { undo }.to raise_error(described_class::Refusal, /a\.rb was written by that turn, but nothing recorded/)
       expect(read("a.rb")).to eq("a v1\n")
       expect(slot.log.count).to eq(1)
       expect(journal).to be_empty
@@ -446,6 +480,218 @@ RSpec.describe Lain::CLI::Command::Undo do
       undo
 
       expect(read("a.rb")).to eq("1\n")
+    end
+  end
+
+  # A real Agent over real tools, the slot holding a posture's declared scope:
+  # the delivery opens each turn's pre-images and hands them to the snapshot.
+  describe "a turn's own writes, through the tools and the delivery", :seam do
+    let(:scope) { Lain::Mode::Posture.for(:manual).snapshot_scope }
+    let(:entered) { Async::Variable.new }
+    let(:release) { Async::Variable.new }
+
+    def text(body) = Lain::Response.new(content: [{ "type" => "text", "text" => body }], stop_reason: :end_turn)
+
+    def agent_over(*responses)
+      tools = [Lain::Tools::ReadFile.new, Lain::Tools::WriteFile.new, UndoSpecSupport::Parking.new(entered:, release:)]
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), snapshot_slot: slot, session:,
+                      toolset: Lain::Toolset.new(tools),
+                      context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024))
+    end
+
+    # Stopped while its parking tool is running, as an interrupt stops a run.
+    def torn_ask(agent)
+      Sync do |task|
+        run = task.async { agent.ask("torn") }
+        entered.wait
+        run.stop
+        run.wait
+      end
+    end
+
+    def write_call(id, name, content) = [id, "write_file", { "path" => in_root(name), "content" => content }]
+
+    def read_call(id, name) = [id, "read_file", { "path" => in_root(name) }]
+
+    def undo_through(agent, args = "")
+      described_class.new.call(args, build_command_env(agent:, snapshots: slot, chronicle:))
+    end
+
+    it "removes a file the manual turn created, and names it as deleted" do
+      agent = agent_over(tool_response(write_call("tu_1", "x.txt", "made\n")), text("done"))
+      agent.ask("make x.txt")
+
+      reply = undo_through(agent)
+
+      expect(exist?("x.txt")).to be(false)
+      expect(reply).to include("deleted x.txt")
+    end
+
+    it "restores a committed file the manual turn overwrote for the first time" do
+      write("keep.txt", "committed\n")
+      user_git("init", "-q")
+      user_git("add", "-A")
+      user_git("commit", "-qm", "init")
+      agent = agent_over(tool_response(read_call("tu_1", "keep.txt"), write_call("tu_2", "keep.txt", "clobbered\n")),
+                         text("done"))
+      agent.ask("rewrite keep.txt")
+
+      undo_through(agent)
+
+      expect(read("keep.txt")).to eq("committed\n")
+    end
+
+    # The write-set is the session's, so after an undo and a skip took the
+    # accept_edits turns out of the history, c.txt and lib.rb are still in the
+    # manual turn's map with no earlier record. That turn never touched them.
+    it "names only what the manual turn wrote after a posture change" do
+      write("lib.rb", "lib v0\n")
+      slot.rebind(Lain::Mode::Posture.for(:accept_edits).snapshot_scope)
+      agent = agent_over(tool_response(write_call("tu_1", "c.txt", "c\n")), text("made c"),
+                         tool_response(read_call("tu_2", "lib.rb"), write_call("tu_3", "lib.rb", "lib v1\n")),
+                         text("edited lib"),
+                         tool_response(write_call("tu_4", "e.txt", "e\n")), text("made e"))
+      agent.ask("make c.txt")
+      agent.ask("edit lib.rb")
+      undo_through(agent)
+      undo_through(agent, "skip")
+      slot.rebind(Lain::Mode::Posture.for(:manual).snapshot_scope)
+      agent.ask("make e.txt")
+
+      reply = undo_through(agent)
+
+      expect(reply).to eq("undid the only undoable file-changing turn: deleted e.txt. " \
+                          "#{described_class::WRITE_SET_ONLY}")
+      expect([read("c.txt"), read("lib.rb"), exist?("e.txt")]).to eq(["c\n", "lib v0\n", false])
+    end
+
+    # The map is the whole session's write-set, so a later turn's snapshot
+    # carries a file the human edited. That turn never wrote it.
+    it "leaves a human's edit alone when undoing a later turn that never wrote the file" do
+      agent = agent_over(tool_response(write_call("tu_1", "x.txt", "A\n")), text("made x"),
+                         tool_response(write_call("tu_2", "y.txt", "Y\n")), text("made y"))
+      agent.ask("make x.txt")
+      write("x.txt", "human\n")
+      agent.ask("make y.txt")
+
+      reply = undo_through(agent)
+
+      expect([read("x.txt"), exist?("y.txt")]).to eq(["human\n", false])
+      expect(reply).not_to include("x.txt")
+    end
+
+    it "never moves a file back past the pre-image an earlier undo restored" do
+      agent = agent_over(tool_response(write_call("tu_1", "x.txt", "A\n")), text("made x"),
+                         tool_response(write_call("tu_2", "x.txt", "B\n")), text("rewrote x"),
+                         tool_response(write_call("tu_3", "y.txt", "Y\n")), text("made y"))
+      agent.ask("make x.txt")
+      write("x.txt", "human\n")
+      agent.ask("rewrite x.txt")
+      undo_through(agent)
+      agent.ask("make y.txt")
+
+      reply = undo_through(agent)
+
+      expect([read("x.txt"), exist?("y.txt")]).to eq(["human\n", false])
+      expect(reply).not_to include("x.txt")
+    end
+
+    # Resumed from what the undo left on disk, the writer sees no change in a
+    # turn that wrote nothing, so no empty turn lands for a later undo to count.
+    it "records no snapshot for a turn after an undo that wrote nothing" do
+      agent = agent_over(tool_response(write_call("tu_1", "x.txt", "A\n")), text("made x"),
+                         tool_response(write_call("tu_2", "x.txt", "B\n")), text("rewrote x"),
+                         tool_response(read_call("tu_3", "x.txt")), text("read x"))
+      agent.ask("make x.txt")
+      write("x.txt", "human\n")
+      agent.ask("rewrite x.txt")
+      undo_through(agent)
+
+      agent.ask("read x.txt")
+
+      expect(slot.log.count).to eq(1)
+    end
+
+    # Nothing settles a torn turn's snapshot, so what its tools captured waits
+    # for the next settle, which then spans both turns.
+    it "undoes a torn turn's created and overwritten files together with the turn after it" do
+      write("t.txt", "v0\n")
+      agent = agent_over(tool_response(read_call("tu_1", "t.txt"), write_call("tu_2", "t.txt", "v1\n")), text("v1"),
+                         tool_response(write_call("tu_3", "t.txt", "v2\n"), write_call("tu_4", "c.txt", "c\n"),
+                                       ["tu_5", "park", {}]),
+                         tool_response(write_call("tu_6", "y.txt", "y\n")), text("made y"))
+      agent.ask("first")
+      torn_ask(agent)
+      agent.ask("next")
+
+      undo_through(agent)
+
+      expect([read("t.txt"), exist?("c.txt"), exist?("y.txt")]).to eq(["v1\n", false, false])
+    end
+
+    # Interrupt a turn that wrote something wrong, fix the file by hand, carry
+    # on: the torn turn's carried pre-image is no longer what stands before
+    # the next change, since someone other than lain moved the path since.
+    it "leaves a hand fix after a torn turn alone when the next turn writes another file" do
+      write("x.txt", "P\n")
+      agent = agent_over(tool_response(read_call("tu_1", "x.txt")), text("read x"),
+                         tool_response(write_call("tu_2", "x.txt", "TORN\n"), ["tu_3", "park", {}]),
+                         tool_response(write_call("tu_4", "y.txt", "y\n")), text("made y"))
+      agent.ask("read x.txt")
+      torn_ask(agent)
+      write("x.txt", "HUMAN FIX\n")
+      agent.ask("make y.txt")
+
+      reply = undo_through(agent)
+
+      expect([read("x.txt"), exist?("y.txt")]).to eq(["HUMAN FIX\n", false])
+      expect(reply).to include("deleted y.txt")
+      expect(reply).not_to include("x.txt")
+    end
+
+    it "restores a hand fix after a torn turn when the next turn rewrites that file" do
+      write("x.txt", "P\n")
+      agent = agent_over(tool_response(read_call("tu_1", "x.txt")), text("read x"),
+                         tool_response(write_call("tu_2", "x.txt", "TORN\n"), ["tu_3", "park", {}]),
+                         tool_response(read_call("tu_4", "x.txt"), write_call("tu_5", "x.txt", "NEXT\n")),
+                         text("rewrote x"))
+      agent.ask("read x.txt")
+      torn_ask(agent)
+      write("x.txt", "HUMAN FIX\n")
+      agent.ask("rewrite x.txt")
+
+      undo_through(agent)
+
+      expect(read("x.txt")).to eq("HUMAN FIX\n")
+    end
+
+    # The map repeats the last record, but the pre-image shows the turn
+    # replaced the human's bytes: dropping that turn would leave an undo that
+    # deletes the file instead.
+    it "restores a human's edit a turn overwrote with the bytes lain last recorded" do
+      agent = agent_over(tool_response(write_call("tu_1", "x.txt", "A\n")), text("made x"),
+                         tool_response(read_call("tu_2", "x.txt"), write_call("tu_3", "x.txt", "A\n")), text("again"))
+      agent.ask("make x.txt")
+      write("x.txt", "human\n")
+      agent.ask("write x.txt back")
+
+      undo_through(agent)
+
+      expect(read("x.txt")).to eq("human\n")
+    end
+
+    context "with accept_edits' shadow scope" do
+      let(:scope) { Lain::Mode::Posture.for(:accept_edits).snapshot_scope }
+
+      it "deletes a file the turn created, exactly as before" do
+        agent = agent_over(tool_response(write_call("tu_1", "b.txt", "b\n")), text("done"))
+        agent.ask("make b.txt")
+
+        reply = undo_through(agent)
+
+        expect(exist?("b.txt")).to be(false)
+        expect(reply).to eq("undid the only undoable file-changing turn: deleted b.txt")
+      end
     end
   end
 

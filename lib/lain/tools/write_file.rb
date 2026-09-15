@@ -77,13 +77,15 @@ module Lain
 
       def perform(input, invocation)
         path = target(invocation, input.path)
+        session = session_of(invocation)
         failing("write", path) do
+          session.record_pre_image(path) { File.file?(path) ? File.binread(path) : nil }
           File.write(path, input.content)
           # The session now KNOWS this file's contents, so recording the read
           # lets a following write_file or edit_file see it as read. The
           # write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
           # only, the documented bash gap).
-          session_of(invocation).record_read(path).record_write(path)
+          session.record_read(path).record_write(path, wrote: input.content)
           Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
         end
       end

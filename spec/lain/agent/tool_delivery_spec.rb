@@ -22,9 +22,9 @@ module ToolDeliverySpecSupport
       self
     end
 
-    def write(timeline:, paths:)
+    def write(timeline:, paths:, pre_images:)
       @trail << :write
-      @written << [timeline, paths]
+      @written << [timeline, paths, pre_images]
       @hook&.call
     end
   end
