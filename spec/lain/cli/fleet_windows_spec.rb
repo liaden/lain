@@ -605,6 +605,22 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(rename_argvs.size).to eq(1)
     end
 
+    # A window titled done over a child that hit its ceiling tells the human
+    # the work came back. It did not.
+    it "marks the window failed, not done, on a one-shot's failed completion" do
+      failed = Lain::Telemetry::Message.new(
+        digest: "blake3:fa11111122223333", kind: :message, from: spawn_digest, to: parent,
+        payload: { "lifecycle" => "failed", "error" => "Lain::Agent::Budget::Exceeded", "final" => "blake3:f1na" },
+        causal_parents: [spawn_digest, "blake3:f1na"], correlation: spawn_digest
+      )
+      fleet << spawn_record
+      fleet << failed
+      fleet.drain_pending
+
+      expect(rename_argvs).to eq([["tmux", "rename-window", "-t", "=researcher-5aaa1111",
+                                   "researcher-5aaa1111 [failed]"]])
+    end
+
     it "closes nothing on an ordinary tell" do
       fleet << spawn_record
       fleet << tell_record

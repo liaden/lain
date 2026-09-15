@@ -54,10 +54,11 @@ module Lain
         # resume chain from the files beside it -- `resumed_from` names a
         # basename, and a chain is written into one directory.
         #
-        # A file recording no completion has no lineage to read, so nothing is
-        # rebuilt to say so. One that does is rebuilt through {Loader} and read
-        # whole, so damage refuses -- in an open file as in a closed one, since
-        # a live writer puts every turn into the file before a record cites it.
+        # A file recording no finished completion has no lineage to read, so
+        # nothing is rebuilt to say so. One that does is rebuilt through
+        # {Loader} and read whole, so damage refuses -- in an open file as in a
+        # closed one, since a live writer puts every turn into the file before
+        # a record cites it.
         #
         # @param path [String]
         # @raise [Corrupt] naming the file, for any damage
@@ -113,7 +114,7 @@ module Lain
         private_class_method :refuse_torn
 
         def self.completion_record?(record)
-          record["type"] == "message" && record["payload"].is_a?(Hash) && record["payload"].key?("final")
+          record["type"] == "message" && record["payload"].is_a?(Hash) && record["payload"].key?("result")
         end
         private_class_method :completion_record?
 
@@ -166,13 +167,14 @@ module Lain
 
         private
 
-        # A `"final"` is what makes a one-shot's completion walkable. An adopted
-        # actor's farewell is terminal too, and cites the actor's head among its
-        # causal parents, but carries no `"final"`: actor lineages are not read
-        # here yet.
+        # Finished work only. A child that failed or was stopped leaves a
+        # completion naming its head, and what it did is no answer for
+        # consolidation, improvement or friction to learn from. An adopted
+        # actor's farewell is terminal too, but carries no `"result"`: actor
+        # lineages are not read here yet.
         def completions
           @messages.select do |event|
-            event.kind == :message && StatusFeed::SpawnLifecycle.new(event).terminal? && event.body.key?("final")
+            event.kind == :message && StatusFeed::SpawnLifecycle.new(event).finished? && event.body.key?("final")
           end
         end
 

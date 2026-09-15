@@ -54,6 +54,34 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
     end
   end
 
+  # A one-shot that ended without answering. Its completion carries no result,
+  # which is what keeps it out of every reader of finished work, and names the
+  # child's head only when the child has one.
+  describe "#ended" do
+    let(:failed) { Lain::StatusFeed::SpawnLifecycle::FAILED }
+
+    it "writes the failure's mark and error class beside the child's head, citing the :spawn and that head" do
+      spawn = lineage.spawn(parent, prompt: "go")
+      message = lineage.ended(parent, spawn, child, lifecycle: failed, error: "Lain::Agent::Budget::Exceeded")
+
+      expect(message.kind).to eq(:message)
+      expect(message.body).to eq("lifecycle" => failed, "error" => "Lain::Agent::Budget::Exceeded",
+                                 "final" => child.head_digest)
+      expect(message.causal_parents).to contain_exactly(spawn.digest, child.head_digest)
+      expect(message.from).to eq(lineage.correlation_of(child))
+      expect(message.to).to eq(lineage.correlation_of(parent))
+    end
+
+    it "names no head and no error for a stopped child that never committed a turn" do
+      spawn = lineage.spawn(parent, prompt: "go")
+      message = lineage.ended(parent, spawn, Lain::Timeline.empty(store:),
+                              lifecycle: Lain::StatusFeed::SpawnLifecycle::STOPPED)
+
+      expect(message.body).to eq("lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED)
+      expect(message.causal_parents).to eq([spawn.digest])
+    end
+  end
+
   describe "#spawn" do
     def spawn_from_another_run(prompt:, lifecycle: nil)
       other_parent = Lain::Timeline.empty(store: Lain::Store.new)

@@ -224,6 +224,40 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.digests).to eq([statin.digest])
     end
 
+    # A child that hit its ceiling never answers, and its completion says so. A
+    # fleet that waited for an answer would count it running for the rest of
+    # the session.
+    it "drops a one-shot whose failed completion names the spawn" do
+      fleet = described_class.new
+      launch = spawn_event("a")
+      fleet.launched(launch)
+
+      fleet.completed(message_event("failed", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED,
+                                                      "error" => "Lain::Agent::Budget::Exceeded" },
+                                              causal_parents: [launch.digest]))
+
+      expect(fleet.digests).to eq([])
+    end
+
+    # The same work from one head is one spawn, so twins share one entry, and
+    # the first of them to end -- here by failing -- retires it, exactly as the
+    # first to answer does.
+    it "retires identical twins' one shared entry when one of them fails" do
+      store = Lain::Store.new
+      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      lineage = Lain::Tools::Subagent::Lineage.new(
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
+      )
+      fleet = described_class.new
+      twins = Array.new(2) { lineage.spawn(head, prompt: "survey the aspirin trials") }
+      twins.each { |spawn| fleet.launched(spawn) }
+
+      fleet.completed(lineage.ended(head, twins.first, Lain::Timeline.empty(store:),
+                                    lifecycle: Lain::StatusFeed::SpawnLifecycle::FAILED, error: "Lain::Error"))
+
+      expect(fleet.digests).to eq([])
+    end
+
     it "leaves a member alone when the completion names some other spawn" do
       fleet = described_class.new
       launch = spawn_event("a")

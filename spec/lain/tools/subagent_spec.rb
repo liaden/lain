@@ -360,6 +360,135 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # A child that raised or was stopped still ends its spawn on the record. The
+  # fleet, the windows and a watch retire a spawn only on a completion, so a
+  # spawn whose child never answered used to stay running for the rest of the
+  # session.
+  describe "a one-shot child that does not finish" do
+    let(:failed) { Lain::StatusFeed::SpawnLifecycle::FAILED }
+
+    # Asks for a tool it was never granted on every turn, so only the ceiling
+    # ends it.
+    def looping_child = mock(tool_response(["e1", "echo", { "text" => "again" }]))
+
+    def dispatched_by_parent(provider: looping_child, observer: record, **seam)
+      parent_agent = nil
+      tool = described_class.new(provider:, context_factory: -> { child_context }, toolset: union,
+                                 policy: spawn_policy, parent: -> { parent_agent.timeline },
+                                 budget: Lain::Agent::Budget.new(max_iterations: 2), max_depth: 3,
+                                 tool_middleware: ToolRegistry::UNGUARDED, observer:, **seam)
+      parent_agent = loop_parent(tool)
+      parent_agent.ask("please spawn")
+      parent_agent.timeline.to_a[2].content.first
+    end
+
+    def published_fleet(events = record.events)
+      Dir.mktmpdir do |dir|
+        feed = Lain::StatusFeed.new(path: File.join(dir, "state.json"))
+        events.each { |event| feed << event }
+        feed.state.fetch("fleet")
+      end
+    end
+
+    # A session record that takes the spawn and refuses the completion: a
+    # closed journal, or a live-view sink raising after the file leg landed.
+    def refusing_completions
+      lambda do |event|
+        raise IOError, "the journal is closed" if event.kind == :message
+
+        record.call(event)
+      end
+    end
+
+    it "journals the lost completion, naming the spawn and the error class, and the fleet still retires it" do
+      telemetry = Lain::Channel.new
+
+      dispatched_by_parent(observer: refusing_completions, telemetry:)
+
+      lost = telemetry.drain.grep(Lain::Tools::Subagent::Lineage::EndingNotRecorded)
+      expect(lost.map(&:to_h)).to eq([{ spawn: record.spawn.digest, record: "completion",
+                                        lifecycle: failed, error: "IOError" }])
+      expect(published_fleet(record.events + lost)).to eq([])
+    end
+
+    # The second stop lands while the stopped completion is being written, and
+    # the write suspends -- a contended monitor, a scheduler-routed write.
+    it "writes a stopped completion though a second stop lands during its write" do
+      entered = false
+      slow = lambda do |event|
+        if event.kind == :message
+          entered = true
+          sleep 0.2
+        end
+        record.call(event)
+      end
+      parked = Class.new(Lain::Provider::Mock) { def complete(*) = sleep }
+      tool = described_class.new(provider: parked.new(responses: []), context_factory: -> { child_context },
+                                 toolset: union, policy: spawn_policy, parent:, observer: slow,
+                                 tool_middleware: ToolRegistry::UNGUARDED)
+
+      Sync do |task|
+        run = task.async { tool.run("go") }
+        task.sleep(0.05)
+        run.stop
+        pumped_until(task, timeout: 2) { entered }
+        run.stop
+        task.sleep(0.4)
+      end
+
+      expect(record.messages.map { |message| message.body.fetch("lifecycle") }).to eq(["stopped"])
+    end
+
+    it "hands the parent an error result and journals a failed completion naming the error and the child's head" do
+      result = dispatched_by_parent
+
+      expect(result["is_error"]).to be(true)
+      body = record.message.body
+      expect(body).to include("lifecycle" => failed, "error" => "Lain::Agent::Budget::Exceeded")
+      expect(body).not_to have_key("result")
+      child = Lain::Timeline.new(head_digest: body.fetch("final"), store:)
+      expect(child.to_a.first.content.first["text"]).to eq("go")
+      expect(record.message.causal_parents).to contain_exactly(record.spawn.digest, child.head_digest)
+    end
+
+    it "retires the spawn from the fleet the HUD publishes" do
+      dispatched_by_parent
+
+      expect(record.spawns.size).to eq(1)
+      expect(published_fleet).to eq([])
+    end
+
+    # A request refused before the child's first answer leaves a head no
+    # iteration returned to write, and the completion cites it.
+    it "settles the head of a child that failed before its first answer into the record ahead of the completion" do
+      dispatched_by_parent(provider: mock)
+
+      final = record.message.body.fetch("final")
+      expect(record.events.index { |event| event.digest == final })
+        .to be < record.events.index(record.message)
+    end
+
+    it "names no head for a child that was never built" do
+      tool = described_class.new(provider: mock, context_factory: -> { raise "this child gets no context" },
+                                 toolset: union, policy: spawn_policy, parent:, observer: record,
+                                 tool_middleware: ToolRegistry::UNGUARDED)
+
+      expect { tool.run("go") }.to raise_error("this child gets no context")
+      expect(record.message.body).to eq("lifecycle" => failed, "error" => "RuntimeError")
+      expect(record.message.causal_parents).to eq([record.spawn.digest])
+    end
+
+    it "writes no spawn when the lease is refused, and hands the parent the refusal" do
+      refusing = Class.new { def acquire(_worker_id) = raise(Lain::Error, "no checkout for this worker") }.new
+
+      result = dispatched_by_parent(isolation: Lain::Isolation::Leases.new(backend: refusing))
+
+      expect(result).to include("is_error" => true, "content" => "no checkout for this worker")
+      expect(record.spawns).to be_empty
+      expect(record.messages).to be_empty
+    end
+  end
+
   # ---- Scenario: an answer too large for the parent's context ---------------
   #
   # A parent cannot drop a tool_result, so ONE oversized child answer pins its
@@ -1505,7 +1634,10 @@ RSpec.describe Lain::Tools::Subagent do
         expect(sync.replies).to eq(["rebased"])
       end
 
-      it "syncs nothing for a spawn that raised" do
+      # The checkout of a spawn that raised is still read before it is
+      # surrendered, so uncommitted work is named on the record. The child is
+      # not asked: it is the one that just failed.
+      it "syncs a spawn that raised without asking it, before its lease is surrendered" do
         tool = described_class.new(provider: mock(text_response("unused")),
                                    context_factory: -> { raise "this child gets no context" },
                                    toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
@@ -1513,7 +1645,7 @@ RSpec.describe Lain::Tools::Subagent do
                                    tool_middleware: ToolRegistry::UNGUARDED)
 
         expect { tool.run("go") }.to raise_error("this child gets no context")
-        expect(calls).to eq([[:surrender, spawned_id, false]])
+        expect(calls).to eq([[:sync, spawned_id, false, false], [:surrender, spawned_id, false]])
       end
 
       it "runs the child in the environment the sync hands it" do
@@ -2508,6 +2640,74 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result).to be_ok
       unroutable!(item.digest)
+    end
+
+    # A question is listed until something in the record names it consumed, and
+    # a stopped child's answering turn never comes. The spawn names it, on the
+    # journal the live inbox surfaces fold.
+    describe "a one-shot child stopped while its question is parked" do
+      let(:feed_dir) { Dir.mktmpdir("subagent-stopped-question") }
+      let(:feed) { Lain::StatusFeed.new(path: File.join(feed_dir, "state.json")) }
+      let(:observed) do
+        lambda do |event|
+          feed << event
+          record.call(event)
+        end
+      end
+      let(:askers) { Lain::CLI::Wiring::Askers.new(observer: observed) }
+      let(:telemetry) { Lain::Channel.new }
+
+      after { FileUtils.rm_rf(feed_dir) }
+
+      def stopped_while_parked
+        seam = Lain::Tools::Subagent::Seam.new(provider: mock(asks, text_response("done")),
+                                               context_factory: -> { child_context }, parent:, askers:,
+                                               tool_middleware: ToolRegistry::UNGUARDED, observer: observed,
+                                               telemetry:)
+        tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
+        Sync { |task| spawning(task, tool) { arrival(task) } }
+      end
+
+      it "names the question set consumed, and the inbox count drops" do
+        item = stopped_while_parked
+        expect(feed.state.fetch("inbox_count")).to eq(1)
+
+        retired = telemetry.drain.grep(Lain::Telemetry::QuestionsConsumed)
+        retired.each { |consumed| feed << consumed }
+
+        expect(retired.flat_map(&:digests)).to eq([item.digest])
+        expect(feed.state.fetch("inbox_count")).to eq(0)
+      end
+
+      # Each ending write stands on its own: the completion refused, the
+      # question is still named consumed, and the loss is on the record.
+      it "still names the question consumed when the completion cannot be written" do
+        refusing = lambda do |event|
+          raise IOError, "the journal is closed" if event.kind == :message && event.body.key?("lifecycle")
+
+          observed.call(event)
+        end
+        seam = Lain::Tools::Subagent::Seam.new(provider: mock(asks, text_response("done")),
+                                               context_factory: -> { child_context }, parent:, askers:,
+                                               tool_middleware: ToolRegistry::UNGUARDED, observer: refusing,
+                                               telemetry:)
+        tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
+        item = Sync { |task| spawning(task, tool) { arrival(task) } }
+
+        written = telemetry.drain
+        expect(written.grep(Lain::Telemetry::QuestionsConsumed).flat_map(&:digests)).to eq([item.digest])
+        expect(written.grep(Lain::Tools::Subagent::Lineage::EndingNotRecorded).map(&:record)).to eq(["completion"])
+      end
+
+      it "journals the spawn's completion as stopped, naming the head the child parked at" do
+        stopped_while_parked
+
+        body = record.message.body
+        expect(body.keys).to contain_exactly("lifecycle", "final")
+        expect(body.fetch("lifecycle")).to eq(Lain::StatusFeed::SpawnLifecycle::STOPPED)
+        expect(record.message.causal_parents).to contain_exactly(record.spawn.digest, body.fetch("final"))
+        expect(feed.state.fetch("fleet")).to eq([])
+      end
     end
 
     # And for an actor it is the lease that reaps the fiber. Both directions

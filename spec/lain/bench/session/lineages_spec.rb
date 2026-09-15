@@ -91,6 +91,39 @@ RSpec.describe Lain::Bench::Session::Lineages do
     expect(lineages_of(session).count).to eq(1)
   end
 
+  # A child that failed leaves a completion so the fleet can retire it, but it
+  # answered nothing: consolidation and improvement read finished work, and a
+  # failed child's transcript is not that.
+  describe "a child that failed" do
+    def echo_forever = tool_response(["e1", "echo", { "text" => "again" }])
+
+    it "yields the lineage that finished and not the one that hit its ceiling" do
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_1", "subagent", { "prompt" => "investigate the login bug" }]),
+                           tool_response(["tu_2", "subagent", { "prompt" => "loop on the payment path" }]),
+                           text_response("parent done")],
+        child_responses: [text_response("the token TTL was zero"), echo_forever]
+      ).run
+
+      expect(session.records.count { |record| record.dig("payload", "lifecycle") == "failed" }).to eq(1)
+      expect(lineages_of(session).map { |lineage| texts(lineage.child_turns) })
+        .to eq([["investigate the login bug", "the token TTL was zero"]])
+    end
+
+    it "reads a file whose only completion failed, yielding nothing and refusing nothing" do
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_1", "subagent", { "prompt" => "go" }]), text_response("parent done")],
+        child_responses: []
+      ).run
+
+      expect(session.records.count { |record| record.dig("payload", "lifecycle") == "failed" }).to eq(1)
+      expect { Lain::Bench::Session.load(session.lines) }.not_to raise_error
+      Dir.mktmpdir do |dir|
+        expect(described_class.read(session.write(File.join(dir, "failed.ndjson"))).to_a).to eq([])
+      end
+    end
+  end
+
   it "yields nothing for a session that spawned nothing" do
     session = RecordedSpawnSession.new(parent_responses: [text_response("no spawn")], child_responses: []).run
 

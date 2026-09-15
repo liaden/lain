@@ -46,9 +46,10 @@ module Lain
 
       # The other half of the same word: a `:message` that ends a spawn's
       # lifecycle takes it back out. {SpawnLifecycle} answers whether this
-      # record is that message -- an actor's farewell and a one-shot's
-      # completion say so differently, and asking is what keeps one reading of
-      # a journal record rather than a copy of it per reader.
+      # record is that message -- an actor's farewell, a one-shot's answer and
+      # a one-shot whose child failed or was stopped say so differently, and
+      # asking is what keeps one reading of a journal record rather than a copy
+      # of it per reader.
       #
       # WHICH member ended is the `causal_parents` join those records already
       # carry: an actor's farewell cites the address it took from its own
@@ -57,7 +58,9 @@ module Lain
       # one found to be a member, because `Event#normalize_causal` uniqs and
       # SORTS: "the first cited parent" is not recoverable from the list, and
       # matching once would make the retirement turn on which digest sorted
-      # lower. A record citing no member drops nothing.
+      # lower. A record citing no member drops nothing. Identical twins share
+      # one member, so whichever of them ends first -- answering or failing --
+      # retires it.
       #
       # @param record [#causal_parents] an arriving `:message`, in either shape
       #   the feed's `:message` arm dispatches: a raw {Event} or the

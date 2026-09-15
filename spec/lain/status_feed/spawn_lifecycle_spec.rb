@@ -48,6 +48,48 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     end
   end
 
+  # A one-shot child that raised: the ceiling, a refused request, a tool that
+  # threw. It ends the spawn as surely as a result does, and a reader keeps it
+  # apart from one, because a failed child's head is not an answer.
+  describe "a one-shot that failed" do
+    let(:lifecycle) do
+      described_class.new(record({ "lifecycle" => "failed", "error" => "Lain::Agent::Budget::Exceeded",
+                                   "final" => "blake3:f1na" }))
+    end
+
+    it "is terminal, and failed" do
+      expect(lifecycle.terminal?).to be(true)
+      expect(lifecycle.failed?).to be(true)
+    end
+
+    it "is a recognized mark, and did not finish" do
+      expect(lifecycle.unrecognized).to be_nil
+      expect(lifecycle.finished?).to be(false)
+    end
+  end
+
+  # A one-shot child whose task was stopped writes the mark an actor's farewell
+  # does, and no result: it ended without answering.
+  describe "a one-shot that was stopped" do
+    let(:lifecycle) { described_class.new(record({ "lifecycle" => "stopped", "final" => "blake3:f1na" })) }
+
+    it "is terminal, neither failed nor finished" do
+      expect(lifecycle.terminal?).to be(true)
+      expect(lifecycle.failed?).to be(false)
+      expect(lifecycle.finished?).to be(false)
+    end
+  end
+
+  describe "a one-shot that answered" do
+    it "finished, and did not fail" do
+      lifecycle = described_class.new(record({ "result" => "found 3 papers", "final" => "blake3:f1na",
+                                               "lifecycle" => "stopped" }))
+
+      expect(lifecycle.finished?).to be(true)
+      expect(lifecycle.failed?).to be(false)
+    end
+  end
+
   describe "an ordinary tell is not terminal" do
     it "is not terminal" do
       lifecycle = described_class.new(record({ "text" => "narrow to RCTs" }))

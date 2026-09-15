@@ -100,7 +100,9 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
     wiring
   end
 
-  def dispatch(wiring) = Sync { wiring.role_spawn.call(:dev, :fresh, "do the work") }
+  def dispatch(wiring) = Sync { dispatch_in(wiring) }
+
+  def dispatch_in(wiring) = wiring.role_spawn.call(:dev, :fresh, "do the work")
 
   def handbacks = record.events.grep(Lain::Telemetry::Handback)
 
@@ -127,6 +129,57 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
     expect(git("rev-parse", ref)).to eq(@c1)
     expect(git("rev-parse", "feat")).to eq(seed)
     expect(File.read(File.join(repo, "README"))).to eq("human edit\n")
+  end
+
+  # A child that raised is surrendered rather than handed back, and its
+  # checkout is still read first: work it wrote and never committed is named
+  # on the record, not reported as a clean tree with nothing to do.
+  it "hands back a leased child that wrote a file and then hit its ceiling as dirty" do
+    path = nil
+    script.push(lambda do |_request|
+      path ||= worktree.tap { |dir| File.write(File.join(dir, "scratch.txt"), "never committed\n") }
+      tool_response(["c1", "no_such_tool", {}])
+    end)
+
+    expect { dispatch(wired) }.to raise_error(Lain::Agent::Budget::Exceeded)
+
+    expect(handbacks.first).to have_attributes(sync: :dirty, dirty: true, path:)
+  end
+
+  # A second stop -- an ancestor task, a reactor teardown -- landing while the
+  # stopped child's checkout is synced must not skip the handoff that releases
+  # its lease: the worktree would stay on disk with nothing on the record.
+  it "releases a stopped child's lease and records its handback when a second stop lands in the sync" do
+    parked = false
+    entered = false
+    path = nil
+    script.push(lambda do |_request|
+      path = worktree
+      git("commit", "--allow-empty", "-q", "-m", "c1", dir: path)
+      parked = true
+      sleep
+    end)
+    allow(Lain::Isolation::SelfSync).to receive(:new).and_wrap_original do |build, **config|
+      build.call(**config).tap do |sync|
+        allow(sync).to receive(:call).and_wrap_original do |original, *args, **kw|
+          entered = true
+          original.call(*args, **kw)
+        end
+      end
+    end
+    wiring = wired
+
+    Sync do |task|
+      run = task.async { dispatch_in(wiring) }
+      pumped_until(task) { parked }
+      run.stop
+      pumped_until(task) { entered }
+      run.stop
+      pumped_until(task, timeout: 10) { run.finished? }
+    end
+
+    released = record.events.grep(Lain::Telemetry::IsolationLease).count { |lease| lease.kind == :released }
+    expect([handbacks.size, released, Dir.exist?(path)]).to eq([1, 1, false])
   end
 
   # What the sync did rides the handback record itself, so the first record

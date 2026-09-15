@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "async"
 require "monitor"
 
 module Lain
@@ -184,6 +185,10 @@ module Lain
       # that returned. The lease is how the two are told apart: a reclaim
       # always releases it, and an acquire that refused left none.
       #
+      # A surrendered checkout is synced first when its block never did, with
+      # nobody to ask, so uncommitted work a failed child left behind is named
+      # on the record rather than read as a clean tree.
+      #
       # @param role [String] what this worker is for, so a checkout left
       #   behind names the spawn it belonged to
       # @param journal [#<<] where a failed reclaim is recorded
@@ -195,10 +200,11 @@ module Lain
       # @return [Held] the block's value and the handback's report
       def hold(role, journal:)
         worker = @lane.worker(role:, ordinal: next_ordinal)
-        synced = SelfSync::Result::NONE
+        synced = nil
         lease = @backend.acquire(worker)
         value = yield(@sync.editorless(lease.worker_env),
                       ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) })
+        synced ||= SelfSync::Result::NONE
         Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
       ensure
         surrender(lease, worker, journal, synced) unless lease.nil? || lease.released?
@@ -212,8 +218,33 @@ module Lain
 
       # A dispatch that raised after its sync ran still says what the sync
       # did, on the record of the surrender.
+      #
+      # The sync and the handoff are ONE shielded region, the
+      # {Agent::ToolDelivery#cancel} precedent: this runs while the task is
+      # already unwinding, the sync is git subprocesses and so a suspension
+      # point, and a further stop landing there -- a reactor teardown, an
+      # ancestor task -- would skip the handoff, leaving the checkout on disk,
+      # the lease unreleased and nothing on the record. `defer_stop` holds off
+      # that one cancel.
       def surrender(lease, worker, journal, synced)
-        tolerated(worker, journal) { @handoff.surrender(lease, worker_id: worker, sync: synced) }
+        shielded do
+          synced ||= unasked(lease, worker)
+          tolerated(worker, journal) { @handoff.surrender(lease, worker_id: worker, sync: synced) }
+        end
+      end
+
+      def shielded(&block)
+        task = Async::Task.current?
+        task ? task.defer_stop(&block) : yield
+      end
+
+      # The sync a dispatch that never reached its own gets on the way out. It
+      # runs while an exception climbs, so a failure of its own reads as no
+      # sync rather than replacing that exception.
+      def unasked(lease, worker)
+        @sync.call(lease, worker: SelfSync::Unaskable, worker_id: worker)
+      rescue StandardError
+        SelfSync::Result::NONE
       end
 
       # A teardown that cannot reclaim must not eat a completed child's

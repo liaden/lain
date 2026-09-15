@@ -62,6 +62,11 @@ module Lain
       # Appended to a window's title when its actor's lineage closes.
       DONE_MARK = "[done]"
 
+      # Appended instead when the lineage closed on a child that raised, so a
+      # window over a child that hit its ceiling does not read as work that
+      # came back.
+      FAILED_MARK = "[failed]"
+
       # The digest-hex width a window name carries -- enough to disambiguate
       # siblings, short enough for a tmux status line.
       SHORT = 8
@@ -407,19 +412,21 @@ module Lain
       def watch_line(digest) = "lain #{(@watch_argv + [digest]).join(" ")}"
 
       # A lineage closes on a terminal message -- the actor farewell's
-      # `lifecycle: "stopped"` marker, or a one-shot's `result` body -- and the
-      # closed spawn is whichever windowed digest the record's causal_parents
-      # name. Deleting the window entry makes a redelivered terminal a no-op,
-      # so the rename never fires twice at a title that no longer matches.
-      # {StatusFeed::SpawnLifecycle} is asked rather than tested inline, so
-      # {StatusFeed} can ask the same question of the same records instead of
-      # growing its own copy of it.
+      # `lifecycle: "stopped"` marker, a one-shot's `result` body, or a
+      # one-shot's `lifecycle: "failed"` -- and the closed spawn is whichever
+      # windowed digest the record's causal_parents name. Deleting the window
+      # entry makes a redelivered terminal a no-op, so the rename never fires
+      # twice at a title that no longer matches. {StatusFeed::SpawnLifecycle}
+      # is asked rather than tested inline, so {StatusFeed} can ask the same
+      # question of the same records instead of growing its own copy of it.
       def observe_close(record)
-        return unless StatusFeed::SpawnLifecycle.new(record).terminal?
+        lifecycle = StatusFeed::SpawnLifecycle.new(record)
+        return unless lifecycle.terminal?
 
         digest = Array(record.causal_parents).find { |parent| @windows.key?(parent) }
         released = digest && @windows.delete(digest)
-        @pump.enqueue(Pump::Mark.new(target: window_target(released), title: "#{released} #{DONE_MARK}")) if released
+        mark = lifecycle.failed? ? FAILED_MARK : DONE_MARK
+        @pump.enqueue(Pump::Mark.new(target: window_target(released), title: "#{released} #{mark}")) if released
       end
 
       def turn_boundary

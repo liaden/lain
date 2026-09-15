@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 module Lain
   module Tools
     class Subagent < Tool
@@ -90,10 +92,22 @@ module Lain
         # digest from its own recorded body. This closes the vocabulary's
         # TERMINAL end only -- a one-shot's :spawn still writes no "launched"
         # (see {#spawn}), so "did this spawn start" is still `kind == :spawn`.
+        # A child that never answered ends in {#ended} instead.
         def message(parent, spawn, child, response)
           final = child.head_digest
           body = { "result" => response.text, "final" => final,
                    "lifecycle" => StatusFeed::SpawnLifecycle::STOPPED }
+          put(parent, kind: :message, from: correlation_of(child), to: correlation_of(parent),
+                      causal_parents: [spawn.digest, final].compact, body:)
+        end
+
+        # A one-shot whose child did not answer: it raised, and `error` names
+        # the class, or its task was stopped. No `"result"`, which is what keeps
+        # it out of every reader of finished work; `"final"` only when the child
+        # has a head to name.
+        def ended(parent, spawn, child, lifecycle:, error: nil)
+          final = child.head_digest
+          body = { "lifecycle" => lifecycle, "error" => error, "final" => final }.compact
           put(parent, kind: :message, from: correlation_of(child), to: correlation_of(parent),
                       causal_parents: [spawn.digest, final].compact, body:)
         end
@@ -115,6 +129,26 @@ module Lain
         # every event. Public so an {Actor} can address the parent without
         # reaching into `identity`.
         def correlation_of(timeline) = Event::ChainWriter.correlation_of(timeline)
+
+        # A write that ends a one-shot and could not land: `record` names which
+        # -- the `completion` or the `questions_consumed` -- and `error` the
+        # class of what refused it, never its message. It speaks the completion
+        # duck the fleet readers retire on, a `:message` citing the spawn and
+        # carrying the lifecycle mark, because a spawn whose completion was lost
+        # has still ended, and a fleet that waited for the lost record would
+        # count it running for the rest of the session.
+        EndingNotRecorded = Data.define(:spawn, :record, :lifecycle, :error) do
+          include Telemetry::Journalable
+
+          def initialize(spawn:, record:, lifecycle:, error:)
+            super(spawn: -spawn.to_s, record: -record.to_s, lifecycle: -lifecycle.to_s, error: -error.to_s)
+          end
+
+          def kind = :message
+          def to = nil
+          def causal_parents = [spawn].freeze
+          def payload = { "lifecycle" => lifecycle }.freeze
+        end
 
         private
 
@@ -151,6 +185,116 @@ module Lain
         # one home.
         def put(parent, kind:, from:, to:, causal_parents:, body:)
           @chain_writer.put(parent, kind:, from:, to:, causal_parents:, body:)
+        end
+
+        # One one-shot dispatch's record, from its :spawn to whichever
+        # completion ends it. One per dispatch and never shared, so a fan-out
+        # sibling resuming mid-flight cannot make a completion name the wrong
+        # spawn or child.
+        class OneShot
+          # A spawn whose child was never built -- its context would not render,
+          # its stack would not close -- has no head and asked nothing.
+          module Unbuilt
+            def self.settled = Timeline.empty
+            def self.asked = []
+          end
+
+          attr_reader :parent
+
+          # @param lineage [Lineage] the writer
+          # @param parent [Timeline] the head the spawn is made from
+          # @param consumed [#<<] the journal the live inbox surfaces fold, where
+          #   a question the child left parked is named consumed
+          # @param journal [#<<] the session record, where a loss is noted when
+          #   `consumed` refuses it too
+          def initialize(lineage, parent, consumed:, journal:)
+            @lineage = lineage
+            @parent = parent
+            @consumed = consumed
+            @journal = journal
+            @spawn = nil
+            @child = Unbuilt
+            @open = true
+          end
+
+          # Runs one dispatch, and ends the record however it exits: a raise
+          # writes `failed`, and any exit that is not a StandardError -- a
+          # cancel raises `Async::Stop` -- writes `stopped`.
+          def recording
+            yield self
+          rescue StandardError => e
+            ended(StatusFeed::SpawnLifecycle::FAILED, error: e.class.name)
+            raise
+          ensure
+            ended(StatusFeed::SpawnLifecycle::STOPPED)
+          end
+
+          def spawned(prompt) = @spawn = @lineage.spawn(@parent, prompt:)
+
+          # @param child [#settled, #asked] the child this spawn built
+          # @return the child, so a build reads as one expression
+          def built(child) = @child = child
+
+          # @return [Response] what the parent is given
+          def finished(timeline, response)
+            @open = false
+            @lineage.message(@parent, @spawn, timeline, response)
+            response
+          end
+
+          private
+
+          # Nothing ends a spawn that never happened -- a refused lease writes
+          # no :spawn. Shielded from a further stop, because this runs while
+          # the task is already unwinding and a write is a suspension point:
+          # `defer_stop` holds off one more cancel, the one a reactor teardown or
+          # an ancestor task lands on a run already stopping.
+          def ended(lifecycle, error: nil)
+            return unless @open && @spawn
+
+            @open = false
+            shielded do
+              completed(lifecycle, error)
+              retired(lifecycle)
+            end
+          end
+
+          def shielded(&block)
+            task = Async::Task.current?
+            task ? task.defer_stop(&block) : yield
+          end
+
+          # Each write catches its own failure, so a lost completion never costs
+          # the question its retirement, and neither replaces the exception
+          # already climbing.
+          def completed(lifecycle, error)
+            @lineage.ended(@parent, @spawn, @child.settled, lifecycle:, error:)
+          rescue StandardError => e
+            lost("completion", lifecycle, e)
+          end
+
+          # A question is listed until something in the record names it
+          # consumed, and the child's turn that would have done so never comes.
+          def retired(lifecycle)
+            digests = @child.asked
+            @consumed << Telemetry::QuestionsConsumed.new(turn: nil, digests:) unless digests.empty?
+          rescue StandardError => e
+            lost("questions_consumed", lifecycle, e)
+          end
+
+          # The live-view journal first, which in a chat is also the session
+          # file; the session record alone when that is what refused.
+          def lost(record, lifecycle, error)
+            loss = EndingNotRecorded.new(spawn: @spawn.digest, record:, lifecycle:, error: error.class.name)
+            [@consumed, @journal].find { |sink| noted?(sink, loss) }
+          end
+
+          def noted?(sink, loss)
+            sink << loss
+            true
+          rescue StandardError
+            false
+          end
         end
       end
     end

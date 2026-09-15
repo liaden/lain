@@ -222,11 +222,17 @@ module Lain
         Tool::Result.ok("actor launched: #{actor.address}")
       end
 
-      # Re-entrant by construction: the records ride LOCALS and nothing else
-      # across `run_child`'s IO yield, so a sibling fan-out task resuming
-      # mid-flight cannot make `message` name the wrong spawn or child. There
-      # is nowhere for one to be left behind either -- the record IS the pair
-      # of events, and a reader watches them through the seam's `observer:`.
+      # Re-entrant by construction: the record rides a {Lineage::OneShot} held
+      # in a LOCAL across the child's IO yield, so a sibling fan-out task
+      # resuming mid-flight cannot make a completion name the wrong spawn or
+      # child. The record IS the pair of events, and a reader watches them
+      # through the seam's `observer:`.
+      #
+      # THE LEASE COMES FIRST, and the :spawn is written under it: a refused
+      # acquire leaves no record of a child that never existed, and the
+      # refusal is what the parent is given. Every spawn written is ended --
+      # by its answer, or by the `failed` or `stopped` completion
+      # {Lineage::OneShot#recording} writes on the way out.
       #
       # WHAT THE RECORD MEANS ON A BOUNDED SPAWN, since two fields change sense
       # and nothing else says so: the :message's `body["result"]` holds what the
@@ -239,11 +245,20 @@ module Lain
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
-        parent = parent_timeline
-        spawn = lineage.spawn(parent, prompt:)
-        child, response = run_child(prompt, parent, on_stream_started:)
-        lineage.message(parent, spawn, child, response)
-        Tool::Result.ok(response.text)
+        Lineage::OneShot.new(lineage, parent_timeline, consumed: telemetry, journal:).recording do |record|
+          held = isolation.hold(@name, journal:) do |worker_env, sync|
+            record.spawned(prompt)
+            run_child(record.built(build_child(record.parent, worker_env)), prompt, sync, on_stream_started:)
+          end
+          Tool::Result.ok(finished(record, held).text)
+        end
+      end
+
+      # The answer, with what the lease's handback owes the parent folded in,
+      # recorded as what the parent was given.
+      def finished(record, held)
+        timeline, response = held.value
+        record.finished(timeline, held.delivered(response))
       end
 
       # `ask` seeds the prompt as the child's first user turn: fresh starts it
@@ -272,16 +287,13 @@ module Lain
       # The self-sync runs HERE too, after the answer and before the lease's
       # reclaim, for the reason the bounding does: a conflicted rebase is put
       # to the child that made the commits, and only this block still holds
-      # it live.
-      def run_child(prompt, parent, on_stream_started: nil)
-        held = isolation.hold(@name, journal:) do |worker_env, sync|
-          build_child(parent, worker_env).answered do |child, tools|
-            @answer.bounded(child, child.ask(prompt, on_stream_started:), journal:)
-                   .tap { sync.call(Isolation::SelfSync.worker(child, tools:)) }
-          end
+      # it live. A child that raised never reaches it, and its lease syncs the
+      # checkout with nobody to ask before surrendering it.
+      def run_child(child, prompt, sync, on_stream_started: nil)
+        child.answered do |agent, tools|
+          @answer.bounded(agent, agent.ask(prompt, on_stream_started:), journal:)
+                 .tap { sync.call(Isolation::SelfSync.worker(agent, tools:)) }
         end
-        timeline, response = held.value
-        [timeline, held.delivered(response)]
       end
 
       def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
@@ -325,7 +337,7 @@ module Lain
 
       # The seam's collaborators, passed through untouched -- only
       # {#parent_timeline} needs the thunk-or-value reading above.
-      delegate :journal, :observer, :supervisor, :isolation, to: :@seam
+      delegate :journal, :telemetry, :observer, :supervisor, :isolation, to: :@seam
     end
 
     # A subagent as an ordinary tool: possessing it is the authorization to
@@ -505,13 +517,13 @@ module Lain
         #
         # `StandardError` and not the budget alone: a 429, a 529 or a socket
         # reset from the second ask would otherwise escape and destroy an answer
-        # the run has already paid for -- on the one-shot path it escapes ahead
-        # of `lineage.message`, so no :message is written at all, and on the
-        # actor path into `@failure`, so no settled note ever reaches the
-        # parent's mailbox. {Agent}'s own
-        # torn-turn rule is the governing one: work that was paid for stays in
-        # the record rather than vanishing with the raise. `Async::Stop` is not
-        # a StandardError, so cancellation still flows past this untouched.
+        # the run has already paid for -- on the one-shot path the completion
+        # would record a failed child in place of the answer, and on the actor
+        # path the raise lands in `@failure`, so no settled note ever reaches
+        # the parent's mailbox. {Agent}'s own torn-turn rule is the governing
+        # one: work that was paid for stays in the record rather than vanishing
+        # with the raise. `Async::Stop` is not a StandardError, so cancellation
+        # still flows past this untouched.
         def condensed(agent, response, size, journal)
           summary = agent.ask(request(size))
           reason = undeliverable(summary)
@@ -716,8 +728,8 @@ module Lain
       # should say which direction it moves that claim; the current ones move it
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
-      Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :supervisor, :observer,
-                         :askers, :isolation, :escalation) do
+      Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :supervisor,
+                         :observer, :askers, :isolation, :escalation) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -743,6 +755,11 @@ module Lain
         # build it through one factory; {CLI::Wiring::ToolsetBuild} -- the
         # only production constructor -- requires its own.
         #
+        # `telemetry` is where a record the live views fold goes -- the tee a
+        # chat's approval gate journals to -- and never `journal`, the session
+        # file alone. A child that did not answer names the question it left
+        # parked consumed there, or the inbox lists it for the rest of the run.
+        #
         # `escalation` defaults to `[AskHuman::HUMAN]`: absent a spawn, `parent`
         # IS the run's own chat, so a question asked FROM it need go no further
         # once it is addressed there. A seam a spawn built over
@@ -750,7 +767,7 @@ module Lain
         # further hops are, so a grandchild's relay carries the whole road
         # rather than only its immediate parent's name.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
-                       supervisor: Supervisor::Null, observer: NO_OBSERVER,
+                       telemetry: Channel::Null.instance, supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze)
           Seam.refuse_unbuildable(tool_middleware)
@@ -808,8 +825,9 @@ module Lain
         #
         # `tools` names what the child was granted, which is what decides
         # whether it may be asked to rebase its own work: only a shell can run
-        # git.
-        Child = Data.define(:agent, :registration, :tools) do
+        # git. `asker` and `feed` are what a child that did not answer leaves
+        # its record through.
+        Child = Data.define(:agent, :registration, :tools, :asker, :feed) do
           # A one-shot child's lifetime IS the dispatch, so the release lands
           # on every exit from it. `timeline` is read AFTER the block: the
           # caller wants the settled head, not the one the child started from.
@@ -830,6 +848,18 @@ module Lain
           ensure
             registration.deregister unless actor
           end
+
+          # The head a child that did not answer stopped at, written into the
+          # record first: its completion cites that head, and an iteration that
+          # raised never returned to write it.
+          def settled
+            feed.catch_up(agent.timeline)
+            agent.timeline
+          end
+
+          # The question set this child last put to a human, which one that did
+          # not answer may have left parked.
+          def asked = [asker.last_question&.digest].compact
         end
 
         # One spawn's own chain: where the child STARTS, how to read its live
@@ -965,7 +995,7 @@ module Lain
           asker = enrolled.asker
           allowed = granted(@policy.attenuate(union), asker)
           child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, worker_env),
-                            registration: enrolled.registration, tools: allowed.names)
+                            registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
           # CANCELLED spawn releases too: `Async::Stop` is not a StandardError.

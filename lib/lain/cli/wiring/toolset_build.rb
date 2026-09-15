@@ -279,7 +279,8 @@ module Lain
                        handback:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           tool_middleware: guard(chronicle, switchboard),
-                                          journal:, supervisor:, observer: chronicle.observer, askers:,
+                                          journal:, telemetry: chronicle.instrumentation.journal,
+                                          supervisor:, observer: chronicle.observer, askers:,
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,
                                                                                  handoff: handback.handoff,
                                                                                  sync: handback.sync))

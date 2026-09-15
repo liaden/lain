@@ -115,6 +115,106 @@ RSpec.describe Lain::Isolation::Leases do
     expect(leaks.map(&:error)).to all(include(leases_root))
   end
 
+  # A dispatch that raised is surrendered, and what the sync reads off the
+  # checkout rides that surrender as it rides a reclaim: a worker that wrote a
+  # file and then hit its ceiling left uncommitted work, and a surrender told
+  # nothing synced would record the checkout as clean. Nobody is asked -- the
+  # child that would be asked is the one that just failed.
+  describe "the sync on a dispatch that did not return" do
+    let(:calls) { [] }
+    let(:outcome) { Lain::Isolation::SelfSync::Result.new(outcome: :dirty, dirty: true, path: "/checkout") }
+    let(:sync) do
+      recorded = calls
+      found = outcome
+      Class.new do
+        define_method(:call) do |_lease, worker:, worker_id:|
+          recorded << [:sync, worker_id, worker.askable?]
+          found
+        end
+        define_method(:editorless) { |worker_env| worker_env }
+      end.new
+    end
+    let(:handoff) do
+      recorded = calls
+      Class.new do
+        define_method(:surrender) do |lease, worker_id:, sync:|
+          recorded << [:surrender, worker_id, sync]
+          lease.release
+          Lain::Isolation::WorkerHandoff::Report.nothing
+        end
+      end.new
+    end
+    let(:syncing) { described_class.new(backend:, handoff:, sync:) }
+    let(:worker) { Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal: 1).to_s }
+
+    it "syncs the checkout of a block that raised, asking nobody, and surrenders with what it found" do
+      expect { syncing.hold("subagent", journal:) { raise Lain::Error, "the ceiling" } }
+        .to raise_error(Lain::Error, "the ceiling")
+
+      expect(calls).to eq([[:sync, worker, false], [:surrender, worker, outcome]])
+    end
+
+    it "syncs a stopped block's checkout too" do
+      Sync do |task|
+        parked = task.async { syncing.hold("subagent", journal:) { sleep } }
+        task.yield
+        parked.stop
+      end
+
+      expect(calls).to eq([[:sync, worker, false], [:surrender, worker, outcome]])
+    end
+
+    # The sync is git subprocesses, so a suspension point, and a second stop --
+    # an ancestor task or a reactor teardown landing on a run already
+    # unwinding -- used to land in it and skip the handoff, leaving the lease
+    # unreleased and no handback on the record.
+    it "still surrenders when a second stop lands while the unasked sync runs" do
+      entered = false
+      recorded = calls
+      slow = Class.new do
+        define_method(:call) do |_lease, worker:, worker_id:|
+          entered = true
+          sleep 0.2
+          recorded << [:sync, worker_id, worker.askable?]
+          Lain::Isolation::SelfSync::Result::NONE
+        end
+        define_method(:editorless) { |worker_env| worker_env }
+      end.new
+      leases = described_class.new(backend:, handoff:, sync: slow)
+
+      Sync do |task|
+        held = task.async { leases.hold("subagent", journal:) { sleep } }
+        task.yield
+        held.stop
+        pumped_until(task, timeout: 2) { entered }
+        held.stop
+        task.sleep(0.4)
+      end
+
+      expect(calls.map(&:first)).to eq(%i[sync surrender])
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    it "does not sync again a block that synced before it raised" do
+      expect do
+        syncing.hold("subagent", journal:) do |_worker_env, synced|
+          synced.call(Lain::Isolation::SelfSync::Unaskable)
+          raise Lain::Error, "after the sync"
+        end
+      end.to raise_error(Lain::Error, "after the sync")
+
+      expect(calls.map(&:first)).to eq(%i[sync surrender])
+    end
+
+    it "syncs nothing and surrenders nothing when the acquire itself refused" do
+      refused = described_class.new(backend: Class.new { def acquire(_id) = raise(Lain::Error, "refused") }.new,
+                                    handoff:, sync:)
+
+      expect { refused.hold("subagent", journal:) { :unreached } }.to raise_error(Lain::Error, "refused")
+      expect(calls).to eq([])
+    end
+  end
+
   # A lane names where this pool's workers are numbered. Every worktree of one
   # repository shares refs/lain/worker/, so two lanes' worker 1 must not spell
   # one id.

@@ -288,6 +288,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(role.tool_middleware.requester).to eq(described_class::SPAWN_REQUESTER)
     end
 
+    # Where a child that did not answer names its parked question consumed: the
+    # journal the chat's own gate retires a question on, so the live inbox
+    # surfaces fold both, and never the session file alone.
+    it "fills that seam's telemetry from the journal the live views fold" do
+      tee = RecordingChannel.new
+      allow(chronicle).to receive(:instrumentation).and_return(Lain::Agent::Instrumentation.new(journal: tee))
+      toolset_build.build(recorder, ask_human:)
+
+      expect(toolset_build.role_spawn.seam.telemetry).to be(tee)
+    end
+
     it "fills that seam from the run's provider, parent handle, journal, supervisor and chronicle observer" do
       toolset_build.build(recorder, ask_human:)
       seam = toolset_build.role_spawn.seam
