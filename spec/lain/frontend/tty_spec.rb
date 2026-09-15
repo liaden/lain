@@ -573,7 +573,7 @@ RSpec.describe Lain::Frontend::TTY do
       tty.render_arrival(announced("db"), from: "researcher")
 
       expect(output.string).to include("researcher").and include("which db?")
-      expect(output.string).to include("nvim").and include("/inbox")
+      expect(output.string).to include("-- answer in lain://inbox, or /inbox")
       expect(output.string.chomp).not_to match(line_break)
     end
 
@@ -595,7 +595,7 @@ RSpec.describe Lain::Frontend::TTY do
                          from: "researcher")
 
       expect(output.string.chomp).not_to match(line_break)
-      expect(output.string).to include("researcher").and include("(/inbox")
+      expect(output.string).to include("researcher").and include("lain://inbox, or /inbox")
     end
 
     # A handback's BYTES are the measurement followed by every byte of the

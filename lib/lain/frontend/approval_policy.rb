@@ -48,6 +48,37 @@ module Lain
       AFFIRMATIVE = /\Ay(es)?\z/i
       private_constant :AFFIRMATIVE
 
+      # How a prompt another surface decided ends its line.
+      CLOSED = "-- decided by %<surface>s: %<verdict>s"
+
+      # The `[y/N]` prompt as the reader is handed it: its text, still a String,
+      # and the call it asks about. A read the call was decided out from under is
+      # STOPPED, and the line it drew is left looking live -- a human's `n` typed
+      # at it became a chat prompt. Ending that line is the terminal's to write,
+      # not this surface's `output`, which under the conductor's reader is a
+      # stream beside the one the prompt was drawn on; so the prompt carries the
+      # sentence and the terminal asks for it on the way out.
+      class Asked < String
+        def initialize(text, pending)
+          super(text)
+          @pending = pending
+          freeze
+        end
+
+        # Yields the sentence ending this prompt's line when another surface
+        # decided its call -- a timeout, an oracle, the editor -- and nothing
+        # while it is undecided or was answered here.
+        def closed
+          yield format(CLOSED, surface: @pending.surface, verdict:) if decided_elsewhere?
+        end
+
+        private
+
+        def decided_elsewhere? = @pending.decided? && @pending.surface != SURFACE
+
+        def verdict = @pending.approved? ? "approved" : "denied"
+      end
+
       # `reader:` is the conductor seam: `(prompt) -> String, nil` owns BOTH the
       # terminal write and the read for one question. The exe injects one that
       # routes through {CLI::Conductor}, so approval prompts serialize with
@@ -75,7 +106,7 @@ module Lain
       # @param pending [Lain::Approval::Queue::Pending]
       # @return [Boolean]
       def decide(pending)
-        answer = @reader.call(@pastel.yellow.bold(prompt_for(pending)))
+        answer = @reader.call(Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending))
         pending.decide(affirmative?(answer), surface: SURFACE)
       end
 

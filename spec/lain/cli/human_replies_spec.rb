@@ -25,6 +25,20 @@ class RecordingEditorRail
   def attached? = true
 end
 
+# An editor that goes away mid-session: its rail is still consumed by the
+# session's fiber, while every line dispatched after it went reads at the
+# terminal again. So a set can be answered on the rail while `human>` is open
+# for it in the chat.
+class DetachingEditorRail < RecordingEditorRail
+  def initialize(*commands)
+    super
+    @attached = true
+  end
+
+  def detach = @attached = false
+  def attached? = @attached
+end
+
 # The nvim end of the approval round trip, recorded: what
 # {Lain::Frontend::Neovim::ApprovalView} answers a `y`/`n` gesture with. Its
 # `decided?`/`report` pair is the whole duck the consumer reads, so this stands
@@ -198,7 +212,9 @@ RSpec.describe Lain::CLI::HumanReplies do
   end
   let(:store) { Lain::Store.new }
   let(:parent) { chain("hi") }
-  let(:conductor) { instance_double(Lain::CLI::Conductor) }
+  # No interrupt countdown runs, and a cockpit's command> reads nothing, unless
+  # an example says otherwise.
+  let(:conductor) { instance_double(Lain::CLI::Conductor, counting_down?: false, read_command: nil) }
   # The REAL producer of what this class consumes. Both halves of the seam or
   # neither: this file exists because a defect once lived exactly between two
   # sides that each had green specs (see the editor rail below), and "the
@@ -500,13 +516,19 @@ RSpec.describe Lain::CLI::HumanReplies do
     # and somebody who typed 65 KB got a bare `human> ` back with nothing on
     # screen to say why. Keyed on the arrival -- the digest and the stamp
     # `InboxItem.asked` takes -- both are said.
+    #
+    # The handback is queued once the first answer is handed on, which is when
+    # a real one arrives: an arrival already queued when its set is answered
+    # is that answered set's, and is retired with it.
     it "announces a second arrival for a set already announced" do
+      item = announced(ask_human, "which db?")
+      handback = Lain::CLI::HumanReplies::InboxItem.new(question: "too long -- type `send`", from: item.from,
+                                                        digest: item.digest, asked_at: item.asked_at + 1)
       typed = ["config.rb"]
       allow(conductor).to receive(:read_reply) { typed.shift || Async::Task.current.sleep(30) }
-      item = announced(ask_human, "which db?")
-      questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "too long -- type `send`",
-                                                               from: item.from, digest: item.digest,
-                                                               asked_at: item.asked_at + 1))
+      allow(directory).to receive(:reply).and_wrap_original do |reply, *args|
+        reply.call(*args).tap { questions.enqueue(handback) }
+      end
 
       with_surfaces { output.string.include?("type `send`") }
 
@@ -1578,6 +1600,26 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals).to be_empty
     end
 
+    # A drain wired with no question queue -- one surface answering one asker,
+    # as the epic gate's seat is -- has nothing queued for an answer to retire,
+    # and an answer must still reach the set it names.
+    it "answers a written document when no question queue was wired at all" do
+      unqueued = described_class.new(tty:, conductor:, ask_human: directory, questions: nil)
+      unqueued.bind_editor(editor)
+      answered = nil
+      Sync { answered = announced(ask_human, "which db?") }
+      editor.push(["question_answered", [answered.digest, answer_set("postgres")]])
+
+      Sync do |task|
+        session = unqueued.session_surfaces(task)
+        pumped_until(task, reason: "the document's answer landed") { !ask_human.pending? || editor.refusals.any? }
+        session.each(&:stop)
+      end
+
+      expect(editor.refusals).to be_empty
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+    end
+
     it "refuses a written document naming a set nobody holds, in the editor it came from" do
       replies.bind_editor(editor)
       editor.push(["question_answered", ["blake3:deadbeef", answer_set("too late")]])
@@ -1622,6 +1664,132 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # A plain chat's `human>` is one surface among several: an editor that was
+  # attached when the session started still answers on its rail. A set it
+  # answers is DONE, so the open read for it is stopped and its item retired --
+  # not re-queued, which drew the same dead `human>` under every later line
+  # until somebody typed into it and was refused.
+  describe "a question settled elsewhere while human> is open for it" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+    let(:rail) { DetachingEditorRail.new }
+
+    before { replies.bind_editor(rail) }
+
+    # Every read the chat opens, and how many are open right now.
+    def reading_at_the_terminal
+      @reads = 0
+      @open_reads = 0
+      allow(conductor).to receive(:read_reply) do
+        @reads += 1
+        @open_reads += 1
+        Async::Task.current.sleep(30)
+      ensure
+        @open_reads -= 1
+      end
+    end
+
+    it "stops the read, retires the item, and draws no human> for it on the next three lines" do
+      reading_at_the_terminal
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        rail.push(["reply", ["postgres"]])
+        pumped_until(task, reason: "human> closed") { @open_reads.zero? }
+        line.each(&:stop)
+        3.times do
+          later = replies.surfaces(task)
+          settle_for(task, 0.05)
+          later.each(&:stop)
+        end
+        run.stop
+        session.each(&:stop)
+      end
+
+      expect(@reads).to eq(1)
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+      expect(replies.pending?).to be(false)
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
+    end
+
+    # The same set with NO read open: the line it was listed under ended, so it
+    # went back on the queue, and the editor answered it between lines. Served
+    # again, it drew `human>` under every later line until somebody typed into
+    # it and was refused -- and nobody types into a prompt for a question they
+    # have already answered.
+    it "never re-opens human> for a set answered on the rail after its line re-queued it" do
+      reading_at_the_terminal
+      reads_after_answer = nil
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        line = replies.surfaces(task)
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        line.each(&:stop)
+        digest = ask_human.last_question.digest
+        rail.push(["question_answered", [digest, Struct.new(:render).new("postgres")]])
+        pumped_until(task, reason: "the rail's answer landed") { ask_human.last_answer }
+        before = @reads
+        5.times do
+          later = replies.surfaces(task)
+          settle_for(task, 0.05)
+          later.each(&:stop)
+        end
+        reads_after_answer = @reads - before
+        run.stop
+        session.each(&:stop)
+      end
+
+      expect(reads_after_answer).to eq(0)
+      expect(replies.pending?).to be(false)
+    end
+
+    # The handback window: an answer too long for the record hands the SAME set
+    # back to the human, re-opened under the digest it already had, before the
+    # delivery that caused it has returned. A read opened for that re-opened set
+    # belongs to it, so "the set was settled" may only stop the reads that were
+    # already open when the answer was handed on.
+    it "leaves a read opened for the same set re-opened while the answer was being handed on" do
+      reading_at_the_terminal
+      digest = "blake3:handed-back"
+      reopening = Class.new do
+        def initialize(questions, reopened_read)
+          @questions = questions
+          @reopened_read = reopened_read
+        end
+
+        def reply(_answer, digest)
+          @questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "too long -- type send",
+                                                                    from: "chat", digest:, asked_at: Time.now))
+          Async::Task.current.sleep(0.005) until @reopened_read.call
+        end
+      end.new(questions, -> { @open_reads.positive? })
+      handing_back = described_class.new(tty:, conductor:, ask_human: reopening, questions:)
+      handing_back.bind_editor(rail)
+      answers = Struct.new(:render).new("a reply far too long")
+      still_open = nil
+
+      Sync do |task|
+        session = handing_back.session_surfaces(task)
+        rail.detach
+        line = handing_back.surfaces(task)
+        rail.push(["question_answered", [digest, answers]])
+        pumped_until(task, reason: "the re-opened set's human> opened") { @open_reads.positive? }
+        settle_for(task, 0.1)
+        still_open = @open_reads
+        line.each(&:stop)
+        session.each(&:stop)
+      end
+
+      expect(still_open).to eq(1)
+    end
+  end
+
   # A COCKPIT: an editor is attached, so lain://inbox and lain://approval are
   # where the human answers. The chat pane opens no `human>` for a question --
   # it says one line and lists the question -- and what it reads, while
@@ -1660,13 +1828,15 @@ RSpec.describe Lain::CLI::HumanReplies do
     def typed_at_command_line(*lines)
       @open_reads = 0
       @reads = 0
-      allow(conductor).to receive(:read_reply) do
+      reading = lambda do |*|
         @reads += 1
         @open_reads += 1
         lines.empty? ? Async::Task.current.sleep(30) : lines.shift
       ensure
         @open_reads -= 1
       end
+      allow(conductor).to receive(:read_command, &reading)
+      allow(conductor).to receive(:read_reply, &reading)
     end
 
     def outstanding = attention.track { true }
@@ -1695,6 +1865,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       line_for
 
+      expect(conductor).not_to have_received(:read_command)
       expect(conductor).not_to have_received(:read_reply)
     end
 
@@ -1703,7 +1874,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       line_for { outstanding }
 
-      expect(conductor).to have_received(:read_reply).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+      expect(conductor).to have_received(:read_command).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
     end
 
     it "holds a line of prose for you>, says so, and answers nothing with it" do
@@ -1741,8 +1912,8 @@ RSpec.describe Lain::CLI::HumanReplies do
       line_for(duration: 0.5) { Sync { announced(ask_human, "which db?") } }
 
       expect(ask_human.last_answer.body["answer"]).to include("postgres")
-      expect(conductor).to have_received(:read_reply).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
-                                                     .at_least(:once)
+      expect(conductor).to have_received(:read_command).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+                                                       .at_least(:once)
       expect(replies.take_held).to be_nil
     end
 
@@ -1755,11 +1926,24 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
 
     it "stops reading when the stream ends, rather than spinning on it" do
-      allow(conductor).to receive(:read_reply).and_return(nil)
+      allow(conductor).to receive(:read_command).and_return(nil)
 
       line_for { outstanding }
 
-      expect(conductor).to have_received(:read_reply).once
+      expect(conductor).to have_received(:read_command).once
+    end
+
+    # `command>` answers nothing, so what the human typed ahead of it is read
+    # AT it rather than drained: a `/approve` typed a moment before the call
+    # parked runs once it has. Every read that can answer drains for itself.
+    it "reads command> through the conductor's command read, never the answer read that drains typeahead" do
+      typed_at_command_line("/ruby 1 + 1")
+
+      line_for { outstanding }
+
+      expect(conductor).to have_received(:read_command).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+                                                       .at_least(:once)
+      expect(conductor).not_to have_received(:read_reply).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
     end
 
     # Enter is the natural reaction to a prompt appearing mid-stream, and a
@@ -1811,6 +1995,52 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       expect(@open_reads).to eq(0)
       expect(output.string.lines.last).to include(Lain::CLI::HumanReplies::CommandLine::CLOSED)
+    end
+
+    it "names lain://inbox and /inbox in the one line a question arrives as" do
+      typed_at_command_line
+
+      line_for { Sync { announced(ask_human, "which db?") } }
+
+      expect(output.string.lines.grep(/which db\?/).first).to include("-- answer in lain://inbox, or /inbox")
+    end
+
+    # A read left open under a Ctrl-C's grace window keeps the countdown's
+    # ticker suppressed, so its status line never draws and the c/w/r a human
+    # presses land in `command>` as a line instead of reaching the countdown.
+    it "closes its read when the interrupt countdown starts, and opens none while it runs" do
+      typed_at_command_line
+      counting = false
+      allow(conductor).to receive(:counting_down?) { counting }
+      reads_while_counting = nil
+
+      line_for(duration: 0.1) do |task|
+        outstanding
+        pumped_until(task, reason: "the read opened") { @open_reads.positive? }
+        counting = true
+        pumped_until(task, reason: "the read closed") { @open_reads.zero? }
+        reads = @reads
+        settle_for(task, 0.2)
+        reads_while_counting = @reads - reads
+      end
+
+      expect(reads_while_counting).to eq(0)
+      expect(output.string).to include(Lain::CLI::HumanReplies::CommandLine::CLOSED)
+    end
+
+    it "opens its read again once the countdown is cancelled" do
+      typed_at_command_line
+      counting = true
+      allow(conductor).to receive(:counting_down?) { counting }
+
+      line_for(duration: 0.1) do |task|
+        outstanding
+        settle_for(task, 0.15)
+        counting = false
+        pumped_until(task, reason: "the read opened after the cancel") { @open_reads.positive? }
+      end
+
+      expect(@reads).to eq(1)
     end
 
     it "refuses a line the record cannot carry where it was typed, and keeps reading" do

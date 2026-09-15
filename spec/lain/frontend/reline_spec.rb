@@ -757,4 +757,81 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(editor.finished?).to be(true)
     end
   end
+
+  # What the human typed before a prompt drew, taken through Reline's own gate:
+  # Reline keeps bytes it read while asking where the cursor is, and a line
+  # typed ahead waits THERE for its next read, not in the kernel.
+  describe ".typed_ahead" do
+    it "takes every byte the next read would, in the order it would take them, then stops" do
+      allow(Reline::IOGate).to receive(:with_raw_input).and_yield
+      allow(Reline::IOGate).to receive(:getc).with(0).and_return(*"yes\ry".bytes, nil)
+
+      expect(described_class.typed_ahead(StringIO.new)).to eq("yes\ry")
+    end
+
+    # A dumb gate's getc never returns on an empty terminal, and the gate keeps
+    # nothing back, so the terminal beneath it is swept -- raw, then restored.
+    it "sweeps the terminal beneath a dumb gate, never the gate itself" do
+      terminal = Class.new do
+        def initialize = @chunks = ["yes\r", "y"]
+        def raw(intr:) = intr && yield
+        def read_nonblock(_size, exception:) = exception ? raise(ArgumentError) : (@chunks.shift || :wait_readable)
+      end.new
+      allow(Reline::IOGate).to receive(:dumb?).and_return(true)
+      allow(Reline::IOGate).to receive(:getc)
+
+      expect(described_class.typed_ahead(terminal)).to eq("yes\ry")
+      expect(Reline::IOGate).not_to have_received(:getc)
+    end
+
+    it "runs the hook it is given before the read draws, and puts the previous one back" do
+      previous = -> {}
+      Reline.pre_input_hook = previous
+      seen = nil
+
+      described_class.before_first_draw(-> { :swept }) { seen = Reline.pre_input_hook.call }
+
+      expect([seen, Reline.pre_input_hook]).to eq([:swept, previous])
+    ensure
+      Reline.pre_input_hook = nil
+    end
+  end
+
+  # Draining what a human typed ahead switches the terminal raw for an instant,
+  # and that must never happen while a read is open: the drain would take the
+  # bytes the read is waiting on. So every read, and every drain between reads,
+  # takes one process-wide lock -- the line editor is one per process already.
+  describe ".exclusively" do
+    it "waits for a read that is already open" do
+      order = []
+      allow(Reline).to receive(:readmultiline) do
+        order << :read_opened
+        Async::Task.current.sleep(0.05)
+        order << :read_closed
+        "a line\n"
+      end
+
+      Sync do |task|
+        reading = task.async { described_class.new.read("> ") }
+        task.sleep(0.01)
+        task.async { described_class.exclusively { order << :drained } }.wait
+        reading.wait
+      end
+
+      expect(order).to eq(%i[read_opened read_closed drained])
+    end
+
+    it "lets the holder read under it, so a drain and the read it precedes are one step" do
+      allow(Reline).to receive(:readmultiline).and_return("a line\n")
+
+      expect(described_class.exclusively { described_class.new.read("> ") }).to eq("a line\n")
+    end
+
+    it "is given back when the read inside it raises" do
+      allow(Reline).to receive(:readmultiline).and_raise(Errno::EIO)
+
+      expect { described_class.exclusively { described_class.new.read("> ") } }.to raise_error(Errno::EIO)
+      expect(described_class.exclusively { :free }).to eq(:free)
+    end
+  end
 end

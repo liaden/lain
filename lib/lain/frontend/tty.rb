@@ -41,6 +41,16 @@ module Lain
       ALTERNATE_SCREEN_ON = "\e[?1049h"
       ALTERNATE_SCREEN_OFF = "\e[?1049l"
 
+      # What typed-ahead text becomes: a whole line waits for `you>`, and a
+      # line the human had not finished is dropped from THIS prompt, with the
+      # rest of it held too once they finish it.
+      HELD = "held as your next prompt: %s"
+      DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"
+
+      # A drained line whose rest is still to be typed at the prompt, read as
+      # the rest rather than as an answer ({#read_past_typeahead}).
+      UNFINISHED = Object.new.freeze
+
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param output [#print, #puts, #flush] default $stdout, a StringIO in specs
       # @param input [#gets, #tty?] default $stdin, a StringIO in specs
@@ -95,6 +105,8 @@ module Lain
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
+        @typeahead = Typeahead.new(input:)
+        @held = []
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
         # writing to the screen while the prompt is live.
@@ -164,6 +176,43 @@ module Lain
         line = @input.gets
         line&.chomp
       end
+
+      # The read an ANSWER is typed at -- `human>`, `[y/N]` -- where {#prompt} is
+      # the read a prompt is typed at. Between reads the terminal is cooked with
+      # echo on, so a line typed while a turn dispatched sits in the kernel and
+      # the next raw reader took it as its own: a prompt became a human's denial
+      # the instant a `[y/N]` appeared. So nothing typed before the prompt drew
+      # answers it ({#read_past_typeahead}), and the drain runs under
+      # {LineEditor.exclusively} with the read, never beside another one.
+      #
+      # A read stopped under a prompt it DREW -- the call decided elsewhere --
+      # ends that line in words, when the prompt has any ({ApprovalPolicy::Asked}),
+      # asked by message as {Inbox} asks a question for its summary. One stopped
+      # while still waiting on the lock drew nothing, so there is no line to end.
+      #
+      # @return [String, nil] the line, or nil at EOF
+      def prompt_afresh(text)
+        state = :waiting
+        LineEditor.exclusively do
+          state = :drawn
+          answer_past_typeahead(text).tap { state = :answered }
+        end
+      ensure
+        close_prompt(text) if state == :drawn
+      end
+
+      # Keep a line the human typed that was neither a command nor an answer
+      # for `you>`, and say so -- a line nobody was told about reads as
+      # swallowed. Held HERE, on the terminal it was typed at, which outlives
+      # the dispatched line it was typed during: a Ctrl-C stops that line's
+      # fibers without taking the text with it.
+      def hold(line)
+        @held << line
+        render_warning(format(HELD, legible(line)))
+      end
+
+      # The oldest held line, or nil when nothing is held, in the order typed.
+      def take_held = @held.shift
 
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
@@ -314,6 +363,50 @@ module Lain
       def render_line(token, text)
         @output.puts(@theme.paint(token, text))
         @output.flush
+      end
+
+      def answer_past_typeahead(text)
+        Enumerator.produce { read_past_typeahead(text) }.lazy.reject { |read| read.equal?(UNFINISHED) }.first
+      end
+
+      # One read, with what was typed ahead swept twice: before it opens, and
+      # again as it is about to draw, past Reline's cursor-position query --
+      # bytes arriving while that waits for its reply were typed before the
+      # prompt appeared. The second sweep continues the first, so a line begun
+      # before the read and ended during the query is one line.
+      #
+      # A line the human was still typing when the prompt drew is not an answer
+      # at either end: judged alone, "Say " then "yes" approved. So the first
+      # line the prompt reads is the rest of it -- joined, held whole, and the
+      # prompt opens again, empty.
+      def read_past_typeahead(text)
+        typed = put_aside(@typeahead.drain)
+        line = LineEditor.before_first_draw(-> { typed = put_aside(@typeahead.drain(typed), noted: typed) }) do
+          prompt(text)
+        end
+        return line if line.nil? || !typed.unfinished?
+
+        hold("#{typed.partial}#{line}")
+        UNFINISHED
+      end
+
+      # `noted` is the sweep already said, whose unfinished line is not said twice.
+      def put_aside(typed, noted: Typeahead::NOTHING)
+        typed.lines.each { |line| hold(line) }
+        render_warning(format(DISCARDED, legible(typed.partial))) if typed.unfinished? && typed.partial != noted.partial
+        typed
+      end
+
+      # The human's own bytes, said back: a control character they typed ahead
+      # -- a Ctrl-D, a paste bracket -- is shown rather than sent to the screen.
+      def legible(text) = text.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
+
+      # It runs in the ensure of a read being stopped, where a raise -- the
+      # terminal gone -- would replace the stop that is climbing.
+      def close_prompt(text)
+        text.closed { |note| render_warning(note) } if text.respond_to?(:closed)
+      rescue StandardError
+        nil
       end
 
       # The background render loop: blocking drain of the Channel so live tool
@@ -495,8 +588,8 @@ module Lain
         # Both surfaces, always: which one is live is not a fact this class can
         # hold -- nvim dies mid-session and `/inbox` answers regardless -- so a
         # note naming only one would be wrong the moment the editor came or
-        # went.
-        POINTER = "/inbox here, or the inbox buffer in nvim"
+        # went. The buffer is named as the editor names it, so it can be typed.
+        POINTER = "answer in lain://inbox, or /inbox"
 
         # What a human can do HERE, said once above the prompt. The document
         # below renders the same checkboxes the editor ticks and a terminal
@@ -528,7 +621,7 @@ module Lain
         # {Tools::AskHuman::Handback#summary} for a reply handed back, which is
         # the bound's one-sentence measurement rather than the reply itself.
         def arrival(question, from: nil)
-          note = "? #{asker(from)}#{summarized(question)}  (#{POINTER})"
+          note = "? #{asker(from)}#{summarized(question)}  -- #{POINTER}"
           @output.puts(@pastel.yellow(Tools::AskHuman::InboxRow.one_line(note)))
           @output.flush
         end
@@ -682,6 +775,51 @@ module Lain
           name = Tools::AskHuman::InboxRow.sender(from)
           name.empty? ? "" : "#{name} "
         end
+      end
+
+      # What the human typed before a read opened, taken off the terminal
+      # without being read AS anything ({LineEditor.typed_ahead}), and sorted
+      # into the lines they finished and the one they had not. `IO#iflush`
+      # would discard the bytes unseen; the human is owed them back.
+      class Typeahead
+        LINE_END = /\r\n|\r|\n/
+
+        # A key typed rather than text: an escape sequence such as an arrow
+        # key's `\e[A` or `\eOA`, or a bare escape.
+        KEY_SEQUENCE = /\e(?:\[[\d;?]*[@-~]|O.)?/
+
+        # Whole lines and whatever followed the last line end, keeping only
+        # what says something: Enter is what a human presses at a prompt that
+        # appears mid-stream, and an arrow key typed ahead is not the start of
+        # a line the next answer should be joined to.
+        Typed = Data.define(:lines, :partial) do
+          def self.from(bytes)
+            *lines, partial = bytes.b.force_encoding(Encoding::UTF_8).scrub.split(LINE_END, -1)
+            new(lines: lines.select { |line| said?(line) }.freeze, partial: (said?(partial.to_s) ? partial : "").freeze)
+          end
+
+          def self.said?(text) = !Blankness.blank?(text.gsub(KEY_SEQUENCE, "").gsub(/[[:cntrl:]]/, ""))
+
+          def unfinished? = !partial.empty?
+        end
+
+        NOTHING = Typed.new(lines: [].freeze, partial: "")
+
+        # @param input [IO] the terminal; anything that is not one -- a spec's
+        #   StringIO, a pipe -- has no typeahead to tell from input
+        def initialize(input:)
+          @input = input
+        end
+
+        # What is waiting now, read on from the unfinished line of an earlier
+        # sweep, if there was one.
+        def drain(after = NOTHING)
+          Typed.from(after.partial.b + (terminal? ? LineEditor.typed_ahead(@input) : ""))
+        end
+
+        private
+
+        def terminal? = @input.respond_to?(:tty?) && @input.tty?
       end
 
       # Renders the status line, owns the bottom of the screen while active, and

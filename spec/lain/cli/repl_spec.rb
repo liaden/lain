@@ -520,8 +520,9 @@ RSpec.describe Lain::CLI::Repl do
   describe "a held line" do
     let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit") }
     let(:replies) do
-      Lain::CLI::HumanReplies.new(tty: instance_double(Lain::Frontend::TTY), conductor:,
-                                  questions: Async::Queue.new, ask_human: ReplRecordedAnswers.new)
+      Lain::CLI::HumanReplies.new(tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new,
+                                                               input: StringIO.new, history_path: File::NULL),
+                                  conductor:, questions: Async::Queue.new, ask_human: ReplRecordedAnswers.new)
     end
     let(:dispatched) { [] }
     # The first line holds what the human typed during it, exactly as the

@@ -39,6 +39,11 @@ module Lain
 
       DEFAULT_TICK = 1.0
 
+      # The shutdown there is while no ask is supervised: nothing is counting down.
+      module Unsupervised
+        def self.state = :running
+      end
+
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
@@ -65,7 +70,7 @@ module Lain
         @supervisor = supervisor
         @run_clock = run_clock
         @clock = clock
-        @ticker = CountdownTicker.new(tty:, tick:, suppressed: -> { @reply_outstanding })
+        @ticker = CountdownTicker.new(tty:, tick:, suppressed: -> { @replies_outstanding.positive? })
         seed_ask_state
       end
 
@@ -79,7 +84,7 @@ module Lain
       def supervise(task, timeline, &block)
         @timeline = timeline
         run = task.async(&block)
-        shutdown = build_shutdown(run)
+        shutdown = @shutdown = build_shutdown(run)
         coordinator, ticker_task = start_shutdown(task, shutdown)
         response = run.wait
         settle(shutdown, coordinator)
@@ -133,16 +138,25 @@ module Lain
       # What DOES change: the countdown ticker is suppressed. It would otherwise
       # smear its status line against Reline's echo and STEAL a keystroke out of
       # the operator's answer with its non-blocking key read -- an 'r' silently
-      # firing wait_responses. The flag is conductor-owned (single writer, this
-      # fiber) and read each tick, so the countdown reappears on the next tick
-      # once the reply returns.
-      def read_reply(tty, text)
-        @reply_outstanding = true
-        @ticker.stop
-        tty.prompt(text)
-      ensure
-        @reply_outstanding = false
-      end
+      # firing wait_responses. It reappears on the next tick once the last read
+      # has finished -- a COUNT, since a `human>` and a `[y/N]` can be open
+      # together.
+      #
+      # The read is {Frontend::TTY#prompt_afresh}: an answer is what the human
+      # types AFTER the prompt appeared, never what they typed while a turn ran.
+      def read_reply(tty, text) = owning_stdin { tty.prompt_afresh(text) }
+
+      # The chat's `command>` read, which answers nothing: what the human typed
+      # ahead of it is read AT it, because a `/approve` typed a moment before
+      # the call parked is what they reached for. Every read that can answer
+      # -- the `[y/N]` that `/approve` asks included -- goes through
+      # {#read_reply} and drains for itself.
+      def read_command(tty, text) = owning_stdin { tty.prompt(text) }
+
+      # Whether the grace countdown is running for the ask being supervised.
+      # A reader open beside the run asks, so it can close and let the
+      # countdown draw and read its keys: an open read suppresses both.
+      def counting_down? = @shutdown.state == :grace
 
       # The coordinator's `closer:` duck AND chat's normal-exit closer. Guarded so
       # only the first close writes: a signal that closed the session mid-ask
@@ -219,12 +233,21 @@ module Lain
         @chronicle.close(reason:)
       end
 
-      # The ticker's suppressed thunk reads @reply_outstanding at tick time, so
+      # The ticker's suppressed thunk reads @replies_outstanding at tick time, so
       # seeding after the ticker is constructed is safe.
       def seed_ask_state
         @timeline = nil
         @closed = false
-        @reply_outstanding = false
+        @replies_outstanding = 0
+        @shutdown = Unsupervised
+      end
+
+      def owning_stdin
+        @replies_outstanding += 1
+        @ticker.stop
+        yield
+      ensure
+        @replies_outstanding -= 1
       end
 
       # No rescue here on purpose -- a Break, during the read OR during this
@@ -271,6 +294,7 @@ module Lain
       # retire), then the ticker so no render outlives the window, then the pipe
       # -- the per-ask analogue of "restore traps before dispose".
       def teardown(shutdown, coordinator, ticker_task)
+        @shutdown = Unsupervised
         @signals.route(Signals::NULL)
         ticker_task&.stop
         @ticker.stop
@@ -294,7 +318,7 @@ module Lain
         # @param tty [#render_countdown, #stop_countdown] the terminal surface the
         #   countdown renders to and erases from ({Frontend::TTY})
         # @param tick [Numeric] the poll cadence, in seconds
-        # @param suppressed [#call] -> Boolean, true while an ask_human reply owns
+        # @param suppressed [#call] -> Boolean, true while any reply owns
         #   stdin ({Conductor#read_reply}); a suppressed tick renders nothing and
         #   reads no key. Defaults to never-suppressed.
         def initialize(tty:, tick:, suppressed: -> { false })

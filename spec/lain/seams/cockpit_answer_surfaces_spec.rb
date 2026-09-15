@@ -59,6 +59,12 @@ module CockpitAnswerSurfacesSupport
 
     def approval_prompts = @prompts.grep(%r{\[y/N\]})
 
+    # No interrupt countdown runs in these examples.
+    def counting_down? = false
+
+    # The chat's `command>` read, on the same one terminal.
+    def read_command(tty, prompt) = read_reply(tty, prompt)
+
     # What the human types from here on at a command prompt.
     def type(*lines) = @answers.fetch(:command).concat(lines)
 

@@ -654,6 +654,128 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # Replies are not one at a time: a question's `human>` and a gated call's
+  # `[y/N]` can both be outstanding, each through {#read_reply}. The first to
+  # finish must not hand the terminal back to the countdown while the second is
+  # still reading, or the ticker's key read steals out of the surviving answer.
+  describe "two replies outstanding at once" do
+    # A reader parked per prompt until the example says what was typed there.
+    let(:reader) do
+      Class.new do
+        def initialize = @typed = Hash.new { |typed, prompt| typed[prompt] = Async::Queue.new }
+
+        def prompt_afresh(text) = @typed[text].dequeue
+
+        def type(prompt, line) = @typed[prompt].enqueue(line)
+      end.new
+    end
+
+    it "keeps the countdown suppressed until the second read finishes" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      renders_between = nil
+
+      Sync do |task|
+        question = task.async { conductor.read_reply(reader, "human> ") }
+        approval = task.async { conductor.read_reply(reader, "[y/N] ") }
+        driver = task.async do
+          entered.dequeue
+          Process.kill("TERM", Process.pid) # arm grace; the constant clock never expires it
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          reader.type("human> ", "postgres")
+          question.wait
+          settle_for(task, 0.05) # ten ticks with one read still open
+          renders_between = tty.renders.size
+          reader.type("[y/N] ", "n")
+          approval.wait
+          task.with_timeout(2) { tty.rendered.dequeue }
+          release.enqueue(true)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect(renders_between).to eq(0)
+      expect(tty.renders).not_to be_empty
+    ensure
+      signals.uninstall
+    end
+  end
+
+  # The chat's command read answers nothing, so it reads what was typed ahead of
+  # it as its own line; it still owns stdin, so the countdown stays out of it.
+  describe "#read_command" do
+    it "reads through the plain prompt and holds the countdown off while it does" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      typed = Async::Queue.new
+      reader = Struct.new(:typed) { def prompt(_text) = typed.dequeue }.new(typed)
+      renders_while_reading = line = nil
+
+      Sync do |task|
+        command = task.async { conductor.read_command(reader, "command> ") }
+        driver = task.async do
+          entered.dequeue
+          Process.kill("TERM", Process.pid)
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          settle_for(task, 0.05)
+          renders_while_reading = tty.renders.size
+          typed.enqueue("/approve")
+          line = command.wait
+          release.enqueue(true)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect([renders_while_reading, line]).to eq([0, "/approve"])
+    ensure
+      signals.uninstall
+    end
+  end
+
+  # Whether the grace countdown is running for the ask this conductor is
+  # supervising -- what a reader open beside the run asks, so it can get out of
+  # the countdown's way rather than swallow its keys.
+  describe "#counting_down?" do
+    it "is false with no ask supervised" do
+      expect(build_conductor(grace: 60, clock: -> { 1000.0 }, signals: Lain::CLI::Signals.new))
+        .not_to be_counting_down
+    end
+
+    it "is true once a signal arms the grace window, and false again once the ask settles" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      before_signal = during_grace = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          before_signal = conductor.counting_down?
+          Process.kill("TERM", Process.pid)
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          during_grace = conductor.counting_down?
+          release.enqueue(true)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect([before_signal, during_grace, conductor.counting_down?]).to eq([false, true, false])
+    ensure
+      signals.uninstall
+    end
+  end
+
   # The expiry-during-reply path (the PTY probe in the handback is the evidence
   # for the terminal-restore half; this pins the reason + suppression under the
   # supervised reactor). A run parks inside the model call while a reply is
@@ -671,7 +793,7 @@ RSpec.describe Lain::CLI::Conductor do
       blocking_tty = Class.new do
         def initialize(parked) = @parked = parked
 
-        def prompt(_text)
+        def prompt_afresh(_text)
           @parked.enqueue(true)
           sleep # park the replier as Reline's blocking read would
         end

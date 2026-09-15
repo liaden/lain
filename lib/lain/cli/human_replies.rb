@@ -113,6 +113,7 @@ module Lain
       # WHICH agent is stuck.
       def initialize(tty:, conductor:, ask_human:, questions:)
         @tty = tty
+        @conductor = conductor
         @ask_human = ask_human
         @questions = questions
         # "Nothing is bound yet" stated as the bind it is, rather than as a
@@ -122,7 +123,8 @@ module Lain
         @changeset_review = NoReview
         @reviews = Reviews.new
         @inbox = Pending.new
-        @held = []
+        @reads = OpenReads.new
+        @queued = questions ? Queued.new(questions) : Queued::NOTHING
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
         # READERS, never the surfaces: every one is bound after this returns, so
         # resolving each per call is what makes a late bind visible without
@@ -268,15 +270,16 @@ module Lain
       end
 
       # A line the human typed in the chat that was neither a command nor an
-      # answer, waiting to be dispatched at `you>`. Held HERE, on the object
-      # that outlives every line, so the line it was typed during can be torn
-      # down -- a Ctrl-C stops its fibers -- without taking the text with it.
-      def hold(line) = @held << line
+      # answer, waiting to be dispatched at `you>`. The terminal holds it
+      # ({Frontend::TTY#hold}), because a line it drained as typeahead before an
+      # answer read is held there too, and ONE queue is what keeps the lines in
+      # the order they were typed.
+      def hold(line) = @tty.hold(line)
 
       # The oldest held line, or nil when nothing is held. {Repl#next_text}
       # asks this before it reads, so a held line is dispatched first and in
       # the order it was typed.
-      def take_held = @held.shift
+      def take_held = @tty.take_held
 
       # The reply surfaces that live for the whole CONVERSATION, started on the
       # repl's own Sync rather than on an ask's -- today just the editor's
@@ -310,7 +313,7 @@ module Lain
       # one call, and handing over `self` would let it reach everything.
       def answers
         @answers ||= AnswerLoop.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
-                                    resolve: method(:resolve_reply))
+                                    resolve: method(:resolve_reply), reads: @reads)
       end
 
       # {#answers}' cockpit counterpart. `drain:` is `/inbox`, which a cockpit
@@ -319,7 +322,7 @@ module Lain
       # line to the human.
       def command_line
         @command_line ||= CommandLine.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
-                                          notice: @tty.method(:render_warning),
+                                          notice: @tty.method(:render_warning), conductor: @conductor,
                                           hold: method(:hold), drain: method(:drain_at_prompt))
       end
 
@@ -354,11 +357,22 @@ module Lain
       # The ONE answer path both surfaces use. `AlreadyResolved` means the other
       # surface beat this one, which is normal, so the duplicate is dropped and
       # the item retired all the same -- the set it named IS answered.
+      #
+      # The `human>` reads and queued arrivals this answer retires are the ones
+      # there BEFORE it is handed on. Handing it on can re-open the same set
+      # under the same digest -- a reply too long for the record is handed back
+      # -- and a read or an arrival for THAT is waiting on an answer nobody gave.
       def deliver(answer, digest)
+        open = @reads.on(digest)
+        queued = @queued.on(digest)
+        handed_on(answer, digest)
+        settled(digest, open, queued)
+      end
+
+      def handed_on(answer, digest)
         @ask_human.reply(answer, digest)
-        settled(digest)
       rescue Lain::Promise::AlreadyResolved
-        settled(digest)
+        nil
       end
 
       # What "this set is DONE" means to everything that lists it, in ONE place
@@ -366,9 +380,17 @@ module Lain
       # settled rather than answered because a third of its callers is a
       # refusal. Reported rather than inferred: a row is retired by the agent's
       # committed turn a model round trip later, so until then only this knows.
-      def settled(digest)
+      #
+      # A `human>` still open for the set is stopped with it, and an arrival
+      # re-queued when an earlier line ended is taken off the queue: either one
+      # left drew `human>` again under every later line until somebody typed
+      # into it and was refused. A refusal has handed nothing on, so what is
+      # there now is what it retires.
+      def settled(digest, reads = @reads.on(digest), queued = @queued.on(digest))
         @views.answered(digest)
         @inbox.retire(digest)
+        @queued.withdraw(queued)
+        reads.each(&:settle)
       end
 
       # The :LainReply command lands on the frontend's rail and this fiber
@@ -516,12 +538,19 @@ module Lain
       # `resolve:` is a message rather than the owner, which would let this
       # reach everything else.
       class AnswerLoop
-        def initialize(questions:, inbox:, tty:, reply:, resolve:)
+        # Ends the line of a `human>` stopped because its set was answered on
+        # another surface, so the next thing printed does not land beside it.
+        ANSWERED_ELSEWHERE = "(human> closed -- answered elsewhere)"
+
+        # `reads:` is where each `human>` is raced against its set being settled
+        # by another surface.
+        def initialize(questions:, inbox:, tty:, reply:, resolve:, reads:)
           @questions = questions
           @inbox = inbox
           @tty = tty
           @reply = reply
           @resolve = resolve
+          @reads = reads
           @announced = Set.new
         end
 
@@ -557,9 +586,13 @@ module Lain
         # It is the right default even with that query in hand, because the two
         # mistakes are not symmetric: re-queueing a dead set costs one refusal
         # the human is told about, where retiring a live one parks the asker
-        # forever with `#pending?` false and nothing able to reach it. It is
-        # also self-limiting -- the next surface serves it once, the directory
-        # refuses it as stale, and it is retired.
+        # forever with `#pending?` false and nothing able to reach it.
+        #
+        # A set ANSWERED on another surface while its read is open is the one
+        # dead set this loop does know about: {HumanReplies#settled} stops that
+        # read, and the exchange ends settled. Re-queued, it came back as a
+        # `human>` under every later line, since no human types into a prompt
+        # for a question they have already answered.
         def serve(item)
           settled = exchange(item)
         ensure
@@ -597,13 +630,19 @@ module Lain
         def exchange(item)
           @inbox << item
           announce(item)
-          answer, answered = @reply.for(item)
-          @resolve.call(answer, answered.digest)
+          heard = @reads.race(item.digest) { @reply.for(item) }
+          heard.equal?(OpenReads::SETTLED) ? closed_elsewhere : resolved(*heard)
           true
         rescue StandardError => e
           @tty.render_error(e.message)
           true
         end
+
+        def resolved(answer, answered) = @resolve.call(answer, answered.digest)
+
+        # Private on the terminal, reached as {HumanReplies#command_line} reaches
+        # it: the frontend's one-line note.
+        def closed_elsewhere = @tty.method(:render_warning).call(ANSWERED_ELSEWHERE)
 
         # An ARRIVAL is announced ONCE, however many lines the question
         # outlives. A re-queued item is dequeued again by the next line's loop,
@@ -662,7 +701,6 @@ module Lain
       # a line nobody was told about reads as swallowed.
       class CommandLine
         PROMPT = "command> "
-        HELD = "held as your next prompt: %s"
 
         # Said when a read is closed under its prompt, which also ends the row
         # that prompt was drawn on -- otherwise the next `you>` lands beside it.
@@ -675,12 +713,15 @@ module Lain
         # whether its reason is gone -- {Repl::ApprovalSurfaces::Arrivals}' tick.
         TICK = 0.05
 
-        def initialize(questions:, inbox:, tty:, reply:, notice:, hold:, drain:)
+        # `conductor:` answers whether a Ctrl-C's grace countdown is running,
+        # which this read must never sit under.
+        def initialize(questions:, inbox:, tty:, reply:, notice:, conductor:, hold:, drain:)
           @questions = questions
           @inbox = inbox
           @tty = tty
           @reply = reply
           @notice = notice
+          @conductor = conductor
           @hold = hold
           @drain = drain
         end
@@ -721,13 +762,20 @@ module Lain
         # read with nothing left to wait for is stopped, and the ensure is what
         # closes it on every other way out, the line's own stop included.
         def read_once(attention)
-          park_until { attention.outstanding? }
+          park_until { wanted?(attention) }
           reading = Async::Task.current.async { heard }
-          park_until { reading.finished? || !attention.outstanding? }
+          park_until { reading.finished? || !wanted?(attention) }
           reading.finished? ? reading.wait : nil
         ensure
           close(reading)
         end
+
+        # Something is waiting on the human, and no interrupt countdown is. A
+        # read open under the countdown suppresses it ({Conductor#read_reply}):
+        # its status line never draws and the c/w/r a human presses to answer it
+        # arrive here as a line. So the read closes when the countdown starts,
+        # and opens again if it is cancelled.
+        def wanted?(attention) = attention.outstanding? && !@conductor.counting_down?
 
         def park_until
           Async::Task.current.sleep(TICK) until yield
@@ -759,16 +807,95 @@ module Lain
         # raised must be reported rather than end it. {Reply::UnknownArm} is the
         # one raise that climbs, as it does at the reply prompt.
         def served(line)
-          @reply.commanded(line, hold: method(:held), drain: @drain)
+          @reply.commanded(line, hold: @hold, drain: @drain)
         rescue Reply::UnknownArm
           raise
         rescue StandardError => e
           @tty.render_error(e.message)
         end
+      end
 
-        def held(line)
-          @hold.call(line)
-          @notice.call(format(HELD, line))
+      # The `human>` reads open right now, each for the set it asks about, so a
+      # set answered on ANOTHER surface can stop the read still waiting on it.
+      # Held as reads rather than as digests: a digest can come back -- a reply
+      # handed back re-opens the same set -- so "this set was settled" must reach
+      # the reads that were open when it was, and no read opened after.
+      class OpenReads
+        # What {#race} answers for a read stopped because its set was settled.
+        SETTLED = Object.new.freeze
+
+        # One read of one set.
+        class Read
+          attr_reader :digest
+
+          def initialize(digest, task)
+            @digest = digest
+            @task = task
+            @settled = false
+          end
+
+          def settled? = @settled
+
+          def wait = @task.wait
+
+          # Not a stop of the calling fiber: a settle reached from inside the
+          # read would unwind the delivery that settled it. The read then ends
+          # as it would have, and still counts as settled.
+          def settle
+            @settled = true
+            @task.stop unless @task.current?
+          end
+        end
+
+        def initialize = @open = []
+
+        # Run the block as a read of `digest` in a child task, answering its
+        # value or {SETTLED}. `finished: false` because a raise out of the read
+        # is re-raised here by `wait`, and is the caller's to report.
+        def race(digest, &block)
+          read = Read.new(digest, Async::Task.current.async(finished: false, &block))
+          @open << read
+          heard = read.wait
+          read.settled? ? SETTLED : heard
+        ensure
+          @open.delete(read)
+        end
+
+        # The reads open for `digest` at this instant.
+        def on(digest) = @open.select { |read| read.digest == digest }
+      end
+
+      # The arrivals waiting on the question queue, which a line that ended
+      # while one was unanswered put back. Picked out BY IDENTITY, for
+      # {OpenReads}' reason: the same digest can arrive again, and only the
+      # items that were there when a set was settled are retired with it.
+      class Queued
+        # The queue nobody wired -- one surface answering one asker, as an epic
+        # gate's seat is -- which holds nothing for an answer to retire.
+        module NOTHING
+          def self.on(_digest) = [].freeze
+          def self.withdraw(_items) = nil
+        end
+
+        def initialize(questions) = @questions = questions
+
+        # The items queued for `digest` at this instant, left where they are.
+        def on(digest) = rotated { true }.select { |item| item.digest == digest }
+
+        def withdraw(items)
+          rotated { |item| items.none? { |gone| gone.equal?(item) } } unless items.empty?
+        end
+
+        private
+
+        # Every item off the queue and the ones the block keeps put back, in
+        # order and with no yield between -- {Approval::Queue}'s own way of
+        # editing a buffer it cannot index. Answers everything that was taken.
+        def rotated(&block)
+          taken = Array.new(@questions.size) { @questions.dequeue(timeout: 0) }.compact
+          kept = taken.select(&block)
+          @questions.enqueue(*kept) unless kept.empty?
+          taken
         end
       end
 
@@ -1076,10 +1203,11 @@ module Lain
         # {HumanReplies#drain_at_prompt} for what refusing here destroyed.
         def at_prompt = accepted { drained(answering: @inbox.oldest, ended: "") }
 
-        # {CommandLine}'s one read.
+        # {CommandLine}'s one read, through the conductor's command read, which
+        # leaves typeahead to be read as the line it is.
         #
         # @return [String, nil] the line, or nil when the stream ended
-        def command_line(prompt) = heard(prompt)
+        def command_line(prompt) = heard(prompt, through: :read_command)
 
         # What a line typed at {CommandLine} becomes, classified by the SAME
         # {#classify} both reply prompts use. Nothing here is an answer: prose
@@ -1147,8 +1275,8 @@ module Lain
         # Narrow on purpose, and `IOError` is deliberately NOT here: widening it
         # would turn every transient terminal fault into a question nobody can
         # ever answer.
-        def heard(prompt)
-          @conductor.read_reply(@tty, prompt)
+        def heard(prompt, through: :read_reply)
+          @conductor.public_send(through, @tty, prompt)
         rescue EOFError, Errno::EIO
           nil
         end

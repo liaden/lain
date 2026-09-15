@@ -189,7 +189,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   describe "the repl's own wiring puts a parked approval in front of the human" do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
-    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
+    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, counting_down?: false) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
     # turn. `serves_replies?` is the second half of the command surface's duck:
@@ -201,6 +201,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         def serves_replies?(_text) = false
       end.new(nil)
     end
+
+    # The chat's command> reads, and nobody types there either.
+    before { allow(conductor).to receive(:read_command) { Async::Task.current.sleep(60) } }
 
     it "renders it in lain://approval and answers it with y, with nobody having wired the view by hand" do
       queue = Lain::Approval::Queue.new(journal:, timeout: 60)

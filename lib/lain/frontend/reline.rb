@@ -76,8 +76,51 @@ module Lain
       # only when a key they have muscle memory for stops doing what it did.
       class KeyTaken < Lain::Error; end
 
+      # Every read in the process holds this, and so does whatever must happen
+      # BETWEEN reads: {TTY#prompt_afresh} switches the terminal raw to drain
+      # typeahead, which run beside an open read would take the bytes that read
+      # is waiting on. lain's own rather than Reline's, whose `@mutex` is an ivar
+      # of a stdlib object this seam does not reach into; every reader goes
+      # through {#read}, so holding this is holding the one line editor.
+      READS = Mutex.new
+
       class << self
         def registry = @registry ||= Registry.new
+
+        # Runs the block holding {READS}, or just runs it when this fiber already
+        # holds it -- so a drain and the read it precedes are one critical
+        # section, with {#read} taking the lock again inside.
+        def exclusively(&block) = READS.owned? ? yield : READS.synchronize(&block)
+
+        # Every byte the next read would take, taken now and read as nothing:
+        # what the human typed before a prompt drew. Through Reline's own gate,
+        # because the kernel is not the only place such bytes wait: Reline asks
+        # the terminal where its cursor is as a read opens and keeps whatever
+        # else it read meanwhile for that read. Raw for the sweep, which is what
+        # hands over a line the human has not finished.
+        #
+        # A dumb gate asks no such question and keeps nothing back, but its
+        # `getc` never returns on an empty terminal, so `input` is swept
+        # beneath it instead -- `IO#raw`'s block puts the cooked mode back on
+        # every way out.
+        def typed_ahead(input)
+          gate = ::Reline::IOGate
+          return beneath(input) if gate.dumb?
+
+          gate.with_raw_input { Enumerator.produce { gate.getc(0) }.take_while(&:itself).pack("C*") }
+        end
+
+        # Runs the block's read with `hook` called once Reline has asked where
+        # the cursor is and before the prompt first draws -- the last moment a
+        # byte can arrive that the human cannot have typed at the prompt. Put
+        # back afterwards, so a read that is not an answer never runs it.
+        def before_first_draw(hook)
+          previous = ::Reline.pre_input_hook
+          ::Reline.pre_input_hook = hook
+          yield
+        ensure
+          ::Reline.pre_input_hook = previous
+        end
 
         # Register `handler` on `name`, a control key written the way a human
         # writes it ("C-g"). The handler is called with the whole buffer typed
@@ -87,6 +130,18 @@ module Lain
         def bound?(name) = registry.bound?(name)
 
         def unbind_all = registry.clear
+
+        private
+
+        def beneath(input)
+          return "" unless input.respond_to?(:raw)
+
+          input.raw(intr: true) { chunks(input).join }
+        end
+
+        def chunks(input)
+          Enumerator.produce { input.read_nonblock(4096, exception: false) }.take_while { |chunk| chunk.is_a?(String) }
+        end
       end
 
       # @param vi_mode [Boolean] ask this process's line editor for vi mode. Off
@@ -106,14 +161,16 @@ module Lain
       # @return [String, nil] the message with continuation markers removed, or
       #   nil at EOF (Ctrl-D / closed input)
       def read(prompt)
-        configure
-        # Installed for the duration of THIS read and taken down after, because
-        # a read is the only window a key action can fire in. Installed
-        # globally, a second LineEditor's construction silently disarmed the
-        # first one's notifier.
-        self.class.registry.reporting_to(@notify) do
-          buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
-          buffer && accept(buffer)
+        self.class.exclusively do
+          configure
+          # Installed for the duration of THIS read and taken down after, because
+          # a read is the only window a key action can fire in. Installed
+          # globally, a second LineEditor's construction silently disarmed the
+          # first one's notifier.
+          self.class.registry.reporting_to(@notify) do
+            buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
+            buffer && accept(buffer)
+          end
         end
       end
 

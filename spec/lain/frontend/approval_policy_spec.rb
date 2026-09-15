@@ -330,6 +330,10 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
 
+    # What the terminal would end the prompt's line with, as the sentences the
+    # prompt yields.
+    def closing_of(prompt) = [].tap { |notes| prompt.closed { |note| notes << note } }
+
     # A bounded wait whose expiry is an ANSWER, not a raise: "the terminal asked
     # nothing more" is the defect itself, so it should read as a failed
     # expectation rather than as a timeout somewhere in the harness.
@@ -374,6 +378,43 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       prompts_either_side_of(approved_elsewhere)
 
       expect(decisions.first).to include("surface" => "nvim", "verdict" => "approve")
+    end
+
+    # The read is stopped, and the terminal it was drawn on is left holding a
+    # `[y/N]` that looks live. What ends that line is the TERMINAL's to write --
+    # this surface's own output stays empty -- so the prompt the reader is handed
+    # carries the sentence, and the terminal asks it on the way out.
+    it "hands the reader a prompt that closes in words once another surface decides" do
+      first, = prompts_either_side_of(approved_elsewhere)
+
+      expect(closing_of(first)).to eq(["-- decided by nvim: approved"])
+      expect(output.string).to be_empty
+    end
+
+    it "names the timeout and its refusal when the window closed the prompt" do
+      unanswerable = Lain::Approval::Queue.new(journal:, timeout: 0.2)
+      Sync do |task|
+        watcher = task.async { absent_human.watch(unanswerable) }
+        task.with_timeout(5) { task.async { unanswerable.call(gated("call_1"), nil) }.wait }
+      ensure
+        watcher&.stop
+      end
+
+      expect(closing_of(asked.dequeue(timeout: 0))).to eq(["-- decided by timeout: denied"])
+    end
+
+    it "has nothing to close with while the call is undecided, or once this terminal answered it" do
+      approval = pending
+      prompts = []
+      policy = described_class.new(output:, reader: lambda { |prompt|
+        prompts << prompt
+        closing_of(prompt).empty? ? "y\n" : "n\n"
+      })
+
+      policy.decide(approval)
+
+      expect(approval.decision).to eq(:approve)
+      expect(closing_of(prompts.first)).to eq([])
     end
 
     # Abandoning a read is not a fault and must not travel as one. {#answered}
