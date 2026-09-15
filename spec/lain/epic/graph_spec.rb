@@ -287,6 +287,42 @@ RSpec.describe Lain::Epic::Graph do
                   preimage: %w[a b], results: %w[c], before: before.digest, after: after.digest }])
     end
 
+    # AC: a merge keeps the provenance both sides share. Two parents naming the
+    # SAME `discovered_from` is not a guess -- it is the one fact both halves
+    # already recorded -- unlike two DIFFERENT parents, where choosing either
+    # would be inventing lineage the merge itself has no way to know.
+    it "keeps the provenance both sides share when the merged issue declares none of its own" do
+      before = graph(issue("b", discovered_from: "a"), issue("c", discovered_from: "a"))
+
+      after = before.merge("b", "c", as: issue("bc"))
+
+      expect(after.fetch("bc").discovered_from).to eq("a")
+    end
+
+    it "leaves the merged issue's own declared provenance alone even when both sides agree" do
+      before = graph(issue("b", discovered_from: "a"), issue("c", discovered_from: "a"))
+
+      after = before.merge("b", "c", as: issue("bc", discovered_from: "elsewhere"))
+
+      expect(after.fetch("bc").discovered_from).to eq("elsewhere")
+    end
+
+    it "is silent about provenance when the two sides disagree" do
+      before = graph(issue("b", discovered_from: "a"), issue("c", discovered_from: "x"))
+
+      after = before.merge("b", "c", as: issue("bc"))
+
+      expect(after.fetch("bc").discovered_from).to be_nil
+    end
+
+    it "is silent about provenance when neither side declares one" do
+      before = graph(issue("b"), issue("c"))
+
+      after = before.merge("b", "c", as: issue("bc"))
+
+      expect(after.fetch("bc").discovered_from).to be_nil
+    end
+
     # The additive-API guarantee: a fiber is something an operation OFFERS, never
     # something it returns instead of the graph. Every existing caller passes no
     # block and reads a Graph back.

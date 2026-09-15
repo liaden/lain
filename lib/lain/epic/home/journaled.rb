@@ -75,9 +75,15 @@ module Lain
         # the review is consulted and long before a file is touched -- so a graph
         # the writer refuses leaves the previous epic exactly as it was.
         #
+        # `preamble:` defaults empty rather than reading the artifact's current
+        # one, the same choice {Document.to_markdown} itself makes: a caller
+        # that wants the epic's existing preamble kept through this write reads
+        # it first and hands it back, the way {CLI::Epic#apply} does, rather
+        # than this method reaching behind its own write to find it.
+        #
         # @return [self] so a chained write stays journaled
-        def write_epic(graph)
-          written(@home.epic, "epic", graph_digest: graph.digest).write(Document.to_markdown(graph))
+        def write_epic(graph, preamble: "")
+          written(@home.epic, "epic", graph_digest: graph.digest).write(Document.to_markdown(graph, preamble:))
           self
         end
 

@@ -41,14 +41,14 @@ module Lain
     # would-be cycle, a duplicate id) leaves `epic.md` and the Journal exactly
     # as they were: nothing here degrades to a partial edit.
     #
-    # The write is `Home#write_epic`, NOT {Epic::Home::Journaled}. That
-    # decorator adds a `DocWritten` ack and a review-baton refusal, both of
-    # which exist for the PROSE artifacts a human reviews turn-by-turn
-    # ({Epic::Review}); a structural graph edit is the epic's own machinery
-    # revising its own graph, journaled in the vocabulary built for exactly
-    # that ({Epic::Scribe#graph_revised}). Wiring the review baton into this
-    # door is a later card's to make, once something actually opens a review on
-    # `epic.md` mid-edit.
+    # The write goes straight to the epic artifact, NOT through
+    # {Epic::Home::Journaled}. That decorator adds a `DocWritten` ack and a
+    # review-baton refusal, both of which exist for the PROSE artifacts a human
+    # reviews turn-by-turn ({Epic::Review}); a structural graph edit is the
+    # epic's own machinery revising its own graph, journaled in the vocabulary
+    # built for exactly that ({Epic::Scribe#graph_revised}). Wiring the review
+    # baton into this door is a later card's to make, once something actually
+    # opens a review on `epic.md` mid-edit.
     #
     # == Every constant from the epic tier is reached at CALL time
     #
@@ -370,13 +370,20 @@ module Lain
 
       def comma_ids(value) = value.to_s.split(",").map(&:strip)
 
-      # The one shape every edit shares. `home.read_epic` and `write_epic` are
-      # two different reads/writes of the SAME artifact deliberately -- nothing
-      # here holds the graph across the block, so a refusal inside the block
-      # leaves `write_epic` uncalled rather than calling it on a half-built
-      # value.
+      # The one shape every edit shares. The read and the write are two
+      # different touches of the SAME artifact deliberately -- nothing here
+      # holds the graph across the block, so a refusal inside the block leaves
+      # the write uncalled rather than calling it on a half-built value.
       #
-      # `write_epic` runs BEFORE `journal_revision`, not after: a crash in
+      # `source` is read through `home.epic` rather than `Home#read_epic`, and
+      # read exactly once: `Home#read_epic` parses and drops the preamble, and
+      # `Home#write_epic` never takes one back, which between them would
+      # delete whatever prose a human put above the first heading on every
+      # edit this method makes. Parsing `source` twice (once for the preamble,
+      # once for the graph the block edits) keeps both readings of the one
+      # write `journal_revision` records.
+      #
+      # The write runs BEFORE `journal_revision`, not after: a crash in
       # that window (disk full, `SIGKILL`) leaves `epic.md` advanced to the
       # new graph with no `graph_revision` record of the edit -- reviewed and
       # kept deliberately, because the other order is worse. Journaling first
@@ -390,8 +397,10 @@ module Lain
       def apply(slug, command:)
         resolved = resolve_slug(slug, command:)
         home = home_for(resolved)
-        revised, fiber = yield(home.read_epic)
-        home.write_epic(revised)
+        source = home.epic.read
+        preamble = Lain::Epic::Document.preamble_of(source)
+        revised, fiber = yield(Lain::Epic::Document.parse_markdown(source))
+        home.epic.write(Lain::Epic::Document.to_markdown(revised, preamble:))
         journal_revision(resolved, fiber)
         Applied.new(resolved, fiber).to_s
       end

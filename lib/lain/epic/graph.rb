@@ -184,14 +184,18 @@ module Lain
       end
 
       # +left+ and +right+ replaced by +as+, which inherits both their edge sets on
-      # top of its own. Provenance is whatever +as+ declares: a merge has two
-      # parents and `discovered_from` holds one, so choosing here would be a guess
-      # the lineage carries forever.
+      # top of its own. Provenance is whatever +as+ declares FIRST: a merge has
+      # two parents and `discovered_from` holds one, so choosing between two
+      # DIFFERENT answers would be a guess the lineage carries forever. The two
+      # parents agreeing is not a guess, though -- it is the one fact both
+      # halves already recorded -- so a merge that declares no provenance of its
+      # own inherits it.
       def merge(left, right, as:, &fiber)
         refuse_self_merge!(left, right)
         arrival = clean_issue(as, "a merged issue")
+        provenance = arrival.discovered_from || shared_discovery(fetch(left), fetch(right))
         revise("merge", { "left" => left, "right" => right, "as" => arrival.canonical },
-               [fetch(left), fetch(right)], [arrival], &fiber)
+               [fetch(left), fetch(right)], [arrival], discovered_from: provenance, &fiber)
       end
 
       def digest = Canonical.digest(canonical)
@@ -237,6 +241,11 @@ module Lain
       def refuse_self_merge!(left, right)
         raise MalformedGraph, "cannot merge an issue with itself (both sides name #{left.inspect})" if left == right
       end
+
+      # `nil` both when neither side names a parent and when the two disagree --
+      # #merge only reads this when +as+ declares none of its own, and either
+      # case leaves that silence exactly as it was.
+      def shared_discovery(left, right) = left.discovered_from == right.discovered_from ? left.discovered_from : nil
 
       # The graph is what comes BACK, always -- a fiber is offered to a block and
       # never returned in the graph's place, so an operation reads the same to

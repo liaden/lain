@@ -714,6 +714,17 @@ RSpec.describe Lain::CLI::Epic do
       expect(epic_home.read_epic.fetch("ab").blocks).to eq(["c"])
     end
 
+    # Scenario: a graph edit keeps the preamble
+    it "keeps an epic's preamble through an edit" do
+      home = epic_home
+      preamble = "# The alpha epic\n\nWhy this epic exists.\n\n"
+      home.epic.write("#{preamble}#{Lain::Epic::Document.to_markdown(chain)}")
+
+      command.add("d", "the d issue", "alpha")
+
+      expect(home.epic.read).to start_with(preamble)
+    end
+
     # Scenario: a slug is resolved once per command
     #
     # Counted on the SUCCESS path, which is the only path where a second

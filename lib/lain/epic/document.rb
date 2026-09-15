@@ -9,8 +9,12 @@ module Lain
     # regexes, one status map read both directions -- with one deliberate
     # difference: prose INSIDE an issue is `description`, and description is
     # meaning, so it moves the digest. Prose ABOVE the first heading is the epic
-    # preamble and is ignored exactly as Plan ignores prose around its steps: the
-    # author owns it, we never emit it, and it cannot move the digest.
+    # preamble: the author owns it and it never moves the digest, exactly as
+    # Plan treats prose around its steps, but unlike Plan's it is not
+    # decoration a reader can regenerate -- a graph carries no memory of it, so
+    # {.to_markdown} only ever puts back what a caller hands it through
+    # +preamble:+, read moments earlier off the very document being edited
+    # ({CLI::Epic#apply}).
     #
     # The round trip is TOTAL in the strong sense: `parse_markdown(to_markdown(g))`
     # is `g` by digest, or the emit is refused loudly naming the value it cannot
@@ -137,17 +141,29 @@ module Lain
       def normalize_line(line) = line.rstrip
 
       # The author-editable document read back into the value. Everything above
-      # the first heading is preamble and is dropped, so the digest is a function
-      # of the issues alone.
+      # the first heading is preamble and is dropped from the graph, so the
+      # digest is a function of the issues alone -- {.preamble_of} is the door
+      # to it for a caller that must put it back.
       def parse_markdown(source) = Graph.new(issues: Reader.new(source).issues)
+
+      # Everything above the first heading, verbatim. A second parse of the
+      # same source rather than folding this into {.parse_markdown}'s return:
+      # every existing reader already treats that return as a bare {Graph}, and
+      # widening it to a graph-and-preamble pair would be a duck every one of
+      # them would have to grow a second hand for. An epic document is small
+      # enough that parsing it twice costs nothing a caller would notice.
+      def preamble_of(source) = Reader.new(source).preamble
 
       # The whole graph as the document a human edits: issues in the graph's own
       # id order, sections in a fixed order, nothing carried over from whatever
-      # document the graph was parsed from. A trailing newline because this is a
-      # whole file, unlike Plan's embedded section.
-      def to_markdown(graph)
+      # document the graph was parsed from except the +preamble+ a caller hands
+      # back explicitly. A trailing newline on the issue body because this is a
+      # whole file, unlike Plan's embedded section; the preamble carries its own
+      # trailing blank line already, from {Reader#preamble}.
+      def to_markdown(graph, preamble: "")
+        refuse_unterminated_preamble!(preamble)
         body = graph.map { |issue| Writer.new(issue).to_s }.join("\n\n")
-        (body.empty? ? body : "#{body}\n").freeze
+        "#{preamble}#{body.empty? ? body : "#{body}\n"}".freeze
       end
 
       # This grammar's verdict on a description and a criteria block, keyed by
@@ -163,6 +179,19 @@ module Lain
       def rule_break(rules, value)
         broken = rules.find { |_message, predicate| predicate.call(value) }
         "#{broken.first} (got #{value.inspect})" if broken
+      end
+
+      # A preamble that does not end its own last line would run into the
+      # heading's `###`, which starts a heading only at the beginning of a
+      # line -- so the two would merge into one line neither the heading nor
+      # the description grammar recognizes, and every issue below it would
+      # silently vanish from the round trip. Refused here rather than
+      # discovered as a graph with no issues at the other end of a parse.
+      def refuse_unterminated_preamble!(preamble)
+        return if preamble.empty? || preamble.end_with?("\n")
+
+        raise MalformedDocument, "preamble #{preamble.inspect} does not end in its own line break, so the first " \
+                                 "heading would run into its last line"
       end
 
       # The fence being gathered: the line its opener sat on, and the lines so
@@ -206,13 +235,19 @@ module Lain
       class Reader
         def initialize(source)
           @drafts = []
-          @draft = Preamble.new
+          @preamble = Preamble.new
+          @draft = @preamble
           @fence = Fence::None.new
           source.to_s.each_line.with_index(1) { |raw, number| feed(number, Document.normalize_line(raw)) }
           refuse_unclosed!
         end
 
         def issues = @drafts.map(&:to_issue)
+
+        # `@preamble` is kept apart from `@draft`, which moves on to the first
+        # {Draft} the moment a heading opens -- so this answers the ORIGINAL
+        # object even after parsing has moved well past it.
+        def preamble = @preamble.to_s
 
         private
 
@@ -256,14 +291,30 @@ module Lain
         end
       end
 
-      # Everything above the first heading. It answers a {Draft}'s whole duck and
-      # drops it, so the reader carries no "are we inside an issue yet" branch and
-      # the epic's own prose is ignored the way Plan ignores prose around its
-      # steps -- including a link-shaped line, which is only author intent once it
-      # is inside an issue.
+      # Everything above the first heading. It answers a {Draft}'s whole duck, so
+      # the reader carries no "are we inside an issue yet" branch, and the
+      # epic's own prose is never read as grammar -- a link-shaped line included,
+      # which is only author intent once it is inside an issue. Unlike a
+      # {Draft}, it keeps every line rather than sorting them into fields: the
+      # preamble is not parsed, only carried, so {Document.to_markdown} can hand
+      # it back to the same author who wrote it.
       class Preamble
-        def line(_number, _text) = nil
-        def criteria(_number, _source) = nil
+        def initialize
+          @lines = []
+        end
+
+        def line(_number, text) = @lines << text
+
+        # A fenced block sitting in the preamble -- the "shows the grammar" case
+        # {Reader} exists to not misread -- arrives here as one joined string
+        # from {Fence#source}, its own lines already normalized on the way in;
+        # splitting it back apart is what keeps every line the preamble holds in
+        # the same one-line-per-entry shape {#to_s} joins from.
+        def criteria(_number, source) = @lines.concat(source.each_line.map(&:chomp))
+
+        # Empty rather than nil: {Document.to_markdown} always has a preamble to
+        # prepend, even when the epic never had one.
+        def to_s = @lines.empty? ? "" : "#{@lines.join("\n")}\n"
       end
 
       # One issue's body, accumulating until the next heading. Mutable while

@@ -166,25 +166,75 @@ RSpec.describe Lain::Epic::Document do
     end
   end
 
-  # AC: epic preamble prose is ignored both directions.
+  # AC: epic preamble prose is ignored both directions by the graph, but a
+  # caller that read it off the same document can carry it through an edit.
   describe "the epic preamble" do
     let(:issues) { "### [ ] `a` Issue a\n\nSome prose.\n" }
+    let(:preambled) { "# An epic\n\nWhy this epic exists.\n\n#{issues}" }
 
     it "parses to the same digest with and without a preamble" do
-      preambled = "# An epic\n\nWhy this epic exists.\n\n#{issues}"
-
       expect(parse(preambled).digest).to eq(parse(issues).digest)
     end
 
-    it "is not re-emitted, so to_markdown is a function of the graph alone" do
-      expect(described_class.to_markdown(parse("# An epic\n\n#{issues}"))).not_to include("An epic")
+    it "is not re-emitted by to_markdown alone, which is a function of the graph absent one" do
+      expect(described_class.to_markdown(parse(preambled))).not_to include("An epic")
     end
 
     # A preamble that shows the template must not be read AS the template.
     it "ignores a heading that sits inside a preamble fence" do
-      preambled = "# An epic\n\n```markdown\n### [ ] `example` Not a real issue\n```\n\n#{issues}"
+      fenced = "# An epic\n\n```markdown\n### [ ] `example` Not a real issue\n```\n\n#{issues}"
 
-      expect(parse(preambled).ids).to eq(%w[a])
+      expect(parse(fenced).ids).to eq(%w[a])
+    end
+
+    describe "#preamble_of" do
+      it "extracts everything above the first heading, verbatim" do
+        expect(described_class.preamble_of(preambled)).to eq("# An epic\n\nWhy this epic exists.\n\n")
+      end
+
+      it "is empty for a document with no prose above its first heading" do
+        expect(described_class.preamble_of(issues)).to eq("")
+      end
+
+      # A fenced example is not a real issue, but it is still the author's
+      # prose, so it survives extraction the same as any other line does.
+      it "keeps a fenced example's lines rather than dropping them" do
+        fenced = "# An epic\n\n```markdown\n### [ ] `example` Not a real issue\n```\n\n#{issues}"
+
+        expect(described_class.preamble_of(fenced))
+          .to eq("# An epic\n\n```markdown\n### [ ] `example` Not a real issue\n```\n\n")
+      end
+    end
+
+    describe "#to_markdown with a preamble" do
+      it "puts the given preamble ahead of the graph's own document" do
+        graph = parse(issues)
+
+        expect(described_class.to_markdown(graph, preamble: "# An epic\n\n"))
+          .to eq("# An epic\n\n#{issues}")
+      end
+
+      it "round-trips through preamble_of and parse_markdown to the same digest and prose" do
+        graph = parse(preambled)
+        preamble = described_class.preamble_of(preambled)
+
+        rewritten = described_class.to_markdown(graph, preamble:)
+
+        expect(rewritten).to eq(preambled)
+        expect(parse(rewritten).digest).to eq(graph.digest)
+      end
+
+      it "defaults to no preamble, unchanged from before this existed" do
+        expect(described_class.to_markdown(parse(issues))).to eq(issues)
+      end
+
+      # {.to_markdown} refuses rather than silently running the preamble's
+      # last line into the first heading's `###`, which would demote it to
+      # unrecognized prose and drop every issue below it from the round trip.
+      it "refuses a non-empty preamble that does not end in its own line break" do
+        expect { described_class.to_markdown(parse(issues), preamble: "# An epic") }
+          .to raise_error(Lain::Epic::MalformedDocument, /preamble.*line break/m)
+      end
     end
   end
 
