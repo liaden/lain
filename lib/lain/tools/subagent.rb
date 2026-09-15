@@ -241,16 +241,30 @@ module Lain
       # AFTER the summarizing ask, because that ask is a real turn on the
       # child's Timeline. The full original answer is not lost -- it is a turn
       # on that Timeline, reachable from `"final"`.
+      #
+      # WHILE THE SEAM'S SCOPE CONFINES, the child is lent the scope's
+      # environment in place of a lease, and its session is confined to the
+      # same scope: under plan, a child's writes land in the spike. Read here,
+      # where every one-shot spawn passes -- a tool call, a role skill, a
+      # fan-out -- and once, so the lease and the session agree.
       def spawn_one_shot(prompt, on_stream_started: nil)
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
+        scope = @seam.scope.current
         Lineage::OneShot.new(lineage, parent_timeline, consumed: telemetry, journal:).recording do |record|
-          held = isolation.hold(@name, journal:) do |worker_env, sync|
-            record.spawned(prompt)
-            run_child(record.built(build_child(record.parent, worker_env)), prompt, sync, on_stream_started:)
-          end
-          Tool::Result.ok(finished(record, held).text)
+          Tool::Result.ok(finished(record, leased(record, prompt, scope:, on_stream_started:)).text)
+        end
+      end
+
+      # A child the scope did not lend to -- one its caller lent a checkout of
+      # its own -- keeps that checkout, so its session is not the scope's.
+      def leased(record, prompt, scope:, on_stream_started:)
+        lent = scope.lend(isolation)
+        scope = Session::Unconfined if lent.equal?(isolation)
+        lent.hold(@name, journal:) do |worker_env, sync|
+          record.spawned(prompt)
+          run_child(record.built(build_child(record.parent, worker_env, scope)), prompt, sync, on_stream_started:)
         end
       end
 
@@ -296,7 +310,9 @@ module Lain
         end
       end
 
-      def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
+      def build_child(parent, worker_env, scope = @seam.scope.current)
+        @builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:)
+      end
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
       # correlation-join reasoning lives there. Memoized rather than built in
@@ -708,6 +724,11 @@ module Lain
       # {Isolation::Null} ignores the id it is handed.
       NO_ISOLATION = Isolation::Leases.new
 
+      # The scope of a seam no board confines.
+      module UNSCOPED
+        def self.current = Session::Unconfined
+      end
+
       # What a child spawn is built OVER: the collaborators every spawn needs
       # and no single spawn chooses. Three adopters ({Subagent},
       # {ChildBuilder}, {Skill::RoleSpawn}) took them as loose keywords, so a
@@ -729,7 +750,7 @@ module Lain
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :supervisor,
-                         :observer, :askers, :isolation, :escalation) do
+                         :observer, :askers, :isolation, :escalation, :scope) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -766,10 +787,14 @@ module Lain
         # ({ChildBuilder#own_chain}) replaces this with whatever `parent`'s OWN
         # further hops are, so a grandchild's relay carries the whole road
         # rather than only its immediate parent's name.
+        #
+        # `scope` answers `#current`, the session scope children are spawned
+        # into; a chat reads its board's. Unscoped by default, since only a
+        # board can enter plan scope.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
-                       escalation: [AskHuman::HUMAN].freeze)
+                       escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -946,11 +971,15 @@ module Lain
         # That handle is the ONE thing the asker and the union share, which is
         # why enrolment happens here rather than at the tool: nothing above this
         # method can name a child that does not exist yet.
-        def build(parent, ceiling:, worker_env: WorkerEnv.default)
+        # A child built while a scope confines runs in the scope's environment
+        # whatever environment it was handed -- an actor's supervisor leases one
+        # of the run's own -- and its session is confined to that scope.
+        def build(parent, ceiling:, worker_env: WorkerEnv.default, scope: @seam.scope.current)
           child = nil
           chain = own_chain(parent) { child.timeline }
           union = child_union(chain.timeline, chain.escalation, ceiling)
-          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, worker_env)
+          session = Session.new(worker_env: scope.env_over(worker_env), scope:)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, session)
             .tap { |built| child = built.agent }
         end
 
@@ -990,11 +1019,11 @@ module Lain
         # for anyone to hang a `deregister` on, and retention runs from
         # `register` to `deregister` and nothing else -- so this method is the
         # only place that release can live.
-        def spawned(enrolled, chain, union, worker_env)
+        def spawned(enrolled, chain, union, session)
           child = nil
           asker = enrolled.asker
           allowed = granted(@policy.attenuate(union), asker)
-          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, worker_env),
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, session),
                             registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
@@ -1065,13 +1094,13 @@ module Lain
         # file would read as the parent's: salvage would pair it with the
         # parent's in-flight `request_sent`, cache-waste would count it, and the
         # ledger would price it as the parent's spend.
-        def spawn_agent(chain, union, allowed, worker_env)
+        def spawn_agent(chain, union, allowed, session)
           Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain),
-            tool_middleware: child_stack(worker_env, allowed),
-            session: Session.new(worker_env:), budget: @budget, journal: Channel::Null.instance
+            tool_middleware: child_stack(session.worker_env, allowed),
+            session:, budget: @budget, journal: Channel::Null.instance
           )
         end
 

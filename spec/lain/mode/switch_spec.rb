@@ -258,4 +258,13 @@ RSpec.describe Lain::Mode::Switch do
         .to raise_error(ArgumentError, /to_layers must be a list of layer names, got String/)
     end
   end
+
+  # A bare switch moves only the mode, so it has nothing more to tell the
+  # command that flipped it.
+  it "says nothing beyond the mode it moved to" do
+    switch = described_class.new(Lain::Mode.new, journal: Lain::Journal.new(io: StringIO.new))
+    switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+
+    expect(switch.said).to eq("")
+  end
 end

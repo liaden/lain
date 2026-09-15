@@ -244,7 +244,8 @@ RSpec.describe LainCLI do
       # The tool phase over the SAME chronicle is NOT empty, so "empty" above is
       # a reading of the Null chronicle and not of an unwired instrumentation.
       expect(instrumentation.tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end

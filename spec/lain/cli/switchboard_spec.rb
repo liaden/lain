@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 RSpec.describe Lain::CLI::Switchboard do
   let(:journal_io) { StringIO.new }
@@ -1010,6 +1012,244 @@ RSpec.describe Lain::CLI::Switchboard do
   # StatusFeed as its sink, and the feed cannot publish (a state dir that is a
   # file). The session file must keep agreeing with the live mode, gate
   # included, and a retry must not break the chain the loader walks.
+  # Plan scope, over a spike that leases a plain directory: what moves on a
+  # flip, what is given back, and how a command is judged once the session is
+  # confined. The seam spec drives the same over real git.
+  describe "plan scope" do
+    around do |example|
+      Dir.mktmpdir("lain-board-plan") do |dir|
+        @base = File.realpath(dir)
+        @home = File.join(@base, "project").tap { FileUtils.mkdir_p(_1) }
+        example.run
+      end
+    end
+
+    # Leases a fresh directory per acquire, and remembers every lease.
+    let(:spike) do
+      Class.new do
+        attr_reader :leases
+
+        def initialize(base)
+          @base = base
+          @leases = []
+        end
+
+        def acquire
+          dir = File.join(@base, "spike-#{@leases.size}").tap { FileUtils.mkdir_p(_1) }
+          Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}),
+                                     origin: Lain::Isolation::Lease::Origin.new(path: dir)).tap { @leases << _1 }
+        end
+
+        def reminder(lease) = "confined to #{lease.worker_env.checkout}"
+
+        def release(lease)
+          lease.release
+          "gave back #{lease.worker_env.checkout}"
+        end
+      end.new(@base)
+    end
+
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @home, env: {})) }
+    let(:slot) { instance_spy(Lain::Agent::SnapshotSlot, root: @home) }
+
+    def board(**rest)
+      @board ||= switchboard(spike:, **rest).bind_session(session).tap { _1.bind_snapshots(slot) }
+    end
+
+    def plan!(approval = :ask) = board.mode_switch.switch(Lain::Mode.new(scope: :plan, approval:), surface: "tty")
+
+    def spiked = spike.leases.last.worker_env.checkout
+
+    describe "a flip into plan" do
+      it "leases a directory and moves the session's tools and reminders there" do
+        plan!
+
+        expect(session.worker_env.cwd).to eq(spiked)
+        expect(session.reminders).to eq(["confined to #{spiked}"])
+        expect(board.mode_switch.scope.name).to eq(:plan)
+      end
+
+      it "roots the snapshots at the lease" do
+        plan!
+
+        expect(slot).to have_received(:rebind).with(root: spiked)
+      end
+
+      it "journals the flip as a scope move" do
+        plan!
+
+        expect(mode_records).to contain_exactly(a_hash_including("from_scope" => "checkout", "to_scope" => "plan"))
+      end
+
+      it "leases once however many times the approval moves inside plan" do
+        plan!
+        plan!(:auto)
+        plan!(:ask)
+
+        expect(spike.leases.size).to eq(1)
+        expect(spike.leases.first).not_to be_released
+      end
+
+      it "refuses with no session bound, leasing nothing and journaling nothing" do
+        unbound = switchboard(spike:)
+
+        expect { unbound.mode_switch.switch(Lain::Mode.new(scope: :plan), surface: "tty") }
+          .to raise_error(Lain::Mode::Scope::Unavailable, /no session is bound/)
+        expect([spike.leases, mode_records]).to eq([[], []])
+      end
+
+      it "refuses on a board with no project to cut a spike from, as a scope that is unavailable" do
+        unscoped = switchboard.bind_session(session)
+
+        expect { unscoped.mode_switch.switch(Lain::Mode.new(scope: :plan), surface: "tty") }
+          .to raise_error(Lain::Mode::Scope::Unavailable, /plan scope could not be entered: .*needs a project/)
+        expect([unscoped.mode_switch.scope.name, mode_records]).to eq([:checkout, []])
+      end
+
+      # A lease taken and then left behind by a setup that raised is a spike
+      # nobody holds and nothing releases.
+      it "gives the lease back when the scope cannot be set up after the lease was taken" do
+        broken = spike
+        broken.define_singleton_method(:reminder) { |_env| raise IOError, "unreadable" }
+
+        expect { plan! }.to raise_error(Lain::Mode::Scope::Unavailable, /unreadable/)
+        expect(spike.leases.first).to be_released
+        expect([session.scope, mode_records]).to eq([Lain::Session::Unconfined, []])
+      end
+
+      # The record commits a flip. One refused leaves the session where it was,
+      # so the lease taken for it must not be left behind.
+      it "gives the lease back and leaves the session unconfined when the record is refused" do
+        refusing = Object.new
+        refusing.define_singleton_method(:record) { |_record| raise IOError, "closed" }
+        refused = described_class.new(journal: refusing, model: "m", toolset: base, spike:).bind_session(session)
+
+        expect { refused.mode_switch.switch(Lain::Mode.new(scope: :plan), surface: "tty") }.to raise_error(IOError)
+        expect(spike.leases.first).to be_released
+        expect([session.scope, refused.mode_switch.scope.name]).to eq([Lain::Session::Unconfined, :checkout])
+      end
+    end
+
+    describe "a flip back to the checkout" do
+      it "says what giving the spike back did, for the command to show" do
+        plan!
+        board.mode_switch.switch(Lain::Mode.new, surface: "tty")
+
+        expect(board.mode_switch.said).to eq("gave back #{spike.leases.first.worker_env.checkout}")
+      end
+
+      it "says nothing for a flip that moved no scope" do
+        board.mode_switch.switch(mode(:auto), surface: "tty")
+
+        expect(board.mode_switch.said).to eq("")
+      end
+
+      it "releases the lease and returns the session to where it was built" do
+        plan!
+        board.mode_switch.switch(Lain::Mode.new, surface: "tty")
+
+        expect(spike.leases.first).to be_released
+        expect([session.worker_env.cwd, session.reminders]).to eq([@home, []])
+        expect(slot).to have_received(:rebind).with(root: @home)
+      end
+
+      it "restores the checkout's own ladders" do
+        plan!
+        board.mode_switch.switch(Lain::Mode.new, surface: "tty")
+
+        expect(board.policy_switch.current).to be(board.ladder)
+      end
+    end
+
+    describe "a command under plan" do
+      def parked(policy, context: session)
+        Sync do |task|
+          call = task.async { policy.call(gated_call, context) }
+          task.with_timeout(1) { board.approvals.dequeue }
+        ensure
+          call&.stop
+        end
+      end
+
+      it "is judged by the plan ladder for the approval level in force" do
+        plan!(:auto)
+
+        expect(board.policy_switch.current.label).to eq("plan auto")
+      end
+
+      # Nothing proved `ls`'s words confined, so under auto it still waits,
+      # and for a person: the automatic approver is not offered it.
+      it "parks for a human even under auto, where nothing automatic may take it" do
+        plan!(:auto)
+
+        pending_call = parked(board.policy_switch)
+
+        expect(pending_call).to be_humans_only
+      end
+
+      it "records why a command under auto waited, once a human decides it" do
+        plan!(:auto)
+        Sync do |task|
+          call = task.async { board.policy_switch.call(gated_call, session) }
+          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty")
+          call.wait
+        end
+
+        because = start_with("plan scope cannot confine this command to #{spiked}")
+        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a.last)
+          .to include("rung" => "surfaces", "reason" => because)
+      end
+
+      it "approves a call that is no command under auto, as the checkout does" do
+        plan!(:auto)
+        read = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "a.rb" }, "tu_2")
+
+        expect(board.policy_switch.call(read, session)).to be(true)
+      end
+
+      it "refuses an unconfined command outright when nobody attends" do
+        unattended = switchboard(spike:, attended: false).bind_session(session)
+        unattended.mode_switch.switch(Lain::Mode.new(scope: :plan, approval: :auto), surface: "tty")
+
+        expect(unattended.policy_switch.call(gated_call, session)).to be(false)
+      end
+
+      # A human's remembered answer is about a command's shape in the checkout,
+      # and says nothing about the spike: under plan only the confinement rule
+      # may approve a command.
+      it "never approves a command on a remembered allow, and parks it for a human instead" do
+        remembered = Lain::Approval::Remembered.new(allow: [{ "tool" => "bash", "input" => { "command" => "ls" } }])
+        board(rules: [remembered], approving: Lain::CLI::Wiring::BoardBuild.method(:approving))
+        plan!(:auto)
+
+        expect(parked(board.policy_switch)).to be_humans_only
+      end
+
+      it "still refuses a command on a remembered deny" do
+        remembered = Lain::Approval::Remembered.new(deny: [{ "tool" => "bash", "input" => { "command" => "ls" } }])
+        board(rules: [remembered], approving: Lain::CLI::Wiring::BoardBuild.method(:approving))
+        plan!(:auto)
+
+        expect(board.policy_switch.call(gated_call, session)).to be(false)
+      end
+
+      it "hands the board's scope to the tool stack, confining every session judged through it" do
+        plan!
+
+        expect(board.guard_inputs.scope.current).to be(session.scope)
+      end
+
+      it "judges a child lent the spike by the plan ladder for the level in force" do
+        board(classifiers: Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: "/home/tester", cwd: @home))
+        plan!(:auto)
+        policy = board.guard_inputs.policy_for.call(session.worker_env)
+
+        expect(policy).to be_a(Lain::CLI::Switchboard::Leased)
+        expect(policy.current.label).to eq("plan auto")
+      end
+    end
+  end
+
   describe "a flip whose state-feed publish fails", :seam do
     it "applies whole, writes one record however often it is retried, and leaves the record loadable" do
       Dir.mktmpdir do |dir|
@@ -1041,30 +1281,41 @@ RSpec.describe Lain::CLI::Switchboard do
   # nothing is journaled for a mode that cannot be resolved, and the policy
   # moves only after the flip is recorded.
   describe Lain::CLI::Switchboard::BoundSwitch do
-    it "resolves, then switches, then applies" do
+    def scoping(seen, ladders: { ask: :ladders })
+      move = Lain::CLI::Switchboard::Scoping::Move.new(ladders:, commit: -> { seen << [:commit] },
+                                                       abandon: -> { seen << [:abandon] })
+      Object.new.tap { |held| held.define_singleton_method(:move) { |_scope| move.tap { seen << [:move] } } }
+    end
+
+    it "moves the scope, resolves, switches, commits the move, then applies" do
       mode = Lain::Mode.new(approval: :auto)
       resolution = Lain::Mode::Resolution.new(gate_policy: ->(*) { false })
       seen = []
       inner_switch = Object.new
       inner_switch.define_singleton_method(:switch) { |_mode, surface:| seen << [:switch, surface] }
       inner_switch.define_singleton_method(:current) { mode }
-      resolve = lambda do |candidate|
-        seen << [:resolve]
+      resolve = lambda do |candidate, ladders|
+        seen << [:resolve, ladders]
         candidate == mode ? resolution : raise("unexpected mode: #{candidate.inspect}")
       end
       apply = ->(res, surface:) { seen << [:apply, surface, res] }
 
-      described_class.new(inner_switch, resolve:, apply:).switch(mode, surface: "spec")
+      described_class.new(inner_switch, scoping: scoping(seen), resolve:, apply:).switch(mode, surface: "spec")
 
-      expect(seen).to eq([[:resolve], [:switch, "spec"], [:apply, "spec", resolution]])
+      expect(seen).to eq([[:move], [:resolve, { ask: :ladders }], [:switch, "spec"], [:commit],
+                          [:apply, "spec", resolution]])
     end
 
-    it "switches nothing when the mode cannot be resolved" do
+    it "switches nothing, and gives the scope's move back, when the mode cannot be resolved" do
+      seen = []
       inner_switch = instance_double(Lain::Mode::Switch)
-      resolve = ->(_candidate) { raise Lain::Mode::Resolution::Unknown, "no policy" }
+      resolve = ->(_candidate, _ladders) { raise Lain::Mode::Resolution::Unknown, "no policy" }
 
-      expect { described_class.new(inner_switch, resolve:, apply: ->(*) {}).switch(Lain::Mode.new, surface: "spec") }
-        .to raise_error(Lain::Mode::Resolution::Unknown)
+      expect do
+        described_class.new(inner_switch, scoping: scoping(seen), resolve:, apply: ->(*) {})
+                       .switch(Lain::Mode.new, surface: "spec")
+      end.to raise_error(Lain::Mode::Resolution::Unknown)
+      expect(seen).to eq([[:move], [:abandon]])
     end
   end
 end

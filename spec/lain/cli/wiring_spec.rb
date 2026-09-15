@@ -254,6 +254,14 @@ class WiringAgentSpecBoard
     @snapshots = slot
   end
 
+  # The session a flip into plan scope confines.
+  attr_reader :session
+
+  def bind_session(session)
+    @session = session
+    self
+  end
+
   # The run's ONE region ledger, the approval queue an unattended board leaves
   # nil, and the path policy -- all real, because the three tool-phase guards
   # take them as required keywords with no default and a double answering nil
@@ -2959,7 +2967,8 @@ RSpec.describe Lain::CLI::Wiring do
           board = board_for(root:)
 
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
-            .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+            .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                    Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                     Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity,
                     Lain::Middleware::Gate])
@@ -3244,7 +3253,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # is refused before a human is ever asked about it.
     it "puts all three secret guards, then the test layout guard, then the board's gate, in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
@@ -3331,7 +3341,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       runner = build.send(:tool_runner)
 
       expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
                 Lain::Effect::Handler::Live])
@@ -3356,6 +3367,14 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       agent = build
 
       expect(chronicle.timeline_handle.call).to be(agent.timeline)
+    end
+
+    # A flip into plan scope confines the session the Agent runs its tools in,
+    # so the board must hold that one and no other.
+    it "binds the board to the session the Agent is built over" do
+      agent = build
+
+      expect(board.session).to be(agent.session)
     end
 
     # The slot is born here and handed to the board, which hands it to `/undo`.

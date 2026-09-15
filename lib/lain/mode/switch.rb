@@ -35,6 +35,10 @@ module Lain
         @journal = journal
       end
 
+      # What the last flip had to say beyond the mode it moved to. A bare
+      # switch moves nothing but the mode, so it has nothing to add.
+      def said = ""
+
       # The mode's own questions, answered by whichever Mode is in force.
       delegate :scope, :approval, :layers, :describe, to: :@current
 

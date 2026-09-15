@@ -281,6 +281,7 @@ module Lain
                                           tool_middleware: guard(chronicle, switchboard),
                                           journal:, telemetry: chronicle.instrumentation.journal,
                                           supervisor:, observer: chronicle.observer, askers:,
+                                          scope: CLI::ToolGuard::BoardScope.new(board: switchboard),
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,
                                                                                  handoff: handback.handoff,
                                                                                  sync: handback.sync))

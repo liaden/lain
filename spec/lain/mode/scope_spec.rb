@@ -2,8 +2,8 @@
 
 RSpec.describe Lain::Mode::Scope do
   describe "the declared roster" do
-    it "names checkout, the project's own working tree, and nothing else yet" do
-      expect(described_class::NAMES).to eq(%i[checkout])
+    it "names checkout, the project's own working tree, and plan, the spike that confines it" do
+      expect(described_class::NAMES).to eq(%i[checkout plan])
     end
 
     it "answers a declared name with that scope, however it is spelled" do
@@ -14,21 +14,21 @@ RSpec.describe Lain::Mode::Scope do
     it "refuses an undeclared name, naming every alternative" do
       expect { described_class.for(:sandbox) }.to raise_error(ArgumentError, /sandbox.*checkout/)
     end
-
-    # Plan scope is a confinement that is not built yet, so the name must not
-    # quietly resolve to the checkout it would have confined.
-    it "refuses plan rather than answering the checkout" do
-      expect { described_class.for(:plan) }.to raise_error(ArgumentError, /plan/)
-    end
   end
 
   describe "the lighter" do
     it "leaves the checkout silent, since it is where every session starts" do
       expect(described_class.for(:checkout).lighter).to eq("")
     end
+
+    # What a plan session writes never reaches the checkout the human is
+    # looking at, so the prompt has to say where the session is.
+    it "lights plan" do
+      expect(described_class.for(:plan).lighter).to eq("PLAN")
+    end
   end
 
   it "is a deeply frozen value" do
-    expect(described_class.for(:checkout)).to be_deeply_frozen
+    expect(described_class::NAMES.map { |name| described_class.for(name) }).to all(be_deeply_frozen)
   end
 end

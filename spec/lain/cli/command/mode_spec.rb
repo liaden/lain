@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "tmpdir"
 
 RSpec.describe Lain::CLI::Command::Mode do
   subject(:command) { described_class.new }
@@ -12,7 +13,10 @@ RSpec.describe Lain::CLI::Command::Mode do
     Lain::Mode::Switch.new(Lain::Mode.new(approval:, layers:), journal:)
   end
 
-  def env_for(switch) = instance_double(Lain::CLI::Command::Env, mode_switch: switch)
+  def env_for(switch, dispatching: false)
+    instance_double(Lain::CLI::Command::Env, mode_switch: switch,
+                                             agent: instance_double(Lain::Agent, dispatching?: dispatching))
+  end
 
   def flips = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
 
@@ -158,12 +162,18 @@ RSpec.describe Lain::CLI::Command::Mode do
         .to raise_error(Lain::Error, /accept_edits is retired: it is ask now/)
     end
 
-    # Plan scope is a confinement not yet built; the name must not fall through
-    # as a typo, and must not quietly leave the session in the checkout.
-    it "refuses plan by name until plan scope exists" do
+    it "moves the scope to plan, keeping the approval level" do
+      switch = switch_for(:auto)
+      command.call("plan", env_for(switch))
+
+      expect([switch.scope.name, switch.approval.name]).to eq(%i[plan auto])
+      expect(flips).to contain_exactly(a_hash_including("from_scope" => "checkout", "to_scope" => "plan"))
+    end
+
+    it "refuses checkout and plan together, naming both" do
       switch = switch_for(:ask)
 
-      expect { command.call("plan", env_for(switch)) }.to raise_error(Lain::Error, /plan is not available/)
+      expect { command.call("checkout plan", env_for(switch)) }.to raise_error(Lain::Error, /checkout plan.*scope/)
       expect(flips).to be_empty
     end
 
@@ -176,11 +186,13 @@ RSpec.describe Lain::CLI::Command::Mode do
   end
 
   describe "the reset" do
-    it "lands in the starting scope and approval from any mode" do
+    # The most confined mode there is: nothing written reaches the checkout,
+    # and nothing is decided without asking.
+    it "lands in plan scope and ask approval from any mode" do
       switch = switch_for(:auto, :auto_approve, :goal, :notify)
       command.call("!", env_for(switch))
 
-      expect([switch.scope.name, switch.approval.name]).to eq(%i[checkout ask])
+      expect([switch.scope.name, switch.approval.name]).to eq(%i[plan ask])
     end
 
     it "clears every layer too -- a reset that leaves auto_approve on has not reset anything" do
@@ -197,9 +209,90 @@ RSpec.describe Lain::CLI::Command::Mode do
     # a deferred design decision (chunk-compaction-tiers-pins-isolation.md).
     # This example going red is the signal that whoever widens it must also
     # decide how the modifier reaches a command.
+    # The reset is a safety step first. A spike that cannot be cut -- an empty
+    # repository, a git failure, a board with nothing to cut from -- must not
+    # leave `auto` and its layers in force.
+    describe "when plan scope cannot be entered" do
+      let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+      let(:board) do
+        Lain::CLI::Switchboard.for(chronicle:, options: { auto_approve: true }, model: "m",
+                                   toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+                                   test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+                              .bind_session(Lain::Session.new)
+      end
+
+      it "still lowers approval to ask and drops every layer, staying in the checkout" do
+        command.call("auto", env_for(board.mode_switch))
+        command.call("!", env_for(board.mode_switch))
+
+        expect(board.mode_switch.current).to eq(Lain::Mode.new)
+        expect(board.policy_switch.current).to be(board.ladder)
+      end
+
+      it "says in words that plan scope could not be entered, and why" do
+        told = command.call("!", env_for(board.mode_switch))
+
+        expect(told).to include("checkout ask: no layers active", "plan scope could not be entered",
+                                "needs a project")
+      end
+    end
+
     it "arrives as an argument, because the invocation grammar rejects a trailing bang" do
       expect(Lain::Skill::Invocation.parse("/mode!")).to be_nil
       expect(Lain::Skill::Invocation.parse("/mode !").args).to eq("!")
+    end
+  end
+
+  # Moving a scope moves where every tool resolves and runs, and gives a spike
+  # back that a call still running may be writing in.
+  describe "a scope flip while the agent is dispatching" do
+    it "refuses entering plan, in words, and moves nothing" do
+      switch = switch_for(:ask)
+
+      expect { command.call("plan", env_for(switch, dispatching: true)) }
+        .to raise_error(Lain::Error, /cannot move the scope while a turn is in flight/)
+      expect([switch.current, flips]).to eq([Lain::Mode.new, []])
+    end
+
+    it "refuses leaving plan too" do
+      switch = Lain::Mode::Switch.new(Lain::Mode.new(scope: :plan), journal:)
+
+      expect { command.call("checkout", env_for(switch, dispatching: true)) }
+        .to raise_error(Lain::Error, /cannot move the scope/)
+    end
+
+    # The reset is the safety step, and a turn in flight is exactly when a
+    # human reaches for it: the approval and the layers drop at once, and only
+    # the move to plan scope waits.
+    describe "the reset" do
+      let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+      let(:board) do
+        Lain::CLI::Switchboard.for(chronicle:, options: { auto_approve: true }, model: "m",
+                                   toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+                                   test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+                              .bind_session(Lain::Session.new)
+      end
+
+      it "lowers approval to ask and drops every layer in the scope it is in" do
+        command.call("auto", env_for(board.mode_switch))
+        command.call("!", env_for(board.mode_switch, dispatching: true))
+
+        expect(board.mode_switch.current).to eq(Lain::Mode.new)
+        expect(board.policy_switch.current).to be(board.ladder)
+      end
+
+      it "says the move to plan scope waits until the turn ends" do
+        told = command.call("!", env_for(board.mode_switch, dispatching: true))
+
+        expect(told).to include("checkout ask: no layers active", "plan scope waits until the turn in flight ends")
+      end
+    end
+
+    it "lets a flip that keeps the scope through" do
+      switch = switch_for(:ask)
+      command.call("auto +vi", env_for(switch, dispatching: true))
+
+      expect(switch.approval.name).to eq(:auto)
     end
   end
 
@@ -274,9 +367,20 @@ RSpec.describe Lain::CLI::Command::Mode do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
     let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
+    # The reset enters plan scope, so the board can lease a scratch directory
+    # and holds a session to confine there.
+    around do |example|
+      Dir.mktmpdir("lain-mode-reset") do |dir|
+        @scratch = dir
+        example.run
+      end
+    end
+
     def board_for(**options)
       Lain::CLI::Switchboard.for(chronicle:, options:, model: "claude-opus-4-8", toolset: tools,
+                                 spike: Lain::Isolation::Scratch.new(root: @scratch),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+                            .bind_session(Lain::Session.new)
     end
 
     def engaged?(board) = Lain::CLI::Wiring::ToolsetBuild::AutoApproveLayer.new(board: -> { board }).call
@@ -317,12 +421,22 @@ RSpec.describe Lain::CLI::Command::Mode do
     let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
     let(:board) do
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: tools,
+                                 spike: Lain::Isolation::Scratch.new(root: @scratch),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+                            .bind_session(Lain::Session.new)
     end
     let(:driver) do
       Lain::CLI::GoalDriver.new(journal:, layer: Lain::CLI::GoalDriver::Layer.new(-> { board.mode_switch }))
     end
     let(:env) { env_for(driver.guarding(board.mode_switch)) }
+
+    # The reset enters plan scope; see the auto_approve layer's examples.
+    around do |example|
+      Dir.mktmpdir("lain-mode-reset") do |dir|
+        @scratch = dir
+        example.run
+      end
+    end
 
     it "refuses +goal with no standing goal, naming /goal <objective>, and switches nothing" do
       expect { command.call("auto +goal", env) }.to raise_error(Lain::Error, %r{/goal <objective>})

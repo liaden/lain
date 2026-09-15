@@ -6,6 +6,12 @@ module Lain
     # children's, and a run's with no chat: the guards on what a tool may write,
     # read and list, then the gate that decides whether a call runs at all.
     #
+    # {Middleware::ConfineToScope} goes first: while the board's scope confines,
+    # a write or a command aimed outside its directory is refused before any
+    # other guard, or any human, is asked about it. It reads the board's scope
+    # per call, so a flip reaches a stack built before it, and every session
+    # judged through the board is confined, whichever way it was spawned.
+    #
     # {Middleware::RefuseSecretWrites} sits in the TOOL phase so a
     # credential-shaped memory_write is withheld before it ever reaches the
     # recorder: a memory, once indexed, replays into every future context, and
@@ -43,8 +49,24 @@ module Lain
       # ({Switchboard#guard_inputs}); a run with no chat builds its own.
       #
       # `policy_for` has no default: a board that forgot it would judge every
-      # leased child by its parent's policy, in silence.
-      Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar)
+      # leased child by its parent's policy, in silence. `scope` answers
+      # `#current`, the session scope the board is in; a run that can never
+      # enter plan scope confines nothing, which is its default.
+      Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
+                           :scope) do
+        def initialize(scope: UNSCOPED, **) = super
+      end
+
+      # The scope of a run with no board that can enter plan.
+      module UNSCOPED
+        def self.current = Session::Unconfined
+      end
+
+      # The board's scope, read through the thunk a spawn seam holds, so a
+      # child built before the board existed still reads the scope in force.
+      BoardScope = Data.define(:board) do
+        def current = board.call.guard_inputs.scope.current
+      end
 
       # The gate policy a child is asked through: the board's own, handed a
       # context that names the child, so a park says which of a fleet is asking
@@ -213,13 +235,14 @@ module Lain
         layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy, requester:)
       end
 
-      # The five guards over one set of inputs, the layout held at `roots`, and
+      # The six guards over one set of inputs, the layout held at `roots`, and
       # the gate's two layers asking `policy` -- checked closed as it is built,
       # the one check a child's stack from any builder is also held to.
       def layered(chronicle, inputs, roots, policy, requester: nil)
         journal = chronicle.instrumentation.journal
         Middleware::Gate.closes!(
-          Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
+          Middleware::Stack.new([Middleware::ConfineToScope.new(scope: inputs.scope),
+                                 Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),

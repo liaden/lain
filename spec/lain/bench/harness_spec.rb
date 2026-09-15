@@ -70,9 +70,9 @@ RSpec.describe Lain::Bench::Harness do
       expect(wiring.tool_middleware.to_a.map(&:class)).to eq(production.to_a.map(&:class))
     end
 
-    it "holds all five guards and the gate, not the write refusal alone" do
+    it "holds all six guards and the gate, not the write refusal alone" do
       expect(wiring.tool_middleware.to_a.map(&:class)).to eq(
-        [Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+        [Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
          Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
          Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
       )

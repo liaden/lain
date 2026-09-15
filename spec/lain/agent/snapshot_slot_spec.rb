@@ -200,6 +200,32 @@ RSpec.describe Lain::Agent::SnapshotSlot do
       expect(notes).to eq([scope_note(:write_set)])
     end
 
+    # Plan scope moves the session's writes into a spike, so what a turn
+    # changed is measured there rather than in the checkout it cannot touch.
+    it "roots the next snapshot at a new root, keeping the scope" do
+      filled = slot
+      filled.write(timeline: turn, paths: [put("a.rb", "one")])
+      Dir.mktmpdir("lain-slot-spike") do |spike|
+        filled.rebind(root: spike)
+        File.write(File.join(spike, "b.rb"), "two")
+        event = filled.write(timeline: turn("in the spike"), paths: [File.join(spike, "b.rb")])
+
+        expect([filled.root, filled.label]).to eq([File.expand_path(spike), "write_set"])
+        expect(event.body).to include("root" => File.expand_path(spike))
+      end
+    end
+
+    it "keeps the writer when neither the scope nor the root changes" do
+      filled = slot
+      path = put("a.rb", "one")
+      filled.write(timeline: turn, paths: [path])
+
+      filled.rebind(root:)
+      filled.write(timeline: turn("again"), paths: [path])
+
+      expect(notes.size).to eq(1)
+    end
+
     it "stays lazy when rebound before the first prime, so a scope never used costs nothing" do
       filled = slot(scope: :shadow_git)
 
@@ -214,7 +240,8 @@ RSpec.describe Lain::Agent::SnapshotSlot do
   # and anything that would read the snapshots refuses by name.
   describe described_class::Unbound do
     it "takes a rebind as a no-op" do
-      expect(described_class.rebind(:plan)).to be(described_class)
+      expect(described_class.rebind(:write_set)).to be(described_class)
+      expect(described_class.rebind(root: "/elsewhere")).to be(described_class)
     end
 
     it "refuses to answer a log or a root" do

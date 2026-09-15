@@ -1406,6 +1406,13 @@ RSpec.describe Lain::Tools::Subagent do
 
     # Sibling fan-out only pays under a shared template prefix, so the policy
     # says so -- what this file's fan-out group uses, narrowed to the one tool.
+    def staggered_policy_with_scope
+      Lain::Tool::SpawnPolicy.new(
+        prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template: "one shared brief. " * 20),
+        posture: :handler_union, only: %i[cwd scope]
+      )
+    end
+
     def staggered_policy
       Lain::Tool::SpawnPolicy.new(
         prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template: "one shared brief. " * 20),
@@ -1442,6 +1449,84 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(seen).to eq([leases_root])
       expect(result.content).to eq("done")
+    end
+
+    # Plan scope confines the session to a spike, and every child spawned while
+    # it stands works there too -- whichever way it is spawned: a model's tool
+    # call, a human's `@role/skill` ({#run}), a fan-out, or an actor. The scope
+    # is read off the seam, which a chat builds over the board that holds it,
+    # so no spawn path can miss it.
+    describe "while the seam's scope confines" do
+      let(:spike) { File.join(File.realpath(leases_root), "spike").tap { FileUtils.mkdir_p(_1) } }
+      let(:scope) do
+        Lain::Session::Confined.new(worker_env: Lain::WorkerEnv.new(cwd: spike, env: {}, checkout: spike),
+                                    reminder: "in a spike")
+      end
+      let(:reader) { Struct.new(:current).new(scope) }
+      let(:scopes) { [] }
+      let(:scope_tool) do
+        held = scopes
+        Class.new(Lain::Tool) do
+          define_method(:name) { "scope" }
+          define_method(:description) { "Reports the scope this session is confined to." }
+          define_method(:input_schema) { { type: :object, properties: {} } }
+          define_method(:perform) do |_input, invocation|
+            held << session_of(invocation).scope
+            Lain::Tool::Result.ok("reported")
+          end
+        end.new
+      end
+
+      def reports_both = mock(tool_response(["c1", "cwd", {}], ["c2", "scope", {}]), text_response("done"))
+
+      def confined_tool(provider = reports_both, **rest)
+        build_subagent(provider:, toolset: cwd_only(scope_tool), policy: spawn_policy(only: %i[cwd scope]),
+                       isolation: leases, scope: reader, **rest)
+      end
+
+      def inherited = [seen, scopes, backend.leased]
+
+      it "runs a child a tool call spawned in the scope's directory, confined, leasing nothing" do
+        expect(confined_tool.call({ "prompt" => "go" }, invocation)).to be_ok
+        expect(inherited).to eq([[spike], [scope], []])
+      end
+
+      it "runs a child a human's role skill spawned there too" do
+        expect(confined_tool.run("go").content).to eq("done")
+        expect(inherited).to eq([[spike], [scope], []])
+      end
+
+      it "runs every child of a fan-out there" do
+        provider = mock(tool_response(["c1", "cwd", {}], ["c2", "scope", {}]), text_response("done"),
+                        tool_response(["c3", "cwd", {}], ["c4", "scope", {}]), text_response("done"))
+        Sync { confined_tool(provider, policy: staggered_policy_with_scope).fan_out(%w[one two]) }
+
+        expect(inherited).to eq([[spike, spike], [scope, scope], []])
+      end
+
+      # A checkout lent on purpose -- a critic reading the reviewed head -- is
+      # what that child is for, so it keeps it; its writes stay the board's to
+      # confine, and nothing tells it it is in the spike.
+      it "keeps a checkout the caller lent explicitly, rather than the scope's directory" do
+        held = Lain::WorkerEnv.new(cwd: File.realpath(leases_root), env: {}, checkout: File.realpath(leases_root))
+        tool = confined_tool(isolation: Lain::Isolation::Leases::InPlace.new(worker_env: held))
+
+        expect(tool.run("go").content).to eq("done")
+        expect([seen, scopes]).to eq([[held.cwd], [Lain::Session::Unconfined]])
+      end
+
+      # The supervisor leased the actor a checkout of the run's own, and plan
+      # scope puts the actor in the spike instead.
+      it "runs an actor in the scope's directory whatever environment it was launched with" do
+        tool = confined_tool(mode: :actor)
+        Sync do
+          actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
+          actor.settle
+          actor.stop
+        end
+
+        expect(inherited).to eq([[spike], [scope], []])
+      end
     end
 
     # The other exit. A context that will not render is {ChildBuilder#spawned}'s

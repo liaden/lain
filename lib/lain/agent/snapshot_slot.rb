@@ -7,8 +7,7 @@ module Lain
     # Where a turn's snapshot writer lives, so the writer can change under a
     # {ToolDelivery} that is built once and never rebuilt. The delivery primes
     # it before a turn's tools run and writes through it when they settle; a
-    # `/mode` flip rebinds it through {CLI::Switchboard#apply}, which is what
-    # puts the posture's declared scope in force.
+    # `/mode` flip into or out of plan scope rebinds it at the scope's root.
     #
     # Every prime restages the scope's before-tree, and every write records
     # the snapshot in the {#log} with the turn's tree pair, so an undo of a
@@ -41,7 +40,7 @@ module Lain
       module Unbound
         REFUSAL = "no snapshot slot is bound to this board; the agent build binds one when it builds the Agent"
 
-        def self.rebind(_scope) = self
+        def self.rebind(_scope = nil, **) = self
 
         def self.log = raise(NotBound, REFUSAL)
 
@@ -110,16 +109,23 @@ module Lain
       # @return [Workspace::SnapshotLog::Skipped]
       def skip = @log.skip
 
-      # A same-scope flip keeps the writer: a fresh one remembers nothing, so
-      # it would land a duplicate of the last snapshot and take a new shadow
-      # baseline for no change at all. A writer not yet built stays unbuilt.
+      # A flip that moves neither the scope nor the root keeps the writer: a
+      # fresh one remembers nothing, so it would land a duplicate of the last
+      # snapshot and take a new shadow baseline for no change at all. A writer
+      # not yet built stays unbuilt. A new root is where plan scope moves the
+      # session's writes, so the write-set fallback moves with it.
       #
+      # @param scope [Symbol, #note] by name or built; the one in force by default
+      # @param root [String] where the next writer is rooted; this slot's by default
       # @return [self]
-      def rebind(scope)
+      def rebind(scope = @scope, root: @root)
         candidate = resolve(scope)
-        return self if candidate.label == label
+        expanded = File.expand_path(root)
+        return self if candidate.label == label && expanded == @root
 
         @scope = candidate
+        @root = expanded
+        @fallback = nil
         @writer &&= built
         self
       end

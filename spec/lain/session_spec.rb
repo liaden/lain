@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 RSpec.describe Lain::Session do
@@ -889,6 +890,139 @@ RSpec.describe Lain::Session do
     end
   end
 
+  # A session's worker env is a slot a mode flip rebinds: plan scope moves
+  # where the session's tools resolve and run, and leaving it moves them back.
+  describe "#rescope" do
+    around do |example|
+      Dir.mktmpdir("lain-session-scope") do |dir|
+        @base = File.realpath(dir)
+        @home = Lain::WorkerEnv.new(cwd: File.join(@base, "project").tap { FileUtils.mkdir_p(_1) }, env: {})
+        @spike = File.join(@base, "spike").tap { FileUtils.mkdir_p(_1) }
+        example.run
+      end
+    end
+
+    let(:scoped) { described_class.new(worker_env: @home) }
+
+    def confined(reminder: "plan scope: writes land in the spike")
+      Lain::Session::Confined.new(worker_env: Lain::WorkerEnv.new(cwd: @spike, env: {}, checkout: @spike), reminder:)
+    end
+
+    it "starts unconfined, its tools resolving where it was built" do
+      expect(scoped.scope).to be(Lain::Session::Unconfined)
+      expect(scoped.worker_env).to be(@home)
+    end
+
+    it "resolves and runs against the scope's environment once confined" do
+      scope = confined
+      scoped.rescope(scope)
+
+      expect(scoped.worker_env).to be(scope.worker_env)
+      expect(scoped.scope).to be(scope)
+    end
+
+    it "returns to the environment it was built with when the scope is lifted" do
+      scoped.rescope(confined).rescope(Lain::Session::Unconfined)
+
+      expect(scoped.worker_env).to be(@home)
+    end
+
+    # The model has to be told where it is, since nothing it writes in a spike
+    # reaches the checkout.
+    it "tells the model its scope among the reminders, after the rest" do
+      scoped.write_todos([Struct.new(:content, :status).new("a", "pending")])
+      scoped.rescope(confined(reminder: "in a spike"))
+
+      expect(scoped.reminders).to eq(["Current todo list:\n- [pending] a", "in a spike"])
+    end
+
+    it "keeps no reminder of a scope that was lifted" do
+      scoped.rescope(confined).rescope(Lain::Session::Unconfined)
+
+      expect(scoped.reminders).to eq([])
+    end
+
+    it "takes a scope at construction, for a child that inherits its parent's" do
+      scope = confined
+
+      expect(described_class.new(worker_env: scope.worker_env, scope:).scope).to be(scope)
+    end
+  end
+
+  describe Lain::Session::Confined do
+    subject(:scope) do
+      described_class.new(worker_env: Lain::WorkerEnv.new(cwd: @spike, env: {}, checkout: @spike), reminder: "r")
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-session-confined") do |dir|
+        @base = File.realpath(dir)
+        @spike = File.join(@base, "spike").tap { FileUtils.mkdir_p(_1) }
+        example.run
+      end
+    end
+
+    it "holds a path under its root, existing or not" do
+      expect(scope.holds?(File.join(@spike, "notes.md"))).to be(true)
+      expect(scope.holds?(File.join(@spike, "new", "dir", "x"))).to be(true)
+      expect(scope.holds?(@spike)).to be(true)
+    end
+
+    it "does not hold a path outside its root, nor a sibling sharing its prefix" do
+      expect(scope.holds?(File.join(@base, "project", "a.rb"))).to be(false)
+      expect(scope.holds?("#{@spike}-other/a.rb")).to be(false)
+    end
+
+    # The kernel follows a link the spike carries, so a path is judged where
+    # it really lands.
+    it "does not hold a path whose real location is outside, through a link inside" do
+      File.symlink(@base, File.join(@spike, "out"))
+
+      expect(scope.holds?(File.join(@spike, "out", "project", "a.rb"))).to be(false)
+    end
+
+    it "does not hold a dangling link, whose target could be made anywhere later" do
+      File.symlink(File.join(@base, "nowhere"), File.join(@spike, "dangling"))
+
+      expect(scope.holds?(File.join(@spike, "dangling"))).to be(false)
+    end
+
+    it "names its root by its real path" do
+      linked = File.join(@base, "linked")
+      File.symlink(@spike, linked)
+      through = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: linked, env: {}, checkout: linked),
+                                    reminder: "r")
+
+      expect(through.root).to eq(@spike)
+    end
+
+    # A child spawned under plan is lent the spike in place: a lease of its
+    # own would be a second checkout the spike never reads.
+    it "leaves a lease its caller already lent in place as it was" do
+      lent = Lain::Isolation::Leases::InPlace.new(worker_env: Lain::WorkerEnv.new(cwd: @base, env: {}))
+
+      expect(scope.lend(lent)).to be(lent)
+    end
+
+    it "lends its environment in place, in the lender's lane" do
+      lane = Lain::Isolation::Leases::Lane.named("issue.x.1")
+      lent = scope.lend(Lain::Isolation::Leases.new(lane:))
+
+      expect(lent).to be_a(Lain::Isolation::Leases::InPlace)
+      expect([lent.worker_env, lent.lane]).to eq([scope.worker_env, lane])
+    end
+  end
+
+  describe Lain::Session::Unconfined do
+    it "holds every path, reminds nothing, and lends the leases it is handed" do
+      leases = Lain::Isolation::Leases.new
+
+      expect(described_class.holds?("/anywhere")).to be(true)
+      expect(described_class.reminders).to eq([])
+      expect(described_class.lend(leases)).to be(leases)
+    end
+  end
+
   describe Lain::Session::Null do
     subject(:null) { described_class.instance }
 
@@ -921,6 +1055,10 @@ RSpec.describe Lain::Session do
 
     it "has no reminders" do
       expect(null.reminders).to eq([])
+    end
+
+    it "is confined to no scope" do
+      expect(null.scope).to be(Lain::Session::Unconfined)
     end
 
     it "records no compaction cut and counts no completed plan step" do

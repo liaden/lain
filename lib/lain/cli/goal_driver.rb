@@ -123,7 +123,7 @@ module Lain
       class Guard
         REFUSAL = "the goal layer shows a standing goal, and none is set -- /goal <objective> sets one and raises it"
 
-        delegate :current, :scope, :approval, :layers, :describe, to: :@switch
+        delegate :current, :scope, :approval, :layers, :describe, :said, to: :@switch
 
         def initialize(switch:, driver:)
           @switch = switch

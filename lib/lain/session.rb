@@ -48,8 +48,10 @@ module Lain
     # @param journal [#<<] where {Telemetry::SessionRead} /
     #   {Telemetry::SessionPin} / {Telemetry::TodoSnapshot} land; the Null
     #   channel records nothing and is what every non-chat Session uses
+    # @param scope [Unconfined, Confined] where the session's tools are
+    #   confined to; a child spawned under plan scope is handed its parent's
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default,
-                   journal: Channel::Null.instance)
+                   journal: Channel::Null.instance, scope: Unconfined)
       @journal = journal
       @reads = ReadSet.new
       @writes = Set.new
@@ -61,17 +63,29 @@ module Lain
       @plan_step_completions = 0
       @compaction_cuts = [].freeze
       @cuts_by_address = {}
-      @memory = memory
-      @manifest_root = nil
-      @manifest_reminders = [].freeze
+      watch_memory(memory)
       @worker_env = worker_env
+      @scope = scope
     end
 
     # The host-side execution context a tool resolves paths and env against --
     # sent to tools via {Tool::Invocation#context}, never onto the Timeline.
+    # The scope in force answers it, so a mode flip that confines the session
+    # moves every tool at once, and lifting the scope returns the one the
+    # session was built with.
     #
     # @return [WorkerEnv]
-    attr_reader :worker_env
+    def worker_env = @scope.env_over(@worker_env)
+
+    # @return [Unconfined, Confined]
+    attr_reader :scope
+
+    # @param scope [Unconfined, Confined]
+    # @return [self]
+    def rescope(scope)
+      @scope = scope
+      self
+    end
 
     # The read-set's path identity, public because the two middleware that ask
     # about a path ({Middleware::RedactSecretReads},
@@ -454,7 +468,7 @@ module Lain
     #
     # @return [Array<String>]
     def reminders
-      (todo_reminders + manifest_reminders).freeze
+      (todo_reminders + manifest_reminders + @scope.reminders).freeze
     end
 
     # Attach the run's journal to a Session that already exists. The RESUMED
@@ -478,6 +492,81 @@ module Lain
 
       @journal = journal
       self
+    end
+
+    # The scope of a session nothing confines: its tools resolve and run where
+    # it was built, and a child it spawns leases as the run's isolation says.
+    module Unconfined
+      def self.env_over(home) = home
+
+      def self.holds?(_path) = true
+
+      def self.reminders = [].freeze
+
+      def self.lend(leases) = leases
+    end
+
+    # The scope of a session confined to one directory -- a spike worktree or a
+    # scratch directory -- which its environment names as its checkout.
+    #
+    # A path is held when it really lands under the root: the real path of its
+    # longest existing prefix, with the part not on disk yet appended, since
+    # the kernel follows every link the path crosses. A dangling link names a
+    # target that can be made anywhere later, so it is not held.
+    #
+    # A child spawned under it is LENT the environment in place, since a lease
+    # of its own would be a second checkout the spike never reads. One lend per
+    # spawn rather than one shared: a nested spawn waits inside its parent's,
+    # and a shared lend would have it wait on itself. A checkout its caller
+    # already lent on purpose -- a critic reading a reviewed head -- is what
+    # that child is for, so it keeps it.
+    class Confined
+      attr_reader :worker_env, :root, :reminders
+
+      # @param worker_env [WorkerEnv] the scope's environment, naming its root
+      #   as the checkout
+      # @param reminder [String] what the model is told about where it is
+      # @raise [SystemCallError] when the root is not on disk
+      def initialize(worker_env:, reminder:)
+        @worker_env = worker_env
+        @root = File.realpath(worker_env.checkout)
+        @reminders = [reminder.dup.freeze].freeze
+        freeze
+      end
+
+      def env_over(_home) = worker_env
+
+      # Resolved against the scope's own environment and cleaned first, as
+      # {WorkerEnv#resolve} places a path before a tool opens it. A location
+      # that cannot be resolved at all is not held.
+      #
+      # @param path [String, nil] as a call wrote it; nil is the scope's cwd
+      def holds?(path)
+        landed = landing(worker_env.resolve(path))
+        landed == root || landed.start_with?(File.join(root, ""))
+      rescue SystemCallError, ArgumentError, TypeError
+        false
+      end
+
+      # @param leases [Isolation::Leases, Isolation::Leases::InPlace] the
+      #   run's, whose lane the child keeps, or a checkout already lent
+      # @return [Isolation::Leases::InPlace]
+      def lend(leases)
+        return leases if leases.is_a?(Isolation::Leases::InPlace)
+
+        Isolation::Leases::InPlace.new(worker_env:, lane: leases.lane)
+      end
+
+      private
+
+      def landing(path)
+        File.realpath(path)
+      rescue Errno::ENOENT
+        parent = File.dirname(path)
+        raise if parent == path || File.symlink?(path)
+
+        File.join(landing(parent), File.basename(path))
+      end
     end
 
     FileIdentity = Data.define(:device, :inode, :size, :mtime)
@@ -604,6 +693,12 @@ module Lain
     def withheld(rounds)
       @journal << Telemetry::SessionReadWithheld.new(rounds:) unless rounds.empty?
       self
+    end
+
+    def watch_memory(memory)
+      @memory = memory
+      @manifest_root = nil
+      @manifest_reminders = [].freeze
     end
 
     def todo_reminders
@@ -963,6 +1058,9 @@ module Lain
       #
       # @return [WorkerEnv]
       def worker_env = WorkerEnv.default
+
+      # @return [Unconfined]
+      def scope = Unconfined
 
       INSTANCE = new.freeze
 

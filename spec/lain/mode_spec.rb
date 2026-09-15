@@ -30,8 +30,8 @@ RSpec.describe Lain::Mode do
       expect(mode.layers).to be(layers)
     end
 
-    # `Mode.new` is where a session starts and where `/mode !` lands, so the
-    # defaults are a claim about both.
+    # `Mode.new` is where a session starts, so the defaults are a claim about
+    # every session.
     it "defaults to the checkout, ask approval and no active layers" do
       mode = described_class.new
 
@@ -44,7 +44,7 @@ RSpec.describe Lain::Mode do
     end
 
     it "fails loudly on an unknown scope, naming every alternative" do
-      expect { described_class.new(scope: :plan) }.to raise_error(ArgumentError, /plan.*checkout/m)
+      expect { described_class.new(scope: :sandbox) }.to raise_error(ArgumentError, /sandbox.*checkout.*plan/m)
     end
 
     it "fails loudly on an unknown layer, naming every alternative" do

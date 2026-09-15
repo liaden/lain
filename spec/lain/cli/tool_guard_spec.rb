@@ -113,10 +113,11 @@ RSpec.describe Lain::CLI::ToolGuard do
   def read_call(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
   describe "the stack it builds" do
-    it "puts the write, read, listing, test layout and automatic output guards first, then the path refusal and " \
-       "the gate" do
+    it "puts the scope, write, read, listing, test layout and automatic output guards first, then the path " \
+       "refusal and the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end

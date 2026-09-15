@@ -79,8 +79,50 @@ module Lain
           factory = classifiers(project:, paths:, table:)
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: Project::Consent.for(project:, notice:).rules, approving: method(:approving),
-                          sensitivity: policy(project:, paths:, table:),
+                          sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:, notice:))
+        end
+
+        # Where `/mode plan` confines this project's session: a spike worktree
+        # when the project is in a git repository, and a scratch directory when
+        # it is not. Asked when plan scope is entered rather than at startup, so
+        # a chat that never enters it never searches for a repository, and one
+        # made a repository mid-session is cut a spike. The source a lease came
+        # from is the one asked about it afterwards, whatever the disk says by
+        # then.
+        class PlanSpike
+          # @param project [Lain::Project] whose root the repository is searched
+          #   from, and whose cwd the spike mirrors
+          # @param paths [Paths] the state home the fleet's worktree root is under
+          def initialize(project:, paths:)
+            @project = project
+            @paths = paths
+            @sources = {}.compare_by_identity
+          end
+
+          # @return [Lain::Isolation::Lease]
+          def acquire
+            from = source
+            from.acquire.tap { |lease| @sources[lease] = from }
+          end
+
+          # @param lease [Lain::Isolation::Lease]
+          # @return [String]
+          def reminder(lease) = @sources.fetch(lease).reminder(lease)
+
+          # @param lease [Lain::Isolation::Lease]
+          # @return [String]
+          def release(lease) = @sources.delete(lease).release(lease)
+
+          private
+
+          def source
+            nearest = Lain::Project::Repository.nearest(@project.root, paths: @paths, home: @paths.home_or_nil)
+            return Lain::Isolation::Scratch.new unless nearest.found?
+
+            Lain::Isolation::Spike.new(repo_root: nearest.path, cwd: @project.cwd,
+                                       root: IsolationBackend.worktree_root(nearest.path, paths: @paths))
+          end
         end
 
         # The deterministic rung's chain: this root's remembered answers, and

@@ -150,6 +150,7 @@ module Lain
   end
 end
 
+require_relative "middleware/confine_to_scope"
 require_relative "middleware/env"
 require_relative "middleware/gate"
 require_relative "middleware/guard_test_layout"

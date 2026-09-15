@@ -516,19 +516,20 @@ module Lain
         agent = nil
         Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
-                        snapshot_slot: snapshot_slot(board, journal: chronicle.record_journal, channel:),
+                        snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
                         **backing(backend, channel, -> { agent.timeline }, board:)).tap { |built| agent = built }
       end
 
-      # Born here, under the posture the board starts in, and handed to the
-      # board, because the board is the one object a `/mode` flip goes through
-      # ({Switchboard#apply} rebinds it). The board's own build is not where it
-      # can be born: that runs before any root reaches it. The root is the
-      # PROJECT's, where every snapshot is rooted, and `paths:` the state home a
-      # shadow snapshot scope keeps its store in.
-      def snapshot_slot(board, journal:, channel:)
+      # Born here and handed to the board, because the board is the one object
+      # a `/mode` flip goes through: a flip into plan scope roots it at the
+      # spike, and the session it was handed first runs there. The board's own
+      # build is not where it can be born: that runs before any root reaches
+      # it. The root is the PROJECT's, where every snapshot is rooted until
+      # then, and `paths:` the state home a shadow snapshot scope keeps its
+      # store in.
+      def snapshot_slot(board, session:, journal:, channel:)
         Lain::Agent::SnapshotSlot.new(root:, scope: board.snapshot_scope, paths: @paths, journal:,
-                                      channel:).tap { |slot| board.bind_snapshots(slot) }
+                                      channel:).tap { |slot| board.bind_session(session).bind_snapshots(slot) }
       end
 
       # The provider, and the compaction wiring hung off it -- the per-turn
