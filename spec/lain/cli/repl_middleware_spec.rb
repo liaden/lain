@@ -41,10 +41,18 @@ RSpec.describe Lain::CLI::ReplMiddleware do
   # threading exists to remove.
   def library_for(root) = Lain::Skill::Library.load(root:)
 
+  # The four critique keywords, over nothing held: a line never reaches them
+  # unless a review round is open, which only the example that opens one does.
+  def critique_seams(outbox: Struct.new(:open?).new(false), checkouts: nil, journal: [])
+    { outbox:, journal:, checkouts: checkouts || Object.new,
+      window: Lain::CLI::Backend::WindowBook::Served.new(model: "critic-model", window_tokens: 32_768) }
+  end
+
   describe ".build" do
     it "returns a Middleware::Stack carrying a SkillDispatch" do
       with_project do |root|
-        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new,
+                                      **critique_seams)
 
         expect(stack).to be_a(Lain::Middleware::Stack)
         expect(stack.to_a).to include(an_instance_of(Lain::Middleware::SkillDispatch))
@@ -53,7 +61,8 @@ RSpec.describe Lain::CLI::ReplMiddleware do
 
     it "expands an in-line invocation through the stack" do
       with_project do |root|
-        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new,
+                                      **critique_seams)
 
         seen = nil
         stack.call({ text: "/greet warmly", agent: :the_agent }) do |env|
@@ -67,7 +76,8 @@ RSpec.describe Lain::CLI::ReplMiddleware do
 
     it "reports an unknown skill without spending a downstream turn" do
       with_project do |root|
-        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new,
+                                      **critique_seams)
 
         ran = false
         result = stack.call({ text: "/nope", agent: :the_agent }) do |env|
@@ -86,7 +96,7 @@ RSpec.describe Lain::CLI::ReplMiddleware do
     it "dispatches and renders through the INJECTED library, reading no disk of its own" do
       with_project do |root|
         library = library_for(root)
-        stack = described_class.build(library:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library:, role_spawn: ReplMiddlewareStubRoleSpawn.new, **critique_seams)
         dispatch = stack.to_a.first
 
         expect(dispatch.instance_variable_get(:@catalog)).to be(library.catalog)
@@ -100,14 +110,14 @@ RSpec.describe Lain::CLI::ReplMiddleware do
     # is: a forgotten library must be a loud ArgumentError, never a quiet second
     # read of the tree far from the bug.
     it "refuses to build without one" do
-      expect { described_class.build(role_spawn: ReplMiddlewareStubRoleSpawn.new) }
+      expect { described_class.build(role_spawn: ReplMiddlewareStubRoleSpawn.new, **critique_seams) }
         .to raise_error(ArgumentError, /library/)
     end
 
     it "threads the role-spawn seam through so a role-bound line reaches it" do
       with_project do |root|
         fake = ReplMiddlewareStubRoleSpawn.new
-        stack = described_class.build(library: library_for(root), role_spawn: fake)
+        stack = described_class.build(library: library_for(root), role_spawn: fake, **critique_seams)
 
         result = stack.call({ text: "@researcher/greet warmly", agent: :the_agent }) do |env|
           env.merge(response: "ran")
@@ -115,6 +125,40 @@ RSpec.describe Lain::CLI::ReplMiddleware do
 
         expect(fake.calls).to eq([["researcher", :inherit, "# Greet\nSay hello.\n\n\nwarmly"]])
         expect(result.fetch(:response).text).to eq("child said hi")
+      end
+    end
+
+    # The window is required for the reason the library is: a defaulted book is
+    # a guessed window, and a critique sized to a guess is the over-window
+    # request this keyword exists to stop.
+    it "refuses to build without the window a critique is sized against" do
+      with_project do |root|
+        expect do
+          described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new,
+                                **critique_seams.except(:window))
+        end.to raise_error(ArgumentError, /window/)
+      end
+    end
+
+    it "refuses to build without the outbox a held round is read from" do
+      with_project do |root|
+        expect do
+          described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new,
+                                **critique_seams.except(:outbox))
+        end.to raise_error(ArgumentError, /outbox/)
+      end
+    end
+
+    it "hands the skill dispatch the outbox, window, checkouts and journal it was given" do
+      with_project do |root|
+        seams = critique_seams
+        library = library_for(root)
+        dispatch = described_class.build(library:, role_spawn: ReplMiddlewareStubRoleSpawn.new, **seams).to_a.last
+
+        expect(dispatch.instance_variable_get(:@outbox)).to be(seams[:outbox])
+        expect(dispatch.instance_variable_get(:@critique))
+          .to include(window: seams[:window], checkouts: seams[:checkouts], journal: seams[:journal],
+                      slots: library.slots)
       end
     end
   end

@@ -125,6 +125,15 @@ module Lain
         # @return [Integer, nil]
         def annotation_count = held_session&.annotations&.size
 
+        # WHAT the held round is over, for `/critique`, which reads its hunks and
+        # its head. The changeset and never the session, on {#annotation_count}'s
+        # reason: the session is what a payload is built from.
+        #
+        # nil with nothing held, on {#held_source}'s terms.
+        #
+        # @return [Review::Changeset, nil]
+        def held_changeset = held_session&.changeset
+
         # WHAT the held round concluded, in the session's own word -- or
         # {Verdict::None} while it is still awaiting judgement, and with nothing
         # held at all.

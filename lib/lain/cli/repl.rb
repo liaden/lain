@@ -247,12 +247,51 @@ module Lain
       # whichever produced it. An error from the ask itself is respond's own (it
       # must journal the torn turns), so that path renders and returns nil here.
       # Returns nil ALWAYS, so only a command can hand #converse an action.
+      #
+      # THE WHOLE PHASE IS SUPERVISED, not only the model turn inside it. A
+      # middleware that answers without a turn can run for minutes -- a
+      # critique spawns a child per chunk -- and outside {Conductor#supervise}
+      # every signal routes to `Signals::NULL`, so the human's Ctrl-C reached
+      # nothing. One supervision per line, so a pass-through line's turn is
+      # supervised by it and {#respond} opens no second one.
+      #
+      # A nil response is a STOPPED run: the block always hands back an env or
+      # a refusal, and only a stop leaves the task with no value. The conductor
+      # has already journaled the stop and closed the session, so what is left
+      # is marking the line unfinished.
       def middleware_turn(text)
-        env = @middleware.call({ text:, agent: @agent }) do |inner|
-          inner.merge(response: respond(inner.fetch(:text)))
-        end
+        supervised = supervise_line(text)
+        # The supervisor's own refusal, already said and recorded in full.
+        return if supervised.nil?
+
+        env = supervised.response
+        raise env if env.is_a?(Lain::Error)
+        return deliver(outcome.note(nil)) if env.nil? && supervised.closed?
+
         env.to_h.key?(:response) ? deliver(env.response) : render_missing_response
         nil
+      end
+
+      # A {Lain::Error} raised by the SUPERVISOR itself, outside the task, is
+      # owed the one line an ask's refusal gets, and nothing is left to deliver:
+      # the nil this answers then is {#middleware_turn}'s cue to stop.
+      def supervise_line(text)
+        Sync { |task| @conductor.supervise(task, -> { @agent.timeline }) { middleware_env(text) } }
+      rescue Lain::Error => e
+        Ask.new(agent: @agent, tty: @tty, chronicle: @chronicle).settle(outcome.note(e))
+      end
+
+      # A middleware's own refusal comes OUT of the supervised task as a value,
+      # for {Ask}'s measured reason: raised inside it, Async reports a task that
+      # "ended with an unhandled exception" before the one line the human is
+      # owed. {#middleware_turn} raises it again OUTSIDE, where {#dispatch}
+      # renders it as it always has.
+      def middleware_env(text)
+        @middleware.call({ text:, agent: @agent }) do |inner|
+          inner.merge(response: respond(inner.fetch(:text)))
+        end
+      rescue Lain::Error => e
+        e
       end
 
       # A middleware that short-circuits WITHOUT setting `:response` is a bug in
@@ -265,32 +304,22 @@ module Lain
 
       # The model turn, returned for {#dispatch} to deliver -- never rendered
       # here, so a short-circuiting middleware's response and this one share the
-      # single boundary renderer. The concurrent surfaces an ask needs are
-      # already live: {LineScope} starts them for the whole dispatched line, and
-      # this Sync nests inside that one rather than opening a second set. They
-      # must be concurrent at all because `ask` parks inside ask_human#perform
-      # awaiting a reply from this same terminal, and a single-fiber
-      # ask-then-prompt deadlocks.
+      # single boundary renderer. It runs inside the line's supervision
+      # ({#middleware_turn}), whose task the concurrent surfaces an ask needs are
+      # already live beside: {LineScope} starts them for the whole dispatched
+      # line. They must be concurrent at all because `ask` parks inside
+      # ask_human#perform awaiting a reply from this same terminal, and a
+      # single-fiber ask-then-prompt deadlocks.
       #
       # A TORN ASK IS {Ask}'S, not this method's. It runs the ask too, so a
       # refusal comes back as a VALUE rather than killing the `Async::Task`
-      # {Conductor#supervise} ran it in -- read its class doc for why, because
-      # that reason is measured and is not visible from here. The rescue is not
-      # redundant beside it: a {Lain::Error} raised OUTSIDE the task, by the
-      # supervisor itself, lands here and is owed the same one line. `ask` is
-      # assigned before anything can raise, so the rescue always has one.
-      #
-      # A refused ask reaches {Conductor#supervise}'s `settle` and returns a
-      # {Conductor::Outcome} -- kept qualified, because {Repl::Outcome} is a
-      # sibling here and a bare reference resolves to that one -- where the
-      # raise used to leave through its ensure. So a bust settles exactly as a
-      # completed ask does, which is the more correct of the two.
+      # {Conductor#supervise} ran the line in -- read its class doc for why,
+      # because that reason is measured and is not visible from here. A stopped
+      # ask never returns here at all: the stop unwinds the whole line, and
+      # {#middleware_turn} settles it.
       def respond(text)
         ask = Ask.new(agent: @agent, tty: @tty, chronicle: @chronicle)
-        supervised = Sync { |task| @conductor.supervise(task, -> { @agent.timeline }) { ask.attempt(text) } }
-        ask.settle(outcome.note(supervised.response))
-      rescue Lain::Error => e
-        ask.settle(outcome.note(e))
+        ask.settle(outcome.note(ask.attempt(text)))
       end
 
       # Turns durable before the reply renders: the belt over the chronicle's

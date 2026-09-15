@@ -48,6 +48,12 @@ RSpec.describe "the repl phase's Middleware::Stack" do
     # turns use that grammar, so a bare stub that is never called satisfies it.
     let(:role_spawn) { Object.new }
 
+    # The critique keywords, never reached: nothing here holds a review round.
+    let(:critique_seams) do
+      { outbox: Struct.new(:open?).new(false), checkouts: Object.new, journal: [],
+        window: Lain::CLI::Backend::WindowBook::Served.new(model: "critic-model", window_tokens: 32_768) }
+    end
+
     def with_library
       Dir.mktmpdir { |root| yield Lain::Skill::Library.load(root:) }
     end
@@ -65,7 +71,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
 
     it "holds exactly the skill dispatch middleware when built with no extras" do
       with_library do |library|
-        stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:)
+        stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:, **critique_seams)
 
         expect(stack.to_a).to match([an_instance_of(Lain::Middleware::SkillDispatch)])
       end
@@ -76,7 +82,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
         trace = []
         extras = [around(:a, trace), around(:b, trace)]
 
-        stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:, extras:)
+        stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:, extras:, **critique_seams)
 
         expect(stack.to_a[0, 2]).to eq(extras)
         expect(stack.to_a.last).to be_an_instance_of(Lain::Middleware::SkillDispatch)
@@ -96,7 +102,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
           def call(env, &_app) = env
         end.new
 
-        stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:, extras: [silent])
+        stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:, extras: [silent], **critique_seams)
         result = stack.call({ text: "hi", agent: :the_agent }) { |env| env.merge(response: "ran") }
 
         expect(result.to_h).not_to have_key(:response)
@@ -104,13 +110,13 @@ RSpec.describe "the repl phase's Middleware::Stack" do
     end
 
     it "raises when built without a library, so a defaulted one cannot read the skill tree twice" do
-      expect { Lain::CLI::ReplMiddleware.build(role_spawn:) }
+      expect { Lain::CLI::ReplMiddleware.build(role_spawn:, **critique_seams) }
         .to raise_error(ArgumentError, /library/)
     end
 
     it "raises when built without a role_spawn" do
       with_library do |library|
-        expect { Lain::CLI::ReplMiddleware.build(library:) }
+        expect { Lain::CLI::ReplMiddleware.build(library:, **critique_seams) }
           .to raise_error(ArgumentError, /role_spawn/)
       end
     end

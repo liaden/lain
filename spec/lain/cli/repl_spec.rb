@@ -200,9 +200,18 @@ RSpec.describe Lain::CLI::Repl do
         commands: falls_through, chronicle: Lain::CLI::Chronicle::Null.new,
         tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
                                      history_path: File.join(dir, "history")),
-        replies: instance_double(Lain::CLI::HumanReplies, surfaces: []),
-        conductor: instance_double(Lain::CLI::Conductor, closed?: false)
+        replies: instance_double(Lain::CLI::HumanReplies, surfaces: []), conductor: passing_conductor
       )
+    end
+
+    # Every middleware line is supervised now, so the double runs the block it
+    # is handed and answers the Outcome the real one would for a clean line.
+    def passing_conductor
+      instance_double(Lain::CLI::Conductor, closed?: false).tap do |conductor|
+        allow(conductor).to receive(:supervise) do |*, &line|
+          Lain::CLI::Conductor::Outcome.new(response: line.call, closed: false)
+        end
+      end
     end
 
     def stopping_at(stop_reason)
@@ -1135,6 +1144,240 @@ RSpec.describe Lain::CLI::Repl do
 
     def gated_call
       Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "echo hi" })
+    end
+  end
+
+  # A line no command claims runs its middleware phase UNDER the conductor's
+  # supervision, not only its model turn: a middleware that answers without one
+  # -- `/critique` spawning a child per chunk, `/meta generate` spawning one --
+  # can run for minutes, and outside supervision every signal routes to
+  # `Signals::NULL`. So the human's Ctrl-C reaches it exactly as it reaches a
+  # turn: one arms the grace window, a second (or SIGQUIT, or the window
+  # expiring) stops it and closes the session.
+  #
+  # Real {Repl#run}, real {Conductor}, real {Signals} installed, real OS
+  # signals; only the middleware is a probe. The signal is sent from INSIDE the
+  # parked middleware, so it provably arrives while that middleware runs.
+  describe "a middleware turn under the conductor's supervision" do
+    around do |example|
+      saved = Lain::CLI::Signals::MAP.keys.to_h { |name| [name, Signal.trap(name, "DEFAULT")] }
+      Dir.mktmpdir("lain-repl-supervised") do |dir|
+        @dir = dir
+        example.run
+      end
+    ensure
+      saved.each { |name, handler| Signal.trap(name, handler) }
+    end
+
+    # The session record, as the two writes a stop owes it.
+    let(:chronicle) do
+      Class.new(SimpleDelegator) do
+        def initialize
+          super(Lain::CLI::Chronicle::Null.new)
+          @events = []
+        end
+
+        attr_reader :events
+
+        def interrupted(reason:, **) = tap { @events << [:interrupted, reason] }
+        def close(reason:) = tap { @events << [:close, reason] }
+      end.new
+    end
+
+    let(:out) { StringIO.new }
+    let(:tty) do
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: out, input: StringIO.new,
+                              history_path: File.join(@dir, "history"))
+    end
+    let(:agent) do
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [text_response("a model answer")]),
+                      toolset: Lain::Toolset.new([]), context: Lain::Context.new(model: "m", max_tokens: 64))
+    end
+    let(:log) { [] }
+
+    def clock_returning(*values)
+      seq = values.dup
+      -> { seq.size > 1 ? seq.shift : seq.first }
+    end
+
+    # Answers each line once, then EOF, so the conversation is exactly as long
+    # as the lines given. `supervisions` counts the real #supervise calls.
+    def conductor_over(lines, clock: -> { 1000.0 })
+      @signals = Lain::CLI::Signals.new.install
+      Lain::CLI::Conductor.new(tty:, chronicle:, signals: @signals, grace: 60, clock:, tick: 0.01).tap do |conductor|
+        conductor.define_singleton_method(:read_prompt) { |*| lines.shift }
+        supervisions = @supervisions = []
+        conductor.define_singleton_method(:supervise) do |*args, &block|
+          supervisions << :supervised
+          super(*args, &block)
+        end
+      end
+    end
+
+    def passthrough_commands
+      Struct.new(:nothing) do
+        def dispatch(_text) = yield
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
+
+    def replies_over(conductor)
+      Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                  ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+    end
+
+    # A registry that claims every line itself, the way `/help` is claimed.
+    def claiming_commands
+      Struct.new(:nothing) do
+        def dispatch(_text) = "the help text"
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
+
+    def converse(middleware, conductor, commands: passthrough_commands)
+      Timeout.timeout(20) do
+        Lain::CLI::Repl.new(agent:, tty:, replies: replies_over(conductor), commands:,
+                            chronicle:, conductor:, middleware: Lain::Middleware::Stack.new([middleware]))
+                       .run(nvim: nil, store: nil, session: nil)
+      end
+    ensure
+      @signals&.uninstall
+    end
+
+    # Parks long enough that only a stop ends it early, after sending `signals`
+    # to this process.
+    def parked(*signals)
+      log = self.log
+      Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &_app|
+          log << :entered
+          # A tick first: the run task starts EAGERLY, ahead of the conductor
+          # routing signals to its shutdown, and a human's key arrives later.
+          Async::Task.current.sleep(0.05)
+          signals.each { |name| Process.kill(name, Process.pid) }
+          Async::Task.current.sleep(3)
+          log << :finished
+          env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "late" }],
+                                                 stop_reason: :end_turn))
+        ensure
+          log << :unwound
+        end
+      end.new
+    end
+
+    def answering(text)
+      Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &_app|
+          env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => text }],
+                                                 stop_reason: :end_turn))
+        end
+      end.new
+    end
+
+    def raising(message)
+      Class.new(Lain::Middleware::Base) do
+        define_method(:call) { |_env, &_app| raise Lain::Error, message }
+      end.new
+    end
+
+    it "stops a parked middleware on a double SIGINT, closing the session as interrupted" do
+      conductor = conductor_over(["/park"])
+
+      converse(parked("INT", "INT"), conductor)
+
+      expect(log).to eq(%i[entered unwound])
+      expect(chronicle.events).to eq([%i[interrupted interrupted], %i[close interrupted]])
+      expect(conductor).to be_closed
+    end
+
+    it "stops a parked middleware at once on SIGQUIT" do
+      conductor = conductor_over(["/park"])
+
+      converse(parked("QUIT"), conductor)
+
+      expect(log).to eq(%i[entered unwound])
+      expect(chronicle.events.last).to eq(%i[close interrupted])
+    end
+
+    # arm reads 1000 -> deadline 1060; the next poll reads 1061 -> expired.
+    it "arms the grace window on one SIGINT, and stops the middleware when it expires" do
+      conductor = conductor_over(["/park"], clock: clock_returning(1000.0, 1061.0))
+
+      converse(parked("INT"), conductor)
+
+      expect(log).to eq(%i[entered unwound])
+      expect(chronicle.events).to eq([%i[interrupted grace_expired], %i[close grace_expired]])
+    end
+
+    it "settles a middleware that answers without a turn with no interrupted record, leaving the session open" do
+      conductor = conductor_over(["/answered"])
+
+      converse(answering("answered in the repl phase"), conductor)
+
+      expect(out.string).to include("answered in the repl phase")
+      expect(chronicle.events).to be_empty
+      expect(conductor).not_to be_closed
+      expect(@supervisions).to eq([:supervised])
+    end
+
+    it "renders a middleware's refusal as one line, with no interrupted record and no unhandled-task warning" do
+      conductor = conductor_over(["/refused"])
+      noise = Tempfile.create("lain-repl-supervised-stderr") do |file|
+        saved = $stderr.dup
+        begin
+          $stderr.reopen(file)
+          converse(raising("the middleware refused"), conductor)
+          $stderr.flush
+        ensure
+          $stderr.reopen(saved)
+          saved.close
+        end
+        File.read(file.path)
+      end
+
+      expect(out.string).to include("the middleware refused")
+      expect(noise).not_to include("Task may have ended with unhandled exception")
+      expect(chronicle.events).to be_empty
+    end
+
+    # The middleware here would send a signal if it ran; that it never runs is
+    # the point, so no signal is ever sent.
+    it "never enters the middleware phase or its supervision for a command line such as /help" do
+      conductor = conductor_over(["/help"])
+
+      converse(parked("INT"), conductor, commands: claiming_commands)
+
+      expect(out.string).to include("the help text")
+      expect(@supervisions).to be_empty
+      expect(log).to be_empty
+      expect(chronicle.events).to be_empty
+      expect(conductor).not_to be_closed
+    end
+
+    # The supervisor ITSELF raising -- its fleet drain, say -- is refused in
+    # the one line an ask's refusal gets, and that line is the whole of it: no
+    # middleware-breach report on top, and one torn record rather than two.
+    it "renders a supervisor's own refusal as its one line, with no breach report and one torn record" do
+      conductor = conductor_over(["hello"])
+      conductor.define_singleton_method(:supervise) { |*| raise Lain::Error, "the fleet could not drain" }
+
+      converse(Lain::Middleware::Base.new, conductor)
+
+      expect(out.string.scan("the fleet could not drain").size).to eq(1)
+      expect(out.string).not_to include(Lain::CLI::Repl::MIDDLEWARE_BREACH)
+      expect(chronicle.events).to eq([%i[interrupted torn]])
+    end
+
+    # The model turn a pass-through middleware reaches is supervised by the
+    # SAME supervision as the middleware around it, never a second nested one.
+    it "supervises a line that reaches the model exactly once" do
+      conductor = conductor_over(["hello"])
+
+      converse(Lain::Middleware::Base.new, conductor)
+
+      expect(out.string).to include("a model answer")
+      expect(@supervisions).to eq([:supervised])
+      expect(chronicle.events).to be_empty
     end
   end
 end

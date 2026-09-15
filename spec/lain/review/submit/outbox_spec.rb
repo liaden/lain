@@ -136,6 +136,21 @@ RSpec.describe Lain::Review::Submit::Outbox do
     end
   end
 
+  # WHAT the held round is over, for `/critique`: the changeset itself, which a
+  # critique reads for its hunks and its head. Not the session -- a caller
+  # handed the session could build a payload beside `#submit`.
+  describe "the changeset the held round is over" do
+    it "answers nil with nothing held, on held_source's terms" do
+      expect(outbox.held_changeset).to be_nil
+    end
+
+    it "answers the held session's own changeset" do
+      held
+
+      expect(outbox.held_changeset).to be(session.changeset)
+    end
+  end
+
   # WHETHER THE ROUND IS STILL LIVE, asked of the session this object already
   # holds. It is a forward and not a state: nothing here judges, so nothing here
   # may remember a judgement, and the answer has to keep coming from the one

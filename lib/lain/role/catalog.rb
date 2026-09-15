@@ -61,6 +61,12 @@ module Lain
         # `prompt/templates/role/diff-docent.md` and `role_spec.rb`'s roll call
         # are pinned to each other in both directions (see `review.rb`).
         Role.new(name: :diff_docent, only: %i[read_file list_files glob grep], unattended: true),
+        # {Review::Critique}'s reviewer, one per chunk of a held review. Read-only
+        # and unattended for `diff_docent`'s reasons. The critique lends it a
+        # detached checkout of the reviewed head as its working directory, so a
+        # RELATIVE read lands on committed bytes; the read tools confine no path,
+        # so an absolute one can still reach the project's working tree.
+        Role.new(name: :diff_critic, only: %i[read_file list_files glob grep], unattended: true),
         # Runs a whole issue's plan in one ask: dev's tools, a spawner for the
         # implementers and reviewers, and the renderer that puts the plan's
         # skill in front of it. No chat floor holds either extra name, so only

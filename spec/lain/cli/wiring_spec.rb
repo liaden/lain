@@ -3295,7 +3295,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "is assigned by the time the command surface is assembled" do
       wire
 
-      expect { wiring.send(:assemble_surface, agent: nil, library: nil, tty: nil) }
+      expect { wiring.send(:assemble_surface, agent: nil, library: nil, window: nil, tty: nil) }
         .to raise_error(ArgumentError, /\[:replies, :agent\]/)
     end
 

@@ -50,3 +50,8 @@ require_relative "review/submit"
 # After `changeset`, whose hunks and revisions it reads, and after `records`,
 # whose {Wire} refusals its own guards use while their class bodies run.
 require_relative "review/docent"
+
+# `/critique` over a held round. After `bounds`, whose chunking it sizes, and
+# after `records`, whose {Wire} refusals its record uses while its class body
+# runs. Nothing else in `Review` names it.
+require_relative "review/critique"

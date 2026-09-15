@@ -28,6 +28,10 @@ results = []
 # it, so this demo exercises the same "one read per session" property the live
 # wiring has.
 library = Lain::Skill::Library.load
+# `/critique` over a held review round is the one line these keywords serve,
+# and this demo holds none, so an empty outbox never reaches the rest.
+critique_seams = { outbox: Lain::Review::Submit::Outbox.new, checkouts: nil, journal: Lain::Channel::Null.instance,
+                   window: Lain::ContextWindow.default }
 def check(results, label, passed)
   results << passed
   puts "  #{label.ljust(52)} #{passed ? "ok" : "FAIL"}"
@@ -35,7 +39,7 @@ end
 
 # --- 1. in-line /create-plan expands into the turn text --------------------
 puts "\n/create-plan draft a widget  (in-line, one timeline)"
-inline_stack = Lain::CLI::ReplMiddleware.build(role_spawn: Object.new, library:)
+inline_stack = Lain::CLI::ReplMiddleware.build(role_spawn: Object.new, library:, **critique_seams)
 downstream_text = nil
 inline_stack.call({ text: "/create-plan draft a widget", agent: :session }) do |env|
   downstream_text = env[:text]
@@ -75,7 +79,7 @@ seam = Lain::Skill::RoleSpawn.new(
   journal: Lain::Channel::Null.instance, supervisor: Lain::Supervisor::Null,
   observer: Lain::Event::ChainWriter::Null.new
 )
-role_stack = Lain::CLI::ReplMiddleware.build(role_spawn: seam, library:)
+role_stack = Lain::CLI::ReplMiddleware.build(role_spawn: seam, library:, **critique_seams)
 
 folded = nil
 parent_turn_ran = false

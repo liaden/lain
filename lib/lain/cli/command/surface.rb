@@ -32,7 +32,10 @@ module Lain
         # `/survey` would mask regions this run has already released -- and the
         # path boundary is that same argument one boundary over (ARCHITECTURE.md,
         # "The secret boundary"). A defaulted snapshot slot would answer
-        # "nothing to undo" for a session that has changed files.
+        # "nothing to undo" for a session that has changed files. And `window:`
+        # is the run's window book, which `/critique` over a held round sizes
+        # its chunks against: a defaulted book is a guessed window, and a chunk
+        # sized to a guess is a request past the window the model is served.
         #
         # `cwd:` is the OTHER half of {Lain::Project}: root is the authority
         # boundary, cwd is where a relative path resolves, and a monorepo chat
@@ -42,9 +45,11 @@ module Lain
         # `lain up` gives both panes one `-c`. `root:` stays on its own
         # business: {Meta} reads the project's `.lain/` config from it.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
-                       model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, approvals: nil,
-                       root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null, epic: nil)
+                       model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
+                       approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
+                       epic: nil)
           @role_spawn = role_spawn
+          @window = window
           @goal_driver = goal_driver
           @root = root
           @cwd = cwd
@@ -76,10 +81,22 @@ module Lain
 
         # The repl phase for every line no command claims, over the SAME library
         # /help lists. No `root:`: the snapshot is handed over, so the builder
-        # has nothing left to read from disk.
-        def middleware = @middleware ||= ReplMiddleware.build(role_spawn: @role_spawn, library: @library)
+        # has nothing left to read from disk. The outbox is {#outbox}, the one
+        # `/review` holds its round in, so `/critique` finds that round.
+        def middleware
+          @middleware ||= ReplMiddleware.build(role_spawn: @role_spawn, library: @library, outbox:, window: @window,
+                                               checkouts: critique_checkouts, journal: @env.chronicle.record_journal)
+        end
 
         private
+
+        # Where a critique's children read: checkouts of this project, in the
+        # container every other lain checkout of it lives in, so `lain worktrees
+        # gc` reaps one a killed process left behind.
+        def critique_checkouts
+          Lain::Review::Critique::Checkouts.new(repo_root: @root,
+                                                root: IsolationBackend.worktree_root(@root, paths: Paths.new))
+        end
 
         # What `/implement-epic` drives, resolved HERE rather than in {Wiring}
         # for the reason {ForkPoint} and {TmuxSurface} are built here:

@@ -32,6 +32,9 @@ RSpec.describe Lain::CLI::Command::Surface do
   # the spy answers both -- absence for the occupancy, which is what a chat
   # with no turn honestly has.
   let(:agent) { instance_spy(Lain::Agent, usage: Lain::Usage.zero, occupancy: nil) }
+  # The run's window book, which `/critique` over a held round sizes its chunks
+  # against. Required, so a surface cannot quietly size to a guessed window.
+  let(:window) { Lain::CLI::Backend::WindowBook::Served.new(model: "critic-model", window_tokens: 32_768) }
 
   # `library:` is required, and arrives as ONE keyword: the run loads ONE
   # library and hands it over, so a surface that read its own would be a second
@@ -41,7 +44,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, **epic)
+                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **epic)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -334,6 +337,45 @@ RSpec.describe Lain::CLI::Command::Surface do
 
       expect(seen.fetch(:text)).to start_with("# Greet")
       expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }.text).to include("/greet")
+    end
+  end
+
+  it "refuses to construct without the run's window book, rather than sizing a critique to a guess" do
+    with_project do |root|
+      windowless = lambda do
+        described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
+                            supervisor: Lain::Supervisor::Null, role_spawn:, root:,
+                            chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
+                            status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:)
+      end
+
+      expect { windowless.call }.to raise_error(ArgumentError, /window/)
+    end
+  end
+
+  # IDENTITY again: a `/critique` that read an outbox of its own would find no
+  # round open while `/review` holds one, and fall through to the skill over the
+  # working tree -- the exact read the held-round critique exists to replace.
+  it "hands the skill middleware the ONE outbox /review holds a round in, and the run's window" do
+    with_project do |root|
+      surface = build_surface(root)
+      dispatch = surface.middleware.to_a.last
+
+      expect(dispatch.instance_variable_get(:@outbox)).to be(surface.outbox)
+      expect(dispatch.instance_variable_get(:@critique)).to include(window:, spawn: role_spawn)
+    end
+  end
+
+  # Where a critique's children read: checkouts of THIS project's repository,
+  # under the same per-project container every other lain checkout lives in,
+  # so `lain worktrees gc` finds one a killed process left behind.
+  it "cuts a critique's checkouts from the project root, under lain's worktree container" do
+    with_project do |root|
+      checkouts = build_surface(root).middleware.to_a.last.instance_variable_get(:@critique).fetch(:checkouts)
+
+      expect(checkouts.instance_variable_get(:@repo_root)).to eq(root)
+      expect(checkouts.instance_variable_get(:@root))
+        .to eq(Lain::CLI::IsolationBackend.worktree_root(root, paths: Lain::Paths.new))
     end
   end
 end

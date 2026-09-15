@@ -17,15 +17,23 @@ module Lain
     # role-bound line degrade to a "not wired" message with no error at the
     # wiring site. Either way a forgotten keyword must be a loud ArgumentError.
     #
+    # The critique keywords are required for the same reason. `outbox:` is the
+    # chat's ONE held review, so `/critique` reads the round `/review` opened and
+    # not an outbox of its own; `window:` is the run's window book, and a
+    # defaulted one would size a critique's chunks to a guess. `checkouts:` and
+    # `journal:` are where {Review::Critique} cuts its children's checkout and
+    # records each chunk.
+    #
     # Extras default to none, and are placed AHEAD of the one fixed member so
     # they run outermost, in the order given, wrapping skill dispatch rather
     # than being wrapped by it. An extra that short-circuits without setting
     # `env[:response]` gets no help here: `repl.rb`'s dispatch boundary already
     # renders that fault loudly, for every phase alike.
     module ReplMiddleware
-      def self.build(role_spawn:, library:, extras: [])
+      def self.build(role_spawn:, library:, outbox:, window:, checkouts:, journal:, extras: [])
         skill_dispatch = Middleware::SkillDispatch.new(catalog: library.catalog, renderer: library.renderer,
-                                                       role_spawn:)
+                                                       role_spawn:, outbox:, window:, checkouts:, journal:,
+                                                       slots: library.slots)
         Middleware::Stack.new([*extras, skill_dispatch])
       end
     end

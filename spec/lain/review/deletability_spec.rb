@@ -169,7 +169,7 @@ module DeletionMap
                   "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
                   "spec/lain/cli/command/survey_spec.rb", "spec/lain/seams/survey_subdirectory_spec.rb",
                   "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb",
-                  "spec/lain/cli/command/introspect_spec.rb"],
+                  "spec/lain/cli/command/introspect_spec.rb", "spec/lain/seams/critique_over_held_review_spec.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/submit"'],
         "lib/lain/forge/gh.rb" => ['require_relative "gh/endpoint"'],

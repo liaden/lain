@@ -25,11 +25,26 @@ module Lain
     #
     # Malformed is deliberately NOT rescued here: rescuing it into a silent
     # pass-through would send the broken line to the model verbatim.
+    #
+    # One in-line skill has a second meaning. With a changeset review held,
+    # `/critique` is {Review::Critique} over the held round -- one child per
+    # chunk, reading git objects -- and not a turn over the working tree the
+    # human is still editing. With nothing held it is the skill like any other.
     class SkillDispatch < Base
-      def initialize(catalog:, renderer:, role_spawn:)
+      # The skill a held review round answers itself.
+      CRITIQUE = :critique
+
+      # `outbox:` is the chat's ONE held review, `window:` the run's window book
+      # a critique sizes its chunks against; `checkouts:`, `journal:` and
+      # `slots:` are what {Review::Critique} reads through, records to and
+      # renders its role's prelude from. All required, for the reason every
+      # keyword here is: a defaulted book would size chunks to a guess.
+      def initialize(catalog:, renderer:, role_spawn:, outbox:, window:, checkouts:, journal:, slots:)
         @catalog = catalog
         @renderer = renderer
         @role_spawn = role_spawn
+        @outbox = outbox
+        @critique = { spawn: role_spawn, window:, checkouts:, journal:, slots: }.freeze
         super()
         freeze
       end
@@ -39,6 +54,7 @@ module Lain
         return downstream(env, &app) if invocation.nil?
         return report_role_bound(env, invocation) unless invocation.inline?
         return report_unknown(env, invocation) unless known?(invocation)
+        return report_critique(env, invocation) if held_critique?(invocation)
 
         downstream(env.merge(text: expand(invocation)), &app)
       end
@@ -46,6 +62,16 @@ module Lain
       private
 
       def known?(invocation) = @catalog.names.include?(invocation.skill.to_sym)
+
+      def held_critique?(invocation) = invocation.skill.to_sym == CRITIQUE && @outbox.open?
+
+      # A refusal raises {Review::Critique::Refused}, a {Lain::Error}, so it
+      # reaches the dispatch boundary exactly as an unknown role does.
+      def report_critique(env, invocation)
+        critique = Review::Critique.new(changeset: @outbox.held_changeset, instructions: expand(invocation),
+                                        **@critique)
+        short_circuit(env, critique.call)
+      end
 
       # The rendered scaffold, then the caller's args verbatim after a blank
       # line. An argless invocation is the bare scaffold -- no trailing blank.
