@@ -17,7 +17,7 @@ module Lain
     # exception and runs its own terminal-restoring ensure (probe-verified).
     #
     # The raise targets the thread that constructed the breaker, captured as
-    # `main:` -- the thread that will be sitting in {Frontend::TTY#prompt}.
+    # `main:` -- the thread that will be waiting on {Frontend::InputRail#read}.
     class PromptBreaker
       # Raised into the prompt thread to unblock the readline. An {Interrupt}, not
       # a {StandardError}, so a bare `rescue` or `rescue StandardError` between

@@ -23,12 +23,17 @@ module Lain
       # (`--non-interactive`) makes the seeded question the WHOLE conversation:
       # nothing reads a second line, so the run ends where an attended one would
       # go back to the prompt.
+      #
+      # `input:` is the producer that feeds the conductor's rail, started for
+      # the conversation by {#run} -- {Frontend::StdinPump} for a chat at a
+      # terminal, and nothing for one that reads no line.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
-                     goal_driver: Lain::CLI::GoalDriver::Null, attended: true)
+                     goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle)
         @agent = agent
         @tty = tty
+        @input = input
         @middleware = middleware
         @chronicle = chronicle
         @conductor = conductor
@@ -72,7 +77,9 @@ module Lain
       # not by {#respond} for one ask: a human marking hunks in a review does it
       # between turns, so an ask-scoped consumer answers nothing while they work
       # -- and the rail is their only signal a gesture landed. {ConversationScope}
-      # owns that lifetime, closed by the ensure on every path out.
+      # owns that lifetime, closed by the ensure on every path out. The input
+      # producer lives for the conversation beside it, since every line of it
+      # is read through that one producer.
       #
       # `epic:` is what the editor's lain://status draws, resolved by {Wiring};
       # like `store:` and `session:` it reaches only the frontend built here.
@@ -85,10 +92,13 @@ module Lain
         # answered on.
         @replies.bind_review_editor(frontend)
         @prompt = composed_prompt(frontend)
+        pumping = Lain::Frontend::StdinPump::Idle
         Sync do |task|
           @conversation.open(task)
+          pumping = @input.start(task)
           @tty.run { frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:) }
         ensure
+          pumping.stop
           @conversation.close
         end
       end
@@ -170,11 +180,11 @@ module Lain
 
       # While a goal drives, `you>` never opens, so what the human typed during
       # an iteration -- `/goal off`, above all -- sits unread until the cap. The
-      # terminal is asked for it first, and a whole line joins the held ones.
-      # Only then: with no goal standing the next read is `you>`, which reads
-      # typeahead as the line it is and lets the human still edit it.
+      # rail's producers are asked for it first, and a whole line joins the held
+      # ones. Only then: with no goal standing the next read is `you>`, which
+      # reads typeahead as the line it is and lets the human still edit it.
       def held_line
-        @tty.hold_typed_ahead if @goal_driver.active?
+        @conductor.gather_typed_ahead if @goal_driver.active?
         @replies.take_held
       end
 

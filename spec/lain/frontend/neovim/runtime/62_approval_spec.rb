@@ -189,7 +189,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   describe "the repl's own wiring puts a parked approval in front of the human" do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
-    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, counting_down?: false) }
+    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, counting_down?: false, take_held: nil) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
     # turn. `serves_replies?` is the second half of the command surface's duck:

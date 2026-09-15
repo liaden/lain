@@ -19,8 +19,8 @@ module PlainChatPromptGuards
   LIB = File.expand_path("../../../lib", __dir__)
   APPROVAL = %r{\[y/N\] }
 
-  # The chat under test: a real Conductor, TTY, HumanReplies, approval surfaces
-  # and Approval::Queue. The one fake is the command registry's fallthrough,
+  # The chat under test: a real Conductor, TTY, InputRail and the StdinPump
+  # feeding it, HumanReplies, approval surfaces and Approval::Queue. The one fake is the command registry's fallthrough,
   # which claims every line so no model is involved: the first line parks one
   # gated call once the spec says the human has finished typing ahead.
   #
@@ -39,8 +39,10 @@ module PlainChatPromptGuards
     queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: window)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
+    rail = Lain::Frontend::InputRail.new(screen: tty)
     conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
-                                         signals: Lain::CLI::Signals.new, grace: 5)
+                                         signals: Lain::CLI::Signals.new, rail:, grace: 5)
+    pump = Lain::Frontend::StdinPump.new(rail:, screen: tty)
     askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
 
@@ -79,7 +81,8 @@ module PlainChatPromptGuards
     end.new(queue, dir, askers)
 
     if shape != "cockpit"
-      Sync do
+      Sync do |task|
+        pump.start(task)
         Lain::CLI::Repl.new(agent: Struct.new(:timeline).new(nil), tty:, replies:, commands:,
                             chronicle: Lain::CLI::Chronicle::Null.new, conductor:, approvals: queue)
                        .converse(first_prompt: { "plain" => "run the tests", "human" => "ask me" }[shape])
@@ -100,7 +103,10 @@ module PlainChatPromptGuards
       )
       replies.bind_commands(Lain::CLI::Command::Registry.new([approve, Lain::CLI::Command::Inbox.new])
                                                         .bind(Struct.new(:approvals, :replies).new(queue, replies)))
-      Sync { Lain::CLI::Repl::LineScope.new(replies:, surfaces:).serve { commands.dispatch("run the tests") } }
+      Sync do |task|
+        pump.start(task)
+        Lain::CLI::Repl::LineScope.new(replies:, surfaces:).serve { commands.dispatch("run the tests") }
+      end
     end
   RUBY
 
@@ -473,28 +479,30 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     end
   end
 
-  # A `[y/N]` still waiting on the one read lock -- a `human>` holds it -- when
-  # the approval window decides its call never drew a prompt, so there is no
-  # line to end: a sentence printed for it would land inside the read that is
-  # open, naming no call.
+  # A `[y/N]` still waiting its turn on the rail -- a `human>` is published
+  # ahead of it -- when the approval window decides its call was never
+  # published, so there is no line to end: a sentence printed for it would land
+  # inside the read that is open, naming no call.
   describe "a prompt decided while it still waited behind another read" do
     it "ends no line, because it drew none" do
       output = StringIO.new
-      tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new("never read\n"),
-                                    history_path: File::NULL, pastel: Pastel.new(enabled: false))
+      tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, history_path: File::NULL,
+                                    pastel: Pastel.new(enabled: false))
+      rail = Lain::Frontend::InputRail.new(screen: tty)
       journal_io = StringIO.new
       queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 0.3)
       policy = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new,
-                                                  reader: ->(prompt) { tty.prompt_afresh(prompt) })
+                                                  reader: ->(prompt) { rail.read(:approval, prompt) })
 
       Sync do |task|
-        human = task.async { Lain::Frontend::LineEditor.exclusively { task.sleep(1.0) } }
+        human = task.async { rail.read(:human, "human> ") }
+        pumped_until(task) { rail.published.kind == :human }
         watcher = task.async { policy.watch(queue) }
         call = Lain::Effect::ToolCall.new(tool_use_id: "call_1", name: "bash", input: { "command" => "rm -rf build" })
         task.async { queue.call(call, nil) }.wait
         settle_for(task, 0.05)
         watcher.stop
-        human.wait
+        human.stop
       end
 
       expect(output.string).not_to include("decided by")

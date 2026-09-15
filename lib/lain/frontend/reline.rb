@@ -77,9 +77,9 @@ module Lain
       class KeyTaken < Lain::Error; end
 
       # Every read in the process holds this, and so does whatever must happen
-      # BETWEEN reads: {TTY#prompt_afresh} switches the terminal raw to drain
-      # typeahead, which run beside an open read would take the bytes that read
-      # is waiting on. lain's own rather than Reline's, whose `@mutex` is an ivar
+      # BETWEEN reads: {StdinPump} switches the terminal raw to drain typeahead,
+      # which run beside an open read would take the bytes that read is waiting
+      # on. lain's own rather than Reline's, whose `@mutex` is an ivar
       # of a stdlib object this seam does not reach into; every reader goes
       # through {#read}, so holding this is holding the one line editor.
       READS = Mutex.new

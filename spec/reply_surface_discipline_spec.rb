@@ -309,3 +309,105 @@ RSpec.describe "reply-surface discipline" do
     expect(ReplySurfaceDiscipline::Scanner.new("probe.rb").scan(source).map(&:name)).to eq(["prompt"])
   end
 end
+
+# The other half of the terminal rule, and the mechanical half of the input
+# rail: on the chat path ONE object reads the process's stdin, and every prompt
+# reaches the chat as a line that object put on the rail. A second reader is
+# not a race to arbitrate but a defect to find, so the scan looks for every
+# route to the terminal's bytes -- the stream itself, a line editor, and the
+# typeahead sweep that drains the kernel beneath one -- rather than for reads
+# that happen to look like reads.
+module StdinReaders
+  LIB = Pathname(__dir__).join("..", "lib", "lain").expand_path
+
+  # The producer, and the line editor it alone runs.
+  READERS = %w[frontend/stdin_pump.rb frontend/reline.rb].freeze
+
+  # `lain epic submit` asks its own question at its own terminal, with no chat
+  # and no rail behind it.
+  OUTSIDE_THE_CHAT = %w[cli/epic_submit.rb].freeze
+
+  # By the Ripper token each is spelled with: the stream, the gate beneath the
+  # line editor, and the two calls that take bytes through it.
+  NAMES = { :@gvar => %w[$stdin], :@const => %w[STDIN IOGate], :@ident => %w[readmultiline typed_ahead] }.freeze
+
+  # A route to stdin, found by syntax rather than text so a comment naming one
+  # is not one.
+  Route = Struct.new(:path, :line, :name) do
+    def to_s = "#{path}:#{line} -> #{name}"
+  end
+
+  module_function
+
+  def routes(source, path)
+    walk(Ripper.sexp(source) || raise("could not parse #{path}"), path)
+  end
+
+  def walk(node, path)
+    return [] unless node.is_a?(Array)
+
+    [*route(node, path), *node.flat_map { |child| walk(child, path) }]
+  end
+
+  # A stream or an editor named, or a line editor built -- `LineEditor.new` is
+  # a reader in waiting.
+  def route(node, path)
+    named = named(node)
+    built = built(node)
+    return [Route.new(path, named.dig(2, 0), named[1])] if named
+    return [Route.new(path, built.dig(2, 0), "LineEditor.new")] if built
+
+    []
+  end
+
+  def named(node)
+    node if NAMES.fetch(node[0], []).include?(node[1])
+  end
+
+  def built(node)
+    node[3] if node[0] == :call && node.dig(1, 1, 1) == "LineEditor" && node.dig(3, 1) == "new"
+  end
+
+  def chat_path
+    %w[cli frontend].flat_map { |unit| LIB.glob("#{unit}/**/*.rb") }
+                    .map { |file| file.relative_path_from(LIB).to_s }
+                    .reject { |path| READERS.include?(path) || OUTSIDE_THE_CHAT.include?(path) }
+  end
+
+  def offenders = chat_path.flat_map { |path| routes(LIB.join(path).read, path) }
+end
+
+RSpec.describe "one reader of stdin on the chat path" do
+  it "finds no route to the process's stdin outside Frontend::StdinPump and the line editor it runs" do
+    expect(StdinReaders.offenders).to be_empty, lambda {
+      "Only Frontend::StdinPump reads stdin in a chat; everything else takes lines from the " \
+        "InputRail it feeds. Found:\n#{StdinReaders.offenders.map { |route| "  #{route}" }.join("\n")}"
+    }
+  end
+
+  it "sees every route it names, so an empty listing means none rather than a blind scan (self-test)" do
+    source = <<~RUBY
+      # $stdin and STDIN in a comment
+      class Probe
+        USAGE = "readmultiline"
+        def a = $stdin.gets
+        def b = STDIN.read
+        def c = ::Reline::IOGate.getc(0)
+        def d = LineEditor.typed_ahead(@input)
+        def e = ::Reline.readmultiline("> ", true) { true }
+        def f = LineEditor.new(vi_mode: -> { false })
+      end
+    RUBY
+
+    expect(StdinReaders.routes(source, "probe.rb").map(&:name))
+      .to eq(%w[$stdin STDIN IOGate typed_ahead readmultiline LineEditor.new])
+  end
+
+  it "reads the pump and its editor, which the scan exempts, as the readers they are (self-test)" do
+    readers = StdinReaders::READERS.flat_map do |path|
+      StdinReaders.routes(StdinReaders::LIB.join(path).read, path)
+    end
+
+    expect(readers.map(&:path).uniq).to match_array(StdinReaders::READERS)
+  end
+end

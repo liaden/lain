@@ -294,14 +294,14 @@ RSpec.describe Lain::Frontend::TTY do
   end
 
   describe "tearing the menu down" do
+    # The prompt as the pump draws it: bracketed by the terminal, which owns the
+    # menu drawn under it.
     it "erases the menu once the prompt it was drawn under has been submitted" do
-      allow(Reline).to receive(:readmultiline).and_return("hello")
-
       Dir.mktmpdir do |dir|
         prompting(dir) do |tty|
           Lain::Frontend::Completion.current.call("@tty")
           output.truncate(output.rewind)
-          tty.prompt("> ")
+          tty.drawing(-> { false }) { "hello" }
           channel.close
         end
       end
@@ -313,14 +313,12 @@ RSpec.describe Lain::Frontend::TTY do
     # CLI::PromptBreaker raises Interrupt into the prompt thread, and completion's
     # dispatch deliberately lets Interrupt through.
     it "erases the menu when the prompt is interrupted rather than answered" do
-      allow(Reline).to receive(:readmultiline).and_raise(Interrupt)
-
       Dir.mktmpdir do |dir|
         expect do
           prompting(dir) do |tty|
             Lain::Frontend::Completion.current.call("@tty")
             output.truncate(output.rewind)
-            tty.prompt("> ")
+            tty.drawing(-> { false }) { raise Interrupt }
           end
         end.to raise_error(Interrupt)
       end

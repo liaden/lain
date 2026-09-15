@@ -245,16 +245,16 @@ RSpec.describe "a critique of a held review", :seam do
   end
 
   # The terminal the human types at, holding the round into the chat's own
-  # outbox just before the first line is read.
+  # outbox just before the first prompt is drawn.
   def tty_factory(output, holds)
     history_path = File.join(@root, "history")
     lambda do |channel:, **|
       Class.new(Lain::Frontend::TTY) do
-        define_method(:prompt) do |text = "> "|
+        define_method(:print_prompt) do |text|
           holds.shift&.call
           super(text)
         end
-      end.new(channel:, output:, input: StringIO.new("/critique\nquit\n"), history_path:)
+      end.new(channel:, output:, history_path:)
     end
   end
 
@@ -265,7 +265,8 @@ RSpec.describe "a critique of a held review", :seam do
     project = Lain::Project.new(root: @repo, cwd: @repo, kind: :project, detected_by: :flag)
     @wiring = Lain::CLI::Wiring.new(options: { grace: }, chronicle: Lain::CLI::Chronicle::Null.new, project:,
                                     tty_factory: tty_factory(output, holds),
-                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                                    stdin: StringIO.new("/critique\nquit\n"))
     holds << -> { held_outbox(@wiring.command_surface.outbox) }
     backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: }, mock: provider)
     Timeout.timeout(60) { @wiring.run(backend:, resumed: nil, nvim: nil) }

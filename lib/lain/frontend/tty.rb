@@ -22,13 +22,16 @@ module Lain
     #    thread -- rendering each attributed {Lain::Telemetry} as it arrives. This
     #    is the consumer whose existence keeps the Channel's blocking backpressure
     #    (see Channel's doc) from ever deadlocking a producer.
-    # 2. {#prompt} and {#render_response} are the synchronous half: reading the
-    #    next line from the human and printing the model's finished turn. These
-    #    do NOT go through the Channel -- Agent#ask already returns the whole
-    #    Response synchronously, so routing it through the Channel would buy
-    #    nothing but a second protocol for the same information. The Channel
-    #    exists for things that arrive concurrently WHILE a call is still
-    #    running (a bash tool's live stdout); a finished Response is not that.
+    # 2. {#render_response} and the prompt's drawing are the synchronous half:
+    #    composing the prompt {StdinPump} reads a line at, and printing the
+    #    model's finished turn. These do NOT go through the Channel --
+    #    Agent#ask already returns the whole Response synchronously, so routing
+    #    it through the Channel would buy nothing but a second protocol for the
+    #    same information. The Channel exists for things that arrive
+    #    concurrently WHILE a call is still running (a bash tool's live stdout);
+    #    a finished Response is not that. This class reads nothing: the pump
+    #    does, and a note that arrives while it has a prompt drawn is held until
+    #    that prompt closes ({Notes}).
     #
     # Deliberately MINIMAL -- an alternate-screen chat surface over
     # `tty-screen`/`tty-cursor`/`pastel`, with stdlib `reline` doing line
@@ -48,16 +51,18 @@ module Lain
       HELD = "held as your next prompt: %s"
       DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"
 
-      # A read that was not the answer -- the rest of a drained line, or a line
-      # the prompt does not take -- after which the prompt opens again
-      # ({#read_past_typeahead}).
-      UNFINISHED = Object.new.freeze
-
       NO_LAYERS = -> { Mode::LayerSet.empty }
+
+      # The countdown's key source when nothing lends one: no terminal, so the
+      # countdown draws a plain line and reads no key.
+      module NoKeys
+        def self.tty? = false
+      end
 
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param output [#print, #puts, #flush] default $stdout, a StringIO in specs
-      # @param input [#gets, #tty?] default $stdin, a StringIO in specs
+      # @param input [#tty?, #read_nonblock] the countdown's key source
+      #   ({StdinPump.keys}, lent by the one reader of stdin); none by default
       # @param pastel [Pastel] the raw palette, still handed to the nested
       #   collaborators below
       # @param theme [Frontend::Theme] the named style vocabulary this class
@@ -98,7 +103,7 @@ module Lain
       #   spec completes against a fixture tree rather than the real cwd.
       #   Only the sources are injectable, not the {Completion} around them:
       #   the theme and the screen are this class's to hand over
-      def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
+      def initialize(channel:, output: $stdout, input: NoKeys, pastel: Pastel.new(enabled: output.tty?),
                      theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: RunClock::MONOTONIC,
@@ -107,17 +112,15 @@ module Lain
                      completion_sources: Completion::Sources.new)
         @channel = channel
         @output = output
-        @input = input
         @pastel = pastel
         @theme = theme
-        build_prompt_stack(prompt_renderer:, vi_mode: -> { layers.call.include?(:vi) }, history_path:)
+        @layers = layers
+        build_prompt_stack(prompt_renderer:, history_path:)
         @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
-        @typeahead = Typeahead.new(input:)
-        @unfinished = Typeahead::NOTHING
-        @held = []
+        @notes = Notes.new(output:, writer: @countdown)
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
         # writing to the screen while the prompt is live.
@@ -158,86 +161,64 @@ module Lain
         exit_alternate_screen
       end
 
-      # Read one line from the human, with reline's editing and history when
-      # `input` is a real terminal. A non-tty `input` (a spec's StringIO, or a
-      # pipe) reads a plain line instead -- reline's line editor requires a
-      # real terminal (it calls `IO#winsize`) and has no business running
-      # against a StringIO in a unit spec.
+      # The prompt as the line editor is handed it: {Warmth}'s cache glyph -- a
+      # per-prompt SNAPSHOT of {StatusFeed}'s published deadline, since Reline
+      # fixes its prompt string for the whole wait -- then the painted words,
+      # composed by {PromptComposer}. Everything the rendering puts ABOVE the
+      # editor's line is printed here, because Reline's prompt is one line and
+      # it mangles a newline into a literal backslash-n rather than wrapping.
       #
-      # The read goes through {Frontend::LineEditor}, so a line ending in a
-      # backslash continues and the human's next line joins it: what arrives
-      # here is one message, however many lines they typed. vi COMMAND
-      # mode is the one exception -- Enter submits there regardless; see
-      # {Frontend::LineEditor}'s comment for why that is not worked around.
+      # A non-tty `output` gets no glyph, gated separately from `@pastel`'s own
+      # disabled-when-non-tty styling because the glyph is plain text rather
+      # than an escape Pastel would strip.
       #
-      # The interactive path is also where {Warmth} prepends a cache-warmth
-      # glyph -- a per-prompt SNAPSHOT of {StatusFeed}'s published deadline. A
-      # snapshot deliberately: Reline fixes its prompt string for the whole
-      # wait, so there is no mid-wait refresh to build, and tmux's status-right
-      # is where live ticking lives. A non-tty `output` gets no glyph, gated
-      # separately from `@pastel`'s own disabled-when-non-tty styling because
-      # the glyph is plain text rather than an escape Pastel would strip.
-      #
-      # @return [String, nil] the line, or nil at EOF (Ctrl-D / closed input)
-      def prompt(text = "> ")
-        return read_line_with_history(text) if @input.respond_to?(:tty?) && @input.tty?
+      # @return [String] the one line the editor draws
+      def compose(text) = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}").editor_line(@output)
 
+      # A prompt with no line editor under it -- a stream that is not a terminal.
+      def print_prompt(text)
         @output.print(text)
         @output.flush
-        line = @input.gets
-        line&.chomp
       end
 
-      # The read an ANSWER is typed at -- `human>`, `[y/N]` -- where {#prompt} is
-      # the read a prompt is typed at. Between reads the terminal is cooked with
-      # echo on, so a line typed while a turn dispatched sits in the kernel and
-      # the next raw reader took it as its own: a prompt became a human's denial
-      # the instant a `[y/N]` appeared. So nothing typed before the prompt drew
-      # answers it ({#read_past_typeahead}), and the drain runs under
-      # {LineEditor.exclusively} with the read, never beside another one.
+      # Bracket a drawn prompt: while the block runs, and while `open` answers
+      # that its prompt is still published, a note is held ({Notes}), and the
+      # held notes print as the block ends.
       #
+      # The completion menu is torn down HERE rather than by the key action that
+      # drew it: a menu belongs to the prompt it was drawn under. In an `ensure`
+      # because a prompt has THREE exits -- a submitted line, EOF, and the
+      # {CLI::PromptBreaker} Interrupt {LineEditor}'s dispatch deliberately lets
+      # through, which unwinds straight past a trailing statement.
+      def drawing(open, &block)
+        @notes.drawing(open, &block)
+      ensure
+        @completion.clear
+      end
+
+      # `reline(…, true)` already feeds an accepted line into the in-memory
+      # `Reline::HISTORY`; {History#append} durably appends it too.
+      def remember(line) = @history.append(line)
+
+      # Whether the `vi` layer is up at this read.
+      def vi? = @layers.call.include?(:vi)
+
+      # A line the human typed that was neither a command nor an answer, kept
+      # for `you>` ({InputRail#hold}) -- said, since a line nobody was told about
+      # reads as swallowed.
+      def render_held(line) = render_warning(format(HELD, legible(line)))
+
+      def render_discarded(partial) = render_warning(format(DISCARDED, legible(partial)))
+
       # A read stopped under a prompt it DREW -- the call decided elsewhere --
       # ends that line in words, when the prompt has any ({ApprovalPolicy::Asked}),
-      # asked by message as {Inbox} asks a question for its summary. One stopped
-      # while still waiting on the lock drew nothing, so there is no line to end.
+      # asked by message as {Inbox} asks a question for its summary.
       #
-      # @return [String, nil] the line, or nil at EOF
-      def prompt_afresh(text)
-        state = :waiting
-        LineEditor.exclusively do
-          state = :drawn
-          answer_past_typeahead(text).tap { state = :answered }
-        end
-      ensure
-        close_prompt(text) if state == :drawn
-      end
-
-      # Keep a line the human typed that was neither a command nor an answer
-      # for `you>`, and say so -- a line nobody was told about reads as
-      # swallowed. Held HERE, on the terminal it was typed at, which outlives
-      # the dispatched line it was typed during: a Ctrl-C stops that line's
-      # fibers without taking the text with it.
-      def hold(line)
-        @held << line
-        render_warning(format(HELD, legible(line)))
-      end
-
-      # The oldest held line, or nil when nothing is held, in the order typed.
-      def take_held = @held.shift
-
-      # What the human has typed while no read was open -- a standing goal
-      # drives turns with no prompt drawn -- asked for without opening one, and
-      # under {LineEditor.exclusively} so it never runs beside a read. Each whole
-      # line is held ({#hold}). A line still being typed is nobody's yet: it is
-      # kept, and the next read starts from it -- typed back into the line editor
-      # at a prompt, joined to what follows at an answer's prompt -- so it is
-      # neither run half-typed nor lost.
-      def hold_typed_ahead
-        LineEditor.exclusively do
-          typed = @typeahead.drain(@unfinished)
-          typed.lines.each { |line| hold(line) }
-          @unfinished = typed
-        end
+      # It runs as a read is being stopped, where a raise -- the terminal gone --
+      # would replace the stop that is climbing.
+      def close_prompt(text)
+        text.closed { |note| render_warning(note) } if text.respond_to?(:closed)
+      rescue StandardError
         nil
       end
 
@@ -280,8 +261,13 @@ module Lain
       #   placeholder standing in for a name nobody supplied.
       #
       # While the `notify` layer is up the arrival also rings ({Bell}).
+      #
+      # A note held behind a drawn prompt still rings at once: the bell and the
+      # tmux message are how the human hears of it while they type.
       def render_arrival(question, from: nil)
-        @bell.ring(@inbox.arrival(question, from:))
+        note = @inbox.arrival(question, from:)
+        noted { @inbox.announce(note) }
+        @bell.ring(note)
       end
 
       # A line that summons the human rather than informs them -- a cockpit's
@@ -309,13 +295,12 @@ module Lain
       #
       # @param items [Enumerable<#question>] the pending set to list, each
       #   answering to `#question`, `#from` and `#asked_at`
-      # @param reader [#call] reads one line; injectable so a countdown ticker's
-      #   ownership of stdin isn't raced (see exe/lain's approval_surface
-      #   comment) -- defaults to the plain prompt read
+      # @param reader [#call] reads one line -- the conductor's reply read, so
+      #   the answer comes off the rail like every other line
       # @param answering [#question] the item this drain answers -- the oldest
       #   listed by default, which is what `/inbox` at `you>` means, and the
       #   parked item when a reply prompt drains mid-ask
-      def drain_inbox(items, reader: method(:prompt), answering: items.first, &on_answer)
+      def drain_inbox(items, reader:, answering: items.first, &on_answer)
         @inbox.drain(items, reader:, answering:, &on_answer)
       end
 
@@ -352,33 +337,14 @@ module Lain
         @countdown.stop
       end
 
-      private
+      # The frontend's ONE-LINE note seam, and the palette stays in TTY proper.
+      # Callers: a collaborator's degraded-path warning ({History}'s and
+      # {Completion}'s `notify:`), the line editor the pump runs, and the run's
+      # line to the human ({CLI::Wiring#told}), which is how `request_review`
+      # says a file is waiting on them now that no desktop surface does.
+      def render_warning(message) = render_line(:warning, message)
 
-      # `reline(…, true)` already feeds an accepted line into the in-memory
-      # `Reline::HISTORY`; {History#append} durably appends it too.
-      #
-      # The bare prompt this class builds -- warmth glyph plus painted text --
-      # is what {PromptComposer} composes, and what it falls back to when a
-      # renderer raises. Everything the rendering puts ABOVE the editor's line is
-      # printed here, because Reline's prompt is one line and it mangles a
-      # newline into a literal backslash-n rather than wrapping.
-      #
-      # The completion menu is torn down HERE rather than by the key action that
-      # drew it: a menu belongs to the prompt it was drawn under. In an `ensure`
-      # because a prompt has THREE exits -- a submitted line, EOF, and the
-      # {CLI::PromptBreaker} Interrupt {LineEditor}'s dispatch deliberately lets
-      # through, which unwinds straight past a trailing statement.
-      def read_line_with_history(text)
-        composed = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}")
-        line = LineEditor.exclusively do
-          @typeahead.type_back(take_unfinished)
-          @line_editor.read(composed.editor_line(@output))
-        end
-        @history.append(line) if line
-        line
-      ensure
-        @completion.clear
-      end
+      private
 
       # Empty string, never nil, when `output` is not a real terminal or
       # {StatusFeed} has published nothing yet: concatenation with "" is a no-op,
@@ -389,74 +355,22 @@ module Lain
         @warmth.prefix(@pastel)
       end
 
-      # The frontend's ONE-LINE note seam, and the palette stays in TTY proper.
-      # Two callers, one shape: a collaborator's degraded-path warning
-      # ({History}'s and {Completion}'s `notify:`), and the run's line to the
-      # human ({CLI::Wiring#told}), which is how `request_review` says a file is
-      # waiting on them now that no desktop surface does.
-      def render_warning(message) = render_line(:warning, message)
-
       # One themed line, printed and flushed -- a forgotten flush is invisible
       # until it is not. {#render_question} is deliberately NOT folded in: it
       # prints two lines under one flush, and routing it through here would cost
       # an extra flush per question.
       def render_line(token, text)
-        @output.puts(@theme.paint(token, text))
-        @output.flush
-      end
-
-      def answer_past_typeahead(text)
-        Enumerator.produce { read_past_typeahead(text) }.lazy.reject { |read| read.equal?(UNFINISHED) }.first
-      end
-
-      # One read, with what was typed ahead swept twice: before it opens, and
-      # again as it is about to draw, past Reline's cursor-position query --
-      # bytes arriving while that waits for its reply were typed before the
-      # prompt appeared. The second sweep continues the first, so a line begun
-      # before the read and ended during the query is one line.
-      #
-      # A line the human was still typing when the prompt drew is not an answer
-      # at either end: judged alone, "Say " then "yes" approved. So the first
-      # line the prompt reads is the rest of it -- joined, held whole, and the
-      # prompt opens again, empty. A line the prompt does not take is held and
-      # asked again the same way ({ApprovalPolicy::Asked#takes?}).
-      def read_past_typeahead(text)
-        typed = put_aside(@typeahead.drain(take_unfinished))
-        line = LineEditor.before_first_draw(-> { typed = put_aside(@typeahead.drain(typed), noted: typed) }) do
-          prompt(text)
+        noted do
+          @output.puts(@theme.paint(token, text))
+          @output.flush
         end
-        return line if line.nil? || (!typed.unfinished? && takes?(text, line))
-
-        hold("#{typed.partial}#{line}")
-        UNFINISHED
       end
 
-      # Asked of the prompt by message, as {#close_prompt} asks it for its
-      # closing line: a `[y/N]` says a `/command` is no answer to it, while
-      # `human>` takes every line and classifies its commands itself.
-      def takes?(text, line) = !text.respond_to?(:takes?) || text.takes?(line)
-
-      # The line {#hold_typed_ahead} kept, handed to exactly one read.
-      def take_unfinished = @unfinished.tap { @unfinished = Typeahead::NOTHING }
-
-      # `noted` is the sweep already said, whose unfinished line is not said twice.
-      def put_aside(typed, noted: Typeahead::NOTHING)
-        typed.lines.each { |line| hold(line) }
-        render_warning(format(DISCARDED, legible(typed.partial))) if typed.unfinished? && typed.partial != noted.partial
-        typed
-      end
+      def noted(&block) = @notes.note(&block)
 
       # The human's own bytes, said back: a control character they typed ahead
       # -- a Ctrl-D, a paste bracket -- is shown rather than sent to the screen.
       def legible(text) = text.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
-
-      # It runs in the ensure of a read being stopped, where a raise -- the
-      # terminal gone -- would replace the stop that is climbing.
-      def close_prompt(text)
-        text.closed { |note| render_warning(note) } if text.respond_to?(:closed)
-      rescue StandardError
-        nil
-      end
 
       # The background render loop: blocking drain of the Channel so live tool
       # output (a running bash command's stdout) renders as it arrives rather
@@ -519,15 +433,14 @@ module Lain
 
       private
 
-      # The three collaborators {#read_line_with_history} drives, in the order it
-      # drives them: compose the prompt string, read a line with it, durably
-      # record what was accepted. Placed HERE, beside the collaborators it
-      # builds, because this block is where the parts that are not "owning the
-      # terminal" live. They share a `notify:` because a degraded collaborator
-      # reports through the frontend's one warning line.
-      def build_prompt_stack(prompt_renderer:, vi_mode:, history_path:)
+      # The two collaborators a drawn prompt uses on either side of the pump's
+      # read: compose the prompt string, durably record what was accepted.
+      # Placed HERE, beside the collaborators it builds, because this block is
+      # where the parts that are not "owning the terminal" live. They share a
+      # `notify:` because a degraded collaborator reports through the
+      # frontend's one warning line.
+      def build_prompt_stack(prompt_renderer:, history_path:)
         @composer = PromptComposer.new(theme: @theme, renderer: prompt_renderer, notify: method(:render_warning))
-        @line_editor = LineEditor.new(vi_mode:, notify: method(:render_warning))
         @history = History.new(path: history_path, notify: method(:render_warning))
       end
 
@@ -672,10 +585,12 @@ module Lain
         #
         # @return [String] the note, unpainted, for whatever else announces it
         def arrival(question, from: nil)
-          note = Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{POINTER}")
+          Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{POINTER}")
+        end
+
+        def announce(note)
           @output.puts(@pastel.yellow(note))
           @output.flush
-          note
         end
 
         # List, print the document of the set being answered, read one answer
@@ -911,57 +826,96 @@ module Lain
         end
       end
 
-      # What the human typed before a read opened, taken off the terminal
-      # without being read AS anything ({LineEditor.typed_ahead}), and sorted
-      # into the lines they finished and the one they had not. `IO#iflush`
-      # would discard the bytes unseen; the human is owed them back.
-      class Typeahead
-        LINE_END = /\r\n|\r|\n/
+      # The notes that arrive while a prompt is drawn: HELD, and printed in the
+      # order they arrived the moment that prompt closes, before the next one
+      # draws. A note never interrupts the line editor's read, so what the human
+      # is typing -- its text, its cursor, vi's mode -- is never touched and the
+      # prompt never torn. The live surface for an arrival is the input pane.
+      #
+      # Two notes print at once rather than wait. One from inside the read
+      # itself -- a sweep in the pre-input hook, a key action -- is the editor's
+      # own. One for a prompt already withdrawn is its closing line, printed by a
+      # reader that is unwinding. Both land while the line editor holds the
+      # terminal raw, where a newline does not return the carriage, so it is
+      # returned by hand.
+      class Notes
+        # A prompt being drawn: whether it is still published, and the fiber
+        # whose read draws it.
+        Drawn = Struct.new(:open, :reader)
 
-        # A key typed rather than text: an escape sequence such as an arrow
-        # key's `\e[A` or `\eOA`, or a bare escape.
-        KEY_SEQUENCE = /\e(?:\[[\d;?]*[@-~]|O.)?/
+        # No prompt drawn: nothing holds a note, and nothing holds the terminal raw.
+        UNDRAWN = Drawn.new(-> { false }, nil).freeze
 
-        # Whole lines and whatever followed the last line end, keeping only
-        # what says something: Enter is what a human presses at a prompt that
-        # appears mid-stream, and an arrow key typed ahead is not the start of
-        # a line the next answer should be joined to.
-        Typed = Data.define(:lines, :partial) do
-          def self.from(bytes)
-            *lines, partial = bytes.b.force_encoding(Encoding::UTF_8).scrub.split(LINE_END, -1)
-            new(lines: lines.select { |line| said?(line) }.freeze, partial: (said?(partial.to_s) ? partial : "").freeze)
+        # A prompt left drawn while a fleet keeps arriving holds the newest this
+        # many, and says how many older ones went.
+        LIMIT = 200
+        DROPPED = "%d earlier notes were dropped while the prompt was drawn"
+
+        # @param output [#print] the terminal
+        # @param writer [#writing] the one writer lock the countdown and the
+        #   completion menu share
+        def initialize(output:, writer:)
+          @output = output
+          @writer = writer
+          @guard = Mutex.new
+          @held = []
+          @dropped = 0
+          @drawn = UNDRAWN
+          @row_open = false
+        end
+
+        # A read that returns has ended its own row. One stopped under a prompt
+        # withdrawn with no closing words has not, so the notes it held start a
+        # row of their own.
+        def drawing(open)
+          @guard.synchronize do
+            @drawn = Drawn.new(open, Fiber.current)
+            @row_open = true
           end
-
-          def self.said?(text) = !Blankness.blank?(text.gsub(KEY_SEQUENCE, "").gsub(/[[:cntrl:]]/, ""))
-
-          def unfinished? = !partial.empty?
+          yield.tap { @guard.synchronize { @row_open = false } }
+        ensure
+          @guard.synchronize { @drawn = UNDRAWN }
+          flush
         end
 
-        NOTHING = Typed.new(lines: [].freeze, partial: "")
+        # @return [void]
+        def note(&print)
+          return if @guard.synchronize { holding?.tap { |held| hold(print) if held } }
 
-        # @param input [IO] the terminal; anything that is not one -- a spec's
-        #   StringIO, a pipe -- has no typeahead to tell from input
-        def initialize(input:)
-          @input = input
-        end
-
-        # What is waiting now, read on from the unfinished line of an earlier
-        # sweep, if there was one.
-        def drain(after = NOTHING)
-          Typed.from(after.partial.b + (terminal? ? LineEditor.typed_ahead(@input) : ""))
-        end
-
-        # An unfinished line put back where the next read takes its first keys
-        # from, as the keys they were: Reline's gate buffer, which both its gates
-        # read ahead of the terminal. Byte by byte from the end, since each
-        # `ungetc` goes in front of the last.
-        def type_back(typed)
-          typed.partial.b.bytes.reverse_each { |byte| ::Reline::IOGate.ungetc(byte) } if typed.unfinished?
+          flush
+          write(&print)
         end
 
         private
 
-        def terminal? = @input.respond_to?(:tty?) && @input.tty?
+        def holding? = !@drawn.reader.equal?(Fiber.current) && @drawn.open.call
+
+        def hold(print)
+          @held.push(print)
+          @dropped += @held.shift([@held.size - LIMIT, 0].max).size
+        end
+
+        def flush
+          row_open, dropped, held = @guard.synchronize do
+            [@row_open && !@held.empty?, @dropped.tap { @dropped = 0 }, @held.shift(@held.size)]
+          end
+          return if held.empty?
+
+          @writer.writing { @output.print("\r\n") } if row_open
+          write { @output.puts(format(DROPPED, dropped)) } if dropped.positive?
+          held.each { |print| write(&print) }
+        end
+
+        def write
+          raw = @guard.synchronize { !@drawn.equal?(UNDRAWN) }
+          @writer.writing do
+            yield
+            @output.print("\r") if raw
+          end
+          # The editor's own note, from inside its read, comes before the prompt
+          # draws on the row after it.
+          @guard.synchronize { @row_open = false unless @drawn.reader.equal?(Fiber.current) }
+        end
       end
 
       # Renders the status line, owns the bottom of the screen while active, and
@@ -1019,11 +973,15 @@ module Lain
         #   bytes are a whole line. Required rather than defaulted: a caller
         #   that has not asked is exactly the caller this guard was filed against.
         def print_above(rendered, line_shaped:)
-          @lock.synchronize do
+          writing do
             active? ? above(rendered) : plain(rendered, line_shaped)
             @output.flush
           end
         end
+
+        # The one writer lock, for a write that is not bytes this class knows
+        # the shape of: a note ({TTY::Notes}).
+        def writing(&block) = @lock.synchronize(&block)
 
         # Bytes straight to the screen, under the SAME lock {#print_above}
         # holds. The completion menu draws through here rather than

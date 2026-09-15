@@ -50,6 +50,9 @@ RSpec.describe Lain::CLI::Conductor do
     end.new
   end
 
+  # Where the conductor's reads take their lines from.
+  let(:rail) { Lain::Frontend::InputRail.new }
+
   around do |example|
     saved = Lain::CLI::Signals::MAP.keys.to_h { |name| [name, Signal.trap(name, "DEFAULT")] }
     example.run
@@ -83,7 +86,34 @@ RSpec.describe Lain::CLI::Conductor do
   end
 
   def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new)
-    described_class.new(tty:, chronicle:, signals:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new, run_clock:)
+    described_class.new(tty:, chronicle:, signals:, rail:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new,
+                        run_clock:)
+  end
+
+  # A human at the rail, on a thread of their own because an idle prompt is read
+  # with no reactor under it: each line typed at the next prompt published, and
+  # a nil the stream ending there.
+  def human_typing(*lines)
+    Thread.new do
+      lines.each do |text|
+        sleep(0.002) until rail.published.generation.positive?
+        prompt = rail.published
+        rail << typed(text, prompt)
+        sleep(0.002) while rail.open?(prompt)
+      end
+    end
+  end
+
+  def typed(text, prompt)
+    return Lain::Frontend::InputRail::Eof.new if text.nil?
+
+    Lain::Frontend::InputRail::Line.new(text:, generation: prompt.generation)
+  end
+
+  # Waits, on the reactor, for a prompt of `kind` and types `text` at it.
+  def typed_at(task, kind, text)
+    pumped_until(task, reason: "a #{kind} prompt published") { rail.published.kind == kind }
+    rail << Lain::Frontend::InputRail::Line.new(text:, generation: rail.published.generation)
   end
 
   # Delivers `os_name` once the run is provably parked, then lets the supervised
@@ -169,6 +199,34 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # A producer on the rail -- an input pane, one day -- has no process to send
+  # an OS signal from, so its signal is routed exactly where the traps are.
+  describe "a signal put on the input rail during an ask" do
+    it "reaches the coordinator as the OS signal would, and nothing once the ask settles" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals: Lain::CLI::Signals.new)
+      armed = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          armed = true
+          rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+          release.enqueue(true)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+      rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+
+      expect([armed, conductor.closed?]).to eq([true, false])
+    end
+  end
+
   describe "a clean ask with no signal" do
     it "returns the response, does not close (chat's ensure owns :exit), and routes signals back to Null" do
       entered = Async::Queue.new
@@ -230,23 +288,13 @@ RSpec.describe Lain::CLI::Conductor do
     it "breaks the prompt out on a signal and closes the session :exit, returning nil" do
       signals = Lain::CLI::Signals.new.install
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
-      entered = Thread::Queue.new
-      # A tty whose #prompt blocks the calling thread, standing in for Reline's
-      # blocking read; the breaker raises the reader out of it.
-      blocking_tty = Class.new do
-        def initialize(entered) = @entered = entered
-
-        def prompt(_text)
-          @entered << true
-          sleep
-        end
-      end.new(entered)
-
+      # Nothing feeds the rail, so the read waits as it would on a human who
+      # types nothing; the breaker raises the reader out of that wait.
       killer = Thread.new do
-        entered.pop
+        sleep(0.002) until rail.published.generation.positive?
         Process.kill("TERM", Process.pid)
       end
-      line = conductor.read_prompt(blocking_tty, "you> ")
+      line = conductor.read_prompt(tty, "you> ")
       killer.join
 
       expect(line).to be_nil
@@ -261,11 +309,9 @@ RSpec.describe Lain::CLI::Conductor do
     it "returns the typed line and leaves the session open when no signal arrives" do
       signals = Lain::CLI::Signals.new
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
-      plain_tty = Class.new do
-        def prompt(_text) = "hello"
-      end.new
+      human_typing("hello")
 
-      expect(conductor.read_prompt(plain_tty, "you> ")).to eq("hello")
+      expect(conductor.read_prompt(tty, "you> ")).to eq("hello")
       expect(conductor).not_to be_closed
       expect(chronicle.events).to be_empty
     end
@@ -279,10 +325,10 @@ RSpec.describe Lain::CLI::Conductor do
       allow(breaker).to receive(:dispose).and_raise(Lain::CLI::PromptBreaker::Break.new(:sigterm))
       allow(Lain::CLI::PromptBreaker).to receive(:new).and_return(breaker)
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
-      plain_tty = Class.new { def prompt(_text) = "hi" }.new
+      human_typing("hi")
       line = :unset
 
-      expect { line = conductor.read_prompt(plain_tty, "you> ") }.not_to raise_error
+      expect { line = conductor.read_prompt(tty, "you> ") }.not_to raise_error
 
       expect(line).to be_nil
       expect(conductor).to be_closed
@@ -301,9 +347,9 @@ RSpec.describe Lain::CLI::Conductor do
     it "records input when a real line is read" do
       run_clock = instance_double(Lain::RunClock, record_input: nil)
       conductor = build_with_run_clock(run_clock:)
-      plain_tty = Class.new { def prompt(_text) = "hello" }.new
+      human_typing("hello")
 
-      conductor.read_prompt(plain_tty, "you> ")
+      conductor.read_prompt(tty, "you> ")
 
       expect(run_clock).to have_received(:record_input)
     end
@@ -311,9 +357,9 @@ RSpec.describe Lain::CLI::Conductor do
     it "does not record on a nil (EOF) return" do
       run_clock = instance_double(Lain::RunClock, record_input: nil)
       conductor = build_with_run_clock(run_clock:)
-      eof_tty = Class.new { def prompt(_text) = nil }.new
+      human_typing(nil)
 
-      conductor.read_prompt(eof_tty, "you> ")
+      conductor.read_prompt(tty, "you> ")
 
       expect(run_clock).not_to have_received(:record_input)
     end
@@ -322,21 +368,12 @@ RSpec.describe Lain::CLI::Conductor do
       run_clock = instance_double(Lain::RunClock, record_input: nil)
       signals = Lain::CLI::Signals.new.install
       conductor = build_with_run_clock(run_clock:, signals:)
-      entered = Thread::Queue.new
-      blocking_tty = Class.new do
-        def initialize(entered) = @entered = entered
-
-        def prompt(_text)
-          @entered << true
-          sleep
-        end
-      end.new(entered)
       killer = Thread.new do
-        entered.pop
+        sleep(0.002) until rail.published.generation.positive?
         Process.kill("TERM", Process.pid)
       end
 
-      conductor.read_prompt(blocking_tty, "you> ")
+      conductor.read_prompt(tty, "you> ")
       killer.join
 
       expect(run_clock).not_to have_received(:record_input)
@@ -348,9 +385,9 @@ RSpec.describe Lain::CLI::Conductor do
       now = 1000.0
       run_clock = Lain::RunClock.new(clock: -> { now })
       conductor = build_with_run_clock(run_clock:)
-      plain_tty = Class.new { def prompt(_text) = "hello" }.new
+      human_typing("hello")
 
-      conductor.read_prompt(plain_tty, "you> ")
+      conductor.read_prompt(tty, "you> ")
       now = 1030.0
 
       expect(run_clock.idle).to eq(30.0)
@@ -659,17 +696,6 @@ RSpec.describe Lain::CLI::Conductor do
   # finish must not hand the terminal back to the countdown while the second is
   # still reading, or the ticker's key read steals out of the surviving answer.
   describe "two replies outstanding at once" do
-    # A reader parked per prompt until the example says what was typed there.
-    let(:reader) do
-      Class.new do
-        def initialize = @typed = Hash.new { |typed, prompt| typed[prompt] = Async::Queue.new }
-
-        def prompt_afresh(text) = @typed[text].dequeue
-
-        def type(prompt, line) = @typed[prompt].enqueue(line)
-      end.new
-    end
-
     it "keeps the countdown suppressed until the second read finishes" do
       entered = Async::Queue.new
       release = Async::Queue.new
@@ -679,17 +705,17 @@ RSpec.describe Lain::CLI::Conductor do
       renders_between = nil
 
       Sync do |task|
-        question = task.async { conductor.read_reply(reader, "human> ") }
-        approval = task.async { conductor.read_reply(reader, "[y/N] ") }
+        question = task.async { conductor.read_reply(tty, "human> ") }
+        approval = task.async { conductor.read_reply(tty, Class.new(String) { def kind = :approval }.new("[y/N] ")) }
         driver = task.async do
           entered.dequeue
           Process.kill("TERM", Process.pid) # arm grace; the constant clock never expires it
           pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
-          reader.type("human> ", "postgres")
+          typed_at(task, :human, "postgres")
           question.wait
           settle_for(task, 0.05) # ten ticks with one read still open
           renders_between = tty.renders.size
-          reader.type("[y/N] ", "n")
+          typed_at(task, :approval, "n")
           approval.wait
           task.with_timeout(2) { tty.rendered.dequeue }
           release.enqueue(true)
@@ -714,19 +740,17 @@ RSpec.describe Lain::CLI::Conductor do
       agent = build_agent(entered:, release:, responses: [text_response])
       signals = Lain::CLI::Signals.new.install
       conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
-      typed = Async::Queue.new
-      reader = Struct.new(:typed) { def prompt(_text) = typed.dequeue }.new(typed)
       renders_while_reading = line = nil
 
       Sync do |task|
-        command = task.async { conductor.read_command(reader, "command> ") }
+        command = task.async { conductor.read_command(tty, "command> ") }
         driver = task.async do
           entered.dequeue
           Process.kill("TERM", Process.pid)
           pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
           settle_for(task, 0.05)
           renders_while_reading = tty.renders.size
-          typed.enqueue("/approve")
+          typed_at(task, :command, "/approve")
           line = command.wait
           release.enqueue(true)
         end
@@ -789,22 +813,13 @@ RSpec.describe Lain::CLI::Conductor do
       agent = build_agent(entered:, release:, responses: [text_response])
       signals = Lain::CLI::Signals.new.install
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0, 1061.0), signals:)
-      reply_parked = Async::Queue.new
-      blocking_tty = Class.new do
-        def initialize(parked) = @parked = parked
-
-        def prompt_afresh(_text)
-          @parked.enqueue(true)
-          sleep # park the replier as Reline's blocking read would
-        end
-      end.new(reply_parked)
       outcome = nil
 
       Sync do |task|
-        replier = task.async { conductor.read_reply(blocking_tty, "human> ") }
+        replier = task.async { conductor.read_reply(tty, "human> ") }
         driver = task.async do
           entered.dequeue # the run is provably inside the model call
-          reply_parked.dequeue # the reply is provably parked
+          pumped_until(task, reason: "the reply parked") { rail.published.kind == :human }
           Process.kill("TERM", Process.pid) # arm grace; the jumped clock expires it
         end
         outcome = conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }

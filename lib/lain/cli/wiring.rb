@@ -257,13 +257,16 @@ module Lain
       #   throwaway one
       # @param tty_factory [#call] #run's TTY seam; a spec hands in a StringIO-backed one
       # @param conductor_opener [#call] #run's Conductor seam
+      # @param stdin [IO] what an attended chat's {Frontend::StdinPump} reads;
+      #   a spec hands in the lines its human types
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
                      project: Project::Resolver.default_project,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
-                     conductor_opener: Lain::CLI::Conductor.public_method(:open))
+                     conductor_opener: Lain::CLI::Conductor.public_method(:open),
+                     stdin: Lain::Frontend::StdinPump.process_input)
         @options = options
         @chronicle = chronicle
         @status_feed = status_feed
@@ -272,6 +275,7 @@ module Lain
         @project = project
         @tty_factory = tty_factory
         @conductor_opener = conductor_opener
+        @stdin = stdin
         # Nobody is looking at anything until #run builds a frontend, and that
         # is the honest value for the window -- not a stand-in for one.
         @human_line = SILENT
@@ -280,16 +284,19 @@ module Lain
       # Assemble the run's collaborators over the now-open chronicle and hand off
       # to the frontend. The conductor slot is set BEFORE the repl blocks, so the
       # exe's ensure can close it even when the repl raises mid-run.
+      #
+      # Human input has ONE rail: the terminal draws on it, the conductor reads
+      # from it, and the pump -- for a chat someone is at -- is what feeds it.
       def run(backend:, resumed:, nvim:, &notice)
         recorder, session = run_state(resumed)
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         resumed&.notices&.each(&notice)
-        tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice),
-                                layers: @switchboard.mode_switch.method(:layers))
-        @human_line = tty.method(:render_summons)
-        @conductor = open_conductor(tty)
+        tty = open_terminal(agent, notice)
+        rail = Lain::Frontend::InputRail.new(screen: tty)
+        @conductor = open_conductor(tty, rail)
         @conductor.guard do
-          build_repl(tty:, agent:, backend:).run(**editor_seams(nvim, agent, session), first_prompt: @options[:prompt])
+          build_repl(tty:, agent:, backend:, input: input_for(rail, tty))
+            .run(**editor_seams(nvim, agent, session), first_prompt: @options[:prompt])
         end
       end
 
@@ -298,8 +305,8 @@ module Lain
       # records on must be the instance the StatusFeed publishes, or the
       # published `idle` never resets; this class only passes on what
       # {ChatLaunch} built.
-      def open_conductor(tty)
-        @conductor_opener.call(tty:, chronicle:, grace: @options[:grace], supervisor:, run_clock:)
+      def open_conductor(tty, rail)
+        @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:)
       end
 
       # What a chat's RUN STATE is, fresh or resumed: the memory recorder and the
@@ -376,6 +383,21 @@ module Lain
       private
 
       attr_reader :options, :chronicle, :run_clock
+
+      # The countdown reads its keys through the pump's terminal, so stdin keeps
+      # its one reader.
+      def open_terminal(agent, notice)
+        @tty_factory.call(channel:, input: Lain::Frontend::StdinPump.keys(@stdin),
+                          prompt_renderer: prompt_renderer(agent, notice),
+                          layers: @switchboard.mode_switch.method(:layers)).tap do |tty|
+          @human_line = tty.method(:render_summons)
+        end
+      end
+
+      # Nobody types into a chat run under --non-interactive, so nothing reads.
+      def input_for(rail, tty)
+        attended? ? Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin) : Lain::Frontend::StdinPump::Idle
+      end
 
       # The first line at which the run HAS a Store, so it is where the HUD's
       # feed is given one: {ChatLaunch} builds that feed before Wiring exists,
@@ -808,7 +830,7 @@ module Lain
       # child's question becomes unanswerable. The {HumanReplies} drain is built
       # HERE rather than inside Repl so the Env's replies reader and the Repl's
       # collaborator are one object.
-      def build_repl(tty:, agent:, backend:)
+      def build_repl(tty:, agent:, backend:, input:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:, goal: goal_driver)
         @command_surface = assemble_surface(agent:, library: backend.library, window: backend.context_window, tty:)
         # Bound rather than injected: the registry is built FROM this object, so
@@ -821,7 +843,7 @@ module Lain
         @repl = Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
                          supervisor:, middleware: @command_surface.middleware, attended: attended?,
                          commands: @command_surface.commands, auto_surface:,
-                         secret_surface: secret_surface(backend), goal_driver:)
+                         secret_surface: secret_surface(backend), goal_driver:, input:)
       end
 
       # Its own method because it is a DIFFERENT unnamed object, which the

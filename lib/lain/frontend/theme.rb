@@ -59,7 +59,7 @@ module Lain
         question_label: %i[yellow bold], # TTY#render_question's heading
         question: %i[yellow],            # TTY#render_question's body
         warning: %i[yellow],             # TTY#render_warning
-        prompt: %i[bold],                # TTY#read_line_with_history
+        prompt: %i[bold],                # TTY#compose
         label: %i[dim],                  # Decorators::ToolOutput's attribution
         tool_error: %i[red],             # a tool subprocess's stderr bytes
         tool_output: [],                 # a tool subprocess's stdout bytes

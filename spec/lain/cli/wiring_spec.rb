@@ -1756,17 +1756,16 @@ RSpec.describe Lain::CLI::Wiring do
     # Wiring hands the factory a `prompt_renderer:` too. It is swallowed rather
     # than forwarded: what this spec is about is the object WIRING composes and
     # passes on, not what the TTY then does with it (that is tty_spec's).
-    def tty_factory(input, dir)
+    def tty_factory(dir)
       lambda do |channel:, **|
-        Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new(input),
-                                history_path: File.join(dir, "history"))
+        Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
       end
     end
 
     def run_wiring(input: "quit\n", options: { grace: 5 })
       Dir.mktmpdir do |dir|
-        wiring = described_class.new(options:, chronicle:, status_feed:,
-                                     tty_factory: tty_factory(input, dir), conductor_opener:)
+        wiring = described_class.new(options:, chronicle:, status_feed:, stdin: StringIO.new(input),
+                                     tty_factory: tty_factory(dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -1807,10 +1806,9 @@ RSpec.describe Lain::CLI::Wiring do
         rendered = StringIO.new
         Dir.mktmpdir do |dir|
           factory = lambda do |channel:, **|
-            Lain::Frontend::TTY.new(channel:, output: rendered, input: StringIO.new("quit\n"),
-                                    history_path: File.join(dir, "history"))
+            Lain::Frontend::TTY.new(channel:, output: rendered, history_path: File.join(dir, "history"))
           end
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
                                        tty_factory: factory, conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.close(reason: :exit)
@@ -1847,7 +1845,8 @@ RSpec.describe Lain::CLI::Wiring do
 
       Dir.mktmpdir do |dir|
         wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, run_clock:,
-                                     tty_factory: tty_factory("quit\n", dir), conductor_opener: opener)
+                                     tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"),
+                                     conductor_opener: opener)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
       end
@@ -1880,7 +1879,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "wires the standing-goal driver over the run's own journal, not a discard" do
         Dir.mktmpdir do |dir|
           wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       tty_factory: tty_factory("quit\n", dir), conductor_opener:)
+                                       tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
 
           driver = wiring.command_surface.goal_driver
@@ -1922,7 +1921,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "applies /mode auto to the gate and drives /goal, with no NoMethodError" do
         Dir.mktmpdir do |dir|
           wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       tty_factory: tty_factory("quit\n", dir), conductor_opener:)
+                                       tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           commands = wiring.command_surface.commands
 
@@ -2085,10 +2084,10 @@ RSpec.describe Lain::CLI::Wiring do
 
       # Records what #run passed, and still builds a working TTY so the rest
       # of the run proceeds exactly as the specs above drive it.
-      def recording_factory(input, dir, seen)
+      def recording_factory(dir, seen)
         lambda do |channel:, **kwargs|
           seen << kwargs[:prompt_renderer]
-          tty_factory(input, dir).call(channel:)
+          tty_factory(dir).call(channel:)
         end
       end
 
@@ -2096,7 +2095,8 @@ RSpec.describe Lain::CLI::Wiring do
         seen = []
         Dir.mktmpdir do |dir|
           wiring = described_class.new(options:, chronicle:, status_feed:,
-                                       tty_factory: recording_factory("quit\n", dir, seen), conductor_opener:)
+                                       tty_factory: recording_factory(dir, seen), conductor_opener:,
+                                       stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: nil, nvim: nil, &notice)
           wiring.conductor.close(reason: :exit)
         end
@@ -2193,15 +2193,16 @@ RSpec.describe Lain::CLI::Wiring do
       def layered_factory(rendered, dir, seen)
         lambda do |channel:, layers:, **|
           seen << layers
-          Lain::Frontend::TTY.new(channel:, output: rendered, input: StringIO.new("quit\n"), layers:,
-                                  history_path: File.join(dir, "history"), tmux: ->(_note) {})
+          Lain::Frontend::TTY.new(channel:, output: rendered, layers:, history_path: File.join(dir, "history"),
+                                  tmux: ->(_note) {})
         end
       end
 
       def run_layered(rendered = StringIO.new, seen = [])
         Dir.mktmpdir do |dir|
           wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       tty_factory: layered_factory(rendered, dir, seen), conductor_opener:)
+                                       tty_factory: layered_factory(rendered, dir, seen), conductor_opener:,
+                                       stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: nil, nvim: nil)
           yield wiring
           wiring.conductor.close(reason: :exit)
@@ -2292,7 +2293,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       def run_in(dir, options: { grace: 5 }, &notice)
         wiring = described_class.new(options:, chronicle:, status_feed:,
-                                     tty_factory: tty_factory("quit\n", dir), conductor_opener:)
+                                     tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil, &notice)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -2543,17 +2544,16 @@ RSpec.describe Lain::CLI::Wiring do
     def run_project(project, options: { grace: 5 })
       Dir.mktmpdir("lain-t5-tty") do |dir|
         wiring = described_class.new(options:, chronicle:, status_feed:, project:,
-                                     tty_factory: project_tty_factory("quit\n", dir))
+                                     tty_factory: project_tty_factory(dir), stdin: StringIO.new("quit\n"))
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
         wiring
       end
     end
 
-    def project_tty_factory(input, dir)
+    def project_tty_factory(dir)
       lambda do |channel:, **|
-        Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new(input),
-                                history_path: File.join(dir, "history"))
+        Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
       end
     end
 
@@ -3033,9 +3033,9 @@ RSpec.describe Lain::CLI::Wiring do
       def seated(options = {})
         described_class.new(options: { grace: 5, **options }, chronicle:, status_feed:,
                             tty_factory: lambda { |channel:, **|
-                              Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new("quit\n"),
+                              Lain::Frontend::TTY.new(channel:, output: StringIO.new,
                                                       history_path: File.join(@tmp, "history"))
-                            },
+                            }, stdin: StringIO.new("quit\n"),
                             project: Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project,
                                                        detected_by: :flag))
       end

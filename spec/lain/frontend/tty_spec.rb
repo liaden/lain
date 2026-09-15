@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "open3"
 require "pastel"
+require "rbconfig"
+require "shellwords"
 require "stringio"
 require "tmpdir"
 
@@ -42,12 +46,6 @@ RSpec.describe Lain::Frontend::TTY do
     Reline::HISTORY.concat(original)
     ENV["INPUTRC"] = original_inputrc
     Reline.core.config.reset_variables
-  end
-
-  # A double standing in for a real terminal's input: #prompt only takes the
-  # reline/history path when `input.tty?` is true, which StringIO never is.
-  def tty_input
-    instance_double(IO, tty?: true)
   end
 
   # What production actually announces and lists -- a whole Question::Set
@@ -139,139 +137,10 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  describe "#prompt" do
-    it "reads a chomped line from a non-tty input" do
-      input.string = "hello there\n"
-
-      expect(tty.prompt).to eq("hello there")
-    end
-
-    it "returns nil at EOF" do
-      expect(tty.prompt).to be_nil
-    end
-
-    it "writes the prompt text to output before reading" do
-      input.string = "x\n"
-
-      tty.prompt("> ")
-
-      expect(output.string).to include(">")
-    end
-
-    # The interactive read goes through {Frontend::LineEditor}, which is
-    # what makes a backslash-continued message arrive as ONE line here rather
-    # than as two prompts.
-    it "delivers a backslash-continued message as one line" do
-      allow(Reline).to receive(:readmultiline).and_return("first \\\nsecond")
-
-      expect(described_class.new(channel:, output:, input: tty_input).prompt).to eq("first \nsecond")
-    end
-
-    it "asks the line editor for vi mode only when the caller configured it" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
-
-      described_class.new(channel:, output:, input: tty_input, layers: -> { Lain::Mode::LayerSet.new([:vi]) }).prompt
-
-      expect(Reline.core.config.editing_mode_is?(:vi_insert)).to be(true)
-    ensure
-      Reline.core.config.reset_variables
-    end
-  end
-
-  # What the human typed while nothing was reading -- a standing goal drives
-  # turns with no prompt open -- asked for between reads. Whole lines are held
-  # for `you>`; a line still being typed is nobody's yet, so it is kept and
-  # handed to whichever read comes next. The kernel's buffer is swept by
-  # {Lain::Frontend::LineEditor.typed_ahead}, stubbed here with what it would
-  # have taken; the seam over a real terminal is in repl_spec.
-  describe "#hold_typed_ahead" do
-    let(:terminal) { described_class.new(channel:, output:, input: tty_input, pastel: Pastel.new(enabled: false)) }
-
-    def typed(*sweeps) = allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return(*sweeps)
-
-    it "holds each whole line typed so far, in the order typed, and says so" do
-      typed("/goal off\rkeep going\r")
-      terminal.hold_typed_ahead
-
-      expect([terminal.take_held, terminal.take_held, terminal.take_held]).to eq(["/goal off", "keep going", nil])
-      expect(output.string).to include("held as your next prompt: /goal off")
-    end
-
-    it "reads nothing from a stream that is not a terminal, so its next line is read at the prompt" do
-      input.string = "a prompt\n"
-      tty.hold_typed_ahead
-
-      expect(tty.take_held).to be_nil
-      expect(tty.prompt).to eq("a prompt")
-    end
-
-    it "keeps a line still being typed, and runs it whole once a later sweep finds its end" do
-      typed("/goal o", "ff\r")
-      terminal.hold_typed_ahead
-      held_early = terminal.take_held
-      terminal.hold_typed_ahead
-
-      expect([held_early, terminal.take_held]).to eq([nil, "/goal off"])
-      expect(output.string).not_to include("discarded")
-    end
-
-    it "types a kept line back ahead of the next prompt's read, where the human finishes it" do
-      typed("hel")
-      gate = []
-      allow(Reline::IOGate).to receive(:ungetc) { |byte| gate.unshift(byte) }
-      allow(Reline).to receive(:readmultiline) { gate.pack("C*") }
-
-      terminal.hold_typed_ahead
-
-      expect(terminal.prompt).to eq("hel")
-    end
-
-    it "types a kept line back once, never into a second read" do
-      typed("hel")
-      pushed = []
-      allow(Reline::IOGate).to receive(:ungetc) { |byte| pushed << byte }
-      allow(Reline).to receive(:readmultiline).and_return("hello", "next")
-
-      terminal.hold_typed_ahead
-      2.times { terminal.prompt }
-
-      expect(pushed.size).to eq(3)
-    end
-
-    it "holds a /command typed at a prompt that does not take one, and asks again" do
-      typed("", "", "")
-      allow(Reline).to receive(:readmultiline).and_return("/goal off", "n")
-      prompt = Class.new(String) { def takes?(line) = !line.start_with?("/") }.new("[y/N] ")
-
-      expect(terminal.prompt_afresh(prompt)).to eq("n")
-      expect(terminal.take_held).to eq("/goal off")
-      expect(output.string).to include("held as your next prompt: /goal off")
-    end
-
-    # `human>` classifies its own `/command` lines, so a prompt with no say in
-    # what it takes hands the line straight back.
-    it "hands a /command back from a prompt that does not say what it takes" do
-      typed("")
-      allow(Reline).to receive(:readmultiline).and_return("/inbox")
-
-      expect(terminal.prompt_afresh("human> ")).to eq("/inbox")
-      expect(terminal.take_held).to be_nil
-    end
-
-    it "is joined to the rest at an answer's prompt rather than taken as the answer" do
-      typed("/goal o", "", "")
-      allow(Reline).to receive(:readmultiline).and_return("ff", "n")
-
-      terminal.hold_typed_ahead
-
-      expect(terminal.prompt_afresh("[y/N] ")).to eq("n")
-      expect(terminal.take_held).to eq("/goal off")
-    end
-  end
-
   # The prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
-  # shows a warmth glyph -- a snapshot taken once, right before Reline waits
-  # (interface-integration.md's fixed-prompt limitation), never mid-wait.
+  # shows a warmth glyph -- a snapshot taken once, as the prompt is composed for
+  # the line editor (interface-integration.md's fixed-prompt limitation), never
+  # mid-wait.
   describe "prompt warmth" do
     around do |example|
       Dir.mktmpdir { |dir| @state_dir = dir and example.run }
@@ -294,22 +163,19 @@ RSpec.describe Lain::Frontend::TTY do
     # A fixed wall clock ("now" = epoch 1_000) so warm/cold is a plain
     # before/after comparison against a deadline written into the fixture
     # file -- no real time passes and no example races a real deadline.
-    def tty_with_state(state_path: self.state_path, output_tty: true, input: tty_input)
+    def tty_with_state(state_path: self.state_path, output_tty: true)
       allow(output).to receive(:tty?).and_return(output_tty)
-      described_class.new(channel:, output:, input:, state_path:, wall_clock: -> { Time.at(1_000) },
+      described_class.new(channel:, output:, state_path:, wall_clock: -> { Time.at(1_000) },
                           pastel: Pastel.new(enabled: false))
     end
 
     it "renders a warm glyph when the deadline is still ahead of now" do
       write_state(cache_deadline: Time.at(1_500).utc.iso8601)
-      allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      tty_with_state.prompt
+      composed = tty_with_state.compose("> ")
 
-      expect(Reline).to have_received(:readmultiline)
-        .with(a_string_including(Lain::StatusFeed::Reading::WARM), true)
-      expect(Reline).not_to have_received(:readmultiline)
-        .with(a_string_including(Lain::StatusFeed::Reading::COLD), true)
+      expect(composed).to include(Lain::StatusFeed::Reading::WARM)
+      expect(composed).not_to include(Lain::StatusFeed::Reading::COLD)
     end
 
     # The same file {Lain::StatusFeed} and `lain up` default to, ASKED of
@@ -323,43 +189,31 @@ RSpec.describe Lain::Frontend::TTY do
       FileUtils.mkdir_p(File.dirname(elsewhere))
       File.write(elsewhere, JSON.generate({ "cache_deadline" => Time.at(1_500).utc.iso8601 }))
       allow(Lain::ProjectDir).to receive(:new).and_return(instance_double(Lain::ProjectDir, state_path: elsewhere))
-      allow(Reline).to receive(:readmultiline).and_return("hi")
       allow(output).to receive(:tty?).and_return(true)
 
-      Dir.chdir(@state_dir) do
-        described_class.new(channel:, output:, input: tty_input, wall_clock: -> { Time.at(1_000) },
-                            pastel: Pastel.new(enabled: false)).prompt
+      composed = Dir.chdir(@state_dir) do
+        described_class.new(channel:, output:, wall_clock: -> { Time.at(1_000) },
+                            pastel: Pastel.new(enabled: false)).compose("> ")
       end
 
-      expect(Reline).to have_received(:readmultiline)
-        .with(a_string_including(Lain::StatusFeed::Reading::WARM), true)
+      expect(composed).to include(Lain::StatusFeed::Reading::WARM)
     end
 
     it "renders a cold glyph when the deadline has already passed" do
       write_state(cache_deadline: Time.at(500).utc.iso8601)
-      allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      tty_with_state.prompt
-
-      expect(Reline).to have_received(:readmultiline)
-        .with(a_string_including(Lain::StatusFeed::Reading::COLD), true)
+      expect(tty_with_state.compose("> ")).to include(Lain::StatusFeed::Reading::COLD)
     end
 
     it "renders today's bare prompt when no state file has ever been published" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
-
-      tty_with_state(state_path: File.join(@state_dir, "never-written", "state.json")).prompt
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_state(state_path: File.join(@state_dir, "never-written", "state.json")).compose("> "))
+        .to eq("> ")
     end
 
     it "renders today's bare prompt when the feed exists but has no cache_deadline yet" do
       write_state(cache_deadline: nil)
-      allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      tty_with_state.prompt
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_state.compose("> ")).to eq("> ")
     end
 
     # Review fix round: the reviewer reproduced a crash where a syntactically
@@ -370,113 +224,86 @@ RSpec.describe Lain::Frontend::TTY do
     # prompt exactly like a missing file does.
     it "renders today's bare prompt when the state file is not valid JSON" do
       write_raw("not json at all {{{")
-      allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      tty_with_state.prompt
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_state.compose("> ")).to eq("> ")
     end
 
     it "renders today's bare prompt when cache_deadline is not a parseable timestamp" do
       write_state(cache_deadline: "not-a-real-timestamp")
-      allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      tty_with_state.prompt
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_state.compose("> ")).to eq("> ")
     end
 
     it "renders today's bare prompt when the published JSON's top level is not a Hash" do
       write_raw(JSON.generate([1, 2, 3]))
-      allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      tty_with_state.prompt
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_state.compose("> ")).to eq("> ")
     end
 
     it "leaves non-tty output byte-identical to today: no glyph, no escapes" do
       write_state(cache_deadline: Time.at(1_500).utc.iso8601)
-      input.string = "hi\n"
 
-      tty_with_state(output_tty: false, input:).prompt("> ")
-
-      expect(output.string).to eq("> ")
+      expect(tty_with_state(output_tty: false).compose("> ")).to eq("> ")
+      expect(output.string).to eq("")
     end
   end
 
   # The prompt string is composed through a {Lain::Frontend::PromptComposer} seam. The
   # default renderer is the null one, and the five `"> "` assertions above are
   # its contract: with nobody composing anything, the bytes the line editor
-  # receives are exactly the ones it received before the seam existed.
+  # receives are exactly the ones it received before the seam existed. What
+  # {#compose} answers is what the pump hands the line editor.
   describe "prompt composition" do
     around do |example|
       Dir.mktmpdir { |dir| @prompt_dir = dir and example.run }
     end
 
     def tty_with_renderer(renderer)
-      described_class.new(channel:, output:, input: tty_input, prompt_renderer: renderer,
+      described_class.new(channel:, output:, prompt_renderer: renderer,
                           history_path: File.join(@prompt_dir, "history"))
     end
 
-    it "hands the composed line to the line editor" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
-
-      tty_with_renderer(->(text:, **) { "opus 42% #{text}" }).prompt("> ")
-
-      expect(Reline).to have_received(:readmultiline).with("opus 42% > ", true)
+    it "answers the composed line for the line editor" do
+      expect(tty_with_renderer(->(text:, **) { "opus 42% #{text}" }).compose("> ")).to eq("opus 42% > ")
     end
 
     it "writes every line but the final one to the screen BEFORE the editor takes over" do
-      seen = nil
-      allow(Reline).to receive(:readmultiline) { seen = output.string.dup and "hi" }
+      tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).compose("> ")
 
-      tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).prompt("> ")
-
-      expect(seen).to eq("model: opus\ncontext: 42%\n")
+      expect(output.string).to eq("model: opus\ncontext: 42%\n")
     end
 
     # Reline escapes a newline in its prompt to a literal backslash-n
     # (line_editor.rb), so a multi-line rendering has to be split here or it
     # arrives mangled.
     it "never lets a newline reach the line editor" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
-
-      tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).prompt("> ")
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).compose("> ")).to eq("> ")
     end
 
     it "shows today's prompt, and no header, when the renderer raises" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
-
-      tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).prompt("> ")
-
-      expect(Reline).to have_received(:readmultiline).with("> ", true)
+      expect(tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).compose("> "))
+        .to eq("> ")
     end
 
     # A degraded renderer is reported through the same warning line an
     # unwritable history file uses -- once, above the prompt, never instead
     # of it.
     it "renders a warning line for a broken renderer rather than failing silently" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
-
-      tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).prompt("> ")
+      tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).compose("> ")
 
       expect(output.string).to eq("warning: prompt renderer unavailable (no model configured)\n")
     end
 
     it "still prepends the warmth glyph the null renderer was handed" do
-      allow(Reline).to receive(:readmultiline).and_return("hi")
       allow(output).to receive(:tty?).and_return(true)
       state = File.join(@prompt_dir, "state.json")
       File.write(state, JSON.generate({ "cache_deadline" => Time.at(1_500).utc.iso8601 }))
 
-      described_class.new(channel:, output:, input: tty_input, state_path: state, pastel: Pastel.new(enabled: false),
-                          wall_clock: -> { Time.at(1_000) }, history_path: File.join(@prompt_dir, "history"))
-                     .prompt("> ")
+      composed = described_class.new(channel:, output:, state_path: state, pastel: Pastel.new(enabled: false),
+                                     wall_clock: -> { Time.at(1_000) }, history_path: File.join(@prompt_dir, "history"))
+                                .compose("> ")
 
-      expect(Reline).to have_received(:readmultiline).with("#{Lain::StatusFeed::Reading::WARM} > ", true)
+      expect(composed).to eq("#{Lain::StatusFeed::Reading::WARM} > ")
     end
   end
 
@@ -489,8 +316,8 @@ RSpec.describe Lain::Frontend::TTY do
       File.join(@history_dir, "history")
     end
 
-    def tty_with_history(history_path: self.history_path, input: tty_input)
-      described_class.new(channel:, output:, input:, history_path:)
+    def tty_with_history(history_path: self.history_path)
+      described_class.new(channel:, output:, history_path:)
     end
 
     # Up-arrow walks THIS session's lines. The file is one undifferentiated pool
@@ -511,58 +338,40 @@ RSpec.describe Lain::Frontend::TTY do
     # this class no longer hands to the prompt.
     it "appends past an earlier session's lines rather than replacing them" do
       File.write(history_path, "from an earlier session\n")
-      allow(Reline).to receive(:readmultiline).and_return("this session's line")
 
-      tty_with_history.prompt
+      tty_with_history.remember("this session's line")
 
       expect(File.read(history_path)).to eq("from an earlier session\nthis session's line\n")
     end
 
     it "writes an accepted line to disk before the next prompt" do
-      allow(Reline).to receive(:readmultiline).and_return("remember me")
-
-      tty_with_history.prompt
+      tty_with_history.remember("remember me")
 
       expect(File.read(history_path)).to eq("remember me\n")
     end
 
     it "creates the history file owner-only (0600) at open(), with no chmod window" do
-      allow(Reline).to receive(:readmultiline).and_return("secret-adjacent line")
       expect(File).not_to receive(:chmod)
 
-      tty_with_history.prompt
+      tty_with_history.remember("secret-adjacent line")
 
       expect(File.stat(history_path).mode & 0o777).to eq(0o600)
     end
 
     it "appends rather than truncating across multiple accepted lines" do
-      allow(Reline).to receive(:readmultiline).and_return("one", "two")
-
       history_tty = tty_with_history
-      2.times { history_tty.prompt }
+      %w[one two].each { |line| history_tty.remember(line) }
 
       expect(File.read(history_path)).to eq("one\ntwo\n")
-    end
-
-    it "never creates the history file for non-tty input" do
-      allow(input).to receive(:tty?).and_return(false)
-      input.string = "plain line\n"
-
-      described_class.new(channel:, output:, input:, history_path:).prompt
-
-      expect(File.exist?(history_path)).to be(false)
     end
 
     it "degrades loudly-but-usable when the history location is unwritable" do
       blocking_file = File.join(@history_dir, "blocked")
       File.write(blocking_file, "not a directory")
       unwritable_path = File.join(blocking_file, "history")
-      allow(Reline).to receive(:readmultiline).and_return("still works")
 
-      line = nil
-      expect { line = tty_with_history(history_path: unwritable_path).prompt }.not_to raise_error
+      expect { tty_with_history(history_path: unwritable_path).remember("still works") }.not_to raise_error
 
-      expect(line).to eq("still works")
       expect(output.string.downcase).to include("warning")
     end
 
@@ -570,10 +379,9 @@ RSpec.describe Lain::Frontend::TTY do
       blocking_file = File.join(@history_dir, "blocked")
       File.write(blocking_file, "not a directory")
       unwritable_path = File.join(blocking_file, "history")
-      allow(Reline).to receive(:readmultiline).and_return("a", "b")
 
       history_tty = tty_with_history(history_path: unwritable_path)
-      2.times { history_tty.prompt }
+      %w[a b].each { |line| history_tty.remember(line) }
 
       expect(output.string.downcase.scan("warning").size).to eq(1)
     end
@@ -724,11 +532,36 @@ RSpec.describe Lain::Frontend::TTY do
   # The TTY-only drain surface. Lists what is pending (sender and age) and
   # reads ONE answer; the resolution itself stays with the caller's block --
   # AskHuman#reply is the Repl's seam, never the TTY's.
+  # A prompt a human leaves drawn while a fleet keeps arriving must not hold an
+  # unbounded backlog: the newest notes are kept, and one line says how many
+  # older ones went.
+  describe "notes held behind a drawn prompt" do
+    it "keeps the newest and says how many earlier ones were dropped" do
+      limit = 200
+      plain = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false))
+
+      Sync do |task|
+        released = Async::Notification.new
+        drawn = task.async { plain.drawing(-> { true }) { released.wait } }
+        task.async { (limit + 50).times { |index| plain.render_warning("note #{index}") } }.wait
+        released.signal
+        drawn.wait
+      end
+
+      printed = output.string.lines
+      expect(printed.first).to include("50 earlier notes were dropped")
+      expect(printed.drop(1).map { |row| row[/note (\d+)/, 1].to_i }).to eq((50...(limit + 50)).to_a)
+    end
+  end
+
   describe "#drain_inbox" do
     let(:drain_tty) do
       described_class.new(channel:, output:, input:, pastel: Pastel.new(enabled: false),
                           wall_clock: -> { Time.at(1_000) })
     end
+
+    # What the human types at the drain's prompt, a line per read.
+    def typed = ->(_prompt) { input.gets&.chomp }
 
     def item(question:, from: "orchestrator", asked_at: Time.at(880))
       Struct.new(:question, :from, :asked_at).new(question, from, asked_at)
@@ -742,7 +575,8 @@ RSpec.describe Lain::Frontend::TTY do
       input.string = "postgres\n"
       wordy = announced("db", body: "Which database?\n\n| option | cost |\n| --- | --- |\n| pg | low |")
 
-      drain_tty.drain_inbox([item(question: wordy), item(question: announced("region"))]) { |_answer| nil }
+      drain_tty.drain_inbox([item(question: wordy), item(question: announced("region"))],
+                            reader: typed) { |_answer| nil }
 
       listed = output.string.lines.take(2)
       expect(listed.first).to include("Which database?").and(satisfy { |line| !line.include?("| pg |") })
@@ -754,7 +588,7 @@ RSpec.describe Lain::Frontend::TTY do
       items = [item(question: "which db?", from: "orchestrator", asked_at: Time.at(880)),
                item(question: "deploy now?", from: "researcher", asked_at: Time.at(997))]
 
-      drain_tty.drain_inbox(items) { |_answer| nil }
+      drain_tty.drain_inbox(items, reader: typed) { |_answer| nil }
 
       expect(output.string).to include("orchestrator").and include("which db?").and include("2m")
       expect(output.string).to include("researcher").and include("deploy now?").and include("3s")
@@ -766,7 +600,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "lists a pending question as the row the editor's inbox also draws" do
       input.string = "\n"
 
-      drain_tty.drain_inbox([item(question: "which db?")]) { |_answer| nil }
+      drain_tty.drain_inbox([item(question: "which db?")], reader: typed) { |_answer| nil }
 
       expect(output.string.lines.first.chomp).to eq("orchestrator  2m  which db?")
     end
@@ -775,13 +609,13 @@ RSpec.describe Lain::Frontend::TTY do
       input.string = "postgres\n"
       resolved = []
 
-      drain_tty.drain_inbox([item(question: "which db?")]) { |answer| resolved << answer }
+      drain_tty.drain_inbox([item(question: "which db?")], reader: typed) { |answer| resolved << answer }
 
       expect(resolved).to eq(["postgres"])
     end
 
     it "renders the empty note and never prompts or yields when nothing is pending" do
-      drain_tty.drain_inbox([]) { |_answer| raise "must not yield" }
+      drain_tty.drain_inbox([], reader: typed) { |_answer| raise "must not yield" }
 
       expect(output.string).to include("(no questions pending)")
       expect(output.string).not_to include("human>")
@@ -790,7 +624,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "does not yield for an empty line or EOF" do
       input.string = "\n"
 
-      expect { |probe| drain_tty.drain_inbox([item(question: "which db?")], &probe) }
+      expect { |probe| drain_tty.drain_inbox([item(question: "which db?")], reader: typed, &probe) }
         .not_to yield_control
     end
 
@@ -803,7 +637,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "does not yield for a whitespace-only line, and never fabricates a record from one" do
       input.string = "    \n"
 
-      expect { |probe| drain_tty.drain_inbox([item(question: announced("db"))], &probe) }
+      expect { |probe| drain_tty.drain_inbox([item(question: announced("db"))], reader: typed, &probe) }
         .not_to yield_control
     end
 
@@ -830,7 +664,7 @@ RSpec.describe Lain::Frontend::TTY do
       input.string = "send\n"
       handback = handed_back(ceiling + 1)
 
-      drain_tty.drain_inbox([item(question: handback)]) { |_answer| nil }
+      drain_tty.drain_inbox([item(question: handback)], reader: typed) { |_answer| nil }
 
       expect(output.string.lines.first.bytesize).to be < 400
       expect(output.string.lines.first).to include("over the ceiling of #{ceiling}")
@@ -843,7 +677,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "prints the markdown of the set a typed answer will answer" do
       input.string = "postgres\n"
 
-      drain_tty.drain_inbox([item(question: announced("db", "region"))]) { |_answer| nil }
+      drain_tty.drain_inbox([item(question: announced("db", "region"))], reader: typed) { |_answer| nil }
 
       expect(output.string).to include("## `db` (write your answer below)").and include("which db?")
       expect(output.string).to include("## `region` (write your answer below)")
@@ -853,7 +687,7 @@ RSpec.describe Lain::Frontend::TTY do
       input.string = "postgres\n"
       items = [item(question: announced("db")), item(question: announced("region"))]
 
-      drain_tty.drain_inbox(items) { |_answer| nil }
+      drain_tty.drain_inbox(items, reader: typed) { |_answer| nil }
 
       expect(output.string).to include("## `db`")
       expect(output.string).not_to include("## `region`")
@@ -863,7 +697,9 @@ RSpec.describe Lain::Frontend::TTY do
       input.string = "use postgres everywhere\n"
       resolved = []
 
-      drain_tty.drain_inbox([item(question: announced("db", "region"))]) { |answer| resolved << answer }
+      drain_tty.drain_inbox([item(question: announced("db", "region"))], reader: typed) do |answer|
+        resolved << answer
+      end
 
       expect(resolved.first).to include("answered the whole set in prose rather than by selection")
       expect(resolved.first).to include("> use postgres everywhere")
@@ -913,7 +749,7 @@ RSpec.describe Lain::Frontend::TTY do
       set = announced("db")
       resolved = []
 
-      drain_tty.drain_inbox([item(question: set)]) { |answer| resolved << answer }
+      drain_tty.drain_inbox([item(question: set)], reader: typed) { |answer| resolved << answer }
 
       expect(resolved.first).to eq(Lain::Question::AnswerSet.new(questions: set.set, text: "use postgres").render)
       expect(resolved.first).not_to include("Chose:")
@@ -1225,19 +1061,12 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     describe "vi" do
-      let(:input) { tty_input }
-
-      before { allow(Reline).to receive(:readmultiline).and_return("hi") }
-
-      it "reads in vi mode once the layer is raised, and in emacs again once it is lowered" do
+      it "answers vi while the layer is raised, and not once it is lowered" do
         raised << :vi
-        layered.prompt
-        in_vi = Reline.core.config.editing_mode_is?(:vi_insert)
+        in_vi = layered.vi?
         raised.clear
-        layered.prompt
 
-        expect(in_vi).to be(true)
-        expect(Reline.core.config.editing_mode_is?(:emacs)).to be(true)
+        expect([in_vi, layered.vi?]).to eq([true, false])
       end
     end
 
@@ -1415,6 +1244,199 @@ RSpec.describe Lain::Frontend::TTY do
       failing = ->(*, **) { raise Mixlib::ShellOut::CommandTimeout, "tmux took too long" }
 
       expect(message(shell: failing).call("a note")).to be_nil
+    end
+  end
+
+  # A note that arrives while a prompt is drawn is HELD, and printed, in arrival
+  # order, the moment that prompt closes and before the next one draws. It never
+  # interrupts the line editor's read, so what the human has typed -- its text,
+  # its cursor, its editing mode -- is never touched, and the prompt is never
+  # torn. That is the restatement of "a note does not tear a drawn prompt": the
+  # typed text is intact, the prompt untorn, and the note appears as the prompt
+  # closes. The live surface for an arrival is the input pane.
+  #
+  # Driven in a child on a private tmux server, because what is asserted is what
+  # a terminal SHOWS -- rows, a wrapped line, vi's cursor -- and only a terminal
+  # emulator can say that. The child runs the real TTY, InputRail and StdinPump.
+  describe "a note rendered while a prompt is drawn", :seam do
+    before { skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL) }
+
+    child = <<~'RUBY'
+      require "lain"
+
+      dir = ARGV.fetch(0)
+      layers = ENV.fetch("LAYERS", "").split(",").map(&:to_sym)
+      # The shipped default.toml, over a run state that has something to say, so
+      # the prompt is the two rows a production chat draws.
+      shipped = Struct.new(:readings) { def to_h = readings }.new({ model: "opus", occupancy: "12%" })
+      renderer = ENV["HUD"] ? { prompt_renderer: Lain::Frontend::PromptComposer.renderer(state: shipped) } : {}
+      tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
+                                    state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false),
+                                    layers: -> { Lain::Mode::LayerSet.new(layers) }, **renderer)
+      rail = Lain::Frontend::InputRail.new(screen: tty)
+      Sync do |task|
+        pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
+        task.async do
+          task.sleep(0.02) until File.exist?(File.join(dir, "notes"))
+          count, gap = File.read(File.join(dir, "notes")).split.map { |word| Float(word) }
+          Integer(count).times do |index|
+            tty.render_arrival("note #{index} of the fleet", from: "researcher")
+            task.sleep(gap)
+          end
+          File.write(File.join(dir, "noted"), "")
+        end
+        if ENV["WITHDRAW"]
+          question = task.async { rail.read(:human, "human> ") }
+          task.sleep(0.02) until File.exist?(File.join(dir, "arm"))
+          tty.render_warning("HELD-NOTE")
+          task.sleep(0.2)
+          question.stop
+        end
+        2.times { File.write(File.join(dir, "lines"), "#{rail.read(:you, "you> ").inspect}\n", mode: "a") }
+        pumping.stop
+      end
+    RUBY
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        @socket = "lain-spec-note-#{Process.pid}-#{rand(1 << 30)}"
+        File.write(File.join(dir, "child.rb"), child)
+        example.run
+      ensure
+        tmux("kill-server")
+      end
+    end
+
+    def tmux(*args) = Open3.capture2("tmux", "-L", @socket, *args).first
+
+    def start(columns: 100, env: {}, ready: /you>/)
+      command = [*env.map { |name, value| "#{name}=#{value}" }, "TERM=xterm-256color", "INPUTRC=/nonexistent",
+                 RbConfig.ruby, "-W0", "-I", File.expand_path("../../../lib", __dir__),
+                 File.join(@dir, "child.rb"), @dir].shelljoin
+      tmux("-f", File::NULL, "new-session", "-d", "-x", columns.to_s, "-y", "40", "-s", "note", "env #{command}")
+      tmux("set", "-g", "remain-on-exit", "on")
+      shows(ready)
+    end
+
+    def type(text) = tmux("send-keys", "-t", "note", "-l", text)
+
+    def press(*keys) = tmux("send-keys", "-t", "note", *keys)
+
+    def screen = tmux("capture-pane", "-t", "note", "-p")
+
+    # capture-pane drops a row's trailing blanks, so a bare prompt reads "you>".
+    def rows(pattern) = screen.lines.grep(pattern)
+
+    def shows(pattern, timeout: 20)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      sleep(0.05) until screen.match?(pattern) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      raise "#{pattern.inspect} never showed; the screen was:\n#{screen}" unless screen.match?(pattern)
+    end
+
+    def notes(count, gap: 0.0)
+      File.write(File.join(@dir, "notes"), "#{count} #{gap}")
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+      noted = File.join(@dir, "noted")
+      sleep(0.02) until File.exist?(noted) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      sleep(0.3)
+    end
+
+    def submitted
+      path = File.join(@dir, "lines")
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+      sleep(0.02) until File.exist?(path) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      File.readlines(path, chomp: true).first
+    end
+
+    it "holds the note while the prompt is drawn, keeps the typed words, and prints the note as the prompt closes" do
+      start
+      type("half a sent")
+      shows(/half a sent/)
+      notes(1)
+
+      expect(rows(/note 0/)).to be_empty
+      expect(rows(/you> /)).to eq(["you> half a sent\n"])
+
+      type("ence")
+      press("Enter")
+
+      expect(submitted).to eq('"half a sentence"')
+      shows(/note 0 of the fleet/)
+      after_submit = screen.split("you> half a sentence", 2).last
+      expect(after_submit.index("note 0 of the fleet")).to be < after_submit.index("you>")
+    end
+
+    # Answered on another surface, a `human>` has no closing words to end its
+    # row, so the notes held behind it start a row of their own.
+    it "prints a note held behind a prompt withdrawn without closing words on a row of its own" do
+      start(env: { "WITHDRAW" => "1" }, ready: /human>/)
+      type("half")
+      shows(/human> half/)
+      FileUtils.touch(File.join(@dir, "arm"))
+      shows(/HELD-NOTE/)
+
+      expect(rows(/HELD-NOTE/)).to eq(["HELD-NOTE\n"])
+      expect(rows(/human> half/)).to eq(["human> half\n"])
+    end
+
+    it "tears nothing of the shipped two-row prompt" do
+      start(env: { "HUD" => "1" })
+      type("half a sent")
+      shows(/half a sent/)
+      notes(1)
+
+      expect(rows(/opus/).size).to eq(1)
+      expect(rows(/you> /)).to eq(["you> half a sent\n"])
+    end
+
+    it "leaves a typed line wider than the terminal one line, and submits it whole" do
+      wide = "#{"x" * 130}TAIL"
+      start(columns: 60)
+      type(wide)
+      shows(/TAIL/)
+      notes(1)
+
+      expect(rows(/^you>/).size).to eq(1)
+      press("Enter")
+      expect(submitted).to eq(wide.inspect)
+    end
+
+    it "keeps vi's mode and cursor, so a command typed after the note does what it says" do
+      start(env: { "LAYERS" => "vi" })
+      type("hello world")
+      shows(/hello world/)
+      press("Escape")
+      sleep(0.3)
+      type("0")
+      sleep(0.3)
+      notes(1)
+      type("iX")
+      sleep(0.2)
+      press("Enter")
+
+      expect(submitted).to eq('"Xhello world"')
+    end
+
+    it "loses and repeats nothing typed while notes keep arriving, and prints them all as the prompt closes" do
+      typed = "abcdefghijklmnopqrstuvwxyz0123456789"
+      start
+      typist = Thread.new do
+        typed.each_char do |char|
+          type(char)
+          sleep(0.013)
+        end
+      end
+      notes(15, gap: 0.02)
+      typist.join
+      sleep(0.5)
+
+      expect(rows(/note \d+ of the fleet/)).to be_empty
+      press("Enter")
+      expect(submitted).to eq(typed.inspect)
+      shows(/note 14 of the fleet/)
+      expect(rows(/note \d+ of the fleet/).map { |row| row[/note (\d+)/, 1].to_i }).to eq((0..14).to_a)
+      expect(rows(/of the fleet/)).to all(start_with("? researcher note"))
     end
   end
 end

@@ -114,8 +114,9 @@ class ReplGoalTerminal
     queue = Lain::Approval::Queue.new(journal:, timeout: 30)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
+    rail = Lain::Frontend::InputRail.new(screen: tty)
     conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
-                                         signals: Lain::CLI::Signals.new, grace: 5)
+                                         signals: Lain::CLI::Signals.new, rail:, grace: 5)
     askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
     driver = Lain::CLI::GoalDriver.new(journal:, cap: Integer(cap))
@@ -154,7 +155,8 @@ class ReplGoalTerminal
       end
     end.new(dir, shape, Lain::CLI::Command::Goal.new(driver:), Struct.new(:agent).new(agent), queue)
 
-    Sync do
+    Sync do |task|
+      Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
       Lain::CLI::Repl.new(agent:, tty:, replies:, commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:,
                           approvals: queue, goal_driver: driver)
                      .converse(first_prompt: "/goal make the specs green")
@@ -236,6 +238,15 @@ class ReplGoalTerminal
 end
 
 RSpec.describe Lain::CLI::Repl do
+  # A conductor double whose held lines wait on a real rail, as the real one's
+  # do, and whose gather asks that rail's producers.
+  def holding(conductor, rail = Lain::Frontend::InputRail.new)
+    allow(conductor).to receive(:hold) { |line| rail.hold(line) }
+    allow(conductor).to receive(:take_held) { rail.take_held }
+    allow(conductor).to receive(:gather_typed_ahead) { rail.gather }
+    conductor
+  end
+
   # The AC round trip: a Provider::Mock, a Channel, and a Frontend::TTY over
   # StringIO stand in for the live edges; the Repl is constructed AND run
   # through Lain::CLI::Wiring#run -- the exe's own assembly path, minus the exe
@@ -266,13 +277,13 @@ RSpec.describe Lain::CLI::Repl do
   def run_chat(input, dir:, chronicle: Lain::CLI::Chronicle::Null.new, options: { grace: 5 })
     output = StringIO.new
     # `**` swallows the `prompt_renderer:` keyword -- this spec is about the chat
-    # round trip, and its StringIO input never reaches the composing path.
+    # round trip, and its StringIO stdin never reaches the composing path.
     tty_factory = lambda do |channel:, **|
-      Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new(input),
-                              history_path: File.join(dir, "history"))
+      Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
     end
     wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:, paths: spec_state(dir),
-                                   status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                                   status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                                   stdin: StringIO.new(input))
     wiring.run(backend:, resumed: nil, nvim: nil)
     wiring.conductor.close(reason: :exit)
     output.string
@@ -296,8 +307,7 @@ RSpec.describe Lain::CLI::Repl do
     # rather than fail.
     def waiting_terminal(output, dir:)
       lambda do |channel:, **|
-        Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new("and another thing\n"),
-                                history_path: File.join(dir, "history"))
+        Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
       end
     end
 
@@ -307,7 +317,8 @@ RSpec.describe Lain::CLI::Repl do
       wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
                                      chronicle: Lain::CLI::Chronicle::Null.new,
                                      tty_factory: waiting_terminal(output, dir:), paths: spec_state(dir),
-                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                                     stdin: StringIO.new("and another thing\n"))
       Timeout.timeout(20) { wiring.run(backend: headless, resumed: nil, nvim: nil) }
       wiring.conductor.close(reason: :exit)
       [wiring, output.string]
@@ -496,13 +507,13 @@ RSpec.describe Lain::CLI::Repl do
 
     def editor_wiring(tty_factory, dir)
       Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                            paths: spec_state(dir), status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                            paths: spec_state(dir), status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                            stdin: StringIO.new("quit\n"))
     end
 
     def chat_with_editor(dir)
       tty_factory = lambda do |channel:, **|
-        Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new("quit\n"),
-                                history_path: File.join(dir, "history"))
+        Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
       end
       wiring = editor_wiring(tty_factory, dir)
       wiring.run(backend:, resumed: nil,
@@ -657,7 +668,7 @@ RSpec.describe Lain::CLI::Repl do
   # line settles, so it is dispatched before the goal driver is asked and
   # before `you>` is read again.
   describe "a held line" do
-    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit") }
+    let(:conductor) { holding(instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit")) }
     let(:replies) do
       Lain::CLI::HumanReplies.new(tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new,
                                                                input: StringIO.new, history_path: File::NULL),
@@ -697,7 +708,7 @@ RSpec.describe Lain::CLI::Repl do
       goal_driver = instance_double(Lain::CLI::GoalDriver, poll: nil, active?: true, settle_pin: nil)
       allow(goal_driver).to receive(:poll).and_return("keep going", nil)
 
-      converse_with(goal_driver:, tty: instance_double(Lain::Frontend::TTY, hold_typed_ahead: nil))
+      converse_with(goal_driver:)
 
       expect(dispatched).to eq(["run the tests", "yes please", "keep going"])
     end
@@ -711,21 +722,24 @@ RSpec.describe Lain::CLI::Repl do
     let(:journal_io) { StringIO.new }
     let(:driver) { Lain::CLI::GoalDriver.new(journal: Lain::Journal.new(io: journal_io)) }
     let(:output) { StringIO.new }
-    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit") }
+    let(:conductor) { holding(instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit"), rail) }
     let(:session) { Lain::Session.new }
     let(:agent) { Struct.new(:timeline, :session).new(Lain::Timeline.empty, session) }
     let(:dispatched) { [] }
     let(:stop_after) { 2 }
-    # A terminal the human types `/goal off` into once `stop_after` iterations
-    # have run: what the sweep finds there is held exactly as a real drain holds it.
     let(:tty) do
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, history_path: File::NULL,
+                              pastel: Pastel.new(enabled: false))
+    end
+    # A producer the human types `/goal off` into once `stop_after` iterations
+    # have run: what its sweep finds there is held exactly as a real sweep holds it.
+    let(:rail) do
       lines = dispatched
       after = stop_after
       typed = -> { lines.count { |line| line.start_with?("Standing goal") } == after && !lines.include?("/goal off") }
-      Class.new(SimpleDelegator) do
-        define_method(:hold_typed_ahead) { typed.call ? hold("/goal off") : nil }
-      end.new(Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
-                                      history_path: File::NULL, pastel: Pastel.new(enabled: false)))
+      Lain::Frontend::InputRail.new(screen: tty).tap do |rail|
+        rail.attach(Struct.new(:rail) { define_method(:sweep) { typed.call && rail.hold("/goal off") } }.new(rail))
+      end
     end
     let(:replies) do
       Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new, ask_human: ReplRecordedAnswers.new)
@@ -807,12 +821,12 @@ RSpec.describe Lain::CLI::Repl do
     it "hands the editor's goal_off verb to the driver the chat polls" do
       Dir.mktmpdir do |dir|
         tty_factory = lambda do |channel:, **|
-          Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new("quit\n"),
-                                  history_path: File.join(dir, "history"))
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
         end
         wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
                                        paths: spec_state(dir),
-                                       status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                                       status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                                       stdin: StringIO.new("quit\n"))
         wiring.run(backend:, resumed: nil, nvim: nil)
         driver = wiring.command_surface.goal_driver
         driver.start("ship it")
@@ -1299,17 +1313,15 @@ RSpec.describe Lain::CLI::Repl do
   # its real fibers -- the queue is a live Async::Queue and the reply comes off
   # a real terminal read.
   describe "the reply surfaces' lifetime" do
-    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
+    let(:conductor) { holding(instance_double(Lain::CLI::Conductor, closed?: false)) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     let(:supervisor) { instance_double(Lain::Supervisor, run: nil, stop: nil) }
     let(:questions) { Async::Queue.new }
     let(:answers) { ReplRecordedAnswers.new }
     let(:output) { StringIO.new }
     let(:typed) { "an answer\nsecond answer\n" }
-    let(:tty) do
-      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new(typed),
-                              history_path: File.join(@dir, "history"))
-    end
+    let(:typed_input) { StringIO.new(typed) }
+    let(:tty) { Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, history_path: File.join(@dir, "history")) }
     # THE subject's collaborator, not a double: "was a fiber alive to serve this"
     # is the question, and a double answers it by construction.
     let(:replies) { Lain::CLI::HumanReplies.new(tty:, conductor:, questions:, ask_human: answers) }
@@ -1362,7 +1374,7 @@ RSpec.describe Lain::CLI::Repl do
     # `fetch`, so a typo names itself rather than silently reading the terminal.
     def reply_reader(reading)
       {
-        typed: ->(terminal, prompt) { terminal.prompt(prompt) },
+        typed: ->(_terminal, prompt) { typed_at(prompt) },
         never: ->(_terminal, _prompt) { Async::Task.current.sleep(60) },
         counted: method(:counted_read)
       }.fetch(reading)
@@ -1372,11 +1384,17 @@ RSpec.describe Lain::CLI::Repl do
     # the most there have ever been. Counted rather than inferred from the
     # rendered prompts: two reads that ran back to back print the same two
     # prompts as two that overlapped, and only the second is a wedge.
-    def counted_read(terminal, prompt)
+    def counted_read(_terminal, prompt)
       @in_flight = @in_flight.to_i + 1
       @peak = [@peak.to_i, @in_flight].max
       Async::Task.current.sleep(0.05) # the human is typing
-      terminal.prompt(prompt).tap { @in_flight -= 1 }
+      typed_at(prompt).tap { @in_flight -= 1 }
+    end
+
+    # The prompt drawn, and the human's next line read at it.
+    def typed_at(prompt)
+      tty.print_prompt(prompt)
+      typed_input.gets&.chomp
     end
 
     def peak_reply_reads = @peak.to_i

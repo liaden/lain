@@ -502,12 +502,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
       def chat(input)
         tty_factory = lambda do |channel:, **|
-          Lain::Frontend::TTY.new(channel:, output: StringIO.new, input:, history_path: File.join(@tmp, "history"))
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(@tmp, "history"))
         end
         project = Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project, detected_by: :flag)
         Lain::CLI::Wiring.new(options: { grace: 5, epic: "demo" }, chronicle: Lain::CLI::Chronicle::Null.new,
                               tty_factory:, project:, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @tmp }),
-                              status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                              status_feed: instance_double(Lain::StatusFeed, bind_store: nil), stdin: input)
       end
 
       it "draws the mounted epic in the editor the chat attached" do

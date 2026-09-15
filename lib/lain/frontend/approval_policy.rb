@@ -54,6 +54,12 @@ module Lain
       # What a line typed for the chat rather than for the prompt begins with.
       COMMAND = "/"
 
+      # The standalone reader's input when none is handed in: nothing is ever
+      # typed there, so the answer is EOF and the call is denied.
+      module NoTerminal
+        def self.gets = nil
+      end
+
       # The `[y/N]` prompt as the reader is handed it: its text, still a String,
       # and the call it asks about. A read the call was decided out from under is
       # STOPPED, and the line it drew is left looking live -- a human's `n` typed
@@ -78,9 +84,12 @@ module Lain
         # Whether `line` is an answer to this prompt at all. A `/command` is not:
         # typed at the drawn prompt it was meant for the chat -- `/goal off` while
         # a goal's iteration waits on this call -- and read as a verdict it was
-        # both a denial nobody gave and a command lost. The terminal holds it for
-        # `you>` and asks again ({TTY#prompt_afresh}), so it still decides nothing.
+        # both a denial nobody gave and a command lost. The rail holds it for
+        # `you>` and asks again ({InputRail#read}), so it still decides nothing.
         def takes?(line) = !line.lstrip.start_with?(COMMAND)
+
+        # What the {InputRail} publishes this prompt as: an answer a run waits on.
+        def kind = :approval
 
         private
 
@@ -91,12 +100,13 @@ module Lain
 
       # `reader:` is the conductor seam: `(prompt) -> String, nil` owns BOTH the
       # terminal write and the read for one question. The exe injects one that
-      # routes through {CLI::Conductor}, so approval prompts serialize with
-      # ask_human replies on the one stdin, the countdown ticker is suppressed
-      # for the read's span, and the read PARKS the fiber (scheduler-routed, so
-      # the queue's fail-closed timer can still fire). A bare `gets` gives none
-      # of that; the default is the standalone behavior.
-      def initialize(output: $stdout, input: $stdin, pastel: Pastel.new, reader: nil)
+      # routes through {CLI::Conductor}, so approval prompts take their answer
+      # off the chat's one input rail, the countdown ticker is suppressed for
+      # the read's span, and the read PARKS the fiber (scheduler-routed, so the
+      # queue's fail-closed timer can still fire). The standalone reader asks
+      # `input:`, which is no terminal unless one is handed in -- stdin is the
+      # pump's to read -- so a policy nobody wired denies.
+      def initialize(output: $stdout, input: NoTerminal, pastel: Pastel.new, reader: nil)
         @output = output
         @input = input
         @pastel = pastel

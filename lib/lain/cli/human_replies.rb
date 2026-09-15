@@ -278,16 +278,16 @@ module Lain
       end
 
       # A line the human typed in the chat that was neither a command nor an
-      # answer, waiting to be dispatched at `you>`. The terminal holds it
-      # ({Frontend::TTY#hold}), because a line it drained as typeahead before an
-      # answer read is held there too, and ONE queue is what keeps the lines in
-      # the order they were typed.
-      def hold(line) = @tty.hold(line)
+      # answer, waiting to be dispatched at `you>`. The input rail holds it
+      # ({Frontend::InputRail#hold}), through the conductor that reads from it,
+      # because a line typed ahead of an answer's prompt is held there too, and
+      # ONE queue is what keeps the lines in the order they were typed.
+      def hold(line) = @conductor.hold(line)
 
       # The oldest held line, or nil when nothing is held. {Repl#next_text}
       # asks this before it reads, so a held line is dispatched first and in
       # the order it was typed.
-      def take_held = @tty.take_held
+      def take_held = @conductor.take_held
 
       # The reply surfaces that live for the whole CONVERSATION, started on the
       # repl's own Sync rather than on an ask's -- today just the editor's

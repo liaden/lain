@@ -23,20 +23,21 @@ require "tmpdir"
 #
 # The timeouts are load-bearing: an unserved question parks the child forever,
 # so the failure shape without them is a hung suite rather than a red example.
-# The run's real terminal, counting how many reads are PARKED on it at once.
+# The run's real stdin, counting how many reads are PARKED on it at once.
 #
 # The one stdin is the contended resource, and every reader reaches it here:
 # the `you>` prompt, the `human> ` reply, and an approval's `[y/N]` all come
-# through {Lain::Frontend::TTY#prompt}. Two of them in flight at the same
-# instant is the wedge this card exists to remove, arrived at from either side
-# -- a surface that outlives its line, or a second surface opened over one.
+# through the {Lain::Frontend::StdinPump} that reads it, one line a read. Two of
+# them in flight at the same instant is the wedge this card exists to remove,
+# arrived at from either side -- a surface that outlives its line, or a second
+# surface opened over one.
 #
 # The park is what makes the count mean anything: a StringIO returns instantly,
 # so two readers could be spawned and never be observed to overlap.
-class CountingTTY < Lain::Frontend::TTY
+class CountingStdin < StringIO
   PARK = 0.02
 
-  def initialize(**)
+  def initialize(...)
     super
     @in_flight = 0
     @peak = 0
@@ -44,11 +45,11 @@ class CountingTTY < Lain::Frontend::TTY
 
   attr_reader :peak
 
-  def prompt(text = "> ")
+  def readpartial(*)
     @in_flight += 1
     @peak = [@peak, @in_flight].max
     Async::Task.current.sleep(PARK)
-    super
+    gets || raise(EOFError)
   ensure
     @in_flight -= 1
   end
@@ -87,10 +88,10 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
 
   # A throwaway state home: a tool turn primes the default posture's shadow
   # snapshot store, which lives there.
-  def chat_wiring(tty_factory, dir)
+  def chat_wiring(tty_factory, dir, stdin)
     Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
                           paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),
-                          status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+                          status_feed: instance_double(Lain::StatusFeed, bind_store: nil), stdin:)
   end
 
   # The whole chat, assembled by {CLI::Wiring} and driven by the lines the human
@@ -99,10 +100,10 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
   def run_chat(input, dir:, provider:, seconds: 20)
     output = StringIO.new
     tty_factory = lambda do |channel:, **|
-      @tty = CountingTTY.new(channel:, output:, input: StringIO.new(input),
-                             history_path: File.join(dir, "history"))
+      Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
     end
-    wiring = chat_wiring(tty_factory, dir)
+    @stdin = CountingStdin.new(input)
+    wiring = chat_wiring(tty_factory, dir, @stdin)
     Timeout.timeout(seconds) { wiring.run(backend: backend_over(provider), resumed: nil, nvim: nil) }
     wiring.conductor.close(reason: :exit)
     output.string
@@ -175,7 +176,7 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
       Dir.mktmpdir do |dir|
         run_chat("please ask me\nthe README\nquit\n", dir:, provider:)
 
-        expect(@tty.peak).to eq(1)
+        expect(@stdin.peak).to eq(1)
       end
     end
 

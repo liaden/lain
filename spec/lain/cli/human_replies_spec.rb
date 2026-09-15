@@ -212,9 +212,17 @@ RSpec.describe Lain::CLI::HumanReplies do
   end
   let(:store) { Lain::Store.new }
   let(:parent) { chain("hi") }
+  # Where a held line waits for `you>`: the conductor's rail, told through the
+  # terminal it draws on.
+  let(:rail) { Lain::Frontend::InputRail.new(screen: tty) }
   # No interrupt countdown runs, and a cockpit's command> reads nothing, unless
-  # an example says otherwise.
-  let(:conductor) { instance_double(Lain::CLI::Conductor, counting_down?: false, read_command: nil) }
+  # an example says otherwise. A line it holds goes to the rail, as the real one's does.
+  let(:conductor) do
+    instance_double(Lain::CLI::Conductor, counting_down?: false, read_command: nil).tap do |conductor|
+      allow(conductor).to receive(:hold) { |line| rail.hold(line) }
+      allow(conductor).to receive(:take_held) { rail.take_held }
+    end
+  end
   # The REAL producer of what this class consumes. Both halves of the seam or
   # neither: this file exists because a defect once lived exactly between two
   # sides that each had green specs (see the editor rail below), and "the

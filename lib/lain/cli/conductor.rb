@@ -17,7 +17,12 @@ module Lain
     #
     # For the ask's duration OS signals are {Signals#route}d to the coordinator;
     # between asks they route back to {Signals::NULL}, because a signal with no
-    # run in flight has nothing to interrupt.
+    # run in flight has nothing to interrupt. A signal a producer puts on the
+    # {Frontend::InputRail} goes wherever an OS signal would.
+    #
+    # It is also the chat's door to that rail: every line the human types
+    # reaches the chat through one of its three reads, and each takes the line
+    # from the rail and from nowhere else.
     #
     # {#close} is the guarded closer the coordinator's `closer:` duck resolves to
     # AND the one chat's normal-exit ensure calls, so a signal-driven close and a
@@ -46,9 +51,9 @@ module Lain
 
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
-      def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
+      def self.open(tty:, chronicle:, rail:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
                     run_clock: RunClock.new)
-        new(tty:, chronicle:, signals: Signals.new, grace:, supervisor:, run_clock:)
+        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
@@ -59,12 +64,16 @@ module Lain
       # not care pays nothing. Production wants ONE shared instance injected here
       # AND handed to whatever else reads it or feeds it compaction events, never
       # a second Conductor-local clock the reader could drift from.
-      def initialize(tty:, chronicle:, signals:, grace: Shutdown::GRACE_DEFAULT,
+      #
+      # `rail:` is where the human's lines come from; a fresh one with nothing
+      # feeding it by default, for a conductor that supervises and never reads.
+      def initialize(tty:, chronicle:, signals:, rail: Frontend::InputRail.new, grace: Shutdown::GRACE_DEFAULT,
                      budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
                      clock: RunClock::MONOTONIC, tick: DEFAULT_TICK)
         @tty = tty
         @chronicle = chronicle
         @signals = signals
+        @rail = rail
         @grace = grace
         @budget = budget
         @supervisor = supervisor
@@ -94,10 +103,9 @@ module Lain
       end
 
       # Read a line at an idle prompt, routing prompt-time signals to a
-      # {PromptBreaker} that raises the reader out of Reline's blocking read --
+      # {PromptBreaker} that raises the reader out of its wait on the rail --
       # there is no run to interrupt while idle, so a terminating signal instead
-      # breaks the prompt and closes the session. Reline's own ensure has restored
-      # the terminal by the time the {PromptBreaker::Break} lands.
+      # breaks the prompt and closes the session.
       #
       # The cleanup (route NULL + dispose) lives in {#read_breakable}'s OWN ensure
       # and deliberately WITHOUT a rescue there, so a Break that races the
@@ -115,12 +123,12 @@ module Lain
       # EOF and a rescued Break are not the user answering anything, so neither
       # records.
       #
-      # @param tty [#prompt]
-      # @param text [String] the prompt string, passed through to
-      #   {#read_breakable} unchanged
+      # @param _tty [Object] the caller's name for where it reads; the line comes
+      #   off the rail whichever terminal that is
+      # @param text [String] the prompt string, published unchanged
       # @return [String, nil] the line, or nil at EOF or on a signal-close
-      def read_prompt(tty, text)
-        line = read_breakable(tty, text)
+      def read_prompt(_tty, text)
+        line = read_breakable(text)
         @run_clock.record_input if line
         line
       rescue PromptBreaker::Break
@@ -128,12 +136,12 @@ module Lain
         nil
       end
 
-      # Read an ask_human reply through the conductor so it KNOWS Reline owns
-      # stdin for the span. Unlike {#read_prompt} there IS a run in flight, so
-      # signals stay routed at the coordinator and the grace clock keeps running;
-      # an expiry interrupts the run while {Repl::LineScope#serve}'s ensure stops
-      # the replier fiber parked here, and Reline's own ensure restores the
-      # terminal on that fiber-stop (PTY-probed), so no breaker is needed.
+      # Read an ask_human reply or a `[y/N]` through the conductor so it KNOWS a
+      # prompt is drawn for the span. Unlike {#read_prompt} there IS a run in
+      # flight, so signals stay routed at the coordinator and the grace clock
+      # keeps running; an expiry interrupts the run while
+      # {Repl::LineScope#serve}'s ensure stops the replier fiber parked here,
+      # which withdraws its prompt from the rail, so no breaker is needed.
       #
       # What DOES change: the countdown ticker is suppressed. It would otherwise
       # smear its status line against Reline's echo and STEAL a keystroke out of
@@ -142,16 +150,27 @@ module Lain
       # has finished -- a COUNT, since a `human>` and a `[y/N]` can be open
       # together.
       #
-      # The read is {Frontend::TTY#prompt_afresh}: an answer is what the human
-      # types AFTER the prompt appeared, never what they typed while a turn ran.
-      def read_reply(tty, text) = owning_stdin { tty.prompt_afresh(text) }
+      # The prompt is an ANSWER on the rail: what the human typed before it was
+      # drawn is held, never taken as the answer to it.
+      def read_reply(_tty, text) = owning_stdin { @rail.read(answer_kind(text), text) }
 
       # The chat's `command>` read, which answers nothing: what the human typed
       # ahead of it is read AT it, because a `/approve` typed a moment before
       # the call parked is what they reached for. Every read that can answer
       # -- the `[y/N]` that `/approve` asks included -- goes through
-      # {#read_reply} and drains for itself.
-      def read_command(tty, text) = owning_stdin { tty.prompt(text) }
+      # {#read_reply}.
+      def read_command(_tty, text) = owning_stdin { @rail.read(:command, text) }
+
+      # A line the human typed that was neither a command nor an answer, kept for
+      # `you>` and said to be ({Frontend::InputRail#hold}).
+      def hold(line) = @rail.hold(line)
+
+      # The oldest held line, or nil.
+      def take_held = @rail.take_held
+
+      # What was typed while no prompt was drawn -- a standing goal drives turns
+      # with none open -- held before the next turn is driven.
+      def gather_typed_ahead = @rail.gather
 
       # Whether the grace countdown is running for the ask being supervised.
       # A reader open beside the run asks, so it can close and let the
@@ -252,14 +271,23 @@ module Lain
 
       # No rescue here on purpose -- a Break, during the read OR during this
       # ensure's dispose, surfaces to {#read_prompt}'s rescue.
-      def read_breakable(tty, text)
+      def read_breakable(text)
         breaker = PromptBreaker.new(main: Thread.current)
-        @signals.route(breaker)
-        tty.prompt(text)
+        route(breaker)
+        @rail.read(:you, text)
       ensure
-        @signals.route(Signals::NULL)
+        route(Signals::NULL)
         breaker.dispose
       end
+
+      def route(sink)
+        @signals.route(sink)
+        @rail.route(sink)
+      end
+
+      # A prompt names its own kind when it has one ({Frontend::ApprovalPolicy::Asked});
+      # otherwise it is a question's `human>`.
+      def answer_kind(text) = text.respond_to?(:kind) ? text.kind : :human
 
       # on_transition is left as Shutdown's no-op: the countdown is POLL-driven
       # ({CountdownTicker}), so a cancel's status-line clear lands on the next
@@ -277,7 +305,7 @@ module Lain
       # Returned as a pair so {#supervise}'s ensure can tear both down even if
       # this raises (they are nil then).
       def start_shutdown(task, shutdown)
-        @signals.route(shutdown)
+        route(shutdown)
         [task.async { shutdown.coordinate }, task.async { @ticker.run(shutdown, task) }]
       end
 
@@ -295,7 +323,7 @@ module Lain
       # -- the per-ask analogue of "restore traps before dispose".
       def teardown(shutdown, coordinator, ticker_task)
         @shutdown = Unsupervised
-        @signals.route(Signals::NULL)
+        route(Signals::NULL)
         ticker_task&.stop
         @ticker.stop
         shutdown&.dispose

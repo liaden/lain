@@ -40,12 +40,19 @@ module CockpitAnswerSurfacesSupport
 
     attr_reader :prompts, :peak, :in_flight
 
+    # Where a held line waits for `you>`: the rail the conductor reads from.
+    attr_writer :rail
+
     def initialize(command: [], approval: [])
       @answers = { command: command.dup, approval: approval.dup }
       @prompts = []
       @in_flight = 0
       @peak = 0
     end
+
+    def hold(line) = @rail.hold(line)
+
+    def take_held = @rail.take_held
 
     def read_reply(_tty, prompt)
       @prompts << prompt
@@ -121,6 +128,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
   # The whole chat a line is dispatched in: the reply surfaces, the approval
   # watchers, and the command registry both of them answer through.
   def cockpit(terminal, editor: true)
+    terminal.rail = Lain::Frontend::InputRail.new(screen: tty)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor: terminal, ask_human: askers.directory,
                                           questions: askers.questions)
     surfaces = Lain::CLI::Repl::ApprovalSurfaces.new(approvals: queue, auto_surface: nil, secret_surface: nil,
@@ -304,7 +312,9 @@ RSpec.describe "cockpit answer surfaces", :seam do
             pumped_until(task, reason: "command> opened") { terminal.in_flight.positive? }
             approve_in_editor(task)
             gated.wait
-            pumped_until(task, reason: "command> closed") { terminal.in_flight.zero? }
+            pumped_until(task, reason: "command> closed") do
+              output.string.include?(Lain::CLI::HumanReplies::CommandLine::CLOSED)
+            end
             terminal.in_flight
           end
         end
