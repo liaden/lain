@@ -25,37 +25,10 @@ module Lain
       # run, because they are things the build DISCOVERS rather than things it
       # is told.
       class ToolsetBuild
-        # == Why both seam axes read the board through a thunk, not as values
-        #
-        # {Tools::Subagent::Seam} is a frozen `Data` built ONCE, here, and the
-        # run's {Switchboard} does not exist yet: the board requires the base
-        # `toolset:` that {#build} RETURNS. Asking for the board here is a
-        # construction cycle, not an argument that was forgotten, so it arrives
-        # as a thunk read later.
-        #
-        # The cycle is not the only reason. A captured
-        # `mode_switch.posture.permits` freezes the child's capability rule at
-        # session start, so a mid-session `/mode plan` would journal, repaint
-        # the HUD, attenuate the parent -- and leave every child holding
-        # `bash`, silently, which is the same failure as not gating at all.
-        # The {Context::ModelSwitch} / {Approval::PolicySwitch} rule: a live
-        # change is a slot the holder already has, never a setter.
-        #
-        # Two seam members read it, at two different moments. `permits` is
-        # asked per SPAWN, so a child already running keeps the plain {Toolset}
-        # it was rendered ({Tools::Subagent::ChildBuilder#permitted}). The tool
-        # guard ({CLI::ToolGuard::Spawned}) reads the board once per child, as
-        # the child is built, and builds the parent's own stack over it -- gate
-        # included, holding the board's one policy switch, so a `/mode` flip
-        # reaches the child's next gated call through the slot it already has.
-        PosturePermits = Data.define(:board) do
-          def include?(tool_name) = board.call.mode_switch.posture.permits.include?(tool_name)
-        end
-
         # Whether the `auto_approve` layer is on, asked of the board on every
-        # sweep of {Approval::AutoSurface}, for {PosturePermits}' two reasons: the
-        # board is built after this build, and a captured layer set would keep
-        # deciding after `/mode -auto_approve`.
+        # sweep of {Approval::AutoSurface}: the board is built after this build,
+        # and a captured layer set would keep deciding after
+        # `/mode -auto_approve`.
         AutoApproveLayer = Data.define(:board) do
           def call = board.call.mode_switch.layers.include?(:auto_approve)
         end
@@ -280,8 +253,13 @@ module Lain
         end
 
         # The ONE {Lain::Tools::Subagent::Seam} every child spawn is built
-        # over. Both posture axes arrive over the switchboard thunk; see the
-        # class comment for why neither may be a captured value.
+        # over. The board arrives as a thunk, because {Tools::Subagent::Seam} is
+        # a frozen `Data` built ONCE, here, while the run's {Switchboard} does
+        # not exist yet: the board requires the base `toolset:` that {#build}
+        # RETURNS, so asking for it here is a construction cycle. The tool guard
+        # ({CLI::ToolGuard::Spawned}) reads it once per child, as the child is
+        # built, gate included -- so a `/mode` flip reaches the child's next
+        # gated call through the policy switch it already holds.
         #
         # `isolation:` is the run's ONE backend, INJECTED -- the same instance
         # {Wiring} hands the {Supervisor}, never a second resolution of the same
@@ -304,8 +282,7 @@ module Lain
                                           journal:, supervisor:, observer: chronicle.observer, askers:,
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,
                                                                                  handoff: handback.handoff,
-                                                                                 sync: handback.sync),
-                                          permits: PosturePermits.new(board: switchboard))
+                                                                                 sync: handback.sync))
         end
 
         # The stack {Wiring#backing} mounts in the parent's tool phase, built again

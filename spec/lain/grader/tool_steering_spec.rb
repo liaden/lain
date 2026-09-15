@@ -108,13 +108,10 @@ RSpec.describe Lain::Grader::ToolSteering do
     end
   end
 
-  # A run that flips posture mid-session narrows what the model can even
-  # choose from -- grading every call against the session header's WIDEST
-  # declaration mistakes "this tool left the model's hands" for "the model
-  # stopped picking it". These build entries in memory rather than off a
-  # committed fixture because the scenario needs a specific count on each side
-  # of the flip (the Gherkin's own: 20 declared, 13 after).
-  describe "a declared set that narrows after a /mode flip" do
+  # A `/mode` flip never changes what the model is shown, so a run that flips
+  # still grades every call against the session header's declaration. These
+  # build entries in memory because the scenario needs a specific count.
+  describe "a run that flips its mode" do
     def declared_tools(names)
       names.map { |name| { "name" => name, "description" => "does #{name}", "input_schema" => {}, "strict" => true } }
     end
@@ -124,9 +121,9 @@ RSpec.describe Lain::Grader::ToolSteering do
       { "type" => "session", "tools" => declared_tools(names), "reminders" => [] }
     end
 
-    def mode_switch(tool_names)
-      { "type" => "mode_switch", "from" => "accept_edits", "to" => "plan", "from_layers" => [], "to_layers" => [],
-        "surface" => "spec", "toolset_digest" => "blake3:after-flip", "tool_names" => tool_names }
+    def mode_switch
+      { "type" => "mode_switch", "from_scope" => "checkout", "to_scope" => "checkout", "from_approval" => "ask",
+        "to_approval" => "auto", "from_layers" => [], "to_layers" => [], "surface" => "spec" }
     end
 
     def calls_turn(digest, names)
@@ -145,72 +142,26 @@ RSpec.describe Lain::Grader::ToolSteering do
       { "type" => "turn", "digest" => digest, "role" => "user", "content" => content, "parent" => parent, "meta" => {} }
     end
 
-    # 20 declared at the header, a flip to 13, then a turn issuing 13 calls: 5
-    # for "t01" and 2 apiece for four other post-flip tools -- 5 + 8 = 13, so
-    # the cohort's own total lines up with the declared count and the numbers
-    # stay legible: declared_share 1/13, observed_share 5/13, ratio exactly 5.0.
-    let(:post_flip_calls) { (["t01"] * 5) + %w[t02 t02 t03 t03 t04 t04 t05 t05] }
+    # 20 declared, then a turn issuing 13 calls: 5 for "t01" and 2 apiece for
+    # four others -- declared_share 1/20, observed_share 5/13.
+    let(:calls) { (["t01"] * 5) + %w[t02 t02 t03 t03 t04 t04 t05 t05] }
     let(:entries) do
-      [header(20), mode_switch((1..13).map { |i| format("t%02d", i) }), calls_turn("call", post_flip_calls),
-       results_turn("result", "call", post_flip_calls.size)]
+      [header(20), mode_switch, calls_turn("call", calls), results_turn("result", "call", calls.size)]
     end
 
-    it "grades a turn after the switch against the post-flip declared set, not the session header" do
+    it "grades a call after the flip against the session header's declared set" do
       flag = described_class.new(entries).flags.find { |candidate| candidate.name == "t01" }
 
       expect(flag).not_to be_nil
-      expect(flag.declared_share).to be_within(1e-9).of(1.0 / 13)
+      expect(flag.declared_share).to be_within(1e-9).of(1.0 / 20)
       expect(flag.observed_share).to be_within(1e-9).of(5.0 / 13)
-      expect(flag.ratio).to be_within(1e-9).of(5.0)
-      # The wrong baseline this exists to rule out: the header's 20, which a
-      # reader ignoring the flip would have used instead.
-      expect(flag.declared_share).not_to be_within(1e-9).of(1.0 / 20)
-    end
-
-    it "still resolves the flagged tool's description off the session header, which the flip carries no prose for" do
-      flag = described_class.new(entries).flags.find { |candidate| candidate.name == "t01" }
-
       expect(flag.description).to eq("does t01")
     end
 
-    describe "a run with no mode_switch record at all" do
-      let(:entries) do
-        [header(20), calls_turn("call", post_flip_calls), results_turn("result", "call", post_flip_calls.size)]
-      end
+    it "grades exactly as a run with no mode_switch record at all" do
+      unflipped = entries.reject { |entry| entry["type"] == "mode_switch" }
 
-      it "falls back to the session header throughout, grading exactly as it did before this card" do
-        flag = described_class.new(entries).flags.find { |candidate| candidate.name == "t01" }
-
-        expect(flag).not_to be_nil
-        expect(flag.declared_share).to be_within(1e-9).of(1.0 / 20)
-      end
-    end
-
-    # A mode_switch record journaled BEFORE this card carries only
-    # from/to/from_layers/to_layers/surface -- no toolset_digest key, no
-    # tool_names key, not even as nil. `record.fetch("tool_names")` raises
-    # KeyError on such a Hash, so an old journal replayed through a new
-    # ToolSteering must not crash: it has nothing this feature can read, which
-    # is exactly the "no switch" case, so it grades like one.
-    describe "a mode_switch record written before this card (no toolset_digest/tool_names key at all)" do
-      def old_shape_mode_switch
-        { "type" => "mode_switch", "from" => "accept_edits", "to" => "plan", "from_layers" => [], "to_layers" => [],
-          "surface" => "spec" }
-      end
-
-      let(:entries) do
-        [header(20), old_shape_mode_switch, calls_turn("call", post_flip_calls),
-         results_turn("result", "call", post_flip_calls.size)]
-      end
-
-      it "does not raise, and grades equal to the pre-card result -- the session header throughout" do
-        flag = nil
-        expect { flag = described_class.new(entries).flags.find { |candidate| candidate.name == "t01" } }
-          .not_to raise_error
-
-        expect(flag).not_to be_nil
-        expect(flag.declared_share).to be_within(1e-9).of(1.0 / 20)
-      end
+      expect(described_class.new(entries).flags).to eq(described_class.new(unflipped).flags)
     end
   end
 

@@ -81,7 +81,7 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
   # Tier-3 bash and the spawn would park on the approval gate; this spec is
   # about where records go, not who lets a call run.
   def approve_everything
-    wiring.instance_variable_get(:@switchboard).mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+    wiring.instance_variable_get(:@switchboard).mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
   end
 
   def converse

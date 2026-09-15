@@ -754,26 +754,26 @@ RSpec.describe Lain::Frontend::PromptComposer do
         expect(described_class.new(agent:, clock:, status_feed:).to_h["mode"]).to be_nil
       end
 
-      it "reports the posture's own lighter for a non-default posture" do
-        mode = Lain::Mode.new(posture: :plan, layers: [])
+      it "reports an axis's own lighter when it has one" do
+        mode = Lain::Mode.new(approval: :auto, layers: [])
 
-        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("PLAN")
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("AUTO")
       end
 
-      it "reports nothing for the default posture with no layers active" do
-        mode = Lain::Mode.new(posture: :accept_edits, layers: [])
+      it "reports nothing for the starting mode with no layers active" do
+        mode = Lain::Mode.new(layers: [])
 
         expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to be_nil
       end
 
-      it "reports the posture lighter alongside every active layer's, in precedence order" do
-        mode = Lain::Mode.new(posture: :manual, layers: %i[auto_approve])
+      it "reports the axes' lighters alongside every active layer's, in precedence order" do
+        mode = Lain::Mode.new(approval: :auto, layers: %i[auto_approve])
 
-        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("MAN AA")
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("AUTO AA")
       end
 
-      it "reports only the active layers' lighters when the posture itself is silent" do
-        mode = Lain::Mode.new(posture: :accept_edits, layers: %i[goal])
+      it "reports only the active layers' lighters when both axes are silent" do
+        mode = Lain::Mode.new(layers: %i[goal])
 
         expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("GOAL")
       end
@@ -1000,31 +1000,30 @@ RSpec.describe Lain::Frontend::PromptComposer do
     # reproduced verbatim -- so a divergence shows up as a real byte
     # difference rather than this test comparing the new format against
     # itself. This is the proof the card's escalation trigger demands: a
-    # non-default posture must not change what a default-posture prompt
-    # renders.
+    # lit mode must not change what a prompt in the starting mode renders.
     let(:pre_t7_format) do
       Lain::Ext::Prompt.from_toml(
         %(format = "[$model](bold cyan)( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"\n)
       )
     end
 
-    it "is byte-identical to the unlayered format when the posture is the default and no layers are active" do
+    it "is byte-identical to the unlayered format in the starting mode with no layers active" do
       old_bytes = pre_t7_format.render(state, color: false)
       new_bytes = shipped.render(state.merge("mode" => nil), color: false)
 
       expect(new_bytes).to eq(old_bytes)
     end
 
-    it "carries a non-default posture's lighter into the rendered line" do
-      rendered = shipped.render(state.merge("mode" => "PLAN"), color: false)
+    it "carries a lit approval's lighter into the rendered line" do
+      rendered = shipped.render(state.merge("mode" => "AUTO"), color: false)
 
-      expect(rendered).to include("PLAN")
+      expect(rendered).to include("AUTO")
     end
 
-    it "carries the posture lighter and every active layer's lighter" do
-      rendered = shipped.render(state.merge("mode" => "MAN AA"), color: false)
+    it "carries the approval's lighter and every active layer's lighter" do
+      rendered = shipped.render(state.merge("mode" => "AUTO AA"), color: false)
 
-      expect(rendered).to include("MAN", "AA")
+      expect(rendered).to include("AUTO", "AA")
     end
   end
 
@@ -1077,7 +1076,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
     let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => [] }) }
     let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
-    # Answers neither #posture nor #layers -- the shape a badly-wired
+    # Answers neither #scope, #approval nor #layers -- the shape a badly-wired
     # collaborator would take, not a well-formed Mode.
     let(:broken_mode) { Object.new }
 

@@ -53,11 +53,12 @@ RSpec.describe Lain::Bench::Variance do
   end
 
   # `/mode` flips land on the run's own journal as they happen, which is the
-  # only evidence a recording carries of the rung it ran on.
+  # only evidence a recording carries of the mode it ran in. Each flip names
+  # the approval on either side; the scope is the checkout throughout.
   def flip!(journal, flips)
     flips.each do |from, to|
-      journal << Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers: [], to_layers: [], surface: "tty",
-                                                 toolset_digest: toolset.digest, tool_names: toolset.names)
+      journal << Lain::Telemetry::ModeSwitch.new(from_scope: :checkout, to_scope: :checkout, from_approval: from,
+                                                 to_approval: to, from_layers: [], to_layers: [], surface: "tty")
     end
   end
 
@@ -207,23 +208,23 @@ RSpec.describe Lain::Bench::Variance do
         .to raise_error(Lain::Capability::Guard::Mismatch)
     end
 
-    # The posture is the same kind of fact the degraded set is: a `plan` run
-    # never saw the editing tools and an `auto` run never stopped for a human,
-    # so a distribution drawn across the two measures the ladder rung rather
-    # than the variable. Until the Recording carried a posture this guard was
-    # unreachable from every caller in the tree.
-    it "raises when the recordings' journals record different postures" do
-      planned = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual plan]])
-      automatic = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual auto]])
-      expect { described_class.new(recordings: [planned, automatic]) }
-        .to raise_error(Lain::Error, /manual → plan.*manual → auto/m)
+    # The mode is the same kind of fact the degraded set is: an `auto` run
+    # never stopped for a human, so a distribution drawn across it and an `ask`
+    # run measures the approval level rather than the variable. Until the
+    # Recording carried a mode this guard was unreachable from every caller in
+    # the tree.
+    it "raises when the recordings' journals record different modes" do
+      automatic = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask auto]])
+      returned = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask auto], %w[auto ask]])
+      expect { described_class.new(recordings: [automatic, returned]) }
+        .to raise_error(Lain::Error, %r{checkout/ask → checkout/auto vs checkout/ask → checkout/auto → checkout/ask})
     end
 
-    it "compares recordings that walked the same posture trajectory, and names it" do
+    it "compares recordings that walked the same mode trajectory, and names it" do
       pair = Array.new(2) do
-        record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[manual plan]])
+        record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask auto]])
       end
-      expect(described_class.new(recordings: pair).report).to include("posture: manual → plan")
+      expect(described_class.new(recordings: pair).report).to include("mode: checkout/ask → checkout/auto")
     end
 
     # A pipeline decides the bytes each model call sends, so a pruned run held
@@ -243,8 +244,8 @@ RSpec.describe Lain::Bench::Variance do
 
     # Every fixture in the repo predates modes, so absence has to stay sayable:
     # the report names it rather than implying the axis was controlled for.
-    it "reports an unrecorded posture for recordings whose journals hold no mode switch" do
-      expect(described_class.new(recordings: [reference, diverging]).report).to include("posture: not recorded")
+    it "reports an unrecorded mode for recordings whose journals hold no mode switch" do
+      expect(described_class.new(recordings: [reference, diverging]).report).to include("mode: not recorded")
     end
   end
 

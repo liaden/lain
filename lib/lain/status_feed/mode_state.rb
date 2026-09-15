@@ -2,8 +2,8 @@
 
 module Lain
   class StatusFeed
-    # The mode, as the HUD publishes it: the posture NAME, and the lighter
-    # already composed out of that posture and every active layer.
+    # The mode, as the HUD publishes it: the scope and approval NAMES, the
+    # layer names, and the lighter already composed out of all of them.
     #
     # It reads a journaled {Telemetry::ModeSwitch}, never a live {Mode}, and
     # that is the whole reason it is not a method on {Mode}: a Mode raises on a
@@ -15,14 +15,14 @@ module Lain
     # Three renderers read the published state feed -- `lain up`'s status job,
     # `plugin/tmux/scripts/lain-status`, and nvim's lualine. Publishing only the
     # NAMES would give each its own copy of the lighter table AND its own
-    # comparison against the default posture's name (`accept_edits` must render
-    # nothing), and both rules already have exactly one home ({Mode::Posture}
-    # and {Mode::Layer} declare a `lighter`). Publishing only the LIGHTER would
+    # comparison against the starting mode's names (`checkout ask` must render
+    # nothing), and both rules already have exactly one home ({Mode::Scope},
+    # {Mode::Approval} and {Mode::Layer} declare a `lighter`). Publishing only the LIGHTER would
     # make a bench arm asking "was `auto_approve` on for this arm?"
     # substring-match `"AA"` inside a rendered string. So all three ship.
-    ModeState = Data.define(:posture, :layers, :lighter) do
+    ModeState = Data.define(:scope, :approval, :layers, :lighter) do
       # String-keyed, for merging straight into {StatusFeed#observed}.
-      def published = { "posture" => posture, "layers" => layers, "mode_lighter" => lighter }
+      def published = { "scope" => scope, "approval" => approval, "layers" => layers, "mode_lighter" => lighter }
     end
 
     class ModeState
@@ -33,7 +33,7 @@ module Lain
 
       # `mode_lighter` is the first FREE-FORM string this feed publishes, and
       # {.lighter_of}'s degradation path can put a foreign journal's raw name in
-      # it. Nothing downstream bounds the width -- a 400-character posture name
+      # it. Nothing downstream bounds the width -- a 400-character scope name
       # would be pasted straight into tmux's `status-right`. Characters, not
       # bytes: `String#[]` is character-based, so a multibyte name cannot be
       # sliced into invalid UTF-8 and break the NDJSON line. Every declared
@@ -45,15 +45,18 @@ module Lain
       #   record carries both ends so a transcript can be reconstructed; a HUD
       #   publishes what is in force NOW.
       def self.of(record)
-        new(posture: record.to, layers: record.to_layers, lighter: compose(record.to, record.to_layers))
+        new(scope: record.to_scope, approval: record.to_approval, layers: record.to_layers,
+            lighter: compose(record))
       end
 
-      # The posture's lighter, then each layer's, dropping the empties -- so the
-      # silent default composes to `""` and a renderer's rule stays one
-      # comparison. The layer ORDER is read, never re-derived: {Mode::LayerSet}
-      # canonicalized it into precedence order before it was journaled.
-      def self.compose(posture, layers)
-        [lighter_of(Mode::Posture, posture), *layers.map { |name| lighter_of(Mode::Layer, name) }]
+      # The scope's lighter, the approval's, then each layer's, dropping the
+      # empties -- so the silent default composes to `""` and a renderer's rule
+      # stays one comparison. The layer ORDER is read, never re-derived:
+      # {Mode::LayerSet} canonicalized it into precedence order before it was
+      # journaled.
+      def self.compose(record)
+        [lighter_of(Mode::Scope, record.to_scope), lighter_of(Mode::Approval, record.to_approval),
+         *record.to_layers.map { |name| lighter_of(Mode::Layer, name) }]
           .reject(&:empty?).join(" ")[0, LIGHTER_CAP]
       end
 
@@ -63,9 +66,9 @@ module Lain
       # failure -- so a record written by a newer lain, or replayed from an
       # older one, would cost the agent its turn over a status line. Falling
       # back to the raw name rather than to `""` is the half that matters: a
-      # posture nobody here can resolve is precisely the one a human must not be
+      # name nobody here can resolve is precisely the one a human must not be
       # left guessing about, so it renders as itself instead of vanishing into
-      # the silence the DEFAULT posture earns.
+      # the silence the starting mode earns.
       def self.lighter_of(family, name)
         family.for(name).lighter
       rescue ArgumentError
@@ -81,7 +84,7 @@ module Lain
       # `occupancy` is nil rather than zero: an empty list is a perfectly
       # ordinary layer set and would claim "nothing is active" for a feed that
       # has not been told anything at all.
-      NONE = new(posture: nil, layers: nil, lighter: nil)
+      NONE = new(scope: nil, approval: nil, layers: nil, lighter: nil)
     end
   end
 end

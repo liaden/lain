@@ -3,9 +3,9 @@
 # Compare draws DISTRIBUTIONS over n>=2 runs -- a single A/B is noise -- and
 # refuses, loudly, on the two axes that decide whether the runs were comparable
 # at all: the capabilities they degraded (a cross-arm comparison where half the
-# tactics silently no-oped on one side is a lie, not a result) and the posture
-# they ran under (a plan-mode run never saw the editing tools). Both arrive as
-# arguments a caller must thread, so both have a vacuous branch, and the posture
+# tactics silently no-oped on one side is a lie, not a result) and the mode
+# they ran under (an auto run never stopped for a human). Both arrive as
+# arguments a caller must thread, so both have a vacuous branch, and the mode
 # describe below is where that branch is held shut. Its report is a DX artifact:
 # a scannable per-metric table, never a wall of floats.
 RSpec.describe Lain::Compare do
@@ -14,9 +14,9 @@ RSpec.describe Lain::Compare do
                     cache_creation_input_tokens: cache_write)
   end
 
-  def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), posture: nil)
+  def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), mode: nil)
     Lain::Compare::Run.new(name:, usage:, price: Lain::Compare::Priced.new(amount: BigDecimal(cost.to_s)), score:,
-                           degraded:, posture:)
+                           degraded:, mode:)
   end
 
   let(:runs) do
@@ -199,10 +199,11 @@ RSpec.describe Lain::Compare do
         .to raise_error(ArgumentError, /ledger/)
     end
 
-    it "carries the posture the caller recorded for the run" do
+    it "carries the mode the caller recorded for the run" do
       timeline, ledger = recorded("yo", input: 10, output: 1)
-      run = described_class::Run.from_timeline(name: "recorded", timeline:, ledger:, posture: :plan)
-      expect(run.posture.to_s).to eq("plan")
+      run = described_class::Run.from_timeline(name: "recorded", timeline:, ledger:,
+                                               mode: Lain::Mode.new(approval: :auto))
+      expect(run.mode.to_s).to eq("checkout/auto")
     end
   end
 
@@ -314,79 +315,77 @@ RSpec.describe Lain::Compare do
     end
   end
 
-  # The posture is an AXIS, not decoration. Compare already refuses to draw a
-  # distribution across runs that degraded different capabilities; a `plan` run
+  # The mode is an AXIS, not decoration. Compare already refuses to draw a
+  # distribution across runs that degraded different capabilities; an `ask` run
   # against an `auto` run is the same kind of apples-to-oranges, because the
-  # posture decides which tools the model could even see and which calls a human
-  # had to answer. The case that must not break is ABSENCE: every recording made
-  # before modes existed carries no mode record at all, and absent has to mean
-  # absent rather than a fifth rung of the ladder.
-  describe "the posture axis" do
-    def posture_run(name, posture)
-      run(name, usage: usage(input: 10, output: 1), cost: "0.001", posture:)
+  # approval level decides which calls a human had to answer. The case that must
+  # not break is ABSENCE: a session that never switched carries no mode record
+  # at all, and absent has to mean absent rather than another point on the axis.
+  describe "the mode axis" do
+    let(:ask) { "checkout/ask" }
+    let(:auto) { "checkout/auto" }
+
+    def mode_run(name, mode)
+      run(name, usage: usage(input: 10, output: 1), cost: "0.001", mode:)
     end
 
-    def compare(*postures)
-      described_class.new(postures.each_with_index.map { |posture, i| posture_run("r#{i}", posture) })
+    def compare(*modes)
+      described_class.new(modes.each_with_index.map { |mode, i| mode_run("r#{i}", mode) })
     end
 
-    it "compares two runs recorded under the same posture" do
-      expect { compare(:accept_edits, :accept_edits) }.not_to raise_error
+    it "compares two runs recorded under the same mode" do
+      expect { compare(ask, ask) }.not_to raise_error
     end
 
-    it "refuses runs under different postures, naming both" do
-      expect { compare(:manual, :auto) }
-        .to raise_error(Lain::Error, /\bmanual\b.*\bauto\b/m)
+    it "refuses runs under different modes, naming both" do
+      expect { compare(ask, auto) }.to raise_error(Lain::Error, %r{checkout/ask.*checkout/auto}m)
     end
 
-    it "compares runs whose journals hold no mode record -- a run from before modes existed" do
+    it "compares runs whose journals hold no mode record" do
       expect { compare(nil, nil) }.not_to raise_error
     end
 
     # THE example for why the guard is `combination(2)` and not the degraded
     # guard's `each_cons(2)`. Agreement is not transitive here: an unrecorded
-    # posture agrees with both its neighbours, so an adjacent-pairwise walk
-    # waves `manual` and `auto` through on the strength of the absence sitting
-    # between them -- and reverting the guard to `each_cons` fails nothing else
-    # in this file.
-    it "refuses postures that differ across an unrecorded run standing between them" do
-      expect { compare(:manual, nil, :auto) }
-        .to raise_error(Lain::Error, /\bmanual\b.*\bauto\b/m)
+    # mode agrees with both its neighbours, so an adjacent-pairwise walk waves
+    # `ask` and `auto` through on the strength of the absence sitting between
+    # them -- and reverting the guard to `each_cons` fails nothing else in this
+    # file.
+    it "refuses modes that differ across an unrecorded run standing between them" do
+      expect { compare(ask, nil, auto) }.to raise_error(Lain::Error, %r{checkout/ask.*checkout/auto}m)
     end
 
     # Absence is not a claim, so it cannot contradict one. A guard that refused
-    # here would be treating "not recorded" as a fifth posture, which is exactly
-    # what every pre-modes fixture would then fail on.
-    it "compares an unrecorded run against a recorded one -- absent is absent, not a fifth posture" do
-      expect { compare(:manual, nil) }.not_to raise_error
-      expect { compare(nil, :manual) }.not_to raise_error
+    # here would be treating "not recorded" as another point on the axis.
+    it "compares an unrecorded run against a recorded one -- absent is absent, not another point" do
+      expect { compare(ask, nil) }.not_to raise_error
+      expect { compare(nil, ask) }.not_to raise_error
     end
 
-    it "refuses a posture name that is not on the ladder, naming the roster" do
-      expect { posture_run("typo", :acept_edits) }
-        .to raise_error(ArgumentError, /unknown posture.*accept_edits/m)
+    it "refuses a mode that is not a declared point, naming the roster" do
+      expect { mode_run("typo", "checkout/atuo") }.to raise_error(ArgumentError, /atuo.*ask.*auto/m)
     end
 
-    it "keeps a Run with a posture Ractor-shareable" do
-      expect(posture_run("a", :manual)).to be_deeply_frozen
+    it "keeps a Run with a mode Ractor-shareable" do
+      expect(mode_run("a", ask)).to be_deeply_frozen
     end
 
     describe "the report" do
-      it "states the posture when every run used the same one" do
-        expect(compare(:accept_edits, :accept_edits).report).to include("posture: accept_edits")
+      it "states the mode when every run used the same one" do
+        expect(compare(ask, ask).report).to include("mode: checkout/ask")
       end
 
-      it "names each run's posture when they were not all recorded alike" do
-        report = compare(:manual, nil).report
-        expect(report).to include("r0=manual").and include("r1=not recorded")
+      it "names each run's mode when they were not all recorded alike" do
+        report = compare(ask, nil).report
+        expect(report).to include("r0=checkout/ask").and include("r1=not recorded")
       end
 
-      it "says a posture was not recorded rather than inventing one" do
-        expect(described_class.new(runs).report).to include("posture: not recorded")
+      it "says a mode was not recorded rather than inventing one" do
+        expect(described_class.new(runs).report).to include("mode: not recorded")
       end
 
       # Both facts on this line are comma lists of their own, so an undelimited
-      # header reads "degraded: extended_output, thinking, posture: a=manual"
+      # header reads "degraded: extended_output, thinking, mode: a=checkout/ask"
       # and a reader cannot see where the capability list ends.
       it "delimits the header's facts, so neither comma list runs into the other" do
         degraded = Lain::Capability::DegradedSet.new(%i[thinking extended_output])
@@ -394,7 +393,7 @@ RSpec.describe Lain::Compare do
           run("r#{i}", usage: usage(input: 10, output: 1), cost: "0.001", degraded:)
         end
         expect(described_class.new(pair).report.lines.first.chomp)
-          .to eq("Compare — 2 runs | degraded: extended_output, thinking | posture: not recorded")
+          .to eq("Compare — 2 runs | degraded: extended_output, thinking | mode: not recorded")
       end
     end
   end

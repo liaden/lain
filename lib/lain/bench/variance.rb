@@ -26,9 +26,9 @@ module Lain
     #
     # Compare AND the determinism diffs are built eagerly, so mismatched
     # degraded sets and a recording that cannot replay both refuse at
-    # construction, before any report text exists. Each recording's POSTURE
-    # rides into Compare beside its degraded set, which is what lets that
-    # guard refuse a plan-mode run held against an auto-mode one: absent it,
+    # construction, before any report text exists. Each recording's MODE
+    # trajectory rides into Compare beside its degraded set, which is what lets
+    # that guard refuse an `ask` run held against an `auto` one: absent it,
     # every run reads as "not recorded" and the guard agrees with everything.
     class Variance
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task
@@ -36,7 +36,7 @@ module Lain
       # @raise [ArgumentError] on fewer than two recordings, or on a recording
       #   whose baseline cannot line up 1:1 with its model calls
       # @raise [Capability::Guard::Mismatch] when the recordings degraded different sets
-      # @raise [Lain::Error] when the recordings walked different posture rungs
+      # @raise [Lain::Error] when the recordings walked different modes
       # @raise [Lain::Error] when the recordings rendered through different
       #   context pipeline stages
       def initialize(recordings:, price_book: PriceBook.default)
@@ -111,7 +111,7 @@ module Lain
           Compare::Run.from_timeline(
             name:, timeline: recording.timeline,
             ledger: Ledger.new(index: recording.ledger_index, price_book: @price_book),
-            degraded: recording.degraded, posture: recording.posture
+            degraded: recording.degraded, mode: recording.mode
           )
         end)
       end

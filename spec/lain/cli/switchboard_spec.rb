@@ -6,17 +6,15 @@ RSpec.describe Lain::CLI::Switchboard do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  # A REAL Toolset, for the reason resolution_spec and posture_spec both record:
-  # a verifying double's `#only` accepts any argument list at all, so a posture
-  # naming a tool no live set holds would satisfy every example here and raise
-  # at the first `/mode plan` of a real session instead.
+  # A REAL Toolset: the rules rung reads a call's tier off it, and a double
+  # would answer whatever an example stubbed.
   let(:base) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
   def switchboard(toolset: base, **rest)
     described_class.new(journal:, model: "claude-opus-4-8", toolset:, **rest)
   end
 
-  def mode(posture) = Lain::Mode.new(posture:)
+  def mode(approval) = Lain::Mode.new(approval:)
 
   def layout_run = Lain::Middleware::GuardTestLayout::Run.undeclared
 
@@ -77,7 +75,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       # The gate is built from the same value: the board's ONE policy switch,
-      # which every posture flip reaches, and the sentence its refusals are
+      # which every mode flip reaches, and the sentence its refusals are
       # reported in -- decided once, because whether a human is attached does
       # not change for a session's whole life.
       it "carries the board's one policy switch and its refusal sentence among the guard's inputs" do
@@ -105,12 +103,12 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # There is no longer a flag that skips either half: a chat gets the parked
-    # list and the asking posture, and `/mode auto` is the only way out of them.
-    it "wires the approval queue and starts on accept_edits, with no flag to skip either" do
+    # list and ask approval, and `/mode auto` is the only way out of them.
+    it "wires the approval queue and starts in checkout ask, with no flag to skip either" do
       board = board_for
 
       expect(board.approvals).to be_a(Lain::Approval::Queue)
-      expect(board.mode_switch.posture.name).to eq(:accept_edits)
+      expect(board.mode_switch.current).to eq(Lain::Mode.new)
     end
 
     # `--non-interactive` answers "who decides a gated call" with "nobody can".
@@ -228,9 +226,9 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(verdict_of(switchboard).call("curl http://example.com")).to be_allow
       end
 
-      # The THIRD posture, and it is a fact about the wiring rather than a
-      # defect: a session with nobody to ask gets a one-rung ladder that
-      # refuses everything, so the exclusion table is never consulted there.
+      # A fact about the wiring rather than a defect: a session with nobody to
+      # ask gets a one-rung ladder that refuses everything under `ask`, so the
+      # exclusion table is never consulted there.
       # The tool still holds the same verdict and still chooses its arm.
       it "is not consulted at all by an unattended session's one-rung ladder" do
         board = switchboard(attended: false, verdict: excluding_curl)
@@ -281,7 +279,7 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(board.ledger).to be(board.ledger)
     end
 
-    # The posture decides who is asked, not whether the run has somewhere to
+    # The approval level decides who is asked, not whether the run has somewhere to
     # record an answer -- and an unattended session wires no queue, so this is
     # the arm most likely to be skipped by accident.
     it "holds one for an unattended session too, where there is no queue" do
@@ -311,8 +309,8 @@ RSpec.describe Lain::CLI::Switchboard do
 
   # An earlier card established WHERE the live mode lives; these are the examples that
   # say a flip DOES something -- it re-binds the gate policy the construction-
-  # fixed Gate reads and the capability set the construction-fixed Agent renders.
-  describe "the mode side, bound to the live gate and the live toolset" do
+  # fixed Gate reads, and leaves the capability set the Agent renders alone.
+  describe "the mode side, bound to the live gate" do
     let(:store) { Lain::Store.new }
     let(:timeline) do
       Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
@@ -373,8 +371,8 @@ RSpec.describe Lain::CLI::Switchboard do
       it "leaves the session holding every tool it was built with" do
         board = switchboard(attended: false)
 
-        expect(board.mode_switch.posture.name).to eq(:accept_edits)
-        expect(board.toolset.names).to match_array(base.names)
+        expect(board.mode_switch.current).to eq(Lain::Mode.new)
+        expect(board.toolset).to be(base)
       end
 
       it "journals no flip for the mode it was constructed in" do
@@ -419,10 +417,9 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
-    describe "a posture flip at runtime" do
-      it "approves a tier-3 call without parking it once the posture switches to auto" do
+    describe "an approval flip at runtime" do
+      it "approves a tier-3 call without parking it once approval switches to auto" do
         board = switchboard
-        board.mode_switch.switch(mode(:manual), surface: "tty")
 
         Sync do |task|
           parked = task.async { board.policy_switch.call(gated_call, nil) }
@@ -442,7 +439,7 @@ RSpec.describe Lain::CLI::Switchboard do
         end
       end
 
-      it "restores the queue when the posture switches back to an asking rung" do
+      it "restores the queue when approval switches back to ask" do
         board = switchboard
 
         board.mode_switch.switch(mode(:auto), surface: "tty")
@@ -451,7 +448,7 @@ RSpec.describe Lain::CLI::Switchboard do
         # is the leg that tells them apart.
         expect(board.policy_switch.current).not_to be(board.ladder)
 
-        board.mode_switch.switch(mode(:manual), surface: "tty")
+        board.mode_switch.switch(mode(:ask), surface: "tty")
 
         expect(board.policy_switch.current).to be(board.ladder)
       end
@@ -464,69 +461,31 @@ RSpec.describe Lain::CLI::Switchboard do
 
         board.mode_switch.switch(mode(:auto), surface: "editor")
 
-        expect(policy_records.last).to include("to" => "approve_all", "surface" => "editor")
+        expect(policy_records.last).to include("from" => "ask", "to" => "auto", "surface" => "editor")
       end
-    end
 
-    describe "plan, which takes the capability away rather than gating it" do
-      it "drops edit_file from a subsequent render" do
+      # One approval level, one name in the record, whoever is attached.
+      it "names the unattended ask ladder ask too, so its gate flips read ask and auto" do
+        board = switchboard(attended: false)
+
+        board.mode_switch.switch(mode(:auto), surface: "tty")
+        board.mode_switch.switch(mode(:ask), surface: "tty")
+
+        expect(policy_records.map { |record| record.values_at("from", "to") }).to eq([%w[ask auto], %w[auto ask]])
+      end
+
+      # A flip back to the level in force selects the very ladder already
+      # there, so the policy switch sees nothing moved and writes nothing.
+      it "journals no gate flip when a mode flip leaves approval where it was" do
         board = switchboard
-        board.mode_switch.switch(mode(:manual), surface: "tty")
-        expect(rendered_tools(board)).to include("edit_file")
 
-        board.mode_switch.switch(mode(:plan), surface: "tty")
+        board.mode_switch.switch(Lain::Mode.new(layers: %i[notify]), surface: "tty")
 
-        expect(rendered_tools(board)).not_to include("edit_file")
-      end
-
-      # The whole reason this card did not have to rebuild the Agent: the
-      # capability set is a SLOT the Agent and its executor already hold, so the
-      # object identity wiring_spec pins across a session survives the flip.
-      it "re-binds the slot in place, so the Agent still holds the object it was built with" do
-        board = switchboard
-        live = board.toolset
-
-        board.mode_switch.switch(mode(:plan), surface: "tty")
-
-        expect(board.toolset).to equal(live)
-        expect(live.names).not_to include("edit_file", "write_file", "bash")
-        expect(live.fetch("read_file")).to be_a(Lain::Tools::ReadFile)
-      end
-
-      # The slot is the possession, and possession IS authorization here -- so
-      # the reader the Agent hands around must not offer a way to disarm a live
-      # session with no journal line and no mode change behind it. The board is
-      # the only writer.
-      it "hands out a read-only face: no writer, and frozen" do
-        live = switchboard.toolset
-
-        expect(live).to be_frozen
-        expect(live).not_to respond_to(:bind)
-        expect(live).not_to respond_to(:only)
-      end
-
-      # A slot is not a value. Said out loud because Toolset#== exists and the
-      # asymmetry would otherwise read as an oversight.
-      it "is not == to the set it holds, in either direction" do
-        live = switchboard.toolset
-
-        expect(live == live.current).to be(false)
-        expect(live.current == live).to be(false)
-      end
-
-      it "restores the full set on the way back out, because it re-resolves from the base" do
-        board = switchboard
-        board.mode_switch.switch(mode(:plan), surface: "tty")
-
-        board.mode_switch.switch(mode(:manual), surface: "tty")
-
-        expect(board.toolset.names).to eq(base.names)
+        expect([mode_records.size, policy_records]).to eq([1, []])
       end
     end
   end
 
-  # The snapshot slot is born in the agent build and bound here, because the
-  # board is the one object a `/mode` flip goes through.
   # The layers every tool call of a session passes before it is interpreted,
   # built over this board and driven through the real runner. The interpreter
   # is a Mock that records, so "it did not run" is an observation rather than
@@ -563,15 +522,11 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # Approval can take as long as a human takes, and a `/mode` flip in that
-    # window may withdraw the very capability being asked about. Plan's promise
-    # is that a mutating tool cannot be run, so the call that comes back from
-    # the queue approved must still find the tool it was judged as -- driven
-    # through the real board, whose flip re-binds the live toolset the runner
-    # resolves against.
+    # window changes the policy the NEXT call is ruled by, never the answer a
+    # parked call is waiting on -- driven through the real board.
     describe "a flip while the call waits on a human" do
       def parked_then(board, flip)
         ran = []
-        board.mode_switch.switch(mode(:manual), surface: "tty")
         result = Sync do |task|
           call = task.async do
             dispatch_call("bash", { "command" => "rm -rf build" }, toolset: board.toolset,
@@ -585,14 +540,7 @@ RSpec.describe Lain::CLI::Switchboard do
         [result, ran]
       end
 
-      it "refuses a call whose tool the flip withdrew, and the interpreter never runs" do
-        result, ran = parked_then(switchboard, :plan)
-
-        expect(result).to eq(Lain::Tool::Result.error('no tool named "bash" is available'))
-        expect(ran).to be_empty
-      end
-
-      it "runs the approved call when the flip left its tool in place" do
+      it "runs the approved call, the tool still in place after a flip to auto" do
         result, ran = parked_then(switchboard, :auto)
 
         expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
@@ -654,7 +602,6 @@ RSpec.describe Lain::CLI::Switchboard do
       # Scenario: a human's denial is unchanged
       it "keeps a human's denial byte-for-byte" do
         board = switchboard
-        board.mode_switch.switch(mode(:manual), surface: "tty")
 
         result = Sync do |task|
           call = task.async do
@@ -681,12 +628,12 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       it "switches only between policies that answer a ruling themselves, attended or not" do
-        postures = %i[plan manual accept_edits auto]
+        levels = Lain::Mode::Approval::NAMES.reverse
         [switchboard, switchboard(attended: false)].each do |board|
-          postures.each do |posture|
-            board.mode_switch.switch(mode(posture), surface: "tty")
+          levels.each do |approval|
+            board.mode_switch.switch(mode(approval), surface: "tty")
 
-            expect(board.policy_switch.current).to respond_to(:rule), "#{posture} resolved to a Boolean-only policy"
+            expect(board.policy_switch.current).to respond_to(:rule), "#{approval} resolved to a Boolean-only policy"
           end
         end
       end
@@ -710,24 +657,24 @@ RSpec.describe Lain::CLI::Switchboard do
   describe "the snapshot slot" do
     let(:slot) { instance_spy(Lain::Agent::SnapshotSlot) }
 
-    it "answers the starting posture's scope, so the slot is born with it" do
+    # The slot falls back to the write-set scope by itself when the shadow
+    # store fails, so no mode chooses a scope.
+    it "answers the shadow scope every mode writes under, so the slot is born with it" do
       expect(switchboard.snapshot_scope).to eq(:shadow_git)
     end
 
-    it "hands every flip's scope to the slot it was bound" do
+    it "leaves the bound slot's scope alone across a mode flip" do
       board = switchboard
       board.bind_snapshots(slot)
 
-      board.mode_switch.switch(mode(:plan), surface: "tty")
       board.mode_switch.switch(mode(:auto), surface: "tty")
 
-      expect(slot).to have_received(:rebind).with(:write_set).ordered
-      expect(slot).to have_received(:rebind).with(:shadow_git).ordered
+      expect(slot).not_to have_received(:rebind)
       expect(board.snapshot_scope).to eq(:shadow_git)
     end
 
     it "flips harmlessly before any slot is bound" do
-      expect { switchboard.mode_switch.switch(mode(:plan), surface: "tty") }.not_to raise_error
+      expect { switchboard.mode_switch.switch(mode(:auto), surface: "tty") }.not_to raise_error
     end
 
     it "hands the bound slot to the command surface" do
@@ -754,24 +701,6 @@ RSpec.describe Lain::CLI::Switchboard do
                                     tty: instance_double(Lain::Frontend::TTY))
 
       expect(kwargs.fetch(:sensitivity)).to be(policy)
-    end
-
-    it "writes the snapshot after a flip to plan under the write-set scope", :seam do
-      Dir.mktmpdir do |root|
-        board = switchboard
-        slot = Lain::Agent::SnapshotSlot.new(root:, scope: board.snapshot_scope,
-                                             paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => root,
-                                                                           "HOME" => root }))
-        board.bind_snapshots(slot)
-        board.mode_switch.switch(mode(:plan), surface: "tty")
-        written = File.join(root, "a.rb").tap { |path| File.write(path, "written\n") }
-
-        event = slot.write(timeline: Lain::Timeline.empty(store: Lain::Store.new)
-                                                   .commit(role: :user, content: [{ "type" => "text", "text" => "t" }]),
-                           paths: [written])
-
-        expect(event.body.fetch("snapshot_scope")).to eq(Lain::Workspace::Snapshot::Scope::WriteSet::NOTE)
-      end
     end
   end
 
@@ -864,7 +793,7 @@ RSpec.describe Lain::CLI::Switchboard do
         [*watchers, call].compact.each(&:stop)
       end
 
-      expect(board.mode_switch.posture.name).to eq(:accept_edits)
+      expect(board.mode_switch.approval.name).to eq(:ask)
       expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
       expect(decisions.map { |record| record["surface"] }).to eq([Lain::Approval::AutoSurface::SURFACE])
     end
@@ -913,7 +842,7 @@ RSpec.describe Lain::CLI::Switchboard do
       chat(auto_approve: true)
 
       expect(mode_records).to contain_exactly(
-        a_hash_including("from" => "accept_edits", "to" => "accept_edits", "from_layers" => [],
+        a_hash_including("from_approval" => "ask", "to_approval" => "ask", "from_layers" => [],
                          "to_layers" => %w[auto_approve], "surface" => described_class::LAUNCH_SURFACE)
       )
       expect(policy_records).to be_empty
@@ -942,31 +871,130 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # A mode is scope × approval, driven through the production entry and the
+  # command a human types, so the flip under test is the flip a chat makes.
+  describe "a mode is scope × approval, over the production entry" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:home) { "/home/tester" }
+    let(:classifiers) { Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: "#{home}/project") }
+
+    def board_for(**options)
+      described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base, classifiers:,
+                          test_layout: layout_run)
+    end
+
+    def typed(board, args)
+      Lain::CLI::Command::Mode.new.call(args, instance_double(Lain::CLI::Command::Env, mode_switch: board.mode_switch))
+    end
+
+    # Scenario: auto still honours a triage deny
+    #
+    # The interpreter is a recording Mock, so a regression that approves the
+    # call is an observation and never a real write under a home directory.
+    it "denies a command writing under a protected path under /mode auto, rather than approving it" do
+      ran = []
+      board = board_for
+      typed(board, "auto")
+
+      result = dispatch_call("bash", { "command" => "cp spare.key #{home}/.ssh/id_ed25519" },
+                             toolset: board.toolset, layers: tool_stack(board), context: Lain::Session.new,
+                             handler: Lain::Effect::Handler::Mock.new { |effect, _| ran << effect.name })
+
+      expect(result).to have_attributes(is_error: true, content: /refused tool "bash".*protects/)
+      expect(ran).to be_empty
+      expect(board.policy_switch.current.map(&:name)).to eq(%w[triage rules auto])
+    end
+
+    it "approves the remainder under /mode auto, where nothing above refused, without parking it" do
+      board = board_for
+      typed(board, "auto")
+
+      expect(board.policy_switch.call(gated_call, nil)).to be(true)
+      expect(board.approvals).to be_none
+    end
+
+    # Scenario: a no-op flip journals nothing
+    it "writes no mode_switch or policy_switch record for a flip that moves nothing" do
+      board = board_for
+      typed(board, "+vi")
+      before = [mode_records.size, policy_records.size]
+
+      typed(board, "+vi")
+
+      expect([mode_records.size, policy_records.size]).to eq(before)
+    end
+
+    # Scenario: the toolset does not change with the mode
+    it "renders the same tool block before and after /mode auto" do
+      board = board_for
+      before = board.toolset.digest
+
+      typed(board, "auto")
+
+      expect(board.toolset.digest).to eq(before)
+      expect(board.toolset).to be(base)
+    end
+  end
+
+  # Production-shaped: the board's journal is a JournalTee with a real
+  # StatusFeed as its sink, and the feed cannot publish (a state dir that is a
+  # file). The session file must keep agreeing with the live mode, gate
+  # included, and a retry must not break the chain the loader walks.
+  describe "a flip whose state-feed publish fails", :seam do
+    it "applies whole, writes one record however often it is retried, and leaves the record loadable" do
+      Dir.mktmpdir do |dir|
+        blocked = File.join(dir, "not-a-dir").tap { |path| File.write(path, "") }
+        feed = Lain::StatusFeed.new(path: File.join(blocked, "state.json"))
+        board = described_class.new(journal: Lain::CLI::JournalTee.new(journal, feed), model: "m", toolset: base,
+                                    test_layout: layout_run)
+        env = instance_double(Lain::CLI::Command::Env, mode_switch: board.mode_switch)
+
+        raised = Array.new(2) do
+          Lain::CLI::Command::Mode.new.call("auto", env)
+          nil
+        rescue Lain::StatusFeed::Publication::Unpublishable => e
+          e
+        end
+
+        expect(raised.first).to be_a(Lain::StatusFeed::Publication::Unpublishable)
+        expect(mode_records.map { |record| record["to_approval"] }).to eq(["auto"])
+        expect(board.mode_switch.approval.name).to eq(:auto)
+        expect(board.policy_switch.current).to have_attributes(label: "auto")
+        expect { Lain::Compare::Mode.from_journal(journal_io.string.lines) }.not_to raise_error
+      end
+    end
+  end
+
   # A direct unit spec over the decorator itself, collaborators doubled --
   # the `board.mode_switch.switch(...)` examples above prove the end-to-end
-  # behaviour through a real Toolset; this one proves the ORDER the
-  # implementation comment claims: the toolset handed to the inner switch is
-  # read off the resolution BEFORE #apply gets a chance to move anything, not
-  # re-read from a live slot afterward.
+  # behaviour; this one proves the ORDER the implementation comment claims:
+  # nothing is journaled for a mode that cannot be resolved, and the policy
+  # moves only after the flip is recorded.
   describe Lain::CLI::Switchboard::BoundSwitch do
-    it "passes the toolset of the resolution it applies, read before apply moves anything" do
-      mode = Lain::Mode.new(posture: :plan)
-      resolution = Lain::Mode::Resolution.new(toolset: Lain::Toolset.new, gate_policy: ->(*) { false },
-                                              snapshot_scope: :write_set)
+    it "resolves, then switches, then applies" do
+      mode = Lain::Mode.new(approval: :auto)
+      resolution = Lain::Mode::Resolution.new(gate_policy: ->(*) { false })
       seen = []
       inner_switch = Object.new
-      inner_switch.define_singleton_method(:switch) { |_mode, surface:, toolset:| seen << [:switch, surface, toolset] }
+      inner_switch.define_singleton_method(:switch) { |_mode, surface:| seen << [:switch, surface] }
       inner_switch.define_singleton_method(:current) { mode }
-      resolve = ->(candidate) { candidate == mode ? resolution : raise("unexpected mode: #{candidate.inspect}") }
-      apply = ->(res, surface:) { seen << [:apply, surface, res.toolset] }
+      resolve = lambda do |candidate|
+        seen << [:resolve]
+        candidate == mode ? resolution : raise("unexpected mode: #{candidate.inspect}")
+      end
+      apply = ->(res, surface:) { seen << [:apply, surface, res] }
 
       described_class.new(inner_switch, resolve:, apply:).switch(mode, surface: "spec")
 
-      # ORDER is the claim: `switch` sees the resolution's toolset FIRST, and
-      # `apply` -- the only thing that could have moved a live slot -- runs
-      # only after. Both entries also carry the SAME toolset object, so a
-      # reader cannot mistake this for two resolutions agreeing by accident.
-      expect(seen).to eq([[:switch, "spec", resolution.toolset], [:apply, "spec", resolution.toolset]])
+      expect(seen).to eq([[:resolve], [:switch, "spec"], [:apply, "spec", resolution]])
+    end
+
+    it "switches nothing when the mode cannot be resolved" do
+      inner_switch = instance_double(Lain::Mode::Switch)
+      resolve = ->(_candidate) { raise Lain::Mode::Resolution::Unknown, "no policy" }
+
+      expect { described_class.new(inner_switch, resolve:, apply: ->(*) {}).switch(Lain::Mode.new, surface: "spec") }
+        .to raise_error(Lain::Mode::Resolution::Unknown)
     end
   end
 end

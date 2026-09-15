@@ -101,10 +101,10 @@ module Lain
   #   heals. So the degrade record is counted too
   #   ({#observe_degraded_approval}), and the floor at zero is a backstop for a
   #   stream that was never paired, not the primary defence.
-  # * `posture` / `layers` / `mode_lighter` -- derived from a
+  # * `scope` / `approval` / `layers` / `mode_lighter` -- derived from a
   #   {Telemetry::ModeSwitch} by {ModeState}, whose doc holds the reasoning. All
   #   absent until the first switch, and forced to be: {Mode::Switch} journals
-  #   nothing at construction, so a guessed `accept_edits` would restate
+  #   nothing at construction, so a guessed `checkout ask` would restate
   #   {CLI::Switchboard}'s seed as though a journal had witnessed it.
   #
   #   THE MODE DERIVATION NEVER RAISES; THE PUBLISH STILL DOES, and the two are
@@ -115,11 +115,11 @@ module Lain
   #   `mode_switch` alone would be incoherent, and swallowing it for every field
   #   is a change to {Publication}'s contract, not to this one.
   #
-  #   All three are {#observed}, so a LAYER flip publishes even when the posture
-  #   did not move. `/mode +auto_approve` journals `manual -> manual`, so a
-  #   guard comparing the posture ALONE would leave a HUD reading "MAN" while
-  #   the approval gate was off -- the silently-active policy the mode design
-  #   forbids. An outcome-altering layer MUST declare a lighter
+  #   All four are {#observed}, so a LAYER flip publishes even when neither
+  #   axis moved. `/mode +auto_approve` journals `ask -> ask`, so a guard
+  #   comparing the axes ALONE would leave a silent HUD while the automatic
+  #   approver was on -- the silently-active policy the mode design forbids.
+  #   An outcome-altering layer MUST declare a lighter
   #   ({Mode::Layer::Declaration} enforces it), so it always moves this string.
   # * `elapsed` / `idle` / `since_compaction` -- the run's own measures, read off
   #   the injected {RunClock} as PLAIN DURATIONS in whole seconds. Deliberately

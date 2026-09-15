@@ -151,15 +151,36 @@ module Lain
       # classifier protecting no path. So both of {Triage}'s deny arms, the only
       # things here that refuse on their own, wait on a call site. Both are
       # seams, so wiring either is a call-site change rather than an edit here.
+      #
+      # This is `ask` approval's ladder: what the deterministic rungs leave
+      # open parks on the queue.
       def self.for(queue:, tools:, journal:, rules: [], triage: Triage.new)
-        new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), Surfaces.new(queue)], journal:)
+        over(Surfaces.new(queue), label: "ask", tools:, journal:, rules:, triage:)
       end
+
+      # `auto` approval's ladder: the same deterministic rungs, so a triage deny
+      # or a rule deny still decides, and {Remainder} where the queue would be.
+      def self.automatic(tools:, journal:, rules: [], triage: Triage.new)
+        over(Remainder.new, label: "auto", tools:, journal:, rules:, triage:)
+      end
+
+      def self.over(bottom, label:, tools:, journal:, rules:, triage:)
+        new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), bottom], journal:, label:)
+      end
+      private_class_method :over
 
       include Enumerable
 
+      # What a `policy_switch` record names this ladder as. Two ladders of one
+      # class stand behind the two approval levels, so the class cannot say
+      # which one a flip moved to.
+      attr_reader :label
+
       # @param rungs [Enumerable<#call, #name>] consulted in order
       # @param journal [#record] where every ruling lands as evidence
-      def initialize(rungs = [], journal:)
+      # @param label [String] the name a policy flip journals this ladder under
+      def initialize(rungs = [], journal:, label: TYPE)
+        @label = -label.to_s
         @rungs = rungs.to_a.freeze
         # Every rung names itself HERE, while the ladder is BUILT, and the
         # answer is KEPT: asking a rung for its name inside the rescue clause,
@@ -573,6 +594,22 @@ module Lain
         def because(decision, note = nil)
           ["shell verdict #{decision.name}", note, decision.reason, Shell::Verdict::CLAIM].compact.join(" -- ")
         end
+      end
+
+      # `auto` approval's bottom rung, standing where {Surfaces} stands under
+      # `ask`: a call no rung above decided is approved. AUTOMATIC authority,
+      # so an allow reached over a faulted rung is suppressed like any other
+      # machine's -- a broken rule never becomes a free pass.
+      class Remainder
+        NAME = "auto"
+        BECAUSE = "approval is auto, and no rung above refused this call"
+
+        # Frozen on {Triage}'s terms: a rung holds no state.
+        def initialize = freeze
+
+        def name = NAME
+
+        def call(_effect, _context) = Ruling.allow(rung: NAME, because: BECAUSE)
       end
 
       # The asking rung: {Approval::Queue}, where a call parks for whatever

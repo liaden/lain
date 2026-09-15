@@ -84,13 +84,12 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
   # The run's real switches, not a double: `/mode` writes these, and
   # the whole claim is that a child reads them LIVE. A stub with a fixed
-  # posture would pass whether or not the read is live, which is the one thing
+  # policy would pass whether or not the read is live, which is the one thing
   # worth asserting here.
   # Its own journal, not this file's `RecordingChannel`: a switch flip goes
   # through `#record`, which is the Journal duck rather than the Channel one.
-  # `toolset:` is the whole shipped registry, the base `switchboard_spec.rb`
-  # itself resolves postures against -- `plan` names `ask_human`, so a narrower
-  # base would raise {Toolset::UnknownTool} on the flip rather than attenuate.
+  # `toolset:` is the whole shipped registry, the set `switchboard_spec.rb`
+  # itself builds its board over.
   #
   # `sensitivity:` is a REAL policy gating a real path, for the same reason the
   # switches are real: the claim about that third axis is that whatever the
@@ -327,20 +326,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.role_spawn.instance_variable_get(:@slots)).to be(library.slots)
     end
 
-    # The two axes the session's posture governs reach a child through the
-    # ONE spawn seam, read LIVE off the run's switches.
-    describe "the session posture the children inherit" do
+    # The session's gate reaches a child through the ONE spawn seam, read LIVE
+    # off the run's switches.
+    describe "the session mode the children inherit" do
       # A THUNK, exactly as `wiring.rb` passes one: the board requires the
       # session's base `toolset:` and that toolset is what #build
-      # RETURNS, so a board cannot exist when this seam is constructed. Both
-      # axes therefore read through it later: `permits` per spawn, the tool
-      # stack as each child is built.
+      # RETURNS, so a board cannot exist when this seam is constructed. The
+      # tool stack therefore reads through it later, as each child is built.
       subject(:toolset_build) { build_with(options, switchboard: -> { switchboard }) }
-
-      def child_permits
-        toolset_build.build(recorder, ask_human:)
-        toolset_build.role_spawn.seam.permits
-      end
 
       # The stack a child is built behind, gate last, as the seam builds it.
       def child_layers
@@ -486,36 +479,11 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         expect(refuses?(gate, effect, bash)).to be(true)
       end
 
-      it "permits everything under the default posture" do
-        expect(child_permits.include?(:bash)).to be(true)
-      end
-
-      # The card's live-read requirement, and the reason `permits` is a
-      # delegator rather than a captured value: the seam is a frozen Data built
-      # ONCE, above, and the flip happens AFTER it exists. A captured
-      # `Permits` would answer `true` here and hand every child a `bash` the
-      # session no longer holds.
-      it "stops permitting bash the moment /mode plan flips, though the seam was built before the flip" do
-        permits = child_permits
-        switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
-
-        expect(permits.include?(:bash)).to be(false)
-        expect(permits.include?(:read_file)).to be(true)
-      end
-
-      it "permits bash again when the posture leaves plan, since attenuation is per-spawn and not cumulative" do
-        permits = child_permits
-        switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
-        switchboard.mode_switch.switch(Lain::Mode.new(posture: :manual), surface: "spec")
-
-        expect(permits.include?(:bash)).to be(true)
-      end
-
       # End to end, through the assembly the exe actually runs: a real
       # Switchboard, this build's real seam, the real role-spawn seam, a real
       # `:dev` Subagent, and the schema its child was really rendered. `:dev`
       # holds `bash` in the catalog (`role/catalog.rb:22`) and the capability
-      # floor really ships one, so the tool is genuinely there to lose.
+      # floor really ships one, so the tool is genuinely there to render.
       context "when a dev child is spawned over a scripted provider" do
         let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done")]) }
         # A real handle, where the outer `let` only ever has its identity
@@ -528,16 +496,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           provider.last_request.tools.map { |tool| tool["name"] }
         end
 
-        it "renders bash to a dev child while the session is in accept_edits" do
+        it "renders bash to a dev child while the session is in ask" do
           expect(spawn_dev).to include("bash")
         end
 
-        it "renders no bash to a dev child spawned after /mode plan" do
-          switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+        # A mode never changes what a child may hold: the gate a child is built
+        # behind is what a flip moves.
+        it "renders the same tools to a dev child spawned after /mode auto" do
+          before = spawn_dev
+          switchboard.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
 
-          rendered = spawn_dev
-          expect(rendered).not_to include("bash", "edit_file", "write_file")
-          expect(rendered).to include("read_file", "grep")
+          expect(spawn_dev).to eq(before)
         end
 
         # The capability this seam grants, end to end through the
@@ -547,19 +516,6 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         # granted it -- one asker per child, over the child's own handle.
         it "renders ask_human to a dev child, though neither the floor nor the role names it" do
           expect(Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)).not_to include("ask_human")
-          expect(spawn_dev).to include("ask_human")
-        end
-
-        # The pin the escalation trigger asks for: {ChildBuilder#permitted}
-        # intersects a child's set with the session posture's, so a rung that
-        # stopped permitting ask_human would MUTE every child's questions,
-        # silently and with this file still green. `plan` is the only rung that
-        # attenuates at all, and it names ask_human deliberately
-        # (`mode/posture.rb`'s READ_ONLY, with the reasoning beside it) -- this
-        # is what fails if that decision is ever quietly reversed.
-        it "keeps rendering ask_human to a dev child after /mode plan, because every rung permits it" do
-          switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
-
           expect(spawn_dev).to include("ask_human")
         end
       end
@@ -667,7 +623,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # of this file drives. It must behave exactly as every spawn did before
     # children were gated, or this card's default would be a live behaviour
     # change nobody asked for.
-    it "leaves a boardless build's children ungated and unattenuated" do
+    it "leaves a boardless build's children ungated" do
       toolset_build.build(recorder, ask_human:)
       seam = toolset_build.role_spawn.seam
       layers = seam.tool_middleware.call(Lain::WorkerEnv.default).to_a
@@ -677,7 +633,6 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         env.merge(result: Lain::Tool::Result.ok("passed on"))
       end
       expect(passed.fetch(:result)).to eq(Lain::Tool::Result.ok("passed on"))
-      expect(seam.permits.include?(:bash)).to be(true)
       expect(layers.last.instance_variable_get(:@sensitivity)).to be(Lain::Sensitivity::Policy::Null.instance)
       expect(layers.grep(Lain::Middleware::RedactSecretReads).first.queue)
         .to be(Lain::Middleware::RedactSecretReads::Unqueued.instance)
@@ -687,18 +642,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # raise rather than fall back to an ungated board: a fallback would
     # silently ungate a real session if the assembly order ever changed.
     #
-    # BOTH readers, because they fail differently: a `|| SpecNulls::NoSwitchboard`
-    # on `permits` alone hands a child the capabilities the session no longer
-    # holds, but the same fallback in the tool stack builds the child's gate
-    # over that board's approve-all policy and Null path policy -- silently
-    # ungating every child in the run. Pinning one leaves the worse regression
-    # free to land green.
+    # A `|| SpecNulls::NoSwitchboard` fallback in the tool stack would build the
+    # child's gate over that board's approve-all policy and Null path policy --
+    # silently ungating every child in the run.
     it "refuses loudly, rather than ungating, if a spawn beats the board into existence" do
       build = build_with(options, switchboard: -> {})
       build.build(recorder, ask_human:)
       seam = build.role_spawn.seam
 
-      expect { seam.permits.include?(:bash) }.to raise_error(NoMethodError, /mode_switch/)
       expect { seam.tool_middleware.call(Lain::WorkerEnv.default) }.to raise_error(NoMethodError, /guard_inputs/)
     end
 
@@ -728,7 +679,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       build.build(recorder, ask_human:)
       enabled = build.auto_surface.instance_variable_get(:@enabled)
       readings = [enabled.call]
-      switchboard.mode_switch.switch(Lain::Mode.new(posture: :accept_edits, layers: %i[auto_approve]), surface: "spec")
+      switchboard.mode_switch.switch(Lain::Mode.new(layers: %i[auto_approve]), surface: "spec")
 
       expect(readings << enabled.call).to eq([false, true])
     end

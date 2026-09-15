@@ -212,7 +212,7 @@ RSpec.describe Lain::Bench::Session do
       recording = load_session
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context context_class toolset workspace baseline ledger_index degraded posture open messages]
+      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages]
         .each do |member|
         expect(recording.public_send(member)).to be_deeply_frozen
       end
@@ -319,21 +319,20 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
-  # A run's posture is the same kind of fact its degraded set is -- what makes
+  # A run's mode is the same kind of fact its degraded set is -- what makes
   # two recordings comparable at all -- so it loads off the same journal and
   # rides on the Recording beside it.
-  describe "the recorded posture" do
-    it "folds mode_switch records into the Recording's posture trajectory" do
+  describe "the recorded mode" do
+    it "folds mode_switch records into the Recording's mode trajectory" do
       write_session
-      journal << Lain::Telemetry::ModeSwitch.new(from: :manual, to: :plan, from_layers: [], to_layers: [],
-                                                 surface: "tty", toolset_digest: toolset.digest,
-                                                 tool_names: toolset.names)
-      expect(load_session.posture.to_s).to eq("manual → plan")
+      journal << Lain::Telemetry::ModeSwitch.new(from_scope: :checkout, to_scope: :checkout, from_approval: :ask,
+                                                 to_approval: :auto, from_layers: [], to_layers: [], surface: "tty")
+      expect(load_session.mode.to_s).to eq("checkout/ask → checkout/auto")
     end
 
     it "answers unrecorded for a session that journaled no mode switch" do
       write_session
-      expect(load_session.posture).to eq(Lain::Compare::Posture::UNRECORDED)
+      expect(load_session.mode).to eq(Lain::Compare::Mode::UNRECORDED)
     end
   end
 

@@ -77,7 +77,7 @@ module Lain
             context:, context_class: header.fetch("context_class"),
             toolset:, workspace:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
-            degraded:, posture:, memory:, open: open?
+            degraded:, mode:, memory:, open: open?
           )
         end
 
@@ -221,7 +221,7 @@ module Lain
         # A missing `context_pipeline` is the ordinary case, not an old one:
         # a session nobody named a pipeline for writes no key.
         #
-        # A name the catalog no longer holds refuses as {Corrupt}, {#posture}'s
+        # A name the catalog no longer holds refuses as {Corrupt}, {#mode}'s
         # rule: every loader caller rescues that class by name. It cites the
         # header, not the flag -- whoever replays never typed one.
         def context
@@ -286,9 +286,10 @@ module Lain
           )
         end
 
-        # The rung this run walked, off the flips it journaled. {Posture} owns
-        # the discriminator and the chaining refusal; what this adds is the
-        # vocabulary those refusals have to arrive in.
+        # The mode trajectory this run walked, off the flips it journaled.
+        # {Compare::Mode} owns the discriminator, the record shape it reads
+        # and the chaining refusal; what this adds is the vocabulary those
+        # refusals have to arrive in.
         #
         # Every session load comes through here, not just the bench's:
         # {CLI::Resume} and {Supervisor::Restart} rebuild from this class too,
@@ -299,10 +300,10 @@ module Lain
         # comment records paying for once already. Interleaved records are
         # ordinary under fan-out, so this is a real input class, not a
         # hypothetical one.
-        def posture
-          Compare::Posture.from_journal(of_type(Compare::Posture::RECORD_TYPE))
+        def mode
+          Compare::Mode.from_journal(of_type(Compare::Mode::RECORD_TYPE))
         rescue Error, ArgumentError => e
-          raise Corrupt, "damaged #{Compare::Posture::RECORD_TYPE.inspect} record: #{e.message}"
+          raise Corrupt, "damaged #{Compare::Mode::RECORD_TYPE.inspect} record: #{e.message}"
         end
 
         def memory

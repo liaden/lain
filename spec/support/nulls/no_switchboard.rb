@@ -1,16 +1,14 @@
 # frozen_string_literal: true
 
 module SpecNulls
-  # A frozen {Lain::Mode} answers `#posture` exactly as {Lain::Mode::Switch}
-  # does, which is the whole of what `PosturePermits` asks -- so the board
-  # below stands in with a real value rather than a fake duck. `accept_edits`
-  # because its {Lain::Mode::Posture::Permits} is `All`: a build with no live
-  # board attenuates nothing, which is what "no posture was ever bound here"
-  # has to mean.
-  UNSWITCHED = Lain::Mode.new(posture: :accept_edits)
+  # A frozen {Lain::Mode} answers `#layers` exactly as {Lain::Mode::Switch}
+  # does, which is the whole of what the auto_approve layer check asks -- so
+  # the board below stands in with a real value rather than a fake duck, in the
+  # mode every session starts in.
+  UNSWITCHED = Lain::Mode.new
 
   # The board a directly-constructed {Lain::CLI::Wiring::ToolsetBuild} runs
-  # under: children ungated and unattenuated, byte-for-byte what every spawn
+  # under: children ungated, byte-for-byte what every spawn
   # did before children were first gated. For the direct-construction seams
   # the specs drive, and never a production state -- the exe always passes a
   # thunk over the run's real {Lain::CLI::Switchboard}.

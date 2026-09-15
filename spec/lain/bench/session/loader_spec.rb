@@ -57,48 +57,57 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.degraded).to include(:prompt_caching)
     end
 
-    # The posture rides on the same journal the degraded set does, and for the
-    # same reason: it is what makes two recordings comparable at all, so a
-    # Recording that could not answer it left Compare's guard unable to fire.
-    it "folds mode_switch records into the recorded posture trajectory" do
-      flips = [{ "type" => "mode_switch", "from" => "manual", "to" => "plan" },
-               { "type" => "mode_switch", "from" => "plan", "to" => "auto" }]
-      lines = entries.to_a + flips.map { |flip| "#{JSON.generate(flip)}\n" }
-      expect(described_class.new(lines).recording.posture.to_s).to eq("manual → plan → auto")
+    # The mode trajectory rides on the same journal the degraded set does, and
+    # for the same reason: it is what makes two recordings comparable at all, so
+    # a Recording that could not answer it left Compare's guard unable to fire.
+    it "folds mode_switch records into the recorded mode trajectory" do
+      flips = [flip("ask", "auto"), flip("auto", "ask")]
+      lines = entries.to_a + flips.map { |record| "#{JSON.generate(record)}\n" }
+      expect(described_class.new(lines).recording.mode.to_s)
+        .to eq("checkout/ask → checkout/auto → checkout/ask")
     end
 
-    it "answers an unrecorded posture for a journal holding no mode_switch record" do
-      expect(recording.posture).to eq(Lain::Compare::Posture::UNRECORDED)
+    it "answers an unrecorded mode for a journal holding no mode_switch record" do
+      expect(recording.mode).to eq(Lain::Compare::Mode::UNRECORDED)
     end
 
-    # Folding the posture HERE puts Posture's own refusals on every session
-    # load, not just the bench's: `lain chat --resume` (CLI::Resume#rebuild) and
+    def flip(from, to, **over)
+      { "type" => "mode_switch", "from_scope" => "checkout", "from_approval" => from,
+        "to_scope" => "checkout", "to_approval" => to }.merge(over)
+    end
+
+    # Folding the mode HERE puts the axis's own refusals on every session load,
+    # not just the bench's: `lain chat --resume` (CLI::Resume#rebuild) and
     # Supervisor::Restart#replay both come through this class, and all three
     # callers rescue Corrupt BY NAME. A damaged flip escaping as a bare
     # Lain::Error or ArgumentError makes a chat session unresumable with a raw
-    # backtrace over one bad line -- and Posture's own docstring calls
-    # interleaved records ordinary under fan-out, so this is a real input class.
+    # backtrace over one bad line -- and interleaved records are ordinary under
+    # fan-out, so this is a real input class.
     describe "a damaged mode_switch record" do
       def loaded_with(*flips)
-        lines = entries.to_a + flips.map { |flip| "#{JSON.generate(flip)}\n" }
+        lines = entries.to_a + flips.map { |record| "#{JSON.generate(record)}\n" }
         described_class.new(lines).recording
       end
 
       it "refuses an unchainable pair as Corrupt, not as a bare Lain::Error" do
-        expect do
-          loaded_with({ "type" => "mode_switch", "from" => "plan", "to" => "manual" },
-                      { "type" => "mode_switch", "from" => "auto", "to" => "plan" })
-        end.to raise_error(Lain::Bench::Session::Corrupt, /mode_switch/)
+        expect { loaded_with(flip("ask", "auto"), flip("ask", "auto")) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /mode_switch/)
       end
 
-      it "refuses a posture name off the ladder as Corrupt, not as a bare ArgumentError" do
-        expect { loaded_with({ "type" => "mode_switch", "from" => "manual", "to" => "pIan" }) }
-          .to raise_error(Lain::Bench::Session::Corrupt, /pIan/)
+      it "refuses an approval name off the roster as Corrupt, not as a bare ArgumentError" do
+        expect { loaded_with(flip("ask", "autto")) }.to raise_error(Lain::Bench::Session::Corrupt, /autto/)
       end
 
-      it "refuses a flip missing its `from` as Corrupt, not as a bare ArgumentError" do
-        expect { loaded_with({ "type" => "mode_switch", "to" => "plan" }) }
+      it "refuses a flip missing a side as Corrupt, not as a bare ArgumentError" do
+        expect { loaded_with(flip("ask", "auto").except("from_approval")) }
           .to raise_error(Lain::Bench::Session::Corrupt)
+      end
+
+      # The loader reads the record shape a mode is journaled in now, and no
+      # other: a line carrying only `from`/`to` names no scope and no approval.
+      it "refuses a record in the retired from/to shape as Corrupt" do
+        expect { loaded_with({ "type" => "mode_switch", "from" => "manual", "to" => "auto" }) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /from_scope and from_approval/)
       end
     end
 

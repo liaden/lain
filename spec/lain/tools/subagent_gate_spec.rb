@@ -78,11 +78,10 @@ end
 # its parent does. Until this landed, `bash` was gated for the parent and
 # ungated for every child holding it -- and four shipped roles hold it.
 #
-# The two axes the parent's posture governs arrive on the spawn {Seam} and
-# nowhere else: the tool guard (whose last layer is the gate a tier-3 call must
-# pass) and `permits` (which capabilities the posture lets a child hold at
-# all). The examples below build that guard with the real {CLI::ToolGuard}, so
-# a child is gated by the same builder a chat's own stack comes from.
+# The parent's gate arrives on the spawn {Seam} and nowhere else, as the tool
+# guard whose last layer is the gate a tier-3 call must pass. The examples below
+# build that guard with the real {CLI::ToolGuard}, so a child is gated by the
+# same builder a chat's own stack comes from.
 RSpec.describe "Subagent gating" do
   let(:store) { Lain::Store.new }
   let(:parent) do
@@ -186,63 +185,12 @@ RSpec.describe "Subagent gating" do
     end
   end
 
-  # ---- Scenario: a child in plan posture cannot hold bash at all -------------
+  # ---- A mode never narrows what a child may hold ----------------------------
 
-  describe "a parent in plan" do
-    let(:permits) { Lain::Mode::Posture.for(:plan).permits }
-
-    it "spawns a dev child whose rendered toolset does not include bash" do
+  describe "a child's rendered set" do
+    it "is its role's set plus its own asker, whatever mode the parent is in" do
       provider = mock(text_response("done"))
-      build_subagent(provider:, permits:).call({ "prompt" => "go" }, invocation)
-
-      expect(rendered(provider)).not_to include("bash")
-    end
-
-    it "keeps every capability the posture does permit" do
-      provider = mock(text_response("done"))
-      build_subagent(provider:, permits:).call({ "prompt" => "go" }, invocation)
-
-      expect(rendered(provider)).to eq(%w[ask_human glob grep list_files read_file])
-    end
-
-    # `:merge_resolver`'s four names are not a superset of the posture's set, and
-    # the posture must ANSWER that rather than raise: `Permits#attenuate` goes
-    # through {Toolset#only}, which would die on the nine read-only names this
-    # child never held.
-    #
-    # No `ask_human` in the result, and it is INCIDENTAL to what this example
-    # guards: the role declares itself unattended (`role/catalog.rb`), so the
-    # spawn withholds an asker regardless of what this posture permits. The
-    # subject here is still the intersection answering instead of raising --
-    # `grep` and `read_file` are the two names the role and the posture share.
-    it "attenuates a role whose set the posture's does not cover, without raising" do
-      provider = mock(text_response("done"))
-
-      expect { build_subagent(provider:, role: :merge_resolver, permits:).call({ "prompt" => "go" }, invocation) }
-        .not_to raise_error
-      expect(rendered(provider)).to eq(%w[grep read_file])
-    end
-
-    # A child with nothing at all is a wiring error, not a tighter child. It is
-    # unreachable from the catalog -- every built-in role holds `read_file`,
-    # which every posture permits -- so the probe pairs a custom `only:` with a
-    # posture that shares no name with it, which is the only way a reader
-    # arrives here.
-    it "refuses to spawn a child the posture would leave holding nothing" do
-      tool = Lain::Tools::Subagent.new(
-        seam: seam(provider: mock(text_response("done")), permits:), toolset: union,
-        policy: Lain::Tool::SpawnPolicy.new(only: %i[bash]),
-        budget: Lain::Agent::Budget.new, max_depth: 1
-      )
-
-      expect { tool.call({ "prompt" => "go" }, invocation) }
-        .to raise_error(Lain::Error, /permits none of the spawn's tools \(bash\)/)
-    end
-
-    it "leaves the child's set alone under an unattenuating posture" do
-      provider = mock(text_response("done"))
-      build_subagent(provider:, permits: Lain::Mode::Posture.for(:manual).permits)
-        .call({ "prompt" => "go" }, invocation)
+      build_subagent(provider:).call({ "prompt" => "go" }, invocation)
 
       expect(rendered(provider)).to eq((union.names + %w[ask_human]).sort)
     end
@@ -250,7 +198,7 @@ RSpec.describe "Subagent gating" do
 
   # ---- Scenario: the merge_resolver role still runs unattended ---------------
 
-  describe "an unattended role under a parent in accept_edits" do
+  describe "an unattended role under a parent in ask" do
     it "never reaches the gate, because it holds no tier-3 tool" do
       policy = SubagentGateSupport::SpyPolicy.new(verdict: false)
       tool = build_subagent(provider: mock(*calls("edit_file")), role: :merge_resolver, gate_policy: policy)
@@ -522,7 +470,6 @@ RSpec.describe "Subagent gating" do
     # ---- Scenario: a child's denial names the child -------------------------
 
     it "parks a child's gated call under the child's name, where the parent's parks under its own" do
-      board.mode_switch.switch(Lain::Mode.new(posture: :manual), surface: "spec")
       read = { "path" => "/home/tester/project/.env" }
       provider = scripted("read_file", read)
       _, toolset = wired(provider)

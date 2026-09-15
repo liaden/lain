@@ -316,6 +316,53 @@ RSpec.describe Lain::Approval::Escalation do
   end
 
   # Scenario: abstention is distinguished from denial by absence, not by falsiness
+  # `ask` and `auto` share every rung but the bottom one, so the session's own
+  # refusals decide under both.
+  describe "the two approval levels' ladders" do
+    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
+    let(:classifiers) { EscalationSpecSupport::Classifiers.new(home: "/home/tester", base: "/srv/project") }
+
+    def automatic(rules: [], triage: described_class::Triage.new)
+      described_class.automatic(tools:, journal:, rules:, triage:)
+    end
+
+    it "labels the asking ladder ask, over the queue" do
+      built = described_class.for(queue:, tools:, journal:)
+
+      expect([built.label, built.map(&:name)]).to eq(["ask", %w[triage rules surfaces]])
+    end
+
+    it "labels the automatic ladder auto, with the remainder where the queue would be" do
+      expect([automatic.label, automatic.map(&:name)]).to eq(["auto", %w[triage rules auto]])
+    end
+
+    it "approves a call no rung above decided, attributed to the remainder" do
+      expect(automatic.call(effect, nil)).to be(true)
+      expect(rulings.last).to include("rung" => "auto", "verdict" => "allow", "authority" => "automatic")
+    end
+
+    it "lets a triage deny decide under auto" do
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash",
+                                        input: { "command" => "cat /home/tester/.ssh/id_ed25519" })
+
+      expect(automatic(triage: described_class::Triage.new(sensitivity: classifiers)).call(read, nil)).to be(false)
+      expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
+    end
+
+    it "lets a rule deny decide under auto" do
+      expect(automatic(rules: [EscalationSpecSupport::Denier.new]).call(effect, nil)).to be(false)
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
+    end
+
+    # The remainder is a machine, so an allow it reaches over a broken rule is
+    # suppressed like any other automatic allow.
+    it "suppresses its allow over a faulted rule, so a broken rule is never a free pass" do
+      expect(automatic(rules: [EscalationSpecSupport::Raiser.new]).call(effect, nil)).to be(false)
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
+      expect(rulings.last["reason"]).to include(described_class::LAUNDERED)
+    end
+  end
+
   describe "a Ruling" do
     it "recognises abstention by asking, never by !allow?" do
       abstained = described_class::Ruling.abstain(rung: "rules", because: "no opinion")

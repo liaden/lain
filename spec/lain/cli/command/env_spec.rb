@@ -54,10 +54,10 @@ RSpec.describe Lain::CLI::Command::Env do
 
   # The mode switch is a REQUIRED live collaborator, not a nilable one and not a
   # Null: `/mode` writes the slot the Gate and the toolset read, so a Null here
-  # would fail OPEN in the way surface.rb:29-37 names -- `/mode plan` would
-  # report success while the live posture never moved. Nil must be as loud as
+  # would fail OPEN in the way surface.rb:29-37 names -- `/mode auto` would
+  # report success while the live mode never moved. Nil must be as loud as
   # any other missing reader, and it must say WHICH one.
-  it "refuses a nil mode_switch by name, so a half-wired posture cannot start a run" do
+  it "refuses a nil mode_switch by name, so a half-wired mode cannot start a run" do
     expect { described_class.new(**readers, mode_switch: nil) }
       .to raise_error(ArgumentError, /mode_switch/)
   end

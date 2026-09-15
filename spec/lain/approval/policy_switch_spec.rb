@@ -120,6 +120,43 @@ RSpec.describe Lain::Approval::PolicySwitch do
       switch
       expect(flips).to be_empty
     end
+
+    # The same rule as the mode switch: the durable record landing commits the
+    # flip, whatever a live sink does afterwards, and a durable failure moves
+    # nothing.
+    it "binds the new policy when a live sink raises after the durable record, then re-raises" do
+      sink = Object.new
+      def sink.<<(_event) = raise(IOError, "state file write failed")
+      held = described_class.new(queue, journal: Lain::CLI::JournalTee.new(journal, sink))
+      approving = Lain::Middleware::Gate::ApproveAll.new
+
+      expect { held.switch(approving, surface: "tty") }.to raise_error(IOError)
+      expect(held.current).to be(approving)
+      expect(flips.size).to eq(1)
+    end
+
+    it "leaves the policy in force when the durable write itself fails" do
+      journal.close
+
+      expect { switch.switch(Lain::Middleware::Gate::ApproveAll.new, surface: "tty") }
+        .to raise_error(Lain::Journal::Closed)
+      expect(switch.current).to be(queue)
+    end
+
+    # The gate did not change, and a record would say it had.
+    it "journals nothing for a switch to the policy already in force" do
+      expect(switch.switch(queue, surface: "tty")).to be(queue)
+      expect(flips).to be_empty
+    end
+
+    # Both approval levels are a ladder of one class, so a flip between them
+    # would journal `escalation -> escalation` if the class named it.
+    it "names a policy that labels itself by its label" do
+      automatic = Lain::Approval::Escalation.new([], journal:, label: "auto")
+      switch.switch(automatic, surface: "tty")
+
+      expect(flips.map { |record| record.values_at("from", "to") }).to eq([%w[recording_policy auto]])
+    end
   end
 
   # WHO a gated call is asked on behalf of, riding the `context` the policy

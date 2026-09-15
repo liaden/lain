@@ -8,28 +8,29 @@ module Lain
     # The live switches a session's commands flip:
     #
     # * ONE {Approval::PolicySwitch} the Gate holds for the whole session --
-    #   a posture flip re-binds the delegate inside it, Gate stays
+    #   a mode flip re-binds the delegate inside it, Gate stays
     #   construction-fixed. An attended session's {Approval::Queue} is the
     #   parked list `/approve` drains, and the {Approval::Escalation} ladder
-    #   OVER it is what the asking rungs resolve to, so the deterministic rungs
+    #   OVER it is what `ask` approval resolves to, so the deterministic rungs
     #   answer first and the queue is where a call lands when they abstain. An
     #   unattended one wires NO queue ({#approvals} is nil then).
     # * ONE {Context::ModelSwitch} the main agent's Context reads at render
     #   time -- `/model` writes it, {#graft} installs it.
-    # * ONE {Mode::Switch} holding the session's posture and layers -- `/mode`
-    #   writes it, the prompt and the HUD read it.
-    # * ONE {LiveToolset} the Agent and its executor are BUILT with -- the
-    #   capability set a posture attenuates, re-bound in place.
+    # * ONE {Mode::Switch} holding the session's scope, approval and layers --
+    #   `/mode` writes it, the prompt and the HUD read it.
     #
-    # Nothing here re-states what a posture MEANS. This class picks the
-    # starting {Mode}; {Mode::Resolution} answers the gate policy and the
-    # capability set that mode implies, for the starting mode and for every
-    # flip after it.
+    # The toolset is not among them. A mode never changes what the model is
+    # shown, so the run's one set is what {#toolset} answers for its whole life
+    # and the tool block a prompt cache keys on never moves under a flip.
+    #
+    # Nothing here re-states what a mode MEANS. This class picks the starting
+    # {Mode}; {Mode::Resolution} answers the gate policy that mode implies, for
+    # the starting mode and for every flip after it.
     #
     # Every switch journals its flips to the SAME journal approval decisions
     # land in: on a study bench "who flipped what, when" is evidence.
     class Switchboard
-      # All four slots live HERE rather than in {Wiring} for a mechanical
+      # All three slots live HERE rather than in {Wiring} for a mechanical
       # reason: each needs the run's `journal:`, and Wiring's only source for
       # one is `chronicle.record_journal`, which OPENS a file per call
       # (/dev/null under --no-journal). This class resolves that journal
@@ -50,7 +51,7 @@ module Lain
       # the masking arm and the approval arm must hold the SAME one, and two
       # half-wirings would give the run two ledgers and a release control that
       # silently releases nothing. Constructed for a queueless session too: the
-      # posture decides who is asked, not whether the run has somewhere to
+      # approval level decides who is asked, not whether the run has somewhere to
       # record an answer.
       attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset
 
@@ -65,10 +66,7 @@ module Lain
       # answering to that layer, so the flag and `/mode +auto_approve` are one
       # switch and the prompt's lighter shows whichever of them turned it on.
       #
-      # `toolset:` is the run's BASE capability set, and base is the whole
-      # point: attenuation is monotone, so every posture resolves from the set
-      # the session was built with and never from what the previous posture
-      # left behind (see {Mode::Resolution}'s note on `base:`).
+      # `toolset:` is the run's capability set, held for the whole session.
       #
       # `rules:` and `sensitivity:` are two vocabularies and never one. `rules:`
       # is APPROVAL -- remembered answers about call SHAPES, which grant. The
@@ -79,7 +77,7 @@ module Lain
       #   what the switches record onto
       # @param options [Hash] the CLI's parsed surface flags
       # @param model [String] the model in force until the first /model
-      # @param toolset [Lain::Toolset] the run's BASE capability set
+      # @param toolset [Lain::Toolset] the run's capability set
       # @param rules [Enumerable<Approval::Rule>] the deterministic rung's rules,
       #   which for a live session is {Project::Consent#rules} -- the remembered
       #   answers a CONSENTED root is allowed to contribute
@@ -118,12 +116,11 @@ module Lain
 
       # @param journal [#record] where flips and approval decisions land
       # @param model [String] the model in force until the first /model
-      # @param toolset [Lain::Toolset] the run's full capability set. Required,
-      #   with no empty-set default: a board built without one resolves every
-      #   posture against nothing, so the model would be shown no tools at all
-      #   and `/mode plan` would raise {Toolset::UnknownTool} on a name the run
-      #   really does hold. A forgotten collaborator must be an ArgumentError
-      #   here, not a mystery one turn on.
+      # @param toolset [Lain::Toolset] the run's capability set, which the
+      #   rules rung reads a call's tier off. Required, with no empty-set
+      #   default: a board built without one would show the model no tools at
+      #   all, and a forgotten collaborator must be an ArgumentError here, not a
+      #   mystery one turn on.
       # @param rules [Enumerable<Approval::Rule>] consulted by the ladder's
       #   deterministic `rules` rung, ahead of the queue and ahead of any human.
       #   EMPTY by default, which abstains on everything: filling it is
@@ -154,15 +151,11 @@ module Lain
       #   parses. Its exclusion table is also the only thing on this ladder
       #   that can DENY on the model's own words.
       #
-      #   Which posture a session is in decides whether any of that is
-      #   consulted, and all three answer differently. An attended board asks
-      #   this ladder. `/mode auto` resolves the Gate's policy to
-      #   {Middleware::Gate::ApproveAll}, which never reaches a rung -- so
-      #   the exclusion table denies NOTHING there, while the tool still holds
-      #   the same verdict and still picks its arm. An unattended session gets
-      #   the one-rung {Unattended} ladder below, which refuses without asking
-      #   this rung anything. The asymmetry is a fact about those postures, not
-      #   a defect here.
+      #   Both approval levels consult it: `ask` and `auto` share the
+      #   deterministic rungs and differ only below them, so the exclusion
+      #   table denies under `/mode auto` exactly as it does under `ask`. An
+      #   unattended session's `ask` is the one-rung {Unattended} ladder below,
+      #   which refuses without asking this rung anything.
       #
       #   Defaults to a verdict restricting no program, so a board built
       #   without a project behaves as it did before the table existed --
@@ -178,7 +171,7 @@ module Lain
       #   a board of its own that declares no layout by default, so the
       #   direct-construction seams a spec drives enforce nothing
       # @param layers [Array<Symbol>] the mode layers the session starts with,
-      #   under the default `accept_edits` posture
+      #   in the starting scope and approval
       def initialize(journal:, model:, toolset:, rules: [],
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -194,9 +187,9 @@ module Lain
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:) if @attended
-        @base = toolset
+        @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
-        seed(Mode.new(posture: :accept_edits, layers:), journal:)
+        seed(Mode.new(layers:), journal:)
         # After the seed, which is what makes the policy switch it carries.
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, denial:)
@@ -210,13 +203,16 @@ module Lain
       # {Agent::SnapshotSlot::Unbound} until the agent build binds one.
       attr_reader :snapshots
 
-      # The snapshot scope the posture in force declares, which is what the
-      # agent build fills the slot with before any flip.
-      def snapshot_scope = mode_switch.posture.snapshot_scope
+      # The snapshot scope every mode writes under, which is what the agent
+      # build fills the slot with. The slot falls back to the write-set scope on
+      # its own when the shadow store fails, so no mode has to choose it.
+      SNAPSHOT_SCOPE = :shadow_git
 
-      # The slot the Agent's deliveries read, so every later flip can rebind
-      # it. Bound rather than built here: it needs the project root, which the
-      # board's own build never sees.
+      def snapshot_scope = SNAPSHOT_SCOPE
+
+      # The slot the Agent's deliveries read, handed to `/undo` through
+      # {#surface_kwargs}. Bound rather than built here: it needs the project
+      # root, which the board's own build never sees.
       #
       # @param slot [Agent::SnapshotSlot]
       # @return [self]
@@ -282,26 +278,20 @@ module Lain
           "and say what it was for."
       end
 
-      # The starting mode's resolution seeds both live slots DIRECTLY rather
-      # than through {#apply}, because construction journals no policy: the
-      # initial one is the posture's, and every session starts in the same
-      # posture.
+      # The starting mode's resolution seeds the policy slot DIRECTLY rather
+      # than through {#apply}, because construction journals no policy: every
+      # session starts at the same approval level.
       #
-      # CONSTRUCTION ORDER: the live toolset slot and the ladder are built
-      # FIRST, before the first {#resolve} -- the ladder is what the asking
-      # rungs resolve TO, and its deterministic rung reads the tier off the
-      # live capability set. The slot answers through a thunk, so it may be
-      # built while `@resolved` is still nil; nothing asks it anything until a
-      # call is gated.
+      # CONSTRUCTION ORDER: both ladders are built FIRST, ONCE, before the
+      # first {#resolve} -- they are what the approval levels resolve TO, and a
+      # flip that selects the ladder already in force is then the identical
+      # object, which is how the policy switch sees that nothing moved.
       def seed(initial, journal:)
         @snapshots = ::Lain::Agent::SnapshotSlot::Unbound
-        @toolset = LiveToolset.new(-> { @resolved })
         @ladder = build_ladder(journal:)
-        resolution = resolve(initial)
-        @resolved = resolution.toolset
-        @policy_switch = Approval::PolicySwitch.new(resolution.gate_policy, journal:)
-        @mode_switch = BoundSwitch.new(launched(initial, resolution, journal:),
-                                       resolve: method(:resolve), apply: method(:apply))
+        @ladders = { ask: @ladder, auto: automatic_ladder(journal:) }.freeze
+        @policy_switch = Approval::PolicySwitch.new(resolve(initial).gate_policy, journal:)
+        @mode_switch = BoundSwitch.new(launched(initial, journal:), resolve: method(:resolve), apply: method(:apply))
       end
 
       # A layer the launch flags turned on IS journaled, as the flip `/mode`
@@ -310,21 +300,21 @@ module Lain
       # alone, so an unrecorded layer would show nowhere but the live prompt
       # until the first `/mode`. A launch with no layer writes nothing, so a
       # plain chat's record is unchanged.
-      def launched(initial, resolution, journal:)
-        switch = Mode::Switch.new(initial.with(layers: Mode::LayerSet.empty), journal:)
-        switch.switch(initial, surface: LAUNCH_SURFACE, toolset: resolution.toolset) unless initial.layers.empty?
-        switch
+      def launched(initial, journal:)
+        Mode::Switch.new(initial.with(layers: Mode::LayerSet.empty), journal:).tap do |switch|
+          switch.switch(initial, surface: LAUNCH_SURFACE)
+        end
       end
 
-      # What an asking posture resolves to is the LADDER, not the bare queue.
+      # What `ask` approval resolves to is the LADDER, not the bare queue.
       # The queue is still the parked list `/approve` drains and still the
       # bottom rung; the deterministic rungs simply get asked first, so a call
       # the session has already decided about never reaches a human.
       #
       # It is TOTAL -- both arms answer an {Approval::Escalation}, never nil. A
       # session with nobody to ask gets a ladder of ONE {Unattended} rung, and the two
-      # rejected alternatives are why it refuses. Approving would be the `auto`
-      # posture under another name, granted to a run the operator never said
+      # rejected alternatives are why it refuses. Approving would be `auto`
+      # approval under another name, granted to a run the operator never said
       # that about. Parking is worse than it looks -- the call waits on a queue
       # no surface drains until the fail-closed timeout denies it anyway, so
       # the outcome is identical and the run spends the wait first.
@@ -338,105 +328,58 @@ module Lain
       # nowhere at all; a ladder journals every rung it consults, which is what
       # makes an unattended arm's denials comparable with an attended arm's.
       #
-      # It is still NOT a quiet demotion to `plan`: the posture stays what it
-      # says, the capability set is untouched, and only the gate's answer
-      # changes.
+      # It is still NOT a quiet change of mode: the mode stays what it says,
+      # the capability set is untouched, and only the gate's answer changes.
       #
       # The unattended arm builds no triage rung at all, which is why the
       # session's verdict and its exclusion table reach nothing here: refusing
       # everything is already stricter than any table could be.
       def build_ladder(journal:)
-        return Approval::Escalation.new([Unattended.new], journal:) unless @approvals
+        return Approval::Escalation.new([Unattended.new], journal:, label: "ask") unless @approvals
 
         Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules, triage: @triage)
       end
 
-      # The posture's declared symbols as this session's live collaborators.
-      # Pure, and it raises before anything moves -- {Toolset::UnknownTool} when
-      # a posture names a tool this run does not hold.
-      def resolve(mode) = Mode::Resolution.for(mode:, base: @base, queue: @ladder)
+      # `auto` approval's ladder, built for attended and unattended sessions
+      # alike: nobody is asked under it, so whether anybody could be changes
+      # nothing, and the triage and rules rungs still decide first.
+      def automatic_ladder(journal:)
+        Approval::Escalation.automatic(tools: @toolset, journal:, rules: @rules, triage: @triage)
+      end
+
+      # A mode as this session's live collaborators. Pure, and it raises before
+      # anything moves.
+      def resolve(mode) = Mode::Resolution.for(mode:, ladders: @ladders)
 
       # What a flip DOES. The gate policy goes through the ONE PolicySwitch
       # every surface writes, so a transcript reads as a single policy history
-      # and the last flip wins whichever surface made it; the capability set is
-      # re-bound in the slot the Agent and the executor already hold, and so is
-      # the snapshot writer, which keeps its writer when the scope is unchanged.
+      # and the last flip wins whichever surface made it.
       def apply(resolution, surface:)
         @policy_switch.switch(resolution.gate_policy, surface:)
-        @resolved = resolution.toolset
-        @snapshots.rebind(resolution.snapshot_scope)
       end
 
       def prompt(conductor:, tty:)
         Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(tty, question) })
       end
 
-      # The capability set the Agent and its {Agent::ToolRunner} are BUILT with,
-      # so a posture flip can change what the model is shown without rebuilding
-      # either. Exactly {Approval::PolicySwitch}'s shape one axis over, and for
-      # the same seam reality: both holders are construction-fixed, so the live
-      # thing has to be a slot they already have.
-      #
-      # == It is a read-only FACE, and the writer stays on the board
-      #
-      # Frozen, with no writer at all: it reads `@resolved` through a thunk,
-      # and only {Switchboard#apply} moves that. The obvious shape -- a public
-      # `#bind` mirroring {Approval::PolicySwitch#switch} -- was built first and
-      # rejected at review. Its three siblings journal every flip with the
-      # surface that made it; a `#bind` here would be the one authorization
-      # write in the family that is unattributable, sitting in public on
-      # `agent.toolset` where `bind(Toolset.new)` disarms a live session to zero
-      # tools, writes no journal line, and leaves the mode slot still reading
-      # `accept_edits`. In a codebase whose premise is "possession is
-      # authorization", the object that IS the possession must not offer a
-      # silent disarm.
-      #
-      # It delegates the model-facing surface and NOTHING else. Not a
-      # `SimpleDelegator`: `only`/`except` deliberately do not pass through,
-      # because attenuating the live slot would answer a plain Toolset and read
-      # like a second, competing expression of the ladder.
-      #
-      # `==` and `hash` are deliberately absent, so `live == live.current` is
-      # false in both directions even though {Toolset#==} exists: this is a
-      # slot, not a value, and two slots holding equal sets are still two
-      # sessions. Compare `live.current`, or `live.digest`, never the face.
-      class LiveToolset
-        include Enumerable
-        include Inspectable
-
-        delegate :to_schema, :include?, :fetch, :[], :each, :names, :digest, :size, :empty?, :to_s, to: :current
-
-        # @param source [#call] answers the {Toolset} in force right now
-        def initialize(source)
-          @source = source
-          freeze
-        end
-
-        # Read every time rather than memoized: being late is the entire job.
-        def current = @source.call
-      end
-
       # The {Mode::Switch} the command surface writes, decorated so a flip does
       # something. The doing is one ordering, and the order is the contract:
       #
       #   resolve  -- pure, and raises here if the mode cannot be bound at all
-      #   switch   -- the slot moves and the flip is journaled
-      #   apply    -- the gate policy and the capability set follow it
+      #   switch   -- the flip is journaled and the slot moves
+      #   apply    -- the gate policy follows it
       #
       # Resolving FIRST keeps a refused flip out of the journal entirely: the
-      # Journal never records a mode the session then failed to enter. Only
-      # that half is enforced. The converse -- that the harness is never in a
-      # mode the Journal missed -- rests on `apply` not raising, and nothing
-      # here would catch it if it did. Unreachable today, since everything that
-      # CAN fail failed in `resolve`, and stated rather than claimed away
-      # because the day `apply` grows a fallible step is the day the order
-      # needs revisiting.
+      # Journal never records a mode the session then failed to enter. The
+      # converse -- that the harness is never in a mode the Journal missed --
+      # holds because the record commits: a live view failing after the record
+      # landed is raised only once the gate has followed.
       #
       # A decorator rather than a hook on {Mode::Switch} because the switch is
       # a delegating VALUE -- nothing about "what a session re-binds when its
-      # posture changes" is its question.
+      # mode changes" is its question.
       class BoundSwitch
-        delegate :current, :posture, :layers, :describe, to: :@switch
+        delegate :current, :scope, :approval, :layers, :describe, to: :@switch
 
         def initialize(switch, resolve:, apply:)
           @switch = switch
@@ -444,15 +387,16 @@ module Lain
           @apply = apply
         end
 
-        # `resolution.toolset` is what {Mode::Switch#switch} journals as this
-        # flip's declared set -- read off the PURE resolution computed above,
-        # never off `@resolved`, which {#apply} has not moved yet at this line.
-        # Reading the live slot here would journal the OUTGOING posture's set
-        # under the incoming flip's record.
+        #
+        # A live view failing after a record landed does not stop the apply:
+        # the mode record committed the flip, so the gate follows it before the
+        # failure is raised.
         def switch(mode, surface:)
           resolution = @resolve.call(mode)
-          @switch.switch(mode, surface:, toolset: resolution.toolset)
-          @apply.call(resolution, surface:)
+          failures = [JournalTee.landed { @switch.switch(mode, surface:) },
+                      JournalTee.landed { @apply.call(resolution, surface:) }].compact
+          raise failures.first unless failures.empty?
+
           @switch.current
         end
       end

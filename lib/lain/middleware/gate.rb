@@ -34,15 +34,17 @@ module Lain
     # context) -> Boolean` stays a legitimate policy too. It is adapted ONCE,
     # here at construction ({Callable}), and its rulings carry no reason.
     #
-    # {ApproveAll} is what the `auto` posture resolves to; {DenyAll} is its
-    # Null-Object opposite and the default -- safer to refuse an unattended
-    # gate than to silently run it.
+    # {ApproveAll} is an explicit, named opt-out; {DenyAll} is its Null-Object
+    # opposite and the default -- safer to refuse an unattended gate than to
+    # silently run it. Neither is what a mode resolves to: both approval levels
+    # are an {Approval::Escalation} ladder, so a session's own triage and rule
+    # denies decide under `/mode auto` too.
     class Gate < Base
-      # What {Mode::Posture}'s `auto` rung selects: an explicit, named opt-out
-      # rather than a magic nil policy.
+      # Approves every gated call without consulting a rung: for a gate built
+      # where no session rules exist to consult, never for a chat's mode.
       class ApproveAll
         RUNG = "approve_all"
-        BECAUSE = "the posture approves every gated call"
+        BECAUSE = "the policy approves every gated call"
 
         def call(_effect, _context) = true
         def rule(_effect, _context) = Approval::Escalation::Ruling.allow(rung: RUNG, because: BECAUSE)
@@ -52,7 +54,7 @@ module Lain
       # human, and the safe default.
       class DenyAll
         RUNG = "deny_all"
-        BECAUSE = "the posture refuses every gated call"
+        BECAUSE = "the policy refuses every gated call"
 
         def call(_effect, _context) = false
         def rule(_effect, _context) = Approval::Escalation::Ruling.deny(rung: RUNG, because: BECAUSE)

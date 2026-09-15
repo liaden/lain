@@ -23,7 +23,7 @@ module Lain
     #
     # The environment may say how the model answers; it may never say what lain
     # is allowed to do, or whether it keeps a record. So neither auto-approval
-    # shape (the `auto` posture and the `--auto-approve` layer) nor `--journal`
+    # shape (`auto` approval and the `--auto-approve` layer) nor `--journal`
     # is readable here. A stray `export` in a directory's `.envrc` would
     # silently disable the approval gate for every session started there, and
     # the failure is invisible -- tool calls simply stop being asked about; a

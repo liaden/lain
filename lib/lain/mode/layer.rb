@@ -5,7 +5,7 @@ require "active_support/core_ext/module/delegation"
 module Lain
   class Mode
     # One composable, orthogonal toggle -- Emacs' minor mode. A layer is
-    # DECLARATION only; the posture owns the exclusive slot, and a layer is
+    # DECLARATION only; scope and approval own the exclusive slots, and a layer is
     # everything that does not need one.
     #
     # `alters_outcome` is a declared field rather than a comment because a

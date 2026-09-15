@@ -319,8 +319,8 @@ module Lain
         # @param status_feed [#state] the published struct; `"fleet"` and
         #   `"derivation_refusal_streak"` are the readings this class takes
         #   from it
-        # @param mode [#posture, #layers, nil] the session's live mode -- a
-        #   {Lain::Mode} value or a {Mode::Switch} both answer this duck. nil
+        # @param mode [#scope, #approval, #layers, nil] the session's live mode
+        #   -- a {Lain::Mode} value or a {Mode::Switch} both answer this duck. nil
         #   until the mode ladder is wired into a live chat, so a caller that
         #   passes nothing gets a `#to_h` reporting no mode.
         def initialize(agent:, clock:, status_feed:, mode: nil)
@@ -396,15 +396,16 @@ module Lain
           Compaction::Source::Derived.stalled?(reading.derivation_refusal_streak) ? "stalled" : nil
         end
 
-        # The posture's own lighter, then every active layer's, in the precedence
-        # order {Mode#describe} reports -- `LayerSet#layers` already
-        # canonicalizes to declaration order. An empty result is nil for {#fleet}
+        # The scope's and the approval's own lighters, then every active
+        # layer's, in the precedence order {Mode#describe} reports --
+        # `LayerSet#layers` already canonicalizes to declaration order. An empty result is nil for {#fleet}
         # and {#occupancy}'s reason: a `( ... )` group elides a variable that is
         # absent, never one that is an empty String rendered anyway.
         def mode
           return nil unless @mode
 
-          lighters = [@mode.posture.lighter, *@mode.layers.layers.map(&:lighter)].reject(&:empty?)
+          lighters = [@mode.scope.lighter, @mode.approval.lighter, *@mode.layers.layers.map(&:lighter)]
+                     .reject(&:empty?)
           lighters.empty? ? nil : lighters.join(" ")
         end
 

@@ -200,22 +200,23 @@ RSpec.describe Lain::Bench::CLI do
 
     # Compare's two comparability guards speak in the RECORDINGS' vocabulary and
     # name no file, so an experimenter who pointed this at a directory of twelve
-    # sessions reads "manual → plan vs manual → auto" with no way back to the
+    # sessions reads "checkout/ask vs checkout/auto" with no way back to the
     # two at fault. Only this layer still holds the paths -- the same sentence
     # the orphan-baseline refusal above is built on.
     describe "refusing recordings that are not comparable" do
       # `fixture_dir` is a local of the enclosing block, so these stay inline
       # rather than becoming `def` helpers, which would not close over it.
-      let(:flip) { { "type" => "mode_switch", "from" => "manual" } }
+      let(:flip) { { "type" => "mode_switch", "from_scope" => "checkout", "to_scope" => "checkout" } }
 
-      it "refuses recordings under different postures as a Refusal naming the sources" do
+      it "refuses recordings under different modes as a Refusal naming the sources" do
         Dir.mktmpdir do |tmp|
-          { "one.ndjson" => "plan", "two.ndjson" => "auto" }.each do |name, to|
-            File.write(File.join(tmp, name),
-                       File.read(File.join(fixture_dir, name)) + "#{JSON.generate(flip.merge("to" => to))}\n")
+          { "one.ndjson" => %w[ask auto], "two.ndjson" => %w[auto ask] }.each do |name, (from, to)|
+            line = JSON.generate(flip.merge("from_approval" => from, "to_approval" => to))
+            File.write(File.join(tmp, name), File.read(File.join(fixture_dir, name)) + "#{line}\n")
           end
           expect { cli.variance_report([tmp]) }
-            .to raise_error(described_class::Refusal, /one\.ndjson.*two\.ndjson.*manual → plan.*manual → auto/m)
+            .to raise_error(described_class::Refusal,
+                            %r{one\.ndjson.*two\.ndjson.*checkout/ask → checkout/auto.*checkout/auto → checkout/ask}m)
         end
       end
 

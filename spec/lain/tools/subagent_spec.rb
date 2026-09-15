@@ -2424,54 +2424,12 @@ RSpec.describe Lain::Tools::Subagent do
       expect(provider.requests[1].tools.map { |tool| tool["name"] }).to include("ask_human")
     end
 
-    # The grant passes through the SAME posture gate the rest of the child's
-    # set does -- it is not handed out past the session.
-    it "keeps the child's asker whenever the session posture permits ask_human" do
-      provider = mock(text_response("done"))
-      seam = asking_seam(provider).with(permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file ask_human]))
-      tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
-
-      tool.call({ "prompt" => "go" }, invocation)
-
-      expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[ask_human read_file])
-    end
-
-    # The second gate {ChildBuilder#permitted} stands: a posture that does not
-    # permit ask_human MUTES the child rather than silently handing it an
-    # asker the session itself may not use.
-    it "withholds the asker from a child whose session posture does not permit it" do
-      provider = mock(text_response("done"))
-      seam = asking_seam(provider).with(permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file]))
-      tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
-
-      tool.call({ "prompt" => "go" }, invocation)
-
-      expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[read_file])
-    end
-
-    # The muted path must not leave the PARENT's asker standing. Under
-    # `handler_union` the union is what the child is SHOWN and what
-    # {Agent::ToolRunner} resolves calls against, so an `ask_human` surviving
-    # there is the parent's own -- reachable by the very child the posture
-    # just muted, and resolving into the parent's {AskHuman::Outstanding}.
-    it "strips the parent's asker from the dispatch union too when the posture mutes it" do
-      provider = mock(text_response("done"))
-      poisoned = Lain::Toolset.new(union.to_a + [Lain::Tools::AskHuman.new(parent:)])
-      seam = asking_seam(provider).with(permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file echo]))
-      tool = described_class.new(seam:, toolset: poisoned, max_depth: 1,
-                                 policy: spawn_policy(only: [], posture: :handler_union))
-
-      tool.call({ "prompt" => "go" }, invocation)
-
-      expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[echo read_file])
-    end
-
     # A role's `only:` says what an arm may TOUCH; `unattended` says it may not
     # PARK. The docent answers while a human stands mid-review waiting for the
     # line to change, so an asker granted past the attenuation would hang
     # exactly the answer the human is waiting on -- and `only:` cannot express
     # a tool the role must NOT hold, because the grant happens outside it.
-    it "withholds the asker from an unattended spawn, though the posture permits it" do
+    it "withholds the asker from an unattended spawn" do
       provider = mock(text_response("done"))
       tool = asking_subagent(provider, policy: spawn_policy(only: [], unattended: true))
 

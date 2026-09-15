@@ -12,78 +12,80 @@ RSpec.describe Lain::Mode do
   let(:precedence_order) { Lain::Mode::Layer::NAMES.select { |name| enabled_names.include?(name) } }
 
   describe "construction" do
-    it "is one posture and a set of layers" do
-      mode = described_class.new(posture: :manual, layers: %i[notify goal])
+    it "is a scope, an approval level and a set of layers" do
+      mode = described_class.new(scope: :checkout, approval: :auto, layers: %i[notify goal])
 
-      expect(mode.posture).to eq(Lain::Mode::Posture.for(:manual))
+      expect(mode.scope).to be(Lain::Mode::Scope.for(:checkout))
+      expect(mode.approval).to be(Lain::Mode::Approval.for(:auto))
       expect(mode.layers).to eq(Lain::Mode::LayerSet.new(%i[goal notify]))
     end
 
-    it "accepts an already-built Posture and LayerSet, not only raw names" do
-      posture = Lain::Mode::Posture.for(:auto)
+    it "accepts already-built axis values and a LayerSet, not only raw names" do
+      approval = Lain::Mode::Approval.for(:auto)
       layers = Lain::Mode::LayerSet.new(%i[vi])
 
-      mode = described_class.new(posture:, layers:)
+      mode = described_class.new(approval:, layers:)
 
-      expect(mode.posture).to be(posture)
+      expect(mode.approval).to be(approval)
       expect(mode.layers).to be(layers)
     end
 
-    it "defaults to no active layers" do
-      mode = described_class.new(posture: :accept_edits)
+    # `Mode.new` is where a session starts and where `/mode !` lands, so the
+    # defaults are a claim about both.
+    it "defaults to the checkout, ask approval and no active layers" do
+      mode = described_class.new
 
+      expect([mode.scope.name, mode.approval.name]).to eq(%i[checkout ask])
       expect(mode.layers).to be_empty
     end
 
-    it "fails loudly on an unknown posture, naming every alternative" do
-      expect { described_class.new(posture: :turbo) }
-        .to raise_error(ArgumentError, /turbo.*plan.*manual.*accept_edits.*auto/m)
+    it "fails loudly on an unknown approval level, naming every alternative" do
+      expect { described_class.new(approval: :manual) }.to raise_error(ArgumentError, /manual.*ask.*auto/m)
+    end
+
+    it "fails loudly on an unknown scope, naming every alternative" do
+      expect { described_class.new(scope: :plan) }.to raise_error(ArgumentError, /plan.*checkout/m)
     end
 
     it "fails loudly on an unknown layer, naming every alternative" do
-      expect { described_class.new(posture: :manual, layers: %i[nonsense]) }
+      expect { described_class.new(layers: %i[nonsense]) }
         .to raise_error(ArgumentError, /nonsense.*auto_approve.*goal.*notify.*vi/)
     end
 
-    # A name-shaped posture (a Symbol or String that just doesn't NAME one of
-    # the four) already raises Posture.for's own ArgumentError, above. These
-    # five are the OTHER kind of garbage -- not even name/Array-shaped -- and
-    # the panel's point stands even though nothing was ever silently
-    # accepted: before this fix each one leaked a NoMethodError from whichever
-    # private method (`to_sym`, `map`) the coercion happened to call first,
-    # instead of the same ArgumentError a bad NAME gets.
+    # A name-shaped value that just doesn't NAME a declared one raises the
+    # family's own ArgumentError, above. These are the OTHER kind of garbage --
+    # not even name/Array-shaped -- which would otherwise leak a NoMethodError
+    # from whichever private method (`to_sym`, `map`) the coercion calls first.
     describe "type-shaped garbage, not just name-shaped garbage" do
-      it "rejects a nil posture with ArgumentError, not NoMethodError" do
-        expect { described_class.new(posture: nil) }.to raise_error(ArgumentError, /unknown posture/)
+      it "rejects a nil approval with ArgumentError, not NoMethodError" do
+        expect { described_class.new(approval: nil) }.to raise_error(ArgumentError, /unknown approval/)
       end
 
-      it "rejects an Integer posture with ArgumentError, not NoMethodError" do
-        expect { described_class.new(posture: 42) }.to raise_error(ArgumentError, /unknown posture/)
+      it "rejects an Integer scope with ArgumentError, not NoMethodError" do
+        expect { described_class.new(scope: 42) }.to raise_error(ArgumentError, /unknown mode scope/)
       end
 
-      it "rejects an Array posture with ArgumentError, not NoMethodError" do
-        expect { described_class.new(posture: [:manual]) }.to raise_error(ArgumentError, /unknown posture/)
+      it "rejects an Array approval with ArgumentError, not NoMethodError" do
+        expect { described_class.new(approval: [:ask]) }.to raise_error(ArgumentError, /unknown approval/)
       end
 
       it "rejects nil layers with ArgumentError, not NoMethodError" do
-        expect { described_class.new(posture: :manual, layers: nil) }
-          .to raise_error(ArgumentError, /unknown mode layers/)
+        expect { described_class.new(layers: nil) }.to raise_error(ArgumentError, /unknown mode layers/)
       end
 
       it "rejects String layers with ArgumentError, not NoMethodError" do
-        expect { described_class.new(posture: :manual, layers: "goal") }
-          .to raise_error(ArgumentError, /unknown mode layers/)
+        expect { described_class.new(layers: "goal") }.to raise_error(ArgumentError, /unknown mode layers/)
       end
     end
   end
 
   describe "#describe" do
-    it "names the posture first, then every active layer in precedence order, each with its lighter" do
-      mode = described_class.new(posture: :accept_edits, layers: enabled_names)
+    it "names the scope and approval first, then every active layer in precedence order, each with its lighter" do
+      mode = described_class.new(layers: enabled_names)
 
       description = mode.describe
 
-      expect(description).to start_with("accept_edits")
+      expect(description).to start_with("checkout ask:")
       expect(precedence_order.map { |name| Lain::Mode::Layer.for(name).to_s })
         .to all(satisfy { |rendered| description.include?(rendered) })
 
@@ -91,33 +93,32 @@ RSpec.describe Lain::Mode do
       expect(positions).to eq(positions.sort)
     end
 
-    it "still names the posture when no layers are active, and says so" do
-      mode = described_class.new(posture: :manual)
-
-      description = mode.describe
-
-      expect(description).to start_with("manual")
-      expect(description).to include("no layers active")
+    it "still names the axes when no layers are active, and says so" do
+      expect(described_class.new.describe).to eq("checkout ask: no layers active")
     end
 
-    it "renders a rung's own lighter too, when it has one" do
-      mode = described_class.new(posture: :auto)
-
-      expect(mode.describe).to include("auto").and include("AUTO")
+    it "renders an axis value's own lighter too, when it has one" do
+      expect(described_class.new(approval: :auto).describe).to eq("checkout auto (AUTO): no layers active")
     end
   end
 
   describe "the value it is" do
     it "is a frozen value, safe to share across a Ractor" do
-      mode = described_class.new(posture: :plan, layers: %i[goal])
+      mode = described_class.new(approval: :auto, layers: %i[goal])
 
       expect(mode).to be_deeply_frozen
+    end
+
+    it "compares equal to a mode built from the same names, so a flip can tell nothing moved" do
+      expect(described_class.new(approval: "auto", layers: %i[vi]))
+        .to eq(described_class.new(approval: :auto, layers: %w[vi]))
     end
   end
 
   describe "the require index this file also is" do
-    it "still resolves Mode::Posture and Mode::Layer -- the constants this class must not drop" do
-      expect(described_class::Posture).to be_a(Class)
+    it "still resolves Mode::Scope, Mode::Approval and Mode::Layer -- the constants this class must not drop" do
+      expect(described_class::Scope).to be_a(Class)
+      expect(described_class::Approval).to be_a(Class)
       expect(described_class::Layer).to be_a(Class)
       expect(described_class::LayerSet).to be_a(Class)
     end

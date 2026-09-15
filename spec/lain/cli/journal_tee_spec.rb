@@ -25,6 +25,17 @@ RSpec.describe Lain::CLI::JournalTee do
     io.string.each_line.map(&:chomp)
   end
 
+  # Under `--no-journal --nvim` the tee IS the run's record journal, and the
+  # mode switch, the policy switch and the goal driver all write `#record`.
+  it "answers #record exactly as it answers <<, so it can stand where a Journal does" do
+    channel = Lain::Channel::DropOldest.new
+    tee = described_class.new(journal, channel)
+
+    expect(tee.record({ "type" => "mode_switch" })).to be(tee)
+    expect(JSON.parse(journal_lines.first)).to include("type" => "mode_switch")
+    expect(channel.size).to eq(1)
+  end
+
   it "survives a dead channel: the journal receives the record and no error escapes" do
     channel = Lain::Channel::DropOldest.new
     channel.close
@@ -181,6 +192,65 @@ RSpec.describe Lain::CLI::JournalTee do
 
       expect(journal_lines.size).to eq(1)
       expect(channel.size).to eq(1) # FIXED: journal and channel legs still complete
+    end
+  end
+
+  # The durable leg landing is what commits a flip written through this tee, so
+  # a caller has to be able to tell "the record is on disk and a live view
+  # failed" from "the record never landed" -- without inspecting journals.
+  describe "telling a live sink's failure from the durable write's" do
+    it "marks a single live sink's failure as recorded, keeping its own class and message" do
+      raiser = instance_double(Lain::StatusFeed)
+      allow(raiser).to receive(:<<).and_raise(ArgumentError, "boom")
+      tee = described_class.new(journal, raiser)
+
+      expect { tee.record({ "type" => "mode_switch" }) }.to raise_error(ArgumentError, "boom") { |error|
+        expect(error).to be_a(described_class::Recorded)
+      }
+      expect(journal_lines.size).to eq(1)
+    end
+
+    # A frozen error cannot be extended, and a FrozenError out of the marking
+    # would read as a durable failure: the half-apply this marker exists to end.
+    it "marks a FROZEN live sink's failure as recorded, keeping its class, message and cause" do
+      frozen = IOError.new("state feed gone").freeze
+      raiser = Object.new
+      raiser.define_singleton_method(:<<) { |_event| raise frozen }
+
+      expect { described_class.new(journal, raiser) << { "type" => "mode_switch" } }
+        .to raise_error(IOError, "state feed gone") { |error|
+          expect(error).to be_a(described_class::Recorded)
+          expect(error.cause).to eq(frozen.cause)
+          expect(error.backtrace).not_to be_empty
+        }
+      expect(journal_lines.size).to eq(1)
+    end
+
+    it "marks several live sinks' failures as recorded too" do
+      raisers = Array.new(2) { instance_double(Lain::StatusFeed).tap { |sink| allow(sink).to receive(:<<).and_raise(IOError) } }
+      tee = described_class.new(journal, *raisers)
+
+      expect { tee << { "type" => "mode_switch" } }
+        .to raise_error(described_class::SinkFailures) { |error| expect(error).to be_a(described_class::Recorded) }
+    end
+
+    it "does not mark a durable write that failed, and tells no sink" do
+      channel = Lain::Channel::DropOldest.new
+      journal.close
+      tee = described_class.new(journal, channel)
+
+      expect { tee << { "type" => "mode_switch" } }
+        .to raise_error(Lain::Journal::Closed) { |error| expect(error).not_to be_a(described_class::Recorded) }
+      expect(channel.size).to eq(0)
+    end
+
+    it "answers a recorded failure from .landed, nil for a clean write, and lets any other raise through" do
+      raiser = instance_double(Lain::StatusFeed)
+      allow(raiser).to receive(:<<).and_raise(IOError, "feed")
+
+      expect(described_class.landed { described_class.new(journal, raiser) << { "type" => "x" } }).to be_a(IOError)
+      expect(described_class.landed { described_class.new(journal) << { "type" => "x" } }).to be_nil
+      expect { described_class.landed { raise TypeError } }.to raise_error(TypeError)
     end
   end
 

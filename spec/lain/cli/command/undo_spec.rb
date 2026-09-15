@@ -111,7 +111,7 @@ RSpec.describe Lain::CLI::Command::Undo do
     expect(described_class.new.usage).to include("/rewind")
   end
 
-  describe "under the default posture's shadow scope", :seam do
+  describe "under the shadow scope every mode writes under", :seam do
     def text(body) = Lain::Response.new(content: [{ "type" => "text", "text" => body }], stop_reason: :end_turn)
 
     # A real Agent, a real slot and real tools. Turn B writes nothing; turn C
@@ -483,10 +483,11 @@ RSpec.describe Lain::CLI::Command::Undo do
     end
   end
 
-  # A real Agent over real tools, the slot holding a posture's declared scope:
-  # the delivery opens each turn's pre-images and hands them to the snapshot.
+  # A real Agent over real tools, the slot holding the write-set scope a failed
+  # shadow store falls back to: the delivery opens each turn's pre-images and
+  # hands them to the snapshot.
   describe "a turn's own writes, through the tools and the delivery", :seam do
-    let(:scope) { Lain::Mode::Posture.for(:manual).snapshot_scope }
+    let(:scope) { :write_set }
     let(:entered) { Async::Variable.new }
     let(:release) { Async::Variable.new }
 
@@ -517,7 +518,7 @@ RSpec.describe Lain::CLI::Command::Undo do
       described_class.new.call(args, build_command_env(agent:, snapshots: slot, chronicle:))
     end
 
-    it "removes a file the manual turn created, and names it as deleted" do
+    it "removes a file the write-set turn created, and names it as deleted" do
       agent = agent_over(tool_response(write_call("tu_1", "x.txt", "made\n")), text("done"))
       agent.ask("make x.txt")
 
@@ -527,7 +528,7 @@ RSpec.describe Lain::CLI::Command::Undo do
       expect(reply).to include("deleted x.txt")
     end
 
-    it "restores a committed file the manual turn overwrote for the first time" do
+    it "restores a committed file the write-set turn overwrote for the first time" do
       write("keep.txt", "committed\n")
       user_git("init", "-q")
       user_git("add", "-A")
@@ -539,30 +540,6 @@ RSpec.describe Lain::CLI::Command::Undo do
       undo_through(agent)
 
       expect(read("keep.txt")).to eq("committed\n")
-    end
-
-    # The write-set is the session's, so after an undo and a skip took the
-    # accept_edits turns out of the history, c.txt and lib.rb are still in the
-    # manual turn's map with no earlier record. That turn never touched them.
-    it "names only what the manual turn wrote after a posture change" do
-      write("lib.rb", "lib v0\n")
-      slot.rebind(Lain::Mode::Posture.for(:accept_edits).snapshot_scope)
-      agent = agent_over(tool_response(write_call("tu_1", "c.txt", "c\n")), text("made c"),
-                         tool_response(read_call("tu_2", "lib.rb"), write_call("tu_3", "lib.rb", "lib v1\n")),
-                         text("edited lib"),
-                         tool_response(write_call("tu_4", "e.txt", "e\n")), text("made e"))
-      agent.ask("make c.txt")
-      agent.ask("edit lib.rb")
-      undo_through(agent)
-      undo_through(agent, "skip")
-      slot.rebind(Lain::Mode::Posture.for(:manual).snapshot_scope)
-      agent.ask("make e.txt")
-
-      reply = undo_through(agent)
-
-      expect(reply).to eq("undid the only undoable file-changing turn: deleted e.txt. " \
-                          "#{described_class::WRITE_SET_ONLY}")
-      expect([read("c.txt"), read("lib.rb"), exist?("e.txt")]).to eq(["c\n", "lib v0\n", false])
     end
 
     # The map is the whole session's write-set, so a later turn's snapshot
@@ -680,8 +657,8 @@ RSpec.describe Lain::CLI::Command::Undo do
       expect(read("x.txt")).to eq("human\n")
     end
 
-    context "with accept_edits' shadow scope" do
-      let(:scope) { Lain::Mode::Posture.for(:accept_edits).snapshot_scope }
+    context "with the shadow scope every mode writes under" do
+      let(:scope) { Lain::CLI::Switchboard::SNAPSHOT_SCOPE }
 
       it "deletes a file the turn created, exactly as before" do
         agent = agent_over(tool_response(write_call("tu_1", "b.txt", "b\n")), text("done"))

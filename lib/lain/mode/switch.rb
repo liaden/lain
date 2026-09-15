@@ -16,11 +16,11 @@ module Lain
     # the Mode that was there stays the frozen value it was, which is what lets
     # a journal reader, a HUD and a prompt hold copies without racing.
     #
-    # Every flip lands in the Journal attributed to the surface that made it,
-    # including a flip to the mode already in force: a transcript that silently
-    # drops a redundant `/mode plan` cannot show that it was asked for. The
-    # INITIAL mode is the wiring's choice and already visible in the session's
-    # flags -- construction journals nothing.
+    # Every flip that MOVES something lands in the Journal attributed to the
+    # surface that made it. A flip to the mode already in force writes nothing:
+    # the session did not change, and a record of it would read as a change to
+    # every reader that folds these. The INITIAL mode is the wiring's choice and
+    # already visible in the session's flags -- construction journals nothing.
     #
     # Like {Approval::PolicySwitch}, there is deliberately no lock: a flip is
     # straight-line Ruby with no yield point, and a fiber only interleaves at an
@@ -35,33 +35,23 @@ module Lain
         @journal = journal
       end
 
-      # The mode's own questions, answered by whichever Mode is in force --
-      # the same set {CLI::Switchboard::Layers} delegates through this object.
-      delegate :posture, :layers, :describe, to: :@current
+      # The mode's own questions, answered by whichever Mode is in force.
+      delegate :scope, :approval, :layers, :describe, to: :@current
 
-      # The record is BUILT before the slot moves, and that order is the whole
-      # contract: {Telemetry::Carriers::ModeSwitch} refuses a flip it cannot
-      # attribute, and assigning first would leave the harness in a mode the
-      # Journal never recorded. It is also what makes a non-Mode argument die on
-      # `.posture` while the old mode is still in force. Answering `@current`
-      # and not `mode` for the same reason: a dropped assignment must not still
-      # confirm the new mode to its caller.
-      #
-      # The `toolset:` keyword names the capability set THIS flip resolves to,
-      # so the record can say what the model is shown -- required, with no
-      # empty-Toolset default: a default here is exactly how a future caller
-      # that forgot to resolve one would go on journaling a false "nothing
-      # declared" set instead of failing at the call site. {CLI::Switchboard::
-      # BoundSwitch} is the only production caller, and it always hands in the
-      # resolution it just computed; a caller driving this object directly as
-      # a stand-in for the `mode_switch:` duck (Command::Mode's and
-      # StatusFeed's specs both do) has to pass one too, real or a bare
-      # `Lain::Toolset.new` named at the call site where a reader can see it
-      # was a deliberate choice, not a silent fallback.
-      def switch(mode, surface:, toolset:)
-        record = flip(@current, mode, surface, toolset)
+      # The durable record COMMITS the flip, and that is the whole contract. A
+      # journal that refuses the record -- a carrier that cannot attribute it,
+      # a closed file -- leaves the old mode in force, so the harness is never
+      # in a mode the session file does not name. A live view that fails after
+      # the record landed ({CLI::JournalTee::Recorded}) cannot undo it: the
+      # slot moves and the failure is raised afterwards, so a retry is a no-op
+      # and the file's flips still chain.
+      def switch(mode, surface:)
+        return @current if mode == @current
+
+        failure = ::Lain::CLI::JournalTee.landed { @journal.record(flip(@current, mode, surface)) }
         @current = mode
-        @journal.record(record)
+        raise failure if failure
+
         @current
       end
 
@@ -69,10 +59,10 @@ module Lain
 
       # The naming lives here rather than on the record, which is the dumb
       # carrier its two siblings are: this object is the one that knows a Mode.
-      def flip(from, to, surface, toolset)
-        Telemetry::ModeSwitch.new(from: from.posture.name, to: to.posture.name,
-                                  from_layers: from.layers.names, to_layers: to.layers.names,
-                                  surface:, toolset_digest: toolset.digest, tool_names: toolset.names)
+      def flip(from, to, surface)
+        Telemetry::ModeSwitch.new(from_scope: from.scope.name, to_scope: to.scope.name,
+                                  from_approval: from.approval.name, to_approval: to.approval.name,
+                                  from_layers: from.layers.names, to_layers: to.layers.names, surface:)
       end
     end
   end

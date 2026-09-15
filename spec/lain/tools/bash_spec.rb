@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "stringio"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::Bash do
@@ -622,8 +623,8 @@ RSpec.describe Lain::Tools::Bash do
 
   # Which arm ran is a decision this tool makes on every call, and until now
   # nothing wrote it down where no ladder ran: the gate journals a `shell
-  # verdict` line from inside its escalation record, but `/mode auto` resolves
-  # the gate to ApproveAll, which consults no rung. So the tool records the
+  # verdict` line from inside its escalation record, but a gate over ApproveAll
+  # consults no rung. So the tool records the
   # decision itself, on both arms -- an abstention that went through `sh -c` is
   # as much a datapoint as an allow that ran as argv.
   # The one message that exposes this tool's verdict. The approval ladder's
@@ -784,23 +785,19 @@ RSpec.describe Lain::Tools::Bash do
       expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow string]])
     end
 
-    # `/mode auto` resolves the gate to ApproveAll, so no rung of the ladder
-    # runs and nothing above the tool writes anything about the choice of arm --
-    # which is what leaves this record as an `auto` session's only account of
-    # it. Driven through the real resolution rather than through ApproveAll
-    # named by hand: which policy `auto` names is the fact the example rests on.
-    it "still records under /mode auto, where no ladder runs" do
+    # `/mode auto` resolves the gate to the automatic ladder, whose remainder
+    # approves what triage and the rules left open. The tool still writes its
+    # own record of the arm, so an `auto` session's account of it does not rest
+    # on which rungs happened to journal.
+    it "still records under /mode auto, where the remainder approves the call" do
       tool = described_class.new(journal:)
-      resolution = Lain::Mode::Resolution.for(mode: Lain::Mode.new(posture: :auto),
-                                              base: Lain::Toolset.new([tool]),
-                                              queue: Lain::Middleware::Gate::DenyAll.new)
-      gate = Lain::Middleware::Gate.new(policy: resolution.gate_policy)
+      toolset = Lain::Toolset.new([tool])
+      ladder = Lain::Approval::Escalation.automatic(tools: toolset, journal: Lain::Journal.new(io: StringIO.new))
+      gate = Lain::Middleware::Gate.new(policy: ladder)
 
-      result = dispatch_call("bash", { "command" => "ls -la" }, id: "tu_auto", toolset: resolution.toolset,
-                                                                layers: [gate],
+      result = dispatch_call("bash", { "command" => "ls -la" }, id: "tu_auto", toolset:, layers: [gate],
                                                                 handler: Lain::Effect::Handler::Live.new(channel:))
 
-      expect(resolution.gate_policy).to be_a(Lain::Middleware::Gate::ApproveAll)
       expect(result).to be_ok
       expect(arms.map { |arm| [arm.tool_use_id, arm.verdict] }).to eq([["tu_auto", :allow]])
     end

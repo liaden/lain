@@ -717,11 +717,10 @@ module Lain
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :supervisor, :observer,
-                         :permits, :askers, :isolation, :escalation) do
-        # Everything after `tool_middleware` defaults to its Null object;
-        # {Mode::Posture::Permits::All} is the one that says "no posture has
-        # been bound to this seam". The first four stay required, so Data's own
-        # missing-keyword error is the loud failure, unwritten.
+                         :askers, :isolation, :escalation) do
+        # Everything after `tool_middleware` defaults to its Null object. The
+        # first four stay required, so Data's own missing-keyword error is the
+        # loud failure, unwritten.
         #
         # `tool_middleware` has no default and no named Null in lib/: a child's
         # tools run behind the stack this builds -- the guards AND the gate --
@@ -752,7 +751,7 @@ module Lain
         # rather than only its immediate parent's name.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
-                       permits: Mode::Posture::Permits::All, askers: NoAskers, isolation: NO_ISOLATION,
+                       askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze)
           Seam.refuse_unbuildable(tool_middleware)
 
@@ -793,7 +792,7 @@ module Lain
       end
 
       # What a child IS: the union it renders, the Agent over it, the tool
-      # stack enforcing the posture. Parent-agnostic by construction -- `parent`
+      # stack enforcing its attenuation. Parent-agnostic by construction -- `parent`
       # arrives per {#build}, never at initialize -- so one builder serves every
       # spawn without carrying spawn-specific state.
       class ChildBuilder
@@ -958,7 +957,7 @@ module Lain
         # spawns concurrently over one of these, so a shared feed would promote
         # one sibling's turns against another's stop digest.
         #
-        # Hoisting the base above {#permitted}'s refusal and the attenuation is
+        # Hoisting the base above the attenuation is
         # free because every {Tool::SpawnPolicy::PrefixStrategy} builds one
         # purely -- `Timeline.empty` or an O(1) `parent.fork` -- so a spawn that
         # goes on to raise merely discards it.
@@ -981,15 +980,15 @@ module Lain
                     feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
         end
 
-        # A spawn that raises past this point (a posture that permits none of
-        # the child's tools, a Context that will not render) leaves no lifetime
+        # A spawn that raises past this point (a Context that will not render,
+        # a stack the gate does not close) leaves no lifetime
         # for anyone to hang a `deregister` on, and retention runs from
         # `register` to `deregister` and nothing else -- so this method is the
         # only place that release can live.
         def spawned(enrolled, chain, union, worker_env)
           child = nil
           asker = enrolled.asker
-          allowed = granted(permitted(@policy.attenuate(union)), asker)
+          allowed = granted(@policy.attenuate(union), asker)
           child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, worker_env),
                             registration: enrolled.registration, tools: allowed.names)
         ensure
@@ -1001,80 +1000,24 @@ module Lain
         # The child's own asker, granted ON TOP of the attenuated set rather
         # than folded into the union it attenuates from: no role in the catalog
         # names `ask_human` in its `only`-set, so a set that went through
-        # {Tool::SpawnPolicy#attenuate} would have dropped it. {#permitted} runs
-        # BEFORE this -- "the posture permits none of the SPAWN's tools" is a
-        # wiring error whether or not the child could still ask about it.
+        # {Tool::SpawnPolicy#attenuate} would have dropped it.
         #
-        # The grant is a default with CONDITIONS, and both must survive a
-        # future edit. The SESSION posture governs it: a rung that stopped
-        # permitting `ask_human` MUTES every child rather than being quietly
-        # granted past. The ROLE governs it too, through
-        # {Tool::SpawnPolicy}'s `unattended` -- an arm that answers with nobody
-        # minding it holds no tool that can block on a human, and `only:` cannot
-        # say so from inside a set this grant is deliberately outside of.
+        # The grant is a default with a CONDITION that must survive a future
+        # edit: the ROLE governs it, through {Tool::SpawnPolicy}'s `unattended`
+        # -- an arm that answers with nobody minding it holds no tool that can
+        # block on a human, and `only:` cannot say so from inside a set this
+        # grant is deliberately outside of.
         #
         # REPLACING rather than appending, and the strip is UNCONDITIONAL where
         # the grant is not. A union that already holds an `ask_human` holds the
         # PARENT's, whose questions would be attributed to the parent's chain
         # and whose promise the parent's {AskHuman::Outstanding} holds. So an
-        # early return for the muted case would leave the PARENT's asker
+        # early return for the unattended case would leave the PARENT's asker
         # standing in the dispatch union -- reachable, and under `handler_union`
-        # rendered, to the very child the posture just muted.
+        # rendered, to the very child the role just muted.
         def granted(set, asker)
-          own = grants_own_asker?(asker) ? [asker] : []
+          own = @policy.unattended ? [] : [asker]
           Toolset.new(set.reject { |tool| tool.name == asker.name } + own)
-        end
-
-        # Two conditions refusing for different reasons: the SESSION posture is
-        # the rung the whole run stands on, `unattended` is the ROLE's own claim
-        # that it answers with nobody minding it. Either alone is enough to
-        # withhold -- both say a question this child asked would reach no one.
-        def grants_own_asker?(asker)
-          !@policy.unattended && @seam.permits.include?(asker.name)
-        end
-
-        # The child's capability set: the spawn policy's attenuation, then the
-        # SESSION posture's -- a `plan`-mode parent must not hand a child the
-        # `bash` it does not itself hold, which four shipped roles would
-        # otherwise take.
-        #
-        # An INTERSECTION rather than {Mode::Posture#attenuate}: that goes
-        # through {Toolset#only}, which raises on a name the set does not hold,
-        # so asking `plan` to attenuate a `:merge_resolver` child's four tools
-        # would die on the nine read-only names the child never held. A spawn
-        # under a restrictive posture must ANSWER "here is what you may hold",
-        # not blow up. `Permits#include?` asks one name at a time for exactly
-        # this reason.
-        #
-        # == Read PER SPAWN, where the gate's policy is read per CALL
-        #
-        # The two axes a posture governs do not have the same liveness, and the
-        # difference is observable. A child renders a frozen {Toolset} once,
-        # here; the gate answers through a live policy on every call. A
-        # `:one_shot` child cannot straddle a `/mode` flip, but an `:actor`
-        # adopted onto the {Supervisor} can, and it keeps the set it was
-        # rendered -- and since `plan`'s `DenyAll` intercepts only TIER 3, that
-        # actor's `edit_file` still runs. "Plan mutates nothing" is therefore a
-        # claim about the session and about children spawned AFTER the flip, not
-        # about one already running. Making it true for those too needs a live
-        # toolset slot in the child ({CLI::Switchboard::LiveToolset}'s shape).
-        def permitted(allowed)
-          permitted = allowed.only(*allowed.names.select { |name| @seam.permits.include?(name) })
-          # A spawn whose session posture permits none of its tools. Loud rather
-          # than an empty child: a child holding no tool cannot do the work its
-          # prompt names, and would report nothing rather than refusing.
-          raise Error, no_capability(allowed) if permitted.empty?
-
-          permitted
-        end
-
-        # A child with nothing at all is a wiring error, not a tighter child.
-        # Unreachable from the shipped catalog, so a reader who hits it paired a
-        # custom `only:` with a posture sharing no name with it -- hence naming
-        # both halves, since either could be the one to change.
-        def no_capability(allowed)
-          "a #{@seam.permits} session permits none of the spawn's tools " \
-            "(#{allowed.names.join(", ")}), so the child would hold nothing"
         end
 
         # Every spawner in the injected union is replaced by a descended copy:
@@ -1141,14 +1084,6 @@ module Lain
         # first: the builder is the only place a child's gate comes from, so a
         # stack it does not end in the gate is refused here, as the child is
         # built and before any of its tools can run.
-        #
-        # Under `handler_union` a `plan`-mode child is SHOWN tools the posture
-        # forbids it, which reads against {Mode::Posture}'s note that plan is
-        # safe because "the rendered schema simply does not contain
-        # `edit_file`". That note describes the DEFAULT posture's mechanism, not
-        # the guarantee. What plan promises is that the child cannot DISPATCH a
-        # mutating tool: `schema` withholds the name, `handler_union` shows it
-        # and refuses it, and neither can dispatch it.
         def child_stack(worker_env, allowed)
           stack = Middleware::Gate.closes!(Middleware::Stack.new(@seam.tool_middleware.call(worker_env).to_a))
           return stack unless @policy.posture.refuses_over_union?

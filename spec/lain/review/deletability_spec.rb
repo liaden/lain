@@ -260,10 +260,9 @@ module DeletionMap
       consumers: ["spec/support/tool_registry.rb", "spec/tool_bounds_discipline_spec.rb"],
       edits: {
         "lib/lain/tools.rb" => ['require_relative "tools/tool_search"'],
-        # Two roll calls that spell the tool's model-facing NAME and never its
-        # constant, so the sweep is blind to both: a posture's drop list and
-        # the parallel-safety table's opted-out set.
-        "spec/lain/mode/posture_spec.rb" => ['"request_review", "tool_search"'],
+        # A roll call that spells the tool's model-facing NAME and never its
+        # constant, so the sweep is blind to it: the parallel-safety table's
+        # opted-out set.
         "spec/lain/tools/parallel_safety_spec.rb" => ["web_fetch web_search tool_search"]
       },
       forces: [], plan: VERIFIED_DELETIONS, untestable: nil

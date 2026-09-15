@@ -1,19 +1,6 @@
 # frozen_string_literal: true
 
-require "delegate"
 require "stringio"
-
-# The stand-in this file drives as `env.mode_switch`. Production's own call
-# site (`cli/command/mode.rb:66`) reaches `env.mode_switch.switch(mode,
-# surface:)` with no `toolset:` at all, because a real chat's `env.mode_switch`
-# is always a {Lain::CLI::Switchboard::BoundSwitch}, which resolves one
-# internally before handing it down. `toolset:` is REQUIRED on the raw
-# {Lain::Mode::Switch} this file builds directly, so it cannot take that same
-# two-argument call any more -- this wraps one exactly the way BoundSwitch
-# does, minus the resolve/apply machinery no example here exercises.
-class ModeSwitchStandIn < SimpleDelegator
-  def switch(mode, surface:) = __getobj__.switch(mode, surface:, toolset: Lain::Toolset.new)
-end
 
 RSpec.describe Lain::CLI::Command::Mode do
   subject(:command) { described_class.new }
@@ -21,8 +8,8 @@ RSpec.describe Lain::CLI::Command::Mode do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def switch_for(posture, *layers)
-    ModeSwitchStandIn.new(Lain::Mode::Switch.new(Lain::Mode.new(posture:, layers:), journal:))
+  def switch_for(approval, *layers)
+    Lain::Mode::Switch.new(Lain::Mode.new(approval:, layers:), journal:)
   end
 
   def env_for(switch) = instance_double(Lain::CLI::Command::Env, mode_switch: switch)
@@ -35,101 +22,165 @@ RSpec.describe Lain::CLI::Command::Mode do
   end
 
   describe "bare /mode" do
-    it "reports the current posture and every active layer" do
-      switch = switch_for(:accept_edits, :goal)
+    it "reports the scope, the approval and every active layer" do
+      switch = switch_for(:ask, :goal)
 
-      expect(command.call("", env_for(switch))).to include("accept_edits").and include("goal")
+      expect(command.call("", env_for(switch))).to eq("checkout ask: goal (GOAL)")
     end
 
     it "reports without switching or journaling" do
-      switch = switch_for(:accept_edits, :goal)
+      switch = switch_for(:ask, :goal)
       command.call("  ", env_for(switch))
 
-      expect(switch.current).to eq(Lain::Mode.new(posture: :accept_edits, layers: [:goal]))
+      expect(switch.current).to eq(Lain::Mode.new(layers: [:goal]))
       expect(flips).to be_empty
     end
   end
 
-  describe "/mode <posture>" do
-    it "switches the posture the session runs under" do
-      switch = switch_for(:auto)
-      command.call("plan", env_for(switch))
+  describe "/mode <approval> and /mode <scope>" do
+    it "switches the approval level the session runs under" do
+      switch = switch_for(:ask)
+      command.call("auto", env_for(switch))
 
-      expect(switch.posture.name).to eq(:plan)
+      expect(switch.approval.name).to eq(:auto)
     end
 
     it "journals the change attributed to the tty" do
       switch = switch_for(:auto)
-      command.call("plan", env_for(switch))
+      command.call("ask", env_for(switch))
 
       expect(flips).to contain_exactly(
-        a_hash_including("from" => "auto", "to" => "plan", "surface" => "tty")
+        a_hash_including("from_approval" => "auto", "to_approval" => "ask", "surface" => "tty")
       )
     end
 
-    it "keeps the layers already enabled -- a posture is one slot, not the whole mode" do
-      switch = switch_for(:manual, :goal)
+    it "keeps the layers already enabled -- an axis is one slot, not the whole mode" do
+      switch = switch_for(:ask, :goal)
       command.call("auto", env_for(switch))
 
       expect(switch.layers.names).to eq([:goal])
     end
 
+    it "takes a token for each axis in one invocation" do
+      switch = switch_for(:ask)
+      command.call("checkout auto", env_for(switch))
+
+      expect(switch.current).to eq(Lain::Mode.new(scope: :checkout, approval: :auto))
+    end
+
     it "returns rendered text naming both the old and the new mode, never printing" do
-      switch = switch_for(:auto)
+      switch = switch_for(:ask)
       text = nil
 
-      expect { text = command.call("plan", env_for(switch)) }.not_to output.to_stdout
-      expect(text).to be_a(String).and include("auto").and include("plan")
+      expect { text = command.call("auto", env_for(switch)) }.not_to output.to_stdout
+      expect(text).to be_a(String).and include("ask").and include("auto")
     end
 
     # Mode#describe carries its own colon, so a "mode: " prefix stutters.
     it "renders the transition without restating the subject" do
-      switch = switch_for(:auto, :goal)
+      switch = switch_for(:ask, :goal)
 
-      expect(command.call("plan", env_for(switch)))
-        .to eq("auto (AUTO): goal (GOAL) -> plan (PLAN): goal (GOAL)")
+      expect(command.call("auto", env_for(switch)))
+        .to eq("checkout ask: goal (GOAL) -> checkout auto (AUTO): goal (GOAL)")
+    end
+
+    it "writes nothing for a token naming the value already in force" do
+      switch = switch_for(:auto)
+      command.call("auto", env_for(switch))
+
+      expect(flips).to be_empty
     end
   end
 
   describe "/mode +layer and /mode -layer" do
-    it "enables one layer without touching the posture" do
-      switch = switch_for(:manual)
+    it "enables one layer without touching either axis" do
+      switch = switch_for(:ask)
       command.call("+auto_approve", env_for(switch))
 
-      expect(switch.posture.name).to eq(:manual)
+      expect(switch.approval.name).to eq(:ask)
       expect(switch.layers).to include(:auto_approve)
     end
 
-    it "disables one layer without touching the posture -- the other half of the toggle" do
-      switch = switch_for(:manual, :auto_approve, :goal)
+    it "disables one layer without touching either axis -- the other half of the toggle" do
+      switch = switch_for(:auto, :auto_approve, :goal)
       command.call("-auto_approve", env_for(switch))
 
-      expect(switch.posture.name).to eq(:manual)
+      expect(switch.approval.name).to eq(:auto)
       expect(switch.layers.names).to eq([:goal])
     end
 
     it "disabling a layer that was never enabled is a no-op, not a refusal" do
-      switch = switch_for(:manual)
+      switch = switch_for(:ask)
 
       expect { command.call("-goal", env_for(switch)) }.not_to raise_error
       expect(switch.layers).to be_empty
     end
 
-    it "applies a posture and a layer in one invocation, journaling one flip" do
-      switch = switch_for(:auto, :goal)
-      command.call("plan +notify -goal", env_for(switch))
+    it "applies an axis and a layer in one invocation, journaling one flip" do
+      switch = switch_for(:ask, :goal)
+      command.call("auto +notify -goal", env_for(switch))
 
-      expect(switch.current).to eq(Lain::Mode.new(posture: :plan, layers: [:notify]))
+      expect(switch.current).to eq(Lain::Mode.new(approval: :auto, layers: [:notify]))
       expect(flips.size).to eq(1)
     end
   end
 
+  describe "tokens from one axis" do
+    # Scenario: contradictory tokens refuse
+    it "refuses two approval tokens, naming both, and leaves the mode unchanged" do
+      switch = switch_for(:ask)
+
+      expect { command.call("ask auto", env_for(switch)) }
+        .to raise_error(Lain::Error, /\bask\b.*\bauto\b/)
+      expect(switch.current).to eq(Lain::Mode.new(approval: :ask))
+      expect(flips).to be_empty
+    end
+
+    it "refuses even when the second token repeats the first" do
+      switch = switch_for(:ask)
+
+      expect { command.call("auto auto", env_for(switch)) }.to raise_error(Lain::Error, /approval twice/)
+    end
+  end
+
+  describe "a retired name" do
+    # Scenario: retired names refuse
+    it "refuses manual by name, listing the tokens /mode takes" do
+      switch = switch_for(:ask)
+
+      expect { command.call("manual", env_for(switch)) }
+        .to raise_error(Lain::Error) { |error| expect(error.message).to include("manual", "ask", "auto", "checkout") }
+      expect(flips).to be_empty
+    end
+
+    it "refuses accept_edits by name, saying what it became" do
+      expect { command.call("accept_edits", env_for(switch_for(:auto))) }
+        .to raise_error(Lain::Error, /accept_edits is retired: it is ask now/)
+    end
+
+    # Plan scope is a confinement not yet built; the name must not fall through
+    # as a typo, and must not quietly leave the session in the checkout.
+    it "refuses plan by name until plan scope exists" do
+      switch = switch_for(:ask)
+
+      expect { command.call("plan", env_for(switch)) }.to raise_error(Lain::Error, /plan is not available/)
+      expect(flips).to be_empty
+    end
+
+    it "refuses a retired name among other tokens, applying none of them" do
+      switch = switch_for(:ask)
+
+      expect { command.call("auto +vi manual", env_for(switch)) }.to raise_error(Lain::Error, /manual/)
+      expect(switch.current).to eq(Lain::Mode.new)
+    end
+  end
+
   describe "the reset" do
-    it "lands in the most restrictive posture from any posture" do
+    it "lands in the starting scope and approval from any mode" do
       switch = switch_for(:auto, :auto_approve, :goal, :notify)
       command.call("!", env_for(switch))
 
-      expect(switch.posture.name).to eq(:plan)
+      expect([switch.scope.name, switch.approval.name]).to eq(%i[checkout ask])
     end
 
     it "clears every layer too -- a reset that leaves auto_approve on has not reset anything" do
@@ -137,10 +188,6 @@ RSpec.describe Lain::CLI::Command::Mode do
       command.call("!", env_for(switch))
 
       expect(switch.layers).to be_empty
-    end
-
-    it "targets the most restrictive rung the posture ladder declares" do
-      expect(described_class::FLOOR).to eq(Lain::Mode::Posture::NAMES.first)
     end
 
     # The reset is reachable as `/mode !` and NOT as `/mode!`: the invocation
@@ -157,30 +204,30 @@ RSpec.describe Lain::CLI::Command::Mode do
   end
 
   describe "an unknown name" do
-    it "raises a recoverable Lain::Error naming every valid posture" do
-      switch = switch_for(:manual)
+    it "raises a recoverable Lain::Error naming every scope and approval token" do
+      switch = switch_for(:ask)
 
       expect { command.call("turbo", env_for(switch)) }
-        .to raise_error(Lain::Error, /turbo/) { |error| expect(error.message).to include(*posture_names) }
+        .to raise_error(Lain::Error, /turbo/) { |error| expect(error.message).to include(*axis_names) }
     end
 
-    it "leaves the mode in force and journals nothing, so the repl loops on the same posture" do
-      switch = switch_for(:manual)
-      suppress(Lain::Error) { command.call("turbo", env_for(switch)) }
+    it "leaves the mode in force and journals nothing, so the repl loops on the same mode" do
+      switch = switch_for(:auto)
+      suppress(Lain::Error) { command.call("auto turbo", env_for(switch)) }
 
-      expect(switch.posture.name).to eq(:manual)
+      expect(switch.approval.name).to eq(:auto)
       expect(flips).to be_empty
     end
 
     it "raises a recoverable Lain::Error naming every declared layer" do
-      switch = switch_for(:manual)
+      switch = switch_for(:ask)
 
       expect { command.call("+nonsense", env_for(switch)) }
         .to raise_error(Lain::Error) { |error| expect(error.message).to include(*layer_names) }
     end
 
     it "refuses a bare sigil rather than enabling nothing quietly" do
-      switch = switch_for(:manual)
+      switch = switch_for(:ask)
 
       expect { command.call("+", env_for(switch)) }.to raise_error(Lain::Error)
     end
@@ -191,22 +238,28 @@ RSpec.describe Lain::CLI::Command::Mode do
   # that. Asserted here so the day someone declares a layer `:"-x"` -- which
   # this command would route as "disable x", silently unreachable -- is the day
   # an example goes red rather than the day a toggle stops working.
-  it "holds: no declared posture or layer name opens with a sigil" do
-    names = (Lain::Mode::Posture::NAMES + Lain::Mode::Layer::NAMES).map(&:to_s)
+  it "holds: no declared scope, approval or layer name opens with a sigil" do
+    names = axis_names + Lain::Mode::Layer::NAMES.map(&:to_s)
 
     expect(names).to all(satisfy { |name| !name.start_with?("+", "-", described_class::RESET) })
   end
 
-  describe "case" do
-    it "accepts the upper-case posture the prompt's own lighter teaches" do
-      switch = switch_for(:auto)
-      command.call("PLAN", env_for(switch))
+  # A bare token is looked up by which roster holds it, so one name on both
+  # rosters would be unreachable on one of them.
+  it "holds: no name is both a scope and an approval level" do
+    expect(Lain::Mode::Scope::NAMES & Lain::Mode::Approval::NAMES).to be_empty
+  end
 
-      expect(switch.posture.name).to eq(:plan)
+  describe "case" do
+    it "accepts the upper-case approval the prompt's own lighter teaches" do
+      switch = switch_for(:ask)
+      command.call("AUTO", env_for(switch))
+
+      expect(switch.approval.name).to eq(:auto)
     end
 
     it "accepts an upper-case layer token too, sigil and all" do
-      switch = switch_for(:manual)
+      switch = switch_for(:ask)
       command.call("+GOAL", env_for(switch))
 
       expect(switch.layers).to include(:goal)
@@ -251,7 +304,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     it "lists the layer the launch flag turned on, before any /mode has run" do
       board = board_for(auto_approve: true)
 
-      expect(command.call("", env_for(board.mode_switch))).to eq("accept_edits: auto_approve (AA)")
+      expect(command.call("", env_for(board.mode_switch))).to eq("checkout ask: auto_approve (AA)")
       expect(flips.map { |flip| flip["surface"] }).to eq([Lain::CLI::Switchboard::LAUNCH_SURFACE])
     end
   end
@@ -272,8 +325,8 @@ RSpec.describe Lain::CLI::Command::Mode do
     let(:env) { env_for(driver.guarding(board.mode_switch)) }
 
     it "refuses +goal with no standing goal, naming /goal <objective>, and switches nothing" do
-      expect { command.call("plan +goal", env) }.to raise_error(Lain::Error, %r{/goal <objective>})
-      expect(board.mode_switch.current).to eq(Lain::Mode.new(posture: :accept_edits))
+      expect { command.call("auto +goal", env) }.to raise_error(Lain::Error, %r{/goal <objective>})
+      expect(board.mode_switch.current).to eq(Lain::Mode.new)
       expect(flips).to be_empty
     end
 
@@ -293,16 +346,29 @@ RSpec.describe Lain::CLI::Command::Mode do
       end
     end
 
+    # A lowering flip whose record landed is committed, so the goal stops even
+    # when a live view fails after the record.
+    it "stops the standing goal on -goal when a live sink fails after the record landed" do
+      sink = Object.new
+      def sink.<<(_event) = raise(IOError, "state file write failed")
+      teed = Lain::CLI::Switchboard.new(journal: Lain::CLI::JournalTee.new(journal, sink), model: "m", toolset: tools)
+      goals = Lain::CLI::GoalDriver.new(journal:, layer: Lain::CLI::GoalDriver::Layer.new(-> { teed.mode_switch }))
+      suppress(IOError) { goals.start("ship the parser") }
+
+      expect { command.call("-goal", env_for(goals.guarding(teed.mode_switch))) }.to raise_error(IOError)
+      expect([goals.active?, teed.mode_switch.layers.include?(:goal)]).to eq([false, false])
+    end
+
     it "leaves a standing goal alone when a flip keeps its layer" do
       driver.start("ship the parser")
-      command.call("plan +notify", env)
+      command.call("auto +notify", env)
 
       expect(driver).to be_active
       expect(board.mode_switch.layers.names).to eq(%i[goal notify])
     end
   end
 
-  def posture_names = Lain::Mode::Posture::NAMES.map(&:to_s)
+  def axis_names = (Lain::Mode::Scope::NAMES + Lain::Mode::Approval::NAMES).map(&:to_s)
 
   def layer_names = Lain::Mode::Layer::NAMES.map(&:to_s)
 

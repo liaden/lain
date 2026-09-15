@@ -155,13 +155,13 @@ RSpec.describe "plugin/tmux" do
     end
 
     # Same discipline: the mode lighter arrives already composed, so the
-    # script renders it without knowing a posture from a layer -- and stays
+    # script renders it without knowing an axis from a layer -- and stays
     # quiet under the silent default, whose lighter is the empty string.
     it "renders the composed mode lighter, and nothing when it is empty" do
-      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, posture: "manual", mode_lighter: "MAN AA")
-      expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0 MAN AA")
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, approval: "auto", mode_lighter: "AUTO AA")
+      expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0 AUTO AA")
 
-      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, posture: "accept_edits", mode_lighter: "")
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, approval: "ask", mode_lighter: "")
       expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0")
     end
 

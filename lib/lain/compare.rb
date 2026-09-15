@@ -13,10 +13,10 @@ module Lain
   # were comparable at all. {Capability::DegradedSet}: if one arm silently lost
   # `:thinking` and the other kept it, half the tactic under study never ran on
   # that arm and the comparison measures the missing capability, not the
-  # variable. {Posture}: a `plan` run never saw the editing tools and an `auto`
-  # run never stopped for a human, so a distribution across the two measures
-  # the ladder rung. Both raise rather than report -- a lie you can read is
-  # worse than an error you cannot ignore.
+  # variable. {Mode}, the mode axis: an `auto` run never stopped for a human,
+  # so a distribution across it and an `ask` run measures the approval level.
+  # Both raise rather than report -- a lie you can read is worse than an error
+  # you cannot ignore.
   #
   # Both arrive as arguments a caller must thread, and a caller that forgets
   # one gets a vacuous pass rather than a failure. {Bench::Variance} reads both
@@ -70,7 +70,7 @@ module Lain
     # `price` is {Priced} or {Unpriced}, never a bare number, so a run the book
     # cannot price is still a run: the refusal travels with it to the report
     # instead of unwinding the whole comparison from its constructor.
-    Run = Data.define(:name, :usage, :price, :score, :degraded, :posture) do
+    Run = Data.define(:name, :usage, :price, :score, :degraded, :mode) do
       # @param name [String] this run's label in the comparison table (the arm
       #   it came from)
       # @param timeline [Lain::Timeline] the recorded run
@@ -79,14 +79,14 @@ module Lain
       #   knows which journal priced this run.
       # @param grade [#score, nil] a grader's verdict, if the run was graded
       # @param degraded [Capability::DegradedSet] what this run silently lost
-      # @param posture [nil, Posture, Mode, Mode::Posture, Symbol] the ladder
-      #   rung this run was in, however the caller holds it. nil -- the default,
-      #   and what every recording made before modes existed answers -- means
-      #   NOT RECORDED, which is not a rung (see {Posture}).
+      # @param mode [nil, Compare::Mode, Lain::Mode, String] the mode trajectory this run
+      #   walked, however the caller holds it. nil -- the default, and what a
+      #   session that never switched answers -- means NOT RECORDED, which is
+      #   not a point on the axis (see {Compare::Mode}).
       def self.from_timeline(name:, timeline:, ledger:, grade: nil,
-                             degraded: Capability::DegradedSet.new([]), posture: nil)
+                             degraded: Capability::DegradedSet.new([]), mode: nil)
         new(name:, usage: ledger.usage(timeline), price: price_of(ledger, timeline),
-            score: grade&.score, degraded:, posture:)
+            score: grade&.score, degraded:, mode:)
       end
 
       # The Ledger keeps raising on a model its book has no row for; this is the
@@ -98,8 +98,8 @@ module Lain
       end
       private_class_method :price_of
 
-      def initialize(name:, usage:, price:, degraded:, score: nil, posture: nil)
-        super(name: -name.to_s, usage:, price:, score:, degraded:, posture: Posture.coerce(posture))
+      def initialize(name:, usage:, price:, degraded:, score: nil, mode: nil)
+        super(name: -name.to_s, usage:, price:, score:, degraded:, mode: Mode.coerce(mode))
       end
 
       # @return [BigDecimal]
@@ -174,13 +174,13 @@ module Lain
     # @param runs [Array<Run>] the runs to compare (n >= 2)
     # @raise [ArgumentError] on fewer than two runs
     # @raise [Capability::Guard::Mismatch] when the runs degraded different sets
-    # @raise [Error] when the runs ran under different postures
+    # @raise [Error] when the runs ran under different modes
     def initialize(runs)
       @runs = Array(runs).freeze
       self.class.check!(runs: @runs)
 
       guard_degraded!
-      guard_postures!
+      guard_modes!
     end
 
     # The capabilities every run in this comparison degraded (equal by the guard).
@@ -210,19 +210,20 @@ module Lain
     # EVERY pair, UNLIKE the degraded guard's `each_cons` above -- and precisely
     # because that guard's reason is the opposite one. Degraded sets compare by
     # equality, which is transitive, so adjacent pairs settle the whole list.
-    # Posture agreement is NOT transitive: an unrecorded posture agrees with
-    # everything, so `[manual, not recorded, auto]` passes adjacent-pairwise on
-    # the strength of the absence sitting between them. A spec pins that.
-    def guard_postures!
-      @runs.map(&:posture).combination(2) { |(a, b)| Posture.guard!(a, b) }
+    # Mode agreement is NOT transitive: an unrecorded mode agrees with
+    # everything, so `[checkout/ask, not recorded, checkout/auto]` passes
+    # adjacent-pairwise on the strength of the absence sitting between them. A
+    # spec pins that.
+    def guard_modes!
+      @runs.map(&:mode).combination(2) { |(a, b)| Mode.guard!(a, b) }
     end
 
     # Pipe-delimited, because both facts it carries are comma lists themselves:
-    # `degraded: a, b, posture: c` gives a reader no way to see where one ends.
+    # `degraded: a, b, mode: c` gives a reader no way to see where one ends.
     def header
       ["Compare — #{@runs.size} runs",
        "degraded: #{degraded.empty? ? "none" : degraded.to_a.join(", ")}",
-       posture_clause].join(" | ")
+       mode_clause].join(" | ")
     end
 
     # In the HEADER beside `degraded:` rather than as a per-run column, because
@@ -231,11 +232,11 @@ module Lain
     #
     # An absence is stated as an absence rather than dropped: a report that
     # omitted it would read as though the axis had been controlled for.
-    def posture_clause
-      labels = @runs.map { |run| run.posture.to_s }
-      return "posture: #{labels.first}" if labels.uniq.size == 1
+    def mode_clause
+      labels = @runs.map { |run| run.mode.to_s }
+      return "mode: #{labels.first}" if labels.uniq.size == 1
 
-      "posture: #{@runs.map { |run| "#{run.name}=#{run.posture}" }.join(", ")}"
+      "mode: #{@runs.map { |run| "#{run.name}=#{run.mode}" }.join(", ")}"
     end
 
     # Score is only reportable when EVERY run was graded; a distribution over a
@@ -298,4 +299,4 @@ end
 # dies with `sweep.rb: uninitialized constant Lain::Bench::Sweep::Compare`.
 require_relative "compare/table"
 require_relative "compare/arm_fold"
-require_relative "compare/posture"
+require_relative "compare/mode"

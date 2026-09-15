@@ -246,7 +246,7 @@ end
 class WiringAgentSpecBoard
   attr_reader :toolset, :grafted, :ledger, :approvals, :sensitivity, :snapshots, :policy_switch
 
-  # The posture a real board starts in declares `:shadow_git`; the stand-in
+  # A real board writes under `:shadow_git`; the stand-in
   # answers the write-set scope so building an Agent over it shells no git.
   def snapshot_scope = :write_set
 
@@ -461,28 +461,23 @@ RSpec.describe Lain::CLI::Wiring do
       expect(agent.toolset.fetch("subagent").attenuates_from.names).not_to include("session_usage")
     end
 
-    # Both directions of Mode::Posture's READ_ONLY allow-list, driven through
-    # the REAL `/mode plan` flip rather than through the approximation
-    # posture_spec.rb assembles (`BaseTools.build` plus `ask_human`), which is
-    # not the set a live chat actually attenuates.
+    # Scenario: the toolset does not change with the mode
     #
-    # - AVAILABILITY: a name in READ_ONLY the live set lacks is a hard
-    #   Toolset::UnknownTool at the flip -- the raise-free half.
-    # - GRANT: an omission from READ_ONLY is SILENT. The tool simply vanishes
-    #   while planning, which is precisely when a human asks what the session
-    #   has cost so far -- and a vanished tool is how the fabrication happened
-    #   in the first place. Hence the second expectation; the first alone
-    #   would pass with session_usage left out entirely.
-    #
-    # It reaches for the board the way `approve_everything` below does, and for
-    # the same reason: the board is Wiring's private collaborator, and the flip
-    # has to happen after #wire_agent built and memoized it.
-    it "keeps session_usage in the set /mode plan resolves to, and flips without refusing" do
+    # Through the Agent a real Wiring built, so the claim is about the set the
+    # model is really shown: a flip moves the gate, never the tool block a
+    # prompt cache keys on. It reaches for the board the way
+    # `approve_everything` below does, and for the same reason: the board is
+    # Wiring's private collaborator, and the flip has to happen after
+    # #wire_agent built and memoized it.
+    it "renders the same tool block before and after /mode auto" do
       agent = wire_agent
       board = wiring.instance_variable_get(:@switchboard)
+      before = [agent.toolset, agent.toolset.digest]
 
-      expect { board.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec") }.not_to raise_error
-      expect(agent.toolset.names).to include("session_usage")
+      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+
+      expect([agent.toolset, agent.toolset.digest]).to eq(before)
+      expect(agent.toolset.names).to include("session_usage", "bash", "edit_file")
     end
 
     # The provider-reported window again, at the third construction site -- the
@@ -688,10 +683,8 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # A flip that moves the ladder or the capability set used to leave no trace
-  # of what the model was shown afterward -- a reader had to re-derive the
-  # posture's attenuation by hand to know. The record now carries it.
-  describe "a posture flip's journaled record" do
+  # The flip a real Wiring's board journals, onto the run's own record.
+  describe "a mode flip's journaled record" do
     let(:journal) { RecordingChannel.new }
     # See the note on wiring_spec's other recording examples: Chronicle#spool
     # derives the WAL path by pure string manipulation, and a Provider::Mock
@@ -700,20 +693,16 @@ RSpec.describe Lain::CLI::Wiring do
 
     def mode_switches = journal.events.grep(Lain::Telemetry::ModeSwitch)
 
-    it "carries the plan toolset's digest and names, without edit_file, from the resolution the flip applied" do
+    it "carries both axes on each side, and a gate flip beside it naming the ladder applied" do
       wire_agent
       board = wiring.instance_variable_get(:@switchboard)
 
-      board.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
 
       flip = mode_switches.last
-      expect(flip.to).to eq("plan")
-      expect(flip.tool_names).not_to include("edit_file")
-      # The resolution the flip APPLIED, read back off the board's own live
-      # slot after the flip -- proving the record named what actually took
-      # effect, not merely what some other computation would have answered.
-      expect(flip.tool_names).to eq(board.toolset.names)
-      expect(flip.toolset_digest).to eq(board.toolset.digest)
+      expect(flip.to_h.slice(:from_scope, :from_approval, :to_scope, :to_approval))
+        .to eq(from_scope: "checkout", from_approval: "ask", to_scope: "checkout", to_approval: "auto")
+      expect(journal.events.grep(Lain::Telemetry::PolicySwitch).map(&:to)).to eq(["auto"])
     end
   end
 
@@ -722,7 +711,7 @@ RSpec.describe Lain::CLI::Wiring do
   # `Channel::Null` and left no record while every other mount of this
   # middleware (consolidation.rb, improve.rb, run_recorder.rb) passes one.
   describe "the secret-write guard's journal wiring" do
-    # A tool turn primes the default posture's shadow snapshot store, which
+    # A tool turn primes the shadow snapshot store, which
     # lives under the state home -- so this chat gets a throwaway one.
     around do |example|
       Dir.mktmpdir("lain-wiring-state") do |state|
@@ -933,7 +922,7 @@ RSpec.describe Lain::CLI::Wiring do
     # pure string manipulation, and a Provider::Mock run never writes a frame.
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "t1-spec-fake-session.ndjson") }
     let(:views) { { channel: view_channel, socket_path: "/tmp/lain-t1-spec.sock", journal: } }
-    # A throwaway state home: the bash turn primes the posture's shadow
+    # A throwaway state home: the bash turn primes the shadow
     # snapshot store, which lives there.
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
@@ -950,13 +939,13 @@ RSpec.describe Lain::CLI::Wiring do
     # Bash is tier 3 and would otherwise park on the approval gate forever;
     # this block is about where the bytes go, not who let them run. The
     # deleted `--yolo` flag used to buy that at construction, and `auto` is the
-    # posture it resolved to -- so the board is flipped there instead. It has to happen HERE, after
+    # approval it resolved to -- so the board is flipped there instead. It has to happen HERE, after
     # #wire_agent, because that is where Wiring builds and memoizes the board,
     # and it reaches in for it because the board is Wiring's private
     # collaborator rather than part of its surface.
     def approve_everything
       wiring.instance_variable_get(:@switchboard)
-            .mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+            .mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
     end
 
     def dispatch(attached)
@@ -1041,7 +1030,7 @@ RSpec.describe Lain::CLI::Wiring do
       recorder, session = wiring.run_state(nil)
       agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
       wiring.instance_variable_get(:@switchboard)
-            .mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+            .mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
       agent.ask(prompt)
     end
 
@@ -1213,7 +1202,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     let(:journal) { RecordingChannel.new }
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "a8-spec-fake-session.ndjson") }
-    # The read turn primes the posture's shadow snapshot store, which lives
+    # The read turn primes the shadow snapshot store, which lives
     # under the state home -- this example's own tmpdir, not the developer's.
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
@@ -1908,6 +1897,49 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # `--no-journal --nvim`: no session record, and every journal-role
+    # collaborator is handed the tee onto nvim's own journal. A flip there must
+    # apply whole -- gate policy and all -- and a goal must drive, where a tee
+    # that answered only `<<` killed the chat on the first `record`.
+    context "with a --no-journal chronicle teed onto an editor's journal" do
+      let(:tee_io) { StringIO.new }
+      let(:chronicle) do
+        Class.new(Lain::CLI::Chronicle::Null) do
+          def initialize(tee)
+            super()
+            @tee = tee
+          end
+        end.new(Lain::CLI::JournalTee.new(Lain::Journal.new(io: tee_io), Lain::Channel::DropOldest.new))
+      end
+
+      def settled_with(text)
+        Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+      end
+
+      # Scenario: a switch applies wholly under --no-journal --nvim
+      it "applies /mode auto to the gate and drives /goal, with no NoMethodError" do
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                       tty_factory: tty_factory("quit\n", dir), conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          commands = wiring.command_surface.commands
+
+          commands.dispatch("/mode auto") { raise "unmatched" }
+          commands.dispatch("/goal ship it") { raise "unmatched" }
+          prompt = wiring.command_surface.goal_driver.poll(settled_with("working on it"))
+          wiring.conductor.close(reason: :exit)
+
+          expect(wiring.instance_variable_get(:@switchboard).policy_switch.current.map(&:name))
+            .to eq(%w[triage rules auto])
+          expect(prompt).to include("ship it")
+        end
+
+        types = tee_io.string.each_line.map { |line| JSON.parse(line)["type"] }
+        expect(types).to include("mode_switch", "goal_iteration")
+      end
+    end
+
     it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired" do
       wiring = run_wiring
       env = wiring.command_env
@@ -2086,24 +2118,24 @@ RSpec.describe Lain::CLI::Wiring do
 
       # The modes chunk wired the live switch and the shipped format's $mode
       # segment both; what never happened is THIS class handing the RunState the
-      # switch to read. `accept_edits` is the default posture and its lighter is
-      # the empty String on purpose (default.toml's own note), so a chat that
+      # switch to read. `checkout ask` is where a session starts and its lighters
+      # are the empty String on purpose (default.toml's own note), so a chat that
       # never flips renders exactly as it did before this card -- the honest
       # reading is "nothing to say", not a literal word on the line. A flip is
       # where the wiring becomes observable: the SAME renderer, called again,
       # reads the switchboard's live slot and the chrome changes with it.
-      it "wires the run's live mode switch into the prompt, so a posture flip shows at the next render" do
+      it "wires the run's live mode switch into the prompt, so a mode flip shows at the next render" do
         agent = wire_agent
         board = wiring.instance_variable_get(:@switchboard)
         renderer = wiring.send(:prompt_renderer, agent, nil)
 
         before_flip = renderer.call(text: "> ", theme: plain_theme)
-        expect(before_flip).not_to include("PLAN", "MAN", "AUTO")
+        expect(before_flip).not_to include("AUTO")
 
-        board.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+        board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
         after_flip = renderer.call(text: "> ", theme: plain_theme)
 
-        expect(after_flip).to include("PLAN")
+        expect(after_flip).to include("AUTO")
       end
 
       # The object identity behind the render above: the state the renderer was
@@ -2117,7 +2149,7 @@ RSpec.describe Lain::CLI::Wiring do
         state = renderer.instance_variable_get(:@state)
 
         expect(state.instance_variable_get(:@mode)).to be(board.mode_switch)
-        expect(state.instance_variable_get(:@mode).posture.name).to eq(:accept_edits)
+        expect(state.instance_variable_get(:@mode).current).to eq(Lain::Mode.new)
       end
 
       # A project config that does not parse is reported through the same
@@ -3323,9 +3355,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       expect(chronicle.timeline_handle.call).to be(agent.timeline)
     end
 
-    # The slot is born here and handed to the board, which is what lets a
-    # `/mode` flip rebind it: the board is the one object that sees the flip.
-    it "hands the board a snapshot slot rooted at the project, under the board's posture" do
+    # The slot is born here and handed to the board, which hands it to `/undo`.
+    it "hands the board a snapshot slot rooted at the project, under the board's scope" do
       build
 
       expect(board.snapshots).to be_a(Lain::Agent::SnapshotSlot)
@@ -3334,12 +3365,11 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     end
   end
 
-  # The default posture's scope, from the first turn, in a chat Wiring built
-  # from a project SUBDIRECTORY, with a real bash call writing a file no lain
-  # tool records. Bash is tier 3 and would park on the approval queue, so the
-  # board is flipped to auto first: a posture declaring the same shadow scope,
-  # so the slot is not rebound.
-  describe "a chat Wiring built in accept_edits, launched from a subdirectory", :seam do
+  # The shadow scope every mode writes under, from the first turn, in a chat
+  # Wiring built from a project SUBDIRECTORY, with a real bash call writing a
+  # file no lain tool records. Bash is tier 3 and would park on the approval
+  # queue, so the board is flipped to auto first, which leaves the slot alone.
+  describe "a chat Wiring launched from a subdirectory", :seam do
     around do |example|
       Dir.mktmpdir("lain-agent-build-project") do |project|
         Dir.mktmpdir("lain-agent-build-state") do |state|
@@ -3376,7 +3406,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "records a file no lain tool wrote in the next snapshot, rooted at the project root" do
       wiring, agent = wired_chat
       board = wiring.role_spawn.seam.tool_middleware.board.call
-      board.mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
 
       agent.ask("make it")
 

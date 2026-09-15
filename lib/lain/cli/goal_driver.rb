@@ -118,12 +118,12 @@ module Lain
       # The mode switch as the human writes it, over the one the driver moves.
       # The `goal` layer says a goal is standing, so raising it with none would
       # be a lighter that lies, and lowering it is the human saying stop. It
-      # decides on the whole folded mode, so `/mode plan +goal` is refused whole
+      # decides on the whole folded mode, so `/mode auto +goal` is refused whole
       # and `/mode !` stops the goal as `-goal` does.
       class Guard
         REFUSAL = "the goal layer shows a standing goal, and none is set -- /goal <objective> sets one and raises it"
 
-        delegate :current, :posture, :layers, :describe, to: :@switch
+        delegate :current, :scope, :approval, :layers, :describe, to: :@switch
 
         def initialize(switch:, driver:)
           @switch = switch
@@ -134,7 +134,14 @@ module Lain
           lowering = standing?(current) && !standing?(mode)
           raise Lain::Error, REFUSAL if standing?(mode) && !standing?(current) && !@driver.active?
 
-          @switch.switch(mode, surface:).tap { @driver.stop if lowering }
+          switched = nil
+          # A record that landed committed the flip, so a lowered goal stops
+          # even when a live view failed after it.
+          failure = JournalTee.landed { switched = @switch.switch(mode, surface:) }
+          @driver.stop if lowering
+          raise failure if failure
+
+          switched
         end
 
         private

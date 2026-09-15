@@ -72,10 +72,10 @@ module Lain
     end
     # Which arm a gated shell call ran on, and why -- the Journal's only account
     # of arm selection when no ladder ran. The gate journals a `shell verdict`
-    # line from inside its escalation record, but `/mode auto` resolves the gate
-    # to {Middleware::Gate::ApproveAll}, which consults no rung and writes
-    # no escalation record, so without this one an `auto` session records nothing
-    # about the choice at all.
+    # line from inside its escalation record, but a gate over
+    # {Middleware::Gate::ApproveAll} consults no rung and writes no escalation
+    # record, so without this one such a gate records nothing about the choice
+    # at all.
     #
     # TWO QUESTIONS, TWO MEMBERS, and the whole point is that they can disagree.
     # `verdict` is what {Shell::Verdict} DECIDED about the command; `arm` is what
@@ -91,8 +91,9 @@ module Lain
     # `arm` is therefore written from the tool's OWN resolved choice -- the same
     # value it hands the backend, never a second derivation of the same
     # predicate, which could disagree with what ran. Whether a non-allow ran at
-    # all is a further question this record does not answer: the attended ladder
-    # refuses a deny, while `/mode auto` approves it and the string arm runs.
+    # all is a further question this record does not answer: both approval
+    # levels' triage rung refuses a deny, while a gate over ApproveAll runs it on
+    # the string arm.
     #
     # `verdict`, `reason` and `term` are {Shell::Verdict::Decision#record}'s own
     # names, so a reader joining the two accounts of one call keys on the same

@@ -45,13 +45,13 @@
 #               It says no derivation has SUCCEEDED since that many refusals;
 #               it does not say one was attempted this turn, and it clears only
 #               when one succeeds. See RunState#compaction for why it latches.
-#   $mode       the posture's lighter, then every active layer's, space
-#               separated -- e.g. "PLAN" or "MAN AA". Absent whenever there is
-#               nothing to say: no mode is wired yet, or the session is in
-#               accept_edits (the default posture) with no layers active. This
-#               is chrome the human cannot accidentally scroll away or turn
-#               off, which is why it rides the composed line above the editor
-#               rather than living only in the transcript.
+#   $mode       the scope's and the approval's lighters, then every active
+#               layer's, space separated -- e.g. "AUTO" or "AUTO AA". Absent
+#               whenever there is nothing to say: no mode is wired yet, or the
+#               session is in checkout ask, where it starts, with no layers
+#               active. This is chrome the human cannot accidentally scroll
+#               away or turn off, which is why it rides the composed line
+#               above the editor rather than living only in the transcript.
 #
 # Colour is NOT resolved here. Ruby owns the stream, so it decides whether this
 # renders with escape sequences at all; a `(bold cyan)` on a piped stdout emits

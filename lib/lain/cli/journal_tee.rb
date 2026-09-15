@@ -25,6 +25,25 @@ module Lain
     # SpecificError` at a call site is undisturbed by the common case; more
     # than one failing sink raises {SinkFailures}, which names all of them.
     class JournalTee
+      # Marks a failure raised AFTER the durable leg landed: the record is in
+      # the session file, and only a live view missed it. A mixin rather than a
+      # wrapping class, so the sink's own error keeps its class and message for
+      # every existing `rescue`, while a caller whose commit IS the record --
+      # a mode or policy flip -- can still tell it from a durable write that
+      # never happened.
+      module Recorded; end
+
+      # Runs the block and answers the {Recorded} failure it raised, or nil. Any
+      # other raise -- the durable write's own -- goes straight through.
+      #
+      # @return [Recorded, nil]
+      def self.landed
+        yield
+        nil
+      rescue Recorded => e
+        e
+      end
+
       # More than one sink failed on the same event. `#failures` is the
       # ordered Array of the original exceptions (one per failing sink, in
       # sink order) -- available for a caller that wants to inspect each one
@@ -52,6 +71,11 @@ module Lain
         self
       end
 
+      # The Journal's own two spellings, because under `--no-journal --nvim`
+      # this tee IS the run's record journal, and every switch and driver
+      # writes through `#record`.
+      alias record <<
+
       private
 
       # @return [StandardError, nil] the sink's own failure (other than a
@@ -70,10 +94,13 @@ module Lain
         e
       end
 
+      # A frozen error cannot take the mark, and the FrozenError that would
+      # escape instead reads as a durable failure. Its dup keeps the class,
+      # message, backtrace and cause.
       def raise_named(failures)
-        raise failures.first if failures.one?
-
-        raise SinkFailures, failures
+        error = failures.one? ? failures.first : SinkFailures.new(failures)
+        error = error.dup if error.frozen?
+        raise error.extend(Recorded)
       end
     end
   end

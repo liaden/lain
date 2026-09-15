@@ -922,31 +922,53 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # The Loader folds the run's posture off its own mode_switch records now, so
-    # Posture's chaining and ladder refusals reach EVERY session load rather than
-    # only `bench variance`. This door rescues Corrupt by name; anything else
+    # The Loader folds the run's mode trajectory off its own mode_switch records,
+    # so the axis's chaining and roster refusals reach EVERY session load rather
+    # than only `bench variance`. This door rescues Corrupt by name; anything else
     # makes a chat session unresumable over one bad line, with a backtrace and
     # no file on it -- which is the asymmetry the examples above exist to close.
+    # A flip whose live sink failed commits on the durable record, so a retry
+    # writes nothing and the session this produced resumes.
+    it "resumes a session whose /mode flip hit a live-sink failure and was retried" do
+      io = StringIO.new
+      sink = Object.new
+      def sink.<<(_event) = raise(IOError, "state file write failed")
+      switch = Lain::Mode::Switch.new(Lain::Mode.new, journal: Lain::CLI::JournalTee.new(Lain::Journal.new(io:), sink))
+      2.times do
+        switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+      rescue IOError
+        nil
+      end
+
+      flips = io.string.lines.map { |line| JSON.parse(line) }
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: flips)
+
+      expect { resume.call }.not_to raise_error
+    end
+
     describe "a damaged mode_switch record" do
       def resume_over(*flips)
         write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: flips)
         resume.call
       end
 
+      def flip(from, to)
+        { "type" => "mode_switch", "from_scope" => "checkout", "from_approval" => from,
+          "to_scope" => "checkout", "to_approval" => to }
+      end
+
       it "refuses an unchainable pair namedly, never a raw Lain::Error" do
-        expect do
-          resume_over({ "type" => "mode_switch", "from" => "plan", "to" => "manual" },
-                      { "type" => "mode_switch", "from" => "auto", "to" => "plan" })
-        end.to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*mode_switch/m)
+        expect { resume_over(flip("ask", "auto"), flip("ask", "auto")) }
+          .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*mode_switch/m)
       end
 
-      it "refuses a posture off the ladder namedly, never a raw ArgumentError" do
-        expect { resume_over({ "type" => "mode_switch", "from" => "manual", "to" => "pIan" }) }
-          .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*pIan/m)
+      it "refuses an approval off the roster namedly, never a raw ArgumentError" do
+        expect { resume_over(flip("ask", "autto")) }
+          .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*autto/m)
       end
 
-      it "refuses a flip missing its `from` namedly, never a raw ArgumentError" do
-        expect { resume_over({ "type" => "mode_switch", "to" => "plan" }) }
+      it "refuses a flip missing a side namedly, never a raw ArgumentError" do
+        expect { resume_over(flip("ask", "auto").except("from_approval")) }
           .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
       end
     end

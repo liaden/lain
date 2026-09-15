@@ -260,10 +260,10 @@ module Lain
 
       # The Journal's only account of arm selection when no ladder ran: the
       # approval gate journals a `shell verdict` line from inside its escalation
-      # record, but `/mode auto` resolves the gate to
-      # {Middleware::Gate::ApproveAll}, which consults no rung and writes
-      # nothing -- so before this record an `auto` session recorded nothing at
-      # all about which arm its commands ran on.
+      # record, but a gate over {Middleware::Gate::ApproveAll} -- a child of a
+      # run with no chat -- consults no rung and writes nothing. Under
+      # `/mode auto` the ladder's triage rung does run and journal, so this
+      # record is the one account every gate shares.
       #
       # Written BEFORE the command runs, so a call that times out still leaves
       # an account of the arm it chose. And written on EVERY call, both arms:
