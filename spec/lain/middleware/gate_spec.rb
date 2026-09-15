@@ -20,6 +20,24 @@ module MiddlewareGateSpecSupport
       @verdict
     end
   end
+
+  # A policy answering one fixed ruling, which also answers `#call` so an
+  # example can witness that the gate never falls back on the Boolean.
+  class RulingPolicy
+    attr_reader :called
+
+    def initialize(ruling)
+      @ruling = ruling
+      @called = false
+    end
+
+    def rule(_effect, _context) = @ruling
+
+    def call(_effect, _context)
+      @called = true
+      @ruling.allow?
+    end
+  end
 end
 
 RSpec.describe Lain::Middleware::Gate do
@@ -99,6 +117,109 @@ RSpec.describe Lain::Middleware::Gate do
       gate = described_class.new(denial: "nobody can approve %<name>s")
 
       expect(through(gate, tool_call("dangerous")).first.content).to eq('nobody can approve "dangerous"')
+    end
+  end
+
+  # A policy that answers a ruling can say WHY it refused, and whether asking
+  # again could ever help. A deny no approval lifts is rendered with its reason,
+  # so a model stops routing around a refusal it took for a missing tool.
+  describe "a policy that answers a ruling" do
+    let(:ruling) { Lain::Approval::Escalation::Ruling }
+
+    def ruled(answer) = MiddlewareGateSpecSupport::RulingPolicy.new(answer)
+
+    it "renders a final deny's reason, the tool, and that no approval will lift it" do
+      policy = ruled(ruling.deny(rung: "triage", because: "the argv names /home/tester/.ssh/id_rsa", final: true))
+
+      told = through(described_class.new(policy:), tool_call("dangerous")).first
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told.content).to include('"dangerous"', "the argv names /home/tester/.ssh/id_rsa",
+                                      "no approval will lift this",
+                                      "do not re-send the same command in another form")
+    end
+
+    it "renders the clause a final ruling tells the model, never the journal's longer reason" do
+      policy = ruled(ruling.deny(rung: "triage", because: "shell verdict allow -- journal detail", final: true,
+                                 told: "the argv names a key"))
+
+      expect(through(described_class.new(policy:), tool_call("dangerous")).first.content)
+        .to eq('refused tool "dangerous": the argv names a key; no approval will lift this, ' \
+               "so do not re-send the same command in another form")
+    end
+
+    it "renders a final deny that way whatever sentence was injected for the rest" do
+      policy = ruled(ruling.deny(rung: "rules", because: "remembered no", final: true))
+
+      told = through(described_class.new(policy:, denial: "nobody can approve %<name>s"), tool_call("dangerous"))
+
+      expect(told.first.content).to include("remembered no", "no approval will lift this")
+    end
+
+    # Scenario: a human's denial is unchanged
+    it "keeps the injected sentence for a deny that is not final, reason and all" do
+      policy = ruled(ruling.deny(rung: "surfaces", because: "a surface refused this call (tty)", authority: :human))
+
+      expect(through(described_class.new(policy:), tool_call("dangerous")).first)
+        .to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
+    end
+
+    it "passes an allowed call downstream" do
+      _, reached = through(described_class.new(policy: ruled(ruling.allow(rung: "rules", because: "ok"))),
+                           tool_call("dangerous"))
+
+      expect(reached).to eq([tool_call("dangerous")])
+    end
+
+    it "asks the ruling alone, never the Boolean beside it" do
+      policy = ruled(ruling.allow(rung: "rules", because: "ok"))
+
+      through(described_class.new(policy:), tool_call("dangerous"))
+
+      expect(policy.called).to be(false)
+    end
+
+    it "is held as it is, with no adapter between the gate and it" do
+      policy = ruled(ruling.allow(rung: "rules", because: "ok"))
+
+      expect(described_class.new(policy:).instance_variable_get(:@policy)).to be(policy)
+    end
+  end
+
+  # Middleware is the Rack-idiom public API, so a bare callable stays a
+  # legitimate policy. It is adapted once, at construction, and says nothing
+  # beyond its Boolean.
+  describe "a bare callable policy" do
+    it "is wrapped once, at construction, in the named adapter" do
+      policy = ->(_effect, _context) { true }
+
+      held = described_class.new(policy:).instance_variable_get(:@policy)
+
+      expect(held).to be_a(described_class::Callable).and have_attributes(policy:)
+    end
+
+    it "is approved by a truthy answer and refused in the injected sentence by a falsy one" do
+      _, reached = through(described_class.new(policy: ->(_e, _c) { true }), tool_call("dangerous"))
+      refused, = through(described_class.new(policy: ->(_e, _c) {}), tool_call("dangerous"))
+
+      expect(reached).to eq([tool_call("dangerous")])
+      expect(refused).to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
+    end
+  end
+
+  describe "the two fixed policies" do
+    it "answer a ruling themselves, so neither is adapted" do
+      [described_class::ApproveAll.new, described_class::DenyAll.new].each do |policy|
+        expect(described_class.new(policy:).instance_variable_get(:@policy)).to be(policy)
+      end
+    end
+
+    it "answer rulings that are not final" do
+      effect = tool_call("dangerous")
+
+      expect(described_class::ApproveAll.new.rule(effect, nil)).to be_allow
+      expect(described_class::DenyAll.new.rule(effect, nil)).to be_deny
+      expect(described_class::DenyAll.new.rule(effect, nil)).not_to be_final
     end
   end
 

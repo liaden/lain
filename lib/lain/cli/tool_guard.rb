@@ -41,10 +41,23 @@ module Lain
       # context that names the child, so a park says which of a fleet is asking
       # while the verdict is still the one policy the parent asks. The name
       # rides the context ({Approval::PolicySwitch::Requested}) rather than a
-      # new parameter, because the `call(effect, context)` duck is what every
-      # policy on this seam already answers.
+      # new parameter, because `rule(effect, context)` is what every policy on
+      # this seam already answers. What it wraps is adapted the way the Gate
+      # adapts what it is handed, since the Gate only ever sees this wrapper.
       Asking = Data.define(:policy, :requester) do
-        def call(effect, context) = policy.call(effect, Approval::PolicySwitch::Requested.new(context, requester))
+        def initialize(policy:, requester:)
+          super(policy: Middleware::Gate::Callable.of(policy), requester:)
+        end
+
+        def call(effect, context) = rule(effect, context).allow?
+
+        # What the Gate asks, so a child is told why a refusal was made in the
+        # same words its parent is.
+        def rule(effect, context) = policy.rule(effect, requested(context))
+
+        private
+
+        def requested(context) = Approval::PolicySwitch::Requested.new(context, requester)
       end
 
       # What a chat's spawn seam carries as its tool middleware: a builder over

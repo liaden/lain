@@ -6,8 +6,8 @@ require "delegate"
 
 module Lain
   module Approval
-    # The delegating slot a posture flip writes: {Middleware::Gate}'s
-    # policy duck, answering through whichever policy is current. Gate stays
+    # The delegating slot a posture flip writes: a {Middleware::Gate} policy,
+    # ruling through whichever policy is current. Gate stays
     # construction-fixed -- it holds this ONE object for the session and the
     # flip swaps the delegate inside it, never a setter on Gate. Deliberately
     # MUTABLE coordination state: it exists to be switched.
@@ -25,8 +25,8 @@ module Lain
       # policy on this seam already threads unexamined.
       #
       # A RAIL and not a parameter, because the alternative is widening the
-      # `call(effect, context)` duck five objects implement -- each forwarding
-      # an identity none of them reads, for the one that does.
+      # `rule(effect, context)` seam every gate policy implements -- each
+      # forwarding an identity none of them reads, for the one that does.
       #
       # A DELEGATOR: it answers every message the wrapped `context` answers, so
       # a rung reading the run's {Session} still gets one. It is NOT `is_a?` the
@@ -90,27 +90,40 @@ module Lain
 
       attr_reader :current
 
-      # @param initial [#call] the starting mode's resolved gate policy. NOT
-      #   the bare {Approval::Queue}: the queue is the parked list the ladder's
-      #   asking rung parks ON.
+      # @param initial [#rule, #call] the starting mode's resolved gate policy.
+      #   NOT the bare {Approval::Queue}: the queue is the parked list the
+      #   ladder's asking rung parks ON.
       # @param journal [#record] where each flip lands as evidence
       def initialize(initial, journal:)
-        @current = initial
+        bind(initial)
         @journal = journal
       end
 
-      def call(effect, context) = @current.call(effect, context)
+      def call(effect, context) = rule(effect, context).allow?
+
+      # The ruling the current policy settles on, which is what the Gate asks.
+      def rule(effect, context) = @ruling.rule(effect, context)
 
       # Answers the policy now in force, so a caller's confirmation text can
       # name what it got.
       def switch(policy, surface:)
         from = policy_name(@current)
-        @current = policy
+        bind(policy)
         @journal.record(Telemetry::PolicySwitch.new(from:, to: policy_name(policy), surface:))
         policy
       end
 
       private
+
+      # The Gate adapted what it was handed at construction, and that was
+      # this slot, so what the slot is handed LATER needs the same adapting:
+      # a bare callable switched in would otherwise raise out of the tool
+      # runner with the model's call unanswered. `current` stays what was
+      # handed in, so a caller inspecting the live side sees its own policy.
+      def bind(policy)
+        @current = policy
+        @ruling = Middleware::Gate::Callable.of(policy)
+      end
 
       # The same snake_case naming Telemetry::Journalable stamps records with,
       # so journal readers grep one convention.

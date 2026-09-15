@@ -9,11 +9,12 @@ module Lain
     #   Shell::Verdict / RuleChain  ->  surfaces (AutoSurface, the human)  ->  timeout
     #        deterministic                        asking                     fail-closed
     #
-    # It presents to {Middleware::Gate} as Gate's existing two-valued policy
-    # duck, `#call(effect, context) -> Boolean`, so Gate is untouched. Three
-    # values live INSIDE -- allow, deny, and the abstention that is the absence
-    # of either -- and collapse at the seam, exactly as {Approval::Queue} keeps
-    # `:approve`/`:deny` internally and collapses them at `queue.rb:128`.
+    # It presents to {Middleware::Gate} as a ruling policy, `#rule(effect,
+    # context) -> Ruling`, handing over the ruling it settled on so a refusal
+    # can say which rung made it and why. Three values live INSIDE -- allow,
+    # deny, and the abstention that is the absence of either -- and only allow
+    # and deny ever leave. `#call` still collapses that to a Boolean for a
+    # caller that only needs the answer.
     #
     # == An abstaining rung does not change the outcome
     #
@@ -34,7 +35,7 @@ module Lain
     #
     # Poisoning is sound between RULES because a later rule is the same kind of
     # authority as the one that faulted. A human is not a later rule: they are
-    # the authority this ladder exists to escalate TO, and `#settle` is lazy, so
+    # the authority this ladder exists to escalate TO, and `#rule` is lazy, so
     # a fault can only have come from a rung consulted BEFORE them. The only
     # shape a blanket suppression fires on is therefore "something broke, we
     # escalated BECAUSE it broke, a person looked at the call and said yes, and
@@ -72,7 +73,7 @@ module Lain
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
-      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority)
+      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -99,7 +100,21 @@ module Lain
         # automatic allow above it may be promoted.
         def self.fault(rung:, because:) = new(verdict: :abstain, rung:, reason: because, fault: true)
 
-        def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic)
+        # `final` is a deny the session decided BEFORE anyone could be asked --
+        # a project exclusion, a protected path, a remembered answer -- so no
+        # approval can lift it, and a model told only "denied" retries the same
+        # command in another form or concludes the tool is missing. Only the
+        # rung that refused can know that, so it is declared, never inferred
+        # from the rung's name: a suppressed allow is attributed to the rung
+        # that faulted without that rung having refused anything, which is
+        # also why {#record} carries it -- the rung alone cannot tell the two.
+        #
+        # `told` is the clause a MODEL reads, and defaults to the reason. The
+        # reason is written for a journal reader and carries what a model would
+        # misread -- a verdict's name, its disclaimer about safety -- so a rung
+        # that refuses names the narrower clause itself. Left off {#record},
+        # which already holds the whole reason.
+        def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -107,7 +122,8 @@ module Lain
             raise Error, "unknown authority #{authority.inspect}; expected one of #{AUTHORITIES.inspect}"
           end
 
-          super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:)
+          super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
+                final: final == true, told: -(told || reason).to_s)
         end
 
         def allow? = verdict == :allow
@@ -118,10 +134,11 @@ module Lain
         def abstain? = verdict == :abstain
         def fault? = fault
         def human? = authority == :human
+        def final? = final
 
         def record
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
-            "faulted" => fault, "authority" => authority.to_s }.freeze
+            "faulted" => fault, "authority" => authority.to_s, "final" => final }.freeze
         end
       end
 
@@ -164,12 +181,8 @@ module Lain
       # @param effect [Effect::ToolCall] the call to judge, already unwrapped
       # @param context [Object, nil] whatever {Effect::Handler} threads through
       #   unexamined; forwarded to every rung's own `#call` untouched
-      # @return [Boolean] whether the call may be performed
-      def call(effect, context) = settle(effect, context).allow?
-
-      private
-
-      def settle(effect, context)
+      # @return [Ruling] the settled allow or deny, never an abstention
+      def rule(effect, context)
         # A local rather than instance state: #initialize freezes the ladder, so
         # a `@faulted` would be a FrozenError on the first broken rung -- and it
         # would be shared between concurrently gated fibers besides.
@@ -185,6 +198,11 @@ module Lain
                             .first
         answer(decided, faulted, effect)
       end
+
+      # @return [Boolean] whether the call may be performed
+      def call(effect, context) = rule(effect, context).allow?
+
+      private
 
       def consult(rung, name, effect, context) = record(ask(rung, name, effect, context), effect)
 
@@ -331,21 +349,32 @@ module Lain
         # A deny after a fault still denies and is still attributed --
         # poisoning suppresses the ALLOW side and only that -- but the record
         # says a fault happened, or a reader sees a clean denial that was not.
+        # Either way it is final: a rule is the session's remembered answer,
+        # and no human is asked over it.
         def ruling(answer)
           faulted = answer.is_a?(RuleChain::Poisoned)
-          return Ruling.deny(rung: NAME, because: attributed(answer), fault: faulted) if answer&.deny?
+          return refusal(answer, faulted) if answer&.deny?
           return Ruling.fault(rung: NAME, because: broke(answer.fault)) if faulted
           return Ruling.abstain(rung: NAME, because: NO_OPINION) if answer.nil?
 
           Ruling.allow(rung: NAME, because: attributed(answer))
         end
 
-        # A {RuleChain::Poisoned} carries the surviving decision; an unpoisoned
-        # answer IS one.
+        # The model is told the rule's own reason: the journal's attribution
+        # prefixes a name the reason usually already starts with.
+        def refusal(answer, faulted)
+          Ruling.deny(rung: NAME, because: attributed(answer), fault: faulted, final: true,
+                      told: decided(answer).reason)
+        end
+
         def attributed(answer)
-          decision = answer.is_a?(RuleChain::Poisoned) ? answer.decision : answer
+          decision = decided(answer)
           "#{decision.rule}: #{decision.reason}"
         end
+
+        # A {RuleChain::Poisoned} carries the surviving decision; an unpoisoned
+        # answer IS one.
+        def decided(answer) = answer.is_a?(RuleChain::Poisoned) ? answer.decision : answer
 
         def broke(fault) = "#{fault.rule} raised #{fault.error}: #{fault.message}"
       end
@@ -401,6 +430,9 @@ module Lain
         NOT_A_COMMAND = "the call carries no command string to judge"
         NOT_SAFE = "an allow claims the command is literal and fully understood, never that it is safe"
         PROTECTED = "the command's argv names a path no approval may lift"
+        # The same refusal as a model reads it, where the sentence around it
+        # already says no approval will lift it.
+        TOLD_PROTECTED = "the command names a path this session protects"
         BARE = "a word matches a protected name but is not written as a path, so this rung only says so"
 
         # A word is evidence about a PATH when it is written as one: it carries
@@ -496,7 +528,7 @@ module Lain
         private
 
         def judge(decision, effect)
-          return Ruling.deny(rung: NAME, because: because(decision)) if decision.deny?
+          return denied(because(decision), told: decision.reason) if decision.deny?
           return literal(decision, effect) if decision.allow?
 
           Ruling.abstain(rung: NAME, because: because(decision))
@@ -508,11 +540,18 @@ module Lain
         # nobody wrote.
         def literal(decision, effect)
           written, bare = refused(decision.term, effect.input[CWD_FIELD]).partition { |word, _| word.match?(PATHLIKE) }
-          return Ruling.deny(rung: NAME, because: because(decision, named(PROTECTED, written))) unless written.empty?
+          unless written.empty?
+            return denied(because(decision, named(PROTECTED, written)), told: named(TOLD_PROTECTED, written))
+          end
+
           return Ruling.abstain(rung: NAME, because: because(decision, named(BARE, bare))) unless bare.empty?
 
           Ruling.abstain(rung: NAME, because: because(decision, NOT_SAFE))
         end
+
+        # Both of this rung's refusals are final: an exclusion and a protected
+        # path are the session's own rules, and no human's answer changes them.
+        def denied(reason, told:) = Ruling.deny(rung: NAME, because: reason, final: true, told:)
 
         # EVERY word of every stage, argv0 included. {PATHLIKE} is applied
         # AFTER classification rather than before, so a bare match can still be

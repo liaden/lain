@@ -47,7 +47,7 @@ module Lain
       # @param mode [Lain::Mode] the mode this session is in
       # @param base [Lain::Toolset] the session's FULL set, never an attenuated
       #   one -- see the monotonicity note above
-      # @param queue [#call] the approval policy `(effect, context) -> Boolean`
+      # @param queue [#rule] the approval policy `(effect, context) -> Ruling`
       #   the asking rungs resolve to. Required, with no Null Object default:
       #   `manual` and `accept_edits` resolved without one would silently become
       #   `plan`'s gate -- the same class -- so every tier-3 call would answer
@@ -91,7 +91,9 @@ module Lain
       private_constant :MISSING_QUEUE
 
       # Each policy as a function of the session's queue, so the queue arm is a
-      # member of the table rather than a branch beside it. The queue is passed
+      # member of the table rather than a branch beside it. Every arm answers
+      # `#rule` itself, so none of them reaches {Middleware::Gate::Callable},
+      # whose rulings cannot say why a call was refused. The queue is passed
       # through untouched: it is the session's one parking place, and a copy
       # would park fibers nobody is watching.
       #

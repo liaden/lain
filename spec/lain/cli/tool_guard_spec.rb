@@ -39,19 +39,25 @@ class ToolGuardSpecBoard
   end
 end
 
-# A gate policy answering one verdict, keeping every context it was asked in.
+# A gate policy answering one ruling, keeping every context it was asked in.
+# It answers `#rule` as every production policy does, so the gate holds it
+# as it is rather than through the adapter a bare callable gets.
 class ToolGuardSpecPolicy
   attr_reader :contexts
 
-  def initialize(verdict: false)
-    @verdict = verdict
+  def initialize(verdict: false, ruling: nil)
+    @ruling = ruling || fixed(verdict ? :allow : :deny)
     @contexts = []
   end
 
-  def call(_effect, context)
+  def fixed(verdict) = Lain::Approval::Escalation::Ruling.public_send(verdict, rung: "spec", because: "a fixed answer")
+
+  def rule(_effect, context)
     @contexts << context
-    @verdict
+    @ruling
   end
+
+  def call(effect, context) = rule(effect, context).allow?
 end
 
 # A chronicle that is actually JOURNALING. `Chronicle::Null`'s
@@ -279,6 +285,54 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
       expect(board.policy.contexts.first.__getobj__).to be(:the_session)
+    end
+
+    # Production never reaches the gate's adapter for a bare callable, whose
+    # rulings carry no reason: the parent's gate holds the board's policy, a
+    # child's holds the ruling-answering wrapper naming it, and a run with no
+    # chat holds its own fixed policy.
+    it "holds a policy that answers a ruling itself on every stack it builds" do
+      board = ToolGuardSpecBoard.new
+      held = [described_class.stack(chronicle, board),
+              described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher"),
+              described_class.detached(journal:).call(Lain::WorkerEnv.default)]
+             .map { |stack| gate_of(stack).instance_variable_get(:@policy) }
+
+      expect(held.map(&:class))
+        .to eq([ToolGuardSpecPolicy, described_class::Asking, Lain::Middleware::Gate::ApproveAll])
+    end
+
+    it "forwards a child's ruling from the board's policy, asked in a context naming the child" do
+      denied = Lain::Approval::Escalation::Ruling.deny(rung: "triage", because: "excluded", final: true)
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(ruling: denied))
+      asking = described_class::Asking.new(policy: board.policy, requester: "researcher")
+
+      expect(asking.rule(:effect, :the_session)).to be(denied)
+      expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
+    end
+
+    it "rules for a child through a bare callable it wraps, rather than raising out of the turn" do
+      asked = []
+      refusing = lambda do |_effect, context|
+        asked << context.requester
+        false
+      end
+      asking = described_class::Asking.new(policy: refusing, requester: "researcher")
+
+      expect(asking.rule(:effect, :the_session)).to be_deny
+      expect(asking.call(:effect, :the_session)).to be(false)
+      expect(asked).to eq(%w[researcher researcher])
+    end
+
+    it "tells a child why a refusal no approval lifts was made, as it tells the parent" do
+      denied = Lain::Approval::Escalation::Ruling.deny(rung: "triage", because: "the argv names a key", final: true)
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(ruling: denied))
+
+      told = [described_class.stack(chronicle, board),
+              described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")]
+             .map { |stack| dispatched(stack).content }
+
+      expect(told).to all(include("the argv names a key", "no approval will lift this"))
     end
   end
 

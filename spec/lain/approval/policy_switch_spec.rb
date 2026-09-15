@@ -20,6 +20,12 @@ module PolicySwitchSpecSupport
       @verdict
     end
   end
+
+  # A Gate policy answering one fixed ruling.
+  class RulingPolicy
+    def initialize(ruling) = @ruling = ruling
+    def rule(_effect, _context) = @ruling
+  end
 end
 
 RSpec.describe Lain::Approval::PolicySwitch do
@@ -52,6 +58,47 @@ RSpec.describe Lain::Approval::PolicySwitch do
 
       expect(switch.call("effect", nil)).to be(false)
       expect(queue.calls.size).to eq(1)
+    end
+
+    it "answers #rule through the current policy, before and after a switch" do
+      denied = Lain::Approval::Escalation::Ruling.deny(rung: "triage", because: "excluded", final: true)
+      switch.switch(PolicySwitchSpecSupport::RulingPolicy.new(denied), surface: "tty")
+
+      expect(switch.rule("effect", nil)).to be(denied)
+
+      switch.switch(Lain::Middleware::Gate::ApproveAll.new, surface: "tty")
+      expect(switch.rule("effect", nil)).to be_allow
+    end
+
+    # The slot is written AFTER the Gate adapted what it was handed, so it has
+    # to adapt what it is handed too, or a bare callable switched in raises out
+    # of the tool runner with the model's tool_use unanswered.
+    it "gates through a bare callable switched in, rather than raising out of the turn" do
+      toolset = Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
+      live = described_class.new(Lain::Middleware::Gate::DenyAll.new, journal:)
+      live.switch(->(_e, _c) { false }, surface: "probe")
+      gate = Lain::Middleware::Gate.new(policy: live)
+
+      ran = Lain::Effect::Handler::Mock.new { |*| Lain::Tool::Result.ok("RAN") }
+
+      result = dispatch_call("bash", { "command" => "ls" }, toolset:, layers: [gate], handler: ran)
+
+      expect(result).to eq(Lain::Tool::Result.error('approval denied for tool "bash"'))
+    end
+
+    it "rules through a bare callable it was built over, and still exposes that callable as current" do
+      approving = ->(_e, _c) { true }
+      live = described_class.new(approving, journal:)
+
+      expect(live.rule("effect", nil)).to be_allow
+      expect(live.current).to be(approving)
+    end
+
+    it "answers #call through a policy that answers only #rule" do
+      denied = Lain::Approval::Escalation::Ruling.deny(rung: "rules", because: "no")
+      switch.switch(PolicySwitchSpecSupport::RulingPolicy.new(denied), surface: "tty")
+
+      expect(switch.call("effect", nil)).to be(false)
     end
 
     it "exposes the current policy for a caller that must inspect the live side" do

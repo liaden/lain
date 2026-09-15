@@ -335,6 +335,28 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "is a deeply frozen value, so it is safe to journal and share" do
       expect(described_class::Ruling.allow(rung: "rules", because: "ok")).to be_deeply_frozen
+      expect(described_class::Ruling.deny(rung: "triage", because: "no", final: true)).to be_deeply_frozen
+    end
+
+    it "is not final unless the rung that built it says so" do
+      expect(described_class::Ruling.deny(rung: "triage", because: "no")).not_to be_final
+      expect(described_class::Ruling.deny(rung: "triage", because: "no", final: true)).to be_final
+    end
+
+    # Which sentence the model read is a treatment variable, and the rung alone
+    # cannot say it: a suppressed allow is journaled under the rung that
+    # faulted, exactly as that rung's own final deny is.
+    it "carries final on the journal record, and leaves the model's clause off it" do
+      record = described_class::Ruling.deny(rung: "triage", because: "no", final: true, told: "the clause").record
+
+      expect(record.keys).to eq(%w[verdict rung reason faulted authority final])
+      expect(record["final"]).to be(true)
+    end
+
+    it "tells the model its reason unless the rung that built it names a narrower clause" do
+      expect(described_class::Ruling.deny(rung: "rules", because: "the whole reason").told).to eq("the whole reason")
+      expect(described_class::Ruling.deny(rung: "rules", because: "the whole reason", told: "a clause").told)
+        .to eq("a clause")
     end
   end
 
@@ -868,6 +890,112 @@ RSpec.describe Lain::Approval::Escalation do
       expect(triaged("cat #{home}/.ssh/id_ed25519", sensitivity: described_class::Triage::AnyPath.new)).to be(false)
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+    end
+  end
+
+  # The settled Ruling, handed to the Gate whole, so a refusal the session
+  # decided before anyone could be asked can say why -- and say that asking
+  # again is pointless -- where a human's no stays a plain no.
+  describe "#rule, the settled ruling a Gate renders" do
+    let(:home) { "/home/tester" }
+    let(:classifiers) { EscalationSpecSupport::Classifiers.new(home:, base: "/srv/project") }
+    let(:excluding_curl) do
+      Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
+    end
+
+    def bash_call(command)
+      Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash",
+                                 input: { "command" => command })
+    end
+
+    def gated_through(policy, command)
+      gate = Lain::Middleware::Gate.new(policy:)
+      dispatch_call("bash", { "command" => command }, toolset: tools, layers: [gate])
+    end
+
+    it "answers the ruling the ladder settled on, not merely whether it allows" do
+      ruling = ladder(EscalationSpecSupport::Silent.new, EscalationSpecSupport::Fixed.new("rules", :deny))
+               .rule(effect, nil)
+
+      expect(ruling).to be_a(described_class::Ruling).and have_attributes(verdict: :deny, rung: "rules")
+    end
+
+    it "marks a triage deny over a protected path as one no approval lifts" do
+      reading_a_key = bash_call("cat #{home}/.ssh/id_rsa")
+      ruling = ladder(described_class::Triage.new(sensitivity: classifiers)).rule(reading_a_key, nil)
+
+      expect(ruling).to be_deny.and be_final
+      expect(ruling.reason).to include("#{home}/.ssh/id_rsa")
+    end
+
+    it "marks a triage deny over a project exclusion as one no approval lifts" do
+      ruling = ladder(described_class::Triage.new(verdict: excluding_curl)).rule(bash_call("curl http://x"), nil)
+
+      expect(ruling).to be_deny.and be_final
+      expect(ruling.reason).to include('"curl"')
+    end
+
+    it "marks a rules deny as one no approval lifts" do
+      expect(ladder(rules_rung(EscalationSpecSupport::Denier.new)).rule(effect, nil)).to be_deny.and be_final
+    end
+
+    # The journal reason prefixes the rule's name onto its own reason; a model
+    # reading that sees the name twice and learns nothing more.
+    it "tells the model a rules deny's own reason, and journals it attributed to the rule" do
+      ruling = ladder(rules_rung(EscalationSpecSupport::Denier.new)).rule(effect, nil)
+
+      expect(ruling.told).to eq("spec denies everything")
+      expect(rulings.last["reason"]).to eq("denier: spec denies everything")
+    end
+
+    it "tells the model a triage deny only the clause it refused on, and journals the whole reason" do
+      reading_a_key = bash_call("cat #{home}/.ssh/id_rsa")
+      path = ladder(described_class::Triage.new(sensitivity: classifiers)).rule(reading_a_key, nil)
+      excluded = ladder(described_class::Triage.new(verdict: excluding_curl)).rule(bash_call("curl http://x"), nil)
+
+      expect(path.told).to eq(%(#{described_class::Triage::TOLD_PROTECTED}: "#{home}/.ssh/id_rsa" is a protected path))
+      expect(excluded.told).to eq(%(the session's capability set excludes: "curl"))
+      expect(rulings.map { |record| record["reason"] }).to all(include(Lain::Shell::Verdict::CLAIM))
+      expect(rulings.first["reason"]).to include("shell verdict allow", described_class::Triage::PROTECTED)
+    end
+
+    it "does not mark a surface's refusal final, since a human or a closed window can answer otherwise next time" do
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.01)
+
+      ruling = Sync { ladder(described_class::Surfaces.new(queue)).rule(effect, nil) }
+
+      expect(ruling).to be_deny
+      expect(ruling).not_to be_final
+    end
+
+    it "does not mark the fail-closed bottom final" do
+      expect(ladder(EscalationSpecSupport::Silent.new).rule(effect, nil)).not_to be_final
+    end
+
+    # Attributed to the rules rung, but no rule refused: an automatic allow was
+    # suppressed over a fault, and a human's allow would have stood.
+    it "does not mark a suppressed allow final, though it names the rung that faulted" do
+      ruling = ladder(rules_rung(EscalationSpecSupport::Raiser.new), EscalationSpecSupport::Fixed.new("auto", :allow))
+               .rule(effect, nil)
+
+      expect(ruling).to have_attributes(verdict: :deny, rung: "rules")
+      expect(ruling).not_to be_final
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny", "final" => false)
+    end
+
+    # Scenario: a protected-path deny says why
+    it "reaches the model through a Gate naming the protected path and saying no approval will lift it" do
+      told = gated_through(ladder(described_class::Triage.new(sensitivity: classifiers)), "cat #{home}/.ssh/id_rsa")
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told.content).to include("#{home}/.ssh/id_rsa", "no approval will lift this")
+    end
+
+    # Scenario: a project exclusion deny names the exclusion
+    it "reaches the model through a Gate naming the excluded program" do
+      told = gated_through(ladder(described_class::Triage.new(verdict: excluding_curl)), "curl http://x")
+
+      expect(told.content).to include('"curl"', "excludes", "no approval will lift this")
     end
   end
 

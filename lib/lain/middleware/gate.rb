@@ -23,9 +23,17 @@ module Lain
     # a layer after it could rewrite the effect or the tool it approved.
     #
     # The approval decision is an injected policy answering
-    # `#call(effect, context) -> Boolean`, never a hardcoded terminal prompt:
-    # `lib/` may not touch the terminal (spec/output_discipline_spec.rb), so a
-    # real interactive policy belongs to the frontend and is handed in.
+    # `#rule(effect, context)` with an {Approval::Escalation::Ruling}, never a
+    # hardcoded terminal prompt: `lib/` may not touch the terminal
+    # (spec/output_discipline_spec.rb), so a real interactive policy belongs to
+    # the frontend and is handed in. A ruling rather than a Boolean because a
+    # refusal the session decided before anyone was asked has to say so, or the
+    # model takes "denied" for a missing tool and routes around it.
+    #
+    # Middleware is the Rack-idiom public API, so a bare `#call(effect,
+    # context) -> Boolean` stays a legitimate policy too. It is adapted ONCE,
+    # here at construction ({Callable}), and its rulings carry no reason.
+    #
     # {ApproveAll} is what the `auto` posture resolves to; {DenyAll} is its
     # Null-Object opposite and the default -- safer to refuse an unattended
     # gate than to silently run it.
@@ -33,18 +41,45 @@ module Lain
       # What {Mode::Posture}'s `auto` rung selects: an explicit, named opt-out
       # rather than a magic nil policy.
       class ApproveAll
+        RUNG = "approve_all"
+        BECAUSE = "the posture approves every gated call"
+
         def call(_effect, _context) = true
+        def rule(_effect, _context) = Approval::Escalation::Ruling.allow(rung: RUNG, because: BECAUSE)
       end
 
       # Correct when no interactive frontend is attached to answer for a
       # human, and the safe default.
       class DenyAll
+        RUNG = "deny_all"
+        BECAUSE = "the posture refuses every gated call"
+
         def call(_effect, _context) = false
+        def rule(_effect, _context) = Approval::Escalation::Ruling.deny(rung: RUNG, because: BECAUSE)
+      end
+
+      # A bare callable policy, answering the ruling its Boolean implies and
+      # nothing more: no reason, and never final.
+      Callable = Data.define(:policy) do
+        # The one normalisation, shared by every slot a policy is handed to:
+        # a policy answering `#rule` as it is, anything else wrapped.
+        def self.of(policy) = policy.respond_to?(:rule) ? policy : new(policy)
+
+        def rule(effect, context)
+          verdict = policy.call(effect, context) ? :allow : :deny
+          Approval::Escalation::Ruling.public_send(verdict, rung: "callable", because: "")
+        end
       end
 
       # What a refused call is reported as when nothing more specific was
       # wired.
       DENIAL = "approval denied for tool %<name>s"
+
+      # What a FINAL refusal is reported as, whatever denial was injected: the
+      # session's own rules refused it before anyone could be asked, so the
+      # sentence has to say why and that asking again cannot help.
+      FINAL = "refused tool %<name>s: %<because>s; no approval will lift this, " \
+              "so do not re-send the same command in another form"
 
       # A tool stack this gate does not close.
       class Unclosed < Error; end
@@ -67,22 +102,23 @@ module Lain
                         "gate to rewrite what it approved; this one ends in #{ending.map(&:class).inspect}"
       end
 
-      # @param policy [#call] `(effect, context) -> Boolean`, the approval
-      #   decision; receives the inner ToolCall even when wrapped in an Approval
+      # @param policy [#rule, #call] the approval decision, `(effect, context)
+      #   -> Ruling`, or a bare `-> Boolean` callable adapted once here; receives
+      #   the inner ToolCall even when wrapped in an Approval
       # @param sensitivity [#gates?] the second gating axis, `(effect) ->
       #   Boolean`, over the PATH a call names rather than the tool's tier.
       #   ROOT-QUALIFIED because {Middleware::Sensitivity} is a sibling under
       #   this very namespace, and a bare `Sensitivity` resolves to it.
-      # @param denial [String] the sentence a refused call is reported as,
-      #   with `%<name>s` standing in for the tool. Injected because the
-      #   DEFAULT one is only honest when a human was actually asked and said
-      #   no -- which reads to a model as a decision that could go the other
-      #   way, so it tries again. A session where nobody was asked, and nobody
-      #   can be, has to say so or it invites exactly that retry. The reason
-      #   cannot travel on the policy: that duck answers a Boolean, and a
-      #   Boolean has no room for a why.
+      # @param denial [String] the sentence a refusal that is not final is
+      #   reported as, with `%<name>s` standing in for the tool. Injected
+      #   because the DEFAULT one is only honest when a human was actually
+      #   asked and said no -- which reads to a model as a decision that could
+      #   go the other way, so it tries again. A session where nobody was
+      #   asked, and nobody can be, has to say so or it invites exactly that
+      #   retry. That is a fact about the SESSION, not about one ruling, which
+      #   is why it is injected here rather than carried on the policy's answer.
       def initialize(policy: DenyAll.new, sensitivity: ::Lain::Sensitivity::Policy::Null.instance, denial: DENIAL)
-        @policy = policy
+        @policy = Callable.of(policy)
         @sensitivity = sensitivity
         @denial = denial
         super()
@@ -96,12 +132,19 @@ module Lain
         return downstream(env, &app) unless gated?(env)
 
         asked = unwrapped(env.fetch(:effect))
-        return downstream(env.merge(effect: asked), &app) if @policy.call(asked, env[:context])
+        ruling = @policy.rule(asked, env[:context])
+        return downstream(env.merge(effect: asked), &app) if ruling.allow?
 
-        env.merge(result: Tool::Result.error(format(@denial, name: asked.name.inspect)))
+        env.merge(result: Tool::Result.error(refusal(ruling, asked.name.inspect)))
       end
 
       private
+
+      def refusal(ruling, name)
+        return format(FINAL, name:, because: ruling.told) if ruling.final?
+
+        format(@denial, name:)
+      end
 
       def unwrapped(effect) = effect.approval? ? effect.effect : effect
 

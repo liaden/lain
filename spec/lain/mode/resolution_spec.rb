@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 RSpec.describe Lain::Mode::Resolution do
   # A REAL Toolset rather than a double, for the reason posture_spec records: a
   # verifying double's `#only` accepts any argument list at all, so a posture
@@ -154,6 +156,27 @@ RSpec.describe Lain::Mode::Resolution do
 
     it "hands the base straight back under a posture that attenuates nothing" do
       expect(resolve(:manual).toolset).to be(base)
+    end
+  end
+
+  # The Gate adapts a bare callable, but a production policy must never need
+  # it: an adapted policy has no room to say why it refused. The asking arms
+  # are resolved over the ladder a session really hands in, since the double
+  # above answers only what an example stubs.
+  describe "the gate policy every posture resolves to" do
+    let(:ladder) { Lain::Approval::Escalation.new([], journal: Lain::Journal.new(io: StringIO.new)) }
+
+    %i[plan manual accept_edits auto].each do |posture|
+      it "#{posture} answers #rule itself" do
+        expect(described_class.for(mode: Lain::Mode.new(posture:), base:, queue: ladder).gate_policy)
+          .to respond_to(:rule)
+      end
+    end
+
+    it "answers plan's refusal and auto's approval as rulings, neither of them final" do
+      expect(resolve(:plan).gate_policy.rule(effect, context)).to be_deny
+      expect(resolve(:plan).gate_policy.rule(effect, context)).not_to be_final
+      expect(resolve(:auto).gate_policy.rule(effect, context)).to be_allow
     end
   end
 

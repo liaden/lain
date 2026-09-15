@@ -217,12 +217,18 @@ module Lain
       # the surface that answers runs as a SIBLING fiber in the same reactor.
       def call(effect, context) = adjudicate(effect, context).approved?
 
+      # The same lifecycle as a ruling, for a Gate that holds the queue
+      # directly. Settled exactly as the ladder's asking rung settles it, so
+      # the surface's authority is read in one place, and never final: a
+      # surface that said no this time can say yes the next.
+      def rule(effect, context) = Escalation::Surfaces.new(self).call(effect, context)
+
       # The same lifecycle, answering the SETTLED {Pending} instead of its
       # Boolean. A caller that has to attribute the verdict needs the SURFACE
       # that made it -- {Approval::Escalation} treats a human's approval and an
       # {AutoSurface}'s as different kinds of authority -- and a Boolean cannot
-      # carry that. {#call} stays the two-valued duck
-      # {Middleware::Gate} wants.
+      # carry that. {#rule} is what a {Middleware::Gate} holding the queue
+      # asks, and {#call} the Boolean for a caller that needs only the answer.
       #
       # `outstanding:` is how the one arm holding a file's bytes tells the
       # surfaces what a yes would release. Answering the settled {Pending} is

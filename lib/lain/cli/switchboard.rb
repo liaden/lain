@@ -249,6 +249,11 @@ module Lain
       # refusal in the same words. A String and nothing else, on {#ladder}'s
       # terms.
       #
+      # It covers every refusal but a FINAL one. A triage or rules deny was
+      # decided by the session's own rules before anyone could be asked, and
+      # {Middleware::Gate::FINAL} reports it with its reason whatever this
+      # sentence says.
+      #
       # An attended session keeps the default: a human was asked and said no,
       # so trying again later, or differently, is a real move. An UNATTENDED
       # one must not borrow that sentence. `approval denied for tool "bash"` is

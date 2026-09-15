@@ -141,6 +141,32 @@ RSpec.describe Lain::Approval::Queue do
       expect(runs).to be_empty
     end
 
+    # The queue as a Gate policy answers a ruling itself, so it is never
+    # adapted, and its refusal is never final: a surface answering no this
+    # time could answer yes the next.
+    it "answers #rule with the surface's ruling, never a final one" do
+      Sync do |task|
+        denied = task.async { queue.rule(tool_call, nil) }
+        queue.dequeue.deny(surface: "tty")
+        approved = task.async { queue.rule(tool_call, nil) }
+        queue.dequeue.approve(surface: "tty")
+
+        expect(denied.wait).to have_attributes(verdict: :deny, authority: :human, final?: false)
+        expect(approved.wait).to be_allow
+      end
+    end
+
+    it "keeps a human's refusal in the gate's own sentence" do
+      gate = gate_over([])
+
+      Sync do |task|
+        run = task.async { gate.call(tool_call) }
+        queue.dequeue.deny(surface: "tty")
+
+        expect(run.wait).to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
+      end
+    end
+
     it "empties its pending list once the decision settles" do
       Sync do |task|
         run = task.async { queue.call(tool_call, nil) }

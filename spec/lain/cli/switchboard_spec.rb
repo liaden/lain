@@ -599,6 +599,98 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
+    # What the model reads off a refused call's tool_result, through the board a
+    # real chat builds. A refusal the session decided before anyone could be
+    # asked says why and that no approval will lift it, because the model
+    # otherwise concludes the tool itself is unavailable and routes around it.
+    # A human's no stays the sentence it always was.
+    describe "what an attended session tells the model a refusal was" do
+      let(:home) { "/home/tester" }
+      let(:classifiers) { Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: "/srv/project") }
+      let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+
+      def told(board, command)
+        dispatch_call("bash", { "command" => command }, toolset: board.toolset, layers: tool_stack(board),
+                                                        context: Lain::Session.new).content
+      end
+
+      # What the journal reason carries for a journal READER, and what a model
+      # would misread: an opening "allow", the path's refusal said twice, and
+      # the verdict's disclaimer about safety.
+      def expect_plain(refusal)
+        expect(refusal).not_to include("shell verdict allow")
+        expect(refusal).not_to include(Lain::Shell::Verdict::CLAIM)
+        expect(refusal).not_to include("never whether it is safe")
+        expect(refusal.scan("no approval").size).to eq(1)
+      end
+
+      # Scenario: a protected-path deny says why
+      it "names the protected path a command reads, and says no approval will lift it" do
+        refusal = told(switchboard(classifiers:), "cat #{home}/.ssh/id_rsa")
+
+        expect(refusal).to eq(
+          %(refused tool "bash": the command names a path this session protects: "#{home}/.ssh/id_rsa" ) \
+          "is a protected path; no approval will lift this, so do not re-send the same command in another form"
+        )
+        expect_plain(refusal)
+      end
+
+      # Scenario: a project exclusion deny names the exclusion
+      it "names the program the project's [shell] exclude table refuses" do
+        excluding_curl = Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
+        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    verdict: excluding_curl, test_layout: layout_run)
+
+        refusal = told(board, "curl http://example.com")
+
+        expect(refusal).to eq(
+          %(refused tool "bash": the session's capability set excludes: "curl"; ) \
+          "no approval will lift this, so do not re-send the same command in another form"
+        )
+        expect_plain(refusal)
+      end
+
+      # Scenario: a human's denial is unchanged
+      it "keeps a human's denial byte-for-byte" do
+        board = switchboard
+        board.mode_switch.switch(mode(:manual), surface: "tty")
+
+        result = Sync do |task|
+          call = task.async do
+            dispatch_call("bash", { "command" => "rm -rf build" }, toolset: board.toolset, layers: tool_stack(board),
+                                                                   handler: recording([]))
+          end
+          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty")
+          task.with_timeout(1) { call.wait }
+        end
+
+        expect(result).to eq(Lain::Tool::Result.error('approval denied for tool "bash"'))
+      end
+    end
+
+    # A bare callable is adapted by the Gate into a ruling with no reason. No
+    # production policy may need that, or its refusals could never say why.
+    describe "the policy the gate holds" do
+      def held(board) = tool_stack(board).last.instance_variable_get(:@policy)
+
+      it "is the board's own policy switch, not an adapter over it" do
+        board = switchboard
+
+        expect(held(board)).to be(board.policy_switch)
+      end
+
+      it "switches only between policies that answer a ruling themselves, attended or not" do
+        postures = %i[plan manual accept_edits auto]
+        [switchboard, switchboard(attended: false)].each do |board|
+          postures.each do |posture|
+            board.mode_switch.switch(mode(posture), surface: "tty")
+
+            expect(board.policy_switch.current).to respond_to(:rule), "#{posture} resolved to a Boolean-only policy"
+          end
+        end
+      end
+    end
+
     # The order is a security posture: a denied path is not approvable, so the
     # refusal that no answer lifts sits outside the gate that asks, and the
     # gate is last, so nothing rewrites what it approved.
