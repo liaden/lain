@@ -11,8 +11,8 @@ require "stringio"
 RSpec.describe Lain::CLI::Repl::Ask do
   let(:timeline) { instance_double(Lain::Timeline, head_digest: "sha-head") }
   let(:agent) { instance_double(Lain::Agent, timeline:) }
-  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil) }
-  let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil) }
+  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil) }
+  let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil, replaced: nil) }
   let(:ask) { described_class.new(agent:, tty:, chronicle:) }
   let(:response) { Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn) }
 
@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
 
   describe "#attempt" do
     it "answers what the agent answered when the ask settles" do
-      allow(agent).to receive(:ask).with("go").and_return(response)
+      allow(agent).to receive(:ask).with("go", on_fold: anything).and_return(response)
 
       expect(ask.attempt("go")).to equal(response)
     end
@@ -51,7 +51,73 @@ RSpec.describe Lain::CLI::Repl::Ask do
       allow(agent).to receive(:ask).and_raise(TypeError, "genuinely broken")
 
       expect { ask.attempt("go") }.to raise_error(TypeError, "genuinely broken")
-      expect(agent).to have_received(:ask).with("go")
+      expect(agent).to have_received(:ask).with("go", on_fold: anything)
+    end
+
+    # The Agent folds a stranded prompt into the new one; the record and the
+    # human are the chat's to tell. The written chain retreats to the stranded
+    # turn's parent BEFORE the folded turn can be caught up, or the scribe
+    # would refuse a chain that no longer extends what it wrote.
+    describe "over a stranded prompt" do
+      let(:stranded) do
+        Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "b" }])
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "earlier" }])
+      end
+      let(:folded) do
+        stranded.rewind(1).commit(role: :user, content: [{ "type" => "text", "text" => "earlier" },
+                                                         { "type" => "text", "text" => "go" }])
+      end
+
+      def folding(outcome)
+        allow(agent).to receive(:ask) do |_text, on_fold:|
+          on_fold.call(stranded, folded)
+          outcome.is_a?(Exception) ? raise(outcome) : outcome
+        end
+      end
+
+      # The folded turn is durable before the request can reach the wire: a
+      # crash while it is out resumes onto a turn still carrying the earlier
+      # text, never onto the parent with both prompts gone.
+      it "journals the stranded chain, then replaces it with the folded turn in the record" do
+        folding(response)
+
+        ask.attempt("go")
+
+        expect(chronicle).to have_received(:catch_up).with(stranded).ordered
+        expect(chronicle).to have_received(:replaced).with(to: stranded.head.parent, with: folded).ordered
+      end
+
+      # True for every head that folds -- a failure, a stop, a failed resend, a
+      # /rewind onto an answered prompt -- and whether or not the request then
+      # reaches a model; and it names the way out.
+      it "tells the human the prompt at the head goes with this one, and how to leave it out" do
+        folding(response)
+
+        ask.attempt("go")
+
+        expect(tty).to have_received(:render_warning).with(%r{no answer on this chain.*carries it too.*/rewind 1})
+      end
+
+      # The Agent stepped back to the stranded head, while the record holds the
+      # folded turn: the record follows it back before the stop is recorded.
+      it "replaces the folded turn with the stranded one in the record when the Agent withdraws the ask" do
+        unsent = Lain::Provider::Ollama::PreWireError.new("connection refused").withdrawn!
+        folding(unsent)
+
+        ask.settle(ask.attempt("go"))
+
+        expect(chronicle).to have_received(:replaced).with(to: stranded.head.parent, with: stranded).ordered
+        expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :transport).ordered
+      end
+
+      it "leaves the folded turn in the record when the failure came after the wire" do
+        folding(Lain::Provider::Ollama::APIError.new("connection reset"))
+
+        ask.settle(ask.attempt("go"))
+
+        expect(chronicle).not_to have_received(:replaced).with(to: stranded.head.parent, with: stranded)
+      end
     end
   end
 
@@ -96,10 +162,18 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :stalled_stream)
     end
 
-    it "still says torn for a refusal that is nobody's stall" do
-      ask.settle(Lain::Agent::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25"))
+    it "says why by type: a ceiling, a refusal, a stop, a transport failure, or torn" do
+      over_window = Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens: 9, window_tokens: 8,
+                                                                               source: "ollama")
+      { Lain::Agent::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25") => :ceiling,
+        over_window => :over_window,
+        Lain::Stopped.new("stopped") => :stopped,
+        Lain::Provider::Ollama::PreWireError.new("connection refused") => :transport,
+        Lain::Error.new("no known kind") => :torn }.each do |error, reason|
+        ask.settle(error)
 
-      expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :torn)
+        expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason:)
+      end
     end
   end
 end

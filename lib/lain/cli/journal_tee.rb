@@ -76,6 +76,19 @@ module Lain
       # writes through `#record`.
       alias record <<
 
+      # The Journal's batch spelling: the durable leg lands whole in one write,
+      # then every sink is told each event in order.
+      #
+      # @param events [Array]
+      # @return [self]
+      def record_all(events)
+        @journal.record_all(events)
+        failures = events.flat_map { |event| @sinks.filter_map { |sink| tell(sink, event) } }
+        raise_named(failures) unless failures.empty?
+
+        self
+      end
+
       private
 
       # @return [StandardError, nil] the sink's own failure (other than a

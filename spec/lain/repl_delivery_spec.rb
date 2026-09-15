@@ -112,7 +112,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     dispatch(repl)
 
     expect(tty).to have_received(:render_response).with(response).once
-    expect(agent).to have_received(:ask).with("hi").once
+    expect(agent).to have_received(:ask).with("hi", on_fold: anything).once
   end
 
   it "renders a Lain::Error raised in the middleware chain instead of crashing the loop" do
@@ -180,8 +180,8 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
 
       repl.__send__(:converse, first_prompt: "why is the build red?")
 
-      expect(agent).to have_received(:ask).with("why is the build red?").once
-      expect(agent).not_to have_received(:ask).with("quit")
+      expect(agent).to have_received(:ask).with("why is the build red?", on_fold: anything).once
+      expect(agent).not_to have_received(:ask).with("quit", on_fold: anything)
       expect(conductor).to have_received(:read_prompt).once # the SECOND prompt, after the seed
     end
 
@@ -191,7 +191,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
 
       repl.__send__(:converse)
 
-      expect(agent).to have_received(:ask).with("hi").once
+      expect(agent).to have_received(:ask).with("hi", on_fold: anything).once
     end
   end
 end

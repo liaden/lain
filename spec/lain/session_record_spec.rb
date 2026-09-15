@@ -488,6 +488,64 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 
+  # A fold replaces the unanswered prompt at the head with one turn cut from
+  # its parent. The retreat and the replacement land as ONE write: a crash
+  # between two records would resume onto a chain holding neither prompt.
+  describe "#replaced -- a retreat and its replacement, as one write" do
+    let(:stranded) { timeline.commit(role: :user, content: text("unanswered")) }
+    let(:folded) { timeline.commit(role: :user, content: text("unanswered") + text("and this")) }
+
+    it "writes the rewound record and the replacement's turns in one journal write" do
+      scribe.catch_up(stranded)
+      writes = []
+      allow(journal_io).to(receive(:write).and_wrap_original do |original, bytes|
+        writes << bytes and original.call(bytes)
+      end)
+
+      scribe.replaced(to: timeline.head_digest, with: folded)
+
+      expect(writes.size).to eq(1)
+      expect(records.last(2).map { |record| record["type"] }).to eq(%w[rewound turn])
+      expect(of_type("rewound").last).to include("from" => stranded.head_digest, "to" => timeline.head_digest)
+      expect(Lain::Bench::Session::Loader.new(records).recording.timeline.head_digest).to eq(folded.head_digest)
+    end
+
+    # The retreat names the turn it precedes, so a reader can refuse to apply
+    # a retreat whose replacement never landed. An ordinary rewind names none.
+    it "names the replacement's first turn on the retreat, and an ordinary rewind names nothing" do
+      scribe.catch_up(stranded)
+      scribe.replaced(to: timeline.head_digest, with: folded)
+      scribe.rewound(to: timeline.head_digest)
+
+      retreat, rewind = of_type("rewound")
+      expect(retreat).to include("then" => folded.head_digest)
+      expect(rewind).not_to have_key("then")
+    end
+
+    it "extends from the replacement afterwards, and can replace back" do
+      scribe.catch_up(stranded)
+      scribe.replaced(to: timeline.head_digest, with: folded)
+
+      scribe.replaced(to: timeline.head_digest, with: stranded)
+      scribe.catch_up(stranded.commit(role: :assistant, content: text("answered")))
+
+      expect(Lain::Bench::Session::Loader.new(records).recording.timeline.to_a.map(&:role).last(2))
+        .to eq(%w[user assistant])
+    end
+
+    it "refuses a target never written, or a replacement that does not stand on it, the file unchanged" do
+      scribe.catch_up(stranded)
+      before = journal_io.string.dup
+
+      expect { scribe.replaced(to: "blake3:#{"f" * 64}", with: folded) }
+        .to raise_error(Lain::SessionRecord::Scribe::Diverged, /never/)
+      elsewhere = stranded.rewind(3).commit(role: :user, content: text("x"))
+      expect { scribe.replaced(to: timeline.rewind(1).head_digest, with: elsewhere) }
+        .to raise_error(Lain::SessionRecord::Scribe::Diverged, /does not stand on/)
+      expect(journal_io.string).to eq(before)
+    end
+  end
+
   describe "a run that a stop beat" do
     it "marks run_interrupted anchored at the last committed turn" do
       scribe.catch_up(timeline)

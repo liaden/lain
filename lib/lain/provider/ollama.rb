@@ -275,8 +275,13 @@ module Lain
       # sits within the connection -- holds its slot for all four attempts rather
       # than freeing it between them. {Admission::Busy} is not an API failure and
       # deliberately passes {ErrorWrapping} by, naming the saturated endpoint.
+      #
+      # One {ErrorWrapping::WireWitness} per round trip, shared by every attempt
+      # of it: the retry tap tells it each abandoned attempt, and the wrapping
+      # asks it whether the last failure can have been the first to send.
       def complete(request)
-        admitted { wrapping_errors { build_response(dispatch(request)) } }
+        witness = ErrorWrapping::WireWitness.new
+        admitted { wrapping_errors(witness) { build_response(dispatch(request, witness)) } }
       end
 
       # The window this server is actually serving `model` with, or nil.
@@ -483,9 +488,9 @@ module Lain
       # handed an encoded payload it cannot re-derive one from. Keeping the
       # transport digest-blind is the same rule that put the rotation in
       # {RetryTap} rather than in the connection.
-      def dispatch(request)
+      def dispatch(request, witness)
         frame = @retries.open_frame(request_digest: request.digest)
-        request.stream ? stream_body(request, frame) : sync_body(request, frame)
+        request.stream ? stream_body(request, frame, witness) : sync_body(request, frame, witness)
       end
 
       # Each body path opens its OWN attempt, which is what makes the retry hook
@@ -493,8 +498,8 @@ module Lain
       # sync body is one parsed Hash, so an abandoned attempt leaves nothing
       # behind and registers no rollback; the streaming path below is the one
       # with something to discard.
-      def sync_body(request, frame)
-        @transport.sync_post(encode(request), attempt: @retries.open_attempt, frame:).body || {}
+      def sync_body(request, frame, witness)
+        @transport.sync_post(encode(request), attempt: @retries.open_attempt.witnessed_by(witness), frame:).body || {}
       end
 
       # The assembler is built out here while faraday-retry runs INSIDE
@@ -513,9 +518,9 @@ module Lain
       # trusted). It is wrapped in APIError rather than escaping as a bare
       # JSON::ParserError for the same reason transport errors are: callers
       # rescue one provider-error family, and the original stays on `#cause`.
-      def stream_body(request, frame)
+      def stream_body(request, frame, witness)
         assembler = StreamAssembler.new
-        attempt = @retries.open_attempt { assembler.reset }
+        attempt = @retries.open_attempt { assembler.reset }.witnessed_by(witness)
         @transport.stream(encode(request), attempt:, frame:) { |chunk| assembler.feed(chunk) }
         assembler.result.tap { note_truncated_stream(assembler, request) }
       rescue JSON::ParserError => e

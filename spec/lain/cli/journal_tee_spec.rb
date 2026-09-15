@@ -36,6 +36,21 @@ RSpec.describe Lain::CLI::JournalTee do
     expect(channel.size).to eq(1)
   end
 
+  # And the batch spelling a session scribe writes a retreat and its
+  # replacement through: one durable write, then each record to every sink.
+  it "answers #record_all with one journal write, then tells every sink each record" do
+    channel = Lain::Channel::DropOldest.new
+    tee = described_class.new(journal, channel)
+    writes = []
+    allow(io).to(receive(:write).and_wrap_original { |original, bytes| writes << bytes and original.call(bytes) })
+
+    expect(tee.record_all([{ "type" => "rewound" }, { "type" => "turn" }])).to be(tee)
+
+    expect(writes.size).to eq(1)
+    expect(journal_lines.map { |line| JSON.parse(line)["type"] }).to eq(%w[rewound turn])
+    expect(channel.size).to eq(2)
+  end
+
   it "survives a dead channel: the journal receives the record and no error escapes" do
     channel = Lain::Channel::DropOldest.new
     channel.close

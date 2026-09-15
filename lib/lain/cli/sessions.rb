@@ -157,7 +157,7 @@ module Lain
         # turn already recorded, or to nothing, and the turns above that stay in
         # the file only because the journal is append-only.
         def folded
-          @folded ||= @records.select { |record| FOLDS.include?(record["type"]) }
+          @folded ||= SessionRecord.applied(@records.select { |record| FOLDS.include?(record["type"]) })
         end
 
         # The digests left on the chain. A rewind to a turn this file never

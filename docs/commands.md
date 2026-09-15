@@ -424,6 +424,14 @@ List recorded sessions, newest first. `/sessions --all` includes ephemeral `.btw
 recorded turn. The Timeline is content-addressed, so nothing is destroyed and the old head stays
 reachable.
 
+**A prompt left unanswered at the head goes out again with your next one.** A failure after the
+request reached the provider, a Ctrl-C or `/stop`, a failed resend, or a `/rewind` that lands on a
+prompt all leave a prompt with no answer on the chain. The next thing you ask is sent as one turn
+carrying both texts, cut from that prompt's parent, and the chat says so. To leave the earlier
+prompt out, `/rewind 1` before asking. A prompt that provably never reached the provider (every
+connection refused, or refused for not fitting the context) is withdrawn instead, so it does not
+come back.
+
 ### /undo
 
 `/undo` puts back the files the last file-changing turn wrote. `/undo skip` drops that turn without

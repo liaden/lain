@@ -33,7 +33,9 @@ module Lain
     # never auto-retries -- a silent retry could double-send -- and instead
     # drains the slot and tells the editor the truth. The notice DISTINGUISHES
     # a pre-wire failure from a wire failure, because claiming provider
-    # ambiguity for a send that provably never left the process is a lie.
+    # ambiguity for a send that provably never left the process is a lie. A
+    # raise while staging is pre-wire by construction; a raise out of the run is
+    # pre-wire only when the error says so ({Lain::PreWire}).
     class ResendBridge
       # Fires the moment the gate passes and BEFORE the round trip, so a human
       # is told an attempt is under way rather than watching an idle diff while
@@ -132,6 +134,8 @@ module Lain
         @journal << Telemetry::ResendDispatched.new(digest: request.digest)
         @agent.run
         "resend dispatched: #{request}"
+      rescue PreWire => e
+        unsent(e)
       rescue StandardError => e
         wire_failure(e)
       end
@@ -142,6 +146,14 @@ module Lain
       def pre_wire_failure(error)
         drain
         "resend failed: #{error.message} -- the edit was not dispatched and nothing reached the provider"
+      end
+
+      # The run's round trip proved it wrote nothing. The rewind before it did
+      # happen, so the notice says that too.
+      def unsent(error)
+        drain
+        "resend failed: #{error.message} -- nothing reached the provider; the edit was unqueued and the " \
+          "Timeline stays rewound"
       end
 
       # Drain a restored edit -- deliver puts an unsent (or sent-then-raised)

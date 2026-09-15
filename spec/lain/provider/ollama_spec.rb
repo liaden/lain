@@ -691,6 +691,46 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # Whether a failed round trip ever wrote a request byte decides whether an
+  # ask may take its prompt back, and faraday-retry surfaces only the LAST
+  # attempt's failure. So the proof covers every attempt: a refused connection
+  # is the one failure that cannot have sent anything, and one attempt that
+  # reached a server makes the whole round trip one that may have.
+  describe "a round trip that never reached the wire" do
+    def stub_chat = stub_request(:post, "http://localhost:11434/api/chat")
+
+    %i[sync stream].each do |path|
+      context "with the #{path} path" do
+        def complete(path) = described_class.new(config: zero_retry_config).complete(request(stream: path == :stream))
+
+        it "is marked pre-wire when every attempt's connection was refused" do
+          stub_chat.to_raise(Errno::ECONNREFUSED)
+
+          expect { complete(path) }.to raise_error(Lain::PreWire) do |error|
+            expect(error).to be_a(Lain::Provider::Ollama::APIError)
+          end
+          expect(a_request(:post, "http://localhost:11434/api/chat")).to have_been_made.times(4)
+        end
+
+        it "is not marked pre-wire when an earlier attempt reached a server" do
+          stub_chat.to_return(status: 500, body: "boom").then.to_raise(Errno::ECONNREFUSED)
+
+          expect { complete(path) }.to raise_error(Lain::Provider::Ollama::APIError) do |error|
+            expect(error).not_to be_a(Lain::PreWire)
+          end
+        end
+
+        it "is not marked pre-wire when the connection was reset rather than refused" do
+          stub_chat.to_raise(Errno::ECONNRESET)
+
+          expect { complete(path) }.to raise_error(Lain::Provider::Ollama::APIError) do |error|
+            expect(error).not_to be_a(Lain::PreWire)
+          end
+        end
+      end
+    end
+  end
+
   # Retry journaling. Retries on this arm used to be invisible on purpose -- see the
   # reversed "deliberately absent" note in ollama.rb. The QA run priced that
   # silence: four attempts at the 300s `request_timeout` is a >400s hang that

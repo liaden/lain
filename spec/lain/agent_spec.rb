@@ -987,20 +987,22 @@ RSpec.describe Lain::Agent do
       end
     end
 
+    # Ends on an answered turn: a seed ending on an unanswered prompt is a
+    # stranded one, which the next ask folds rather than renders beside.
     def seed(store)
-      committed(store, [:user, "first"], [:assistant, "ack"], [:user, "second"])
+      committed(store, [:user, "first"], [:assistant, "ack"], [:user, "second"], [:assistant, "again"])
     end
 
-    it "is the starting state: the request renders all three turns before the new user turn" do
+    it "is the starting state: the request renders every seeded turn before the new user turn" do
       provider = CoreGraph.provider(text_response("hello"))
       a = described_class.new(provider:, toolset:, context:, timeline: seed(seeded_store))
       a.ask("hi")
 
       rendered = provider.last_request.messages
-      expect(rendered.map { |message| message["role"] }).to eq(%w[user assistant user user])
-      # The content sequence is the pin: two seeded turns share role "user", so
-      # the role sequence alone would not catch a transposition of their content.
-      expect(rendered.map { |message| message["content"].first["text"] }).to eq(%w[first ack second hi])
+      expect(rendered.map { |message| message["role"] }).to eq(%w[user assistant user assistant user])
+      # The content sequence is the pin: seeded turns share roles, so the role
+      # sequence alone would not catch a transposition of their content.
+      expect(rendered.map { |message| message["content"].first["text"] }).to eq(%w[first ack second again hi])
     end
 
     it "shares its Store with the Agent: subsequent commits land in the same Store, no copy" do
@@ -1099,6 +1101,109 @@ RSpec.describe Lain::Agent do
 
       expect { a.ask("hi") }.to raise_error(Lain::Error, "provider down")
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user])
+    end
+
+    # The refusal's words say whether the prompt was taken back, and only the
+    # Agent knows: a refusal after a tool round leaves the prompt where it was.
+    it "tells the refusal it withdrew the prompt, and only when it did" do
+      withdrawn = refusal
+      kept = refusal
+      expect { agent_over(withdrawn).ask("hi") }.to raise_error(withdrawn)
+      expect { agent_over(tool_response(["tu_1", "echo", { "text" => "a" }]), kept).ask("hi") }.to raise_error(kept)
+
+      expect(withdrawn).to be_withdrawn
+      expect(kept).not_to be_withdrawn
+    end
+
+    # A request none of whose attempts wrote a byte reached no model either,
+    # so it is withdrawn the way an over-window refusal is.
+    describe "a failure that provably never reached the wire" do
+      let(:unsent_class) { Class.new(Lain::Error) { include Lain::PreWire } }
+
+      def unsent = unsent_class.new("connection refused")
+
+      it "withdraws the prompt, keeping the turn in the store" do
+        a = agent_over(text_response("hello"), unsent)
+        a.ask("hi")
+        head = a.timeline.head_digest
+        stored = a.timeline.store.size
+
+        expect { a.ask("never sent") }.to raise_error(unsent_class)
+
+        expect(a.timeline.head_digest).to eq(head)
+        expect(a.timeline.store.size).to be > stored
+      end
+
+      it "keeps a tool round that ran before it later in the same ask" do
+        a = agent_over(tool_response(["tu_1", "echo", { "text" => "a" }]), unsent)
+
+        expect { a.ask("hi") }.to raise_error(unsent_class)
+
+        expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+      end
+    end
+  end
+
+  # A failure after the wire leaves its prompt committed and unanswered. The
+  # next prompt is not stacked on top as a second user turn: both texts go as
+  # one turn, cut from the stranded turn's parent, and the stranded turn stays
+  # in the Store.
+  describe "a prompt stranded by a failure after the wire" do
+    def scripted(*outcomes)
+      Class.new do
+        define_method(:initialize) { |list| @list = list }
+        define_method(:complete) do |_request|
+          outcome = @list.shift || raise("script exhausted")
+          outcome.is_a?(Exception) ? raise(outcome) : outcome
+        end
+      end.new(outcomes)
+    end
+
+    def stranded_agent
+      a = described_class.new(provider: scripted(text_response("hello"), Lain::Error.new("stream cut"),
+                                                 text_response("answered")), toolset:, context:)
+      a.ask("hi")
+      expect { a.ask("first") }.to raise_error(Lain::Error, "stream cut")
+      a
+    end
+
+    it "folds the stranded text and the new text into one user turn" do
+      a = stranded_agent
+
+      expect(a.ask("next").text).to eq("answered")
+
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+      expect(a.timeline.to_a[2].content.map { |block| block["text"] }).to eq(%w[first next])
+    end
+
+    # The caller is handed both chains BEFORE the request is sent, so a record
+    # can make the folded turn durable ahead of the wire.
+    it "keeps the stranded turn in the store and hands the caller both chains before the request is sent" do
+      a = stranded_agent
+      stranded = a.timeline
+      told = []
+
+      a.ask("next", on_fold: ->(from, to) { told << [from, to, a.timeline] })
+
+      from, to, live = told.fetch(0)
+      expect(from).to eq(stranded)
+      expect(live).to eq(stranded)
+      expect(to.head.parent).to eq(stranded.head.parent)
+      expect(a.timeline.to_a[2].digest).to eq(to.head_digest)
+      expect(a.timeline.store.fetch(stranded.head_digest)).to eq(stranded.head)
+    end
+
+    it "does not fold a head that answers tool calls rather than asks" do
+      a = described_class.new(provider: scripted(tool_response(["tu_1", "echo", { "text" => "a" }]),
+                                                 Lain::Error.new("stream cut"), text_response("answered")),
+                              toolset:, context:)
+      expect { a.ask("hi") }.to raise_error(Lain::Error, "stream cut")
+      folded = []
+
+      a.ask("next", on_fold: ->(*chains) { folded << chains })
+
+      expect(folded).to be_empty
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user user assistant])
     end
   end
 

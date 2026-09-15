@@ -129,8 +129,10 @@ mistaking one for the other is a silent 8x error.
 - **An over-window 400's `n_ctx`** is the same served figure, stated by the runner that just
   refused a prompt against it. `Middleware::ResolveWindow` adopts it as an authoritative window
   (`WindowBook::Live#vouch`), which also corrects a book that probed a stale, smaller runner
-  before the request reloaded it. The turn stack cannot see the refused request, so today the
-  vouch names the run's own `--model`; `#vouch` takes a `model:` for a caller that can.
+  before the request reloaded it. The turn stack cannot see the refused request, but
+  `Middleware::RequestBudget` in the model phase can: the refusal it re-raises names the refused
+  request's model, and the vouch lands on that model, so a refusal after a `/model` switch
+  leaves the run's `--model` with the answer it had.
 
 **A caller that sends `num_ctx` owns the `min`.** Ollama reloads a runner whose `NumCtx` differs
 from the request's (`sched.go`'s `needsReload`), so a runner left at 32,768 by `ollama run`, by a

@@ -54,6 +54,16 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
     expect(gave_up_at).to be > last_retrying
   end
 
+  it "tells the retried round trip's witness what its abandoned attempt failed with" do
+    witness = Lain::Provider::ErrorWrapping::WireWitness.new
+    env = { request: Data.define(:context).new(context: { wire_witness: witness }), status: 529 }
+
+    tap.retry_block.call(env:, retry_count: 0, exception: Lain::Provider::HTTP::OverloadedError.new(nil, "x"),
+                         will_retry_in: 0.1)
+
+    expect(witness.pre_wire?(Faraday::ConnectionFailed.new(Errno::ECONNREFUSED.new))).to be(false)
+  end
+
   it "rotates the retried request's OWN frame, read off the env, and journals" do
     frames = []
     tap = described_class.new(spool: recording_spool(frames), channel:)

@@ -97,8 +97,12 @@ module Lain
       # subagents must not serialise on one hosted endpoint -- but the seam is
       # here so an `api_base:` aimed at a loopback proxy is gated like any other
       # local server, rather than by which class happened to build the client.
+      #
+      # One {ErrorWrapping::WireWitness} per round trip, for the reason
+      # {Provider::Ollama#complete} gives.
       def complete(request, on_stream_started: nil)
-        admitted { wrapping_errors { build_response(dispatch(request, on_stream_started)) } }
+        witness = ErrorWrapping::WireWitness.new
+        admitted { wrapping_errors(witness) { build_response(dispatch(request, on_stream_started, witness)) } }
       end
 
       private
@@ -134,10 +138,12 @@ module Lain
       # frame is threaded onto the request context so a retry rotates THIS
       # request's frame rather than concatenating two attempts into one --
       # reentrant across parallel subagents sharing one Provider.
-      def dispatch(request, on_stream_started)
+      def dispatch(request, on_stream_started, witness)
         payload = wire_payload(request)
         frame = @retries.open_frame(request_digest: request.digest)
-        request.stream ? stream_dispatch(payload, frame, request, on_stream_started) : sync_dispatch(payload, frame)
+        return sync_dispatch(payload, frame, witness) unless request.stream
+
+        stream_dispatch(payload, frame, witness, request, on_stream_started)
       end
 
       # The FIRST data chunk is always the response's own `message_start`,
@@ -146,10 +152,10 @@ module Lain
       # inspect `data["type"]`. `signaled` covers the whole round trip rather
       # than one attempt: a retry is still the SAME logical request, and a
       # stagger scheduler awaiting `request.digest` wants exactly one signal.
-      def stream_dispatch(payload, frame, request, on_stream_started)
+      def stream_dispatch(payload, frame, witness, request, on_stream_started)
         assembler = StreamAssembler.new
         signaled = false
-        @transport.stream(payload, frame:) do |data|
+        @transport.stream(payload, frame:, witness:) do |data|
           unless signaled
             signaled = true
             emit_stream_started(request, on_stream_started)
@@ -159,8 +165,8 @@ module Lain
         assembler.result
       end
 
-      def sync_dispatch(payload, frame)
-        body = @transport.sync_post(payload, frame:).body || {}
+      def sync_dispatch(payload, frame, witness)
+        body = @transport.sync_post(payload, frame:, witness:).body || {}
         StreamAssembler::Assembled.new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
                                        content: body["content"] || [], usage: body["usage"] || {})
       end

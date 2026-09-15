@@ -23,7 +23,9 @@ module Lain
     #
     # A prompt refused for not fitting the context raises through here, and the
     # refusal names the context the server loaded. That is a measured window, so
-    # the book adopts it before the refusal goes on up; the turn still fails.
+    # the book adopts it before the refusal goes on up; the turn still fails. It
+    # adopts it for the model the refused request named, which this cannot see
+    # and the refusal can.
     class ResolveWindow < Base
       # @param book [#reresolve, #vouch] the run's one window book
       def initialize(book:)
@@ -36,7 +38,7 @@ module Lain
         @book.reresolve
         downstream(env, &app)
       rescue Lain::WindowExceeded => e
-        @book.vouch(e.window_tokens)
+        e.vouch(@book)
         raise
       end
     end

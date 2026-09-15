@@ -253,6 +253,40 @@ RSpec.describe Lain::Provider::Anthropic do
     end
   end
 
+  # The same proof as the ollama arm's, over this arm's own retry tap: pre-wire
+  # only when no attempt in the retry sequence can have written a byte.
+  describe "a round trip that never reached the wire" do
+    before { allow_any_instance_of(Faraday::Retry::Middleware).to receive(:sleep) }
+
+    def stub_messages = stub_request(:post, "https://api.anthropic.com/v1/messages")
+
+    %i[sync stream].each do |path|
+      context "with the #{path} path" do
+        def complete(path) = described_class.new(api_key: "test").complete(request(stream: path == :stream))
+
+        it "is marked pre-wire when every attempt's connection was refused" do
+          stub_messages.to_raise(Errno::ECONNREFUSED)
+
+          expect { complete(path) }.to raise_error(Lain::PreWire) do |error|
+            expect(error).to be_a(described_class::APIError)
+          end
+          expect(a_request(:post, "https://api.anthropic.com/v1/messages")).to have_been_made.times(3)
+        end
+
+        it "is not marked pre-wire when an earlier attempt reached a server" do
+          stub_messages.to_return(status: 529, headers: { "Content-Type" => "application/json" },
+                                  body: JSON.generate("type" => "error",
+                                                      "error" => { "type" => "overloaded_error", "message" => "x" }))
+                       .then.to_raise(Errno::ECONNREFUSED)
+
+          expect { complete(path) }.to raise_error(described_class::APIError) do |error|
+            expect(error).not_to be_a(Lain::PreWire)
+          end
+        end
+      end
+    end
+  end
+
   # Step C, end to end through the REAL vendored Faraday stack + faraday-retry:
   # a 429 carrying a reset header must journal exactly ONE retry event and back
   # off by the header's value. A silent retry hides real spend.

@@ -207,6 +207,7 @@ module Lain
       @cache_deadline = nil
       @occupancy = nil
       @window_guessed = nil
+      @remeasure = -> {}
       @unmeasured_turns = 0
       @run_tokens = nil
       @mode = ModeState::NONE
@@ -248,6 +249,7 @@ module Lain
       # about a number the Source owns.
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
+      remeasure if event.is_a?(Telemetry::RunInterrupted)
       observe_consumption(event)
       observe(event) if event.respond_to?(:kind)
       # Matched by class rather than on `#to`/`#to_layers`, which would also
@@ -316,8 +318,25 @@ module Lain
     # two stories about the context that just overflowed. Nothing was billed,
     # so `run_tokens` is left alone.
     def observe_refusal(event)
-      record_occupancy(occupancy_of(Usage.new(input_tokens: event.prompt_tokens), event.model))
+      record_occupancy(measured(Usage.new(input_tokens: event.prompt_tokens), event.model))
     end
+
+    # A reading, kept re-takeable. A refusal vouches for its window only after
+    # its record reached this feed, so the reading beside it still names the
+    # guess; the `run_interrupted` the chat writes once the ask stops is the
+    # first record after the vouch, and it re-takes the last reading. Every
+    # `run_interrupted` does, a Ctrl-C's included, which re-reads a book that
+    # did not move.
+    #
+    # The re-take is `@occupancy`'s second writer, and it bypasses
+    # {#record_occupancy} on purpose: it measures no new turn, so it must not
+    # clear the unmeasured streak, and an absence still never overwrites.
+    def measured(usage, model)
+      @remeasure = -> { occupancy_of(usage, model) }
+      @remeasure.call
+    end
+
+    def remeasure = @occupancy = @remeasure.call || @occupancy
 
     # A committed turn's one record and the two unrelated debts it settles: what
     # the turn PAID ({#observe_usage}) and which questions it CONSUMED
@@ -365,11 +384,12 @@ module Lain
       usage = JournaledUsage.new(event.usage)
       slide_cache_deadline(usage)
       @run_tokens = @run_tokens.to_i + usage.total_tokens
-      record_occupancy(occupancy_of(usage, event.model))
+      record_occupancy(measured(usage, event.model))
     end
 
-    # `@occupancy`'s ONE writer after the seed, and the whole policy in a
-    # sentence: an absence never overwrites a reading. The rule had three
+    # `@occupancy`'s writer for every reading a record brings ({#remeasure}
+    # only re-takes one), and the whole policy in a sentence: an absence never
+    # overwrites a reading. The rule had three
     # ad-hoc writers with three different answers -- the seed, a zero-usage
     # skip, and the unresolvable-model rescue below, which ASSIGNED its nil and
     # so erased a good number over a record it merely failed to read.

@@ -70,6 +70,50 @@ RSpec.describe Lain::Provider::ErrorWrapping do
     end
   end
 
+  # Whether any attempt of one round trip could have written a request byte.
+  # A connection refused, unroutable, unresolvable or never opened in time is
+  # the only failure that provably did not; everything else, a bare
+  # ConnectionFailed included, may have.
+  describe Lain::Provider::ErrorWrapping::WireWitness do
+    subject(:witness) { described_class.new }
+
+    def failed(inner) = Faraday::ConnectionFailed.new(inner)
+
+    it "proves a round trip unsent when its connection was refused" do
+      expect(witness.pre_wire?(failed(Errno::ECONNREFUSED.new))).to be(true)
+      expect(witness.pre_wire?(failed(Net::OpenTimeout.new))).to be(true)
+    end
+
+    it "does not prove it for a failure that can follow a written byte" do
+      expect(witness.pre_wire?(failed(Errno::ECONNRESET.new))).to be(false)
+      expect(witness.pre_wire?(Faraday::ConnectionFailed.new("dropped"))).to be(false)
+      expect(witness.pre_wire?(Faraday::TimeoutError.new("read timeout"))).to be(false)
+    end
+
+    it "stops proving it once any earlier attempt failed in a way that may have sent" do
+      witness.attempted(failed(Errno::ECONNREFUSED.new))
+      expect(witness.pre_wire?(failed(Errno::ECONNREFUSED.new))).to be(true)
+
+      witness.attempted(failed(Errno::ECONNRESET.new))
+
+      expect(witness.pre_wire?(failed(Errno::ECONNREFUSED.new))).to be(false)
+    end
+
+    it "proves nothing for a round trip nobody witnessed" do
+      expect(described_class::Unwitnessed.pre_wire?(failed(Errno::ECONNREFUSED.new))).to be(false)
+    end
+  end
+
+  describe "the pre-wire member of each family" do
+    it "is an APIError carrying the pre-wire mark, and no other family member carries it" do
+      klass = includer_under(Lain::Error)
+
+      expect(klass::PreWireError.superclass).to eq(klass::APIError)
+      expect(klass::PreWireError.new("refused")).to be_a(Lain::PreWire)
+      expect(klass::APIError.new("x")).not_to be_a(Lain::PreWire)
+    end
+  end
+
   describe "#wrap_error" do
     subject(:wrapper) { includer_under(Lain::Error).new }
 

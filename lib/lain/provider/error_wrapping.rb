@@ -3,6 +3,8 @@
 require "active_support"
 require "active_support/concern"
 require "faraday"
+require "net/http"
+require "socket"
 
 module Lain
   class Provider
@@ -30,14 +32,75 @@ module Lain
     # read, so the base arrives as an argument: `.under(base)` returns the
     # concern to include. One self-describing line at the top of each class.
     #
-    # == Not a marker across the family
+    # == One marker across the family, for READING, never for rescuing
     #
     # The SDK oracles declare identically-named pairs of their own in
     # spec/support, because they wrap the official SDK's errors rather than
     # vendored-transport ones. So `rescue Anthropic::APIError` still does not
-    # catch an `AnthropicReference` failure, and nothing here introduces the
-    # shared marker module that would change that.
+    # catch an `AnthropicReference` failure. {RoundTripFailure} marks every
+    # family's APIError so a reader classifying a stopped ask by type
+    # ({Agent::StopReason}) need not enumerate the families; a `rescue` of it
+    # would catch every backend at once, which is the thing the nesting above
+    # exists to prevent.
     module ErrorWrapping
+      # Every includer's APIError, whatever its base.
+      module RoundTripFailure; end
+
+      # Whether any attempt of ONE round trip can have written a request byte.
+      #
+      # faraday-retry hands the round trip back only its LAST failure, so a
+      # refused connection on the final attempt proves nothing about an earlier
+      # attempt that reached a server. The retry taps tell a witness each
+      # abandoned attempt's failure off the retried env, and
+      # {Wrapping#wrapping_errors} asks it about the last one.
+      #
+      # Only a connection that never opened provably sent nothing: refused,
+      # unroutable, unresolvable, or not opened in time. A reset, a broken pipe
+      # and a read timeout can each follow a written byte, and a
+      # ConnectionFailed built from a bare string names no cause at all.
+      #
+      # The proof is by errno CLASS, not by the phase that raised it. On Linux an
+      # established socket can surface a soft ICMP error (EHOSTUNREACH,
+      # ENETUNREACH) once its retransmits time out, after bytes were written;
+      # the transport's read and write timeouts fire long before that, which is
+      # what keeps it unreachable. Lengthen those past `tcp_retries2` and this
+      # list stops being a proof.
+      #
+      # Mutable, and one per round trip: the attempts of one round trip run in
+      # sequence on one fiber.
+      class WireWitness
+        UNCONNECTED = [Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Errno::ENETUNREACH, Errno::EADDRNOTAVAIL,
+                       SocketError, Net::OpenTimeout].freeze
+
+        # A round trip nobody witnessed cannot be proved unsent.
+        module Unwitnessed
+          def self.attempted(_exception) = self
+
+          def self.pre_wire?(_exception) = false
+        end
+
+        def initialize
+          @reached = false
+        end
+
+        # @param exception [Exception] an abandoned attempt's failure
+        # @return [self]
+        def attempted(exception)
+          @reached ||= !unconnected?(exception)
+          self
+        end
+
+        # @param exception [Exception] the round trip's last failure
+        def pre_wire?(exception) = !@reached && unconnected?(exception)
+
+        private
+
+        def unconnected?(exception)
+          exception.is_a?(Faraday::ConnectionFailed) &&
+            UNCONNECTED.any? { |failure| exception.wrapped_exception.is_a?(failure) }
+        end
+      end
+
       # What makes an `APIStatusError` more than a name: the HTTP status, lifted
       # out of the wrapped error so a caller branches on it without unwrapping
       # `#cause`. A module rather than a class body inside {.under}, so each
@@ -77,12 +140,16 @@ module Lain
         # copy is invisible while a wrong one is not. What legitimately differs
         # per backend is the round trip inside the block, not the arms around
         # it.
-        def wrapping_errors
+        #
+        # A connection-level failure the round trip's witness proves unsent
+        # becomes the family's `PreWireError` -- still an APIError, so every
+        # rescue of the family catches it.
+        def wrapping_errors(witness = WireWitness::Unwitnessed)
           yield
         rescue Provider::HTTP::Error => e
           raise wrap_error(e)
         rescue Faraday::Error => e
-          raise api_error_class, e.message
+          raise witness.pre_wire?(e) ? pre_wire_error_class : api_error_class, e.message
         end
 
         # ONE body has to raise each includer's OWN pair, so the classes arrive
@@ -110,7 +177,7 @@ module Lain
       # @param base [Class] the class the pair descends from -- {Lain::Error}
       #   for a {Provider}, {Embedder::Error} for an {Embedder}.
       # @return [Module] a concern; including it defines `APIError`,
-      #   `APIStatusError`, and private `#wrapping_errors` / `#wrap_error` on
+      #   `APIStatusError`, `PreWireError`, and private `#wrapping_errors` / `#wrap_error` on
       #   the includer. The module is anonymous, so `ancestors` shows one
       #   `#<Module:0x…>` entry -- ask `include?(ErrorWrapping::Wrapping)`, which
       #   is named and spec-pinned, rather than `include?(ErrorWrapping)`.
@@ -129,12 +196,14 @@ module Lain
       # `Lain::Provider::Anthropic::APIError.name` and every backtrace read
       # exactly as they did when the classes were hand-written.
       def self.declare_family(includer, base)
-        api_error = includer.const_set(:APIError, Class.new(base))
+        api_error = includer.const_set(:APIError, Class.new(base) { include RoundTripFailure })
         status_error = includer.const_set(:APIStatusError, Class.new(api_error) { include Status })
+        pre_wire_error = includer.const_set(:PreWireError, Class.new(api_error) { include Lain::PreWire })
         includer.class_eval do
           define_method(:api_error_class) { api_error }
           define_method(:api_status_error_class) { status_error }
-          private :api_error_class, :api_status_error_class
+          define_method(:pre_wire_error_class) { pre_wire_error }
+          private :api_error_class, :api_status_error_class, :pre_wire_error_class
         end
       end
     end

@@ -335,7 +335,10 @@ RSpec.describe Lain::SessionRecord::Replay do
       heads = %w[one two].map { |prompt| run.ask(prompt).then { run.timeline } }
       scribe.catch_up(run.timeline)
       scribe.rewound(to: run.rewind(5).timeline.head_digest)
-      run.ask("three")
+      # The rewind lands on the prompt "two", which nothing on this chain
+      # answers, so "three" folds into it and the record trades it for the
+      # folded turn, as the chat's ask does.
+      run.ask("three", on_fold: ->(stranded, folded) { scribe.replaced(to: stranded.head.parent, with: folded) })
 
       expect(disagreements(session, run.timeline, [*heads, run.timeline])).to eq([])
     end

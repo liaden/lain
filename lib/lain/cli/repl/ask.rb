@@ -39,13 +39,15 @@ module Lain
           @agent = agent
           @tty = tty
           @chronicle = chronicle
+          @unfold = NOTHING_FOLDED
         end
 
         # @return [Lain::Response, Lain::Error] the model's answer, or the
         #   refusal as a value -- never a raise, so the task that ran this ENDS
         #   rather than dying.
         def attempt(text)
-          @agent.ask(text)
+          @unfold = NOTHING_FOLDED
+          @agent.ask(text, on_fold: method(:resending))
         rescue Lain::Error => e
           e
         end
@@ -58,45 +60,47 @@ module Lain
         # @return [Lain::Response, nil] nil for a refusal, which is already said
         def settle(outcome) = outcome.is_a?(Lain::Error) ? refuse(outcome) : outcome
 
+        RESENDING = "the prompt at the head has no answer on this chain, so this ask carries it too -- " \
+                    "/rewind 1 before asking to leave it out"
+
+        NOTHING_FOLDED = -> {}
+        private_constant :NOTHING_FOLDED
+
         private
 
         # A torn ask: journal the turns that did commit, anchor the stop, then
-        # say what stopped it in one line and nothing else.
+        # say what stopped it in one line and nothing else. Why it stopped is
+        # read off the error's type ({Agent::StopReason}), so the record can be
+        # triaged from the file.
         def refuse(error)
-          record_interruption(reason_for(error))
+          record_interruption(error)
           @tty.render_error(error.message)
           nil
         end
 
         # catch_up FIRST: a raise can land AFTER commits (the ask tore
         # mid-loop), so the committed turns are journaled before the stop is
-        # recorded and `interrupted` then names the true last commit.
-        def record_interruption(reason)
+        # recorded and `interrupted` then names the true last commit. A folded
+        # ask the Agent withdrew is the exception: the record holds the folded
+        # turn the Agent stepped back from, so it follows the Agent back first.
+        def record_interruption(error)
+          @unfold.call if error.is_a?(Lain::Withdrawal) && error.withdrawn?
           @chronicle.catch_up(@agent.timeline)
-          @chronicle.interrupted(head: @agent.timeline.head_digest, reason:)
+          @chronicle.interrupted(head: @agent.timeline.head_digest, reason: Agent::StopReason.for(error))
         end
 
-        # The catch-all frame, so the only place that can tell the record WHICH
-        # failure tore the ask -- and the distinction it owed a reader is
-        # whether the MODEL went quiet or the HARNESS stopped. Both used to land
-        # as the same bare run_interrupted, untriageable from the file.
-        def reason_for(error) = stalled?(error) ? :stalled_stream : :torn
-
-        # By the cause chain, because a stall never arrives as itself:
-        # {Provider::HTTP::Streaming::StalledStreamError} is not a {Lain::Error}
-        # -- deliberately, so the vendored retry allowlist cannot match it --
-        # and `ErrorWrapping#wrapping_errors` re-raises it as the backend's own
-        # APIError. `raise` inside a rescue records the original as the cause,
-        # so the stall survives there and nowhere else. Matching on the message
-        # string is not an alternative: the text is the provider's to change.
-        def stalled?(error)
-          causes(error).any?(Provider::HTTP::Streaming::StalledStreamError)
+        # The Agent is about to send a turn cut from the stranded turn's parent.
+        # The record catches up on the stranded chain -- the retreat's target has
+        # to be written -- then trades the stranded turn for the folded one in
+        # ONE write, before the request can reach the wire: a crash at any point
+        # resumes onto a turn carrying the earlier text.
+        def resending(stranded, folded)
+          parent = stranded.head.parent
+          @chronicle.catch_up(stranded)
+          @chronicle.replaced(to: parent, with: folded)
+          @unfold = -> { @chronicle.replaced(to: parent, with: stranded) }
+          @tty.render_warning(RESENDING)
         end
-
-        # The exception and everything that caused it, innermost last. `produce`
-        # is lazy, so `take_while` stops the walk at the first nil rather than
-        # asking a nil for its cause.
-        def causes(error) = Enumerator.produce(error, &:cause).take_while(&:itself)
       end
     end
   end

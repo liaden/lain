@@ -13,6 +13,7 @@ require_relative "agent/model_caller"
 require_relative "agent/pipeline_source"
 require_relative "agent/request_override"
 require_relative "agent/snapshot_slot"
+require_relative "agent/stop_reason"
 require_relative "agent/tool_delivery"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
@@ -24,7 +25,7 @@ module Lain
   # Every `stop_reason` the wire can carry must have somewhere to go, and a
   # `case` with no `else` is how a new enum value -- or a forgotten old one like
   # `:stop_sequence` -- becomes a turn that silently does nothing. Here each
-  # reason is a named transition and {StopReason::UNKNOWN} is a real
+  # reason is a named transition and {::Lain::StopReason::UNKNOWN} is a real
   # destination, so an unrecognized value fails loudly rather than falling
   # through.
   #
@@ -54,11 +55,18 @@ module Lain
     IN_FLIGHT = "cannot rewind while a run is in flight: it would commit its turns over the rewound head"
     private_constant :IN_FLIGHT
 
+    # {#ask}'s default fold observer: an Agent with no record to keep has
+    # nothing to do when it folds.
+    NO_FOLD = ->(_stranded, _folded) {}
+    private_constant :NO_FOLD
+
     # The diagnostic each failing stop_reason records. A lookup table, not control
-    # flow: every StopReason whose event transitions to :failed has an entry.
-    FAILURE_REASONS = { StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
-                        StopReason::REFUSAL => "model refused to continue",
-                        StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
+    # flow: every wire stop reason whose event transitions to :failed has an
+    # entry. Root-qualified because {Agent::StopReason} shadows the wire enum
+    # everywhere inside this class.
+    FAILURE_REASONS = { ::Lain::StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
+                        ::Lain::StopReason::REFUSAL => "model refused to continue",
+                        ::Lain::StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
     private_constant :FAILURE_REASONS
 
     # Each of the three objects the loop drives, paired with the legacy
@@ -218,23 +226,37 @@ module Lain
     # its words: nothing here can say whether that call ran. Text committed on
     # top of an orphan is a chain every later request and derivation refuses.
     #
-    # A prompt the provider refused whole for not fitting its context
-    # ({Lain::WindowExceeded}) is WITHDRAWN: no model saw it, so the head goes
-    # back to where it stood before this ask's text, and a re-sent prompt does
-    # not stack on a turn nothing answered. The Timeline stays lossless -- the
-    # turn is still in the Store -- and only while that text is still the head:
-    # a tool round that ran before a later refusal in the same ask is work that
-    # happened, and stays.
+    # A prompt no model can have seen -- refused whole for not fitting its
+    # context ({Lain::WindowExceeded}), or failed before any attempt wrote a
+    # byte ({Lain::PreWire}) -- is WITHDRAWN: the head goes back to where it
+    # stood before this ask's text, and a re-sent prompt does not stack on a
+    # turn nothing answered. The Timeline stays lossless -- the turn is still in
+    # the Store -- and only while that text is still the head: a tool round
+    # that ran before a later refusal in the same ask is work that happened, and
+    # stays. The error is told, so its words can say which it was.
     #
+    # Any other failure may have reached a model, so its prompt stays, STRANDED.
+    # The next ask folds the stranded text and the new text into one user turn
+    # cut from the stranded turn's parent, rather than stacking a second
+    # unanswered prompt on it. The shape decides, not what left the prompt
+    # there: a stop, a failed resend and a /rewind onto a prompt leave the same
+    # head, and the model reads the same text either way.
+    #
+    # @param text [String] the prompt
+    # @param on_stream_started [#call, nil] the first-token observer
+    # @param on_fold [#call] told `(stranded, folded)` -- the chain before the
+    #   fold and the chain after it -- under the dispatch lock and before the
+    #   request is sent, so a caller keeping a record can make the folded turn
+    #   durable ahead of the wire
     # @return [Lain::Response] the final assistant response
     # @raise [Tool::Cancellation::Unpairable] when the stranded call names no
     #   id, so nothing can answer it and nothing is committed over it
-    def ask(text, on_stream_started: nil)
+    def ask(text, on_stream_started: nil, on_fold: NO_FOLD)
       @dispatch_lock.synchronize do
         reopen! unless awaiting_user?
         answer_stranded(:unknown)
         before = @timeline
-        @timeline = asked = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
+        @timeline = asked = prompted([{ "type" => "text", "text" => text }], on_fold)
         withdrawing(before, asked) { run(on_stream_started:) }
       end
     end
@@ -335,9 +357,26 @@ module Lain
 
     def withdrawing(before, asked)
       yield
-    rescue WindowExceeded
-      @timeline = before if @timeline.equal?(asked)
-      raise
+    rescue WindowExceeded, PreWire => e
+      raise e unless @timeline.equal?(asked)
+
+      @timeline = before
+      raise e.withdrawn!
+    end
+
+    def prompted(prompt, on_fold)
+      head = @timeline.head
+      return @timeline.commit(role: :user, content: prompt) unless stranded_prompt?(head)
+
+      @timeline.checkout(head.parent).commit(role: :user, content: head.content + prompt)
+               .tap { |folded| on_fold.call(@timeline, folded) }
+    end
+
+    # Text a human asked that nothing answered. A head of tool results is not
+    # one: folding it would put an answer to the model's calls in the human's
+    # mouth.
+    def stranded_prompt?(head)
+      !head.nil? && head.role == "user" && head.content.all? { |block| block["type"] == "text" }
     end
 
     # The repair every stranded head gets, through the one mint every repair
@@ -545,12 +584,12 @@ module Lain
 
     # Fire the machine event named for the (already-normalized) stop_reason and
     # let the machine, not a `case`, decide the resulting state.
-    # `StopReason.normalize` has closed the wire's open enum before we get here
+    # `::Lain::StopReason.normalize` has closed the wire's open enum before we get here
     # and {LoopMachine} declares one event per member, so the send always names
     # a real event -- an unrecognized wire value arrives as `:unknown`, which
     # fails to `:failed`. The only loud arm left is structural: firing from an
     # illegal state raises `StateMachines::InvalidTransition`. Coupling the
-    # event names to StopReason's vocabulary is deliberate; a totality spec pins
+    # event names to the wire enum's vocabulary is deliberate; a totality spec pins
     # it.
     #
     # The side effects that follow are keyed off the state the machine just

@@ -451,7 +451,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
         recorder, session = wiring.run_state(nil)
         agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
-        Lain::CLI::Repl::Ask.new(agent:, tty: nil, chronicle:)
+        Lain::CLI::Repl::Ask.new(agent:, tty: instance_double(Lain::Frontend::TTY, render_error: nil), chronicle:)
       end
     end
 
@@ -481,6 +481,20 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
       expect(backend.context_window.resolve(model)).to be_authoritative
       expect(backend.context_window.window_tokens(model)).to eq(refused_at)
       expect(critique_budget.window_tokens).to eq(refused_at)
+    end
+
+    # The refusal is journaled inside the model phase and vouches in the turn
+    # phase around it, so the record that reaches the feed first AFTER the vouch
+    # is the one the chat writes when the ask stops -- not a model call that may
+    # be minutes away.
+    it "drops the HUD's guess mark once the refused ask is recorded, before any later model call" do
+      ask.attempt("hello")
+
+      ask.settle(ask.attempt("DOES-NOT-FIT"))
+
+      expect(hud).to match(/ ctx:\d+% /)
+      expect(JSON.parse(File.read(state_path))["window_guessed"]).to be(false)
+      expect(a_request(:post, %r{/api/chat})).to have_been_made.times(2)
     end
 
     it "drops the HUD's guess mark on the next measured turn" do

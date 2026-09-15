@@ -63,6 +63,27 @@ RSpec.describe Lain::Journal do
 
   # Losslessness would be a lie if an unencodable value tore a line or vanished.
   # A serialization failure must still produce ONE parseable line.
+  # A caller whose records only make sense together -- a retreat and the turn
+  # that replaces what it retreated past -- needs them in ONE write, so a
+  # process killed between two records cannot leave the first alone.
+  describe "#record_all" do
+    it "writes every record, in order, in one write" do
+      writes = []
+      allow(io).to(receive(:write).and_wrap_original { |original, bytes| writes << bytes and original.call(bytes) })
+
+      journal.record_all([{ "type" => "rewound", "to" => nil }, { "type" => "turn", "digest" => "abc" }])
+
+      expect(writes.size).to eq(1)
+      expect(lines.map { |line| JSON.parse(line)["type"] }).to eq(%w[rewound turn])
+    end
+
+    it "refuses once closed" do
+      journal.close
+
+      expect { journal.record_all([{ "a" => 1 }]) }.to raise_error(described_class::Closed)
+    end
+  end
+
   describe "a value JSON cannot encode" do
     it "records a parseable journal_error instead of a torn line" do
       unencodable = Object.new

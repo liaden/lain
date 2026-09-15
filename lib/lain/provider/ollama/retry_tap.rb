@@ -49,6 +49,10 @@ module Lain
         # {Telemetry::ProviderRetry} for that attempt and replaces the transport
         # error faraday-retry was carrying. The streaming assembler's reset is
         # bound by this: discarding a buffer cannot be allowed to fail.
+        #
+        # It also carries the round trip's {ErrorWrapping::WireWitness}, being
+        # the one object every attempt of it is abandoned through. Handed over
+        # after opening, so {#open_attempt}'s shape stays the rollback alone.
         class Attempt
           # Null Object: a round trip with nothing to discard is abandoned
           # exactly like one that has something, so no caller writes
@@ -57,9 +61,20 @@ module Lain
 
           def initialize(on_abandon = nil)
             @on_abandon = on_abandon || NOTHING_TO_DISCARD
+            @witness = ErrorWrapping::WireWitness::Unwitnessed
           end
 
           def abandon = @on_abandon.call
+
+          # @param witness [#attempted] the round trip's wire witness
+          # @return [self]
+          def witnessed_by(witness)
+            @witness = witness
+            self
+          end
+
+          # @param exception [Exception] what the abandoned attempt failed with
+          def attempted(exception) = @witness.attempted(exception)
         end
 
         def initialize(channel:, spool: Spool::Null.new)
@@ -86,11 +101,12 @@ module Lain
         end
 
         # The block faraday-retry calls on every retry, and the ORDER ranks the
-        # three things it does. It ABANDONS the attempt (the discard that stops
-        # two attempts sharing an assembler), it ROTATES this request's WAL
-        # frame (a retried attempt's bytes must not concatenate onto the
-        # abandoned attempt's inside one complete-marked frame, which the
-        # terminator's byte count cannot catch), and only then does it JOURNAL.
+        # things it does. It ABANDONS the attempt (the discard that stops two
+        # attempts sharing an assembler), it ROTATES this request's WAL frame (a
+        # retried attempt's bytes must not concatenate onto the abandoned
+        # attempt's inside one complete-marked frame, which the terminator's
+        # byte count cannot catch), it tells the round trip's witness what the
+        # abandoned attempt failed with, and only then does it JOURNAL.
         # The discard runs first because it is the older guarantee and the one a
         # regression here would silently reinstate.
         #
@@ -110,8 +126,10 @@ module Lain
         #   with the same keywords faraday-retry passed.
         def retry_block(then_call: nil)
           lambda do |env:, retry_count:, exception:, will_retry_in:, **rest|
-            attempt_on(env)&.abandon
+            attempt = attempt_on(env)
+            attempt&.abandon
             frame_on(env)&.rotate
+            attempt&.attempted(exception)
             @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
                                                        status: env[:status], reason: exception.class.name))
             then_call&.call(env:, retry_count:, exception:, will_retry_in:, **rest)

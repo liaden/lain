@@ -27,10 +27,11 @@ module Lain
         # One non-streaming round trip. `faraday.response :json` has already parsed
         # the body, so `#body` is a Hash; {WalResponseTee} captured the wire bytes
         # for `frame` earlier in the same response, before that parse.
-        def sync_post(payload, headers = {}, frame: Spool::Null::Frame.new)
+        def sync_post(payload, headers = {}, frame: Spool::Null::Frame.new,
+                      witness: ErrorWrapping::WireWitness::Unwitnessed)
           response = connection.post(completion_url, payload) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
-            req.options.context = (req.options.context || {}).merge(wal_frame: frame)
+            req.options.context = (req.options.context || {}).merge(wal_frame: frame, wire_witness: witness)
           end
           frame.close(complete: true)
           response
@@ -43,13 +44,14 @@ module Lain
         # an empty, apparently successful turn. `flush:` is the UNTEED handler:
         # the flush's blank line is ours, so it must not reach the WAL frame,
         # which records only what came off the wire.
-        def stream(payload, headers = {}, frame: Spool::Null::Frame.new, &on_event)
+        def stream(payload, headers = {}, frame: Spool::Null::Frame.new,
+                   witness: ErrorWrapping::WireWitness::Unwitnessed, &on_event)
           handler = sse_handler(&on_event)
           post_stream(connection, stream_url, payload, tee_chunks(handler, frame), flush: handler) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
             # On the context so RetryTap#retry_block reaches THIS request's frame
-            # off the retried env, exactly as the sync path already does.
-            req.options.context = (req.options.context || {}).merge(wal_frame: frame)
+            # and witness off the retried env, exactly as the sync path does.
+            req.options.context = (req.options.context || {}).merge(wal_frame: frame, wire_witness: witness)
           end
           frame.close(complete: true)
         end

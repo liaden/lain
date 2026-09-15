@@ -32,10 +32,16 @@ module Lain
     #
     # A request can retry at the transport level and {Provider::ResponseWal}
     # rotates a fresh frame per attempt, so several frames can share one request
-    # digest -- only the LAST one is real. The last COMPLETE frame for the target
-    # digest wins; when none is complete, the most recent matching frame (however
-    # torn, or absent entirely) is surfaced as a reviewable {Incomplete} artifact
-    # rather than guessed into a commit.
+    # digest -- only the LAST one is real. It is recovered only when it is
+    # complete; otherwise it (however torn, or absent entirely) is surfaced as a
+    # reviewable {Incomplete} artifact rather than guessed into a commit.
+    #
+    # An older complete frame followed by an incomplete one is NOT recovered.
+    # The render is pure, so a prompt re-asked over the head a rewind restored
+    # has the digest the answered one had, and its complete frame is still in
+    # the log. When the later round trip failed -- and the ask withdrew its
+    # prompt -- that old answer would commit onto a head no longer holding the
+    # question.
     #
     # == Reassembly reuses the accumulator, not the transport
     #
@@ -143,9 +149,8 @@ module Lain
         digest = unanswered_request_digest
         return Nothing if digest.nil?
 
-        matching = @frames.select { |frame| frame.request_digest == digest }
-        complete = matching.reverse.find(&:complete?)
-        complete ? recover(digest, complete) : incomplete(digest, matching.last)
+        last = @frames.reverse_each.find { |frame| frame.request_digest == digest }
+        last&.complete? ? recover(digest, last) : incomplete(digest, last)
       end
 
       private

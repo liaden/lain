@@ -137,8 +137,62 @@ RSpec.describe Lain::SessionRecord::Salvage do
     end
   end
 
-  describe "the retry ruling: the last COMPLETE frame per digest wins" do
+  describe "the retry ruling: only the LAST frame per digest is real" do
     before { allow_any_instance_of(Faraday::Retry::Middleware).to receive(:sleep) }
+
+    def spool_through(stub)
+      provider = Lain::Provider::Anthropic.new(spool: Lain::Provider::ResponseWal.new(@wal_path), api_key: "test")
+      stub.call
+      provider.complete(anthropic_request)
+    rescue Lain::Error
+      nil
+    ensure
+      WebMock.reset!
+    end
+
+    def answered
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 200, body: AnthropicSSE.body(canned), headers: { "Content-Type" => "text/event-stream" })
+    end
+
+    # The render is pure, so a prompt re-asked over the head a rewind restored
+    # has the digest the answered one had. The frame that answered it is still
+    # in the log, and the last round trip for that digest is the one that
+    # failed: recovering the old answer would commit it onto a head that no
+    # longer holds the question.
+    it "recovers nothing when an older complete frame is followed by a failed round trip for the same digest" do
+      spool_through(-> { answered })
+      spool_through(-> { stub_request(:post, "https://api.anthropic.com/v1/messages").to_raise(Errno::ECONNREFUSED) })
+
+      outcome = described_class.new(entries: [request_sent(anthropic_request.digest)], frames:, timeline:).call
+
+      expect(frames.to_a.map(&:complete?)).to eq([true, false, false, false])
+      expect(outcome).not_to be_recovered
+      expect(outcome.request_digest).to eq(anthropic_request.digest)
+    end
+
+    # The same join, on the one refusal that already withdrew a prompt before
+    # pre-wire failures did: ollama's over-window 400 over a digest an earlier
+    # round trip answered.
+    it "recovers nothing when the later round trip was refused for not fitting the context" do
+      request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, messages: [{ role: "user", content: "hi" }])
+      ollama = Lain::Provider::Ollama.new(config: zero_retry_config, spool: Lain::Provider::ResponseWal.new(@wal_path))
+      reply = { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "old" }, "done" => true,
+                "done_reason" => "stop", "prompt_eval_count" => 5, "eval_count" => 1 }
+      ndjson = "#{JSON.generate(reply)}\n"
+      refusal = { "error" => { "type" => "exceed_context_size_error", "n_prompt_tokens" => 9_000, "n_ctx" => 8192 } }
+      stub_request(:post, %r{/api/chat})
+        .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" }, body: ndjson)
+        .then.to_return(status: 400, headers: { "Content-Type" => "application/json" },
+                        body: JSON.generate("error" => JSON.generate(refusal)))
+      ollama.complete(request)
+      expect { ollama.complete(request) }.to raise_error(Lain::WindowExceeded)
+
+      outcome = described_class.new(entries: [request_sent(request.digest)], frames:, timeline:).call
+
+      expect(frames.to_a.map(&:complete?)).to eq([true, false])
+      expect(outcome).not_to be_recovered
+    end
 
     it "ignores an earlier aborted attempt and recovers only the retried attempt's content" do
       request = anthropic_request

@@ -74,11 +74,12 @@ module Lain
       # `:salvaged` is a later process's verdict on a file -- while it has
       # nowhere to put a stall. The overlap is intended.
       #
-      # `:torn` is the honest residue and the default, because it is the only
-      # thing every stopped run is known to have in common: a record built with
-      # no classification says the unclassified thing rather than borrowing a
-      # narrower one it cannot support.
-      REASONS = %i[interrupted grace_expired stalled_stream torn].freeze
+      # The middle five are what {Agent::StopReason} reads off the error an
+      # ask ended with. `:torn` is the honest residue and the default, because
+      # it is the only thing every stopped run is known to have in common: a
+      # record built with no classification says the unclassified thing rather
+      # than borrowing a narrower one it cannot support.
+      REASONS = %i[interrupted grace_expired stopped ceiling over_window transport stalled_stream torn].freeze
 
       # Mirrors {SessionClosed.reason!}, nil-tolerance included: a guard that
       # refuses differently from its sibling is one a reader has to check

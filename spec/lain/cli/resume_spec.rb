@@ -84,6 +84,8 @@ RSpec.describe Lain::CLI::Resume do
       expect(result.written).to eq(three.to_a.map(&:digest))
     end
 
+    # The session ends on a prompt nothing answered, so the chat's next ask
+    # folds it: the new file retreats past it before the folded turn lands.
     it "carries all three prior turns into the next request, and the new file's header chains to the old" do
       result = resume.call
       journal_io = StringIO.new
@@ -93,11 +95,12 @@ RSpec.describe Lain::CLI::Resume do
 
       provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
       agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
-      agent.ask("third")
+      tty = instance_double(Lain::Frontend::TTY, render_warning: nil)
+      Lain::CLI::Repl::Ask.new(agent:, tty:, chronicle:).attempt("third")
       chronicle.catch_up(agent.timeline)
 
-      expect(provider.last_request.messages.map { |message| message["content"].first["text"] })
-        .to eq(%w[first ack second third])
+      expect(provider.last_request.messages.map { |message| message["content"].map { |block| block["text"] } })
+        .to eq([%w[first], %w[ack], %w[second third]])
 
       new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
       header = new_records.find { |record| record["type"] == "session" }

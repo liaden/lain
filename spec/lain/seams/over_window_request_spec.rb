@@ -79,13 +79,15 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       body: JSON.generate("error" => JSON.generate(inner)) }
   end
 
-  def chat
+  def chat(tty: nil)
     wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
-    [agent, Lain::CLI::Repl::Ask.new(agent:, tty: nil, chronicle:)]
+    [agent, Lain::CLI::Repl::Ask.new(agent:, tty:, chronicle:)]
   end
+
+  def tty = @tty ||= instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil)
 
   def journaled(type)
     journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
@@ -112,6 +114,76 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       expect(journaled("compaction_decision").last).to include("nothing_droppable" => true)
       expect(refusal.message).to include("9000", "8192", "withdrawn", "/rewind", "/unpin")
       expect(refusal.message).not_to include("compaction")
+    end
+  end
+
+  # A refusal after a tool round in the same ask leaves the prompt where it
+  # was -- the round ran, and its results are what the refused request carried
+  # -- so the words must not say it was taken back.
+  describe "a refusal after a tool round" do
+    # Nothing droppable, the one refusal whose words have ever named a
+    # withdrawal.
+    let(:backend) do
+      provider = Lain::Provider::Ollama.new(config: zero_retry_config)
+      Class.new(Lain::CLI::Backend) do
+        define_method(:provider) { |**| provider }
+      end.new({ provider: "ollama", model:, max_tokens: 64 })
+    end
+
+    def answer(body)
+      chat_bodies << body
+      return refusal(prompt_tokens: 9_000) if body["messages"].any? { |message| message["role"] == "tool" }
+
+      call = { "function" => { "name" => "session_usage", "arguments" => {} } }
+      reply = { "model" => model, "message" => { "role" => "assistant", "content" => "", "tool_calls" => [call] },
+                "done" => true, "done_reason" => "stop", "prompt_eval_count" => 100, "eval_count" => 1 }
+      { status: 200, headers: { "Content-Type" => "application/x-ndjson" }, body: "#{JSON.generate(reply)}\n" }
+    end
+
+    it "does not say the prompt was withdrawn" do
+      agent, ask = chat
+
+      refusal = ask.attempt("look, then answer")
+
+      expect(refusal).to be_a(Lain::Middleware::RequestBudget::OverWindow)
+      expect(agent.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+      expect(refusal.message).to include("9000")
+      expect(refusal.message).not_to include("withdrawn")
+    end
+  end
+
+  # Transport failures over the same wiring. faraday-retry surfaces only the
+  # last attempt, so what decides the prompt's fate is whether ANY attempt can
+  # have written a byte.
+  describe "a transport failure" do
+    def refuse_connections = stub_request(:post, %r{/api/chat}).to_raise(Errno::ECONNREFUSED)
+
+    it "withdraws a prompt whose every attempt was refused a connection, and records it as transport" do
+      agent, ask = chat(tty:)
+      ask.attempt("hello")
+      head = agent.timeline.head_digest
+      refuse_connections
+
+      ask.settle(ask.attempt("never sent"))
+
+      expect(agent.timeline.head_digest).to eq(head)
+      expect(journaled("run_interrupted").last).to include("reason" => "transport", "head" => head)
+    end
+
+    it "keeps a prompt the connection was reset under, and folds it into the next one" do
+      agent, ask = chat(tty:)
+      ask.attempt("hello")
+      stub_request(:post, %r{/api/chat}).to_raise(Errno::ECONNRESET)
+      ask.settle(ask.attempt("cut off"))
+      expect(agent.timeline.head.content.first["text"]).to eq("cut off")
+      stub_request(:post, %r{/api/chat}).to_return { |request| answer(JSON.parse(request.body)) }
+
+      expect(ask.attempt("next").text).to eq("settled")
+
+      expect(agent.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+      expect(agent.timeline.to_a[2].content.map { |block| block["text"] }).to eq(["cut off", "next"])
+      expect(journaled("rewound")).not_to be_empty
+      expect(tty).to have_received(:render_warning).with(/carries it too/)
     end
   end
 

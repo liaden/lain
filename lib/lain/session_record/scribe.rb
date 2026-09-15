@@ -214,6 +214,27 @@ module Lain
         self
       end
 
+      # A retreat to `to` and the turns of `with` above it, as ONE write. A fold
+      # replaces the unanswered prompt at the head with a turn cut from its
+      # parent, and it has to be durable before the request reaches the wire;
+      # written as a {#rewound} and then a {#catch_up}, a process killed between
+      # the two would resume onto a chain holding neither prompt.
+      #
+      # @param to [String, nil] a turn digest this record already wrote
+      # @param with [Lain::Timeline] a chain standing on `to`
+      # @return [self]
+      # @raise [Diverged] for a target never written, or a chain not standing
+      #   on it; nothing is written
+      def replaced(to:, with:)
+        written_target!(to)
+        fresh = with.ancestors.take_while { |turn| turn.digest != to }.reverse
+        stands_on!(to, with, fresh)
+        @journal.record_all([retreat(to, fresh), *fresh.map { |turn| SessionRecord.turn(turn) }])
+        @written.retreat_to(to)
+        fresh.each { |turn| @written.append(turn.digest) }
+        self
+      end
+
       # Graceful close: anchor the final head and the reason. `head:` defaults to
       # the last head {#catch_up} saw, so a caller that caught up first need not
       # repeat it.
@@ -358,6 +379,19 @@ module Lain
         raise Diverged, "the written chain is not a prefix of timeline #{timeline.head_digest.inspect} " \
                         "(#{@written.length} digests ending at #{@written.head.inspect}); a `written:` seed " \
                         "must be the prior file's turns in chain order, root first"
+      end
+
+      def retreat(to, fresh)
+        return SessionRecord.rewound(from: @written.head, to:) if fresh.empty?
+
+        SessionRecord.retreat(from: @written.head, to:, landing: fresh.first.digest)
+      end
+
+      def stands_on!(to, timeline, fresh)
+        return if fresh.first&.parent == to
+
+        raise Diverged, "timeline #{timeline.head_digest.inspect} does not stand on #{to.inspect}; " \
+                        "a replacement lands only above the turn the record retreats to"
       end
 
       def written_target!(to)

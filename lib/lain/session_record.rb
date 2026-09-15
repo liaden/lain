@@ -95,6 +95,34 @@ module Lain
     def rewound(from:, to:)
       { "type" => REWOUND_TYPE, "from" => from, "to" => to }
     end
+
+    # A rewound written in the same write as the turn that replaces what it
+    # retreated past. A process killed mid-write can leave the retreat whole
+    # and that turn torn, so `then` names the turn, and {.applied} lets a
+    # reader drop a retreat whose turn never parsed: the head stays where it
+    # was rather than moving to a chain holding neither.
+    def retreat(from:, to:, landing:)
+      rewound(from:, to:).merge("then" => landing)
+    end
+
+    # The records a fold applies, in file order: every one, except a
+    # {.retreat} whose named turn does not follow it. An ordinary rewound names
+    # no turn and always applies.
+    #
+    # @param records [Enumerable<Hash>] parsed records, in file order
+    # @return [Array<Hash>]
+    def applied(records)
+      records = records.to_a
+      landed = records.each_with_index.filter_map do |record, index|
+        [record["digest"], index] if record["type"].to_s == TURN_TYPE
+      end.to_h
+      records.each_with_index.reject { |record, index| unlanded?(record, index, landed) }.map(&:first)
+    end
+
+    def unlanded?(record, index, landed)
+      record["type"].to_s == REWOUND_TYPE && record.key?("then") && landed.fetch(record["then"], -1) < index
+    end
+    private_class_method :unlanded?
   end
 end
 

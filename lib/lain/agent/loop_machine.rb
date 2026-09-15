@@ -11,11 +11,11 @@ module Lain
     # Two invariants ride on this being a real machine and not a bag of
     # `@state =` assignments. An undeclared move RAISES, where `@state =
     # :nonsense` sailed through. And the wire-facing events are named for the
-    # normalized {StopReason} vocabulary itself, so {Agent#transition} fires the
+    # normalized {::Lain::StopReason} vocabulary itself, so {Agent#transition} fires the
     # reason directly (`send("#{stop_reason}!")`) with no `case` to re-parse it
-    # -- safe because `StopReason.normalize` closes the wire's open enum to a
+    # -- safe because `::Lain::StopReason.normalize` closes the wire's open enum to a
     # fixed set before the machine sees it, and a totality spec pins one
-    # declared event per member, so adding a StopReason without an event fails a
+    # declared event per member, so adding a wire stop reason without an event fails a
     # test rather than a run.
     #
     # `:awaiting_approval` has no incoming event yet; it is where
@@ -39,7 +39,7 @@ module Lain
         event(:dispatch) { transition %i[awaiting_user awaiting_model awaiting_tools] => :awaiting_model }
         event(:reopen) { transition any => :awaiting_user }
 
-        # One event per normalized StopReason -- fired by name from Agent#transition.
+        # One event per normalized wire stop reason -- fired by name from Agent#transition.
         event(:tool_use) { transition awaiting_model: :awaiting_tools }
         event(:pause_turn) { transition awaiting_model: :awaiting_model }
         event(:end_turn) { transition awaiting_model: :done }

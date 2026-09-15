@@ -684,7 +684,8 @@ RSpec.describe Lain::Telemetry do
     # which no interrupted run can be. The overlap is exactly
     # {CLI::Conductor::INTERRUPT_REASONS}, the two a signal-driven close carries.
     it "pins its own reason enum, distinct from a session's" do
-      expect(described_class::REASONS).to eq(%i[interrupted grace_expired stalled_stream torn])
+      expect(described_class::REASONS)
+        .to eq(%i[interrupted grace_expired stopped ceiling over_window transport stalled_stream torn])
       expect(described_class::REASONS).not_to eq(Lain::Telemetry::SessionClosed::REASONS)
       expect(described_class::REASONS).to include(*Lain::CLI::Conductor::INTERRUPT_REASONS)
     end
@@ -692,14 +693,16 @@ RSpec.describe Lain::Telemetry do
     it "refuses a reason outside the enum at construction, echoing the offender" do
       expect { described_class.new(head: nil, reason: :nonsense) }
         .to raise_error(ArgumentError,
-                        "reason must be one of [:interrupted, :grace_expired, :stalled_stream, :torn], " \
+                        "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
+                        ":transport, :stalled_stream, :torn], " \
                         "got :nonsense")
     end
 
     it "refuses a nil reason the same way, for the reason SessionClosed's twin gives" do
       expect { described_class.new(head: nil, reason: nil) }
         .to raise_error(ArgumentError,
-                        "reason must be one of [:interrupted, :grace_expired, :stalled_stream, :torn], " \
+                        "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
+                        ":transport, :stalled_stream, :torn], " \
                         "got nil")
     end
 

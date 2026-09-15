@@ -67,8 +67,11 @@ module Lain
     # schedule around.
     class Admission
       # No slot came free inside the acquire deadline. Named for the ENDPOINT,
-      # because the interesting fact is which server is saturated.
-      class Busy < Error; end
+      # because the interesting fact is which server is saturated. Raised
+      # before the round trip is dispatched at all, so nothing reached the wire.
+      class Busy < Error
+        include PreWire
+      end
 
       # {#try_enter}'s answer when the endpoint is busy. A sentinel rather than
       # nil, because nil is a legitimate thing for an admitted block to return

@@ -158,16 +158,20 @@ module Lain
     # @return [self]
     # @raise [Closed] if the Journal has been closed
     def record(entry)
-      line = "#{encode(entry)}\n"
-      @monitor.synchronize do
-        raise Closed, "journal is closed" if @closed
-
-        @io.write(line)
-        @io.fsync if @fsync && @io.respond_to?(:fsync)
-      end
-      self
+      write_whole("#{encode(entry)}\n")
     end
     alias << record
+
+    # Several records in ONE write, for records that only make sense together:
+    # a process killed between two writes leaves the first alone in the file,
+    # and between the records of one write there is no such point.
+    #
+    # @param entries [Array<Hash, #to_journal>]
+    # @return [self]
+    # @raise [Closed] if the Journal has been closed
+    def record_all(entries)
+      write_whole(entries.map { |entry| "#{encode(entry)}\n" }.join)
+    end
 
     # Hand this Journal's descriptor to another writer -- the Rust tracing
     # subscriber dups it (`dup_writer` in ext/lain) so its spans merge into this
@@ -218,6 +222,16 @@ module Lain
     end
 
     private
+
+    def write_whole(bytes)
+      @monitor.synchronize do
+        raise Closed, "journal is closed" if @closed
+
+        @io.write(bytes)
+        @io.fsync if @fsync && @io.respond_to?(:fsync)
+      end
+      self
+    end
 
     def descriptor
       @io.respond_to?(:fileno) ? @io.fileno : nil

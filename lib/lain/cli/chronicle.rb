@@ -40,6 +40,7 @@ module Lain
 
         def catch_up(_timeline) = self
         def rewound(**) = self
+        def replaced(**) = self
         def interrupted(**) = self
         def close(**) = self
 
@@ -263,6 +264,13 @@ module Lain
       # Announce a rewind to the scribe -- see {SessionRecord::Scribe#rewound}.
       def rewound(to:)
         scribe.rewound(to:)
+        self
+      end
+
+      # A retreat and its replacement in one write -- see
+      # {SessionRecord::Scribe#replaced}.
+      def replaced(to:, with:)
+        scribe.replaced(to:, with:)
         self
       end
 

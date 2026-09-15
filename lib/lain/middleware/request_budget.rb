@@ -22,8 +22,24 @@ module Lain
       # The refusal an ask ends with, in the harness's own error vocabulary
       # ({CLI::Repl::Ask} carries a {Lain::Error} out as a value), still
       # carrying the provider's figures and the provider's error as its cause.
+      #
+      # Its words are finished when they are READ, not when it is raised:
+      # whether the prompt was withdrawn is the {Agent}'s decision, made after
+      # this raised.
       class OverWindow < Lain::Error
         include Lain::WindowExceeded
+
+        WITHDRAWN = ", and it was withdrawn"
+
+        # @param refused [String] the line up to the point a withdrawal is said
+        # @param moves [String] the rest of the line
+        # @param figures [Hash] the {Lain::WindowExceeded} figures
+        def initialize(refused = nil, moves: "", **figures)
+          @moves = moves
+          super(refused, **figures)
+        end
+
+        def to_s = "#{super}#{WITHDRAWN if withdrawn?}#{@moves}"
       end
 
       REFUSED = "not answered: %<source>s refused this prompt at %<prompt>d tokens against the %<window>d-token " \
@@ -35,8 +51,8 @@ module Lain
       MOVES = {
         true => ". Make room with compaction (that count is now the reading it measures), /rewind, /unpin a " \
                 "pinned turn, or a narrower read",
-        false => ", and it was withdrawn. Nothing older can be compacted yet, so make room with /rewind past the " \
-                 "turn that grew it, /unpin a pinned turn, or a narrower read"
+        false => ". Nothing older can be compacted yet, so make room with /rewind past the turn that grew it, " \
+                 "/unpin a pinned turn, or a narrower read"
       }.freeze
 
       LARGER_CONTEXT = "; the system prompt and tools alone come to about %<fixed>d tokens, so start with a " \
@@ -59,8 +75,9 @@ module Lain
       rescue Lain::WindowExceeded => e
         request = env.fetch(:request)
         @journal << pressure(e, request)
-        raise OverWindow.new(refusal(e, request), prompt_tokens: e.prompt_tokens, window_tokens: e.window_tokens,
-                                                  source: e.source)
+        raise OverWindow.new(format(REFUSED, source: e.source, prompt: e.prompt_tokens, window: e.window_tokens),
+                             moves: moves(e, request), prompt_tokens: e.prompt_tokens, window_tokens: e.window_tokens,
+                             source: e.source, model: request.model)
       end
 
       private
@@ -71,11 +88,10 @@ module Lain
                                       window_tokens: refusal.window_tokens)
       end
 
-      def refusal(error, request)
-        line = format(REFUSED, source: error.source, prompt: error.prompt_tokens, window: error.window_tokens) +
-               MOVES.fetch(@compaction.droppable?)
+      def moves(error, request)
+        moves = MOVES.fetch(@compaction.droppable?)
         fixed = fixed_tokens(error, request)
-        fixed < error.window_tokens ? "#{line}." : "#{line}#{format(LARGER_CONTEXT, fixed:)}."
+        fixed < error.window_tokens ? "#{moves}." : "#{moves}#{format(LARGER_CONTEXT, fixed:)}."
       end
 
       # The share of the provider's exact count the system prompt and the tool

@@ -25,7 +25,7 @@ module Lain
         # @param base [Timeline] the fold's starting chain -- empty, or a
         #   resume chain's verified prior head
         def initialize(records:, base:)
-          @records = records.select { |record| TYPES.include?(record["type"].to_s) }
+          @records = SessionRecord.applied(records.select { |record| TYPES.include?(record["type"].to_s) })
           @base = base
           @chain = base
           @position = 0

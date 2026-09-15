@@ -80,6 +80,17 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
       expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1])
     end
 
+    # faraday-retry hands the round trip back only its LAST failure, so each
+    # abandoned attempt has to be told to the witness as it is abandoned.
+    it "tells the retried round trip's witness what its abandoned attempt failed with" do
+      witness = Lain::Provider::ErrorWrapping::WireWitness.new
+
+      tap.retry_block.call(env: env_for(tap.open_attempt.witnessed_by(witness)), retry_count: 0,
+                           exception: Faraday::ConnectionFailed.new(Errno::ECONNRESET.new), will_retry_in: 0.5)
+
+      expect(witness.pre_wire?(Faraday::ConnectionFailed.new(Errno::ECONNREFUSED.new))).to be(false)
+    end
+
     # A probe (`/api/ps`) opens no attempt, and neither does an injected config
     # in a spec; both must still journal rather than crash on a missing context.
     it "journals a retry on an env carrying no attempt at all" do

@@ -33,9 +33,13 @@ module Lain
           Spool::RotatingFrame.new(spool: @spool, request_digest:)
         end
 
+        # Rotates the retried request's frame, tells its round trip's witness
+        # what the abandoned attempt failed with -- faraday-retry hands the round
+        # trip back only the last failure -- and journals.
         def retry_block
           lambda do |env:, retry_count:, exception:, will_retry_in:, **|
             frame_on(env)&.rotate
+            witness_on(env)&.attempted(exception)
             @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
                                                        status: env[:status], reason: exception.class.name))
           end
@@ -60,6 +64,12 @@ module Lain
         def frame_on(env)
           context = env[:request]&.context
           context && context[:wal_frame]
+        end
+
+        # The round trip's {ErrorWrapping::WireWitness}, off its own key.
+        def witness_on(env)
+          context = env[:request]&.context
+          context && context[:wire_witness]
         end
       end
     end

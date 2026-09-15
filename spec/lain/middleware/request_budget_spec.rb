@@ -89,6 +89,24 @@ RSpec.describe Lain::Middleware::RequestBudget do
       expect(error.cause).to be_a(provider_refusal)
     end
 
+    # The provider cannot see the request it refused, and this can: the window
+    # the refusal vouches for belongs to the model that request named.
+    it "names the refused request's model" do
+      expect(refused(big).model).to eq(model)
+    end
+
+    # Whether the prompt was taken back is the Agent's decision, made after
+    # this raised: a refusal after a tool round leaves it where it was.
+    it "says the prompt was withdrawn only once told it was" do
+      error = refused(big)
+      expect(error.message).not_to include("withdrawn")
+
+      error.withdrawn!
+
+      expect(error.message).to include("so no model saw it, and it was withdrawn.")
+      expect(error.message.lines.size).to eq(1)
+    end
+
     it "journals one over_window record with the exact count, the context size and the source" do
       refused(big)
 
@@ -113,7 +131,7 @@ RSpec.describe Lain::Middleware::RequestBudget do
       let(:droppable) { false }
 
       it "leads with /rewind, says the prompt was withdrawn, and does not offer compaction" do
-        message = refused(big).message
+        message = refused(big).tap(&:withdrawn!).message
 
         expect(message).to include("12011", "8192", "withdrawn", "/unpin", "narrower")
         expect(message).not_to include("compaction")

@@ -281,6 +281,27 @@ RSpec.describe Lain::CLI::ResendBridge do
       expect(notice).to include("may have reached the provider once")
       expect(notice).to include("at-least-once")
     end
+
+    # The round trip's own error says whether any byte left, and a send that
+    # provably never did claims no ambiguity. The rewind did happen, so it says
+    # that too.
+    it "a round trip that never reached the wire says so, and names the rewind that did happen" do
+      unsent = Class.new(Lain::Error) { include Lain::PreWire }
+      refusing = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, on_stream_started: nil|
+          raise unsent, "connection refused" if request.max_tokens == 512
+
+          super(request, on_stream_started:)
+        end
+      end
+      agent = build_agent(refusing.new(responses: [text_response("first")]))
+      agent.ask("hi")
+
+      notice = described_class.new(agent:, journal:).offer { edited }
+
+      expect(notice).to include("resend failed: connection refused", "nothing reached the provider", "stays rewound")
+      expect(notice).not_to include("may have reached the provider")
+    end
   end
 
   # A queued resend re-checks the gate at fire time, and the human is told

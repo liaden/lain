@@ -59,19 +59,30 @@ RSpec.describe Lain::Middleware::ResolveWindow do
   # from the refusal, it does not answer for it.
   describe "on an over-window refusal" do
     before do
-      book.define_singleton_method(:vouch) { |window_tokens| @trail << [:vouched, window_tokens] }
+      book.define_singleton_method(:vouch) do |window_tokens, **model|
+        @trail << [:vouched, window_tokens, model]
+      end
     end
 
-    def refusal
+    def refusal(**model)
       Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens: 40_000, window_tokens: 32_768,
-                                                                 source: "ollama")
+                                                                 source: "ollama", **model)
     end
 
     it "vouches for the window the refusal names, and lets the refusal raise" do
       failed = refusal
 
       expect { described_class.new(book:).call({}) { raise failed } }.to raise_error(failed)
-      expect(trail).to eq([:reresolved, [:vouched, 32_768]])
+      expect(trail).to eq([:reresolved, [:vouched, 32_768, {}]])
+    end
+
+    # The book answers per model, and after a `/model` switch the run's own is
+    # not the one refused: the vouch lands on the model the refused request named.
+    it "vouches for the refused request's model when the refusal names one" do
+      failed = refusal(model: "qwen3:8b")
+
+      expect { described_class.new(book:).call({}) { raise failed } }.to raise_error(failed)
+      expect(trail).to eq([:reresolved, [:vouched, 32_768, { model: "qwen3:8b" }]])
     end
   end
 

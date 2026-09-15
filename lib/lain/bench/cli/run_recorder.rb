@@ -33,30 +33,20 @@ module Lain
           end
         end
 
-        # The provider families whose errors can be a failed round trip. Named
-        # rather than read off {Lain::Error}, which is also what a budget stop,
-        # a capability the provider lacks and a refused store write raise --
-        # outcomes of the run, or of its configuration, that no retry changes.
-        API_ERRORS = [Provider::Ollama::APIError, Provider::Anthropic::APIError].freeze
-
         # @param path [String]
         # @return [Boolean] whether the file is a run set aside as failed
         def self.failed?(path) = path.end_with?(FAILED)
 
         # A connection that dropped, timed out or stalled, a stream that could
-        # not be read, an endpoint too busy to take the call, or a server-side
-        # failure. Any other status is the request's own fault -- a bad key, a
-        # model the server does not have, a prompt over the window -- and
-        # every later run would fail the same way.
+        # not be read, an endpoint too busy to take the call, a rate limit, or a
+        # server-side failure: the one classification a stopped ask's
+        # `transport` reason is read from. Any other status is the request's own
+        # fault -- a bad key, a model the server does not have, a prompt over
+        # the window -- and every later run would fail the same way.
         #
         # @param error [Exception]
         # @return [Boolean]
-        def self.round_trip?(error)
-          return true if error.is_a?(Provider::Admission::Busy)
-          return false unless API_ERRORS.any? { |family| error.is_a?(family) }
-
-          !error.is_a?(Provider::ErrorWrapping::Status) || error.status.to_i >= 500
-        end
+        def self.round_trip?(error) = Agent::StopReason.transport?(error)
 
         # @param provider [Lain::Provider] the recording client every run asks
         # @param context [Lain::Context] what every run renders through
