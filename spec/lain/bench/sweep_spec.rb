@@ -131,11 +131,14 @@ RSpec.describe Lain::Bench::Sweep do
         .to raise_error(Lain::Bench::Sweep::MissingCorpus, /#{Regexp.escape(missing)}/)
     end
 
-    it "raises a Lain::Error naming a missing embeddings path" do
+    it "raises a Lain::Error naming a missing embeddings path, not a generic corpus refusal" do
       missing = "#{described_class::EMBEDDINGS_PATH}.does-not-exist"
 
       expect { described_class.new(k: 5, embeddings_path: missing).report }
-        .to raise_error(Lain::Bench::Sweep::MissingCorpus, /#{Regexp.escape(missing)}/)
+        .to raise_error(Lain::Bench::Sweep::MissingCorpus) { |e|
+          expect(e.message).to include(missing).and include("embeddings")
+          expect(e.message).not_to include("no sweep corpus file")
+        }
     end
   end
 end

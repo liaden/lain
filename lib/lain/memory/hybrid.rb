@@ -30,6 +30,18 @@ module Lain
       RRF_K = 60
       private_constant :RRF_K
 
+      # The most hits any one arm's OWN ranking contributes to fusion, applied
+      # before RRF ever sees a rank. Vector's positive-cosine floor accepts
+      # almost anything on a small corpus, so an unbounded arm hands fusion a
+      # near-complete copy of the corpus to agree with -- a document a lexical
+      # match barely reaches then earns a SECOND arm's credit just because
+      # that second arm happened to rank everything. Bounding what reaches
+      # fusion at all keeps "ranks decently in both arms" the property that
+      # wins, not "was returned by both arms at any depth." Fixed the same
+      # way RRF_K is: a shallow, generic window, not sized to any one corpus.
+      CANDIDATES = 20
+      private_constant :CANDIDATES
+
       # The two arms fused, in the fixed order #why lists them.
       SOURCES = %i[bm25 vector].freeze
       private_constant :SOURCES
@@ -85,11 +97,16 @@ module Lain
         { bm25: ranked(@bm25, query), vector: ranked(@vector, query) }
       end
 
-      # id => [1-based rank, Hit], over the arm's OWN unbounded search --
-      # fusion needs a source's full ranking, never a k-bounded slice a
-      # caller's k would truncate before fusion ever saw the rest of it.
+      # id => [1-based rank, Hit], over the arm's own top-CANDIDATES ranking.
+      # Truncated HERE, on the arm's full result, rather than by asking the
+      # arm to search at k: CANDIDATES -- fusion's bound is Hybrid's own, not
+      # a request to a collaborator that may not even honour it (a duck is
+      # only bound to implement #search(query), never a particular k
+      # behaviour). This is never the caller's #search k either: that one
+      # truncates the FUSED result afterward (#search above), a different
+      # cut than how deep into each arm fusion looks before it fuses.
       def ranked(source, query)
-        source.search(query).each_with_index.to_h { |hit, index| [hit.id, [index + 1, hit]] }
+        source.search(query).first(CANDIDATES).each_with_index.to_h { |hit, index| [hit.id, [index + 1, hit]] }
       end
 
       def fuse(ranks)

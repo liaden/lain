@@ -117,5 +117,25 @@ RSpec.describe Lain::Memory::Hybrid do
 
       expect(described_class.new(bm25:, vector:).search("q").size).to eq(5)
     end
+
+    # An unbounded arm hands fusion nearly the whole corpus, so a doc bm25
+    # ranks first also picks up a second contribution from
+    # wherever vector's exhaustive list happens to place it -- even far down
+    # that list, where vector barely favors it at all. Bounded to
+    # Hybrid::CANDIDATES, that far placement never reaches fusion, so the
+    # doc is left with the SAME single-arm, rank-1 score gold has from
+    # vector alone -- a tie the id order then settles in gold's favor,
+    # rather than the noise doc winning outright on a second, barely-earned
+    # term.
+    it "keeps a vector-only gold answer above bm25 noise a corpus-wide vector arm would have double-counted" do
+      vector_order = ["gold"] + (1..19).map { |n| "filler-#{n}" } + (1..10).map { |n| "noise-#{n}" }
+      bm25_order = (1..10).map { |n| "noise-#{n}" }
+      bm25 = instance_double(Lain::Memory::Bm25, search: bm25_order.map { |id| hit(id, "#{id} description") })
+      vector = instance_double(Lain::Memory::Vector, search: vector_order.map { |id| hit(id, "#{id} description") })
+
+      hits = described_class.new(bm25:, vector:).search("aspirin", k: 1)
+
+      expect(hits.first.id).to eq("gold")
+    end
   end
 end
