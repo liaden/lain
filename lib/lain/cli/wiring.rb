@@ -216,8 +216,7 @@ module Lain
       # `--provider` / `--summarizer-provider` knobs held here are exactly what
       # must not reach it -- that module's header has what
       # `--summarizer-provider anthropic` would do to a candidate secret's path.
-      # The journal is resolved ONCE and shared, on {#goal_journal}'s note: each
-      # call OPENS a file.
+      # The journal is resolved ONCE and shared by the oracle and the surface.
       #
       # @return [Approval::SecretSurface, nil]
       def secret_surface
@@ -335,10 +334,10 @@ module Lain
       def chat_env = Lain::WorkerEnv.default.with(cwd: project.cwd)
 
       def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil, notice: nil)
-        # The run's ONE Channel, in a slot for the reason `@agent` carries below:
-        # the collaborators that journal onto it are assembled across three
-        # methods here, so a value threaded through each of them is a promise
-        # every caller has to keep where the slot is a fact this object holds.
+        # The run's ONE display Channel, in a slot because #run hands the same
+        # one to the TTY after this returns. It is not a journal: the TTY skips
+        # every record it does not render, so collaborators that record are
+        # handed {#durable_journal} instead.
         @channel = channel
         parent = -> { @agent.timeline }
         @supervisor = supervise(notice)
@@ -406,7 +405,7 @@ module Lain
       # It takes NO argument, and that is the memo's own honesty: a `journal:`
       # parameter would be honoured on the first call and silently discarded on
       # every later one, so the signature would promise a choice the object does
-      # not offer. The run's one Channel is a slot instead.
+      # not offer. Its leases go to {#durable_journal}, which is the chronicle's to answer.
       #
       # Resolved on the first call, before the chronicle pins its header, so an
       # unrecognized name refuses while the session record is still empty -- the
@@ -416,13 +415,20 @@ module Lain
       # `.lain/services.rb` is read from and where the repository search starts,
       # so a run from a subdirectory declares the services its PROJECT
       # declares.
-      def fleet_isolation = @fleet_isolation ||= IsolationBackend.resolve(options[:isolation], root:, journal: channel)
+      def fleet_isolation
+        @fleet_isolation ||= IsolationBackend.resolve(options[:isolation], root:, journal: durable_journal)
+      end
 
-      # The run's ONE Channel, and {Lain::Channel::Null} until {#wire_agent} has
-      # opened one: a Wiring driven straight at a private assembly seam -- which
-      # two specs do -- journals nowhere rather than handing a collaborator nil
-      # to push records onto.
+      # The run's ONE display Channel, and {Lain::Channel::Null} until
+      # {#wire_agent} has opened one.
       def channel = @channel || Lain::Channel::Null.instance
+
+      # Where a collaborator's records go when nothing live folds them -- the
+      # isolation leases, the handback, the supervisor's reaps and drain, the
+      # bash tool's arm and the spawn seam's refusals. The session file itself,
+      # never the tee: a record routed through the tee reaches {StatusFeed} and
+      # {FleetWindows}, which count what they are handed.
+      def durable_journal = chronicle.durable_journal
 
       # The PROJECT's root, which is what every collaborator below is handed:
       # never `Dir.pwd`, so a chat started in a subdirectory still resolves
@@ -634,9 +640,9 @@ module Lain
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend),
                                           chronicle:, options:, root:, usage: -> { @agent&.usage }, askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
-                                          switchboard: -> { @switchboard }, journal: channel, verdict: verdict(notice),
-                                          isolation: fleet_isolation, handback: handback(notice),
-                                          epic: epic_mount(notice))
+                                          switchboard: -> { @switchboard }, journal: durable_journal,
+                                          verdict: verdict(notice), isolation: fleet_isolation,
+                                          handback: handback(notice), epic: epic_mount(notice))
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -645,7 +651,7 @@ module Lain
       # from the fleet's one backend and surrenders a crashed actor through the
       # run's one handoff.
       def supervise(notice)
-        Lain::Supervisor.new(journal: channel, isolation: fleet_isolation, handoff: handback(notice).handoff)
+        Lain::Supervisor.new(journal: durable_journal, isolation: fleet_isolation, handoff: handback(notice).handoff)
       end
 
       # How a worker's work comes home, built ONCE and handed to both lanes --
@@ -678,7 +684,7 @@ module Lain
         strategy = Isolation::MergeStrategy.from(settings)
         resolver = Handback::LateResolver.new(role_spawn: -> { role_spawn })
         Handback.new(handoff: Isolation::WorkerHandoff.over(repo_root: fleet_isolation.repo_root, base:,
-                                                            journal: channel, strategy:, resolver:),
+                                                            journal: durable_journal, strategy:, resolver:),
                      sync: Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries))
       end
 
@@ -810,7 +816,7 @@ module Lain
       def assemble_surface(agent:, library:, tty:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              chronicle: @chronicle, status_feed: @status_feed, root: project.root, cwd: project.cwd,
-                             epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: channel,
+                             epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
                                                          toolset_build:, asker: @ask_human, conductor: @conductor),
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
@@ -818,10 +824,8 @@ module Lain
       # Memoized, so the surface and the Repl poll ONE instance.
       def goal_driver = @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? })
 
-      # Asked INSIDE the memo, never above it: under --no-journal the answer
-      # OPENS /dev/null, so hoisting it leaks one File per extra #goal_driver
-      # call -- opened, discarded unread, never closed. Two readers poll the
-      # driver, so that was a real leak rather than a hypothetical one.
+      # A record a live view may fold, so the tee-following reader. Under
+      # --no-journal it answers the null device {Chronicle::Null} opens once.
       def goal_journal = chronicle.record_journal
 
       # Both observable halves of "do not drive while the fleet is unquiet": a

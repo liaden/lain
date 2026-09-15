@@ -385,6 +385,28 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # The reader for records nothing live folds: a shell arm, a lease, a reap. The
+  # tee would hand them to the status feed and the fleet windows, which count
+  # what reaches them, so this reader must bypass the tee under every setting.
+  describe "#durable_journal" do
+    it "is the session journal itself, before and after --nvim wraps a tee" do
+      before = chronicle.durable_journal
+      chronicle.wrap_tee([])
+
+      expect([before, chronicle.durable_journal]).to all(be(journal))
+    end
+
+    it "lands a record in the file and in no live view" do
+      live = []
+      chronicle.wrap_tee(live)
+
+      chronicle.durable_journal << { "type" => "probe" }
+
+      expect(of_type("probe").size).to eq(1)
+      expect(live).to be_empty
+    end
+  end
+
   describe "#wrap_tee" do
     it "returns the SAME journal the scribe writes turns into -- not a second one" do
       expect(chronicle.wrap_tee([])).to be(journal)
@@ -632,6 +654,22 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(returned).to be(fresh_journal)
       expect(instrumentation.journal).to be_a(Lain::CLI::JournalTee)
       expect(instrumentation.model_middleware.to_a.first).to be_a(Lain::Middleware::JournalRequests)
+    end
+
+    # Every journal-role collaborator of a run asks for this, and the null device
+    # is a File: one per call would be one leaked descriptor per collaborator.
+    it "answers one memoised journal that records into nothing, and never the --nvim tee" do
+      allow(Lain::Journal).to receive(:open).with(no_args).and_return(instance_double(Lain::Journal, :<< => nil))
+      first = null.durable_journal
+      null.wrap_tee([])
+
+      expect(null.durable_journal).to be(first)
+      expect(first).to be_a(Lain::Journal)
+      expect { first << { "type" => "probe" } }.not_to raise_error
+    end
+
+    it "shares that journal with the record reader while no tee is wrapped" do
+      expect(null.record_journal).to be(null.durable_journal)
     end
 
     # --no-journal's half of the same obligation: no chronicle, no spool, no

@@ -30,7 +30,9 @@ module Lain
     class AlreadyRunning < Error; end
 
     # @param journal [#<<] where a bounded {Drain}'s timeout record and every
-    #   reap's {WorkerReaped} land; the Null channel by default.
+    #   reap's {WorkerReaped} land; the Null channel by default. A chat hands it
+    #   the session record itself, never its display Channel, which renders
+    #   neither record.
     # @param isolation [#acquire] the isolation backend each adoption leases a
     #   {WorkerEnv} from; the shared-process {Isolation::Null} by default, whose
     #   lease is {WorkerEnv.default} and whose release is a no-op, so a supervisor

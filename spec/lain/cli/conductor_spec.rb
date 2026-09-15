@@ -451,6 +451,91 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # A signal closes the session record DURING the conversation, and the fleet is
+  # only stopped later, as the conversation's own scope unwinds. Every farewell
+  # writes -- a lease release, a crashed row's reap, an actor's last message -- so
+  # the fleet has to be stopped while the record is still open.
+  describe "a signal close with an adopted fleet" do
+    let(:session_io) { StringIO.new }
+    let(:session_file) { Lain::Journal.new(io: session_io) }
+    let(:chronicle) do
+      Lain::CLI::Chronicle.new(journal: session_file).start(context:, toolset:)
+    end
+    let(:supervisor) do
+      Lain::Supervisor.new(journal: session_file,
+                           isolation: Lain::Isolation::Journal.new(backend: Lain::Isolation::Null.new,
+                                                                   journal: session_file))
+    end
+    let(:worker_class) do
+      Class.new do
+        attr_reader :session
+
+        def initialize(worker_env)
+          @session = Lain::Session.new(worker_env:)
+          @stopped = false
+        end
+
+        def settle = self
+
+        def stop = tap { @stopped = true }
+
+        def stopped? = @stopped
+
+        def dead? = @stopped
+      end
+    end
+
+    def types = session_io.string.each_line.map { |line| JSON.parse(line)["type"] }
+
+    # The conversation scope's own stop, as a chat unwinds after the signal. A
+    # raise is answered rather than propagated, and the reactor's children are
+    # cancelled with it: a raise leaving a Sync that still has a live child task
+    # hangs the Sync, and a red run should report, not hang.
+    def unwind(supervisor, task)
+      supervisor.stop
+      nil
+    rescue StandardError => e
+      task.children&.each(&:stop)
+      e
+    end
+
+    it "writes the fleet's lease release before the record closes, and leaves no supervisor task running" do
+      entered = Async::Queue.new
+      agent = build_agent(entered:, release: Async::Queue.new, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = described_class.new(tty:, chronicle:, signals:, grace: 60, clock: clock_returning(1000.0),
+                                      tick: 0.005, supervisor:)
+      unwound = nil
+
+      Sync do |task|
+        supervisor.run(task)
+        supervisor.adopt(role: "researcher") { |worker_env| worker_class.new(worker_env) }
+        supervise_and_signal(agent:, conductor:, entered:, os_name: "QUIT")
+      ensure
+        unwound = unwind(supervisor, task)
+      end
+
+      expect(unwound).to be_nil
+      expect(supervisor).not_to be_running
+      expect(types.grep(/\A(isolation_lease|session_closed)\z/))
+        .to eq(%w[isolation_lease isolation_lease session_closed])
+    ensure
+      signals.uninstall
+    end
+
+    # A farewell can raise -- a worktree release git refuses -- and the record
+    # must still close, or a clean quit reads as a torn run.
+    it "still closes the record when stopping the fleet raises, and lets the raise through" do
+      refusing = Object.new
+      refusing.define_singleton_method(:stop) { raise Lain::Error, "git worktree remove refused" }
+      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, grace: 60,
+                                      clock: clock_returning(1000.0), supervisor: refusing)
+
+      expect { conductor.close(reason: :exit) }.to raise_error(Lain::Error, /refused/)
+      expect(types).to include("session_closed")
+    end
+  end
+
   # FB (interrupt-readline UX fix): while an ask_human reply is outstanding, Reline
   # owns stdin -- so the countdown ticker must NEITHER render its status line NOR
   # make its non-blocking key read (which would otherwise STEAL a keystroke out of

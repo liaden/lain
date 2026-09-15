@@ -294,19 +294,13 @@ module Lain
       # apart. It is safe because this memo is the ONE Lineage a Subagent ever
       # has, so every actor it launches counts off the same sequence; a second
       # Subagent would be a second count.
-      def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer: lineage_observer, lane: isolation.lane.name)
-
-      # An actor's lifecycle rides the journal: every {Lineage} event is
-      # promoted to a {Telemetry::Message}, whose kind/digest/to/causal_parents
-      # shape is what {StatusFeed}'s fleet field consumes. One-shot keeps the
-      # plain observer -- its records already ride the tool_result and the
-      # scribe, and existing specs pin its journal contents.
-      def lineage_observer = @mode == :actor ? method(:journal_lifecycle) : observer
-
-      def journal_lifecycle(event)
-        journal << Telemetry::Message.from_event(event)
-        observer.call(event)
-      end
+      #
+      # Every {Lineage} event, an actor's lifecycle included, reaches the record
+      # through the observer alone. In a chat that is the scribe, which writes
+      # it as a {Telemetry::Message} and routes it through the tee to
+      # {StatusFeed}'s fleet field; the seam's journal is the same session file,
+      # so writing the event there too would record every transition twice.
+      def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer:, lane: isolation.lane.name)
 
       # Mode fails loudly here: a mistyped mode must not silently fall through
       # to one-shot.
@@ -1116,13 +1110,20 @@ module Lain
         # each call against the RENDERED toolset -- the attenuated set under
         # `schema`, the descended union under `handler_union` -- so a permitted
         # nested subagent runs at its decremented ceiling.
+        #
+        # The child Agent's OWN journal discards, deliberately, while the seam's
+        # records around it reach the session file. What an Agent journals is
+        # its `turn_usage` and `tool_cancelled`, and a child's in the parent's
+        # file would read as the parent's: salvage would pair it with the
+        # parent's in-flight `request_sent`, cache-waste would count it, and the
+        # ledger would price it as the parent's spend.
         def spawn_agent(chain, union, allowed, worker_env)
           Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain),
             tool_middleware: child_stack(worker_env, allowed),
-            session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
+            session: Session.new(worker_env:), budget: @budget, journal: Channel::Null.instance
           )
         end
 

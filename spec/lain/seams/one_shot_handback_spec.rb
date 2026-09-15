@@ -22,6 +22,10 @@ end
 # the provider is scripted.
 RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
   let(:channel) { RecordingChannel.new }
+  # The lease and handback records land in the session record, not on the
+  # display Channel, so they are read back off a recording chronicle.
+  let(:record) { RecordingChannel.new }
+  let(:chronicle) { Lain::CLI::Chronicle.new(journal: record, journal_path: "one-shot-handback-session.ndjson") }
   let(:script) { [] }
   let(:provider) { OneShotHandbackProvider.new(responses: script) }
   let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
@@ -75,7 +79,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
   # The checkout the child runs in: the path on the lease record the run
   # journalled when it acquired one.
   def worktree
-    channel.events.grep(Lain::Telemetry::IsolationLease).reverse.find { |lease| lease.kind == :acquired }.path
+    record.events.grep(Lain::Telemetry::IsolationLease).reverse.find { |lease| lease.kind == :acquired }.path
   end
 
   def text(body) = Lain::Response.new(content: [{ "type" => "text", "text" => body }], stop_reason: :end_turn)
@@ -90,7 +94,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
 
   def wired(options = {})
     wiring = Lain::CLI::Wiring.new(options: { grace: 5, isolation: "worktree", **options },
-                                   chronicle: Lain::CLI::Chronicle::Null.new, status_feed:)
+                                   chronicle:, status_feed:)
     recorder, session = wiring.run_state(nil)
     wiring.wire_agent(channel:, recorder:, session:, backend:, notice: ->(_line) {})
     wiring
@@ -98,7 +102,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
 
   def dispatch(wiring) = Sync { wiring.role_spawn.call(:dev, :fresh, "do the work") }
 
-  def handbacks = channel.events.grep(Lain::Telemetry::Handback)
+  def handbacks = record.events.grep(Lain::Telemetry::Handback)
 
   it "brings a child's commit back to the branch the chat launched on" do
     script.push(works)

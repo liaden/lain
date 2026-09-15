@@ -47,7 +47,8 @@ module Lain
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
-      # {Shutdown}'s `#settle` drain duck; {Supervisor::Null} by default.
+      # {Shutdown}'s `#settle` drain duck, and `#stop`, which {#close} sends
+      # before the record shuts; {Supervisor::Null} by default.
       #
       # `run_clock:` defaults to a fresh private {RunClock} so a caller that does
       # not care pays nothing. Production wants ONE shared instance injected here
@@ -152,6 +153,13 @@ module Lain
       # run_interrupted written without it said a run stopped while staying silent
       # about which stop it was.
       #
+      # The fleet stops BEFORE the record closes. A signal closes the record
+      # mid-conversation, and every farewell writes to it -- a lease release, a
+      # crashed row's reap, an actor's last message -- so a fleet stopped later,
+      # as the conversation unwinds, would write into a closed journal. A
+      # supervisor already stopped answers at once, so the normal-exit order,
+      # where the conversation stopped it first, is unchanged.
+      #
       # @param reason [Symbol] one of {Telemetry::SessionClosed::REASONS}
       def close(reason:)
         return self if @closed
@@ -159,7 +167,7 @@ module Lain
         @closed = true
         catch_up
         @chronicle.interrupted(head: @timeline.call.head_digest, reason:) if INTERRUPT_REASONS.include?(reason)
-        @chronicle.close(reason:)
+        stop_fleet_then_close(reason)
         self
       end
 
@@ -201,6 +209,15 @@ module Lain
       end
 
       private
+
+      # The close is unconditional: a farewell that raises -- a worktree release
+      # git refuses -- still propagates, but after the record has closed, since
+      # {#close} is already marked closed and nothing would close it later.
+      def stop_fleet_then_close(reason)
+        @supervisor.stop
+      ensure
+        @chronicle.close(reason:)
+      end
 
       # The ticker's suppressed thunk reads @reply_outstanding at tick time, so
       # seeding after the ticker is constructed is safe.

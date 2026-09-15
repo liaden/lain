@@ -45,13 +45,20 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     end)
   end
 
+  # The one road an actor's lifecycle takes to the record: the seam's observer,
+  # which in a chat is the scribe turning each :spawn and :message into a
+  # Telemetry::Message. Its turn records are left out, as the fold reads none.
+  def lifecycle_into(journal)
+    ->(event) { journal << Lain::Telemetry::Message.from_event(event) unless event.kind == :turn }
+  end
+
   def actor_tool(provider:, journal: Lain::Channel::Null.instance, supervisor: Lain::Supervisor::Null)
     Lain::Tools::Subagent.new(
       tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
       toolset: Lain::Toolset.new([EchoTool.new]),
       policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
-      parent: parent_timeline, journal:, mode: :actor, log:, supervisor:
+      parent: parent_timeline, journal:, observer: lifecycle_into(journal), mode: :actor, log:, supervisor:
     )
   end
 

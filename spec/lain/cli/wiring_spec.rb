@@ -997,6 +997,87 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  # Where the records a chat's collaborators write end up. The display Channel
+  # renders three record types and skips the rest, so a record handed to it is
+  # a record lost; these read the session record back instead.
+  describe "the records a chat's collaborators write" do
+    let(:session_io) { StringIO.new }
+    let(:session_file) { Lain::Journal.new(io: session_io) }
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal: session_file, journal_path: "collaborator-records-session.ndjson") }
+    let(:channel) { RecordingChannel.new }
+    let(:mock_provider) do
+      Lain::Provider::Mock.new(responses: [tool_response(["tu_bash", "bash", { "command" => "printf hello" }]),
+                                           text_response("settled")])
+    end
+    let(:wiring) do
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-wiring-records") do |state|
+        @state = state
+        example.run
+      end
+    end
+
+    def records = session_io.string.each_line.map { |line| JSON.parse(line) }
+
+    def of_type(type) = records.select { |record| record["type"] == type }
+
+    # Bash is tier 3 and would park on the approval gate; the board is flipped
+    # to `auto` after #wire_agent memoizes it, as the live-views group does.
+    def converse(prompt)
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+      wiring.instance_variable_get(:@switchboard)
+            .mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+      agent.ask(prompt)
+    end
+
+    it "lands the bash tool's arm record for that call in the session record" do
+      converse("run it")
+
+      expect(of_type("shell_arm").map { |arm| arm["tool_use_id"] }).to eq(["tu_bash"])
+    end
+
+    # A chat launched without --nvim still tees onto the status feed whenever it
+    # journals. The arm record is nothing that feed folds, so it must go round
+    # the tee rather than through it.
+    it "lands the arm record in the file and not on the status feed a plain chat tees" do
+      feed = RecordingChannel.new
+      Lain::CLI::LiveViews.new(options: { journal: true }, chronicle:, status_feed: feed)
+
+      converse("run it")
+
+      expect(of_type("shell_arm").size).to eq(1)
+      expect(feed.events.grep(Lain::Telemetry::ShellArm)).to be_empty
+    end
+
+    context "when the model spawns a one-shot subagent" do
+      let(:mock_provider) do
+        Lain::Provider::Mock.new(responses: [tool_response(["s1", "subagent", { "prompt" => "look around" }]),
+                                             text_response("child done"), text_response("parent done")])
+      end
+
+      def child_digests = of_type("child_turn").map { |turn| turn["digest"] }
+
+      # A child's usage written as `turn_usage` would pair with the parent's
+      # in-flight request in salvage, and be priced by the ledger as the
+      # parent's spend.
+      it "writes no turn_usage for a child turn, so salvage and the ledger see only the parent's" do
+        converse("look around")
+
+        expect([child_digests, of_type("turn_usage")]).to all(be_present)
+        expect(of_type("turn_usage").map { |usage| usage["digest"] })
+          .to match_array(of_type("turn").select { |turn| turn["role"] == "assistant" }.map { |turn| turn["digest"] })
+        expect(child_digests.flat_map { |digest| Lain::Ledger::Index.from_journal(records).entries_for(digest) })
+          .to be_empty
+        expect(of_type("request_sent").size).to eq(of_type("turn_usage").size)
+      end
+    end
+  end
+
   # The assembly, and the point the whole chunk converges on. A plain `lain
   # chat` compacts, which means the Agent gets three things Wiring never passed
   # before: the run's per-turn Context source, the eager-summary observer its
@@ -1239,10 +1320,12 @@ RSpec.describe Lain::CLI::Wiring do
     require "mixlib/shellout"
     require "tmpdir"
 
-    # The journal Wiring hands the Supervisor is the run's live Channel; a
-    # recording stand-in is what lets the lease records be read back (and never
-    # blocks, unlike a SizedQueue nobody drains).
+    # The lease and handback records land in the session record, read back here
+    # off a recording journal. The display Channel is recorded too, only so
+    # nothing blocks on a SizedQueue nobody drains.
     let(:channel) { RecordingChannel.new }
+    let(:record) { RecordingChannel.new }
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal: record, journal_path: "fleet-isolation-session.ndjson") }
 
     def wiring_with(isolation)
       described_class.new(options: { grace: 5, isolation: }, chronicle:, status_feed:)
@@ -1263,7 +1346,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    def leases = channel.events.grep(Lain::Telemetry::IsolationLease)
+    def leases = record.events.grep(Lain::Telemetry::IsolationLease)
 
     # A chat started somewhere OTHER than the repo this suite runs in, so "the
     # lease names the chat's own cwd" is an assertion and not a coincidence --
@@ -1329,7 +1412,7 @@ RSpec.describe Lain::CLI::Wiring do
           Sync { wiring.role_spawn.call(:dev, :fresh, "work") }
         end
 
-        expect(channel.events.grep(Lain::Telemetry::Handback)).to be_empty
+        expect(record.events.grep(Lain::Telemetry::Handback)).to be_empty
       end
     end
 
@@ -1473,7 +1556,7 @@ RSpec.describe Lain::CLI::Wiring do
           Sync { wiring.role_spawn.call(:dev, :fresh, "work") }
         end
 
-        def handbacks = channel.events.grep(Lain::Telemetry::Handback)
+        def handbacks = record.events.grep(Lain::Telemetry::Handback)
 
         it "hands a one-shot child's lease back with the strategy the project's config names" do
           in_throwaway_repo do |repo|
@@ -1618,6 +1701,18 @@ RSpec.describe Lain::CLI::Wiring do
         wiring.conductor.close(reason: :exit)
         wiring
       end
+    end
+
+    # The epic driver's supervisor, retirement and landing queue all journal
+    # into what these seams carry, and a chat can only reach that driver through
+    # a slash command, so nothing else here would notice a display Channel there.
+    it "hands the epic driver's seams the session record, never the display channel" do
+      allow(Lain::CLI::EpicDriver::Seams).to receive(:new).and_call_original
+
+      run_wiring
+
+      expect(Lain::CLI::EpicDriver::Seams).to have_received(:new)
+        .with(hash_including(journal: be(chronicle.durable_journal)))
     end
 
     it "threads the injected tty/conductor seams -- the conductor the opener built is the one exposed" do

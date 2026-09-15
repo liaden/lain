@@ -108,11 +108,14 @@ module Lain
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
-        # @param journal [#<<] the journal {Wiring} hands down, and two things
-        #   ride it from here: a spawned child's lifecycle events
-        #   ({Tools::Subagent#journal_lifecycle}), and the record
-        #   {Lain::Tools::Bash} writes of which arm each shell command ran on,
-        #   which {BaseTools} takes as its own keyword. Kept in the spawn seam
+        # @param journal [#<<] the session record {Wiring} hands down
+        #   ({Chronicle#durable_journal}), and two kinds of record ride it from
+        #   here: the spawn seam's own -- leases, bounded answers, refusals --
+        #   and the record {Lain::Tools::Bash} writes of which arm each shell
+        #   command ran on, which {BaseTools} takes as its own keyword. A
+        #   child's lifecycle is not among them: it reaches the record through
+        #   `chronicle.observer`, and a child Agent's own usage is kept out of
+        #   it ({Tools::Subagent::ChildBuilder}). Kept in the spawn seam
         #   and read back off it rather than also held in an ivar here: the
         #   {Tools::Subagent::Seam} member is this same object, and a second
         #   holder would be a second thing to keep in step.

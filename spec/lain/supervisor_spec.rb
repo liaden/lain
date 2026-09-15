@@ -25,9 +25,16 @@ RSpec.describe Lain::Supervisor do
              .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
+  # The one road an actor's lifecycle takes to the record: the seam's observer,
+  # which in a chat is the scribe turning each :spawn and :message into a
+  # Telemetry::Message. Its turn records are left out, as the fold reads none.
+  def lifecycle_into(journal)
+    ->(event) { journal << Lain::Telemetry::Message.from_event(event) unless event.kind == :turn }
+  end
+
   def actor_tool(*responses, journal: CoreGraph.journal)
     CoreGraph.subagent(provider: CoreGraph.provider(*responses),
-                       parent: parent_timeline, journal:, mode: :actor, log:)
+                       parent: parent_timeline, journal:, observer: lifecycle_into(journal), mode: :actor, log:)
   end
 
   # A child provider that announces entry and parks; a :raise release fails
@@ -53,7 +60,7 @@ RSpec.describe Lain::Supervisor do
   def parking_tool(entered:, release:, journal: CoreGraph.journal)
     CoreGraph.subagent(
       provider: SupervisorParkProvider.new(entered:, release:, responses: [text_response("late")]),
-      parent: parent_timeline, journal:, mode: :actor, log:
+      parent: parent_timeline, journal:, observer: lifecycle_into(journal), mode: :actor, log:
     )
   end
 
@@ -408,6 +415,8 @@ RSpec.describe Lain::Supervisor do
         windows << within
         [registration]
       end
+      # The close stops the fleet before the record shuts, so the duck owes that too.
+      supervisor.define_singleton_method(:stop) { self }
       conductor = Lain::CLI::Conductor.new(
         tty:, chronicle:, signals: Lain::CLI::Signals.new.install,
         grace: 60, clock: -> { 1000.0 }, tick: 0.005, supervisor:
@@ -1555,7 +1564,7 @@ RSpec.describe Lain::Supervisor do
 
       def committing(provider)
         CoreGraph.subagent(provider:, toolset: CoreGraph.toolset([RetireCommitTool.new]),
-                           parent: parent_timeline, journal:, mode: :actor, log:)
+                           parent: parent_timeline, journal:, observer: lifecycle_into(journal), mode: :actor, log:)
       end
 
       def commits = CoreGraph.provider(tool_response(["c1", "commit", {}]), text_response("done"))

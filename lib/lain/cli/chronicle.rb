@@ -31,7 +31,13 @@ module Lain
         # No record was ever opened, and {Channel::Null} is not a journal (it
         # answers `#<<`, not `#record`). The null device is the same duck,
         # discarding.
-        def record_journal = @tee || Journal.new(io: File.open(File::NULL, "ab"))
+        def record_journal = @tee || durable_journal
+
+        # Memoised because it OPENS the null device, and every journal-role
+        # collaborator of a run asks for it. Never the tee: under --nvim that
+        # is nvim's own journal, and these records were never nvim's to fold.
+        def durable_journal = @durable_journal ||= Journal.new(io: File.open(File::NULL, "ab"))
+
         def catch_up(_timeline) = self
         def rewound(**) = self
         def interrupted(**) = self
@@ -236,6 +242,13 @@ module Lain
       # The same destination {#instrumentation} carries, so a flip and a
       # turn_usage cannot land in two different files.
       def record_journal = instrumentation.journal
+
+      # The journal a record nothing live folds goes to: a shell arm, a lease, a
+      # handback, a reap, a spawn seam's refusals. The session journal under
+      # every setting and never the tee, because the tee also feeds
+      # {StatusFeed} and {FleetWindows}, which count what reaches them. A record
+      # a live view DOES fold goes to {#record_journal} instead.
+      def durable_journal = @journal
 
       def catch_up(timeline)
         scribe.catch_up(timeline)
