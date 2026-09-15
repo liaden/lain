@@ -6,16 +6,18 @@ require "uri"
 
 module Lain
   module Tools
-    # Tier 1 (structured): fetches one URL and returns its body text. There is
-    # no command string here for the model to control, so it sits at the lowest
-    # tier -- but a network egress tool needs bounds a filesystem read does not,
-    # and those bounds are STRUCTURAL, not an approval prompt (see the plan's
-    # "Web-tool safety"): the body is STREAMED and the read is aborted once it
-    # exceeds an egress byte-cap (a lying or absent Content-Length cannot defeat
-    # it), redirects are capped, only http/https egress is allowed, NO auth
-    # headers are ever sent, non-routable destinations are refused
-    # unconditionally ({NonRoutable}), and an optional domain allowlist narrows
-    # further -- the last two re-checked on every hop.
+    # Tier 1 (structured): fetches one URL and returns its body text -- an HTML
+    # page as its readable text ({Readable}) unless the model asks for the
+    # markup. There is no command string here for the model to control, so it
+    # sits at the lowest tier -- but a network egress tool needs bounds a
+    # filesystem read does not, and those bounds are STRUCTURAL, not an approval
+    # prompt (see the plan's "Web-tool safety"): the body is STREAMED and the
+    # read is aborted once it exceeds an egress byte-cap (a lying or absent
+    # Content-Length cannot defeat it), redirects are capped, only http/https
+    # egress is allowed, NO auth headers are ever sent, non-routable
+    # destinations are refused unconditionally ({NonRoutable}), an optional
+    # domain allowlist narrows further -- the last two re-checked on every hop
+    # -- and a result over {BOUND} is refused.
     # {#requires_approval?} stays false -- a subagent that owns this
     # tool gets no Gate, so a `true` here would be a no-op, and the real safety
     # is the structure, not a gate.
@@ -41,14 +43,61 @@ module Lain
       SUCCESSFUL = (200..299)
       USER_AGENT = "lain-web-fetch/1"
 
-      # The wire shape: one required URL. Shape only -- Tool::Input never
-      # validates safety (see the comment atop tool/input.rb); the scheme guard,
-      # allowlist, and caps below are the real bounds, and they live on the tool.
+      # The wire shape: one required URL, and whether an HTML page comes back as
+      # markup. Shape only -- Tool::Input never validates safety (see the comment
+      # atop tool/input.rb); the scheme guard, allowlist, and caps below are the
+      # real bounds, and they live on the tool.
       class Input < Tool::Input
-        field :url, :string, description: "Absolute http(s) URL to fetch.", required: true
+        field :url, :string,
+              required: true,
+              description: "Absolute http(s) URL to fetch. A #fragment naming an element's id narrows " \
+                           "an HTML page's readable text to that section."
+        field :raw, :boolean,
+              description: "Return an HTML page's markup instead of its readable text. Defaults to false; " \
+                           "any other content type is returned as it is."
       end
 
       input_model Input
+
+      # A fetched page is a WHOLE ARTIFACT in {Tool::Bounds}' sense, so a result
+      # over the ceiling is refused rather than truncated. The measurement is of
+      # the text the model would be handed, after {Readable}, because the bytes
+      # a page spent on markup are not bytes the window pays for. {ByteCap} is a
+      # different bound: it limits what is READ off the socket, not what is
+      # returned.
+      BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("web_fetch"))
+
+      Rendering = Data.define(:noun, :readable, :narrower)
+
+      # How a successful body becomes the result, and what a refusal over the
+      # ceiling calls it and offers instead. Each names a fetch that returns
+      # less, since re-issuing the same call would be refused identically.
+      # Reopened rather than given a block, because a constant set inside the
+      # `Data.define` block would land on the enclosing class.
+      class Rendering
+        def subject(url) = "the #{noun} of #{url}"
+
+        READABLE = new(noun: "readable text", readable: true, narrower: [
+          "fetch a narrower url, such as the page of the one section you need",
+          "add a #fragment naming the id of that section's heading, which narrows the text to that section"
+        ].freeze)
+        MARKUP = new(noun: "markup", readable: false, narrower: [
+          "fetch it without raw, which returns the page's readable text",
+          "fetch a narrower url, such as the page of the one section you need"
+        ].freeze)
+        BODY = new(noun: "body", readable: false, narrower: [
+          "fetch a narrower url, such as one page, one file, or a query that returns less"
+        ].freeze)
+
+        # @param type [ContentType]
+        # @param raw [Boolean, nil] the model's own choice of markup
+        # @return [Rendering]
+        def self.of(type, raw)
+          return BODY unless type.html?
+
+          raw ? MARKUP : READABLE
+        end
+      end
 
       # The egress floor: the destinations a fetch tool has no business
       # reaching, refused as a property of the class. Deliberately NOT a
@@ -363,6 +412,8 @@ module Lain
           @value.empty? ? "an unlabelled binary body" : "non-text content type #{@value.inspect}"
         end
 
+        def html? = @media == "text/html"
+
         def to_s = @value
 
         private
@@ -491,9 +542,12 @@ module Lain
       def name = "web_fetch"
 
       def description
-        "Fetches a single http(s) URL and returns its body text. The response " \
-          "is streamed and capped in size, redirects are bounded, and a non-2xx " \
-          "status or a network error is returned as an error result."
+        "Fetches a single http(s) URL and returns its body text. An HTML page comes back as " \
+          "readable text -- headings as #, list items as -, links as text (url), code verbatim, " \
+          "navigation and scripts dropped -- and raw: true returns the markup instead. A result " \
+          "over #{BOUND.limit} bytes is refused with a narrower fetch to try. The response is " \
+          "streamed and capped in size, redirects are bounded, and a non-2xx status or a network " \
+          "error is returned as an error result."
       end
 
       # A bare Faraday connection carrying only a User-Agent -- and, pointedly,
@@ -507,7 +561,7 @@ module Lain
       protected
 
       def perform(input, _invocation)
-        follow(input.url, @redirect_cap)
+        follow(input.url, @redirect_cap, input.raw)
       rescue Faraday::Error => e
         Tool::Result.error("web_fetch failed for #{input.url}: #{e.message}")
       end
@@ -517,25 +571,37 @@ module Lain
       # One hop. The egress guard (scheme + allowlist) runs BEFORE the fetch, so
       # a disallowed host or scheme is never contacted -- and because a redirect
       # recurses through here, that guard is re-applied to every hop.
-      def follow(url, budget)
+      def follow(url, budget, raw)
         problem = egress_problem(url)
         return Tool::Result.error(problem) if problem
 
         status, headers, cap = fetch(url)
-        return redirect(url, headers, budget) if redirect?(status, headers)
+        return redirect(url, headers, budget, raw) if redirect?(status, headers)
         return Tool::Result.error("web_fetch: #{status} for #{url}") unless success?(status)
 
-        Tool::Result.ok(rendered(cap, ContentType.of(headers).charset))
+        bounded(url, cap, ContentType.of(headers), raw)
       rescue ByteCap::Refused => e
         Tool::Result.error("web_fetch: refusing #{e.message} for #{url}")
       end
 
-      def redirect(from, headers, budget)
+      def bounded(url, cap, type, raw)
+        rendering = Rendering.of(type, raw)
+        text = rendered(url, cap, type, rendering)
+        return Tool::Result.ok(text) if BOUND.admits?(text.bytesize)
+
+        BOUND.refusal(subject: rendering.subject(url), size: text.bytesize, narrower: rendering.narrower)
+      rescue Readable::Overflow
+        BOUND.refusal_over(subject: rendering.subject(url), narrower: rendering.narrower)
+      rescue Readable::Unparseable, Readable::TooMany, Readable::Unanchored => e
+        Tool::Result.error("web_fetch: #{url}: #{e.message}")
+      end
+
+      def redirect(from, headers, budget, raw)
         if budget.zero?
           return Tool::Result.error("web_fetch: too many redirects (cap #{@redirect_cap}) starting at #{from}")
         end
 
-        follow(URI.join(from, location_of(headers)).to_s, budget - 1)
+        follow(hop(from, location_of(headers)), budget - 1, raw)
       rescue URI::InvalidURIError => e
         Tool::Result.error("web_fetch: malformed redirect Location #{location_of(headers).inspect}: #{e.message}")
       end
@@ -553,6 +619,15 @@ module Lain
         [cap.status || 200, cap.headers, cap]
       end
 
+      # A Location with no fragment of its own keeps the one the request carried
+      # (RFC 9110, section 10.2.2), so a fragment narrowing a page survives the
+      # redirect a documentation site answers a missing trailing slash with.
+      def hop(from, location)
+        target = URI.join(from, location)
+        target.fragment ||= URI.parse(from).fragment
+        target.to_s
+      end
+
       def stream_into(cap)
         proc { |chunk, received, env| cap.call(chunk, received, env) }
       end
@@ -561,12 +636,27 @@ module Lain
       # down to a character boundary means the body is <= the cap, and telling
       # the model "truncated at 4 bytes" beside a three-byte body is a small lie
       # in the one sentence explaining why the page is short.
-      def rendered(cap, charset)
-        text = Text.decode(cap.bytes, charset)
+      def rendered(url, cap, type, rendering)
+        bytes = cap.bytes
+        text = body(url, Text.decode(bytes, charset(type, bytes)), rendering)
         return text unless cap.truncated?
 
         label = "[web_fetch: truncated at #{cap.bytesize} bytes]"
         text.empty? ? label : "#{text}\n\n#{label}"
+      end
+
+      def body(url, decoded, rendering)
+        rendering.readable ? Readable.call(decoded, url, limit: BOUND.limit) : decoded
+      end
+
+      # A page that names its charset only in its own markup is read by that
+      # name, unless its bytes are already valid UTF-8: a page that is valid
+      # UTF-8 was written as UTF-8, whatever a meta tag copied from a template
+      # claims, and reading it as Latin-1 would make believable mojibake of it.
+      def charset(type, bytes)
+        return type.charset if type.charset || !type.html?
+
+        Readable.meta_charset(bytes) unless bytes.dup.force_encoding(Encoding::UTF_8).valid_encoding?
       end
 
       def redirect?(status, headers)

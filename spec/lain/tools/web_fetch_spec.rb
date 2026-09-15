@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 # A minimal Faraday-response duck: status, headers, body -- what the tool reads
 # for redirect detection. Specs never hit the network; the connection injected.
 WebFetchStubResponse = Struct.new(:status, :headers, :body, keyword_init: true)
@@ -329,6 +331,265 @@ RSpec.describe Lain::Tools::WebFetch do
 
       expect(result).to be_ok
       expect(result.content).to eq("Le café était bon")
+    end
+  end
+
+  describe "an HTML page comes back as readable text" do
+    let(:html) { { "content-type" => "text/html; charset=utf-8" } }
+    let(:article) do
+      <<~HTML
+        <html><body>
+          <nav><a href="/">Home</a> <a href="/pricing">Pricing</a></nav>
+          <script>window.analytics = "tracked";</script>
+          <article>
+            <h2>Getting started</h2>
+            <p>See <a href="/docs/install">the install guide</a>.</p>
+          </article>
+        </body></html>
+      HTML
+    end
+
+    def fetching(body, headers:, url: "https://example.com/blog/post", **input)
+      connection = WebFetchStubConnection.new(chunk_size: 4096) do |_url|
+        WebFetchStubResponse.new(status: 200, headers:, body:)
+      end
+      described_class.new(connection:).call({ url:, **input }, nil)
+    end
+
+    it "renders the article's heading and links, and none of the nav or script" do
+      result = fetching(article, headers: html)
+
+      expect(result).to be_ok
+      expect(result.content).to include("## Getting started", "the install guide (https://example.com/docs/install)")
+      expect(result.content).not_to include("Home", "Pricing", "analytics", "<")
+    end
+
+    it "returns the markup when asked for raw" do
+      result = fetching(article, headers: html, raw: true)
+
+      expect(result).to be_ok
+      expect(result.content).to include("<nav>", "<h2>Getting started</h2>", "window.analytics")
+    end
+
+    it "leaves a text/plain body as the decoded body" do
+      body = "<h2>not markup here</h2>\n  two  spaces"
+      result = fetching(body, headers: { "content-type" => "text/plain" })
+
+      expect(result.content).to eq(body)
+    end
+
+    it "refuses a fragment that names nothing on the page, returning none of it" do
+      page = '<main><h2 id="a">A</h2><p>kept</p><h2 id="b">B</h2><p>other</p></main>'
+      result = fetching(page, headers: html, url: "https://example.com/doc#nope")
+
+      expect(result).to be_error
+      expect(result.content).to include("no element with id or name `nope`", "https://example.com/doc")
+      expect(result.content).not_to include("kept", "other")
+    end
+
+    # Tools run on reactor fibers, whose stack is a fraction of the main
+    # thread's, and SystemStackError is not a StandardError: the handler's
+    # rescue would not have turned an overflowing walk into a tool_result.
+    describe "a deeply nested page, on a reactor fiber" do
+      def fetch_in_fiber(body)
+        connection = WebFetchStubConnection.new(chunk_size: 65_536) do |_url|
+          WebFetchStubResponse.new(status: 200, headers: html, body:)
+        end
+        tool = described_class.new(connection:)
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "t1", name: "web_fetch",
+                                            input: { "url" => "https://example.com/" })
+        Sync { |task| task.async { Lain::Effect::Handler::Live.new.call({ effect:, tool:, context: nil }) }.wait }
+      end
+
+      def nested(levels) = "<main>#{"<div><span>" * levels}deep#{"</span></div>" * levels}</main>"
+
+      it "returns the text of a page 380 elements deep" do
+        result = fetch_in_fiber(nested(190))
+
+        expect(result).to be_ok
+        expect(result.content).to eq("deep")
+      end
+
+      it "returns the text of a page just inside the parser's depth limit" do
+        result = fetch_in_fiber(nested(196))
+
+        expect(result).to be_ok
+        expect(result.content).to eq("deep")
+      end
+
+      it "refuses in words a page just past it" do
+        result = fetch_in_fiber(nested(200))
+
+        expect(result).to be_error
+        expect(result.content).to include("nests", "raw: true")
+      end
+    end
+
+    # Megabytes of empty elements hold no text to stop at, so the walk budget
+    # is the only thing between such a page and a stalled reactor.
+    it "refuses a page of more nodes than the walk budget quickly, naming raw" do
+      page = "<main>#{"<br>" * (1024 * 1024 / 4)}</main>"
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result = fetching(page, headers: html)
+
+      expect(result).to be_error
+      expect(result.content).to include("more than #{Lain::Tools::WebFetch::Readable::Page::WALK_BUDGET}", "raw: true")
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 3
+    end
+
+    describe "a charset the page declares only in its markup" do
+      it "decodes a Shift_JIS page by its meta charset" do
+        body = '<html><head><meta charset="shift_jis"></head><body><p>日本語のテキスト</p></body></html>'
+               .encode(Encoding::Shift_JIS)
+        expect(fetching(body, headers: { "content-type" => "text/html" }).content).to eq("日本語のテキスト")
+      end
+
+      it "decodes an ISO-8859-7 page by its meta charset" do
+        body = '<meta charset="iso-8859-7"><p>Καλημέρα</p>'.encode(Encoding::ISO_8859_7)
+        expect(fetching(body, headers: { "content-type" => "text/html" }).content).to eq("Καλημέρα")
+      end
+
+      # A page that is valid UTF-8 was written as UTF-8, whatever a stale meta
+      # tag copied from a template claims.
+      it "keeps a valid UTF-8 page as UTF-8 when its meta charset says otherwise" do
+        body = '<meta charset="iso-8859-1"><p>café</p>'
+        expect(fetching(body, headers: { "content-type" => "text/html" }).content).to eq("café")
+      end
+
+      it "prefers the charset the response header names" do
+        body = '<meta charset="iso-8859-7"><p>Привет</p>'.encode(Encoding::Windows_1251)
+        expect(fetching(body, headers: { "content-type" => "text/html; charset=windows-1251" }).content)
+          .to eq("Привет")
+      end
+    end
+
+    it "narrows to the section a url fragment names" do
+      page = '<main><h2 id="a">A</h2><p>kept</p><h2 id="b">B</h2><p>dropped</p></main>'
+      result = fetching(page, headers: html, url: "https://example.com/doc#a")
+
+      expect(result.content).to eq("## A\n\nkept")
+    end
+
+    it "resolves relative links against the url a redirect landed on" do
+      hops = { "https://example.com/old" => WebFetchStubResponse.new(status: 301, headers: { "location" => "/new/" },
+                                                                     body: ""),
+               "https://example.com/new/" => WebFetchStubResponse.new(status: 200, headers: html,
+                                                                      body: '<p><a href="page">next</a></p>') }
+      connection = WebFetchStubConnection.new { |url| hops.fetch(url) }
+      result = described_class.new(connection:).call({ url: "https://example.com/old" }, nil)
+
+      expect(result.content).to eq("next (https://example.com/new/page)")
+    end
+
+    it "keeps the requested fragment across a redirect whose Location names none" do
+      page = '<main><h2 id="a">A</h2><p>kept</p><h2 id="b">B</h2><p>dropped</p></main>'
+      hops = []
+      connection = WebFetchStubConnection.new do |url|
+        hops << url
+        if url.include?("/doc/")
+          WebFetchStubResponse.new(status: 200, headers: html, body: page)
+        else
+          WebFetchStubResponse.new(status: 301, headers: { "location" => "/doc/" }, body: "")
+        end
+      end
+      result = described_class.new(connection:).call({ url: "https://example.com/doc#a" }, nil)
+
+      expect(hops).to eq(["https://example.com/doc#a", "https://example.com/doc/#a"])
+      expect(result.content).to eq("## A\n\nkept")
+    end
+
+    # A page that renders itself with JavaScript has no readable text in its
+    # markup, and an empty success would read as a blank page rather than as a
+    # page this rendering cannot see.
+    it "says so when a page holds no readable text, and names raw" do
+      result = fetching("<body><div id=root></div><script>boot()</script></body>", headers: html)
+
+      expect(result).to be_ok
+      expect(result.content).to include("no readable text", "raw")
+    end
+
+    it "refuses a page nested past what the parser will build, naming raw" do
+      result = fetching("#{"<div>" * 1000}buried#{"</div>" * 1000}", headers: html)
+
+      expect(result).to be_error
+      expect(result.content).to include("raw")
+      expect(result.content).not_to include("buried")
+    end
+
+    it "marks the readable text of a body the transport cap cut short" do
+      connection = WebFetchStubConnection.new do |_url|
+        WebFetchStubResponse.new(status: 200, headers: html, body: "<p>abcdefghij</p><p>klmnop</p>")
+      end
+      result = described_class.new(connection:, byte_cap: 13).call({ url: "https://example.com" }, nil)
+
+      expect(result.content).to eq("abcdefghij\n\n[web_fetch: truncated at 13 bytes]")
+    end
+  end
+
+  describe "the result ceiling" do
+    let(:ceiling) { Lain::Tool::Bounds::CEILINGS.fetch("web_fetch") }
+    let(:html) { { "content-type" => "text/html" } }
+
+    def fetching(body, headers:, **input)
+      connection = WebFetchStubConnection.new(chunk_size: 65_536) do |_url|
+        WebFetchStubResponse.new(status: 200, headers:, body:)
+      end
+      described_class.new(connection:).call({ url: "https://example.com/big", **input }, nil)
+    end
+
+    # Each paragraph renders as 69 bytes of text and a blank line: 71.
+    def paragraphs(bytes) = Array.new(bytes / 71) { "<p>#{"word " * 12}sentence.</p>" }.join
+
+    it "is the one table's row" do
+      expect(described_class::BOUND.limit).to eq(ceiling)
+    end
+
+    # The converter stops once the text passes the ceiling, so the refusal can
+    # say only that it is over -- rendering the rest to count it is the cost
+    # the stop exists to avoid.
+    it "refuses an article whose readable text is 60 KiB, naming the ceiling it is over" do
+      page = "<article>#{paragraphs(60 * 1024)}</article>"
+      size = Lain::Tools::WebFetch::Readable.call(page, "https://example.com/big", limit: 1024 * 1024).bytesize
+      result = fetching(page, headers: html)
+
+      expect(size).to be_within(71).of(60 * 1024)
+      expect(result).to be_error
+      expect(result.content).to include("readable text of https://example.com/big is over #{ceiling} bytes")
+      expect(result.content).to include("#fragment")
+      expect(result.content).not_to include("word word")
+    end
+
+    # The measurement is of the text the model would be handed, so markup that
+    # renders small is not refused for the bytes it spent on the wire.
+    it "admits a page whose markup is over the ceiling and whose text is not" do
+      page = "<article><p>short</p>#{"<div class='wrapper-with-a-long-class-name'></div>" * 2000}</article>"
+      result = fetching(page, headers: html)
+
+      expect(page.bytesize).to be > ceiling
+      expect(result).to be_ok
+      expect(result.content).to eq("short")
+    end
+
+    it "measures raw markup against the same ceiling, and offers the readable text instead" do
+      result = fetching("<article>#{paragraphs(20 * 1024)}</article>", headers: html, raw: true)
+
+      expect(result).to be_error
+      expect(result.content).to include("over the ceiling of #{ceiling}", "without raw")
+    end
+
+    it "measures a non-HTML body against the same ceiling" do
+      body = "x" * (ceiling + 1)
+      result = fetching(body, headers: { "content-type" => "text/plain" })
+
+      expect(result).to be_error
+      expect(result.content).to include("is #{ceiling + 1} bytes, over the ceiling of #{ceiling}")
+      expect(result.content).not_to include("xxxx")
+    end
+
+    it "admits a result of exactly the ceiling" do
+      body = "x" * ceiling
+
+      expect(fetching(body, headers: { "content-type" => "text/plain" }).content).to eq(body)
     end
   end
 

@@ -217,7 +217,8 @@ module Lain
         "test_pattern" => RESULT_BYTES,
         "web_search" => RESULT_BYTES,
         "ast_search" => RESULT_BYTES,
-        "ast_dump" => RESULT_BYTES
+        "ast_dump" => RESULT_BYTES,
+        "web_fetch" => RESULT_BYTES
       }.freeze
 
       # The disclosing shape: cap the rows, say so in the rows.
@@ -363,10 +364,30 @@ module Lain
         #   that names nowhere to go leaves the model to re-issue the same call
         #   and be refused identically, which is the loop this exists to break
         def message(subject:, size:, narrower:)
+          measured = Bounds.ceiling(size)
+          "#{subject} is #{measured} #{unit}, over the ceiling of #{limit} -- #{instead(narrower)}"
+        end
+
+        # The refusal for a caller that stopped producing the artifact once it
+        # passed the ceiling, and so holds no size to state. Saying so is the
+        # point: a number here would be the size at which it stopped, reading
+        # as the size of the whole.
+        #
+        # @param subject [String] what is being refused, in the reader's terms
+        # @param narrower [Array<String>] the actions that WOULD work
+        # @return [Tool::Result] an error result
+        # @raise [ArgumentError] when no narrower action is offered
+        def refusal_over(subject:, narrower:)
+          Result.error("#{subject} is over #{limit} #{unit}, the ceiling, and was not measured past it -- " \
+                       "#{instead(narrower)}")
+        end
+
+        private
+
+        def instead(narrower)
           raise ArgumentError, "a refusal must offer a narrower action" if narrower.empty?
 
-          measured = Bounds.ceiling(size)
-          "#{subject} is #{measured} #{unit}, over the ceiling of #{limit} -- instead, #{narrower.join(", or ")}"
+          "instead, #{narrower.join(", or ")}"
         end
       end
 

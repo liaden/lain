@@ -124,6 +124,27 @@ RSpec.describe Lain::Tool::Bounds do
         .to raise_error(ArgumentError, /narrower/)
     end
 
+    # A caller that stops producing the artifact once it passes the ceiling
+    # has no size to state, and a guessed one would be a number that lies.
+    describe "#refusal_over" do
+      it "names the subject, the ceiling it is over and every narrower action, as an error Result" do
+        refusal = bound.refusal_over(subject: "the page", narrower:)
+
+        expect(refusal).to be_error
+        expect(refusal.content).to eq("the page is over 262144 bytes, the ceiling, and was not measured past it " \
+                                      "-- instead, read a window with offset and limit, or run code_outline")
+      end
+
+      it "refuses loudly to compose a refusal with no narrower action" do
+        expect { bound.refusal_over(subject: "the page", narrower: []) }.to raise_error(ArgumentError, /narrower/)
+      end
+
+      it "cannot see the content, because no parameter carries it" do
+        expect(described_class.instance_method(:refusal_over).parameters.map(&:last))
+          .to contain_exactly(:subject, :narrower)
+      end
+    end
+
     # Scenario: an artifact refusal carries none of the oversized content
     it "carries no bytes of the artifact in its message" do
       content = "SECRETPAYLOAD" * 5_000
@@ -604,7 +625,7 @@ RSpec.describe Lain::Tool::Bounds do
       expect(ceilings.keys).to contain_exactly("read_file", "bash", "memory_read", "memory_write",
                                                "run_skill", "ask_human", "subagent", "grep", "glob",
                                                "list_files", "file_symbols", "test_pattern", "web_search",
-                                               "ast_search", "ast_dump")
+                                               "ast_search", "ast_dump", "web_fetch")
     end
 
     it "gives every row the one static figure, with no per-model variation" do

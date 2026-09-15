@@ -333,15 +333,6 @@ module ToolBoundsRegistry
               "into it; never wired into a shipped toolset"
     ),
     ToolExemption.new(
-      tool: "Lain::Tools::WebFetch", grounds: ToolExemption::AWAITING_RULING,
-      reason: "TRUNCATES a page at 5 MiB and appends a label saying so, which is exactly what the " \
-              "Bounds class doc argues a whole artifact must never do -- its first N bytes read " \
-              "like the answer and are not -- and at 40x bash's ceiling besides. The cap is a " \
-              "constructor argument, so it is not even a class constant a reader could find. " \
-              "Recorded as found, not endorsed: whether it should become an Artifact refusal is a " \
-              "ruling nobody has made"
-    ),
-    ToolExemption.new(
       tool: "Lain::Tools::RequestReview", grounds: ToolExemption::AWAITING_RULING,
       reason: "quotes every human annotation verbatim into its result with no ceiling. Its INPUTS " \
               "are bounded by Review::Bounds, but that bounds the changeset a reviewer is shown " \
@@ -459,7 +450,7 @@ RSpec.describe "tool bounds discipline" do
   # against.
   it "pins the tools recorded as unbounded rather than exempt" do
     awaiting = ToolBoundsRegistry.with_grounds(ToolExemption::AWAITING_RULING).map(&:tool)
-    known = ["Lain::Tools::WebFetch", "Lain::Tools::RequestReview"]
+    known = ["Lain::Tools::RequestReview"]
 
     expect(awaiting).to match_array(known), lambda {
       standing = ["now: #{awaiting.sort.inspect}", "pinned: #{known.sort.inspect}"].join("\n  ")
