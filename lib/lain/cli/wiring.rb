@@ -284,8 +284,9 @@ module Lain
         recorder, session = run_state(resumed)
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         resumed&.notices&.each(&notice)
-        tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
-        @human_line = tty.method(:render_warning)
+        tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice),
+                                layers: @switchboard.mode_switch.method(:layers))
+        @human_line = tty.method(:render_summons)
         @conductor = open_conductor(tty)
         @conductor.guard do
           build_repl(tty:, agent:, backend:).run(**editor_seams(nvim, agent, session), first_prompt: @options[:prompt])

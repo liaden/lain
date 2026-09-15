@@ -53,6 +53,15 @@ RSpec.describe Lain::Mode::Layer do
       expect(described_class.new(name: :phantom, lighter: "", alters_outcome: false).lighter).to eq("")
     end
   end
+
+  # The notify layer rings the terminal and, inside tmux, displays a message --
+  # nothing outside those two -- so its lighter names the bell rather than a
+  # notification some desktop daemon would be expected to show.
+  describe "what the notify layer's lighter promises" do
+    it "lights notify as BELL" do
+      expect(described_class.for(:notify)).to have_attributes(alters_outcome?: false, lighter: "BELL")
+    end
+  end
 end
 
 RSpec.describe Lain::Mode::LayerSet do

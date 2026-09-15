@@ -59,9 +59,14 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # call through the frontend's own one-line note, and what it printed is half
   # of what these examples assert.
   let(:output) { StringIO.new }
+  # The chat's mode layers as the terminal reads them, and every note the
+  # `notify` layer handed to tmux.
+  let(:raised) { [] }
+  let(:displayed) { [] }
   let(:tty) do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
-                            history_path: File.join(@dir, "history"))
+                            history_path: File.join(@dir, "history"),
+                            layers: -> { Lain::Mode::LayerSet.new(raised) }, tmux: ->(note) { displayed << note })
   end
   # The seam {#approval_surface}'s reader routes through. "y" is the ONLY way a
   # pending can end up approved at all, so an approval is proof this reader ran
@@ -303,7 +308,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     # die of it, or leave Async's own warning in the chat pane instead.
     it "reports a note that failed to render once, and keeps announcing later calls" do
       notes = 0
-      allow(tty).to receive(:render_warning).and_wrap_original do |original, *args|
+      allow(tty).to receive(:render_summons).and_wrap_original do |original, *args|
         notes += 1
         raise Errno::EPIPE if notes == 1
 
@@ -323,6 +328,25 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(output.string.lines.grep(/could not announce/).size).to eq(1)
     end
 
+    # The note is a summons: the human is being asked for something, so the
+    # `notify` layer rings with it, naming the call.
+    it "rings the terminal with the note while the notify layer is up" do
+      raised << :notify
+
+      fan_out(attached: editor)
+
+      expect(output.string.count("\a")).to eq(1)
+      expect(displayed).to contain_exactly(a_string_including("asks to run bash(", "/approve"))
+    end
+
+    it "announces without ringing while the notify layer is down" do
+      fan_out(attached: editor)
+
+      expect(notes.size).to eq(1)
+      expect(output.string).not_to include("\a")
+      expect(displayed).to be_empty
+    end
+
     it "makes three with --auto-approve, and still reads nothing at the terminal" do
       result = fan_out(auto: auto_surface, attached: editor)
 
@@ -336,6 +360,19 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(watched).to contain_exactly(an_instance_of(Async::Task))
       expect(editor.queues).to be_empty
     end
+  end
+
+  # A plain chat's parked call is the inline `[y/N]` itself, drawn where the
+  # human is already typing -- an arrival line would be a second announcement
+  # of the prompt in front of them, so the notify layer has nothing to ring on.
+  it "keeps the inline [y/N] silent with the notify layer up" do
+    raised << :notify
+
+    fan_out
+
+    expect(conductor).to have_received(:read_reply).with(tty, /approve bash/)
+    expect(output.string).not_to include("\a")
+    expect(displayed).to be_empty
   end
 
   it "compacts the absent auto surface away rather than leaving a nil hole in the set" do

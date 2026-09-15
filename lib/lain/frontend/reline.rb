@@ -144,16 +144,17 @@ module Lain
         end
       end
 
-      # @param vi_mode [Boolean] ask this process's line editor for vi mode. Off
-      #   unless asked: with vi_mode false this class touches neither the editing
-      #   mode nor the mode indicator, so an unconfigured lain leaves Reline
-      #   exactly as it found it.
+      # @param vi_mode [#call] answers whether to ask this process's line editor
+      #   for vi mode, and is asked at every read, because the `vi` mode layer
+      #   goes up and down mid-session. Until it first answers true this class
+      #   touches neither the editing mode nor the mode indicator, so an
+      #   unconfigured lain leaves Reline exactly as it found it ({EditingMode}).
       # @param notify [#call] renders a warning line ({TTY#render_warning}), so
       #   presentation stays out of this class. It configures the process-wide
       #   {Registry}, because there is one line editor per process and
       #   pretending otherwise would be a fiction.
-      def initialize(vi_mode: false, notify: SILENT)
-        @vi_mode = vi_mode
+      def initialize(vi_mode: EditingMode::NEVER, notify: SILENT)
+        @editing_mode = EditingMode.new(vi_mode)
         @notify = Reporter.new(notify)
         @warned_about_vi = false
       end
@@ -210,14 +211,7 @@ module Lain
         # the session's first prompt alone, which is worse than either answer
         # applied consistently. Read, never written.
         config.read unless config.loaded?
-        apply_vi_mode(config) if @vi_mode
-      end
-
-      def apply_vi_mode(config)
-        config.editing_mode = :vi_insert
-        config.show_mode_in_prompt = true
-        config.vi_cmd_mode_string = COMMAND_INDICATOR
-        config.vi_ins_mode_string = INSERT_INDICATOR
+        @editing_mode.apply(config)
       end
 
       # Once per session, not once per occurrence: the point is to explain the
@@ -243,6 +237,61 @@ module Lain
           @notify.call(message)
         rescue StandardError
           nil
+        end
+      end
+
+      # Which editing mode a read opens in, as the `vi` layer goes up and down.
+      #
+      # Raising it remembers the settings in force at that read -- the inputrc's
+      # choice once {LineEditor#configure} has read it, or Reline's own default
+      # -- and lowering it writes exactly those back. So the only mode this
+      # object ever restores is one the session was already in, and a session
+      # that never raises the layer is never written to at all.
+      class EditingMode
+        NEVER = -> { false }
+
+        # Everything raising the layer writes, read back under the same names.
+        Settings = Data.define(:editing_mode, :show_mode_in_prompt, :vi_cmd_mode_string, :vi_ins_mode_string) do
+          # `Config#editing_mode` answers the keymap rather than its name, so
+          # the name is found by asking which one is in force.
+          def self.of(config)
+            new(editing_mode: KEYMAPS.find { |name| config.editing_mode_is?(name) },
+                show_mode_in_prompt: config.show_mode_in_prompt,
+                vi_cmd_mode_string: -config.vi_cmd_mode_string.to_s,
+                vi_ins_mode_string: -config.vi_ins_mode_string.to_s)
+          end
+
+          def onto(config) = to_h.each { |setting, value| config.public_send(:"#{setting}=", value) }
+        end
+
+        KEYMAPS = %i[emacs vi_insert vi_command].freeze
+
+        VI = Settings.new(editing_mode: :vi_insert, show_mode_in_prompt: true,
+                          vi_cmd_mode_string: COMMAND_INDICATOR, vi_ins_mode_string: INSERT_INDICATOR)
+
+        # What there is to hand back while the layer has not been raised.
+        module Untouched
+          def self.onto(_config) = nil
+        end
+
+        # @param raised [#call] answers whether the `vi` layer is up right now
+        def initialize(raised)
+          @raised = raised
+          @before = Untouched
+        end
+
+        def apply(config) = @raised.call ? raise_vi(config) : lower_vi(config)
+
+        private
+
+        def raise_vi(config)
+          @before = Settings.of(config) if @before.equal?(Untouched)
+          VI.onto(config)
+        end
+
+        def lower_vi(config)
+          @before.onto(config)
+          @before = Untouched
         end
       end
     end

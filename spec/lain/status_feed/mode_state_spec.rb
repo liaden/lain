@@ -105,7 +105,7 @@ RSpec.describe Lain::StatusFeed::ModeState do
     it "leaves every declared combination untouched -- the cap only trims degradation" do
       state = described_class.of(record(to: :accept_edits, to_layers: Lain::Mode::Layer::NAMES))
 
-      expect(state.published["mode_lighter"]).to eq("AA GOAL NOTIFY VI")
+      expect(state.published["mode_lighter"]).to eq("AA GOAL BELL VI")
     end
   end
 

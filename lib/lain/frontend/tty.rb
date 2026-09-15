@@ -3,6 +3,7 @@
 require "fileutils"
 require "io/console"
 require "json"
+require "mixlib/shellout"
 require "pastel"
 require "reline"
 require "time"
@@ -52,6 +53,8 @@ module Lain
       # ({#read_past_typeahead}).
       UNFINISHED = Object.new.freeze
 
+      NO_LAYERS = -> { Mode::LayerSet.empty }
+
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param output [#print, #puts, #flush] default $stdout, a StringIO in specs
       # @param input [#gets, #tty?] default $stdin, a StringIO in specs
@@ -83,8 +86,12 @@ module Lain
       #   absolute deadline (wall time), while `clock:` is {RunClock::MONOTONIC}
       #   and answers a different question. There is deliberately no shared
       #   WALL constant to pair with it -- see {RunClock::MONOTONIC}
-      # @param vi_mode [Boolean] ask the line editor for vi mode; off unless
-      #   asked, in which case {LineEditor} leaves Reline as it found it
+      # @param layers [#call] answers the chat's {Mode::LayerSet} in force right
+      #   now -- read, never kept, so a `/mode` flip reaches the next read (`vi`)
+      #   and the next arrival (`notify`). No layers by default, in which case
+      #   {LineEditor} leaves Reline as it found it and nothing rings
+      # @param tmux [#call] takes the note an arrival rings with, while the
+      #   `notify` layer is up ({TmuxMessage})
       # @param completion_sources [Completion::Sources] where a `/command` or
       #   `@path` candidate comes from -- injectable so a caller that HAS the
       #   command registry and the skill catalog can hand them over, and so a
@@ -96,13 +103,15 @@ module Lain
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: RunClock::MONOTONIC,
                      state_path: ProjectDir.new.state_path,
-                     wall_clock: -> { Time.now }, vi_mode: false, completion_sources: Completion::Sources.new)
+                     wall_clock: -> { Time.now }, layers: NO_LAYERS, tmux: TmuxMessage.new,
+                     completion_sources: Completion::Sources.new)
         @channel = channel
         @output = output
         @input = input
         @pastel = pastel
         @theme = theme
-        build_prompt_stack(prompt_renderer:, vi_mode:, history_path:)
+        build_prompt_stack(prompt_renderer:, vi_mode: -> { layers.call.include?(:vi) }, history_path:)
+        @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
@@ -269,8 +278,18 @@ module Lain
       # @param from [#to_s, nil] who is stuck -- the item's own attribution.
       #   Absent, the note is today's unattributed line rather than a
       #   placeholder standing in for a name nobody supplied.
+      #
+      # While the `notify` layer is up the arrival also rings ({Bell}).
       def render_arrival(question, from: nil)
-        @inbox.arrival(question, from:)
+        @bell.ring(@inbox.arrival(question, from:))
+      end
+
+      # A line that summons the human rather than informs them -- a cockpit's
+      # parked-call note, a review's "a file is waiting" ({CLI::Wiring#told}) --
+      # rendered as {#render_warning} renders a note, and rung like an arrival.
+      def render_summons(line)
+        render_warning(line)
+        @bell.ring(line)
       end
 
       # The TTY-only drain. Lists every pending item (sender, age,
@@ -650,10 +669,13 @@ module Lain
         # the row the editor's inbox shows, and
         # {Tools::AskHuman::Handback#summary} for a reply handed back, which is
         # the bound's one-sentence measurement rather than the reply itself.
+        #
+        # @return [String] the note, unpainted, for whatever else announces it
         def arrival(question, from: nil)
-          note = "? #{asker(from)}#{summarized(question)}  -- #{POINTER}"
-          @output.puts(@pastel.yellow(Tools::AskHuman::InboxRow.one_line(note)))
+          note = Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{POINTER}")
+          @output.puts(@pastel.yellow(note))
           @output.flush
+          note
         end
 
         # List, print the document of the set being answered, read one answer
@@ -804,6 +826,88 @@ module Lain
         def asker(from)
           name = Tools::AskHuman::InboxRow.sender(from)
           name.empty? ? "" : "#{name} "
+        end
+      end
+
+      # The `notify` mode layer: while it is up, an arrival rings the terminal's
+      # bell and hands its note to tmux. That is the whole of it -- no desktop
+      # notifier exists, and this is not one.
+      class Bell
+        BEL = "\a"
+
+        # @param output [#print, #flush] the terminal the arrival was written to
+        # @param raised [#call] answers whether the layer is up, at each arrival
+        # @param tmux [#call] takes the note ({TmuxMessage})
+        def initialize(output:, raised:, tmux:)
+          @output = output
+          @raised = raised
+          @tmux = tmux
+        end
+
+        def ring(note)
+          return unless @raised.call
+
+          @output.print(BEL)
+          @output.flush
+          @tmux.call(note)
+        end
+      end
+
+      # `tmux display-message` with an arrival's note, against the server the
+      # chat itself runs under: its own `$TMUX`, handed on by name, so the note
+      # reaches the human's tmux and no other. Outside tmux it runs nothing.
+      #
+      # Off the caller's stack and under a timeout, because the caller is an
+      # arrival being rendered, and a tmux that is wedged or slow to answer
+      # must cost the human the message and never the render. Every failure is
+      # swallowed for the same reason: by then the note is on the screen and
+      # the bell has rung.
+      #
+      # tmux expands a message as a FORMAT -- `#(...)` runs a shell command and
+      # `%` goes through strftime -- and a note carries model-written text, so
+      # both are escaped into literals. `display-message -l` would say the same,
+      # but not every tmux a chat runs under knows the flag.
+      class TmuxMessage
+        TIMEOUT = 2
+
+        # A status line's worth; tmux cuts a message at the client's width anyway.
+        LIMIT = 200
+
+        SESSION = %w[TMUX TMUX_PANE].freeze
+
+        # @param env [#[], #slice] the chat process's environment
+        # @param shell_out [#call] builds the command, `Mixlib::ShellOut.new`'s shape
+        # @param background [#call] runs the block off the caller's stack
+        def initialize(env: ENV, shell_out: Mixlib::ShellOut.public_method(:new),
+                       background: Thread.public_method(:new))
+          @env = env
+          @shell_out = shell_out
+          @background = background
+        end
+
+        def call(note)
+          return if @env["TMUX"].to_s.empty?
+
+          @background.call { display(note) }
+          nil
+        end
+
+        private
+
+        # The escaping happens here, under the rescue, rather than before the
+        # hand-off: a caller such as `request_review` counts its line to the
+        # human as delivered only once the call returns.
+        def display(note)
+          @shell_out.call("tmux", "display-message", literal(note), environment: @env.slice(*SESSION),
+                                                                    timeout: TIMEOUT).run_command
+        rescue StandardError
+          nil
+        end
+
+        # Scrubbed first: a note can carry a file name, whose bytes nothing
+        # promises are UTF-8, and every pattern below raises on invalid ones.
+        def literal(note)
+          note.to_s.scrub[0, LIMIT].gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }.gsub("#", "##").gsub("%", "%%")
         end
       end
 

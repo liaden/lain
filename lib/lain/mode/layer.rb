@@ -78,11 +78,14 @@ module Lain
       # would otherwise have been asked about only while this layer is on,
       # whether `--auto-approve` or `/mode +auto_approve` turned it on. The
       # other three change what the human sees or how input is read, never what
-      # is permitted.
+      # is permitted: `vi` reads the prompt in vi mode, and `notify` rings the
+      # terminal's bell when something arrives for the human, with a tmux
+      # message inside tmux and nothing anywhere else -- which is why its lighter
+      # says BELL and not something a desktop notifier would answer to.
       DECLARED = {
         auto_approve: new(name: :auto_approve, lighter: "AA", alters_outcome: true),
         goal: new(name: :goal, lighter: "GOAL", alters_outcome: false),
-        notify: new(name: :notify, lighter: "NOTIFY", alters_outcome: false),
+        notify: new(name: :notify, lighter: "BELL", alters_outcome: false),
         vi: new(name: :vi, lighter: "VI", alters_outcome: false)
       }.freeze
       private_constant :DECLARED

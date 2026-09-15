@@ -2153,6 +2153,66 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # The `vi` and `notify` layers are the terminal's to act on, so what this
+    # class owes the TTY factory is the session's layer set as it is NOW --
+    # read through the live switch `/mode` writes, never a copy taken at launch.
+    describe "the mode layers the terminal reads" do
+      def layered_factory(rendered, dir, seen)
+        lambda do |channel:, layers:, **|
+          seen << layers
+          Lain::Frontend::TTY.new(channel:, output: rendered, input: StringIO.new("quit\n"), layers:,
+                                  history_path: File.join(dir, "history"), tmux: ->(_note) {})
+        end
+      end
+
+      def run_layered(rendered = StringIO.new, seen = [])
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                       tty_factory: layered_factory(rendered, dir, seen), conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          yield wiring
+          wiring.conductor.close(reason: :exit)
+        end
+        seen
+      end
+
+      def type_mode(wiring, args) = Lain::CLI::Command::Mode.new.call(args, wiring.command_env)
+
+      it "hands the factory a reading of the layers that follows /mode" do
+        seen = run_layered do |wiring|
+          type_mode(wiring, "+vi")
+        end
+
+        expect(seen.size).to eq(1)
+        expect(seen.first.call).to include(:vi)
+      end
+
+      it "hands it a reading that shows a layer lowered again" do
+        seen = run_layered do |wiring|
+          type_mode(wiring, "+vi +notify")
+          type_mode(wiring, "-vi")
+        end
+
+        expect(seen.size).to eq(1)
+        expect(seen.first.call.names).to eq([:notify])
+      end
+
+      # The review half of the notify layer: `request_review`'s line to the
+      # human is a summons, so it rings while the layer is up.
+      it "rings the terminal with the run's line to the human once /mode +notify is typed" do
+        rendered = StringIO.new
+
+        run_layered(rendered) do |wiring|
+          wiring.told.call("quiet before the layer")
+          type_mode(wiring, "+notify")
+          wiring.told.call("epic.md is open for review")
+        end
+
+        expect(rendered.string.count("\a")).to eq(1)
+        expect(rendered.string.index("\a")).to be > rendered.string.index("epic.md is open for review")
+      end
+    end
+
     # request_review is a capability, so it is the toolset build's to
     # append -- but WHICH epic a chat is in is a question the chat tier never
     # had to answer before, and the answer decides whether the tool exists at

@@ -109,7 +109,7 @@ module Lain
 
         # Memoized for {Arrivals}' reason: it remembers what it has announced,
         # and that memory spans every line a call stays parked through.
-        def arrivals = @arrivals ||= Arrivals.new(notice: @tty.method(:render_warning))
+        def arrivals = @arrivals ||= Arrivals.new(notice: @tty.method(:render_summons))
       end
 
       class ApprovalSurfaces
@@ -127,8 +127,9 @@ module Lain
         # the moment it leaves the parked set, so the memory is bounded by what
         # is parked right now.
         #
-        # `notice:` is the frontend's one-line note ({Frontend::TTY#render_warning},
-        # reached as {CLI::Wiring} reaches it for the run's line to the human).
+        # `notice:` is the frontend's summons line ({Frontend::TTY#render_summons},
+        # reached as {CLI::Wiring} reaches it for the run's line to the human),
+        # so a parked call rings while the `notify` layer is up.
         class Arrivals
           TICK = 0.05
 

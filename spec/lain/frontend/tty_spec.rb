@@ -170,7 +170,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "asks the line editor for vi mode only when the caller configured it" do
       allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      described_class.new(channel:, output:, input: tty_input, vi_mode: true).prompt
+      described_class.new(channel:, output:, input: tty_input, layers: -> { Lain::Mode::LayerSet.new([:vi]) }).prompt
 
       expect(Reline.core.config.editing_mode_is?(:vi_insert)).to be(true)
     ensure
@@ -1211,6 +1211,210 @@ RSpec.describe Lain::Frontend::TTY do
       tty.drain_and_render
 
       expect(output.string).to end_with("half a li")
+    end
+  end
+
+  # The `vi` and `notify` mode layers, read off the chat's live layer set at
+  # the moment each one matters: `vi` at every read, `notify` at every arrival.
+  describe "the vi and notify mode layers" do
+    let(:raised) { [] }
+    let(:displayed) { [] }
+    let(:layered) do
+      described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new(raised) },
+                          tmux: ->(note) { displayed << note })
+    end
+
+    describe "vi" do
+      let(:input) { tty_input }
+
+      before { allow(Reline).to receive(:readmultiline).and_return("hi") }
+
+      it "reads in vi mode once the layer is raised, and in emacs again once it is lowered" do
+        raised << :vi
+        layered.prompt
+        in_vi = Reline.core.config.editing_mode_is?(:vi_insert)
+        raised.clear
+        layered.prompt
+
+        expect(in_vi).to be(true)
+        expect(Reline.core.config.editing_mode_is?(:emacs)).to be(true)
+      end
+    end
+
+    describe "notify, on a question's arrival" do
+      it "rings the terminal and asks tmux to display a message naming the asker" do
+        raised << :notify
+
+        layered.render_arrival(announced("db"), from: "explorer")
+
+        expect(output.string).to include("\a")
+        expect(displayed).to contain_exactly(a_string_including("explorer"))
+      end
+
+      it "rings after the note is on the screen, not before it" do
+        raised << :notify
+
+        layered.render_arrival(announced("db"), from: "explorer")
+
+        expect(output.string.index("\a")).to be > output.string.index("explorer")
+      end
+
+      it "writes no bell and runs no tmux command while the layer is down" do
+        layered.render_arrival(announced("db"), from: "explorer")
+
+        expect(output.string).not_to include("\a")
+        expect(displayed).to be_empty
+      end
+
+      it "reads the layer at the arrival, so lowering it silences the next one" do
+        raised << :notify
+        layered.render_arrival(announced("db"), from: "explorer")
+        raised.clear
+
+        layered.render_arrival(announced("region"), from: "explorer")
+
+        expect(output.string.count("\a")).to eq(1)
+        expect(displayed.size).to eq(1)
+      end
+    end
+
+    # A parked approval's note and a review's "a file is waiting" line are the
+    # other two things a human is summoned by.
+    describe "#render_summons" do
+      it "renders the line as a note and rings with it while the layer is up" do
+        raised << :notify
+
+        layered.render_summons("epic.md is open for review")
+
+        expect(output.string).to include("epic.md is open for review").and include("\a")
+        expect(displayed).to eq(["epic.md is open for review"])
+      end
+
+      it "renders the line and nothing else while the layer is down" do
+        layered.render_summons("epic.md is open for review")
+
+        expect(output.string).to include("epic.md is open for review")
+        expect(output.string).not_to include("\a")
+        expect(displayed).to be_empty
+      end
+    end
+
+    # `request_review` marks a hand-over done only once its line to the human
+    # returns, so a raise from here -- after the note is printed and the bell
+    # has rung -- would report a review the human was shown as one never handed
+    # over. A file name is bytes, and nothing upstream promises they are UTF-8.
+    it "rings once and raises nothing for a summons whose line is not valid UTF-8" do
+      shelled = []
+      tmux = Lain::Frontend::TTY::TmuxMessage.new(env: { "TMUX" => "/tmp/tmux-1000/default,1,0" },
+                                                  shell_out: lambda { |*argv, **|
+                                                    shelled << argv
+                                                    instance_double(Mixlib::ShellOut, run_command: nil)
+                                                  },
+                                                  background: ->(&work) { work.call })
+      summoning = described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new([:notify]) },
+                                      tmux:)
+
+      expect(summoning.render_summons("review \xFF\xFE.md is waiting")).to be_nil
+      expect(output.string.b.count("\a")).to eq(1)
+      expect(shelled.size).to eq(1)
+    end
+
+    it "rings for nothing when built with no layers at all" do
+      tty.render_arrival(announced("db"), from: "explorer")
+      tty.render_summons("epic.md is open for review")
+
+      expect(output.string).not_to include("\a")
+    end
+  end
+
+  # The one thing the notify layer runs outside this process. It runs off the
+  # arrival's own stack, bounded by a timeout, against the chat's own tmux.
+  describe "TTY::TmuxMessage" do
+    let(:shelled) { [] }
+    let(:shell_out) do
+      lambda do |*argv, **options|
+        shelled << [argv, options]
+        instance_double(Mixlib::ShellOut, run_command: nil)
+      end
+    end
+    let(:inline) { ->(&work) { work.call } }
+    let(:chat_env) { { "TMUX" => "/tmp/tmux-1000/default,4242,0", "TMUX_PANE" => "%3", "HOME" => "/home/x" } }
+
+    def message(env: chat_env, background: inline, shell: shell_out)
+      Lain::Frontend::TTY::TmuxMessage.new(env:, shell_out: shell, background:)
+    end
+
+    # The one shell-out a call made, failing when it made none or several.
+    def shelled_once
+      expect(shelled.size).to eq(1)
+      shelled.first
+    end
+
+    it "asks the chat's own tmux server to display the note" do
+      message.call("? explorer which db?")
+
+      argv, options = shelled_once
+      expect(argv).to eq(["tmux", "display-message", "? explorer which db?"])
+      expect(options[:environment]).to eq("TMUX" => chat_env["TMUX"], "TMUX_PANE" => "%3")
+    end
+
+    it "bounds the tmux call with a timeout" do
+      message.call("a note")
+
+      expect(shelled_once.last[:timeout]).to be_a(Numeric).and be_positive
+    end
+
+    it "runs nothing outside tmux" do
+      message(env: { "HOME" => "/home/x" }).call("a note")
+      message(env: { "TMUX" => "" }).call("a note")
+
+      expect(shelled).to be_empty
+    end
+
+    it "returns before the tmux call runs, so the arrival render never waits on it" do
+      deferred = []
+
+      message(background: ->(&work) { deferred << work }).call("a note")
+
+      expect(shelled).to be_empty
+      expect(deferred.size).to eq(1)
+    end
+
+    # tmux expands `#(...)` in a display-message by running it as a shell
+    # command, and `%` as strftime -- so a note carrying model-written text is
+    # escaped into a literal before tmux sees it.
+    it "escapes tmux's format and time expansions, so model text cannot run a command" do
+      message.call("run #(touch /tmp/owned) at 100% -- \e[31m")
+
+      expect(shelled_once.first.last).to eq("run ##(touch /tmp/owned) at 100%% -- \\e[31m")
+    end
+
+    it "hands tmux a scrubbed note when the note is not valid UTF-8, and raises nothing" do
+      expect(message.call("? \xFF #(x)")).to be_nil
+
+      expect(shelled_once.first.last).to eq("? \uFFFD ##(x)").and be_valid_encoding
+    end
+
+    it "does the escaping off the caller's stack, where a failure is swallowed" do
+      deferred = []
+
+      expect(message(background: ->(&work) { deferred << work }).call("\xFF #(x)")).to be_nil
+      expect(shelled).to be_empty
+
+      deferred.each(&:call)
+      expect(shelled_once.first.last).to eq("\uFFFD ##(x)")
+    end
+
+    it "clamps a long note to one status-line's worth" do
+      message.call("x" * 5_000)
+
+      expect(shelled_once.first.last.length).to be <= Lain::Frontend::TTY::TmuxMessage::LIMIT
+    end
+
+    it "swallows a tmux that is missing, failing or too slow" do
+      failing = ->(*, **) { raise Mixlib::ShellOut::CommandTimeout, "tmux took too long" }
+
+      expect(message(shell: failing).call("a note")).to be_nil
     end
   end
 end

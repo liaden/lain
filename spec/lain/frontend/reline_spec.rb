@@ -187,7 +187,7 @@ RSpec.describe Lain::Frontend::LineEditor do
     it "puts the editor in vi insert mode when vi mode is enabled" do
       allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      described_class.new(vi_mode: true).read("> ")
+      described_class.new(vi_mode: -> { true }).read("> ")
 
       expect(config.editing_mode_is?(:vi_insert)).to be(true)
     end
@@ -195,7 +195,7 @@ RSpec.describe Lain::Frontend::LineEditor do
     it "shows which mode is active, with a string for each" do
       allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      described_class.new(vi_mode: true).read("> ")
+      described_class.new(vi_mode: -> { true }).read("> ")
 
       expect(config.show_mode_in_prompt).to be(true)
       expect(config.vi_ins_mode_string).not_to be_empty
@@ -210,7 +210,7 @@ RSpec.describe Lain::Frontend::LineEditor do
         before = File.read(path)
         allow(Reline).to receive(:readmultiline).and_return("hi")
 
-        described_class.new(vi_mode: true).read("> ")
+        described_class.new(vi_mode: -> { true }).read("> ")
 
         expect(File.read(path)).to eq(before)
       end
@@ -227,7 +227,7 @@ RSpec.describe Lain::Frontend::LineEditor do
         ENV["INPUTRC"] = path
         allow(Reline).to receive(:readmultiline).and_return("hi")
 
-        described_class.new(vi_mode: true).read("> ")
+        described_class.new(vi_mode: -> { true }).read("> ")
 
         expect(config.editing_mode_is?(:vi_insert)).to be(true)
       end
@@ -285,7 +285,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       reported = []
       allow(Reline).to receive(:readmultiline).and_return("hi")
 
-      described_class.new(vi_mode: true, notify: reported.method(:push)).read("> ")
+      described_class.new(vi_mode: -> { true }, notify: reported.method(:push)).read("> ")
 
       expect(reported).to be_empty
     end
@@ -298,6 +298,83 @@ RSpec.describe Lain::Frontend::LineEditor do
         described_class.new(notify: reported.method(:push)).read("> ")
 
         expect(reported).to be_empty
+      end
+    end
+  end
+
+  # The `vi` mode layer is raised and lowered mid-session, so the editor asks
+  # at every read rather than once at construction -- and what a lowered layer
+  # hands back is whatever was in force before lain first asked, never a mode
+  # of lain's choosing.
+  describe "vi mode asked for at every read, as the vi layer is raised and lowered" do
+    let(:layer) { [false] }
+    let(:editor) { described_class.new(vi_mode: -> { layer.first }) }
+
+    before { allow(Reline).to receive(:readmultiline).and_return("hi") }
+
+    def read_with_layer(raised)
+      layer[0] = raised
+      editor.read("> ")
+    end
+
+    def spy_on_mode_writes
+      allow(config).to receive(:editing_mode=).and_call_original
+      allow(config).to receive(:show_mode_in_prompt=).and_call_original
+    end
+
+    it "switches a session that started in emacs to vi at the read after the layer is raised" do
+      read_with_layer(false)
+      read_with_layer(true)
+
+      expect(config.editing_mode_is?(:vi_insert)).to be(true)
+    end
+
+    it "is back in emacs, with no mode shown, at the read after the layer is lowered" do
+      read_with_layer(true)
+      read_with_layer(false)
+
+      expect(config.editing_mode_is?(:emacs)).to be(true)
+      expect(config.show_mode_in_prompt).to be(false)
+      expect([config.vi_cmd_mode_string, config.vi_ins_mode_string]).to eq(["(cmd)", "(ins)"])
+    end
+
+    it "hands back the mode in force before the first raise, however many reads the layer stayed up" do
+      read_with_layer(true)
+      read_with_layer(true)
+      read_with_layer(false)
+
+      expect(config.editing_mode_is?(:emacs)).to be(true)
+    end
+
+    it "never sets the editing mode or its indicator in a session that never raises the layer" do
+      spy_on_mode_writes
+
+      3.times { read_with_layer(false) }
+
+      expect(config).not_to have_received(:editing_mode=)
+      expect(config).not_to have_received(:show_mode_in_prompt=)
+    end
+
+    it "writes nothing further once a lowered layer has been handed back" do
+      read_with_layer(true)
+      read_with_layer(false)
+      spy_on_mode_writes
+
+      read_with_layer(false)
+
+      expect(config).not_to have_received(:editing_mode=)
+      expect(config).not_to have_received(:show_mode_in_prompt=)
+    end
+
+    # The operator's inputrc is the mode the session started in, so lowering
+    # the layer gives THAT back rather than emacs.
+    it "gives an inputrc that selected vi its own settings back when the layer is lowered" do
+      with_vi_inputrc do
+        read_with_layer(true)
+        read_with_layer(false)
+
+        expect(config.editing_mode_is?(:vi_insert)).to be(true)
+        expect(config.show_mode_in_prompt).to be(false)
       end
     end
   end
