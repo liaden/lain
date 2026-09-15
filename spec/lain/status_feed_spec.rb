@@ -763,7 +763,8 @@ RSpec.describe Lain::StatusFeed do
     context "when a prompt was refused for not fitting the context" do
       def pressure(prompt_tokens:, model: "claude-opus-4-8")
         Lain::Telemetry::WindowPressure.new(kind: :over_window, source: "ollama", model:,
-                                            request_digest: "blake3:refused", prompt_tokens:, window_tokens: 8192)
+                                            request_digest: "blake3:refused", prompt_tokens:, window_tokens: 8192,
+                                            stands_on: nil)
       end
 
       it "publishes the refused prompt's exact count as the occupancy" do
@@ -783,6 +784,217 @@ RSpec.describe Lain::StatusFeed do
         feed << pressure(prompt_tokens: 900_000)
 
         expect(published["run_tokens"]).to eq(500_005)
+      end
+    end
+
+    # A reading is about the chain it was taken on, and the Agent reads one as
+    # absent once that chain is gone. This sink follows the same rule off the
+    # records that move the head, so the prompt line and the HUD agree after a
+    # rewind. The chains here are real, because the question is ancestry.
+    context "when the chain moves under the reading" do
+      let(:store) { Lain::Store.new }
+      let(:line) do
+        %w[user assistant user assistant].each_with_index.inject(Lain::Timeline.empty(store:)) do |grown, (role, index)|
+          grown.commit(role:, content: [{ "type" => "text", "text" => "turn #{index}" }])
+        end
+      end
+      let(:book) { Lain::ContextWindow.new(windows: { "qwen3" => 8192 }) }
+
+      def digest(index) = line.to_a[index].digest
+
+      def answered(index, input_tokens: 4096)
+        Lain::Telemetry::TurnUsage.new(
+          digest: digest(index), model: "qwen3:4b", stop_reason: :end_turn,
+          usage: { "input_tokens" => input_tokens, "output_tokens" => 5,
+                   "cache_read_input_tokens" => 0, "cache_creation_input_tokens" => 0 }
+        )
+      end
+
+      def refused(stands_on: digest(3), prompt_tokens: 9_000)
+        Lain::Telemetry::WindowPressure.new(kind: :over_window, source: "ollama", model: "qwen3:4b",
+                                            request_digest: "blake3:refused", prompt_tokens:, window_tokens: 8192,
+                                            stands_on:)
+      end
+
+      def rewound(to:) = Lain::SessionRecord.rewound(from: line.head_digest, to:)
+
+      def feed = @feed ||= described_class.new(path:, context_window: book, store:)
+
+      it "spells the rewind record the way the session record writes it" do
+        expect(described_class::REWOUND).to eq(Lain::SessionRecord::REWOUND_TYPE)
+      end
+
+      it "publishes absence, never zero, once a rewind drops the turn the reading was taken at" do
+        feed << answered(3)
+
+        feed << rewound(to: digest(1))
+
+        expect(published["occupancy"]).to be_nil
+        expect(published["window_guessed"]).to be_nil
+      end
+
+      it "keeps a reading whose turn the rewind left on the chain" do
+        feed << answered(1)
+
+        feed << rewound(to: digest(2))
+
+        expect(published["occupancy"]).to eq(0.5)
+      end
+
+      it "keeps a refused count through the withdrawal that follows it, which moves no record" do
+        feed << answered(3)
+
+        feed << refused
+
+        expect(published["occupancy"]).to eq(9_000.fdiv(8192))
+      end
+
+      # The record names the turn the count stands on, so nothing is inferred
+      # from the head this sink last heard of: a refusal on a prompt a resend
+      # rewound onto stands beneath that prompt, not on it.
+      it "tags a refused count with the turn its record names, not the head it last heard" do
+        feed << answered(3)
+        feed << rewound(to: digest(2))
+        feed << refused(stands_on: digest(1))
+
+        feed << rewound(to: digest(1))
+
+        expect(published["occupancy"]).to eq(9_000.fdiv(8192))
+      end
+
+      it "stands a refused count taken beneath a root prompt on every chain, the empty one included" do
+        feed << refused(stands_on: nil)
+
+        feed << rewound(to: nil)
+
+        expect(published["occupancy"]).to eq(9_000.fdiv(8192))
+      end
+
+      it "starts the unmeasured streak again when a rewind drops the reading" do
+        feed << answered(3)
+        feed << Lain::Telemetry::TurnUsage.new(digest: digest(3), model: "qwen3:4b", stop_reason: :end_turn,
+                                               usage: nil)
+        expect(published["unmeasured_turns"]).to eq(1)
+
+        feed << rewound(to: digest(1))
+
+        expect(published["unmeasured_turns"]).to eq(0)
+      end
+
+      it "drops a refused count once a rewind takes the turn below the refused prompt" do
+        feed << answered(3)
+        feed << refused
+
+        feed << rewound(to: digest(1))
+
+        expect(published["occupancy"]).to be_nil
+      end
+
+      it "keeps a refused count through a fold that cuts the next prompt from the turn it stood on" do
+        feed << answered(3)
+        feed << refused
+
+        feed << Lain::SessionRecord.retreat(from: "blake3:stranded", to: digest(3), landing: "blake3:folded")
+
+        expect(published["occupancy"]).to eq(9_000.fdiv(8192))
+      end
+
+      it "does not bring a dropped reading back when a stopped ask re-reads the book" do
+        feed << answered(3)
+        feed << rewound(to: digest(1))
+
+        feed << Lain::Telemetry::RunInterrupted.new(head: digest(1), reason: :stopped)
+
+        expect(published["occupancy"]).to be_nil
+      end
+
+      it "takes the next reading as usual after a dropped one" do
+        feed << answered(3)
+        feed << rewound(to: digest(1))
+
+        feed << answered(3, input_tokens: 2048)
+
+        expect(published["occupancy"]).to eq(0.25)
+      end
+    end
+
+    # The Agent and this sink read a refused count off one tag: the Agent names
+    # it as it calls the model, and the refusal record the model phase writes
+    # carries it here. Driven through a real Agent and a real RequestBudget, so
+    # the record is the one production writes; the rewinds reach the feed as
+    # the session record's own `rewound` records.
+    context "when the Agent and the feed read one refused count" do
+      let(:store_book) { Lain::ContextWindow.new(windows: { "qwen3" => 8192 }) }
+      let(:refusal_class) { Class.new(Lain::Error) { include Lain::WindowExceeded } }
+      let(:feed) { described_class.new(path:, context_window: store_book) }
+
+      def refusal = refusal_class.new("too long", prompt_tokens: 12_011, window_tokens: 8192, source: "spec")
+
+      def answer(stop_reason: :end_turn)
+        text_response("yo", stop_reason:, usage: Lain::Usage.new(input_tokens: 4096, output_tokens: 1),
+                            model: "qwen3:4b")
+      end
+
+      def scripted(*outcomes)
+        Class.new do
+          define_method(:initialize) { |list| @list = list }
+          define_method(:complete) do |_request|
+            outcome = @list.shift || raise("script exhausted")
+            outcome.is_a?(Exception) ? raise(outcome) : outcome
+          end
+        end.new(outcomes)
+      end
+
+      def agent_over(*outcomes)
+        budget = Lain::Middleware::RequestBudget.new(journal: feed)
+        agent = Lain::Agent.new(provider: scripted(*outcomes), toolset: CoreGraph.toolset([EchoTool.new]),
+                                context: CoreGraph.context(model: "qwen3:4b"), journal: feed,
+                                model_middleware: Lain::Middleware::Stack.new([budget]))
+        feed.bind_store(agent.timeline.store)
+        agent
+      end
+
+      def rewind(agent)
+        from = agent.timeline.head_digest
+        agent.rewind(1)
+        feed << Lain::SessionRecord.rewound(from:, to: agent.timeline.head_digest)
+      end
+
+      def agreed(agent) = [agent.occupancy(context_window: store_book), feed.state["occupancy"]]
+
+      # What an nvim resend does: rewind onto the prompt, then run it again.
+      # A refusal there is not withdrawn, and `/rewind 1` lands beneath it.
+      it "agrees after a resend's refusal and a rewind onto the prompt's parent" do
+        agent = agent_over(answer, answer, refusal)
+        agent.ask("one")
+        agent.ask("two")
+        rewind(agent)
+        expect { agent.run }.to raise_error(Lain::WindowExceeded)
+
+        rewind(agent)
+
+        expect(agreed(agent)).to eq([12_011.fdiv(8192)] * 2)
+      end
+
+      it "agrees after a root refusal, a stranded prompt and a rewind to the empty chain" do
+        agent = agent_over(refusal, Lain::Error.new("provider down"))
+        expect { agent.ask("huge") }.to raise_error(Lain::WindowExceeded)
+        expect { agent.ask("small") }.to raise_error(Lain::Error, "provider down")
+
+        rewind(agent)
+
+        expect(agent.timeline).to be_empty
+        expect(agreed(agent)).to eq([12_011.fdiv(8192)] * 2)
+      end
+
+      it "agrees after a refusal on a paused turn's re-dispatch and a rewind past that turn" do
+        agent = agent_over(answer(stop_reason: :pause_turn), refusal)
+        expect { agent.ask("hi") }.to raise_error(Lain::WindowExceeded)
+        expect(agent.timeline.to_a.map(&:role)).to eq(%w[user assistant])
+
+        rewind(agent)
+
+        expect(agreed(agent)).to eq([nil, nil])
       end
     end
 

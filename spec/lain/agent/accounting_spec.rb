@@ -88,33 +88,85 @@ RSpec.describe Lain::Agent::Accounting do
     end
   end
 
+  # A reading is about a chain, so it is asked of one. These chains are real:
+  # whether a reading still stands is a question about ancestry, which only a
+  # Store can answer.
   describe "#last_turn_usage" do
+    let(:line) do
+      %w[user assistant user assistant].each_with_index.inject(Lain::Timeline.empty) do |grown, (role, index)|
+        grown.commit(role:, content: [{ "type" => "text", "text" => "turn #{index}" }])
+      end
+    end
+
+    def at(index) = line.checkout(line.to_a[index].digest)
+
+    def digest(index) = line.to_a[index].digest
+
     it "is nil before any turn -- unknown, not zero" do
-      expect(described_class.new.last_turn_usage).to be_nil
+      expect(described_class.new.last_turn_usage(on: line)).to be_nil
     end
 
     it "reports the most recent response's input tokens, not the sum" do
       accounting = described_class.new
-      accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
-      accounting.observe(response(input: 250, output: 5), digest: "blake3:two")
+      accounting.observe(response(input: 100, output: 5), digest: digest(1))
+      accounting.observe(response(input: 250, output: 5), digest: digest(3))
 
-      expect(accounting.last_turn_usage).to eq(250)
+      expect(accounting.last_turn_usage(on: line)).to eq(250)
       expect(accounting.usage.total_input_tokens).to eq(350)
+    end
+
+    context "when the chain has moved since the reading was taken" do
+      it "still reads it on a chain grown past the turn it was taken at" do
+        accounting = described_class.new
+        accounting.observe(response(input: 250, output: 5), digest: digest(1))
+
+        expect(accounting.last_turn_usage(on: line)).to eq(250)
+      end
+
+      it "reads it on the very turn it was taken at" do
+        accounting = described_class.new
+        accounting.observe(response(input: 250, output: 5), digest: digest(3))
+
+        expect(accounting.last_turn_usage(on: at(3))).to eq(250)
+      end
+
+      it "reads as absent, and never as zero, once a rewind drops the turn it was taken at" do
+        accounting = described_class.new
+        accounting.observe(response(input: 250, output: 5), digest: digest(3))
+
+        expect(accounting.last_turn_usage(on: at(2))).to be_nil
+      end
+
+      it "reads as absent on a branch that never held that turn" do
+        accounting = described_class.new
+        accounting.observe(response(input: 250, output: 5), digest: digest(3))
+        branch = at(2).commit(role: "assistant", content: [{ "type" => "text", "text" => "another answer" }])
+
+        expect(accounting.last_turn_usage(on: branch)).to be_nil
+      end
+
+      it "comes back when the chain returns to the turn it was taken at" do
+        accounting = described_class.new
+        accounting.observe(response(input: 250, output: 5), digest: digest(3))
+        accounting.last_turn_usage(on: at(2))
+
+        expect(accounting.last_turn_usage(on: line)).to eq(250)
+      end
     end
 
     context "when a response reports no usage at all" do
       it "leaves the last real reading standing rather than reading as an empty context" do
         accounting = described_class.new
-        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
-        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+        accounting.observe(response(input: 100, output: 5), digest: digest(1))
+        accounting.observe(response(input: 0, output: 0), digest: digest(3))
 
-        expect(accounting.last_turn_usage).to eq(100)
+        expect(accounting.last_turn_usage(on: line)).to eq(100)
       end
 
       it "still folds the zero turn into the cumulative total" do
         accounting = described_class.new
-        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
-        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+        accounting.observe(response(input: 100, output: 5), digest: digest(1))
+        accounting.observe(response(input: 0, output: 0), digest: digest(3))
 
         expect(accounting.usage).to eq(Lain::Usage.new(input_tokens: 100, output_tokens: 5))
       end
@@ -131,9 +183,9 @@ RSpec.describe Lain::Agent::Accounting do
 
       it "is still absent when the very first response reports no usage" do
         accounting = described_class.new
-        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+        accounting.observe(response(input: 0, output: 0), digest: digest(1))
 
-        expect(accounting.last_turn_usage).to be_nil
+        expect(accounting.last_turn_usage(on: line)).to be_nil
       end
 
       it "is the shape Ollama yields when the body omits prompt_eval_count" do
@@ -145,29 +197,29 @@ RSpec.describe Lain::Agent::Accounting do
 
       it "leaves a real reading standing when Ollama reports output but no prompt cost" do
         accounting = described_class.new
-        accounting.observe(response(input: 900_000, output: 5), digest: "blake3:one")
+        accounting.observe(response(input: 900_000, output: 5), digest: digest(1))
         accounting.observe(
           response(usage: ollama_usage(ollama_body_missing_prompt_eval_count)),
-          digest: "blake3:two"
+          digest: digest(3)
         )
 
-        expect(accounting.last_turn_usage).to eq(900_000)
+        expect(accounting.last_turn_usage(on: line)).to eq(900_000)
       end
 
       it "leaves the reading standing on a negative input sum, which neither type forbids" do
         accounting = described_class.new
-        accounting.observe(response(input: 900_000, output: 5), digest: "blake3:one")
-        accounting.observe(response(input: -10, output: 5), digest: "blake3:two")
+        accounting.observe(response(input: 900_000, output: 5), digest: digest(1))
+        accounting.observe(response(input: -10, output: 5), digest: digest(3))
 
-        expect(accounting.last_turn_usage).to eq(900_000)
+        expect(accounting.last_turn_usage(on: line)).to eq(900_000)
       end
 
       it "takes the reading when only the output tokens are zero" do
         accounting = described_class.new
-        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
-        accounting.observe(response(input: 7, output: 0), digest: "blake3:two")
+        accounting.observe(response(input: 100, output: 5), digest: digest(1))
+        accounting.observe(response(input: 7, output: 0), digest: digest(3))
 
-        expect(accounting.last_turn_usage).to eq(7)
+        expect(accounting.last_turn_usage(on: line)).to eq(7)
       end
     end
   end
@@ -178,21 +230,57 @@ RSpec.describe Lain::Agent::Accounting do
   # yields. Without it compaction's approaching-window signal keeps reading
   # the last answered turn and never fires, so every later prompt is refused
   # the same way.
+  #
+  # The refused prompt itself may be withdrawn, so the count is taken as
+  # standing on the turn below it, which the Agent names.
   describe "#observe_refusal" do
+    let(:line) do
+      %w[user assistant user].each_with_index.inject(Lain::Timeline.empty) do |grown, (role, index)|
+        grown.commit(role:, content: [{ "type" => "text", "text" => "turn #{index}" }])
+      end
+    end
+
+    def at(index) = line.checkout(line.to_a[index].digest)
+
+    def digest(index) = line.to_a[index].digest
+
     it "takes the provider's exact prompt count as the current reading" do
       accounting = described_class.new
-      accounting.observe(response(input: 7_000, output: 5), digest: "blake3:one")
+      accounting.observe(response(input: 7_000, output: 5), digest: digest(1))
 
-      accounting.observe_refusal(prompt_tokens: 12_011)
+      accounting.observe_refusal(prompt_tokens: 12_011, head: digest(1))
 
-      expect(accounting.last_turn_usage).to eq(12_011)
+      expect(accounting.last_turn_usage(on: line)).to eq(12_011)
+    end
+
+    it "is still believed once the refused prompt is withdrawn off the chain" do
+      accounting = described_class.new
+      accounting.observe_refusal(prompt_tokens: 12_011, head: digest(1))
+
+      expect(accounting.last_turn_usage(on: at(1))).to eq(12_011)
+    end
+
+    it "reads as absent once a rewind drops the turn it stood on" do
+      accounting = described_class.new
+      accounting.observe_refusal(prompt_tokens: 12_011, head: digest(1))
+
+      expect(accounting.last_turn_usage(on: at(0))).to be_nil
+    end
+
+    it "stands on any chain when the refused prompt was the first turn of all" do
+      accounting = described_class.new
+
+      accounting.observe_refusal(prompt_tokens: 12_011, head: nil)
+
+      expect(accounting.last_turn_usage(on: Lain::Timeline.empty)).to eq(12_011)
+      expect(accounting.last_turn_usage(on: line)).to eq(12_011)
     end
 
     it "spends nothing and records nothing, since nothing was generated or billed" do
       accounting = described_class.new(journal:)
-      accounting.observe(response(input: 7_000, output: 5), digest: "blake3:one")
+      accounting.observe(response(input: 7_000, output: 5), digest: digest(1))
 
-      accounting.observe_refusal(prompt_tokens: 12_011)
+      accounting.observe_refusal(prompt_tokens: 12_011, head: digest(1))
 
       expect(accounting.usage).to eq(Lain::Usage.new(input_tokens: 7_000, output_tokens: 5))
       expect(records.size).to eq(1)
@@ -200,11 +288,11 @@ RSpec.describe Lain::Agent::Accounting do
 
     it "leaves the reading standing on a count that says nothing" do
       accounting = described_class.new
-      accounting.observe(response(input: 7_000, output: 5), digest: "blake3:one")
+      accounting.observe(response(input: 7_000, output: 5), digest: digest(1))
 
-      accounting.observe_refusal(prompt_tokens: 0)
+      accounting.observe_refusal(prompt_tokens: 0, head: digest(1))
 
-      expect(accounting.last_turn_usage).to eq(7_000)
+      expect(accounting.last_turn_usage(on: line)).to eq(7_000)
     end
   end
 end

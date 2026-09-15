@@ -14,9 +14,14 @@ module Lain
       # The head rule is what makes a rewind or a fork a forward run. Below the
       # commit head, the original run sent those turns verbatim, and a summary
       # committed later in time has no business replacing the turn a human
-      # rewound TO. The arm rule keeps one arm's prefix from being sent under
-      # another on a bench that compares them. The boundary rule keeps a resume
-      # under a larger `--compact-keep` from collapsing turns keep_last retains.
+      # rewound TO. The commit head is the turn the render stood on
+      # ({Event.stands_on}), not the prompt at the head: an ask refused before
+      # any model saw it withdraws that prompt and the next takes its place, so
+      # a cut committed at the prompt itself retreated and was committed again
+      # on every stuck ask. The arm rule keeps one arm's prefix from being sent
+      # under another on a bench that compares them. The boundary rule keeps a
+      # resume under a larger `--compact-keep` from collapsing turns keep_last
+      # retains.
       # The latest recorded cut meeting all three holds, with its lineage;
       # otherwise none does.
       #
@@ -102,7 +107,8 @@ module Lain
 
           @session.record_compaction_cut(
             Telemetry::CompactionCut.new(
-              digest: shipped.seam.digest, head: @timeline.head_digest, strategy: @arm, parent: @lineage.last&.address,
+              digest: shipped.seam.digest, head: Event.stands_on(@walk.turns.last), strategy: @arm,
+              parent: @lineage.last&.address,
               collapses: shipped.seam.collapses.drop(@seam.collapses.size),
               plan_step_completions: @session.plan_step_completions
             )

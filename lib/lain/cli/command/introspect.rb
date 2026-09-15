@@ -50,14 +50,16 @@ module Lain
         # does not, and it sums every model the run called.
         SCOPE = "this run only -- a --resume starts a fresh ledger, so spend before it is not counted " \
                 "here; the totals cover every model this run called, not just the one named above"
-        # ABSENCE, scoped to the run that can claim it: a resumed chat's
-        # Accounting is fresh while its Timeline is not, so an unqualified "no
+        # ABSENCE, scoped to what can claim it: a resumed chat's Accounting is
+        # fresh while its Timeline is not, and a `/rewind` past the measured turn
+        # leaves this run's earlier turns on the chain, so an unqualified "no
         # turn yet" is false about turns that are sitting right there.
-        NO_TURN = "no turn yet in this run"
+        NO_TURN = "no turn measured on this chain in this run"
 
-        # AS OF, not as of now: {Lain::Agent::Accounting#last_turn_usage} is
-        # written only by `#observe`, so a `/rewind` that drops the turn this
-        # measured leaves the reading where it stood. It names its denominator
+        # AS OF, not as of now: {Lain::Agent::Accounting#last_turn_usage} is the
+        # last response's count, or a refused prompt's, taken before whatever
+        # this chain has grown by since. A `/rewind` past the turn it stood on
+        # reads as no reading rather than as this one. It names its denominator
         # so the two rows cannot be read as being about different windows.
         AS_OF = "%.1f%% at the last model response, of a window whose size is unreported below"
 

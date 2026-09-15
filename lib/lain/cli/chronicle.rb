@@ -18,6 +18,11 @@ module Lain
       # no nil-checks. The `(**)` signatures accept the real methods' keywords
       # without naming arguments a Null never reads.
       class Null
+        # Views to tell only once {#wrap_tee} names them.
+        def initialize
+          @live = Channel::Null.instance
+        end
+
         # Nil is the honest answer: --no-journal has no file, and /fork reads
         # this to refuse composing a selector no record backs.
         def journal_path = nil
@@ -39,10 +44,27 @@ module Lain
         def durable_journal = @durable_journal ||= Journal.new(io: File.open(File::NULL, "ab"))
 
         def catch_up(_timeline) = self
-        def rewound(**) = self
-        def replaced(**) = self
-        def interrupted(**) = self
         def close(**) = self
+
+        # The head moves, with no record to write them to but still live views
+        # to tell: under --nvim a HUD that never heard a rewind keeps a figure
+        # about a chain that is gone. There is no written chain, so a move
+        # names no `from`.
+        def rewound(to:)
+          @live << SessionRecord.rewound(from: nil, to:)
+          self
+        end
+
+        def replaced(to:, with:)
+          landing = with.ancestors.take_while { |turn| turn.digest != to }.last
+          @live << SessionRecord.retreat(from: nil, to:, landing: landing&.digest)
+          self
+        end
+
+        def interrupted(head:, reason:)
+          @live << Telemetry::RunInterrupted.new(head:, reason:)
+          self
+        end
 
         # --no-journal + --nvim: there is no session record to share, so nvim
         # gets its OWN real journal. Returns it, the same duck the real
@@ -51,6 +73,7 @@ module Lain
         def wrap_tee(channel)
           journal = Journal.open
           @tee = JournalTee.new(journal, channel)
+          @live = LiveLeg.new(channel, journal:)
           journal
         end
 
@@ -86,6 +109,50 @@ module Lain
           @wal = Provider::ResponseWal.new(path) unless File.exist?(path)
           @path = path
           self
+        end
+      end
+
+      # The live views alone, for a record the scribe has already written and
+      # followed: a rewind, a fold's retreat, a stopped run. The views are the
+      # sinks {#wrap_tee} fans telemetry to, reached through a
+      # {JournalTee} over no journal, so a closed Channel is swallowed as it is
+      # everywhere else.
+      #
+      # A view that raises is NOT raised into the caller, and that is the one
+      # difference from the tee. Each of these records announces a move the
+      # caller still has to make -- `/rewind` moves the Agent after it, a stop
+      # closes the session after it -- and a raise there leaves the file ahead
+      # of the run it describes: an Agent at a head the record has retreated
+      # from, refused by every later catch_up, or a session never closed.
+      #
+      # Not silent either: the fault lands in the session file in the
+      # Journal's own `journal_error` shape, as {Approval::Queue}'s degraded
+      # evidence does, so a reader has one failure record to know. When even
+      # that write fails the journal is gone, and the record it would describe
+      # already failed to land with it.
+      class LiveLeg
+        # @param views [#<<] the sinks {#wrap_tee} fans telemetry to
+        # @param journal [#<<] the session journal a view's fault is written to
+        def initialize(views, journal:)
+          @views = JournalTee.new(Channel::Null.instance, views)
+          @journal = journal
+          freeze
+        end
+
+        def <<(record)
+          fault = JournalTee.landed { @views << record }
+          report(fault, record) if fault
+          self
+        end
+
+        private
+
+        # A Hash record is named by its own type, since its class says nothing.
+        def report(fault, record)
+          @journal << { "type" => "journal_error", "error" => "#{fault.class}: #{fault.message}",
+                        "entry_class" => record.is_a?(Hash) ? record.fetch("type") : record.class.name }
+        rescue StandardError
+          nil
         end
       end
 
@@ -131,6 +198,7 @@ module Lain
       def initialize(journal:, journal_path: nil)
         @journal = journal
         @tee = nil
+        @live = Channel::Null.instance
         @journal_path = journal_path
         @recorder = nil
       end
@@ -151,6 +219,7 @@ module Lain
       # -- must be this identical instance.
       def wrap_tee(channel)
         @tee = JournalTee.new(@journal, channel)
+        @live = LiveLeg.new(channel, journal: @journal)
         @journal
       end
 
@@ -195,7 +264,7 @@ module Lain
       def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
                 profile: RunProfile::UNRECORDED)
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
-                                            resumed_from:, written:, message_journal: @tee,
+                                            resumed_from:, written:, message_journal: @tee, live: @live,
                                             profile: profile.to_header)
         self
       end

@@ -8,9 +8,10 @@ require "tmpdir"
 # builds: a real {Lain::CLI::Backend} resolving the run's window book from
 # `/api/ps`, the real {Lain::Provider::Ollama} encoding and error mapping, the
 # model phase {Lain::CLI::Wiring} composes, a real {Lain::Agent} with its real
-# compaction source, a real session journal and a real {Lain::StatusFeed} on the
-# tee. Only the socket is stubbed, and the bodies it answers with are ollama
-# 0.32.12's own.
+# compaction source, a real session journal and a real {Lain::StatusFeed} joined
+# to it the way `ChatLaunch#open_chronicle` joins one, through
+# {Lain::CLI::LiveViews}. Only the socket is stubbed, and the bodies it answers
+# with are ollama 0.32.12's own.
 #
 # The defect it closes, from round 17: a 330 KB request went to a 32,768-token
 # runner, which cut it from the front to 16,386 tokens -- dropping the system
@@ -29,8 +30,8 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
     Lain::StatusFeed.new(path: File.join(@dir, "state.json"), context_window: backend.context_window)
   end
   let(:chronicle) do
-    Lain::CLI::Chronicle.new(journal: Lain::CLI::JournalTee.new(Lain::Journal.new(io: journal_io), feed),
-                             journal_path: "over-window-seam.ndjson")
+    Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "over-window-seam.ndjson")
+                        .tap { |opened| Lain::CLI::LiveViews.new(options: {}, chronicle: opened, status_feed: feed) }
   end
   let(:chat_bodies) { [] }
 
@@ -84,10 +85,19 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
+    feed.bind_store(agent.timeline.store)
     [agent, Lain::CLI::Repl::Ask.new(agent:, tty:, chronicle:)]
   end
 
+  # The command a human types, over the same chronicle, so the move lands in
+  # the record the feed rides as well as on the Agent.
+  def rewind(agent, count)
+    Lain::CLI::Command::Rewind.new.call(count.to_s, build_command_env(agent:, chronicle:))
+  end
+
   def tty = @tty ||= instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil)
+
+  def published = JSON.parse(File.read(File.join(@dir, "state.json")))
 
   def journaled(type)
     journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
@@ -259,6 +269,116 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
 
       expect(feed.state["occupancy"]).to eq(agent.occupancy)
       expect(agent.occupancy).to eq(9_000.fdiv(context_length))
+    end
+
+    it "is measured the same by the Agent and by the status feed after a rewind past it" do
+      agent, ask = chat
+      ask.attempt("hello")
+      ask.attempt("again")
+      ask.attempt("DOES-NOT-FIT")
+
+      rewind(agent, 2)
+
+      expect(agent.occupancy).to be_nil
+      expect(feed.state["occupancy"]).to eq(agent.occupancy)
+    end
+
+    # What the tmux HUD prints is the published file, and the rewind reaches it
+    # through the session record's own write, before any later model call.
+    it "clears the published HUD figure at the rewind, before the next response" do
+      agent, ask = chat
+      ask.attempt("hello")
+      ask.attempt("again")
+      expect(published["occupancy"]).to be_a(Float)
+      requests = chat_bodies.size
+
+      rewind(agent, 1)
+
+      expect(published["occupancy"]).to be_nil
+      expect(published["hud"]).not_to match(/ctx:~?\d+%/)
+      expect(chat_bodies.size).to eq(requests)
+    end
+
+    # A withdrawn prompt leaves the turn below it at the head, and the refused
+    # count is still the best reading of that chain plus the next prompt.
+    it "is still believed by both after the withdrawal, with no rewind" do
+      agent, ask = chat
+      ask.attempt("hello")
+      ask.attempt("DOES-NOT-FIT")
+
+      expect(agent.occupancy).to eq(9_000.fdiv(context_length))
+      expect(feed.state["occupancy"]).to eq(agent.occupancy)
+    end
+  end
+
+  # Nothing is resident, so the window is a guess until a refusal names the
+  # context the server loaded. The refusal record reaches the feed before that
+  # vouch; the `run_interrupted` the chat writes when the ask stops is the
+  # first record after it.
+  describe "an over-window refusal over a guessed window" do
+    before do
+      stub_request(:get, %r{/api/ps}).to_return(
+        status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => [])
+      )
+    end
+
+    it "drops the published guess mark when the stopped ask is recorded, before any later model call" do
+      _, ask = chat(tty:)
+      ask.attempt("hello")
+      expect(published["window_guessed"]).to be(true)
+
+      ask.settle(ask.attempt("DOES-NOT-FIT"))
+
+      expect(journaled("run_interrupted").last).to include("reason" => "over_window")
+      expect(published["window_guessed"]).to be(false)
+      expect(published["hud"]).to match(/ ctx:\d+% /)
+      expect(chat_bodies.size).to eq(2)
+    end
+  end
+
+  # A count refused on a 32k runner describes a chain a rewind has since cut
+  # back; believed there, it fires the window signal and compacts a history a
+  # fraction of the window's size.
+  describe "a rewind past a refused turn" do
+    let(:context_length) { 32_768 }
+
+    def answer(body)
+      chat_bodies << body
+      return refusal(prompt_tokens: 33_000) if JSON.generate(body["messages"]).include?("DOES-NOT-FIT")
+
+      super
+    end
+
+    it "does not fire the approaching-window signal on the refused count" do
+      agent, ask = chat
+      ask.attempt("hello")
+      ask.attempt("again")
+      ask.attempt("DOES-NOT-FIT")
+      rewind(agent, 2)
+
+      expect(ask.attempt("ping").text).to eq("settled")
+
+      expect(journaled("compaction_decision").last).to include("used_tokens" => nil, "compacted" => false)
+      expect(journaled("compaction_decision").last["signals"]).not_to include("approaching_window")
+    end
+  end
+
+  # An ask refused whole is withdrawn, and the next ask renders the same chain
+  # plus its own prompt. A cut committed on the refused render must still hold
+  # there, or every stuck ask retreats the cut and commits it again.
+  describe "a stuck ask" do
+    it "commits its cut once across two refused and withdrawn asks" do
+      _, ask = chat
+      ask.attempt(prose("FIRST-MARKER", 12_000))
+      ask.attempt(prose("SECOND-MARKER", 12_000))
+      ask.attempt("DOES-NOT-FIT")
+
+      2.times { |attempt| ask.attempt("DOES-NOT-FIT, attempt #{attempt}") }
+
+      cuts = journaled("compaction_cut")
+      expect(journaled("compaction_decision").map { |record| record["compacted"] }).to include(true)
+      expect(cuts.size).to eq(1)
+      expect(JSON.generate(chat_bodies.last["messages"])).not_to include("FIRST-MARKER")
     end
   end
 end

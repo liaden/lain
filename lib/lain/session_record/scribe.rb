@@ -138,13 +138,21 @@ module Lain
       #   file, carrying edges the ChildTurn beside it already holds for the same
       #   digest. It earns its place on the WIRE, not in the record; the
       #   duplicated bytes are the accepted price of not routing the wide one.
+      # @param live [#<<] the live views ALONE, told each record that moves the
+      #   head -- a rewind, a fold's retreat, a stopped run -- once the journal
+      #   has it and the written chain has moved with it. A second leg rather
+      #   than `message_journal`, because a fold's retreat shares its one write
+      #   with turn records the views must not see, and because the chain has to
+      #   move between the durable write and the live one: told first, a raising
+      #   view would leave a record on disk this object had not followed.
       # @param profile [Hash{String=>Object}] the run profile's header fields
       #   (`CLI::RunProfile#to_header`); empty writes none
       # @param writer [Liveness::Writer] the process writing this session
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                     message_journal: nil, profile: {}, writer: Liveness::Writer.current)
+                     message_journal: nil, live: Channel::Null.instance, profile: {}, writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal
+        @live = live
         @written = WrittenChain.new(written)
         # The digests {#child_turn} has already recorded. A Set, and membership
         # is the only question asked of it -- unlike {WrittenChain}, where the
@@ -209,8 +217,10 @@ module Lain
       # @raise [Diverged] for a target never written; nothing is written
       def rewound(to:)
         written_target!(to)
-        @journal << SessionRecord.rewound(from: @written.head, to:)
+        record = SessionRecord.rewound(from: @written.head, to:)
+        @journal << record
         @written.retreat_to(to)
+        @live << record
         self
       end
 
@@ -229,9 +239,11 @@ module Lain
         written_target!(to)
         fresh = with.ancestors.take_while { |turn| turn.digest != to }.reverse
         stands_on!(to, with, fresh)
-        @journal.record_all([retreat(to, fresh), *fresh.map { |turn| SessionRecord.turn(turn) }])
+        moved = retreat(to, fresh)
+        @journal.record_all([moved, *fresh.map { |turn| SessionRecord.turn(turn) }])
         @written.retreat_to(to)
         fresh.each { |turn| @written.append(turn.digest) }
+        @live << moved
         self
       end
 
@@ -266,7 +278,9 @@ module Lain
       # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
       # @return [self]
       def interrupted(reason:, head: @written.head)
-        @journal << Telemetry::RunInterrupted.new(head:, reason:)
+        record = Telemetry::RunInterrupted.new(head:, reason:)
+        @journal << record
+        @live << record
         self
       end
 

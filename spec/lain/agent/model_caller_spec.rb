@@ -39,4 +39,19 @@ RSpec.describe Lain::Agent::ModelCaller do
     expect(seen_in.request).to eq(request)
     expect(seen_out.response).to be(response)
   end
+
+  it "carries what the caller says about the turn into the env beside the request" do
+    seen_in = nil
+    probe = Class.new(Lain::Middleware::Base) do
+      define_method(:call) do |env, &downstream|
+        seen_in = env
+        downstream.call(env)
+      end
+    end.new
+
+    described_class.new(provider:, middleware: Lain::Middleware::Stack.new.use(probe))
+                   .call(request, stands_on: "blake3:below")
+
+    expect(seen_in.to_h).to eq(request:, stands_on: "blake3:below")
+  end
 end

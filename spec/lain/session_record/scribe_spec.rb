@@ -348,6 +348,75 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 
+  # The records that move the head are what a live view needs to follow the
+  # chain: a HUD reading taken on turns a rewind dropped describes nothing any
+  # more. They reach the file once, through the journal, and the live leg is
+  # told only after the written chain has moved with them, so a live view that
+  # raises can neither lose the record nor get it written twice.
+  describe "the head moves, told to a live leg" do
+    let(:live) { [] }
+    let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, live:) }
+    let(:line) do
+      %w[first second third].inject(Lain::Timeline.empty(store:)) do |grown, body|
+        grown.commit(role: :user, content: text(body))
+      end
+    end
+
+    def at(index) = line.checkout(line.to_a[index].digest)
+
+    it "tells it a rewind after the file has it, once" do
+      scribe.catch_up(line)
+
+      scribe.rewound(to: line.to_a[1].digest)
+
+      expect(of_type("rewound").size).to eq(1)
+      expect(live).to eq([Lain::SessionRecord.rewound(from: line.head_digest, to: line.to_a[1].digest)])
+    end
+
+    it "tells it a fold's retreat, and none of the turns written beside it" do
+      scribe.catch_up(line)
+      folded = at(1).commit(role: :user, content: text("third, and more"))
+
+      scribe.replaced(to: line.to_a[1].digest, with: folded)
+
+      expect(live).to eq([Lain::SessionRecord.retreat(from: line.head_digest, to: line.to_a[1].digest,
+                                                      landing: folded.head_digest)])
+      expect(live.map { |record| record["type"] }).not_to include(Lain::SessionRecord::TURN_TYPE)
+    end
+
+    it "tells it a stopped run after the file has it, once" do
+      scribe.catch_up(line)
+
+      scribe.interrupted(reason: :stopped)
+
+      expect(of_type("run_interrupted").size).to eq(1)
+      expect(live).to eq([Lain::Telemetry::RunInterrupted.new(head: line.head_digest, reason: :stopped)])
+    end
+
+    it "keeps telling it nothing else: turns stay record data" do
+      scribe.catch_up(line)
+
+      expect(live).to be_empty
+    end
+
+    it "has moved the written chain before a raising live leg is told" do
+      deaf = Class.new { define_method(:<<) { |_record| raise IOError, "live view down" } }.new
+      scribe = described_class.new(journal:, context:, toolset:, workspace:, live: deaf)
+      scribe.catch_up(line)
+
+      expect { scribe.rewound(to: line.to_a[1].digest) }.to raise_error(IOError)
+      expect { scribe.catch_up(at(1).commit(role: :user, content: text("elsewhere"))) }.not_to raise_error
+      expect(of_type("rewound").size).to eq(1)
+    end
+
+    it "writes nothing and tells nothing for a target the record never wrote" do
+      scribe.catch_up(line)
+
+      expect { scribe.rewound(to: "blake3:never") }.to raise_error(described_class::Diverged)
+      expect(live).to be_empty
+    end
+  end
+
   # Paths the card never named, kept as guards because they are where an
   # ordering or double-recording mistake would surface first.
   describe "shapes beyond the card's own" do

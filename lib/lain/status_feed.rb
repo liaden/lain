@@ -173,6 +173,11 @@ module Lain
     # pinned by spec.
     INBOX_RECIPIENT = "human"
 
+    # {SessionRecord::REWOUND_TYPE}, spelled again for {INBOX_RECIPIENT}'s
+    # reason, and pinned by spec: the record that moves the head back, and the
+    # one a fold's retreat wears too.
+    REWOUND = "rewound"
+
     # @param path [String] where the state struct is atomically published;
     #   defaults to this project's file under `$XDG_STATE_HOME/lain` via
     #   {ProjectDir#state_path}.
@@ -197,6 +202,7 @@ module Lain
       @cache_profile = cache_profile
       @run_clock = run_clock
       @context_window = context_window
+      @store = store
       @inbox = Inbox.new(store:)
       start_empty
     end
@@ -208,6 +214,7 @@ module Lain
       @occupancy = nil
       @window_guessed = nil
       @remeasure = -> {}
+      @reading_head = nil
       @unmeasured_turns = 0
       @run_tokens = nil
       @mode = ModeState::NONE
@@ -250,6 +257,7 @@ module Lain
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
       remeasure if event.is_a?(Telemetry::RunInterrupted)
+      observe_rewind(event) if rewound?(event)
       observe_consumption(event)
       observe(event) if event.respond_to?(:kind)
       # Matched by class rather than on `#to`/`#to_layers`, which would also
@@ -268,7 +276,10 @@ module Lain
     #
     # @param store [Store] the session's object database
     # @return [void]
-    def bind_store(store) = @inbox.bind_store(store)
+    def bind_store(store)
+      @store = store
+      @inbox.bind_store(store)
+    end
 
     private
 
@@ -318,7 +329,8 @@ module Lain
     # two stories about the context that just overflowed. Nothing was billed,
     # so `run_tokens` is left alone.
     def observe_refusal(event)
-      record_occupancy(measured(Usage.new(input_tokens: event.prompt_tokens), event.model))
+      reading = measured(Usage.new(input_tokens: event.prompt_tokens), event.model)
+      record_occupancy(reading, stands_on: event.stands_on)
     end
 
     # A reading, kept re-takeable. A refusal vouches for its window only after
@@ -384,7 +396,7 @@ module Lain
       usage = JournaledUsage.new(event.usage)
       slide_cache_deadline(usage)
       @run_tokens = @run_tokens.to_i + usage.total_tokens
-      record_occupancy(measured(usage, event.model))
+      record_occupancy(measured(usage, event.model), stands_on: event.digest)
     end
 
     # `@occupancy`'s writer for every reading a record brings ({#remeasure}
@@ -400,9 +412,38 @@ module Lain
     #
     # A STREAK rather than a total, so the count answers "how stale is this
     # ratio" and a measurable turn clears it.
-    def record_occupancy(reading)
+    #
+    # A reading is tagged with the turn its record says it stands on: a
+    # committed turn's own digest, or the turn a refusal record names.
+    def record_occupancy(reading, stands_on: nil)
       @unmeasured_turns = reading.nil? ? @unmeasured_turns + 1 : 0
+      @reading_head = stands_on unless reading.nil?
       @occupancy = reading || @occupancy
+    end
+
+    def rewound?(event) = event.is_a?(Hash) && event["type"] == REWOUND
+
+    # {Agent::Accounting::Reading}'s rule, taken off the record: a reading
+    # stands only on a chain still holding the turn it was tagged with. The
+    # one place a reading is REMOVED rather than left standing, because a
+    # rewind past it does not fail to measure the window, it changes which
+    # window there is. The re-take goes with it, or the next stopped ask would
+    # bring the number back, and so does the unmeasured streak, which has no
+    # ratio left to call stale.
+    def observe_rewind(event)
+      return if @occupancy.nil? || stands?(@reading_head, event["to"])
+
+      @occupancy = @window_guessed = nil
+      @remeasure = -> {}
+      @unmeasured_turns = 0
+    end
+
+    # Never raises, for {Inbox#cited_by_chain}'s reason: a chain this sink
+    # cannot walk reads as one the reading is not on.
+    def stands?(tag, head)
+      tag.nil? || Timeline.new(head_digest: head, store: @store).include?(tag)
+    rescue StandardError
+      false
     end
 
     def slide_cache_deadline(usage)

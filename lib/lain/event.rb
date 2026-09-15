@@ -64,6 +64,22 @@ module Lain
       new(kind: :turn, carried_payload: payload, render_parent: parent, correlation:, causal_parents:)
     end
 
+    # The turn a render over `head` stands on, and so what a reading or a
+    # compaction cut taken on that render is believed on. A user turn at the
+    # head is the one the render added -- a prompt, a round's results, a
+    # cancellation -- and an ask refused before any model saw it withdraws a
+    # prompt while the next one takes its place, so the answer is the turn
+    # beneath it; the model's own turn at the head is its own answer. nil is
+    # the empty chain, which every chain extends.
+    #
+    # @param head [Event, nil]
+    # @return [String, nil] a turn digest
+    def self.stands_on(head)
+      return nil if head.nil?
+
+      head.role == "user" ? head.parent : head.digest
+    end
+
     # Whether `event` is an assistant turn still carrying an unanswered
     # tool_use block -- the shape the next request would render as a dangling
     # tool_use, which the API rejects.

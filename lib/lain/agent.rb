@@ -305,7 +305,8 @@ module Lain
     #
     # The numerator is {Accounting}'s LAST-turn input tokens, never its
     # cumulative `#usage` -- a cumulative sum only ever grows, so it would report
-    # a context that never empties even after a compaction dropped the head.
+    # a context that never empties even after a compaction dropped the head --
+    # and only while this chain still holds the turn that reading stood on.
     # `context.model` is read per call rather than captured, so a mid-session
     # `/model` switch ({Context::ModelSwitch}) moves the denominator with it.
     #
@@ -319,7 +320,8 @@ module Lain
     #   this Agent was CONSTRUCTED with. Written explicitly only by a caller
     #   measuring a run against a window that is not the run's own -- a bench
     #   arm sweeping candidate windows.
-    # @return [Float, nil] nil before any turn -- absence, not an empty context
+    # @return [Float, nil] nil before any turn, and after a rewind past the
+    #   reading -- absence, not an empty context
     # @raise [ContextWindow::UnknownModel] if the live model slot is nil or
     #   blank (a wiring bug), or if the model matches nothing in a book
     #   configured with no fallback. A caller rendering this per prompt either
@@ -328,7 +330,7 @@ module Lain
     #   measures as Infinity or NaN rather than as a reading. Unreachable
     #   through {ContextWindow.default}; a caller passing its own book owns it.
     def occupancy(context_window: @context_window)
-      context_window.occupancy(accounting.last_turn_usage, model: context.model).ratio
+      context_window.occupancy(accounting.last_turn_usage(on: @timeline), model: context.model).ratio
     end
 
     # Time travel: the loop can be resumed from any earlier turn, which is what
@@ -616,14 +618,17 @@ module Lain
     #
     # A prompt refused for not fitting the context still leaves its measure:
     # the provider's exact count becomes the reading the next render's
-    # compaction decision reads ({Accounting#observe_refusal}).
+    # compaction decision reads ({Accounting#observe_refusal}). The turn it
+    # stands on is named once, here, and rides the model phase so the refusal
+    # record carries the same answer to every live view.
     def call_model(on_stream_started)
       dispatch!
+      stands_on = Event.stands_on(@timeline.head)
       @request_override.deliver(render: -> { render_request }) do |request|
-        model_caller.call(request, on_stream_started:)
+        model_caller.call(request, on_stream_started:, stands_on:)
       end
     rescue WindowExceeded => e
-      accounting.observe_refusal(prompt_tokens: e.prompt_tokens)
+      accounting.observe_refusal(prompt_tokens: e.prompt_tokens, head: stands_on)
       raise
     end
 
@@ -639,7 +644,7 @@ module Lain
     # never clears.
     def render_request
       turn_context = @instrumentation.pipeline_source.context_for(base: @context, timeline: @timeline,
-                                                                  usage: accounting.last_turn_usage,
+                                                                  usage: accounting.last_turn_usage(on: @timeline),
                                                                   session: @session)
       turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end

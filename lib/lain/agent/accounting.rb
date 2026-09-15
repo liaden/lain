@@ -9,6 +9,24 @@ module Lain
     # the Journal, one {Telemetry::TurnUsage} per model call, keyed by the
     # committed turn's digest.
     class Accounting
+      # How full a context was, and the turn the measured chain stood on. A
+      # reading describes a chain, so it is believed only on a chain still
+      # holding that turn: after a rewind past it the number describes history
+      # no request will carry, and believing it fires the window signal on a
+      # context a fraction of its size. `head` is nil for a chain standing on
+      # nothing, which every chain extends.
+      Reading = Data.define(:tokens, :head) do
+        # @param timeline [Timeline] the chain being asked about
+        # @return [Integer, nil] the tokens, or nil where the reading does not
+        #   describe `timeline`
+        def on(timeline) = head.nil? || timeline.include?(head) ? tokens : nil
+      end
+
+      # No reading yet: absent on every chain.
+      module Unread
+        def self.on(_timeline) = nil
+      end
+
       # The run's cumulative {Usage}; the monoid sum of every observed response.
       attr_reader :usage
 
@@ -20,7 +38,7 @@ module Lain
       def initialize(journal: Channel::Null.instance)
         @journal = journal
         @usage = Usage.zero
-        @last_turn_usage = nil
+        @reading = Unread
       end
 
       # Roll one model response into the running total and journal it against
@@ -31,7 +49,7 @@ module Lain
       # @return [Lain::Usage] the cumulative usage, ready for a budget check
       def observe(response, digest:)
         @usage += response.usage
-        take_reading(response.usage)
+        take_reading(response.usage, head: digest)
         @journal << Telemetry::TurnUsage.new(
           digest:,
           model: response.model,
@@ -50,10 +68,13 @@ module Lain
       # is refused the same way.
       #
       # @param prompt_tokens [Integer] the provider's exact prompt count
-      # @return [Integer, nil] the current reading
-      def observe_refusal(prompt_tokens:)
-        take_reading(Usage.new(input_tokens: prompt_tokens))
-        @last_turn_usage
+      # @param head [String, nil] the turn below the refused prompt, which the
+      #   caller names because only it knows the prompt may be withdrawn: the
+      #   count still describes that chain plus the next prompt put on it
+      # @return [Reading, Unread] the current reading
+      def observe_refusal(prompt_tokens:, head:)
+        take_reading(Usage.new(input_tokens: prompt_tokens), head:)
+        @reading
       end
 
       # Current context occupancy: the billed-on-the-way-in tokens of the most
@@ -63,10 +84,11 @@ module Lain
       # can answer -- see `#take_reading` for why a response carrying none is
       # skipped rather than believed.
       #
-      # @return [Integer, nil] nil before any turn -- distinct from zero, which
-      #   would read as an empty context on a resumed session whose Accounting is
-      #   fresh but whose Timeline is not
-      attr_reader :last_turn_usage
+      # @param on [Timeline] the chain whose occupancy is asked
+      # @return [Integer, nil] nil before any turn, and on a chain that no
+      #   longer holds the turn the reading stood on -- distinct from zero,
+      #   which would read as an empty context
+      def last_turn_usage(on:) = @reading.on(on)
 
       private
 
@@ -96,9 +118,9 @@ module Lain
       # The turn itself is never suppressed -- the cumulative total and the
       # journal record above still count it -- and no real reading can be lost
       # this way.
-      def take_reading(usage)
-        reading = usage.total_input_tokens
-        @last_turn_usage = reading if reading.positive?
+      def take_reading(usage, head:)
+        tokens = usage.total_input_tokens
+        @reading = Reading.new(tokens:, head:) if tokens.positive?
       end
     end
   end

@@ -43,7 +43,7 @@ RSpec.describe Lain::Middleware::RequestBudget do
   end
 
   def refused(request, **numbers)
-    budget.call({ request: }, &refusing(**numbers))
+    budget.call({ request:, stands_on: "blake3:below" }, &refusing(**numbers))
     raise "expected a refusal"
   rescue described_class::OverWindow => e
     e
@@ -114,6 +114,14 @@ RSpec.describe Lain::Middleware::RequestBudget do
         include("kind" => "over_window", "source" => "ollama", "model" => model, "request_digest" => big.digest,
                 "prompt_tokens" => 12_011, "window_tokens" => 8192)
       )
+    end
+
+    # The Agent names the turn the render stood on as it calls the model, and
+    # the record carries it, so a live view tags the count as the Agent does.
+    it "records the turn the refused render stood on, as the model call named it" do
+      refused(big)
+
+      expect(records.first).to include("stands_on" => "blake3:below")
     end
 
     it "says so in one line naming both numbers and the moves that make room" do

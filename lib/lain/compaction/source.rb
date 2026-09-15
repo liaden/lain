@@ -413,9 +413,10 @@ module Lain
       # @param base [Context] the Agent's own Context
       # @param timeline [Timeline] the history as of this render
       # @param usage [Integer, nil] the LAST-TURN input tokens -- nil before any
-      #   turn, which {Need::ApproachingWindow} distinguishes from zero. A
-      #   cumulative total here would latch the signal on permanently, and a
-      #   zero would read as an empty context on a resumed session.
+      #   turn and on a chain rewound past the turn they were read on, which
+      #   {Need::ApproachingWindow} distinguishes from zero. A cumulative total
+      #   here would latch the signal on permanently, and a zero would read as
+      #   an empty context on a resumed session.
       # @param session [Session] the run's Session, for its plan-step signal
       #   and the compaction cuts it has recorded -- and records a new one
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline

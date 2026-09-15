@@ -34,19 +34,24 @@ module Lain
     # at the request's `num_ctx` -- and `source` names who said so.
     # `request_digest` joins it onto the `request_sent` that carried the
     # prompt. `kind` is a closed set of one, kept so a reader discriminates on a
-    # tag rather than on shape.
+    # tag rather than on shape. `stands_on` is the turn the count is believed on
+    # ({Event.stands_on}, named by the Agent as it called the model), so a live
+    # view tags the reading as the Agent does instead of inferring it; nil is
+    # the empty chain, a value, which is why the keyword has no default.
     #
     # It rides the record journal, which is the tee in a cockpit, so the
     # {StatusFeed} takes the same reading the {Agent} does.
-    WindowPressure = Data.define(:kind, :source, :model, :request_digest, :prompt_tokens, :window_tokens) do
+    WindowPressure = Data.define(:kind, :source, :model, :request_digest, :prompt_tokens, :window_tokens,
+                                 :stands_on) do
       include Journalable
 
-      def initialize(kind:, source:, request_digest:, prompt_tokens:, window_tokens:, model: nil)
+      def initialize(kind:, source:, request_digest:, prompt_tokens:, window_tokens:, stands_on:, model: nil)
         kind = kind&.to_sym
         Carriers::WindowPressure.check!(kind:, source:, request_digest:, prompt_tokens:, window_tokens:)
 
         super(kind:, source: -source.to_s, model: model && -model.to_s, request_digest: -request_digest.to_s,
-              prompt_tokens: Integer(prompt_tokens), window_tokens: Integer(window_tokens))
+              prompt_tokens: Integer(prompt_tokens), window_tokens: Integer(window_tokens),
+              stands_on: stands_on && -stands_on.to_s)
       end
     end
   end

@@ -244,6 +244,32 @@ RSpec.describe Lain::Event do
     end
   end
 
+  # The turn a render over a head stands on: what a reading or a compaction cut
+  # taken on that render is believed on. One rule, read by the Agent for a
+  # refused count and by the compaction cut for its commit head, and carried on
+  # the refusal record so a live view reads the same answer rather than guessing.
+  describe ".stands_on" do
+    let(:line) do
+      Lain::Timeline.empty.commit(role: :user, content: block("ask"))
+                    .commit(role: :assistant, content: block("answer"))
+    end
+
+    it "is the turn beneath a user turn at the head, which the render added" do
+      prompted = line.commit(role: :user, content: block("next"))
+
+      expect(described_class.stands_on(prompted.head)).to eq(line.head_digest)
+    end
+
+    it "is the head itself when the head is the model's own turn" do
+      expect(described_class.stands_on(line.head)).to eq(line.head_digest)
+    end
+
+    it "is nil, the empty chain, beneath a root prompt and for no head at all" do
+      expect(described_class.stands_on(line.rewind(1).head)).to be_nil
+      expect(described_class.stands_on(nil)).to be_nil
+    end
+  end
+
   # One definition of "the head is a tool_use awaiting results", shared by
   # resume, fork, and rewind -- previously duplicated in resume.rb and
   # rewind.rb with a load-bearing difference (rewind's guarded the nil case,

@@ -74,7 +74,7 @@ module Lain
         downstream(env, &app)
       rescue Lain::WindowExceeded => e
         request = env.fetch(:request)
-        @journal << pressure(e, request)
+        @journal << pressure(e, request, env.fetch(:stands_on))
         raise OverWindow.new(format(REFUSED, source: e.source, prompt: e.prompt_tokens, window: e.window_tokens),
                              moves: moves(e, request), prompt_tokens: e.prompt_tokens, window_tokens: e.window_tokens,
                              source: e.source, model: request.model)
@@ -82,10 +82,10 @@ module Lain
 
       private
 
-      def pressure(refusal, request)
+      def pressure(refusal, request, stands_on)
         Telemetry::WindowPressure.new(kind: :over_window, source: refusal.source, model: request.model,
                                       request_digest: request.digest, prompt_tokens: refusal.prompt_tokens,
-                                      window_tokens: refusal.window_tokens)
+                                      window_tokens: refusal.window_tokens, stands_on:)
       end
 
       def moves(error, request)

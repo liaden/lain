@@ -270,7 +270,7 @@ RSpec.describe Lain::CLI::Command::Surface do
 
       rendered = surface.commands.dispatch("/introspect") { raise "fallthrough must not run" }
 
-      expect(rendered.text).to include("model claude-opus-4-8", "occupancy no turn yet in this run",
+      expect(rendered.text).to include("model claude-opus-4-8", "occupancy no turn measured on this chain in this run",
                                        "review open over pull request 7 (github_pr)", "annotations 1")
       expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }.text)
         .to include("/introspect")

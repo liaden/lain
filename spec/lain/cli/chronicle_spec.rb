@@ -415,6 +415,73 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # The live views follow what the session file says, so the records that move
+  # the head reach them too: once in the file, and told to the views after it.
+  describe "the head moves, once #wrap_tee has run" do
+    let(:line) { timeline.commit(role: :assistant, content: text("yo")).commit(role: :user, content: text("next")) }
+
+    def started(views)
+      chronicle.wrap_tee(views)
+      chronicle.start(context:, toolset:)
+      chronicle.catch_up(line)
+    end
+
+    it "delivers a rewind, a fold's retreat and a stopped run to the views, each written to the file once" do
+      views = []
+      started(views)
+      folded = line.rewind(1).commit(role: :user, content: text("next, and more"))
+
+      chronicle.rewound(to: line.rewind(1).head_digest)
+      chronicle.catch_up(line)
+      chronicle.replaced(to: line.rewind(1).head_digest, with: folded)
+      chronicle.interrupted(head: folded.head_digest, reason: :stopped)
+
+      expect(of_type("rewound").size).to eq(2)
+      expect(of_type("run_interrupted").size).to eq(1)
+      expect(views.map { |record| record.is_a?(Hash) ? record["type"] : record.journal_type })
+        .to eq(%w[rewound rewound run_interrupted])
+    end
+
+    # The move the record announces is already on disk and still has to happen
+    # in the caller: a `/rewind` that raised here would leave the Agent at a
+    # head the record has retreated from, and every later catch_up refusing.
+    it "does not fail a rewind over a live view that raises, and writes it once" do
+      views = Class.new { define_method(:<<) { |_record| raise IOError, "tmux went away" } }.new
+      started(views)
+
+      expect { chronicle.rewound(to: line.rewind(1).head_digest) }.not_to raise_error
+      expect(of_type("rewound").size).to eq(1)
+      expect { chronicle.catch_up(line.rewind(1)) }.not_to raise_error
+    end
+
+    it "records the view's fault in the session file rather than dropping it in silence" do
+      views = Class.new { define_method(:<<) { |_record| raise IOError, "tmux went away" } }.new
+      started(views)
+
+      chronicle.interrupted(head: line.head_digest, reason: :stopped)
+
+      expect(of_type("run_interrupted").size).to eq(1)
+      expect(of_type("journal_error"))
+        .to contain_exactly(include("error" => "IOError: tmux went away",
+                                    "entry_class" => Lain::Telemetry::RunInterrupted.name))
+    end
+
+    it "names a Hash record's fault by its record type, not by Hash" do
+      views = Class.new { define_method(:<<) { |_record| raise IOError, "tmux went away" } }.new
+      started(views)
+
+      chronicle.rewound(to: line.rewind(1).head_digest)
+
+      expect(of_type("journal_error")).to contain_exactly(include("entry_class" => "rewound"))
+    end
+
+    it "still fails loudly when the file itself refuses the rewind" do
+      started([])
+
+      expect { chronicle.rewound(to: "blake3:never") }.to raise_error(Lain::SessionRecord::Scribe::Diverged)
+    end
+  end
+
   describe "#wrap_tee" do
     it "returns the SAME journal the scribe writes turns into -- not a second one" do
       expect(chronicle.wrap_tee([])).to be(journal)
@@ -639,6 +706,51 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(null.catch_up(nil)).to be(null)
       expect(null.interrupted(head: "x", reason: :torn)).to be(null)
       expect(null.close(reason: :exit)).to be(null)
+    end
+
+    # --no-journal + --nvim: there is no session record, but the live views
+    # still fold what a record would have said, or after `/rewind` the Agent
+    # reads no occupancy while the HUD keeps a figure about a chain that is gone.
+    describe "the head moves, once #wrap_tee has run" do
+      let(:tee_journal_io) { StringIO.new }
+      let(:line) { timeline.commit(role: :assistant, content: text("yo")) }
+
+      before { allow(Lain::Journal).to receive(:open).with(no_args).and_return(Lain::Journal.new(io: tee_journal_io)) }
+
+      def tee_records = tee_journal_io.string.each_line.map { |record| JSON.parse(record) }
+
+      it "clears a feed's reading on a rewind past it, through the views LiveViews joins" do
+        Dir.mktmpdir do |dir|
+          feed = Lain::StatusFeed.new(path: File.join(dir, "state.json"),
+                                      context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 }), store:)
+          Lain::CLI::LiveViews.new(options: { nvim: "/nonexistent.sock" }, chronicle: null, status_feed: feed)
+          null.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
+            digest: line.head_digest, model: "qwen3:4b", stop_reason: :end_turn,
+            usage: { "input_tokens" => 4096, "output_tokens" => 5 }
+          )
+          expect(feed.state["occupancy"]).to eq(0.5)
+
+          null.rewound(to: timeline.head_digest)
+
+          expect(feed.state["occupancy"]).to be_nil
+        end
+      end
+
+      it "tells the views a rewind, a fold's retreat and a stopped run, and writes none of them anywhere" do
+        views = []
+        null.wrap_tee(views)
+        folded = timeline.commit(role: :user, content: text("and more"))
+
+        null.rewound(to: timeline.head_digest)
+        null.replaced(to: timeline.head_digest, with: folded)
+        null.interrupted(head: timeline.head_digest, reason: :stopped)
+
+        expect(views).to eq([Lain::SessionRecord.rewound(from: nil, to: timeline.head_digest),
+                             Lain::SessionRecord.retreat(from: nil, to: timeline.head_digest,
+                                                         landing: folded.head_digest),
+                             Lain::Telemetry::RunInterrupted.new(head: timeline.head_digest, reason: :stopped)])
+        expect(tee_records).to be_empty
+      end
     end
 
     it "wraps session and memory as identity -- --no-journal decorates nothing" do

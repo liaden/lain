@@ -173,18 +173,27 @@ RSpec.describe Lain::CLI::Command::Introspect do
 
   # ---- PROBE 3: occupancy is as-of the last response, not as-of now ----------
   #
-  # {Lain::Agent::Accounting#last_turn_usage} is written only by `#observe`, so a
-  # `/rewind` that drops the turn it measured leaves the reading where it was.
-  # The row therefore says WHEN it was taken instead of implying "right now".
-  it "stamps occupancy with the response it was taken at, so a rewind cannot make it lie" do
+  # The row says WHEN its reading was taken instead of implying "right now", and
+  # a `/rewind` past the turn it was taken at leaves no reading at all rather
+  # than a figure about a chain that is gone.
+  it "stamps occupancy with the response it was taken at" do
     agent = agent_over(usage_response("one", input_tokens: 640, output_tokens: 5))
     agent.ask("first")
-    agent.rewind(2)
 
     expect(report(agent)).to include("occupancy 64.0% at the last model response")
   end
 
-  # ---- PROBE 1: "no turn yet" is false on a resumed chat ---------------------
+  it "reports no figure once a rewind drops the turn the reading was taken at, and says so truly" do
+    agent = agent_over(usage_response("one", input_tokens: 640, output_tokens: 5))
+    agent.ask("first")
+    agent.rewind(1)
+
+    expect(agent.timeline.length).to eq(1)
+    expect(report(agent)).to include("occupancy no turn measured on this chain in this run")
+    expect(report(agent)).not_to include("64.0%")
+  end
+
+  # ---- PROBE 1: "no turn yet" was false on a resumed chat -------------------
   #
   # {Lain::ContextWindow::Occupancy::None}'s own docstring names this hazard for
   # the value 0.0 -- "a resumed session's Accounting is fresh while its Timeline
@@ -198,7 +207,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     resumed = agent_over(timeline: seeded.timeline)
 
     expect(resumed.timeline.length).to be >= 4
-    expect(report(resumed)).to include("occupancy no turn yet in this run")
+    expect(report(resumed)).to include("occupancy no turn measured on this chain in this run")
   end
 
   # ---- Scenario: introspect reports review state ----------------------------
@@ -287,7 +296,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
   it "renders on a chat with no turns and no review, reporting absence as absence" do
     rendered = report(fresh)
 
-    expect(rendered).to include("occupancy no turn yet in this run",
+    expect(rendered).to include("occupancy no turn measured on this chain in this run",
                                 "review none held by /review or /survey", "total 0")
     expect(rendered).to include("cache hit ratio nothing billed on the way in yet")
     expect(rendered).not_to include("cache hit ratio 0.0%")

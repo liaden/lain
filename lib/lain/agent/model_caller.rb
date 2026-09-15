@@ -25,11 +25,16 @@ module Lain
       # taking only a request (Ollama, the default fan-out path) is
       # untouched.
       #
+      # What the caller knows about the turn it is rendering -- the Agent names
+      # the turn the render stands on -- rides the env beside the request, for a
+      # middleware that records it.
+      #
       # @param request [Lain::Request]
       # @param on_stream_started [#call, nil]
+      # @param turn [Hash{Symbol => Object}] env entries beside `request`
       # @return [Lain::Response]
-      def call(request, on_stream_started: nil)
-        @middleware.call({ request: }) do |inner|
+      def call(request, on_stream_started: nil, **turn)
+        @middleware.call({ request:, **turn }) do |inner|
           inner.merge(response: complete(inner.fetch(:request), on_stream_started))
         end.response
       end

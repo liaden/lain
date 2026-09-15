@@ -10,7 +10,23 @@ require "json"
 RSpec.describe Lain::Telemetry::WindowPressure do
   def pressure(**overrides)
     described_class.new(kind: :over_window, source: "ollama", model: "qwen3:4b", request_digest: "blake3:abc",
-                        prompt_tokens: 12_011, window_tokens: 2048, **overrides)
+                        prompt_tokens: 12_011, window_tokens: 2048, stands_on: "blake3:below", **overrides)
+  end
+
+  # The turn the refused count is believed on, so a live view reading the
+  # record tags it exactly as the Agent does. nil is the empty chain, which
+  # every chain extends, and is a value rather than an absence.
+  it "carries the turn the refused count stands on, nil for the empty chain" do
+    expect(pressure.stands_on).to eq("blake3:below")
+    expect(pressure(stands_on: nil).stands_on).to be_nil
+    expect(JSON.parse(JSON.generate(pressure(stands_on: nil).to_journal))).to include("stands_on" => nil)
+  end
+
+  it "refuses a record that does not say what the count stands on" do
+    expect do
+      described_class.new(kind: :over_window, source: "ollama", model: "qwen3:4b", request_digest: "blake3:abc",
+                          prompt_tokens: 12_011, window_tokens: 2048)
+    end.to raise_error(ArgumentError, /stands_on/)
   end
 
   it "carries the provider's exact prompt count, its context size, and who said so" do

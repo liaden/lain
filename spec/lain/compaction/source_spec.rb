@@ -437,12 +437,14 @@ RSpec.describe Lain::Compaction::Source do
   describe "occupancy comes from the last turn, not the run" do
     it "does not fire the approaching-window signal on a run whose cumulative usage crossed it" do
       accounting = Lain::Agent::Accounting.new
+      line = timeline
       [400, 400, 10].each_with_index do |tokens, index|
-        accounting.observe(response(tokens), digest: "blake3:turn-#{index}")
+        accounting.observe(response(tokens), digest: line.to_a[index].digest)
       end
       built = source(need: build_need(approaching_ratio: 0.9), context_window: window_book(1_000))
 
-      context_for(built, timeline, usage: accounting.last_turn_usage)
+      expect(accounting.last_turn_usage(on: line)).to eq(10)
+      context_for(built, line, usage: accounting.last_turn_usage(on: line))
 
       expect(decisions.first["signals"]).not_to include("approaching_window")
     end
@@ -1592,9 +1594,28 @@ RSpec.describe Lain::Compaction::Source do
       3.times { context_for(built, line) }
 
       expect(cuts.size).to eq(1)
-      expect(cuts.first).to include("digest" => line.to_a[3].digest, "head" => line.head_digest,
+      expect(cuts.first).to include("digest" => line.to_a[3].digest, "head" => line.to_a[4].digest,
                                     "strategy" => built.collapse_strategy, "parent" => nil)
       expect(cuts.first["collapses"].map { |collapse| collapse["content"] }).to eq([rendered.first["content"]])
+    end
+
+    # The commit head is the turn below the asked prompt, because an ask
+    # refused before any model saw it withdraws exactly that prompt. Holding
+    # the cut through the withdrawal is what keeps a stuck ask from retreating
+    # and committing the same cut again on every attempt.
+    it "holds the cut through a withdrawn prompt and commits it once across two stuck asks" do
+      built = forcing
+      line = timeline(6)
+      context_for(built, line)
+      cut = cuts.first["digest"]
+
+      2.times do |attempt|
+        reasked = at(line, 4).commit(role: "user", content: [block(90 + attempt)])
+        context_for(built, reasked)
+      end
+
+      expect(cuts.size).to eq(1)
+      expect(derivations.drop(1).map { |record| record["compaction_cut"] }).to eq([cut, cut])
     end
 
     it "retreats to no cut when the human rewinds below it, and says so on the record" do
