@@ -222,9 +222,10 @@ module Lain
         recorder
       end
 
-      # Per-iteration durability: every committed turn is on disk before the
-      # NEXT model call. The scribe duck handed on is `self`, so this stack can
-      # be wired before {#start} -- iterations run only during asks.
+      # Per-turn durability: every committed turn is on disk before any tool it
+      # called runs, and the round's results before the NEXT model call. The
+      # scribe duck handed on is `self`, so this stack can be wired before
+      # {#start} -- turns commit only during asks.
       def turn_middleware(timeline)
         Middleware::Stack.new([Middleware::JournalTurns.new(scribe: self, timeline:)])
       end

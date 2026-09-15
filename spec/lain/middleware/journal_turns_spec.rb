@@ -54,6 +54,17 @@ RSpec.describe Lain::Middleware::JournalTurns do
     expect(caught).to be_empty
   end
 
+  # The turn a tool round runs under is written before its tools start, so a
+  # record the round writes never cites a turn the file lacks. The agent hands
+  # over the timeline it just committed; the thunk is for the iteration's end.
+  it "catches the scribe up on the timeline it is settled with" do
+    middleware = described_class.new(scribe:, timeline: -> { raise "the live head is not read to settle" })
+    committed = timeline.commit(role: :assistant, content: text("calling a tool"))
+
+    expect(middleware.settle(committed)).to be(middleware)
+    expect(caught).to eq([committed])
+  end
+
   it "runs as a member of a Stack, the shape every production chain takes" do
     middleware = described_class.new(scribe:, timeline: -> { timeline })
     composed = Lain::Middleware::Stack.new([Lain::Middleware::Base.new, middleware])

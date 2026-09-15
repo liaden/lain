@@ -180,22 +180,24 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # And why that check may not be a RAISE. Content addressing makes a fresh
     # child's root turn literally the parent's root turn when the spawn prompt
     # equals the human's opening message -- ONE event on two chains, verified
-    # here rather than argued. The spawn happens mid-iteration, before the
-    # parent's own turn has been caught up, so this session genuinely records
-    # the same digest under both types and must still load: refusing would have
-    # crashed an ordinary chat over a coincidence the format absorbs.
-    it "still loads a spawn whose child root IS a turn the parent also writes" do
+    # here rather than argued. The parent's turns are written before its tools
+    # run, so the child's copy arrives already recorded and is written no second
+    # time: refusing it would have crashed an ordinary chat over a coincidence
+    # the format absorbs.
+    it "records once, and loads, a spawn whose child root IS a turn the parent also writes" do
       agent = chat(tools: ->(parent) { [subagent(parent, [text_response("child done")], prefix: :fresh)] },
                    responses: [tool_response(["tu_1", "subagent", { "prompt" => "please spawn" }]),
                                text_response("parent done")])
       agent.ask("please spawn")
       scribe.catch_up(agent.timeline)
       scribe.close(reason: :exit)
-      shared = digests_of(Lain::SessionRecord::CHILD_TURN_TYPE) & digests_of("turn")
+      root = agent.timeline.to_a.first.digest
       recording = nil
 
-      expect(shared).not_to be_empty
       expect { recording = Lain::Bench::Session.load(journal_io.string.each_line) }.not_to raise_error
+      expect(Lain::Bench::Session::Lineages.of(recording).map { |lineage| lineage.child_turns.first.digest })
+        .to eq([root])
+      expect(records.count { |record| record["digest"] == root }).to eq(1)
       expect(recording.timeline.ancestor_digests).to eq(agent.timeline.ancestor_digests)
     end
   end

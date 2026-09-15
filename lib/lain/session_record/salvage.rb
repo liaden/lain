@@ -8,19 +8,25 @@ module Lain
     # Recovers a paid-for-but-uncommitted response from the response WAL when a
     # session resumes open. {Middleware::JournalRequests} journals a
     # `request_sent` BEFORE the round trip dispatches, and {Agent#commit_and_account}
-    # commits the Timeline turn and journals its `turn_usage` as ONE atom -- so a
-    # process that dies between the two has already spent real tokens the session
+    # commits the Timeline turn and then writes its `turn` record and its
+    # `turn_usage`, in that order, with no stop landing between -- so a process
+    # that dies before the turn record has already spent real tokens the session
     # record alone cannot show, and only the {Provider::ResponseWal} might still
     # hold the bytes.
     #
     # == Finding the target
     #
     # The candidate is the session's LAST `request_sent`, but only when nothing
-    # SUPERSEDES it later in the file: a `turn_usage` after it is proof the round
-    # trip already committed normally (the atom above), and a `rewound` after it
-    # is the user explicitly abandoning that branch -- committing the "recovered"
-    # response onto the post-rewind head would silently reverse the rewind.
-    # Either way: {Nothing}, a clean no-op.
+    # SUPERSEDES it later in the file. An assistant `turn` record after it is
+    # proof the response was committed -- the first such proof the agent writes,
+    # so a kill before its `turn_usage` still has it -- and so is a `turn_usage`.
+    # A `rewound` after it is the user explicitly abandoning that branch --
+    # committing the "recovered" response onto the post-rewind head would
+    # silently reverse the rewind. Either way: {Nothing}, a clean no-op.
+    #
+    # The one assistant turn that proves nothing is this class's own recovery,
+    # which {CLI::Resume::Salvager} writes after its `salvaged` record: a crash
+    # before the closing anchor re-resumes onto {#already_committed?} instead.
     #
     # == Frame selection
     #
@@ -58,10 +64,11 @@ module Lain
     class Salvage
       REQUEST_SENT_TYPE = "request_sent"
       TURN_USAGE_TYPE = "turn_usage"
+      SALVAGED_TYPE = "salvaged"
       # Record types that, appearing AFTER a request_sent, prove its round
       # trip is settled history rather than a salvage target (see "Finding
-      # the target" above).
-      SUPERSEDING_TYPES = [TURN_USAGE_TYPE, REWOUND_TYPE].freeze
+      # the target" above). A turn record only when it is an assistant's.
+      SUPERSEDING_TYPES = [TURN_USAGE_TYPE, REWOUND_TYPE, TURN_TYPE].freeze
       RELEVANT_TYPES = [REQUEST_SENT_TYPE, *SUPERSEDING_TYPES].freeze
 
       # Nothing needed recovering. A Null Object (CLAUDE.md's `Sink::Null`
@@ -152,9 +159,9 @@ module Lain
       end
 
       # The last `request_sent` with nothing superseding it after it in the
-      # file -- {Agent#commit_and_account}'s atomic commit-then-journal means a
-      # `turn_usage` on record is proof of a normal commit, and a `rewound`
-      # on record is proof the user moved the head away on purpose.
+      # file -- an assistant `turn` or a `turn_usage` on record is proof of a
+      # normal commit, and a `rewound` on record is proof the user moved the
+      # head away on purpose.
       def unanswered_request_digest
         last_sent = relevant_records.reverse_each.find { |record, _i| record["type"].to_s == REQUEST_SENT_TYPE }
         return nil if last_sent.nil?
@@ -168,7 +175,19 @@ module Lain
       end
 
       def superseded_after?(index)
-        relevant_records.any? { |record, i| i > index && SUPERSEDING_TYPES.include?(record["type"].to_s) }
+        relevant_records.any? { |record, i| i > index && superseding?(record) }
+      end
+
+      def superseding?(record)
+        type = record["type"].to_s
+        return SUPERSEDING_TYPES.include?(type) unless type == TURN_TYPE
+
+        record["role"].to_s == "assistant" && !recovered_turns.include?(record["digest"])
+      end
+
+      def recovered_turns
+        @recovered_turns ||= @records.select { |record| record["type"].to_s == SALVAGED_TYPE }
+                                     .to_set { |record| record["head_after"] }
       end
 
       def recover(digest, frame)

@@ -496,15 +496,15 @@ module Lain
       call_model(on_stream_started).tap { |response| commit_and_account(response, inbox) }
     end
 
-    # The commit->journal pair, shielded as ONE atom against cancellation.
-    # `defer_stop` holds a {Budget#interrupt} off until the region exits, so a
-    # stop can never land between the Timeline commit and its TurnUsage journal
+    # The commit, its record and its TurnUsage, shielded as ONE atom against
+    # cancellation. `defer_stop` holds a {Budget#interrupt} off until the region
+    # exits, so a stop can never land between the Timeline commit and either
     # write: bench cost accounting reads the Journal, and a committed turn whose
     # usage record vanished with an interrupt would silently price as free. The
     # deferred stop also preempts a raise from inside the region, so a
     # simultaneous stop and token-ceiling bust settles as the stop.
     #
-    # A failure after the commit -- the token ceiling, or the usage record
+    # A failure after the commit -- the token ceiling, or either record
     # refusing to land -- comes before any {ToolDelivery} exists, so the calls
     # this turn just committed are answered here, inside the same shield, and
     # the failure goes on.
@@ -522,7 +522,12 @@ module Lain
       end
     end
 
+    # The turn is settled into the record ahead of its usage, because the usage
+    # record and everything the tool round goes on to write -- a memory root, a
+    # spawn, a question -- cite it, and a process killed between two of these
+    # writes must leave no citation of a turn the file lacks.
     def account(response)
+      @instrumentation.turn_middleware.settle(@timeline)
       @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
     rescue StandardError => e
       answer_errored

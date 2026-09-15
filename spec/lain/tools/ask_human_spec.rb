@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "async"
+require "json"
+require "stringio"
 
 # ask_human is a promise. The tool emits the question as a :message to the
 # human's inbox and hands back a pending Promise; awaiting it parks the fiber,
@@ -83,12 +85,10 @@ RSpec.describe Lain::Tools::AskHuman do
   # ---- Scenario: the head a question cites is already in the record ---------
   #
   # A Q cites the head its asker stood at when it asked, and on reload that
-  # citation resolves only if the record already CARRIES that head. For the
-  # chat's own asker it always does -- {CLI::Repl::Ask} catches the record up
-  # per ask, before it anchors anything. For a child's it does not: a child's
-  # turns reach the record when its ITERATION returns, and a question that
-  # parks never returns from the one it was asked in. So the handle a spawn
-  # hands over settles the record first, and the citation is what says it did.
+  # citation resolves only if the record already CARRIES that head. The head is
+  # the tool_use turn whose round is running this call, and every agent puts that
+  # turn into its record before any of the round's tools run -- so the handle
+  # only reads, and the record is its owner's to settle.
   describe "the head a question cites" do
     it "is the parent handle's live head" do
       Sync { tool.ask("which file?") }
@@ -96,41 +96,47 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(tool.last_question.causal_parents).to eq([parent.head_digest])
     end
 
-    # The invariant is "the head cited IS the head promoted", and it has to be
-    # structural rather than a courtesy of the caller: the settler is HANDED
-    # the Timeline, so a second read cannot answer something else and no
-    # discipline about single fibers is load-bearing.
-    it "hands the settler the very Timeline whose head it then cites" do
-      promoted = []
-      live = parent.commit(role: :user, content: [{ "type" => "text", "text" => "mid-iteration" }])
-      settling = described_class::Parent.new(read: -> { live }, settle: ->(timeline) { promoted << timeline })
-
-      asking = described_class.new(parent: settling)
-      Sync { asking.ask("which file?") }
-
-      expect(promoted.map(&:head_digest)).to eq(asking.last_question.causal_parents)
-    end
-
-    # A settle CAN raise -- {Tools::Subagent::TurnFeed} refuses a rewound
-    # timeline -- and it now runs inside a tool dispatch. Nothing may be half
-    # open afterwards: no Q in the append-only Store, and no set outstanding.
-    it "leaves no question set open when the settle raises" do
-      boom = described_class::Parent.new(read: parent, settle: ->(_timeline) { raise "the feed diverged" })
-      asking = described_class.new(parent: boom)
-
-      expect { Sync { asking.ask("which file?") } }.to raise_error("the feed diverged")
-      expect(asking.pending?).to be(false)
-      expect(asking.last_question).to be_nil
-    end
-
-    # A handle nobody taught to settle is the common case and stays a bare
-    # thunk at every call site: whoever owns ITS record catches it up already.
     it "reads a plain thunk exactly as it reads a Timeline" do
       thunked = described_class.new(parent: -> { parent })
 
       Sync { thunked.ask("which file?") }
 
       expect(thunked.last_question.causal_parents).to eq([parent.head_digest])
+    end
+
+    # A chat's own asker, wired as the chronicle wires one: the scribe observes
+    # the question and the turn phase journals the chain. What the file holds is
+    # read at the instant the question reaches the scribe, before it is written.
+    it "is a turn the session file already holds when a chat agent's question is written" do
+      journal_io = StringIO.new
+      context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024)
+      agent = nil
+      held = nil
+      scribe = nil
+      recorded = ->(digest) { journal_io.string.each_line.any? { |line| JSON.parse(line)["digest"] == digest } }
+      observer = lambda do |event|
+        held = recorded.call(event.causal_parents.first) if event.kind == :message && held.nil?
+        scribe.call(event)
+      end
+      asking = described_class.new(parent: -> { agent.timeline }, observer:)
+      toolset = Lain::Toolset.new([asking])
+      scribe = Lain::SessionRecord::Scribe.new(journal: Lain::Journal.new(io: journal_io), context:, toolset:)
+      agent = Lain::Agent.new(
+        provider: Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "ask_human", { "question" => "db?" }]),
+                                                       text_response("done")]),
+        context:, toolset:, timeline: Lain::Timeline.empty(store:),
+        turn_middleware: Lain::Middleware::Stack.new(
+          [Lain::Middleware::JournalTurns.new(scribe:, timeline: -> { agent.timeline })]
+        )
+      )
+
+      Sync do |task|
+        run = task.async { agent.ask("hi") }
+        answered(asking, "postgres")
+        run.wait
+      end
+
+      expect(held).to be(true)
     end
   end
 

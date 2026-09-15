@@ -361,34 +361,19 @@ module Lain
         def take = @digests.slice!(0..)
       end
 
-      # The live parent-Timeline handle, and the ONE thing a handle can be
-      # asked beyond reading a head: to settle the record the question about to
-      # be written will cite.
+      # The live parent-Timeline handle, and where a question written against
+      # it is sent.
       #
       # A Q cites the head its asker stood at when it asked, and on reload that
-      # citation resolves only if the record ALREADY carries that head. For the
-      # chat's own asker it always does -- {CLI::Repl::Ask} catches the record
-      # up before it anchors anything, for this reason. For a subagent's it
-      # does not: a child's turns reach the record when its ITERATION returns
-      # ({Middleware::JournalTurns}), and a question that parks never returns
-      # from the one it was asked in, so the cited turn reached the file only
-      # if a human happened to answer. Unanswered, the session would not fork
-      # and would not resume.
-      #
-      # So a spawn hands over a handle that promotes the child's committed
-      # turns first ({Tools::Subagent::ChildBuilder#build}, the only place that
-      # can name a child), and every other caller gets one with nothing to
-      # promote.
+      # citation resolves only if the record ALREADY carries that head. For a
+      # question asked as a tool call, at any depth, it does: the head is the
+      # tool_use turn whose round is running the call, and the agent that
+      # committed it put it into its record before any tool ran
+      # ({Middleware::JournalTurns#settle}). A question asked outside a tool
+      # round reads a head nothing here settled, so the handle only reads, and
+      # keeping that head recorded is the record owner's job, not the asker's.
       class Parent
-        # Whoever owns this record catches it up itself, so a question written
-        # against this handle already cites a head the record holds. It takes
-        # the Timeline it is not going to promote, because a settler that could
-        # be handed one and a settler that could not would be two ducks.
-        module Null
-          def self.call(_timeline) = nil
-        end
-
-        # `is_a?` rather than `respond_to?(:settled)`, for {#announcement_for}'s
+        # `is_a?` rather than `respond_to?(:escalate)`, for {#announcement_for}'s
         # reason: this is this class's own currency, and every other shape --
         # a Timeline, a thunk reading one -- becomes one here.
         def self.over(handle) = handle.is_a?(Parent) ? handle : new(read: handle)
@@ -417,15 +402,12 @@ module Lain
 
         # @param read [Lain::Timeline, #call] a Timeline, or a thunk reading the
         #   live one, since the toolset is built before the Agent
-        # @param settle [#call] takes the Timeline and puts into the record
-        #   everything a question written against its head may cite
         # @param to [String] who a question written against this handle is
         #   addressed to; see {#to}
         # @param escalation [Array<String>] the further hops beyond `to:`; see
         #   {#escalation}
-        def initialize(read:, settle: Null, to: HUMAN, escalation: [])
+        def initialize(read:, to: HUMAN, escalation: [])
           @read = read
-          @settle = settle
           @to = to
           # `.dup.freeze` rather than trusting the caller's Array frozen: a
           # `freeze` that left a REACHABLE mutable Array behind would not be
@@ -440,16 +422,6 @@ module Lain
         # The live Timeline: {Lain.live} resolves the thunk-or-Timeline @read
         # was handed.
         def timeline = Lain.live(@read)
-
-        # The same Timeline, with the record caught up to it first.
-        #
-        # ONE read, and the settler is HANDED it. "The head cited is the head
-        # promoted" is the whole of this class, and a second `timeline` after
-        # the settle would make that an agreement between two reads of a live
-        # object rather than a property of the code -- true today only because
-        # `ask_human` is a barrier and no fiber can commit between them, which
-        # is a fact about the caller and not about this.
-        def settled = timeline.tap { |live| @settle.call(live) }
 
         # Relays `message` one hop per {#escalation} entry, each citing the
         # message before it rather than a live agent head -- see
@@ -936,10 +908,9 @@ module Lain
       # digest {Outstanding} names its set by -- always the OUTERMOST hop's,
       # because that is the one a queue announces and a human answers.
       #
-      # `settled` rather than {#parent_timeline}: the head THIS OWN Q cites has
-      # to be in the record before the citation is written, and for a child's
-      # asker that is not free -- see {Parent}. Nothing past this cites a live
-      # head again -- {Parent#escalate} chains message to message instead
+      # ONE read of the live head, which the Q both cites and is written onto.
+      # Nothing past this cites a live head again -- {Parent#escalate} chains
+      # message to message instead
       # (a :message is journaled the instant {#write_message} returns, the
       # shared observer seeing it synchronously exactly as {Lineage#message}
       # relies on), which is what lets it relay without the parent a hop
@@ -958,7 +929,7 @@ module Lain
       # flagged rather than guarded, because closing it means deciding what
       # THOSE callers should show instead, which is their call to make.
       def emit_question(announcement)
-        parent = @parent.settled
+        parent = parent_timeline
         own_question = write_message(parent, from: identity(parent), to: @to,
                                              body: emitted_body(announcement),
                                              causal_parents: [parent.head_digest].compact)

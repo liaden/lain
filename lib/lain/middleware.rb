@@ -10,13 +10,45 @@ module Lain
   # nesting two of them into an opaque pair. Ordering is precisely the Rack
   # footgun, so the one composition mechanism is the one whose order a reader
   # can inspect and adjust.
+  #
+  # A member of an agent's TURN stack answers one message more, `#settle(timeline)`,
+  # sent as each turn commits and before any tool that turn called runs.
+  # {Base} answers it with nothing to do, and {.settles!} refuses a turn stack
+  # holding a member that cannot, where the stack is handed to the agent.
   module Middleware
+    # A turn-stack member that does not answer `#settle`.
+    class CannotSettle < Error; end
+
+    # @param stack [#call] a turn stack, or a lone member
+    # @return [#call] `stack`, every member of it answering `#settle`
+    # @raise [CannotSettle] naming each member that does not
+    def self.settles!(stack)
+      unsettled = unsettled(stack)
+      return stack if unsettled.empty?
+
+      raise CannotSettle, "turn middleware must answer #settle(timeline), which every turn sends before its " \
+                          "tools run; #{unsettled.map(&:inspect).join(", ")} answer#{"s" if unsettled.one?} " \
+                          "only #call. Subclass Lain::Middleware::Base, whose #settle does nothing."
+    end
+
+    def self.unsettled(member)
+      return member.to_a.flat_map { |inner| unsettled(inner) } if member.is_a?(Stack)
+
+      member.respond_to?(:settle) ? [] : [member]
+    end
+    private_class_method :unsettled
     # The leaf base: a pass-through. Subclasses override {#call} and invoke the
     # downstream via {#downstream}.
     class Base
       def call(env, &app)
         downstream(env, &app)
       end
+
+      # The turn phase's one message besides {#call}: the agent has just
+      # committed a turn and hands over the timeline holding it, before any tool
+      # that turn called can run. A member with a record to keep writes it here;
+      # everything else has nothing to do.
+      def settle(_timeline) = self
 
       protected
 
@@ -77,6 +109,12 @@ module Lain
 
       def empty?
         @middlewares.empty?
+      end
+
+      # {Base#settle}, handed to every member in order.
+      def settle(timeline)
+        @middlewares.each { |middleware| middleware.settle(timeline) }
+        self
       end
 
       # Run `env` through every middleware, terminating in the given app (or a

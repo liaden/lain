@@ -22,6 +22,11 @@ RSpec.describe Lain::SessionRecord::Salvage do
     { "type" => "request_sent", "digest" => digest, "payload" => {}, "stream" => true, "extra" => {} }
   end
 
+  def turn_record(role)
+    { "type" => "turn", "digest" => "blake3:#{role}", "role" => role, "content" => text(role), "parent" => nil,
+      "meta" => {} }
+  end
+
   def turn_usage(digest)
     { "type" => "turn_usage", "digest" => digest, "model" => "m", "stop_reason" => "end_turn", "usage" => {} }
   end
@@ -209,6 +214,24 @@ RSpec.describe Lain::SessionRecord::Salvage do
 
       expect(outcome).to be(described_class::Nothing)
       expect(outcome.notice).to be_nil
+    end
+
+    # The agent writes a committed turn's record ahead of its usage, so a kill
+    # between the two leaves the turn itself as the proof the response landed.
+    it "is a clean no-op when the last request_sent is followed by an assistant turn record" do
+      entries = [request_sent("d1"), turn_record("user"), turn_record("assistant")]
+
+      outcome = described_class.new(entries:, frames: [], timeline:).call
+
+      expect(outcome).to be(described_class::Nothing)
+    end
+
+    it "still treats a request as unanswered when only a user turn follows it" do
+      entries = [request_sent("d1"), turn_record("user")]
+
+      outcome = described_class.new(entries:, frames: [], timeline:).call
+
+      expect(outcome).not_to be(described_class::Nothing)
     end
 
     it "is a clean no-op when there is no request_sent at all" do

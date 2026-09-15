@@ -71,6 +71,47 @@ RSpec.describe Lain::Middleware do
       nested = described_class.new([a, described_class.new([b]), c])
       expect(observe(nested)).to eq([%i[a in], %i[b in], %i[c in], %i[c out], %i[b out], %i[a out]])
     end
+
+    it "#settle hands the timeline to every member in order, nested Stacks included" do
+      settled = []
+      settling = lambda do |label|
+        Class.new(Lain::Middleware::Base) { define_method(:settle) { |timeline| settled << [label, timeline] } }.new
+      end
+      stack = described_class.new([settling.call(:a), a, described_class.new([settling.call(:b)])])
+
+      expect(stack.settle(:timeline)).to be(stack)
+      expect(settled).to eq([%i[a timeline], %i[b timeline]])
+    end
+  end
+
+  # A turn-phase member is asked to settle on every commit, so one that cannot
+  # is refused where the turn stack is handed over, never on the first commit.
+  describe ".settles!" do
+    let(:duck) { Class.new { def call(env) = yield(env) }.new }
+
+    it "answers a stack whose every member settles, nested stacks included" do
+      stack = described_class::Stack.new([described_class::Base.new,
+                                          described_class::Stack.new([described_class::Base.new])])
+
+      expect(described_class.settles!(stack)).to be(stack)
+    end
+
+    it "refuses a member answering only #call, naming it and the message it lacks" do
+      lambda_member = ->(env, &app) { app.call(env) }
+      stack = described_class::Stack.new([described_class::Base.new,
+                                          described_class::Stack.new([duck, lambda_member])])
+
+      expect { described_class.settles!(stack) }
+        .to raise_error(described_class::CannotSettle, /#{Regexp.escape(duck.inspect)}.*Proc.*#settle/m)
+    end
+  end
+
+  describe described_class::Base do
+    it "settles nothing, answering itself" do
+      base = described_class.new
+
+      expect(base.settle(:timeline)).to be(base)
+    end
   end
 
   # A bare `yield` inside a middleware raises LocalJumpError the moment anyone

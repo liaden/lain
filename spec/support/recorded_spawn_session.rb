@@ -94,9 +94,8 @@ class RecordedSpawnSession
 
   private
 
-  # Journaled as a chat's parent is, so each committed assistant turn's
-  # `turn_usage` lands the moment it commits -- before its tool calls run, and
-  # before the turn record the iteration writes on its way out.
+  # Journaled as a chat's parent is: each committed assistant turn's record,
+  # then its `turn_usage`, land before its tool calls run.
   def parent(responses, toolset, resuming)
     Lain::Agent.new(
       provider: Lain::Provider::Mock.new(responses:), context: CONTEXT, toolset:, journal: @journal,

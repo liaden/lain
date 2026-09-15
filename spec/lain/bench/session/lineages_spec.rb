@@ -133,8 +133,9 @@ RSpec.describe Lain::Bench::Session::Lineages do
     end
 
     # A chat's file is read while it is still being written, or after it was
-    # killed mid-spawn. A spawn whose parent turn has not been journaled yet is
-    # a lineage still in progress, not damage.
+    # killed mid-spawn. Every agent writes a tool round's turn before its tools
+    # run, so a spawn in flight already cites a turn the file holds, and the
+    # open file is read by the same rules as a closed one.
     describe "a session still being written" do
       def spawn(id, prompt) = tool_response([id, "subagent", { "prompt" => prompt }])
 
@@ -155,8 +156,7 @@ RSpec.describe Lain::Bench::Session::Lineages do
         expect(child_texts(snapshot_at(session))).to eq([["first child", "first done"]])
       end
 
-      # The one gap an open file may hold, and nothing wider: every other shape
-      # below is damage no live writer produces, and refuses by name.
+      # Damage no live writer produces, refused by name in an open file.
       describe "damage in an open file" do
         let(:live) do
           RecordedSpawnSession.new(
@@ -206,17 +206,11 @@ RSpec.describe Lain::Bench::Session::Lineages do
           expect { described_class.read(written(live)) }.to raise_error(Lain::Bench::Session::Corrupt, /never landed/)
         end
 
-        it "refuses an in-flight spawn whose causal parent is not the turn it names" do
-          in_flight(live)["causal_parents"] = ["blake3:#{"e" * 64}"]
-
-          expect { described_class.read(written(live)) }.to raise_error(Lain::Bench::Session::Corrupt, /never landed/)
-        end
-
-        # The witness of the write-order gap: the parent's assistant turn is
-        # priced the moment it commits, before its tool calls run.
-        it "refuses a spawn from an unwritten turn no turn_usage names" do
+        # The turn is priced as it commits, so its usage record still names it:
+        # a usage record is no stand-in for the turn a spawn cites.
+        it "refuses an in-flight spawn whose parent turn is missing, though its usage names it" do
           head = in_flight(live).dig("payload", "spawned_from")
-          live.reject! { |record| record["type"] == "turn_usage" && record["digest"] == head }
+          live.reject! { |record| record["type"] == "turn" && record["digest"] == head }
 
           expect { described_class.read(written(live)) }.to raise_error(Lain::Bench::Session::Corrupt, /never landed/)
         end

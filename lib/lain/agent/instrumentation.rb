@@ -45,6 +45,7 @@ module Lain
                      pipeline_source: PipelineSource::Null)
         refuse_explicit_nil(journal:, model_middleware:, tool_middleware:, turn_middleware:,
                             tool_observer:, transition_listener:, pipeline_source:)
+        Middleware.settles!(turn_middleware)
         super
       end
     end

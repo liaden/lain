@@ -56,8 +56,8 @@ module Lain
         #
         # A file recording no completion has no lineage to read, so nothing is
         # rebuilt to say so. One that does is rebuilt through {Loader} and read
-        # whole, so damage refuses -- in an open file as in a closed one, less
-        # exactly the one gap a live writer leaves ({InFlight}).
+        # whole, so damage refuses -- in an open file as in a closed one, since
+        # a live writer puts every turn into the file before a record cites it.
         #
         # @param path [String]
         # @raise [Corrupt] naming the file, for any damage
@@ -124,10 +124,9 @@ module Lain
         def self.from(records, resolve:, whole:)
           return new(messages: [], store: Store.new) unless records.any? { |record| completion_record?(record) }
 
-          in_flight = InFlight.new(records)
-          loader = Loader.new(in_flight.kept, resolve:)
-          settle(loader, whole: whole && !in_flight.gap?)
-          new(messages: events(in_flight.kept, loader.store), store: loader.store)
+          loader = Loader.new(records, resolve:)
+          settle(loader, whole:)
+          new(messages: events(records, loader.store), store: loader.store)
         end
         private_class_method :from
 
@@ -137,10 +136,8 @@ module Lain
         end
         private_class_method :events
 
-        # {Loader#recording} checks the whole file. A file with a spawn in
-        # flight cannot pass it -- its `memory_root` names the unwritten turn,
-        # as its `turn_usage` does -- so there the turn chain and every kept
-        # flat record are forced, which is all the lineages rest on.
+        # {Loader#recording} checks the whole file. A slice is held only to the
+        # turn chain and its flat records, which is all the lineages rest on.
         def self.settle(loader, whole:)
           return loader.recording if whole
 
@@ -193,99 +190,6 @@ module Lain
           stop = spawn.body.fetch("spawned_from")
           Timeline.new(head_digest: completion.body.fetch("final"), store: @store)
                   .ancestors.take_while { |turn| turn.digest != stop }.reverse
-        end
-      end
-
-      class Lineages
-        # The one gap an open session file may hold, and nothing wider.
-        #
-        # A top-level spawn cites the parent's assistant turn that called it,
-        # and the scribe journals that turn only when its iteration returns --
-        # after the child has run. So a live file, or one killed mid-spawn,
-        # holds a `:spawn` whose causal parent is on no record yet. Its witness
-        # is the parent's `turn_usage`, written the moment that turn committed:
-        # the gap is a `:spawn` citing exactly the `spawned_from` it names, when
-        # that head is the file's LAST `turn_usage` and no record carries it.
-        #
-        # Those spawns are set aside, with every flat record that rests on them
-        # (a sibling's completion, an inheriting child's turns) and on nothing
-        # else missing. Everything else is kept and forced, so a malformed
-        # record, a dangling parent or an unlanded `final` refuses in an open
-        # file exactly as in a closed one. A closed file has no gap.
-        class InFlight
-          FLAT_TYPES = ["message", SessionRecord::CHILD_TURN_TYPE].freeze
-          CARRIERS = ["turn", *FLAT_TYPES].freeze
-
-          # @param records [Array<Hash>] one file's parsed records
-          def initialize(records)
-            @records = records
-          end
-
-          # @return [Array<Hash>] the records to force, in file order
-          def kept
-            @kept ||= gap? ? without(set_aside) : @records
-          end
-
-          # Does this file hold the write-order gap at all?
-          def gap? = gaps.any?
-
-          private
-
-          def without(aside)
-            @records.reject { |record| FLAT_TYPES.include?(record["type"]) && aside.include?(record["digest"]) }
-          end
-
-          def gaps
-            @gaps ||= open? && !witness.nil? ? @records.select { |record| in_flight_spawn?(record) } : []
-          end
-
-          def in_flight_spawn?(record)
-            head = record.dig("payload", "spawned_from")
-            record["type"] == "message" && record["kind"] == "spawn" && head == witness &&
-              record["causal_parents"] == [head] && !carried.include?(head)
-          end
-
-          # Grown to a fixpoint: a dependent's own dependents rest on the gap too.
-          def set_aside
-            aside = Set[witness, *gaps.map { |record| record["digest"] }]
-            grown = true
-            while grown
-              found = flat.reject { |record| aside.include?(record["digest"]) }
-                          .select { |record| rests_on?(record, aside) }
-              aside.merge(found.map { |record| record["digest"] })
-              grown = found.any?
-            end
-            aside
-          end
-
-          # Only a record whose every missing parent is set aside; one also
-          # citing a digest nothing carries is damage, and stays to refuse.
-          def rests_on?(record, aside)
-            cited = record.fetch("causal_parents", [])
-            return false unless cited.is_a?(Array) && cited.all?(String)
-
-            parents = [*cited, record["render_parent"]].compact
-            aside.intersect?(parents) &&
-              parents.all? { |digest| aside.include?(digest) || carried.include?(digest) }
-          end
-
-          def flat = @flat ||= @records.select { |record| FLAT_TYPES.include?(record["type"]) }
-
-          def carried
-            @carried ||= @records.select { |record| CARRIERS.include?(record["type"]) }
-                                 .to_set { |record| record["digest"] }
-          end
-
-          def witness
-            @witness ||= @records.reverse.find { |record| record["type"] == "turn_usage" }&.fetch("digest", nil)
-          end
-
-          def open?
-            header = @records.find { |record| record["type"] == HEADER_TYPE }
-            !header.nil? && Anchor.new(header:, session_closed_records: of_type("session_closed")).open?
-          end
-
-          def of_type(type) = @records.select { |record| record["type"] == type }
         end
       end
     end

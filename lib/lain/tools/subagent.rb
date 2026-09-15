@@ -833,9 +833,9 @@ module Lain
         end
 
         # One spawn's own chain: where the child STARTS, how to read its live
-        # head, how its committed turns reach the session record, and the
-        # whole road a question the child asks travels before it reaches a
-        # human -- the parent's own correlation first, then wherever THAT
+        # head, the feed its committed turns reach the session record through,
+        # and the whole road a question the child asks travels before it reaches
+        # a human -- the parent's own correlation first, then wherever THAT
         # parent's own questions would go, which {#own_chain} reads off the
         # seam being spawned INTO rather than recomputing. The four travel
         # together because the asker needs the other three before the Agent
@@ -867,37 +867,12 @@ module Lain
           end
 
           # What a child's asker is handed instead of a bare timeline thunk:
-          # the same live head, the promotion that has to happen before a
-          # question cites it, and the escalation road so the Q names who it
+          # the same live head, and the escalation road so the Q names who it
           # was actually put to and {AskHuman} can relay it the rest of the
           # way without ever touching an ancestor's own dispatch.
-          # {Middleware::JournalTurns} promotes when an iteration RETURNS, and
-          # a parked ask never returns from the one it asked in -- so
-          # unpromoted, the question named a turn no record carried and the
-          # session refused to fork or resume.
           def asking_handle
-            AskHuman::Parent.new(read: timeline, settle: method(:promote),
-                                 to: escalation.first, escalation: escalation.drop(1))
+            AskHuman::Parent.new(read: timeline, to: escalation.first, escalation: escalation.drop(1))
           end
-
-          # And what a NESTED spawn's seam is handed, for the same defect one
-          # record up: a grandchild's :spawn cites the child's live head
-          # exactly as a question cites its asker's, and a grandchild parked
-          # mid-iteration leaves the CHILD's iteration unreturned too. A thunk
-          # rather than the handle above, because {Seam}'s `parent` member is a
-          # Timeline or a thunk and this seam gains no new duck.
-          def spawning_handle = -> { settled }
-
-          # ONE read, promoted and then cited: a record names the head that was
-          # promoted because it is the same value, not because nothing could
-          # advance between two reads.
-          def settled = timeline.call.tap { |live| promote(live) }
-
-          # Idempotent through {TurnFeed}'s stop digest, which advances per
-          # turn: the catch-up the iteration runs afterwards re-walks nothing,
-          # so this cannot double-record and cannot re-enter the middleware it
-          # shares a feed with.
-          def promote(live) = feed.catch_up(live)
         end
 
         attr_reader :policy, :toolset, :budget
@@ -944,7 +919,7 @@ module Lain
         def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
           chain = own_chain(parent) { child.timeline }
-          union = child_union(chain.spawning_handle, chain.escalation, ceiling)
+          union = child_union(chain.timeline, chain.escalation, ceiling)
           spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, worker_env)
             .tap { |built| child = built.agent }
         end
@@ -1092,17 +1067,13 @@ module Lain
                               Middleware::RefuseUnpermitted.new(allowed: allowed.names, journal: @seam.journal))
         end
 
-        # The child's turns, into the session record, per ITERATION rather than
-        # per settle: a child's `ask_human` question is written DURING an
-        # iteration and cites the head that iteration committed, so a feed that
-        # waited for the child to settle would record the turn AFTER the
-        # question naming it. The timeline rides a thunk because the turn env
-        # carries the PRE-step snapshot, and is late-bound because the
+        # The child's turns, into the session record as each is committed,
+        # before any tool it called runs: a child's `ask_human` question and a
+        # grandchild's :spawn are written DURING that tool round and cite the
+        # turn that opened it, and an iteration that parks on a human never
+        # returns to catch up afterwards. The timeline rides a thunk because the
+        # turn env carries the PRE-step snapshot, and is late-bound because the
         # middleware must exist before the Agent that runs it.
-        #
-        # Per-iteration is still not often enough for a question that PARKS --
-        # that iteration never returns -- which is what {Chain#asking_handle}
-        # covers, on the same feed.
         def recorded_turns(chain)
           Middleware::Stack.new([Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async/queue"
+
 # The per-turn Context sources. Defined in a module body so each pipeline is
 # built where `self` is Ractor-shareable -- the same reason
 # T21PipelineProviders exists (see context_spec) -- and so the doubles read as
@@ -366,6 +368,72 @@ RSpec.describe Lain::Agent do
       expect(run).to be_cancelled
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
       expect(a).not_to be_done
+    end
+  end
+
+  # Every record a tool round writes cites the turn that called its tools, so
+  # that turn goes into the record before any of them runs, and before the
+  # usage record naming it. The settle is shielded with the commit, so a stop
+  # waits for the write rather than landing between the two.
+  describe "settling the turn middleware before tools run" do
+    # A turn phase that answers `settle`, logging what it was handed.
+    def settling(log, &on_settle)
+      Class.new(Lain::Middleware::Base) do
+        define_method(:settle) do |timeline|
+          on_settle&.call
+          log << [:settle, timeline.head.content.map { |block| block["type"] }]
+        end
+      end.new
+    end
+
+    def logging_journal(log) = Class.new { define_method(:<<) { |record| log << record.class } }.new
+
+    it "hands over the committed tool_use turn before any tool runs, and before its usage record" do
+      log = []
+      a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response("done")],
+                turn_middleware: Lain::Middleware::Stack.new([settling(log)]),
+                tool_middleware: Lain::Middleware::Stack.new([T22Instrumentation::Tap.new(log, :tool)]),
+                journal: logging_journal(log))
+
+      a.ask("hi")
+
+      expect(log.take(3)).to eq([[:settle, %w[thinking tool_use]], Lain::Telemetry::TurnUsage, :tool])
+    end
+
+    # The documented middleware duck is `#call` alone, which the turn phase no
+    # longer accepts: refused as the Agent is built, not as an errored tool round
+    # on every commit.
+    it "refuses, at construction, a turn member that answers only #call" do
+      duck = Class.new { def call(env) = yield(env) }.new
+
+      expect { agent(text_response("done"), turn_middleware: Lain::Middleware::Stack.new([duck])) }
+        .to raise_error(Lain::Middleware::CannotSettle, /settle/)
+      expect { Lain::Agent::Instrumentation.new.with(turn_middleware: Lain::Middleware::Stack.new([duck])) }
+        .to raise_error(Lain::Middleware::CannotSettle, /settle/)
+    end
+
+    it "defers a stop landing during the settle until the turn's usage is recorded" do
+      log = []
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      parked = settling(log) do
+        entered.enqueue(true)
+        release.dequeue
+      end
+      a = agent(text_response("done"), turn_middleware: Lain::Middleware::Stack.new([parked]),
+                                       journal: logging_journal(log))
+      returned = :never_returned
+
+      Sync do |task|
+        run = task.async { returned = a.ask("hi") }
+        task.with_timeout(5) { entered.dequeue }
+        a.budget.interrupt(run)
+        release.enqueue(true)
+        run.wait
+      end
+
+      expect(log).to eq([[:settle, %w[text]], Lain::Telemetry::TurnUsage])
+      expect(returned).to eq(:never_returned)
     end
   end
 

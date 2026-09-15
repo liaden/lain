@@ -1976,11 +1976,10 @@ RSpec.describe Lain::Tools::Subagent do
         )
       end
 
-      # A spawn TWO deep, where the parking is the grandchild's. The exposure
-      # moves one record up with it: a grandchild's :spawn cites the CHILD's
-      # live head exactly as a question cites its asker's, and a grandchild
-      # parked mid-iteration means the child's iteration never returns either,
-      # so that head is unpromoted for the same reason.
+      # A spawn TWO deep, where the parking is the grandchild's. A grandchild's
+      # :spawn cites the CHILD's live head exactly as a question cites its
+      # asker's, and a grandchild parked mid-iteration leaves the child's
+      # iteration unreturned too.
       def nested_tool
         inner = recorded_tool(provider: mock(asks("which db?"), text_response("inner done")), max_depth: 3)
         recorded_tool(provider: mock(tool_response(["s1", "subagent", { "prompt" => "deeper" }]),
@@ -1997,11 +1996,10 @@ RSpec.describe Lain::Tools::Subagent do
 
       # And the shape none of them had: the question reaches the queue, nobody
       # answers, and the child's fiber is stopped where it stands -- a Ctrl-C,
-      # or a run that outlived the human. The turn the question cites is
-      # COMMITTED but unpromoted, because {Middleware::JournalTurns} catches up
-      # when an iteration RETURNS and a parked ask never returns from the one it
-      # was asked in. Every fixture that answers the question hides that, which
-      # is why the suite could not have caught this.
+      # or a run that outlived the human. The iteration that asked never
+      # returns, so the turn the question cites reaches the file only because
+      # the child's own agent settled it before the tool ran. Every fixture that
+      # answers the question would hide a miss.
       def parked_journal(tool = recorded_tool)
         Sync { |task| spawning(task, tool) { arrival(task) } }
         settled_journal
@@ -2057,7 +2055,7 @@ RSpec.describe Lain::Tools::Subagent do
         end
       end
 
-      # The promotion a parked ask forces and the one its iteration runs
+      # The settle before the tool runs and the catch-up its iteration runs
       # afterwards share ONE feed, and the stop digest advancing per turn is
       # the whole of why the second walks nothing. Doubled records would be
       # this file's own claim about the run, told twice.
@@ -2070,6 +2068,36 @@ RSpec.describe Lain::Tools::Subagent do
 
         expect(recorded).to eq(recorded.uniq)
         expect(recorded).not_to be_empty
+      end
+
+      # A chat's own spawn, from an agent wired as the chronicle wires one. What
+      # the file holds is read at the instant the :spawn reaches the scribe,
+      # before the scribe writes it.
+      it "writes a chat agent's spawn after the turn its causal parent names" do
+        agent = nil
+        held = nil
+        recorded = ->(digest) { journal_io.string.each_line.any? { |line| JSON.parse(line)["digest"] == digest } }
+        watching = lambda do |event|
+          held = recorded.call(event.causal_parents.first) if event.kind == :spawn
+          scribe.call(event)
+        end
+        tool = described_class.new(
+          seam: Lain::Tools::Subagent::Seam.new(provider: mock(text_response("child done")),
+                                                context_factory: -> { child_context }, parent: -> { agent.timeline },
+                                                observer: watching, tool_middleware: ToolRegistry::UNGUARDED),
+          toolset: union, policy: spawn_policy(only: []), max_depth: 1
+        )
+        agent = Lain::Agent.new(
+          provider: mock(tool_response(["tu_1", "subagent", { "prompt" => "go" }]), text_response("parent done")),
+          context: session_context, toolset: Lain::Toolset.new([tool]), timeline: Lain::Timeline.empty(store:),
+          turn_middleware: Lain::Middleware::Stack.new([Lain::Middleware::JournalTurns.new(
+            scribe:, timeline: -> { agent.timeline }
+          )])
+        )
+
+        agent.ask("spawn one")
+
+        expect(held).to be(true)
       end
 
       describe "when the question is never answered" do
@@ -2117,8 +2145,8 @@ RSpec.describe Lain::Tools::Subagent do
           expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
         end
 
-        # One builder, two children parked at once. The chain a spawn promotes
-        # against is built PER SPAWN for exactly this: a shared feed would walk
+        # One builder, two children parked at once. The feed a spawn settles
+        # through is built PER SPAWN for exactly this: a shared feed would walk
         # one sibling's turns against the other's stop digest.
         it "carries every cited digest when two siblings park at once" do
           tool = recorded_tool(provider: mock(asks("first?"), asks("second?"), text_response("done")))
@@ -2133,7 +2161,7 @@ RSpec.describe Lain::Tools::Subagent do
           expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
         end
 
-        # The SECOND question parks, so this promotion runs on a feed whose
+        # The SECOND question parks, so this settle runs on a feed whose
         # stop digest the first iteration's catch-up already advanced.
         it "carries every cited digest when a child parks on its second question" do
           tool = recorded_tool(provider: mock(asks("first?"), asks("second?"), text_response("done")))
@@ -2150,9 +2178,9 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       # One level up, where the record's exposure is the grandchild's :spawn
-      # rather than its question -- the same unpromoted head, cited by a
-      # different record. A depth qualifier nobody wrote is not a scope
-      # boundary, so this door has to open too.
+      # rather than its question -- the same head, cited by a different
+      # record. A depth qualifier nobody wrote is not a scope boundary, so this
+      # door has to open too.
       describe "when the parked question is a GRANDchild's" do
         it "carries every digest its records cite" do
           recording, cited = cited_by(parked_journal(nested_tool))
