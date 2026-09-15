@@ -297,6 +297,39 @@ RSpec.describe Lain::CLI::Command::Survey do
         .to raise_error(Lain::Survey::Walk::Refused, /#{Regexp.escape(missing)}/)
     end
 
+    # An extra word past the path used to vanish with no refusal at all,
+    # silently surveying the path alone.
+    it "refuses an extra word after the path, naming it" do
+      two_documents
+      attached
+
+      expect { command.call("#{@root} something", env) }
+        .to raise_error(Lain::Error, /something/)
+    end
+
+    # {Command::Survey} shares {Lain::CLI::Command::Args} with `/review`: a
+    # Hash keyed by flag name silently kept the last of two, so a human who
+    # retyped `--scope` reading a typo never learned the first one was thrown
+    # away.
+    it "refuses a flag given twice, rather than quietly keeping the last" do
+      two_documents
+      attached
+
+      expect { command.call("#{@root} --scope by_directory --scope by_extension", env) }
+        .to raise_error(Lain::Error, /--scope was given more than once/)
+    end
+
+    # A directory whose name has a space could not be surveyed at all before
+    # {Lain::CLI::Command::Args} started splitting with {Shellwords}.
+    it "surveys a directory whose name has a space when the line quotes it" do
+      spaced = write("my notes/page.md", document("# Notes", "", "One line of prose."))
+      attached
+
+      answer = command.call(%("#{File.dirname(spaced)}"), env)
+
+      expect(answer).to include("1 file")
+    end
+
     # Nothing may be bound and nothing journaled by a call that refused: a review
     # the human cannot answer is worse than no review, and a rail still holding
     # the last one would route their next verdict to it.

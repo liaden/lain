@@ -17,6 +17,7 @@ end
 
 require_relative "command/env"
 require_relative "command/registry"
+require_relative "command/args"
 require_relative "command/small"
 require_relative "command/rewind"
 require_relative "command/undo"

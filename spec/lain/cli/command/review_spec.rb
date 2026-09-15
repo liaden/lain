@@ -264,6 +264,21 @@ RSpec.describe Lain::CLI::Command::Review do
       expect { command.call("feature --base --permissive", env) }.to raise_error(Lain::Error, /--base/)
     end
 
+    # This command used to ignore every word past the target, and take the
+    # LAST of a duplicated flag, with no word about either.
+    it "refuses an extra word after the target, naming it" do
+      attached
+
+      expect { command.call("main extra", env) }.to raise_error(Lain::Error, /extra/)
+    end
+
+    it "refuses a flag given twice, rather than quietly keeping the last" do
+      attached
+
+      expect { command.call("feature --base main --base feature", env) }
+        .to raise_error(Lain::Error, /--base was given more than once/)
+    end
+
     # {Lain::CLI::Review::Target}'s own refusals, reached rather than restated:
     # this command resolves through that object unchanged, which is what makes
     # the card cheap, and an unresolvable ref must say so in ITS words.

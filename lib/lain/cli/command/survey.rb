@@ -62,9 +62,6 @@ module Lain
                        "a survey opened over it would rebind the gesture rails to a sidebar that review's " \
                        "marks cannot reach. Run `lain survey <path>` for a text rendering outside this chat."
 
-        # A word beginning with `--` that this command does not declare.
-        UNKNOWN_FLAG = "%<flags>s is not a flag /survey can read -- %<usage>s"
-
         # A flag it DOES declare, whose value is missing or is itself a flag.
         # Apart from {UNKNOWN_FLAG} because the remedy is the opposite one: a
         # human told `--scope` is unreadable deletes the word they got right.
@@ -139,7 +136,7 @@ module Lain
         #   grouping a corpus cannot answer, a tree past a ceiling -- each
         #   already worded by whoever owns the refusal
         def call(args, env)
-          parsed = parse(args.to_s.split)
+          parsed = parse(args.to_s)
           return usage if parsed.path.nil?
 
           opened(parsed, env, ceilings: ceilings_for(parsed), policy: policy_for(parsed))
@@ -152,44 +149,26 @@ module Lain
         Parsed = Data.define(:path, :scope, :unbounded, :permissive)
         private_constant :Parsed
 
-        def parse(words)
-          flags = flagged(words)
-          rest = words.reject.with_index do |word, index|
-            flags.key?(index) || flags.key?(index - 1) || SWITCHES.include?(word)
-          end
-          values = flags.values.to_h
-          refuse_unreadable!(values, rest)
-          Parsed.new(path: rest.first, scope: values["scope"], **switched(words))
+        # {Command::Args} splits the line, pairs a declared flag with its
+        # value and refuses an unknown flag, a duplicated one, or an extra
+        # positional by name -- {#refuse_unreadable!} is what is left this
+        # command alone, because "takes a value" is a noun only this command
+        # knows to use.
+        def parse(text)
+          parsed = Lain::CLI::Command::Args.parse(text, name: "survey", usage:, flags: FLAGS, switches: SWITCHES)
+          refuse_unreadable!(parsed.pairs)
+          Parsed.new(path: parsed.positionals.first, scope: parsed.pairs["scope"], **parsed.switches)
         end
 
-        # Each switch by the name it declares, so no switch can answer for
-        # another. This read `words.intersect?(SWITCHES)`, which says only "any
-        # switch present" -- true of a one-member list and wrong the moment
-        # there are two, where `--permissive` would silently have lifted the
-        # ceilings `--unbounded` lifts.
-        def switched(words) = SWITCHES.to_h { |switch| [switch.delete_prefix("--").to_sym, words.include?(switch)] }
-
-        # The flag words, by the INDEX each sits at, carrying the word after
-        # it. Keyed by position because the rejection above drops two words per
-        # flag, and only the position says which second word that is.
-        def flagged(words)
-          at = words.each_index.select { |index| FLAGS.include?(words[index]) }
-          at.to_h { |index| [index, [words[index].delete_prefix("--"), words[index + 1]]] }
-        end
-
-        # Two mistakes with opposite remedies. A flag at the end of the line
-        # has nil for a value and a flag FOLLOWED BY A FLAG has the next flag
-        # for one -- `--scope --unbounded` would otherwise survey at a scope
-        # named `--unbounded` -- and both are a MISSING VALUE, not an
-        # unreadable flag. Only an undeclared word gets {UNKNOWN_FLAG}.
-        def refuse_unreadable!(values, rest)
-          refuse!(NEEDS_VALUE, values.select { |_, value| value.nil? || value.start_with?("--") }.keys
-                                     .map { |flag| "--#{flag}" })
-          refuse!(UNKNOWN_FLAG, rest.grep(/\A--/))
-        end
-
-        def refuse!(sentence, flags)
-          raise Error, format(sentence, flags: flags.join(", "), usage:) if flags.any?
+        # A flag at the end of the line has nil for a value, and a flag
+        # FOLLOWED BY A FLAG has the next flag for one -- `--scope --unbounded`
+        # would otherwise survey at a scope named `--unbounded` -- and both are
+        # a MISSING VALUE, which is the one refusal {Command::Args} leaves to
+        # the caller.
+        def refuse_unreadable!(pairs)
+          missing = pairs.select { |_, value| value.nil? || value.start_with?("--") }.keys
+          raise Error, format(NEEDS_VALUE, flags: missing.map { |flag| "--#{flag}" }.join(", "), usage:) if
+            missing.any?
         end
 
         # The whole card: refuse, resolve, walk, open, BIND, draw, HOLD.

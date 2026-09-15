@@ -115,7 +115,7 @@ module Lain
         #   an ambiguous target, an undeclared scope, a changeset past a
         #   ceiling -- each already worded by whoever owns the refusal
         def call(args, env)
-          parsed = parse(args.to_s.split)
+          parsed = parse(args.to_s)
           return usage if parsed.target.nil?
 
           opened(parsed, env, policy: policy_for(parsed))
@@ -128,28 +128,16 @@ module Lain
         Parsed = Data.define(:target, :base, :scope, :permissive)
         private_constant :Parsed
 
-        def parse(words)
-          flags = flagged(words)
-          rest = words.reject.with_index do |word, index|
-            flags.key?(index) || flags.key?(index - 1) || SWITCHES.include?(word)
-          end
-          values = flags.values.to_h
-          refuse_unreadable!(values, rest)
-          Parsed.new(target: rest.first, base: values["base"], scope: values["scope"], **switched(words))
-        end
-
-        # Each switch by the name it declares, {Command::Survey#switched}'s
-        # reason: a membership test against the whole list says only "some
-        # switch was typed", which stops being the same question at two.
-        def switched(words) = SWITCHES.to_h { |switch| [switch.delete_prefix("--").to_sym, words.include?(switch)] }
-
-        # The flag words, by the INDEX each sits at, carrying the word after it.
-        # Keyed by position because the rejection above drops two words per flag
-        # -- the flag and its value -- and only the position says which second
-        # word that is.
-        def flagged(words)
-          at = words.each_index.select { |index| FLAGS.include?(words[index]) }
-          at.to_h { |index| [index, [words[index].delete_prefix("--"), words[index + 1]]] }
+        # {Command::Args} splits the line, pairs a declared flag with its
+        # value and refuses an unknown flag, a duplicated one, or an extra
+        # positional by name -- {#refuse_unreadable!} is what is left this
+        # command alone, because it names the THING each flag takes and only
+        # this command knows that noun.
+        def parse(text)
+          parsed = Lain::CLI::Command::Args.parse(text, name: "review", usage:, flags: FLAGS, switches: SWITCHES)
+          refuse_unreadable!(parsed.pairs)
+          Parsed.new(target: parsed.positionals.first, base: parsed.pairs["base"], scope: parsed.pairs["scope"],
+                     **parsed.switches)
         end
 
         # A flag at the end of the line has nil for a value, which read as
@@ -158,12 +146,9 @@ module Lain
         # value: `--base --permissive` would resolve against a ref named
         # `--permissive` AND quietly enable the escape -- two wrong things from
         # one typo, neither of them the word that is actually missing.
-        def refuse_unreadable!(values, rest)
-          missing = values.select { |_, value| value.nil? || value.start_with?("--") }.keys
+        def refuse_unreadable!(pairs)
+          missing = pairs.select { |_, value| value.nil? || value.start_with?("--") }.keys
           raise Error, "--#{missing.first} takes #{NEEDS_VALUE.fetch(missing.first)} -- #{usage}" if missing.any?
-
-          unknown = rest.grep(/\A--/)
-          raise Error, "#{unknown.join(", ")} is not a flag /review can read -- #{usage}" if unknown.any?
         end
 
         # The whole card: resolve, build, open, BIND, HOLD, draw.

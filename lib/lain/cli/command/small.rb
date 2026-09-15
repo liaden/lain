@@ -239,7 +239,7 @@ module Lain
         # want the issues taken one at a time, and editing a config file to say
         # so is not something anybody does mid-chat. The budget stays a
         # construction seam -- it is a bench's question, not a prompt's.
-        WIDTH = /\A--width[= ]\s*(?<width>\S+)\z/
+        FLAGS = %w[--width].freeze
 
         def name = "implement-epic"
 
@@ -251,21 +251,25 @@ module Lain
         # @raise [Error] when this chat is in no epic
         # @raise [Lain::Error] when the width is not a positive whole number
         def call(args, env)
-          env.epic_driver.run(**width(args.strip)).to_s
+          env.epic_driver.run(**width(args.to_s)).to_s
         end
 
         private
 
-        # Refused rather than defaulted: a human who typed a width meant it, and
-        # driving the epic at some other number because the word was misspelled
-        # is the kind of quiet substitution that is found three issues later.
+        # {Command::Args} does this command's reading now -- it is what makes
+        # `/implement-epic plans --wdith 1` name `--wdith` rather than reading
+        # `plans` as though this command took a path. Refused rather than
+        # defaulted: a human who typed a width meant it, and driving the epic
+        # at some other number because the word was misspelled is the kind of
+        # quiet substitution that is found three issues later.
         def width(args)
-          return {} if args.empty?
+          parsed = Lain::CLI::Command::Args.parse(args, name:, usage: USAGE, flags: FLAGS, positionals: 0)
+          return {} unless parsed.pairs.key?("width")
 
-          matched = WIDTH.match(args)
-          raise Error, "#{name} takes only --width N -- #{USAGE}" if matched.nil?
+          value = parsed.pairs["width"]
+          raise Error, "#{name} takes only --width N -- #{USAGE}" if value.nil? || value.start_with?("--")
 
-          { width: positive!(matched[:width]) }
+          { width: positive!(value) }
         end
 
         def positive!(value)

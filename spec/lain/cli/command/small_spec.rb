@@ -427,6 +427,21 @@ RSpec.describe Lain::CLI::Command::ImplementEpic do
 
     expect { command.call("--width nope", env) }.to raise_error(Lain::Error, /width/)
   end
+
+  # This command used to read only `--width N` through a whole-string regex,
+  # so a mistyped flag beside a stray word answered a generic "takes only
+  # --width N" that never named which word was wrong.
+  it "refuses a mistyped flag, naming it, ahead of the word beside it" do
+    env = build_command_env(epic_driver: ImplementEpicSpecDriver.new("done"))
+
+    expect { command.call("plans --wdith 1", env) }.to raise_error(Lain::Error, /--wdith/)
+  end
+
+  it "refuses a bare word, this command reading no positional at all" do
+    env = build_command_env(epic_driver: ImplementEpicSpecDriver.new("done"))
+
+    expect { command.call("plans", env) }.to raise_error(Lain::Error, /plans/)
+  end
 end
 
 # /help answers a {Lain::Renderable} now. The WORDS are unchanged -- the
