@@ -182,6 +182,75 @@ RSpec.describe Lain::Survey::Projection do
     end
   end
 
+  # One line of the file, numbered as the file on disk numbers it. A whole-file
+  # projection collapses a multi-line region into one placeholder, so its line N
+  # is not the disk's line N; a note placed in the unprojected buffer names the
+  # disk's.
+  describe "one line, by its raw number" do
+    let(:pem) do
+      "-----BEGIN PRIVATE KEY-----\n#{Array.new(4) { "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn" }.join("\n")}\n" \
+        "-----END PRIVATE KEY-----"
+    end
+    let(:keyed) { "one\n#{pem}\nseven\neight\nAPI_KEY=#{api_key}\n" }
+
+    it "masks the values on that line and keeps the rest of it" do
+      expect(projection.line(path, dotenv, 2)).to eq("DATABASE_PASSWORD=#{placeholder(2)}")
+    end
+
+    it "numbers each placeholder as the whole file's projection does" do
+      expect(projection.line(path, keyed, 10)).to eq("API_KEY=#{placeholder(2)}")
+    end
+
+    it "answers a line below a multi-line region by the disk's own number" do
+      expect([1, 8, 9].map { |number| projection.line(path, keyed, number) }).to eq(%w[one seven eight])
+    end
+
+    it "answers every line inside a masked region with that region's mask, never a neighbour's text" do
+      expect((2..7).map { |number| projection.line(path, keyed, number) }).to all(eq(placeholder(1)))
+    end
+
+    it "shows a released region's bytes on its line" do
+      ledger.release(path, [regions_in(dotenv).first])
+
+      expect(projection.line(path, dotenv, 1)).to eq("API_KEY=#{api_key}")
+      expect(projection.line(path, dotenv, 2)).to eq("DATABASE_PASSWORD=#{placeholder(1)}")
+    end
+
+    # The line view asks the ledger about the WHOLE file, so it reconciles
+    # exactly as a whole projection does; a scan of one line would forget every
+    # release for a region on any other line.
+    it "keeps a release standing for a region on a line it was not asked about" do
+      ledger.release(path, regions_in(dotenv))
+
+      projection.line(path, dotenv, 3)
+
+      expect(projection.project(path, dotenv)).to include(api_key, password)
+    end
+
+    it "answers nothing for a line the file does not hold" do
+      expect([projection.line(path, dotenv, 4), projection.line(path, "", 1)]).to eq([nil, nil])
+    end
+
+    it "keeps a blank line blank" do
+      expect(projection.line(path, "a\n\nb\n", 2)).to eq("")
+    end
+
+    # A blank line is an empty byte span: inside a key block it is still that
+    # block's line and answers its mask, and the blank line after the block
+    # touches the region's end without being inside it.
+    it "masks a blank line inside a region, and leaves the blank line after it blank" do
+      spaced = "#{pem.sub("\n", "\n\n")}\n\nafter\n"
+
+      expect([2, 8, 9].map { |number| projection.line(path, spaced, number) }).to eq([placeholder(1), "", "after"])
+    end
+
+    it "keeps the file's encoding and a carriage return" do
+      answered = projection.line(path, "café\r\nx\n", 1)
+
+      expect([answered, answered.encoding]).to eq(["café\r", Encoding::UTF_8])
+    end
+  end
+
   # Walk and projection are one admission policy: which paths enter, and which
   # bytes of them. A denied path is decided by the first half and no amount of
   # the second half brings it back -- denial is not approvable.

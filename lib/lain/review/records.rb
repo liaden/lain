@@ -177,14 +177,12 @@ module Lain
         validates :drifted, inclusion: { in: [true, false], message: Wire.refusal("must be true or false") }
         validates :revision,
                   presence: { message: Wire.refusal("must name the revision the note was authored against") }
-        # NOT `presence:`, which is where this parts company with
-        # {Epic::Annotation}, deliberately. A blank line in a diff is a real
+        # `anchor_text` carries no validation, which is where this parts company
+        # with {Epic::Annotation}, deliberately. A blank line in a diff is a real
         # anchorable position -- an added empty line is a change a human may
-        # legitimately have an opinion about -- so `""` is kept and only a
-        # missing anchor is refused. A prose document has no such line, which is
-        # why the sibling can be stricter.
-        validates :anchor_text,
-                  exclusion: { in: [nil], message: Wire.refusal("must carry the line the note was anchored to") }
+        # legitimately have an opinion about -- so `""` is kept. And nil is kept:
+        # the evidence is read out of the reviewed revision, which may hold no
+        # line where the note was placed, and a note is never refused over that.
       end
 
       # `drifted` has NO default, unlike {Epic::Annotation}'s. Drift is a

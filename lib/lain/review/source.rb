@@ -15,6 +15,10 @@ module Lain
     #   #diff_origin  where the bytes came from, and whether anything fell back
     #   #sides        which of {Review::SIDES} this round presents at all
     #
+    # Every source also answers `#line_at`, one line by the file's own numbering,
+    # which a note's evidence is read from. The shared group does not hold it
+    # yet; each source's own spec does.
+    #
     # {LocalBranch#diff} and {LocalBranch#commits} are NOT on that list. They
     # belong to sources that have unified-diff bytes and a commit walk, which is
     # a real category and not the port. Everything downstream -- the anchors, the
@@ -275,6 +279,21 @@ module Lain
         #
         # @return [Identity]
         def identity = @identity ||= Identity.new(scheme: DIGEST_SCHEME, parts: identity_parts)
+
+        # One line of {#file_at}'s answer, cut by {Anchor.lines}' rule -- what a
+        # note's evidence is read from. {Corpus#line_at} answers the same
+        # question, and cannot be this: its whole-file answer is projected, and a
+        # projection's line numbers are not the file's.
+        #
+        # @param revision [String] {#base_ref} or {#head_ref}
+        # @param path [String] the path as that revision names it
+        # @param number [Integer] 1-based
+        # @return [String, nil] the line's raw bytes; nil when the revision holds
+        #   no such path or no such line
+        def line_at(revision, path, number)
+          bytes = file_at(revision, path)
+          Anchor.lines(bytes)[number - 1] unless bytes.nil?
+        end
 
         private
 

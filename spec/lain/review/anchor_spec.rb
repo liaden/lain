@@ -73,6 +73,13 @@ RSpec.describe Lain::Review::Anchor do
       expect(anchor.drifted?("")).to be(true)
     end
 
+    # No evidence line means nothing to say the position still reads -- even
+    # where the document also has no line, which a bare `!=` would call equal.
+    it "reports drift for an anchor with no evidence line, the document's line present or not" do
+      expect([anchor(anchor_text: nil).drifted?(padded_document("x")), anchor(anchor_text: nil).drifted?("")])
+        .to eq([true, true])
+    end
+
     # The CRLF defect, and it was total rather than partial: a unified diff's
     # body carries the line exactly as the file holds it -- carriage return
     # included -- while `String#lines(chomp: true)` strips `\r\n` as readily as
@@ -151,8 +158,15 @@ RSpec.describe Lain::Review::Anchor do
       expect { anchor(path: 42) }.to raise_error(Lain::Error, /path must be a String, got 42/)
     end
 
-    it "refuses a nil anchor_text" do
-      expect { anchor(anchor_text: nil) }.to raise_error(Lain::Error, /anchor_text/)
+    # nil is "the revision holds no line there": a note placed where the
+    # reviewed revision has no evidence still lands, and says so.
+    it "accepts a nil anchor_text as a position with no evidence line" do
+      expect(anchor(anchor_text: nil).anchor_text).to be_nil
+    end
+
+    it "refuses an anchor_text that is neither a String nor nil, false included" do
+      expect { anchor(anchor_text: 42) }.to raise_error(Lain::Error, /anchor_text/)
+      expect { anchor(anchor_text: false) }.to raise_error(Lain::Error, /anchor_text/)
     end
 
     it "accepts an empty anchor_text -- a blank line is a real anchorable position" do

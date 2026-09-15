@@ -55,11 +55,20 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
 
   def base_sha = -("b" * 40)
 
+  # Each revision's bytes, long enough to hold every line a note below names,
+  # because a note's evidence is read out of the revision rather than the wire.
+  def file_at(revision, path)
+    lines = path == "app.rb" ? 90 : 2
+    Array.new(lines) { |index| "#{revision[0]} #{path} #{index + 1}\n" }.join.b
+  end
+
   def changeset
-    @changeset ||= Lain::Review::Changeset.new(
-      source: DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, base_ref: base_sha,
-                                                                                 head_ref: head_sha, commits: []))
-    )
+    @changeset ||= begin
+      double = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, base_ref: base_sha,
+                                                                  head_ref: head_sha, commits: [])
+      allow(double).to receive(:file_at) { |revision, path| file_at(revision, path) }
+      Lain::Review::Changeset.new(source: DiffSource.over(double))
+    end
   end
 
   def record = @record ||= StringIO.new

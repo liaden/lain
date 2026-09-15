@@ -745,6 +745,105 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
+  # What a note's anchor rests on: the revision's own line at that position,
+  # never the editor buffer the note was placed in.
+  describe "the anchor a note at a position rests on" do
+    subject(:changeset) { described_class.new(source:) }
+
+    let(:held) { { ["h" * 40, "to.rb"] => ["keep", "new", "", "tail"], ["b" * 40, "from.rb"] => %w[keep old] } }
+    let(:source) do
+      instance_double(Lain::Review::Source::LocalBranch,
+                      files: parsed(renamed_diff), commits: [commit_record(sha: "c1", paths: ["from.rb => to.rb"])],
+                      base_ref: "b" * 40, head_ref: "h" * 40).tap do |double|
+        allow(double).to receive(:line_at) { |revision, path, line| held[[revision, path]]&.[](line - 1) }
+      end
+    end
+
+    def renamed_diff
+      <<~DIFF
+        diff --git a/from.rb b/to.rb
+        similarity index 80%
+        rename from from.rb
+        rename to to.rb
+        --- a/from.rb
+        +++ b/to.rb
+        @@ -1,2 +1,2 @@
+         keep
+        -old
+        +new
+      DIFF
+    end
+
+    it "reads a new-side line out of the head, and names the head as its revision" do
+      anchor = changeset.anchor(path: "to.rb", side: "new", line: 2)
+
+      expect(anchor).to have_attributes(path: "to.rb", side: :new, line: 2, anchor_text: "new",
+                                        revision: "h" * 40)
+    end
+
+    # The file is named by the path that identifies it on BOTH sides, as the
+    # editor stamps it, and the old side still reads the name the base held.
+    it "reads an old-side line out of the base at the file's old path" do
+      anchor = changeset.anchor(path: "to.rb", side: :old, line: 2)
+
+      expect(anchor).to have_attributes(side: :old, anchor_text: "old", revision: "b" * 40)
+    end
+
+    it "anchors a blank line, which is a real position" do
+      expect(changeset.anchor(path: "to.rb", side: :new, line: 3).anchor_text).to eq("")
+    end
+
+    # SCRUBBED, where a diff anchor's evidence is not, and deliberately: this
+    # text goes into a journal record, and a record holding bytes that are not
+    # valid UTF-8 cannot be written as JSON -- the note would be replaced by a
+    # journal error and a resumed round would have lost the human's words. The
+    # drift the editor measures is its own buffer against itself, so a U+FFFD
+    # here costs no measurement; it costs only a byte-exact copy of a line that
+    # does not decode.
+    it "scrubs evidence that is not valid UTF-8, so the note can be journaled" do
+      held[["h" * 40, "to.rb"]] = ["caf\xC3\xA9".b, "latin \xE9".b]
+
+      texts = [1, 2].map { |line| changeset.anchor(path: "to.rb", side: :new, line:).anchor_text }
+
+      expect(texts).to eq(["café", "latin \uFFFD"])
+      expect(texts).to all(be_valid_encoding)
+    end
+
+    # A note never refuses on evidence: a batch of notes is taken whole or
+    # refused whole, so a refusal of one would journal its neighbours twice on
+    # the retry. The position still lands, carrying no evidence line.
+    it "anchors a line that side does not hold with no evidence line" do
+      expect(changeset.anchor(path: "to.rb", side: :new, line: 5))
+        .to have_attributes(line: 5, anchor_text: nil, revision: "h" * 40)
+    end
+
+    it "anchors a path this changeset does not carry with no evidence line, asking the source nothing" do
+      expect(changeset.anchor(path: "elsewhere.rb", side: :new, line: 1).anchor_text).to be_nil
+      expect(source).not_to have_received(:line_at)
+    end
+
+    it "anchors the old side of a file the changeset adds with no evidence line" do
+      diff = "diff --git a/new.rb b/new.rb\nnew file mode 100644\n--- /dev/null\n+++ b/new.rb\n@@ -0,0 +1 @@\n+fresh\n"
+      added = described_class.new(source: instance_double(Lain::Review::Source::LocalBranch,
+                                                          files: parsed(diff), base_ref: "b" * 40, head_ref: "h" * 40))
+
+      expect(added.anchor(path: "new.rb", side: :old, line: 1).anchor_text).to be_nil
+    end
+
+    # Line 0 indexes the LAST line if nothing checks it first.
+    it "refuses line 0 rather than reading the last line" do
+      expect { changeset.anchor(path: "to.rb", side: :new, line: 0) }
+        .to raise_error(Lain::Review::Anchor::InvalidLine)
+      expect(source).not_to have_received(:line_at)
+    end
+
+    it "refuses a side outside the two before reading anything" do
+      expect { changeset.anchor(path: "to.rb", side: "both", line: 1) }
+        .to raise_error(Lain::Review::Anchor::UnknownSide)
+      expect(source).not_to have_received(:line_at)
+    end
+  end
+
   describe "what a changeset owes a partition strategy" do
     subject(:changeset) { changeset_over(diff, commits:) }
 

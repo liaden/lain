@@ -288,6 +288,95 @@ RSpec.describe "a survey, from a directory to a rendering", :seam do
     end
   end
 
+  # The note rail over a real projection and the run's one ledger. The editor's
+  # buffer is the file on disk, unprojected by ruling, so the text it sends is
+  # the credential itself; the journal is the artifact, and it must hold only
+  # what the projection shows.
+  describe "a note placed on a masked line" do
+    let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+    let(:ledger) { Lain::Sensitivity::Ledger.new }
+    let(:pem) do
+      "-----BEGIN PRIVATE KEY-----\n#{Array.new(4) { "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn" }.join("\n")}\n" \
+        "-----END PRIVATE KEY-----"
+    end
+    let(:session) do
+      corpus = Lain::Review::Source::Corpus.new(
+        walk: Lain::Survey::Walk.new(root: @root, sensitivity: Lain::Sensitivity.new(home:, cwd: @root)),
+        projection: Lain::Survey::Projection.new(ledger:)
+      )
+      open_over(:unused, over: Lain::Review::Changeset.new(source: corpus))
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-survey-masked") do |made|
+        @root = File.realpath(made)
+        File.binwrite(File.join(@root, "settings.env"), "# service\nREGION=eu\nAPI_KEY=#{api_key}\nDEBUG=0\n")
+        File.binwrite(File.join(@root, "keyed.md"), "one\n#{pem}\nseven\neight\n")
+        File.binwrite(File.join(@root, "latin.txt"), "caf\xE9 au lait\nplain\n".b)
+        example.run
+      end
+    end
+
+    def placed = Lain::Journal.records(entries, type: "annotation_placed").to_a
+
+    def note(drifted: false, path: "settings.env", line: 3, anchor_text: "API_KEY=#{api_key}")
+      { "path" => path, "side" => "new", "line" => line, "anchor_text" => anchor_text,
+        "text" => "rotate this", "kind" => "note", "revision" => session.changeset.head_ref,
+        "drifted" => drifted }
+    end
+
+    def handed_back(*notes)
+      handover = Lain::Review::Handover.new(session:)
+      Lain::Frontend::Neovim::ReviewWrite.notes([notes]) { |one| handover.wrote_annotation(one) }
+    end
+
+    it "journals the projected line, never the credential the buffer sent" do
+      expect(handed_back(note)).to be_nil
+
+      expect(placed.map { |record| record["anchor_text"] })
+        .to eq(["API_KEY=#{format(Lain::Sensitivity::Regions::PLACEHOLDER, 1)}"])
+      expect(entries.join).not_to include(api_key)
+    end
+
+    it "names the corpus's own head as the revision the evidence was read at" do
+      handed_back(note)
+
+      expect(placed.first["revision"]).to eq(session.changeset.head_ref)
+    end
+
+    it "carries the editor's drift measurement unchanged" do
+      handed_back(note(drifted: true))
+
+      expect(placed.first["drifted"]).to be(true)
+    end
+
+    # A latin-1 file's line does not decode, and a record that is not valid
+    # UTF-8 cannot be journaled: the note would live in memory and be gone from
+    # the record, so a resumed round would have lost it.
+    it "journals a note on a line that does not decode, so a replay still holds it" do
+      expect(handed_back(note(path: "latin.txt", line: 1, anchor_text: "café au lait"))).to be_nil
+
+      replayed = Lain::Review::Session.from_journal(entries, changeset: session.changeset, journal:, surface:)
+      expect([session.annotations.size, replayed.annotations.size]).to eq([1, 1])
+      expect(replayed.annotations.first.anchor_text).to eq("caf\uFFFD au lait")
+    end
+
+    # A private key spans lines and the whole-file projection collapses it to
+    # one placeholder, so its line numbers are not the buffer's. The note names
+    # the buffer's line, and its evidence is that raw line, masked.
+    it "reads each note's evidence at the buffer's own line number, below a multi-line masked region too" do
+      raw = "one\n#{pem}\nseven\neight\n".lines(chomp: true)
+      notes = [3, 7, 8, 9].map { |line| note(path: "keyed.md", line:, anchor_text: raw[line - 1]) }
+
+      expect(handed_back(*notes)).to be_nil
+
+      expect(placed.map { |record| record.values_at("line", "anchor_text") })
+        .to eq([[3, format(Lain::Sensitivity::Regions::PLACEHOLDER, 1)],
+                [7, format(Lain::Sensitivity::Regions::PLACEHOLDER, 1)], [8, "seven"], [9, "eight"]])
+      expect(entries.join).not_to include("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn")
+    end
+  end
+
   describe "a survey groups by directory" do
     it "heads each directory with its own files" do
       session = open_over(:spread)

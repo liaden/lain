@@ -1066,11 +1066,12 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
       )].freeze
     end
 
+    # The head's bytes, because a note's evidence is read out of the revision.
     def changeset
-      source = DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
-                                               diff: diff.b, commits: walk,
-                                               base_ref: -("b" * 40), head_ref: -("h" * 40)))
-      Lain::Review::Changeset.new(source:)
+      double = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: walk,
+                                                                  base_ref: -("b" * 40), head_ref: -("h" * 40))
+      allow(double).to receive(:file_at).with(-("h" * 40), "a.rb").and_return("one\nTWO\nTWO\n".b)
+      Lain::Review::Changeset.new(source: DiffSource.over(double))
     end
 
     let(:io) { StringIO.new }

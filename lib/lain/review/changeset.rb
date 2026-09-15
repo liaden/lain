@@ -139,6 +139,42 @@ module Lain
       # @return [Boolean]
       def checked_out?(file) = @source.checked_out?(file.path)
 
+      # The position a note names, with the evidence read out of the revision
+      # that side rests on -- the head for `new`, the base for `old` -- rather
+      # than out of the editor buffer the note was placed in. On a changeset that
+      # buffer is the working copy, which need not be the head; on a survey it is
+      # the file on disk, unprojected, and the source masks the line it answers
+      # ({Source::Corpus#line_at}). Either way the buffer's text is not what the
+      # round reviewed, and the journal records what it reviewed.
+      #
+      # It NEVER REFUSES on evidence. A position the revision holds no line at --
+      # a file this changeset does not carry, a line past the end, a surveyed
+      # file deleted since -- anchors with a nil `anchor_text`. The note rail
+      # takes a batch of notes whole or refuses it whole, so refusing one note
+      # would journal its neighbours a second time on the retry.
+      #
+      # The text is SCRUBBED, unlike a diff anchor's {#evidence}: it goes into a
+      # journal record, and bytes that are not valid UTF-8 cannot be written as
+      # JSON, so a latin-1 line would cost the note its place on the record. The
+      # editor measures drift on its own buffer, so a U+FFFD here changes no
+      # measurement.
+      #
+      # The side and the line are judged BEFORE anything is read: `line: 0`
+      # indexes the last line, which is a position nobody named.
+      #
+      # @param path [String] the file as {#file} knows it, on either side
+      # @param side [Symbol, String] one of {Review::SIDES}
+      # @param line [Integer] 1-based
+      # @return [Anchor]
+      # @raise [Anchor::UnknownSide, Anchor::InvalidLine] a position that cannot exist
+      def anchor(path:, side:, line:)
+        side = Anchor.side!(side)
+        number = Anchor.line!(line)
+        revision = side == :old ? base_ref : head_ref
+        text = evidence_at(file(path), side, revision, number)
+        Anchor.new(path:, side:, line: number, revision:, anchor_text: text && decoded(text).scrub)
+      end
+
       # Register that this file has now been READ, on somebody's behalf, and
       # answer what reading it produced.
       #
@@ -293,7 +329,16 @@ module Lain
       # for byte against the line the file now holds, and substituting U+FFFD for
       # a latin-1 source file's bytes would report drift on a line nobody touched.
       # A path is the opposite case and is scrubbed -- see {Source::Parser#path_text}.
-      def evidence(line) = line.byteslice(1..).to_s.dup.force_encoding(Encoding::UTF_8)
+      def evidence(line) = decoded(line.byteslice(1..).to_s)
+
+      def decoded(text) = text.dup.force_encoding(Encoding::UTF_8)
+
+      # The name that side's revision holds the file under: nil for the old side
+      # of an addition or the new side of a deletion, which is no evidence.
+      def evidence_at(held, side, revision, number)
+        named = held && (side == :old ? held.old_path : held.new_path)
+        named && @source.line_at(revision, named, number)
+      end
     end
   end
 end

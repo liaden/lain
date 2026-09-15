@@ -70,10 +70,16 @@ module Lain
       # above and this share nothing but the note they read: this one decides
       # what a valid POSITION is, and gets that decision from {Anchor} rather
       # than restating any of it.
+      #
+      # The one exception is a nil `anchor_text`, which {Anchor} accepts as "the
+      # reviewed revision holds no line here". This rail's text is the editor's
+      # own read of its buffer, which always has one, so nil here is a note that
+      # lost a key and is refused.
       def anchor_for(note)
         Anchor.new(path: Wire.token(note["path"]), side: Wire.token(note["side"]),
                    line: Epic::WireInteger.read(note["line"], field: "line"),
-                   anchor_text: Wire.text(note["anchor_text"]), revision: Wire.token(note["revision"]))
+                   anchor_text: Anchor.string!(Wire.text(note["anchor_text"]), field: "anchor_text"),
+                   revision: Wire.token(note["revision"]))
       end
       private_class_method :anchor_for
     end

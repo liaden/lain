@@ -158,7 +158,8 @@ is ~80,800 rendered, ~1.1M tokens, past even a 1M window.
 
 `Lain::Review::Source` is where a reviewable changeset comes from. The seven messages
 a source answers, and what is deliberately absent from that list, are at
-`lib/lain/review/source.rb`; these are the arguments behind the shape.
+`lib/lain/review/source.rb`, beside `#line_at`, which every source also answers
+and the shared group does not yet hold; these are the arguments behind the shape.
 
 ### `#sides`, and why the question is the SOURCE's
 
@@ -213,6 +214,23 @@ showing the old side beside the new needs the whole old file, and a diff
 carries the hunks and three lines around them. Every consumer of that is a
 renderer, so the read belongs to the source that already knows where the
 bytes live.
+
+### `#line_at`, and why it is not `#file_at` cut into lines
+
+A note's evidence is one line of the reviewed revision, numbered as the file the
+human placed it in numbers it. For a diff source that is `#file_at` cut by
+`Anchor.lines`, and `Source::Diffed` answers it so. A corpus cannot: its
+`#file_at` is the PROJECTION, and masking a region that spans lines (a private
+key block) collapses those lines into one placeholder, so the projection's line
+N is not the file's. `Corpus#line_at` asks `Survey::Projection#line`, which
+reconciles over the whole file and masks only where a region crosses that raw
+line.
+
+It answers nil rather than refusing -- past the end, at a revision that does not
+hold the path, for a surveyed file deleted since -- and `Changeset#anchor`
+records that as a note with no evidence line. The note rail takes a batch of
+notes whole or refuses it whole, so a refusal of one note would journal its
+neighbours twice on the retry.
 
 ### `DiffOrigin`, and why it is on the PORT
 

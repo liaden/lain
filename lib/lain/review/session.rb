@@ -358,11 +358,11 @@ module Lain
       # false. This object has no document -- it holds a diff, not a working tree
       # -- so it refuses to guess.
       #
-      # The revision recorded is the ANCHOR's, never the changeset's head: a note
-      # placed while one commit is on screen was authored against that commit,
-      # and an annotation authored against one diff and submitted against another
-      # is a live defect in tuicr that only an on-record revision makes
-      # detectable.
+      # The revision recorded is the ANCHOR's: the revision its evidence was read
+      # at ({Changeset#anchor} -- the head for a new-side note, the base for an
+      # old-side one), never the one the editor's buffer was stamped with. An
+      # annotation submitted against a different diff stays detectable because
+      # that revision is on the record.
       #
       # @param anchor [Review::Anchor]
       # @param text [String] the human's own words

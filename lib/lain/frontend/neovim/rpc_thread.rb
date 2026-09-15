@@ -551,12 +551,11 @@ module Lain
       # and it has to judge it HERE, because a refusal is only worth anything
       # while the human's words are still in the buffer.
       #
-      # Of the record's members only the anchor's `id` is minted on this side.
-      # `revision` is the EDITOR's, off `47_diff.lua`'s `b:lain_review_revision`
-      # stamp, and it has to be: the member exists so that an annotation
-      # authored against one diff and submitted against another is DETECTABLE,
-      # which only works if the diff the human was LOOKING at is on the record
-      # rather than whatever is on screen at submit time.
+      # `anchor_text` and `revision` still cross this boundary, off the buffer
+      # and `47_diff.lua`'s `b:lain_review_revision` stamp, but neither is
+      # recorded: {Review::Handover} reads a note's evidence and revision out of
+      # the reviewed revision ({Review::Changeset#anchor}). They are still judged
+      # here as the editor's shape.
       #
       # `drifted` is the EDITOR's for a harder reason: drift is the anchor text
       # against the line the number NOW names, and that line lives in the buffer
@@ -589,9 +588,11 @@ module Lain
         # sets they must land in.
         CLOSED = { "side" => :SIDES, "kind" => :ANNOTATION_KINDS }.freeze
 
-        # The three nobody downstream can reconstruct: the file a note is on, the
-        # words in it, and the revision it was authored against. All
-        # blank-checked; `anchor_text` deliberately is not (see {KEYS}).
+        # The file a note is on, the words in it, and the revision the editor
+        # stamped it with. All blank-checked; `anchor_text` deliberately is not
+        # (see {KEYS}). The wire's revision is not what gets recorded -- the
+        # handover records the reviewed one -- so a blank one here means only
+        # that the editor lost its stamp, whatever the refusal's words suggest.
         NAMED = {
           "path" => "an annotation must name the file it is on",
           "text" => "an annotation with nothing in it records no opinion",

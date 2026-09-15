@@ -280,10 +280,11 @@ RSpec.describe Lain::Review::AnnotationPlaced do
   # refuses a blank anchor_text because a prose document has no blank line worth
   # annotating; a diff does -- an added empty line is a real, anchorable position,
   # and refusing it would lose the human's words over a line they legitimately
-  # chose. Absent is still refused: nil is not a line, "" is.
-  it "anchors to a blank line but not to a missing one" do
+  # chose. nil is a different fact from "": the reviewed revision held no line
+  # at that position, and the note lands with no evidence rather than being lost.
+  it "anchors to a blank line, and to a position with no evidence line" do
     expect(placed(anchor_text: "").anchor_text).to eq("")
-    expect { placed(anchor_text: nil) }.to raise_error(ArgumentError, /anchor_text/)
+    expect(placed(anchor_text: nil).anchor_text).to be_nil
   end
 
   # The leading indentation IS the evidence: drift is anchor_text against the

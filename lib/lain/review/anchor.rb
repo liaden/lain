@@ -77,7 +77,8 @@ module Lain
       # `anchor_text` is validated with {.string!} alone, never this: an
       # anchored blank line is a real, anchorable position, so "" is a valid
       # anchor_text and only `path`/`revision` (identifiers, never blank)
-      # need the non-empty half of the check.
+      # need the non-empty half of the check. nil is valid too, and means
+      # something else: the reviewed revision holds no line at that position.
       def self.nonblank_string!(value, field:)
         candidate = string!(value, field:)
         return candidate unless candidate.empty?
@@ -100,7 +101,7 @@ module Lain
         super(path: -self.class.nonblank_string!(path, field: "path"),
               side: self.class.side!(side),
               line: self.class.line!(line),
-              anchor_text: -self.class.string!(anchor_text, field: "anchor_text"),
+              anchor_text: anchor_text.nil? ? nil : -self.class.string!(anchor_text, field: "anchor_text"),
               revision: -self.class.nonblank_string!(revision, field: "revision"),
               id: -(id || SecureRandom.uuid).to_s)
       end
@@ -159,9 +160,11 @@ module Lain
       # collapses "moved" and "gone" into one boolean: telling them apart is the
       # drift-model spike this fences off as an open research question. The
       # question answered here is only "does this position still say what it
-      # said"; both cases answer no.
+      # said"; both cases answer no. An anchor with no evidence line never said
+      # anything, so it answers no too -- even against a document that also has
+      # no line there, which a bare comparison of two nils would call unchanged.
       def drifted?(document)
-        self.class.lines(document)[line - 1] != anchor_text
+        anchor_text.nil? || self.class.lines(document)[line - 1] != anchor_text
       end
 
       # revision[0, 7] is unguarded, but revision is validated non-empty at

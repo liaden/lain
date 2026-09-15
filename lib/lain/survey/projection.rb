@@ -44,10 +44,11 @@ module Lain
     # One surface is NOT that artifact: on a SURVEY the window `:LainNote`
     # operates on is the diff's `new` slot, a REAL file buffer the human can
     # edit, and it shows the file on disk unprojected, deliberately -- a survey is
-    # a survey of project STATE and the note rail needs the real file. A human can
-    # always open their own file in their own editor, so unprojected bytes there
-    # are correct. What WOULD be a leak is unprojected bytes inside the artifact
-    # itself: the journal, the docent brief, a `/critique` prefill.
+    # a survey of project STATE. A human can always open their own file in their
+    # own editor, so unprojected bytes there are correct. What WOULD be a leak is
+    # unprojected bytes inside the artifact itself: the journal, the docent brief,
+    # a `/critique` prefill. So a note placed in that buffer journals its
+    # evidence through {#line}, never the buffer's text.
     #
     # == The ledger is the run's one ledger
     #
@@ -114,7 +115,57 @@ module Lain
         Sensitivity::Masking.render(content, unreleased)
       end
 
+      # One line of the projection, numbered as the file on disk numbers it --
+      # which {#project}'s answer is not, because a region spanning lines (a
+      # private key block) collapses into one placeholder. A note is placed in
+      # the unprojected buffer, so the number it names is the disk's.
+      #
+      # The ledger is asked about the WHOLE file, exactly as {#project} asks it:
+      # a scan of one line would reconcile away every release for a region on
+      # any other line. Each region crossing the line is then masked where it
+      # crosses, under the ordinal the whole projection gives it, so a line
+      # inside a masked region answers that region's placeholder and never a
+      # neighbour's text.
+      #
+      # @param path [String, Pathname] the file, ABSOLUTE, as for {#project}
+      # @param content [String] its whole bytes
+      # @param number [Integer] 1-based, by {Review::Anchor.lines}' rule
+      # @return [String, nil] that line with its unreleased regions masked, in
+      #   the content's encoding; nil when the file holds no such line
+      def line(path, content, number)
+        unreleased = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+        from, to = span(content, number)
+        return nil if from.nil?
+
+        crossing = unreleased.each_with_index.select { |region, _| crosses?(region, from, to) }
+        Sensitivity::Masking.render(content.byteslice(from, to - from),
+                                    crossing.map { |region, _| clipped(region, from, to) },
+                                    ordinals: crossing.map { |_, index| index + 1 }.each)
+      end
+
       private
+
+      Clipped = Data.define(:start, :length)
+      private_constant :Clipped
+
+      # Byte offsets of one line, without its terminator.
+      def span(content, number)
+        lines = Review::Anchor.lines(content.b)
+        return [nil, nil] unless number.between?(1, lines.size)
+
+        from = lines.first(number - 1).sum { |line| line.bytesize + 1 }
+        [from, from + lines[number - 1].bytesize]
+      end
+
+      # Half-open, which already holds for an empty line: a region spanning it
+      # starts before its offset and ends after it. A region STARTING at an
+      # empty line would begin with its newline, and no detector emits one.
+      def crosses?(region, from, to) = region.start < to && region.start + region.length > from
+
+      def clipped(region, from, to)
+        start = [region.start, from].max
+        Clipped.new(start: start - from, length: [region.start + region.length, to].min - start)
+      end
 
       # `complete: true` is a claim about the BYTES, and this object cannot see a
       # truncation by looking at one. The failure it prevents surfaces nowhere

@@ -200,6 +200,13 @@ module Lain
           # them together means holding every file's bytes for the session.
           def content = projection.project(listing.absolute, File.binread(listing.absolute))
 
+          # One line of {#content}, numbered as the file on disk numbers it
+          # ({Survey::Projection#line}).
+          #
+          # @param number [Integer] 1-based
+          # @return [String, nil]
+          def line(number) = projection.line(listing.absolute, File.binread(listing.absolute), number)
+
           private
 
           # `File.join` and not interpolation, so a prefix is joined by one rule
@@ -299,6 +306,25 @@ module Lain
           reading = readings[path.to_s] if revision.to_s == head_ref
 
           reading&.content
+        end
+
+        # One line of one file as the head holds it, numbered as the file on
+        # disk numbers it -- the buffer a note is placed in -- and masked as the
+        # projection masks it.
+        #
+        # A file gone since the corpus listed it answers nothing rather than
+        # raising: a human goes on working in the tree they survey, and a note
+        # that arrives on a deleted file still lands, with no evidence line.
+        #
+        # @param revision [String] {#head_ref}; anything else answers nil
+        # @param path [String] one of {#files}' paths
+        # @param number [Integer] 1-based
+        # @return [String, nil]
+        def line_at(revision, path, number)
+          reading = readings[path.to_s] if revision.to_s == head_ref
+          reading&.line(number)
+        rescue SystemCallError
+          nil
         end
 
         # The object database answered and nobody was asked -- the same fact

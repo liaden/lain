@@ -186,12 +186,17 @@ module Lain
       # @param redraw [#present] how the sidebar is drawn again once a gesture
       #   has changed what one of its rows says ({Redraw}), which needs the
       #   scope the round is being read at and so comes from whoever drew it
-      def initialize(session:, view: Detached, baton: Unheld, docent: Unattended, redraw: Undrawn)
+      # @param evidence [#anchor] what a note's position is read against --
+      #   the round's own changeset ({Changeset#anchor}), which every caller
+      #   already holds through the session, so no wiring can forget it
+      def initialize(session:, view: Detached, baton: Unheld, docent: Unattended, redraw: Undrawn,
+                     evidence: session.changeset)
         @session = session
         @view = view
         @baton = baton
         @docent = docent
         @redraw = redraw
+        @evidence = evidence
       end
 
       # @return [Review::Session] the aggregate this rail records against
@@ -230,11 +235,16 @@ module Lain
 
       # One note, as {Frontend::Neovim::ReviewWrite} normalized it off the wire.
       #
-      # `drifted` is FORWARDED and never computed. Drift is the anchor text
-      # against the line the number now names, and that line lives in the editor
-      # buffer -- neither the diff this session holds nor anything reachable from
-      # here. The measurement is taken where the buffer is, in the lua half at
-      # settle time. {AnnotationPlaced} gives it no default for that reason: a
+      # The wire's `anchor_text` and `revision` are the BUFFER's, and neither is
+      # recorded. The position is read against the round's own revision instead
+      # ({Changeset#anchor}): a changeset's buffer can be a checkout that is not
+      # the head, and a survey's is the file on disk, unprojected, so recording
+      # its text would journal a credential the projection masks.
+      #
+      # `drifted` is FORWARDED and never computed. Drift is the buffer's text
+      # against the line the number now names, and that buffer is not reachable
+      # from here. The measurement is taken where the buffer is, in the lua half
+      # at settle time. {AnnotationPlaced} gives it no default for that reason: a
       # note nobody measured must not be recorded as one that did not drift.
       #
       # The note's SHAPE was already judged at the boundary ({ReviewWrite}), so
@@ -332,13 +342,7 @@ module Lain
 
       private
 
-      # The position the note names, minted here rather than resolved against
-      # the rendering: every member of it crossed the wire, which is the whole
-      # reason {ReviewWrite::KEYS} carries `revision` and `anchor_text`.
-      def anchor(note)
-        Anchor.new(path: note["path"], side: note["side"], line: note["line"],
-                   anchor_text: note["anchor_text"], revision: note["revision"])
-      end
+      def anchor(note) = @evidence.anchor(path: note["path"], side: note["side"], line: note["line"])
 
       # A refusal EMPTIES `hunk_keys`, because `#marked?` answers the human's
       # question -- did this gesture land. What did reach the session is NAMED

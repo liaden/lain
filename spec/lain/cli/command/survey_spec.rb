@@ -1103,7 +1103,8 @@ RSpec.describe Lain::CLI::Command::Survey do
       FileUtils.rm(File.join(@root, "notes.md"))
 
       expect(handover.wrote_annotation(note)).to be_nil
-      expect(records.map { |entry| entry["type"] }).to include("annotation_placed")
+      expect(records.select { |entry| entry["type"] == "annotation_placed" }.map { |entry| entry["anchor_text"] })
+        .to eq([nil])
     end
 
     # THE PANE MAY NOT ASSERT A THREAD THE RECORD DENIES. `nitpick` is not one

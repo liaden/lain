@@ -1261,6 +1261,16 @@ RSpec.describe Lain::Review::Session do
         .to eq([["note", false, head_sha], ["blocker", true, changeset.partitions(walk).last.detail.sha]])
     end
 
+    # A note the reviewed revision held no line for is journaled with no
+    # evidence, and replay must restore that as no evidence -- not refuse the
+    # round over it, and not invent a blank line.
+    it "restores a note with no evidence line as one with no evidence line" do
+      session = open_session
+      session.annotate(anchor_on("a.rb", 40, nil), "past the end", kind: :note, drifted: true)
+
+      expect(replayed.annotations.map { |note| [note.line, note.anchor_text] }).to eq([[40, nil]])
+    end
+
     it "restores a submitted verdict" do
       session = live_round(policy: Lain::Review::Verdict::Policy::Permissive.new)
       session.submit("approve")

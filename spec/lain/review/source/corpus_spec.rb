@@ -538,6 +538,38 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
+  # One line, numbered as the file on disk numbers it -- the buffer a note is
+  # placed in -- with what the projection masks still masked.
+  describe "#line_at" do
+    let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+    let(:pem) do
+      "-----BEGIN PRIVATE KEY-----\n#{Array.new(4) { "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn" }.join("\n")}\n" \
+        "-----END PRIVATE KEY-----"
+    end
+
+    before { write("notes.md", "one\n#{pem}\nseven\neight\nAPI_KEY=#{api_key}\n") }
+
+    it "answers a line below a multi-line masked region by its raw number, masked" do
+      expect([3, 8, 10].map { |line| corpus.line_at(corpus.head_ref, "notes.md", line) })
+        .to eq([format(Lain::Sensitivity::Regions::PLACEHOLDER, 1), "seven",
+                "API_KEY=#{format(Lain::Sensitivity::Regions::PLACEHOLDER, 2)}"])
+    end
+
+    it "answers nothing past the end, at the base, or for a path it does not carry" do
+      expect([corpus.line_at(corpus.head_ref, "notes.md", 11), corpus.line_at(corpus.base_ref, "notes.md", 1),
+              corpus.line_at(corpus.head_ref, "other.md", 1)]).to eq([nil, nil, nil])
+    end
+
+    # A human goes on working in the tree they survey, so a file can be gone by
+    # the time a note on it arrives; that is no evidence, not an error.
+    it "answers nothing for a file deleted since the corpus listed it" do
+      head = corpus.head_ref
+      File.delete(File.join(root, "notes.md"))
+
+      expect(corpus.line_at(head, "notes.md", 1)).to be_nil
+    end
+  end
+
   # A hunk's body carries an origin marker on EVERY line, blank ones included:
   # `Changeset#context?` reads `""` as CONTEXT, so a bare blank line would grow
   # an old side that does not exist and materialise anchors against a base that

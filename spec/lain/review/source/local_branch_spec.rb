@@ -353,6 +353,20 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  # One line of `#file_at`'s answer, cut by `Anchor.lines`' rule: what a note's
+  # evidence is read from.
+  describe "#line_at" do
+    it "answers one line as each revision holds it" do
+      expect([source.line_at(source.base_ref, "shared.rb", 2), source.line_at(source.head_ref, "shared.rb", 2)])
+        .to eq(%w[b CHANGED])
+    end
+
+    it "answers nothing past the end, or for a path the revision does not hold" do
+      expect([source.line_at(source.head_ref, "shared.rb", 4), source.line_at(source.head_ref, "absent.rb", 1)])
+        .to eq([nil, nil])
+    end
+  end
+
   # Whether the working tree can stand in for the head, one path at a time: an
   # editor shows the file on disk only when it is the file under review.
   describe "#checked_out?" do

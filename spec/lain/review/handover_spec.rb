@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
+require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
@@ -167,10 +169,19 @@ RSpec.describe Lain::Review::Handover do
      commit(sha: "d" * 40, subject: "second: touch b", path: "b.rb")]
   end
 
+  # What each revision holds, so a note's evidence can be read out of the
+  # objects the way a real source reads it with `git show`.
+  def blobs
+    { [base_sha, "a.rb"] => "one\ntwo\nthree\n", [head_sha, "a.rb"] => "one\nTWO\nthree\n",
+      [base_sha, "b.rb"] => "x\ny\n", [head_sha, "b.rb"] => "x\nY\n" }
+  end
+
   def source_double
-    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
-                                    diff: diff.b, commits: commits.freeze,
-                                    base_ref: base_sha, head_ref: head_sha))
+    held = blobs
+    double = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: commits.freeze,
+                                                                base_ref: base_sha, head_ref: head_sha)
+    allow(double).to receive(:file_at) { |revision, path| held[[revision, path]]&.b }
+    DiffSource.over(double)
   end
 
   def keys_for(path)
@@ -182,7 +193,7 @@ RSpec.describe Lain::Review::Handover do
   # rather than built through that class, so this spec pins what the HANDOVER
   # does with a note rather than what the boundary does to one.
   def note(**overrides)
-    { "path" => "a.rb", "side" => "new", "line" => 3, "anchor_text" => "TWO",
+    { "path" => "a.rb", "side" => "new", "line" => 2, "anchor_text" => "TWO",
       "text" => "this reads backwards", "kind" => "note", "revision" => head_sha,
       "drifted" => false }.merge(overrides.transform_keys(&:to_s))
   end
@@ -392,7 +403,7 @@ RSpec.describe Lain::Review::Handover do
     it "refuses the approve, naming the file and the line the blocker sits on" do
       strict.wrote_annotation(note(kind: "blocker"))
 
-      expect(strict.wrote_verdict("approve")).to include("a.rb").and include("3")
+      expect(strict.wrote_verdict("approve")).to include("a.rb:2")
     end
 
     # The refusal has to leave the round OPEN, or a blocker would cost the human
@@ -433,7 +444,7 @@ RSpec.describe Lain::Review::Handover do
       strict.wrote_annotation(note(kind: "blocker", text: "and this one too"))
       strict.wrote_annotation(note(kind: "note", text: "answered: the first one"))
 
-      expect(strict.wrote_verdict("approve")).to include("a.rb:3")
+      expect(strict.wrote_verdict("approve")).to include("a.rb:2")
       expect(strict_baton.settles).to be_zero
     end
 
@@ -461,7 +472,7 @@ RSpec.describe Lain::Review::Handover do
       handover.wrote_annotation(note)
 
       expect(records_of("annotation_placed").first)
-        .to include("path" => "a.rb", "side" => "new", "line" => 3, "text" => "this reads backwards",
+        .to include("path" => "a.rb", "side" => "new", "line" => 2, "text" => "this reads backwards",
                     "kind" => "note", "revision" => head_sha)
     end
 
@@ -470,10 +481,10 @@ RSpec.describe Lain::Review::Handover do
     end
 
     # THE MEASUREMENT IS FORWARDED, NEVER COMPUTED, and this is the example that
-    # says so. `anchor_text` here is exactly what the diff's new side reads at
-    # that line, so an implementation that measured drift ITSELF -- anchor text
-    # against the diff it holds -- would answer false and journal false. Only a
-    # forwarding one journals true.
+    # says so. The editor's `anchor_text` is exactly what the head reads at that
+    # line, so an implementation that measured drift ITSELF -- the buffer's text
+    # against the evidence it read -- would answer false and journal false. Only
+    # a forwarding one journals true.
     it "records drift as the editor measured it, over a line whose text still matches" do
       handover.wrote_annotation(note(anchor_text: "TWO", drifted: true))
 
@@ -488,14 +499,53 @@ RSpec.describe Lain::Review::Handover do
       expect(records_of("annotation_placed").first["drifted"]).to be(false)
     end
 
-    # The revision is the ANCHOR's -- the diff the human was looking at -- and
-    # not the changeset's head. That is the whole reason the record carries one:
-    # an annotation authored against one diff and submitted against another has
-    # to stay detectable.
-    it "records the revision the editor authored against, not the changeset's head" do
-      handover.wrote_annotation(note(revision: "e" * 40))
+    # The checkout behind the head is the case the buffer lies in: it holds a
+    # line nobody submitted, and the editor stamps it with whatever revision it
+    # was drawn under. The record names what the reviewed revision holds.
+    it "journals the head's own line and the head as revision, whatever the buffer held" do
+      handover.wrote_annotation(note(anchor_text: "two, as the stale checkout has it", revision: "e" * 40))
 
-      expect(records_of("annotation_placed").first["revision"]).to eq("e" * 40)
+      expect(records_of("annotation_placed").first.slice("anchor_text", "revision"))
+        .to eq("anchor_text" => "TWO", "revision" => head_sha)
+    end
+
+    it "journals an old-side note against the base's own line and the base" do
+      handover.wrote_annotation(note(side: "old", line: 2, anchor_text: "whatever the buffer said"))
+
+      expect(records_of("annotation_placed").first.slice("anchor_text", "revision"))
+        .to eq("anchor_text" => "two", "revision" => base_sha)
+    end
+
+    # The session holds the round's changeset, so the evidence reader is that
+    # changeset unless one is injected -- and an injected one is what is read.
+    it "reads the evidence at the note's position from whatever reader it was handed" do
+      asked = []
+      placed = Lain::Review::Anchor.new(path: "a.rb", side: :new, line: 2, anchor_text: "READ", revision: "r" * 40)
+      reader = Object.new
+      reader.define_singleton_method(:anchor) { |**position| asked.push(position) && placed }
+
+      handover(evidence: reader).wrote_annotation(note)
+
+      expect(asked).to eq([{ path: "a.rb", side: "new", line: 2 }])
+      expect(records_of("annotation_placed").first.slice("anchor_text", "revision"))
+        .to eq("anchor_text" => "READ", "revision" => "r" * 40)
+    end
+
+    # A NOTE NEVER REFUSES ON EVIDENCE. The rail takes a batch whole or refuses
+    # it whole, so refusing one note would journal the others twice on a retry;
+    # a position the reviewed revision holds no line at lands with no evidence.
+    it "journals a note on a line the reviewed revision does not hold, with no evidence line" do
+      expect(handover.wrote_annotation(note(line: 40))).to be_nil
+
+      expect(records_of("annotation_placed").map { |record| record.values_at("line", "anchor_text") })
+        .to eq([[40, nil]])
+    end
+
+    it "journals a note on a path the changeset does not carry, with no evidence line" do
+      expect(handover.wrote_annotation(note(path: "c.rb"))).to be_nil
+
+      expect(records_of("annotation_placed").map { |record| record.values_at("path", "anchor_text") })
+        .to eq([["c.rb", nil]])
     end
 
     # THE DOCENT IS TOLD ONLY ABOUT A NOTE THAT LANDED, and the order of those
@@ -1213,6 +1263,74 @@ RSpec.describe Lain::Review::Handover do
       asked = handover.ask("anchor-1", "why this way?")
 
       expect([asked.asked?, asked.report]).to eq([false, Lain::Review::Handover::Unattended::NO_DOCENT])
+    end
+  end
+
+  # Notes over a REAL branch, through the real session and journal, then
+  # replayed. Every shape a revision's bytes can take -- a checkout that is not
+  # the head, the old side of a rename, CRLF, latin-1, a binary blob, a line past
+  # the end -- has to leave its note on the record, or a resumed round has lost
+  # the human's words while this rail answered that it took them.
+  describe "notes over a real branch, journaled and replayed", :seam do
+    let(:scrub) { Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }
+
+    around do |example|
+      Dir.mktmpdir("lain-handover-branch") do |made|
+        @repo = File.realpath(made)
+        FileUtils.cp_r("#{SeedRepo.at("from.rb" => "#{numbered}old\n", "crlf.txt" => "a\r\nb\r\n",
+                                      "latin.txt" => "plain\n", "blob.bin" => "\x00\x01")}/.", @repo)
+        example.run
+      end
+    end
+
+    def numbered = (1..20).map { |n| "line #{n}\n" }.join
+
+    def git(*) = Mixlib::ShellOut.new("git", "-C", @repo, *, environment: scrub).run_command.error!
+
+    def branched
+      git("checkout", "-q", "-b", "base")
+      git("checkout", "-q", "-b", "topic")
+      git("mv", "from.rb", "to.rb")
+      { "to.rb" => "#{numbered}new\n", "crlf.txt" => "a\r\nB\r\n", "latin.txt" => "caf\xE9 latin-1\n".b,
+        "blob.bin" => "\x89PNG\r\n\x1A\n\xFF\xFE\n".b }.each do |name, body|
+        File.binwrite(File.join(@repo, name), body)
+      end
+      git("add", "-A")
+      git("commit", "-q", "-m", "head")
+      File.binwrite(File.join(@repo, "to.rb"), "line 1\nWORKING COPY\n")
+      Lain::Review::Changeset.new(source: Lain::Review::Source::LocalBranch.new(base: "base", head: "topic",
+                                                                                repo_root: @repo))
+    end
+
+    def positions
+      [["to.rb", "new", 2], ["to.rb", "new", 21], ["to.rb", "old", 21], ["to.rb", "new", 99],
+       ["crlf.txt", "new", 2], ["latin.txt", "new", 1], ["blob.bin", "new", 1], ["blob.bin", "old", 1]]
+    end
+
+    it "keeps every note on the record, so a replay holds as many as the live round took" do
+      changeset = branched
+      live = Lain::Review::Session.open(changeset:, journal:, source: "local_branch", surface:, policy:)
+      rail = described_class.new(session: live)
+
+      answers = positions.map do |path, side, line|
+        rail.wrote_annotation(note(path:, side:, line:, anchor_text: "BUFFER", revision: "stale"))
+      end
+
+      replayed = Lain::Review::Session.from_journal(io.string.lines, changeset:, journal:, surface:)
+      expect(answers).to all(be_nil)
+      expect([live.annotations.size, replayed.annotations.size]).to eq([positions.size, positions.size])
+    end
+
+    it "journals what each revision holds, never what the buffer sent" do
+      changeset = branched
+      rail = described_class.new(session: Lain::Review::Session.open(changeset:, journal:, source: "local_branch",
+                                                                     surface:, policy:))
+      positions.first(6).each do |path, side, line|
+        rail.wrote_annotation(note(path:, side:, line:, anchor_text: "BUFFER", revision: "stale"))
+      end
+
+      expect(records_of("annotation_placed").map { |record| record["anchor_text"] })
+        .to eq(["line 2", "new", "old", nil, "B\r", "caf\uFFFD latin-1"])
     end
   end
 
