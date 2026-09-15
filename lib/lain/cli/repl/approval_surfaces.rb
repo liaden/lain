@@ -3,9 +3,12 @@
 module Lain
   module CLI
     class Repl
-      # One, or up to four under --auto-approve, --nvim and --secret-oracle,
-      # watch the SAME parked-approval queue, and FIRST ANSWER WINS (Pending's
-      # own doctrine).
+      # Up to four watch the SAME parked-approval queue, and FIRST ANSWER WINS
+      # (Pending's own doctrine): the terminal's surface, the automatic approver
+      # every attended session is built with, the editor's under --nvim, and the
+      # secret oracle under --secret-oracle. The automatic approver's fiber
+      # always runs and decides only while the `auto_approve` mode layer is on,
+      # so turning the layer on or off mid-session needs no watcher respawned.
       #
       # The two LLM surfaces are DISJOINT rather than a second opinion on one
       # pending: {Approval::AutoSurface} takes only pendings carrying no

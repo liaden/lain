@@ -247,7 +247,7 @@ RSpec.describe Lain::Approval::Escalation do
     # abstained on.
     it "creates nothing for an auto-approve surface to adjudicate when the rung allowed" do
       spawn = ->(*) { raise "a role was spawned to adjudicate a call the rung had already settled" }
-      surface = Lain::Approval::AutoSurface.new(role_spawn: spawn)
+      surface = Lain::Approval::AutoSurface.new(role_spawn: spawn, enabled: -> { true })
 
       over(EscalationSpecSupport::Fixed.new("rules", :allow)).call(effect, nil)
 

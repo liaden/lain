@@ -38,6 +38,12 @@ RSpec.describe Lain::Mode::Layer do
       expect(altering.map(&:lighter)).to all(satisfy { |lighter| !lighter.empty? })
     end
 
+    # The layer the automatic approval surface answers to, so the prompt that
+    # carries its lighter is telling the human something is deciding for them.
+    it "declares auto_approve as outcome-altering, lit as AA" do
+      expect(described_class.for(:auto_approve)).to have_attributes(alters_outcome?: true, lighter: "AA")
+    end
+
     it "refuses to declare an outcome-altering layer with no lighter" do
       expect { described_class.new(name: :phantom, lighter: "", alters_outcome: true) }
         .to raise_error(ArgumentError, /lighter/)

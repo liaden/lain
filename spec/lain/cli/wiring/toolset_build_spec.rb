@@ -721,10 +721,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.role_spawn).to be_a(Lain::Skill::RoleSpawn)
     end
 
-    it "wires no auto surface without --auto-approve" do
-      toolset_build.build(recorder, ask_human:)
+    # Built whatever the flags say: the surface answers to the live
+    # auto_approve layer, which `--auto-approve` merely starts on.
+    it "wires an AutoSurface without --auto-approve, disengaged until the board's layer comes on" do
+      build = build_with({}, switchboard: -> { switchboard })
+      build.build(recorder, ask_human:)
+      enabled = build.auto_surface.instance_variable_get(:@enabled)
+      readings = [enabled.call]
+      switchboard.mode_switch.switch(Lain::Mode.new(posture: :accept_edits, layers: %i[auto_approve]), surface: "spec")
 
-      expect(toolset_build.auto_surface).to be_nil
+      expect(readings << enabled.call).to eq([false, true])
     end
 
     # The docent's ANSWERER and not a Docent: a docent is keyed to a changeset
@@ -751,8 +757,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     # The secret-surface invariant, now assertable directly: the third approval surface
     # folds through the SAME seam a `@role/skill` line does.
-    it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
-      build = build_with({ auto_approve: true })
+    it "wires the AutoSurface over its own role_spawn seam" do
+      build = build_with({})
       build.build(recorder, ask_human:)
 
       expect(build.auto_surface).to be_a(Lain::Approval::AutoSurface)

@@ -616,20 +616,19 @@ RSpec.describe Lain::CLI::Wiring do
       expect(io.string).not_to include("capability_degraded")
     end
 
-    # No --auto-approve, no third surface -- unchanged wiring.
-    it "wires no auto surface without --auto-approve" do
-      wire_agent
-      expect(wiring.auto_surface).to be_nil
-    end
+    # The surface is wired for every chat and answers to the board's
+    # auto_approve layer, which --auto-approve starts on. Read through the
+    # surface's own predicate, so a wiring that built the surface over some
+    # other board would read the wrong layer here.
+    it "wires an AutoSurface for every chat, engaged only when --auto-approve seeds the layer" do
+      readings = [{ grace: 5 }, { grace: 5, auto_approve: true }].map do |options|
+        wiring = described_class.new(options:, chronicle:, status_feed:)
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend:)
+        wiring.auto_surface.instance_variable_get(:@enabled).call
+      end
 
-    # --auto-approve constructs the surface over the SAME role_spawn
-    # seam a `@role/skill` line folds through.
-    it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
-      wiring = described_class.new(options: { grace: 5, auto_approve: true }, chronicle:, status_feed:)
-      recorder, session = wiring.run_state(nil)
-      wiring.wire_agent(channel:, recorder:, session:, backend:)
-
-      expect(wiring.auto_surface).to be_a(Lain::Approval::AutoSurface)
+      expect(readings).to eq([false, true])
     end
 
     # No --secret-oracle, no surface. Asserted at the CONSTRUCTION

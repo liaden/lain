@@ -11,6 +11,23 @@ module AutoSurfaceSpecSupport
   # the tool_use_id the park's journal record correlates on.
   Effect = Struct.new(:name, :input, :tool_use_id)
 
+  # The `enabled:` predicate of a session whose auto_approve layer is on and
+  # stays on -- every example not about the layer itself.
+  ENGAGED = -> { true }
+
+  # A layer the example flips, read on every call the way the mode switch is.
+  class Layer
+    def initialize(on)
+      @on = on
+    end
+
+    def on! = @on = true
+
+    def off! = @on = false
+
+    def call = @on
+  end
+
   # A {Skill::RoleSpawn} stand-in: records every spawn and answers each prompt
   # through the injected block, returning a {Tool::Result}. Injecting the seam
   # (rather than assembling a real RoleSpawn's provider/context/toolset set)
@@ -51,7 +68,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     Sync do |task|
       gated = task.async { queue.call(effect, nil) }
       pending = task.with_timeout(1) { queue.dequeue }
-      described_class.new(role_spawn: spawn).sweep(queue)
+      described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
       gated.wait
       pending.surface
     ensure
@@ -106,7 +123,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     Sync do |task|
       gated = task.async { queue.call(effect("edit_file", { "path" => "/etc/passwd" }), nil) }
       task.with_timeout(1) { queue.dequeue }
-      described_class.new(role_spawn: spawn).sweep(queue)
+      described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
       gated.wait
     end
 
@@ -123,7 +140,7 @@ RSpec.describe Lain::Approval::AutoSurface do
       gated = task.async { queue.call(effect, nil) }
       # The human surface draws the arrival first -- but does not decide.
       human_arrival = task.with_timeout(1) { queue.dequeue }
-      described_class.new(role_spawn: spawn).sweep(queue)
+      described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
       [gated.wait, human_arrival]
     end
 
@@ -143,7 +160,7 @@ RSpec.describe Lain::Approval::AutoSurface do
       a = task.async { queue.call(effect("gated_a", {}), nil) }
       b = task.async { queue.call(effect("gated_b", {}), nil) }
       task.with_timeout(1) { [queue.dequeue, queue.dequeue] }
-      described_class.new(role_spawn: spawn).sweep(queue)
+      described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
       a.wait
       b.wait
     end
@@ -170,7 +187,7 @@ RSpec.describe Lain::Approval::AutoSurface do
         pending.decide(true, surface: "tty")
         Lain::Tool::Result.ok("APPROVE")
       end
-      described_class.new(role_spawn: spawn).sweep(queue)
+      described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
       gated.wait
       # The auto surface DID answer, afterwards -- and lost.
       expect(spawn.calls.size).to eq(1)
@@ -187,7 +204,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     Sync do |task|
       gated = task.async { queue.call(effect, nil) }
       task.with_timeout(1) { queue.dequeue }
-      surface = described_class.new(role_spawn: spawn)
+      surface = described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED)
       surface.sweep(queue)
       surface.sweep(queue)
       gated.wait
@@ -209,7 +226,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     Sync do |task|
       gated = task.async { queue.call(effect, nil) }
       task.with_timeout(1) { queue.dequeue }
-      surface = described_class.new(role_spawn: spawn, pruning:)
+      surface = described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED, pruning:)
       surface.sweep(queue)
       surface.sweep(queue)
       gated.wait
@@ -236,7 +253,7 @@ RSpec.describe Lain::Approval::AutoSurface do
         tool_b.decide(false, surface: "tty") if prompt.include?("tool_a")
         Lain::Tool::Result.ok("DEFER")
       end
-      described_class.new(role_spawn: spawn).sweep(queue)
+      described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
       a.wait
       b.wait
       expect(spawn.calls.map { |call| call[:prompt] }.grep(/tool_b/)).to be_empty
@@ -263,7 +280,7 @@ RSpec.describe Lain::Approval::AutoSurface do
       Sync do |task|
         gated = task.async { queue.adjudicate(effect, nil, outstanding:) }
         task.with_timeout(1) { queue.dequeue }
-        described_class.new(role_spawn: spawn).sweep(queue)
+        described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
         task.with_timeout(2) { gated.wait }
       ensure
         gated&.stop
@@ -396,7 +413,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     # surface never gets a pending, and a hand-driven sweep could only say that
     # about the moment it was called.
     def while_watching(board, &block)
-      surface = described_class.new(role_spawn: spawn, poll_interval: 0.005)
+      surface = described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED, poll_interval: 0.005)
       Sync do |task|
         watcher = task.async { surface.watch(board.approvals) }
         task.with_timeout(2, &block)
@@ -478,6 +495,87 @@ RSpec.describe Lain::Approval::AutoSurface do
   # it is pinned HERE, beside the constant, rather than only in the subagent
   # spec: a reader who changes `ROLE` -- or widens `auto_approver`'s tools --
   # will not go looking in spec/lain/tools for the reason they must not.
+  # The surface is built for every attended session, so whether it decides
+  # anything is the auto_approve layer's to say, read live on every sweep.
+  describe "the auto_approve layer it answers to" do
+    let(:spawn) { AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("APPROVE") } }
+
+    def parked_under(layer, timeout: 0.05)
+      queue = Lain::Approval::Queue.new(journal:, timeout:)
+      Sync do |task|
+        gated = task.async { queue.call(effect, nil) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        yield described_class.new(role_spawn: spawn, enabled: layer), queue
+        gated.wait
+        pending.surface
+      ensure
+        gated&.stop
+      end
+    end
+
+    it "refuses to be built without the predicate, so a forgotten wire cannot approve everything" do
+      expect { described_class.new(role_spawn: spawn) }.to raise_error(ArgumentError, /enabled/)
+    end
+
+    it "asks nothing and decides nothing while the layer is off" do
+      surface = parked_under(AutoSurfaceSpecSupport::Layer.new(false)) { |auto, queue| auto.sweep(queue) }
+
+      expect([surface, spawn.calls]).to eq(["timeout", []])
+    end
+
+    it "decides the next pending once the layer comes on" do
+      layer = AutoSurfaceSpecSupport::Layer.new(false)
+      surface = parked_under(layer) do |auto, queue|
+        auto.sweep(queue)
+        layer.on!
+        auto.sweep(queue)
+      end
+
+      expect(surface).to eq(described_class::SURFACE)
+    end
+
+    it "withdraws from the next pending once the layer goes off" do
+      layer = AutoSurfaceSpecSupport::Layer.new(true)
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+      auto = described_class.new(role_spawn: spawn, enabled: layer)
+
+      surfaces = Sync do |task|
+        %w[tu_first tu_second].map do |id|
+          gated = task.async { queue.call(effect("bash", { "command" => "ls" }, id), nil) }
+          pending = task.with_timeout(1) { queue.dequeue }
+          auto.sweep(queue)
+          layer.off!
+          gated.wait
+          pending.surface
+        end
+      end
+
+      expect(surfaces).to eq([described_class::SURFACE, "timeout"])
+    end
+
+    # The ask yields while the role thinks, and a human may turn the layer off
+    # in that window. A verdict that returns afterwards is an answer to a
+    # question the session no longer puts to this surface.
+    it "does not settle a verdict that returns after the layer went off" do
+      layer = AutoSurfaceSpecSupport::Layer.new(true)
+      turning_off = AutoSurfaceSpecSupport::ScriptedRoleSpawn.new do
+        layer.off!
+        Lain::Tool::Result.ok("APPROVE")
+      end
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+
+      surface = Sync do |task|
+        gated = task.async { queue.call(effect, nil) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        described_class.new(role_spawn: turning_off, enabled: layer).sweep(queue)
+        gated.wait
+        pending.surface
+      end
+
+      expect([surface, turning_off.calls.size]).to eq(["timeout", 1])
+    end
+  end
+
   describe "the role it adjudicates as" do
     it "holds no tier-3 tool, so a gated child can never park on the queue this surface sweeps" do
       tools = Lain::Role::Catalog[described_class::ROLE].only.map { |name| ToolRegistry.build(name.to_s) }

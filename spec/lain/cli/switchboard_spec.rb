@@ -113,8 +113,9 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(board.mode_switch.posture.name).to eq(:accept_edits)
     end
 
-    # `--non-interactive` is the only flag this entry reads, and it answers
-    # "who decides a gated call" with "nobody can".
+    # `--non-interactive` answers "who decides a gated call" with "nobody can".
+    # It and `--auto-approve`, which only seeds a mode layer, are the two flags
+    # this entry reads.
     it "wires no queue for an unattended session, and a gate that denies" do
       board = board_for(non_interactive: true)
 
@@ -788,6 +789,157 @@ RSpec.describe Lain::CLI::Switchboard do
 
     expect(pending.surface).to eq("tty")
     expect(pending).to be_approved
+  end
+
+  # The auto_approve layer end to end, over the two objects a real chat builds
+  # it from, in the order the chat builds them: the toolset build first, which
+  # makes the surface over a thunk, then the board that holds the mode switch
+  # the surface reads. The provider answers APPROVE to anything, so a decision
+  # signed auto_approver is proof the surface ran, and a provider that was
+  # never asked is proof it did not.
+  describe "the auto_approve layer, over the toolset build a chat assembles" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:home) { "/home/tester" }
+    let(:sensitivity) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: "#{home}/proj"))
+    end
+    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+    let(:provider) { Lain::Provider::Mock.new(responses: [text_response("APPROVE")]) }
+    let(:ran) { [] }
+    let(:handler) do
+      Lain::Effect::Handler::Mock.new do |effect, _context|
+        ran << effect.name
+        Lain::Tool::Result.ok("the interpreter ran")
+      end
+    end
+
+    def chat(**options)
+      board = nil
+      build = toolset_build(options, -> { board })
+      build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+      board = described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base, sensitivity:,
+                                  test_layout: layout_run)
+      [board, build]
+    end
+
+    def toolset_build(options, switchboard)
+      Lain::CLI::Wiring::ToolsetBuild.new(
+        backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options:, switchboard:,
+        supervisor: Lain::Supervisor.new(journal: RecordingChannel.new),
+        parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal: RecordingChannel.new,
+        library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: "/srv/switchboard-project",
+        askers: SpecNulls::UnwiredAskers.build
+      )
+    end
+
+    def typed(board, args)
+      Lain::CLI::Command::Mode.new.call(args, instance_double(Lain::CLI::Command::Env, mode_switch: board.mode_switch))
+    end
+
+    # The Repl's own fan-out, minus the terminal: the automatic surface is the
+    # only watcher, so whatever decides a pending here is that surface or the
+    # human the example plays after it.
+    def watching(board, build, task)
+      Lain::CLI::Repl::ApprovalSurfaces.new(approvals: board.approvals, auto_surface: build.auto_surface,
+                                            secret_surface: nil, tty: nil, conductor: nil)
+                                       .watch(task, terminal: false)
+    end
+
+    def dispatched(board, task, name, input)
+      task.async { dispatch_call(name, input, toolset: board.toolset, layers: tool_stack(board), handler:) }
+    end
+
+    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+
+    # Scenario: turning the layer on lets the automatic approver decide
+    it "lets the automatic approver decide a call parked after /mode +auto_approve" do
+      board, build = chat
+      typed(board, "+auto_approve")
+
+      result = Sync do |task|
+        watchers = watching(board, build, task)
+        call = dispatched(board, task, "bash", { "command" => "rm -rf build" })
+        task.with_timeout(5) { call.wait }
+      ensure
+        [*watchers, call].compact.each(&:stop)
+      end
+
+      expect(board.mode_switch.posture.name).to eq(:accept_edits)
+      expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
+      expect(decisions.map { |record| record["surface"] }).to eq([Lain::Approval::AutoSurface::SURFACE])
+    end
+
+    # Scenario: turning the layer off returns decisions to the human
+    it "leaves a call parked after /mode -auto_approve to the human, and never asks the role" do
+      board, build = chat
+      typed(board, "+auto_approve")
+      typed(board, "-auto_approve")
+
+      surfaces = Sync do |task|
+        watchers = watching(board, build, task)
+        call = dispatched(board, task, "bash", { "command" => "rm -rf build" })
+        pumped_until(task, reason: "the call to park") { board.approvals.any? }
+        settle_for(task, 0.3)
+        undecided = board.approvals.none?(&:decided?)
+        board.approvals.first.deny(surface: "tty")
+        task.with_timeout(1) { call.wait }
+        [undecided, decisions.map { |record| record["surface"] }]
+      ensure
+        [*watchers, call].compact.each(&:stop)
+      end
+
+      expect(surfaces).to eq([true, ["tty"]])
+      expect([provider.call_count, ran]).to eq([0, []])
+    end
+
+    # Scenario: the launch flag shows its lighter
+    it "seeds the layer from --auto-approve, so the first prompt carries AA and /mode lists it" do
+      board, = chat(auto_approve: true)
+      run_state = Lain::Frontend::PromptComposer::RunState.new(
+        agent: instance_double(Lain::Agent, occupancy: 0.0, dispatching?: false,
+                                            context: instance_double(Lain::Context, model: "opus")),
+        clock: Lain::RunClock.new(clock: -> { 0.0 }), status_feed: instance_double(Lain::StatusFeed, state: {}),
+        mode: board.mode_switch
+      )
+
+      expect(run_state.to_h["mode"]).to eq("AA")
+      expect(typed(board, "")).to include("auto_approve")
+    end
+
+    # The status line and a bench reader fold the mode off the journal, never
+    # off the live board, so a layer the flag turned on has to be written down
+    # before the first prompt or they show nothing until the first /mode.
+    it "journals the launch flag's layer once, as the record /mode writes, before any prompt" do
+      chat(auto_approve: true)
+
+      expect(mode_records).to contain_exactly(
+        a_hash_including("from" => "accept_edits", "to" => "accept_edits", "from_layers" => [],
+                         "to_layers" => %w[auto_approve], "surface" => described_class::LAUNCH_SURFACE)
+      )
+      expect(policy_records).to be_empty
+    end
+
+    it "starts with no layer when the flag is absent, and journals no mode at all" do
+      board, = chat
+
+      expect([board.mode_switch.layers.to_a, mode_records]).to eq([[], []])
+    end
+
+    # Scenario: a denied path stays unliftable under the layer
+    it "refuses a protected private key at the path boundary before any surface is asked" do
+      board, build = chat(auto_approve: true)
+
+      result = Sync do |task|
+        watchers = watching(board, build, task)
+        call = dispatched(board, task, "read_file", { "path" => "#{home}/.ssh/id_rsa" })
+        task.with_timeout(1) { call.wait }
+      ensure
+        [*watchers, call].compact.each(&:stop)
+      end
+
+      expect(result).to have_attributes(is_error: true, content: /no approval can lift this/)
+      expect([board.approvals.to_a, decisions, provider.call_count, ran]).to eq([[], [], 0, []])
+    end
   end
 
   # A direct unit spec over the decorator itself, collaborators doubled --

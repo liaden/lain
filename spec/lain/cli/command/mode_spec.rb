@@ -213,6 +213,49 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
   end
 
+  # The same command over the switch a real chat hands it -- a board's
+  # BoundSwitch -- read back through the predicate the automatic approval
+  # surface asks on every sweep, so a toggle here is the toggle that surface
+  # sees.
+  describe "the auto_approve layer, over a real board" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+
+    def board_for(**options)
+      Lain::CLI::Switchboard.for(chronicle:, options:, model: "claude-opus-4-8", toolset: tools,
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+    end
+
+    def engaged?(board) = Lain::CLI::Wiring::ToolsetBuild::AutoApproveLayer.new(board: -> { board }).call
+
+    it "engages the automatic approver on +auto_approve and withdraws it on -auto_approve" do
+      board = board_for
+      readings = [engaged?(board)]
+      command.call("+auto_approve", env_for(board.mode_switch))
+      readings << engaged?(board)
+      command.call("-auto_approve", env_for(board.mode_switch))
+
+      expect(readings << engaged?(board)).to eq([false, true, false])
+    end
+
+    it "withdraws a layer the launch flag turned on, and the reset withdraws it too" do
+      %w[-auto_approve !].each do |args|
+        board = board_for(auto_approve: true)
+        launched = engaged?(board)
+        command.call(args, env_for(board.mode_switch))
+
+        expect([launched, engaged?(board)]).to eq([true, false]), "#{args} did not withdraw the launch flag's layer"
+      end
+    end
+
+    it "lists the layer the launch flag turned on, before any /mode has run" do
+      board = board_for(auto_approve: true)
+
+      expect(command.call("", env_for(board.mode_switch))).to eq("accept_edits: auto_approve (AA)")
+      expect(flips.map { |flip| flip["surface"] }).to eq([Lain::CLI::Switchboard::LAUNCH_SURFACE])
+    end
+  end
+
   def posture_names = Lain::Mode::Posture::NAMES.map(&:to_s)
 
   def layer_names = Lain::Mode::Layer::NAMES.map(&:to_s)

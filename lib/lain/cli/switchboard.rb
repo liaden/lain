@@ -54,10 +54,16 @@ module Lain
       # record an answer.
       attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset
 
+      # Who a mode the session STARTED in is attributed to: the command line
+      # that launched it, which no surface of the running session can be.
+      LAUNCH_SURFACE = "launch"
+
       # The wiring entry: resolves the journal the chronicle carries, then
-      # builds the switches over it. `--auto-approve` is deliberately NOT read
-      # here -- it wires an adjudicating surface, which is
-      # {CLI::Wiring::ToolsetBuild}'s to build.
+      # builds the switches over it. `--auto-approve` is read here and only
+      # here, as the starting mode's `auto_approve` layer: the surface that
+      # decides is {CLI::Wiring::ToolsetBuild}'s, built for every run and
+      # answering to that layer, so the flag and `/mode +auto_approve` are one
+      # switch and the prompt's lighter shows whichever of them turned it on.
       #
       # `toolset:` is the run's BASE capability set, and base is the whole
       # point: attenuation is monotone, so every posture resolves from the set
@@ -88,15 +94,17 @@ module Lain
       #   one test layout run. REQUIRED here: a chat with no layout decision
       #   behind it is a mis-wire, not a default
       # @option options [Boolean] :non_interactive no human is at this
-      #   session's terminal -- the only flag this entry reads off `options`, so
-      #   a board built here differs from `new` in exactly that one resolution
+      #   session's terminal
+      # @option options [Boolean] :auto_approve the session starts with the
+      #   `auto_approve` layer on. These two are the only flags this entry
+      #   reads off `options`
       # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [],
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:, classifiers:, verdict:,
-            test_layout:, attended: !options[:non_interactive])
+            test_layout:, attended: !options[:non_interactive], layers: options[:auto_approve] ? [:auto_approve] : [])
       end
 
       # What the tool stack is built over, as ONE value: the ledger and the
@@ -169,11 +177,13 @@ module Lain
       # @param test_layout [Middleware::GuardTestLayout::Run] as on {.for};
       #   a board of its own that declares no layout by default, so the
       #   direct-construction seams a spec drives enforce nothing
+      # @param layers [Array<Symbol>] the mode layers the session starts with,
+      #   under the default `accept_edits` posture
       def initialize(journal:, model:, toolset:, rules: [],
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
-                     attended: true)
+                     attended: true, layers: [])
         @attended = attended
         # The rung itself, not the two things it is built from: a board that
         # held them apart would be holding a constructor's argument list, and
@@ -186,7 +196,7 @@ module Lain
         @approvals = Approval::Queue.new(journal:) if @attended
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
-        seed(Mode.new(posture: :accept_edits), journal:)
+        seed(Mode.new(posture: :accept_edits, layers:), journal:)
         # After the seed, which is what makes the policy switch it carries.
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, denial:)
@@ -273,9 +283,9 @@ module Lain
       end
 
       # The starting mode's resolution seeds both live slots DIRECTLY rather
-      # than through {#apply}, because construction must journal nothing: the
-      # initial policy is the wiring's choice and is already visible in the
-      # session's flags.
+      # than through {#apply}, because construction journals no policy: the
+      # initial one is the posture's, and every session starts in the same
+      # posture.
       #
       # CONSTRUCTION ORDER: the live toolset slot and the ladder are built
       # FIRST, before the first {#resolve} -- the ladder is what the asking
@@ -290,8 +300,20 @@ module Lain
         resolution = resolve(initial)
         @resolved = resolution.toolset
         @policy_switch = Approval::PolicySwitch.new(resolution.gate_policy, journal:)
-        @mode_switch = BoundSwitch.new(Mode::Switch.new(initial, journal:),
+        @mode_switch = BoundSwitch.new(launched(initial, resolution, journal:),
                                        resolve: method(:resolve), apply: method(:apply))
+      end
+
+      # A layer the launch flags turned on IS journaled, as the flip `/mode`
+      # would have written to reach it: the session header carries no flags,
+      # and the status line and a bench reader fold the mode off the journal
+      # alone, so an unrecorded layer would show nowhere but the live prompt
+      # until the first `/mode`. A launch with no layer writes nothing, so a
+      # plain chat's record is unchanged.
+      def launched(initial, resolution, journal:)
+        switch = Mode::Switch.new(initial.with(layers: Mode::LayerSet.empty), journal:)
+        switch.switch(initial, surface: LAUNCH_SURFACE, toolset: resolution.toolset) unless initial.layers.empty?
+        switch
       end
 
       # What an asking posture resolves to is the LADDER, not the bare queue.

@@ -52,6 +52,14 @@ module Lain
           def include?(tool_name) = board.call.mode_switch.posture.permits.include?(tool_name)
         end
 
+        # Whether the `auto_approve` layer is on, asked of the board on every
+        # sweep of {Approval::AutoSurface}, for {PosturePermits}' two reasons: the
+        # board is built after this build, and a captured layer set would keep
+        # deciding after `/mode -auto_approve`.
+        AutoApproveLayer = Data.define(:board) do
+          def call = board.call.mode_switch.layers.include?(:auto_approve)
+        end
+
         # What a child announces itself as at the approval gate when the spawn
         # bound no more specific name -- the tool's own default `name`, so a
         # park is at least separable from the human's own agent
@@ -79,12 +87,13 @@ module Lain
         # The orchestrator, and one level of children under it.
         EPIC_DEPTH = 2
 
-        # The repl-phase role-spawn seam a role/skill line folds through (nil
-        # until {#build}), the opt-in third approval surface over it (nil
-        # without --auto-approve), and the docent ANSWERER -- an answerer and
-        # not a {Review::Docent} because a docent is keyed to a changeset and a
-        # thread pane, and neither exists at toolset-build time. What a RUN
-        # holds is the capability to spawn the role.
+        # The repl-phase role-spawn seam a role/skill line folds through, the
+        # automatic approval surface over it (built for every run, deciding only
+        # while the `auto_approve` layer is on), and the docent ANSWERER -- all
+        # nil until {#build}. An answerer and not a {Review::Docent} because a
+        # docent is keyed to a changeset and a thread pane, and neither exists at
+        # toolset-build time. What a RUN holds is the capability to spawn the
+        # role.
         attr_reader :role_spawn, :auto_surface, :docent
 
         # The run's collaborators, each INJECTED rather than resolved here for
@@ -182,10 +191,11 @@ module Lain
         #   run's ONE handoff, the same one {Wiring} hands the {Supervisor}.
         #   Defaults to one that only releases, for the direct-construction
         #   seams the specs drive.
-        # @option options [Boolean] :auto_approve the ONE key this class reads
-        #   for a collaborator, alongside the two `--exec` keys the `exec:`
-        #   default reads. Last, after every `@param`, because yard-lint fixes
-        #   that order.
+        # @option options [String] :exec the transport the `exec:` default
+        #   resolves, with `:exec_image` the only other keys this class reads.
+        #   `--auto-approve` is not among them: it seeds the mode's layer on
+        #   {Switchboard.for}, and the surface here reads that layer. Last,
+        #   after every `@param`, because yard-lint fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        root:, switchboard:, askers:, usage: nil,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
@@ -193,12 +203,12 @@ module Lain
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
-          @options = options
           @exec = exec
           @verdict = verdict
           @epic = epic
           @askers = askers
           @usage = usage
+          @auto_approve = AutoApproveLayer.new(board: switchboard)
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
                              isolation:, handback:)
         end
@@ -216,7 +226,7 @@ module Lain
           base = capability_floor(recorder)
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
-          @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
+          @auto_surface = Lain::Approval::AutoSurface.new(role_spawn: @role_spawn, enabled: @auto_approve)
           @floor = base
           Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] + epic.tools)
         end
@@ -257,7 +267,7 @@ module Lain
 
         private
 
-        attr_reader :backend, :library, :options, :seam, :epic, :askers
+        attr_reader :backend, :library, :seam, :epic, :askers
 
         # The floor, and the session-wide objects that reach it: where a command
         # becomes a process, which programs the project ruled out, and where the

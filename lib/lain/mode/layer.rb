@@ -73,10 +73,12 @@ module Lain
 
       # Declared after the methods that read it, which reach it at call time, so
       # nothing above needs a forward reference. `:auto_approve` is the only
-      # member that answers `alters_outcome?` today: it turns
-      # {Approval::AutoSurface} on, which decides tool calls a human would
-      # otherwise have been asked about. The other three change what the human
-      # sees or how input is read, never what is permitted.
+      # member that answers `alters_outcome?` today: {Approval::AutoSurface}
+      # watches every attended session's parked calls and decides one a human
+      # would otherwise have been asked about only while this layer is on,
+      # whether `--auto-approve` or `/mode +auto_approve` turned it on. The
+      # other three change what the human sees or how input is read, never what
+      # is permitted.
       DECLARED = {
         auto_approve: new(name: :auto_approve, lighter: "AA", alters_outcome: true),
         goal: new(name: :goal, lighter: "GOAL", alters_outcome: false),

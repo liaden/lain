@@ -4,9 +4,10 @@ module Lain
   module Approval
     # A meta-agent standing in for the human at {Approval::Queue}'s second
     # surface: it observes the PARKED set and asks the `auto_approver` role.
-    # Opt-in, never wired by default. The observing, the seen-set and the
-    # polling are {QueueSurface}'s; this class is the role, the prompt, the
-    # verdict grammar and the abstention.
+    # Wired into every session, and silent until the `auto_approve`
+    # mode layer is on. The observing, the seen-set and the polling are
+    # {QueueSurface}'s; this class is the role, the prompt, the verdict grammar,
+    # the abstention and the layer.
     #
     # Every decision is signed {SURFACE}, so a transcript can never confuse an
     # auto approval with a human one, and {Escalation::Surfaces::AUTOMATIC}
@@ -34,9 +35,25 @@ module Lain
       #   seam ({Skill::RoleSpawn}); injected, so the surface depends on the
       #   message, not on how the child is assembled. Every other keyword
       #   forwards to {QueueSurface} -- `poll_interval:`, `pruning:`, `journal:`.
-      def initialize(role_spawn:, **)
+      # @param enabled [#call] answers whether the `auto_approve` layer is on
+      #   RIGHT NOW, read on every sweep and again before a verdict settles, so
+      #   `/mode -auto_approve` withdraws the surface without rebuilding it.
+      #   Required: an always-on default would turn a forgotten wire into a
+      #   surface that decides for a session that never asked it to.
+      def initialize(role_spawn:, enabled:, **)
         super(**)
         @role_spawn = role_spawn
+        @enabled = enabled
+      end
+
+      # Nothing is asked while the layer is off, so a session that never turns
+      # it on spends nothing on the role. A pending parked meanwhile is left
+      # unmarked, and is judged if the layer comes on while it is still parked.
+      #
+      # @param queue [Approval::Queue]
+      # @return [void]
+      def sweep(queue)
+        super if @enabled.call
       end
 
       # ORDINARY approvals only -- the ones that release nothing sensitive.
@@ -53,8 +70,12 @@ module Lain
       private
 
       # Defer is a deliberate no-op that leaves the pending for the human or
-      # the clock.
+      # the clock, and so is any verdict that returns after the layer went off:
+      # the ask yields while the role thinks, and the human may have withdrawn
+      # the surface in that window.
       def settle(pending, verdict)
+        return unless @enabled.call
+
         pending.approve(surface: SURFACE) if verdict == :approve
         pending.deny(surface: SURFACE) if verdict == :deny
       end

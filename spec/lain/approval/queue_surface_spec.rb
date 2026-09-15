@@ -86,7 +86,7 @@ RSpec.describe Lain::Approval::QueueSurface do
 
   # The property neither surface could assert about itself.
   describe "the partition between the two shipped surfaces" do
-    let(:auto) { Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("DEFER") }) }
+    let(:auto) { Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("DEFER") }, enabled: -> { true }) }
     let(:secret) do
       Lain::Approval::SecretSurface.new(oracle: instance_double(Lain::Oracle::Model))
     end
