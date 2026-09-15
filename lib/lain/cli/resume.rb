@@ -6,9 +6,11 @@ module Lain
     # wires: the chain-verified Timeline the Agent is seeded with, the replayed
     # Session run-state and its memory recorder, the chained-header fields the
     # NEW journal opens with, and the notices the frontend renders. The recorded
-    # tool schema and model in the old header are display-only: the live toolset
-    # and provider always come from the current flags, and a disagreement is
-    # LOUD-and-continue ({#notices}), never a silent override in either direction.
+    # tool schema in the old header is display-only: the live toolset always
+    # comes from the current flags. The recorded run profile is what an untyped
+    # backend field defaults to ({#recorded_profile}), and a typed field that
+    # disagrees with it is LOUD-and-continue ({MismatchNotices}), never a silent
+    # override in either direction.
     class Resume
       # A resume that cannot proceed: nothing to resume, an ambiguous or
       # unmatched selector, a corrupt or pre-scribe file, or a mid-tool head. A
@@ -16,6 +18,10 @@ module Lain
       class Refusal < Error; end
 
       Door = Data.define(:verb, :path)
+
+      # What the current run resolved, carried together to the one place it is
+      # compared against the recording.
+      Mismatch = Data.define(:profile, :model)
 
       # WHICH door a human came through and WHICH file they named -- the two
       # facts every refusal needs. As two bare Strings riding seven frames as
@@ -74,22 +80,67 @@ module Lain
         def repaired? = !recorded.equal?(timeline)
       end
 
+      # A session file's header record, or an empty Hash for a file with none
+      # (the Loader refuses that file by name once a door loads it).
+      #
+      # @param path [String]
+      # @return [Hash{String=>Object}]
+      def self.header(path)
+        Journal.records(File.foreach(path), type: SessionRecord::HEADER_TYPE).first || {}
+      end
+
       def initialize(paths: Paths.new)
         @paths = paths
       end
 
+      # The two SELECTIONS, apart from the opens below, so a caller that must
+      # read a session before opening it picks the file once: a bare
+      # `--resume` answers whatever is newest when it looks, and two looks
+      # can land on two files.
+      #
       # @param selector [String, nil] nil or "" (a bare `--resume`) picks the
       #   newest session; otherwise a filename or unique prefix under this
       #   project's session dir
-      # @param model [String, nil] the model the current flags resolved to,
+      # @return [String] the selected session's path
+      # @raise [Refusal]
+      def locate(selector) = Selector.new(dir:).call(selector)
+
+      # @param selector [String] `<session>@<digest-prefix>`
+      # @return [ForkPoint::Point]
+      # @raise [Refusal]
+      def fork_point(selector) = ForkPoint.new(dir:).call(selector)
+
+      # The run profile a selected session recorded, read BEFORE the backend
+      # exists so an untyped field can default to it. Reads the header and
+      # nothing else: no load, no salvage, no write.
+      #
+      # @param path [String] a path {#locate} or {#fork_point} selected
+      # @return [RunProfile]
+      def recorded_profile(path)
+        RunProfile.from_header(self.class.header(path))
+      rescue Errno::ENOENT
+        RunProfile::UNRECORDED
+      end
+
+      # {#resume_at} over a fresh {#locate}.
+      def call(selector: nil, profile: RunProfile::UNRECORDED, model: nil)
+        resume_at(locate(selector), profile:, model:)
+      end
+
+      # @param path [String] the session {#locate} selected
+      # @param profile [RunProfile] what the current run resolved, compared
+      #   against the recorded header for the mismatch notices
+      # @param model [String, nil] the model the current run resolved to,
       #   compared against the recording for the mismatch notice
-      # @param provider [String, nil] the provider name ({CLI::Backend}'s
-      #   naming, e.g. "anthropic") the current `--provider` flag resolved to,
-      #   compared against the recorded header for the mismatch notice
       # @return [Result]
       # @raise [Refusal]
-      def call(selector: nil, model: nil, provider: nil)
-        rebuild(Selector.new(dir:).call(selector), model, provider)
+      def resume_at(path, profile: RunProfile::UNRECORDED, model: nil)
+        rebuild(path, Mismatch.new(profile:, model:))
+      end
+
+      # {#fork_at} over a fresh {#fork_point}.
+      def fork(selector:, profile: RunProfile::UNRECORDED, model: nil)
+        fork_at(fork_point(selector), profile:, model:)
       end
 
       # Fork mode: the new run starts at a recorded turn instead of the parent's
@@ -101,20 +152,15 @@ module Lain
       # verification is the load's re-commit fold, which proved every digest
       # {ForkPoint} can resolve.
       #
-      # @param selector [String] `<session>@<digest-prefix>`
-      # @param model [String, nil] the model the current flags resolved to, compared
-      #   against the forked file's recorded header for the mismatch notice (same
-      #   check as {#call})
-      # @param provider [String, nil] the provider name ({CLI::Backend}'s naming,
-      #   e.g. "anthropic") the current `--provider` flag resolved to, compared
-      #   against the forked file's recorded header for the mismatch notice
+      # @param point [ForkPoint::Point] the fork point {#fork_point} selected
+      # @param profile [RunProfile] as {#resume_at}'s, against the forked file's header
+      # @param model [String, nil] as {#resume_at}'s, against the forked recording
       # @return [Result] whose `resumed_from` names `{file, fork digest}`
       # @raise [Refusal]
-      def fork(selector:, model: nil, provider: nil)
-        point = ForkPoint.new(dir:).call(selector)
+      def fork_at(point, profile: RunProfile::UNRECORDED, model: nil)
         recording = load_recording(point.path)
         forked = recording.timeline.checkout(point.digest)
-        fork_result(point, recording, forked, model, provider)
+        fork_result(point, recording, forked, Mismatch.new(profile:, model:))
       # The MissingObject arm is DEFENSIVE and kept deliberately: it is not
       # reachable from any journal we can construct, and the last time that was
       # believed it was false. The property lives in two classes a door cannot
@@ -142,11 +188,11 @@ module Lain
       # "open-plus-salvaged" shape those classes would have to learn. It is also
       # what makes `resumed_from`/`written` correct unchanged: both derive from
       # `recording.timeline`, which now reflects a file that IS closed.
-      def rebuild(path, model, provider)
+      def rebuild(path, current)
         recording = load_recording(path)
         outcome = salvage(path, recording)
         recording = load_recording(path) if outcome.recovered?
-        resumed_result(path, recording, outcome, model, provider)
+        resumed_result(path, recording, outcome, current)
       rescue Bench::Session::Corrupt, Store::MissingObject => e
         # Corrupt's own message names digests and reasons; only this layer still
         # holds the path. The MissingObject arm is {#fork}'s, and it was missing
@@ -170,15 +216,15 @@ module Lain
       # exactly the timeline and the notices: resume ends on the rebuilt head
       # with the salvage/open notices, a fork on the checked-out fork point with
       # the mismatch notices alone.
-      def resumed_result(path, recording, outcome, model, provider)
-        mismatched = mismatches(path, recording, model, provider)
+      def resumed_result(path, recording, outcome, current)
+        mismatched = mismatches(path, recording, current)
         result(Door.new(verb: "resume", path:), recording.timeline, replay(path),
                open: recording.open?, notices: notices(path, recording, outcome, mismatched))
       end
 
-      def fork_result(point, recording, forked, model, provider)
+      def fork_result(point, recording, forked, current)
         result(Door.new(verb: "fork", path: point.path), forked, replay(point.path),
-               open: recording.open?, notices: mismatches(point.path, recording, model, provider))
+               open: recording.open?, notices: mismatches(point.path, recording, current))
       end
 
       def fork_refusal(point, reason) = Door.new(verb: "fork", path: point.path).refuse(reason)
@@ -188,8 +234,8 @@ module Lain
       # come from {ChainWalk}, every file of the chain, oldest first.
       def replay(path) = SessionRecord::Replay.new(ChainWalk.new(dir:).entries(path))
 
-      def mismatches(path, recording, model, provider)
-        MismatchNotices.new(recording:, path:).call(model:, provider:)
+      def mismatches(path, recording, current)
+        MismatchNotices.new(recording:, path:).call(**current.to_h)
       end
 
       # Salvage only ever runs against an open session: a gracefully closed file

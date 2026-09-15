@@ -86,6 +86,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("turn")).to be_empty
   end
 
+  it "writes the recorded profile's fields into that header, and none it was not handed" do
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        profile: { "provider" => "ollama", "api_base" => "http://127.0.0.1:11434" })
+
+    expect(of_type("session").first).to include("provider" => "ollama", "api_base" => "http://127.0.0.1:11434")
+    expect(of_type("session").first).not_to have_key("num_ctx")
+  end
+
   describe "a chat turn is on disk before the reply renders" do
     it "holds the header, the user turn, the assistant turn, and the tool_result turns, each re-commit-verifiable" do
       scribe.catch_up(timeline)
@@ -891,6 +899,22 @@ RSpec.describe Lain::SessionRecord, ".header" do
 
     it "writes no key when the chat was launched without the flag" do
       expect(launched_header({})).not_to have_key("context_pipeline")
+    end
+
+    # The argv goes through the exe's own flag band and profile resolution, so
+    # the header holds what the launch really resolved: the typed fields, and
+    # the environment's answer for the rest.
+    it "records the profile it ran with: provider, api base, num_batch, and num_ctx as resolved" do
+      load File.expand_path("../../exe/lain", __dir__) unless defined?(LainCLI)
+      argv = %w[--provider ollama --api-base http://127.0.0.1:11434 --num-batch 2048]
+      options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(argv)
+      profile = with_env("LAIN_NUM_CTX" => "8192", "LAIN_PROVIDER" => nil, "LAIN_API_BASE" => nil) do
+        LainCLI::ModelFlags.profile(options)
+      end
+
+      expect(launched_header(profile.to_options))
+        .to include("provider" => "ollama", "api_base" => "http://127.0.0.1:11434",
+                    "num_batch" => 2048, "num_ctx" => 8192)
     end
   end
 end

@@ -795,22 +795,66 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # The same LOUD-and-continue policy `model` already has, extended to the
-  # provider the header now names as data.
-  describe "the provider-mismatch notice (LOUD, then continue with the flags)" do
-    before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "anthropic") }
+  # The same LOUD-and-continue policy `model` already has, over every field of
+  # the run profile the header records. Only a field the human TYPED can
+  # disagree: an untyped one resolves to the recording.
+  describe "the profile-mismatch notice (LOUD, then continue with the flags)" do
+    before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "ollama") }
 
-    it "names both providers when the current flags disagree with the recording" do
-      notices = resume.call(provider: "ollama").notices
-      expect(notices.join).to include("anthropic", "ollama")
+    def typed(**options) = Lain::CLI::RunProfile.from_options(options)
+
+    it "resolves a typed provider over the recording, and the notice names both" do
+      profile = typed(provider: "anthropic").over(resume.recorded_profile(resume.locate("")))
+
+      expect(profile.provider).to eq("anthropic")
+      expect(resume.call(profile:).notices.join).to include("recorded with provider ollama", "anthropic")
     end
 
-    it "stays silent when they agree" do
-      expect(resume.call(provider: "anthropic").notices).to be_empty
+    it "stays silent when a typed provider agrees with the recording" do
+      expect(resume.call(profile: typed(provider: "ollama")).notices).to be_empty
     end
 
-    it "stays silent when the current flags name no provider" do
-      expect(resume.call.notices).to be_empty
+    it "stays silent when nothing was typed, and resolves to the recording" do
+      profile = typed.with_defaults(provider: "anthropic").over(resume.recorded_profile(resume.locate("")))
+
+      expect(profile.provider).to eq("ollama")
+      expect(resume.call(profile:).notices).to be_empty
+    end
+
+    # A field the header left unset is no recorded value, so a typed one
+    # overrides nothing and there is nothing to be loud about.
+    it "stays silent for a typed field the recording left unset" do
+      expect(resume.call(profile: typed(num_batch: 512)).notices).to be_empty
+    end
+  end
+
+  describe "a typed runner knob against a recorded one" do
+    before do
+      timeline = chain("hi", "yo")
+      write_session("20260101T000000-1.ndjson",
+                    [open_header(provider: "ollama").merge("num_batch" => 2048), *turn_records(timeline),
+                     closed_record(timeline.head_digest)])
+    end
+
+    it "names both when they disagree" do
+      notices = resume.call(profile: Lain::CLI::RunProfile.from_options(num_batch: 512)).notices
+
+      expect(notices.join).to include("recorded with num_batch 2048", "512")
+    end
+  end
+
+  describe "the recorded profile a door reads before anything is resolved" do
+    before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "ollama") }
+
+    it "reads the header a --fork selector names, without writing to it" do
+      path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
+      before = File.read(path)
+
+      head = chain("hi", "yo").head_digest.delete_prefix("blake3:")[0, 12]
+      recorded = resume.recorded_profile(resume.fork_point("20260101@#{head}").path)
+
+      expect(recorded).to have_attributes(provider: "ollama", model: "recorded-model")
+      expect(File.read(path)).to eq(before)
     end
   end
 
@@ -820,7 +864,7 @@ RSpec.describe Lain::CLI::Resume do
     before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
 
     it "proceeds with a 'provider unrecorded' notice rather than a refusal" do
-      result = resume.call(provider: "ollama")
+      result = resume.call(profile: Lain::CLI::RunProfile.from_options(provider: "ollama"))
 
       expect(result.timeline.head_digest).not_to be_nil
       expect(result.notices.join).to include("provider unrecorded", "ollama")

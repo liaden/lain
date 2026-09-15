@@ -260,6 +260,14 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("session").first).to include("head" => nil, "model" => "claude-opus-4-8")
     end
 
+    it "pins the run profile it is handed into that header" do
+      profile = Lain::CLI::RunProfile.from_options(provider: "ollama", num_batch: 2048)
+
+      chronicle.start(context:, toolset:, profile:)
+
+      expect(of_type("session").first).to include("provider" => "ollama", "num_batch" => 2048)
+    end
+
     # Loud, not lossy: an event arriving before the scribe exists must raise,
     # never silently vanish -- pre-start is wiring time, when no event can flow.
     it "raises NotStarted from the observer (and catch_up) before #start" do

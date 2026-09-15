@@ -157,6 +157,14 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
+    it "names an api base with no host precisely, without claiming a scheme is required" do
+      expect { backend_for(provider: "ollama", api_base: "http://") }
+        .to raise_error(Lain::CLI::Backend::InvalidEndpoint) { |error|
+          expect(error.message).to include("has no host")
+          expect(error.message).not_to include("scheme is required")
+        }
+    end
+
     it "still refuses a malformed --api-base as a flag error rather than a cloud one" do
       with_key do
         expect { backend_for(provider: "ollama-cloud", api_base: "localhost:11434") }
@@ -1769,6 +1777,21 @@ RSpec.describe Lain::CLI::Backend do
 
     it "emits no options key at all when no sampler flag was given" do
       expect(payload_for.key?(:options)).to be(false)
+    end
+
+    # The same claim from argv: the exe's flag band leaves the two runner knobs
+    # nil when neither a flag nor LAIN_NUM_BATCH/LAIN_NUM_CTX says anything, and
+    # the launch's profile carries that absence into the Backend.
+    it "sends no options object for a flagless chat resolved through the exe's profile band" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
+      profile = with_env("LAIN_PROVIDER" => "ollama", "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil) do
+        LainCLI::ModelFlags.profile(options)
+      end
+      request = Lain::CLI::ChatLaunch.new(options, profile:).backend
+                                     .context.render(timeline:, toolset: Lain::Toolset.new)
+
+      expect(Lain::Provider::Ollama.new.encode(request)).not_to have_key(:options)
     end
 
     # A sampler knob is not a prompt: the same cache-identity claim temperature

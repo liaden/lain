@@ -624,10 +624,11 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
-  # A resolver double honoring Resume#call's keyword signature.
+  # A resolver double refusing at the first door a launch knocks on, which is
+  # the header read ahead of the backend.
   def refusing_resolver(refusal)
     resolver = Object.new
-    resolver.define_singleton_method(:call) { |selector:, model:| refusal.call(selector:, model:) }
+    resolver.define_singleton_method(:locate) { |selector| refusal.call(selector:) }
     resolver
   end
 end
@@ -645,9 +646,9 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
   # --resume, must refuse BEFORE any journal opens; --btw threads to
   # Chronicle.for so the journal is born ephemeral.
   it "routes --fork through the resolver's fork method, winning over --resume" do
-    forked = ->(**kwargs) { kwargs }
-    resolver = Object.new
-    resolver.define_singleton_method(:fork) { |selector:, model:| forked.call(selector:, model:) }
+    point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")
+    resolver = instance_double(Lain::CLI::Resume, fork_point: point, recorded_profile: Lain::CLI::RunProfile::UNRECORDED)
+    allow(resolver).to receive(:fork_at) { |*args, **kwargs| [args, kwargs] }
     chronicle_factory = spy("chronicle_factory")
 
     instance = described_class.new({ fork: "@abc123", resume: "ignored", journal: false,
@@ -658,6 +659,48 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
 
     expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, "stop here")
     expect(chronicle_factory).to have_received(:call).with(hash_including(btw: false))
+    expect(resolver).to have_received(:fork_point).with("@abc123").once
+    expect(resolver).to have_received(:recorded_profile).with(point.path)
+    expect(resolver).to have_received(:fork_at).with(point, hash_including(:profile, :model))
+  end
+
+  # Nothing typed: the recording answers, over whatever the environment said.
+  # A typed field still wins over it. Resolved before the backend exists,
+  # because every backend refusal is judged against the fields it resolves.
+  it "builds the backend from the recorded profile under whatever the human typed" do
+    recorded = Lain::CLI::RunProfile.from_header("provider" => "ollama", "model" => "qwen3:4b",
+                                                 "api_base" => "http://127.0.0.1:11500")
+    point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")
+    resolver = instance_double(Lain::CLI::Resume, fork_point: point, recorded_profile: recorded)
+    launch = lambda do |typed|
+      profile = Lain::CLI::RunProfile.from_options(typed).with_defaults(provider: "anthropic")
+      described_class.new({ fork: "@abc123", journal: false, max_tokens: 16 }, profile:,
+                                                                               resume_factory: -> { resolver })
+    end
+
+    expect(launch.call({}).backend.run_profile)
+      .to have_attributes(provider: "ollama", model: "qwen3:4b", api_base: "http://127.0.0.1:11500")
+    expect(launch.call({ model: "qwen3:8b" }).backend.run_profile).to have_attributes(provider: "ollama",
+                                                                                      model: "qwen3:8b")
+  end
+
+  # A header that recorded provider ollama and no num_batch, resumed under
+  # LAIN_NUM_BATCH: the recording says nothing about the field, so the
+  # environment answers it, and the request carries it.
+  it "sends the environment's num_batch for a field the resumed header did not record" do
+    load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+    recorded = Lain::CLI::RunProfile.from_header("provider" => "ollama", "model" => "qwen3:4b")
+    resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson", recorded_profile: recorded)
+    options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(%w[--resume])
+    profile = with_env("LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil) { LainCLI::ModelFlags.profile(options) }
+    timeline = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: [{ "type" => "text",
+                                                                                            "text" => "hi" }])
+
+    backend = described_class.new(options, profile:, resume_factory: -> { resolver }).backend
+    request = backend.context.render(timeline:, toolset: Lain::Toolset.new)
+
+    expect(backend.run_profile.provider).to eq("ollama")
+    expect(Lain::Provider::Ollama.new.encode(request)[:options]).to eq(num_batch: 2048)
   end
 
   it "threads --btw into Chronicle.for as btw: true" do
@@ -741,14 +784,19 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
   # --resume/--fork resolution READS the record and may repair it, so it is not
   # construction and doing it twice is a change to the session's history. Its
   # refusals stay the pane's to report.
-  it "resolves neither --resume nor --fork" do
-    resume_factory = spy("resume_factory")
+  #
+  # Reading the profile the header recorded is neither: it writes nothing, and
+  # without it a pre-flight of `--resume` on an ollama session would construct
+  # the anthropic arm and refuse a key the real launch never needs.
+  it "resolves neither --resume nor --fork, reading only the profile the header recorded" do
+    resume = instance_double(Lain::CLI::Resume, locate: "/sessions/newest.ndjson",
+                                                recorded_profile: Lain::CLI::RunProfile::UNRECORDED)
 
     with_env(described_class::PREFLIGHT_ENV => "1") do
-      described_class.new(offline(resume: ""), resume_factory:).call { |_notice| nil }
+      described_class.new(offline(resume: ""), resume_factory: -> { resume }).call { |_notice| nil }
     end
 
-    expect(resume_factory).not_to have_received(:call)
+    expect(resume).to have_received(:recorded_profile).with("/sessions/newest.ndjson")
   end
 
   describe "the refusals it still raises" do
@@ -944,14 +992,142 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
     # either is residue a closed journal is not.
     it "salvages no resume and schedules no reap when --num-ctx is refused" do
       trained_at(262_144)
-      resume_factory = spy("resume_factory")
+      resume = instance_double(Lain::CLI::Resume, locate: "/sessions/newest.ndjson",
+                                                  recorded_profile: Lain::CLI::RunProfile::UNRECORDED)
+      allow(resume).to receive(:resume_at)
       gc = spy("gc_schedule")
       gc_schedule_factory = ->(**) { gc }
-      instance = described_class.new(offline(num_ctx: 999_999, resume: ""), resume_factory:, gc_schedule_factory:)
+      instance = described_class.new(offline(num_ctx: 999_999, resume: ""), resume_factory: -> { resume },
+                                                                            gc_schedule_factory:)
 
       expect { instance.call { |_notice| nil } }.to raise_error(Lain::CLI::Backend::UnservableWindow)
-      expect(resume_factory).not_to have_received(:call)
+      expect(resume).not_to have_received(:resume_at)
       expect(gc).not_to have_received(:call)
     end
+  end
+end
+
+# A bare `--resume` names no file, so the session it picks is whichever is
+# newest WHEN it looks. The profile a backend is built from and the file the
+# door opens must be one pick, or a session that becomes newest in between (a
+# sibling pane's first turn) is resumed under another file's backend, silently:
+# nothing was typed, so no notice can say so.
+RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
+  around do |example|
+    Dir.mktmpdir("lain-launch-door") do |dir|
+      @dir = File.realpath(dir)
+      with_env("XDG_STATE_HOME" => @dir) { example.run }
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+  end
+
+  let(:timeline) do
+    Lain::Timeline.empty(store: Lain::Store.new)
+                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+  end
+
+  def write_session(name, api_base)
+    context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
+    profile = { "provider" => "ollama", "api_base" => api_base }
+    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile:),
+               *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+               Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
+    File.write(File.join(Lain::Paths.new.sessions_dir, name), records.map do |record|
+      "#{JSON.generate(record)}\n"
+    end.join)
+  end
+
+  def launched(options)
+    seen = {}
+    project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+    wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+    allow(wiring).to receive(:run) { |backend:, resumed:, **| seen.update(backend:, resumed:) }
+    described_class.new({ journal: false, max_tokens: 16, **options },
+                        profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic"),
+                        wiring_factory: ->(**) { wiring }, project_factory: -> { project },
+                        gc_schedule_factory: ->(**) { -> {} }).call { |_notice| nil }
+    seen
+  end
+
+  # The race: a newer session lands the moment the first header is read.
+  def newer_session_after_the_header_read
+    newer = true
+    allow(Lain::CLI::Resume).to receive(:header).and_wrap_original do |original, path|
+      original.call(path).tap do
+        write_session("20260102T000000-1.ndjson", "http://10.0.0.7:11434") if newer
+        newer = false
+      end
+    end
+  end
+
+  def head_prefix = timeline.head_digest.delete_prefix("blake3:")[0, 12]
+
+  it "opens the very file whose recorded profile the backend was built from, whatever became newest since" do
+    write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
+    newer_session_after_the_header_read
+
+    seen = launched(resume: "")
+
+    expect(seen.fetch(:resumed).file).to eq("20260101T000000-1.ndjson")
+    expect(seen.fetch(:backend).run_profile.api_base).to eq("http://127.0.0.1:11500")
+  end
+
+  # `--fork @<digest>` names no file either, so its session is the newest too.
+  it "forks the very file whose recorded profile the backend was built from, whatever became newest since" do
+    write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
+    newer_session_after_the_header_read
+
+    seen = launched(fork: "@#{head_prefix}")
+
+    expect(seen.fetch(:resumed).resumed_from.fetch("file")).to eq("20260101T000000-1.ndjson")
+    expect(seen.fetch(:backend).run_profile.api_base).to eq("http://127.0.0.1:11500")
+  end
+
+  it "runs the session selector exactly once per launch, through either door" do
+    write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
+    selections = 0
+    allow(Lain::CLI::Resume::Selector).to receive(:new).and_wrap_original do |original, **kwargs|
+      original.call(**kwargs).tap do |selector|
+        allow(selector).to receive(:call).and_wrap_original do |call, *args|
+          selections += 1
+          call.call(*args)
+        end
+      end
+    end
+
+    counted = lambda do |options|
+      selections = 0
+      launched(options)
+      selections
+    end
+
+    expect([counted.call(resume: ""), counted.call(fork: "20260101@#{head_prefix}")]).to eq([1, 1])
+  end
+
+  # `lain up -- --resume` pre-flights the chat it is about to put in a pane.
+  # With nothing to resume, the refusal is the PANE's to report, as it always
+  # was: the pre-flight reads the selection as "no recorded profile" and passes.
+  it "lets a pre-flight of --resume with no sessions pass, leaving the refusal to the pane" do
+    FileUtils.mkdir_p(Lain::Paths.new.sessions_dir)
+    launch = described_class.new({ resume: "", journal: false, max_tokens: 16 },
+                                 profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"))
+
+    expect { with_env(described_class::PREFLIGHT_ENV => "1") { launch.call { |_notice| nil } } }.not_to raise_error
+  end
+
+  # `typed` is a claim about argv, so the backend's profile keeps the launch's
+  # answer rather than recounting every field that ended up with a value.
+  it "hands the backend a profile whose typed fields are only the ones the human typed" do
+    write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
+    profile = Lain::CLI::RunProfile.from_options(model: "qwen3:8b").with_defaults(provider: "anthropic")
+    launch = described_class.new({ resume: "", journal: false, max_tokens: 16 }, profile:)
+
+    expect(launch.backend.run_profile)
+      .to have_attributes(provider: "ollama", api_base: "http://127.0.0.1:11500", model: "qwen3:8b", typed: [:model])
   end
 end

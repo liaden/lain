@@ -41,12 +41,18 @@ module Lain
     # -- a fresh session's header must stay byte-identical to the pre-resume
     # format, so absence is no key, never a nil value. The context pipeline's
     # name follows the same rule, through {.context_pipeline}.
-    def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil)
+    #
+    # `profile:` is the run profile's fields beside `model` -- `provider`,
+    # `api_base`, `num_ctx`, `num_batch` -- the keys {Bench::Session}'s own
+    # header already spells `provider` with, so one reader reads both. It is
+    # what a resumed or forked chat defaults its backend to.
+    def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {})
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
-                 "tools" => toolset.to_schema, "reminders" => workspace.reminders }.merge(context_pipeline(context))
+                 "tools" => toolset.to_schema, "reminders" => workspace.reminders }
+      record = record.merge(context_pipeline(context), profile)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 

@@ -31,7 +31,7 @@ module Lain
         #   shape `http:///x`), or when the scheme is not http/https
         def url
           uri = parsed
-          raise InvalidEndpoint, hostless_message if hostless?(uri)
+          raise InvalidEndpoint, hostless_message(uri) if hostless?(uri)
           raise InvalidEndpoint, scheme_message(uri) unless http_scheme?(uri)
 
           value
@@ -49,8 +49,12 @@ module Lain
 
         def http_scheme?(uri) = %w[http https].include?(uri.scheme)
 
-        def hostless_message
-          "#{flag} #{value.inspect} has no host; a scheme is required, e.g. http://localhost:11434"
+        # Only the scheme-less typo is told a scheme is required: `http://`
+        # has one, and a refusal claiming otherwise sends the operator to fix
+        # the half that was right.
+        def hostless_message(uri)
+          remedy = http_scheme?(uri) ? "name one" : "a scheme is required"
+          "#{flag} #{value.inspect} has no host; #{remedy}, e.g. http://localhost:11434"
         end
 
         def scheme_message(uri)

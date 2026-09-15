@@ -139,8 +139,10 @@ RSpec.describe LainCLI do
       expect(model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
-    it "the chat command's --provider flag defaults to anthropic" do
-      expect(described_class.commands.fetch("chat").options.fetch(:provider).default).to eq("anthropic")
+    it "resolves a flagless chat's provider to anthropic" do
+      options = Thor::Options.new(described_class.commands.fetch("chat").options).parse([])
+
+      expect(with_env("LAIN_PROVIDER" => nil) { LainCLI::ModelFlags.profile(options).provider }).to eq("anthropic")
     end
   end
 
@@ -153,6 +155,23 @@ RSpec.describe LainCLI do
 
       expect(description).to include(Lain::CLI::Backend::PROVIDERS.join(", "))
       expect(description).not_to match(/bedrock/i)
+    end
+
+    # Both approval surfaces race the human's own; neither goes first.
+    it "does not say the secret oracle answers ahead of the human" do
+      description = described_class.commands.fetch("chat").options.fetch(:secret_oracle).description
+
+      expect(description).not_to include("ahead of the human")
+    end
+
+    # All five follow the same rule, so each help line says it: a forked or
+    # resumed chat takes what its header recorded for a flag nobody typed.
+    it "says on every run-profile flag that a resumed or forked chat defaults to its recorded value" do
+      options = described_class.commands.fetch("chat").options
+
+      Lain::CLI::RunProfile::FIELDS.each do |field|
+        expect(options.fetch(field).description).to include("resumed or forked chat defaults to")
+      end
     end
 
     it "still scopes the --api-base description to ollama" do
@@ -774,6 +793,10 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
     seen.first
   end
 
+  # The run profile the exe resolves from what Thor parsed, read under the same
+  # environment the parse ran in.
+  def profile_under(env, argv) = with_env(env) { LainCLI::ModelFlags.profile(options_under(env, argv)) }
+
   # A throwaway Thor whose only command records what Thor parsed. `seen` is
   # closed over rather than assigned to a global, which the cop forbids and
   # which would leak between examples anyway.
@@ -787,27 +810,30 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
   end
 
   it "takes the provider and model from LAIN_PROVIDER and LAIN_MODEL" do
-    options = options_under({ "LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3:4b" }, [])
+    profile = profile_under({ "LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3:4b" }, [])
 
-    expect(options["provider"]).to eq("ollama")
-    expect(options["model"]).to eq("qwen3:4b")
+    expect(profile).to have_attributes(provider: "ollama", model: "qwen3:4b", typed: [])
   end
 
-  # PRECEDENCE, and the reason the reader sits in the `default:` slot: Thor
-  # consults a default only when the flag is absent, so this holds without
-  # anything comparing parsed options against defaults afterward -- the version
-  # that cannot tell `--provider ollama` from silence.
-  it "lets an explicit flag beat the environment" do
-    options = options_under({ "LAIN_PROVIDER" => "ollama" }, ["--provider", "ollama-cloud"])
+  it "lets an explicit flag beat the environment, and counts it as typed" do
+    profile = profile_under({ "LAIN_PROVIDER" => "ollama" }, ["--provider", "ollama-cloud"])
 
-    expect(options["provider"]).to eq("ollama-cloud")
+    expect(profile).to have_attributes(provider: "ollama-cloud", typed: [:provider])
+  end
+
+  # The profile flags carry no Thor `default:`, because a default makes
+  # `--provider anthropic` and silence the same parse, and a resumed or forked
+  # chat has to know which fields the human typed before it lets the recording
+  # answer the rest.
+  it "leaves an untyped profile flag unset in Thor's parse, so silence is not a typed value" do
+    options = options_under({ "LAIN_PROVIDER" => "ollama", "LAIN_NUM_BATCH" => "2048" }, [])
+
+    expect(options.slice("provider", "api_base", "model", "num_ctx", "num_batch")).to be_empty
   end
 
   it "falls back to the built-in default when the environment says nothing" do
-    options = options_under({ "LAIN_PROVIDER" => nil, "LAIN_MAX_TOKENS" => nil }, [])
-
-    expect(options["provider"]).to eq("anthropic")
-    expect(options["max_tokens"]).to eq(4_096)
+    expect(profile_under({ "LAIN_PROVIDER" => nil }, []).provider).to eq("anthropic")
+    expect(options_under({ "LAIN_MAX_TOKENS" => nil }, [])["max_tokens"]).to eq(4_096)
   end
 
   it "reads the numeric band as numbers, not strings" do
@@ -815,6 +841,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
 
     expect(options["max_tokens"]).to eq(8_192)
     expect(options["temperature"]).to eq(0.7)
+    expect(profile_under({ "LAIN_NUM_BATCH" => "2048" }, []).num_batch).to eq(2_048)
   end
 
   # Thor validates an `enum:` BEFORE it dispatches, so this list is a scope

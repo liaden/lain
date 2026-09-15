@@ -6,13 +6,18 @@ module Lain
     # and model in a `direnv` `.envrc` instead of retyping them on every
     # invocation.
     #
-    # == Precedence comes free, and that is why this sits in the `default:` slot
+    # == Two places a reader sits
     #
-    # Thor uses a `default:` only when the flag is absent, so
-    # `default: EnvDefaults.string("LAIN_PROVIDER", "anthropic")` already means
-    # "explicit flag beats env beats built-in default" without anything
-    # comparing the parsed options against the defaults afterward -- which is
-    # the version of this that cannot tell `--provider anthropic` from silence.
+    # Most flags read here in their `default:` slot. Thor uses a `default:` only
+    # when the flag is absent, so `default: EnvDefaults.numeric("LAIN_MAX_TOKENS",
+    # 4_096)` already means "explicit flag beats env beats built-in default".
+    #
+    # The five run-profile flags cannot sit there. A `default:` makes a typed
+    # `--provider anthropic` and silence the same parse, and a resumed or forked
+    # chat has to know which fields were typed before its recorded profile
+    # answers the rest. Those flags declare no default, and `exe/lain`'s
+    # `ModelFlags.profile` reads these same variables for the untyped fields
+    # instead ({RunProfile#with_defaults}). Do not move them back into the slot.
     #
     # == What is deliberately NOT configurable here
     #

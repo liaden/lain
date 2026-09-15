@@ -352,7 +352,7 @@ module Lain
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
         switchboard(backend, toolset, notice)
-        chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
+        chronicle.start(context: backend.context, toolset:, profile: backend.run_profile, **resume_start(resumed))
         # ASSIGNED to an ivar, not merely returned: the `parent` thunk above and
         # the usage thunk #build_toolset passes both read this slot at CALL time.
         # Left as a bare return expression it stays nil forever -- the caller's

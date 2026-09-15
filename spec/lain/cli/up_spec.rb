@@ -1993,15 +1993,16 @@ RSpec.describe LainCLI, "naming a project on the command line" do
 
     # The ordinary case must keep ChatLaunch's OWN default factory
     # (Project::Resolver.default_project), not a second construction of the
-    # same resolver wearing the shell's directory as an explicit flag.
+    # same resolver wearing the shell's directory as an explicit flag. The
+    # run profile is the one keyword every chat launch carries.
     it "overrides nothing when neither flag is given" do
-      expect(run_chat(%w[chat])).to eq({})
+      expect(run_chat(%w[chat])).to match(profile: an_instance_of(Lain::CLI::RunProfile))
     end
 
     # `--root ""` is a truthy String, so it would reach rung 1 and die inside
     # realpath("") -- which is what an unset shell variable expands to.
     it "reads an empty --root as no flag at all" do
-      expect(run_chat(["chat", "--root", ""])).to eq({})
+      expect(run_chat(["chat", "--root", ""])).to match(profile: an_instance_of(Lain::CLI::RunProfile))
     end
 
     it "refuses a --root that is a regular file, naming the flag and the path" do

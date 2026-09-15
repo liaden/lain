@@ -225,3 +225,71 @@ RSpec.describe "the /btw and /keep registration" do
     end
   end
 end
+
+# The side chat /btw opens forks this session's header, so it asks the same
+# backend the session ran on without a backend flag on its pane command. The
+# real command composes the popup's command, and that command's argv goes
+# through the exe's Thor parse and the real ChatLaunch backend resolution; only
+# the conversation, the editor views and the daily reap are stubbed.
+RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
+  load File.expand_path("../../../../exe/lain", __dir__) unless defined?(LainCLI)
+
+  around do |example|
+    Dir.mktmpdir("lain-btw-profile") do |dir|
+      env = %w[LAIN_PROVIDER LAIN_API_BASE LAIN_MODEL LAIN_NUM_CTX LAIN_NUM_BATCH].to_h { |name| [name, nil] }
+      with_env(env.merge("XDG_STATE_HOME" => dir)) { example.run }
+    end
+  end
+
+  let(:timeline) do
+    Lain::Timeline.empty(store: Lain::Store.new)
+                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+  end
+  let(:session_path) do
+    context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
+    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" }),
+               *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+               Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
+    File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson").tap do |path|
+      File.write(path, records.map { |record| "#{JSON.generate(record)}\n" }.join)
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+    stub_const("Lain::CLI::GcSchedule::SPAWN", ->(*, **) {})
+  end
+
+  def composed_command(question)
+    surface = instance_double(Lain::CLI::TmuxSurface)
+    composed = nil
+    allow(surface).to receive(:popup) do |command:, **|
+      composed = command
+      Lain::CLI::TmuxSurface::Placement.new(kind: :popup, target: "btw", degraded: false, reason: nil)
+    end
+    chronicle = instance_double(Lain::CLI::Chronicle, journal_path: session_path, catch_up: nil)
+    env = build_command_env(agent: instance_double(Lain::Agent, timeline:), chronicle:, tmux_surface: surface)
+    described_class.new.call(question, env)
+    composed
+  end
+
+  def resolved_backend(argv)
+    seen = nil
+    wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+    allow(wiring).to receive(:run) { |backend:, **| seen = backend }
+    allow(Lain::CLI::Wiring).to receive(:new).and_return(wiring)
+    views = instance_double(Lain::CLI::LiveViews, views: nil, fleet: nil)
+    allow(Lain::CLI::LiveViews).to receive(:new).and_return(views)
+    LainCLI.start(argv, debug: true)
+    seen
+  end
+
+  it "asks the side question of an ollama session on ollama" do
+    argv = composed_command("a side question").shellsplit.drop_while { |word| word != "exec" }.drop(2)
+
+    expect(argv).to include("--btw", "--fork", "--prompt", "a side question")
+    expect(resolved_backend(argv).run_profile.provider).to eq("ollama")
+  end
+end

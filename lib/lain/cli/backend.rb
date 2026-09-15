@@ -135,8 +135,14 @@ module Lain
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
-      def initialize(options)
+      # @param run_profile [RunProfile] the provider, model, endpoint and runner
+      #   knobs, carrying which of them were typed. A chat launch hands in the
+      #   one it resolved; any other caller's is read off `options`, where every
+      #   field holding a value counts as typed. Positional, because a keyword
+      #   would claim the braceless option hash every other caller passes.
+      def initialize(options, run_profile = RunProfile.from_options(options))
         @options = options
+        @run_profile = run_profile
         summarizer_name
         summarizer_max_tokens
         # BOTH arms, built for their refusals and dropped: `--summarizer-provider
@@ -145,7 +151,7 @@ module Lain
         # says, so `lain up` cannot open a pane that dies at the first
         # compaction. It also evaluates {#api_base} on the way in, so that flag
         # stays validated for EVERY provider.
-        [@options[:provider], summarizer_name].each { |name| ollama_tier(name) }
+        [run_profile.provider, summarizer_name].each { |name| ollama_tier(name) }
         # `--num-ctx`'s SHAPE only: the trained-maximum half needs a probe, and
         # a constructor that probes is one {ChatLaunch#preflight} cannot run.
         # Still AFTER {#api_base}, unchanged: a base URL the probe will talk to
@@ -267,6 +273,13 @@ module Lain
         (shared ? sampler_extra.slice(*RUNNER_KEYS) : {}).freeze
       end
 
+      # The provider, model, endpoint and runner knobs this run was handed, as
+      # the one value a session header records. Every model-access read below
+      # goes through it, so what is recorded is what was used.
+      #
+      # @return [RunProfile]
+      attr_reader :run_profile
+
       # Where this run's records land. Bound by the first {#pipeline_source}
       # call (the run has exactly one wiring site) and the Null channel until
       # then, so a path that never wires compaction -- bench, `--no-journal` --
@@ -334,13 +347,13 @@ module Lain
       # provider. {#initialize} reaches it through {OllamaTier}, which takes the
       # validated value as an argument, so the eager refusal fires whatever
       # `--provider` says.
-      def api_base = @options[:api_base] && Endpoint.new(flag: "--api-base", value: @options[:api_base]).url
+      def api_base = run_profile.api_base && Endpoint.new(flag: "--api-base", value: run_profile.api_base).url
 
       # `--model` resolved once, so {#context}, {WindowBook} and the compaction
       # book agree about which model this run is. {WindowBook} asks for it
       # lazily, since it must not be resolved before that object can rescue what
       # {#provider_name} raises for an option hash naming no provider at all.
-      def model = @options[:model] || default_model(provider_name)
+      def model = run_profile.model || default_model(provider_name)
 
       # Which Context THIS turn renders through -- the live compaction source
       # by DEFAULT, since `lain chat` compacts unless `--no-compact` says
@@ -435,7 +448,7 @@ module Lain
 
       private
 
-      def num_ctx_request = @num_ctx_request ||= NumCtx.new(backend: self, value: @options[:num_ctx])
+      def num_ctx_request = @num_ctx_request ||= NumCtx.new(backend: self, value: run_profile.num_ctx)
 
       # Refuses BEFORE construction: {Provider::Anthropic} validates the key
       # eagerly too, but as {Provider::HTTP::ConfigurationError}, which is not a
@@ -465,7 +478,7 @@ module Lain
 
       # Validated once, so #provider and #default_model both key off a name
       # already known to be in PROVIDERS.
-      def provider_name = validated(@options[:provider], "provider")
+      def provider_name = validated(run_profile.provider, "provider")
 
       def summarizer_name = validated(knob(:summarizer_provider, DEFAULT_SUMMARIZER_PROVIDER), "summarizer provider")
 
@@ -480,7 +493,7 @@ module Lain
 
       def tier_default_model = chat_name?(summarizer_name) ? model : default_model(summarizer_name)
 
-      # The one raw `--provider` read in this class, and it does NOT weaken
+      # The one unvalidated provider read in this class, and it does NOT weaken
       # {#provider_name}'s seam: equality with an already-validated name IS the
       # validation. `summarizer_name` is refused at construction if unknown, so
       # a chat name equal to it is in PROVIDERS too, and an unequal one takes
@@ -488,7 +501,7 @@ module Lain
       # summarizer tier still resolving for a Backend assembled from an option
       # hash naming no chat provider, rather than refusing about a flag this
       # method does not read.
-      def chat_name?(name) = name == @options[:provider]
+      def chat_name?(name) = name == run_profile.provider
 
       # WHOSE arm a tier is -- which decides the flag a refusal names -- and,
       # separately, whether `--api-base` is this tier's to use. NOT the same
@@ -496,7 +509,7 @@ module Lain
       # base is filtered HERE, so the tier is never handed one it will drop.
       def ollama_tier(name) = OllamaTier.new(name:, chat: chat_name?(name), api_base: ollama_base(name))
 
-      def ollama_base(name) = OllamaTier.claims_base?(name, @options[:provider]) ? api_base : nil
+      def ollama_base(name) = OllamaTier.claims_base?(name, run_profile.provider) ? api_base : nil
 
       # The ollama arms answer from {OllamaTier}'s CLASS rather than an
       # instance: this must not build a tier, read ENV, or be able to raise
@@ -598,20 +611,22 @@ module Lain
       # {Provider::Ollama::Encoding}, because an encoder-side default would put
       # an `options` object on every ollama request in the process, where a flag
       # the operator did not set leaves the payload byte-identical. Only an
-      # ollama chat gets {OLLAMA_ONLY_KEYS}.
+      # ollama chat gets {OLLAMA_ONLY_KEYS}. The two runner knobs come off the
+      # {#run_profile} and the sampling pair off the flags.
       def sampler_extra
         keys = Provider::Ollama::Encoding::SAMPLER_KEYS
         keys -= OLLAMA_ONLY_KEYS unless ollama_chat?
-        keys.to_h { |key| [key, @options[key.to_sym]] }.compact
+        runner = run_profile.to_options
+        keys.to_h { |key| [key, runner.fetch(key.to_sym) { @options[key.to_sym] }] }.compact
       end
 
-      def ollama_chat? = OllamaTier::NAMES.include?(@options[:provider])
+      def ollama_chat? = OllamaTier::NAMES.include?(run_profile.provider)
 
       # The chat's own endpoint is `--provider` at `--api-base`, since
       # {OllamaTier.claims_base?} always gives the chat's arm the base. Ordered
       # so {#model} is read last: it refuses an option hash naming no provider.
       def shares_chat_runner?(provider, model, base)
-        ollama_chat? && provider == @options[:provider] &&
+        ollama_chat? && provider == run_profile.provider &&
           endpoint(provider, base) == endpoint(provider, api_base) && model == self.model
       end
 

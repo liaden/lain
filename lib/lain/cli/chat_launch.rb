@@ -32,6 +32,9 @@ module Lain
       #   whole to {Backend}, {LiveViews} and {Wiring} rather than being read
       #   here: this object owns the bracket's ORDER, not the meaning of any
       #   one flag.
+      # @param profile [RunProfile] the backend the command line and the
+      #   environment resolved, carrying which fields were typed; the exe
+      #   builds it, and a chat forked or resumed lays it over the recording
       # @param resume_factory [#call] builds the --resume resolver
       # @param chronicle_factory [#call] opens the run's chronicle
       # @param live_views_factory [#call] builds the editor views
@@ -57,6 +60,7 @@ module Lain
       # @option options [String] :resume a session to resume
       # @return [ChatLaunch]
       def initialize(options,
+                     profile: RunProfile.from_options(options),
                      resume_factory: -> { Resume.new },
                      chronicle_factory: Chronicle.public_method(:for),
                      live_views_factory: LiveViews.public_method(:new),
@@ -69,6 +73,7 @@ module Lain
                      },
                      env: ENV)
         @options = options
+        @typed_profile = profile
         @resume_factory = resume_factory
         @chronicle_factory = chronicle_factory
         @live_views_factory = live_views_factory
@@ -139,13 +144,16 @@ module Lain
       # up` learns of it from the pane rather than from here.
       # `--resume`/`--fork` are absent for a third reason:
       # resolving one reads the record and may repair it, and two processes
-      # would put that repair in the history twice.
+      # would put that repair in the history twice. The profile their header
+      # recorded is still read, since that writes nothing, and a selector that
+      # refuses reads as no recorded profile: that refusal stays the pane's.
       #
       # @return [nil]
       # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
       def preflight(&notice)
         refuse_contradictory_flags!
         resolve_project!
+        @profile = preflight_profile
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is
         # reachable by accident: LAIN_PREFLIGHT is inherited like any other
@@ -196,7 +204,13 @@ module Lain
       # the compaction source off it -- and the window book is memoized per
       # Backend, so two Backends would be two probes and possibly two answers
       # across an ollama runner reload.
-      def backend = @backend ||= Backend.new(@options)
+      def backend = @backend ||= Backend.new(@options, profile)
+
+      # The ONE {RunProfile} the run's backend is built from: what was typed,
+      # over the profile a `--resume`d or `--fork`ed header recorded. Resolved
+      # before the backend, and so before every refusal the backend raises,
+      # because each is judged against the fields this resolves.
+      def profile = @profile ||= @typed_profile.over(recorded_profile)
 
       # The ONE RunClock for the run. Written by the Conductor and by the tee's
       # Telemetry::Compaction, read by the StatusFeed; two instances would
@@ -316,10 +330,37 @@ module Lain
       # read-only (never salvages it) and wins over --resume when both are
       # given.
       def resumed_run(backend)
-        return @resume_factory.call.fork(selector: @options[:fork], model: backend.context.model) if @options[:fork]
+        return resume.fork_at(fork_point, profile:, model: backend.context.model) if @options[:fork]
 
-        @options[:resume] && @resume_factory.call.call(selector: @options[:resume], model: backend.context.model)
+        @options[:resume] && resume.resume_at(resumed_path, profile:, model: backend.context.model)
       end
+
+      # Only the header, so a pre-flight may read it too: a recorded profile
+      # decides which arm's refusals the flags must pass.
+      def recorded_profile
+        return resume.recorded_profile(fork_point.path) if @options[:fork]
+        return resume.recorded_profile(resumed_path) if @options[:resume]
+
+        RunProfile::UNRECORDED
+      end
+
+      # A pre-flight leaves a selector's refusal -- nothing to resume, an
+      # ambiguous or unmatched name -- to the pane that reports it, as it always
+      # has, and reads the selection as having recorded nothing.
+      def preflight_profile
+        @typed_profile.over(recorded_profile)
+      rescue Resume::Refusal
+        @typed_profile
+      end
+
+      # Each door selects its session ONCE, and the header read and the open
+      # both use that selection. See {Resume#locate} for the race two looks run.
+      def resumed_path = @resumed_path ||= resume.locate(@options[:resume])
+
+      def fork_point = @fork_point ||= resume.fork_point(@options[:fork])
+
+      # One resolver for both reads of the record, the header and the door.
+      def resume = @resume ||= @resume_factory.call
 
       def nvim_views = @live_views&.views
 

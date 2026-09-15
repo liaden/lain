@@ -480,8 +480,15 @@ RSpec.describe "lain chat's flag surface" do
     # is the whole of the sink's justification.
     def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "lain:compaction", stream: :stderr)
 
+    # Through the exe's own profile resolution too, as `lain chat` builds its
+    # Backend: the five profile flags parse to nothing unless typed.
+    def resolved(*argv)
+      options = parse(*argv)
+      options.merge(LainCLI::ModelFlags.profile(options).to_options)
+    end
+
     def source_from(*argv, **overrides)
-      Lain::CLI::Backend.new(parse(*argv).merge(overrides))
+      Lain::CLI::Backend.new(resolved(*argv).merge(overrides))
                         .pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
     end
 
@@ -524,7 +531,7 @@ RSpec.describe "lain chat's flag surface" do
       stub_request(:post, %r{/api/chat}).to_raise(Faraday::ConnectionFailed)
       source = source_from("--compact-strategy", "summarizing", compact_bytes: 100, compact_cap: 100,
                                                                 compact_keep: 2)
-      base = Lain::CLI::Backend.new(parse).context
+      base = Lain::CLI::Backend.new(resolved).context
       line = history(6)
 
       expect { source.context_for(base:, timeline: line, usage: nil, session:) }.not_to raise_error

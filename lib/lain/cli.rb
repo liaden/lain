@@ -15,6 +15,7 @@ end
 # Loaded first because exe/lain reads these in `method_option` defaults, which
 # evaluate while the Thor class body loads -- before any command runs.
 require_relative "cli/env_defaults"
+require_relative "cli/run_profile"
 require_relative "cli/backend"
 require_relative "cli/isolation_backend"
 require_relative "cli/worktrees"

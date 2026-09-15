@@ -724,6 +724,10 @@ class LainCLI < Thor
   # used to sit: Thor accumulates `method_option` onto the command declared
   # NEXT, so a band that moved would silently attach to the wrong command.
   module ModelFlags
+    # The rule every profile flag's help states: an untyped one takes what the
+    # resumed or forked session's header recorded, ahead of the environment.
+    RECORDED = "a resumed or forked chat defaults to what its session recorded"
+
     # Split in two on {CompactionFlags}' own rule (its three methods are one
     # question each), and by the cop's insistence: WHICH endpoint answers, then
     # HOW it answers. The order the two are called in is the order the flags
@@ -734,19 +738,41 @@ class LainCLI < Thor
       throughput(thor)
     end
 
-    # Every default here reads {Lain::CLI::EnvDefaults} first, so a project can
-    # pin its endpoint in a direnv `.envrc` and stop retyping it. An explicit
-    # flag still wins: Thor consults a `default:` only when the flag is absent.
+    # The five {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
+    # makes a typed `--provider anthropic` and silence the same parse, and a
+    # resumed or forked chat must know which fields the human typed before it
+    # lets the recorded profile answer the rest. {profile} supplies the
+    # environment's answer instead, under the same variable names, so a
+    # project still pins its endpoint in a direnv `.envrc`.
     # See EnvDefaults for what is deliberately NOT env-configurable, and why.
     def self.endpoint(thor)
-      thor.method_option :provider, type: :string, default: Lain::CLI::EnvDefaults.string("LAIN_PROVIDER", "anthropic"),
-                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} [$LAIN_PROVIDER]"
-      thor.method_option :api_base, type: :string, default: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
+      thor.method_option :provider, type: :string,
+                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} " \
+                                          "[$LAIN_PROVIDER, else #{Lain::CLI::RunProfile::DEFAULT_PROVIDER}; " \
+                                          "#{RECORDED}]"
+      thor.method_option :api_base, type: :string,
                                     desc: "Override the Ollama API base (ollama arms only; https " \
-                                          "required on ollama-cloud) [$LAIN_API_BASE]"
-      thor.method_option :model, type: :string, default: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
+                                          "required on ollama-cloud) [$LAIN_API_BASE; #{RECORDED}]"
+      thor.method_option :model, type: :string,
                                  desc: "Model id; defaults to the selected provider's own default when unset " \
-                                       "[$LAIN_MODEL]"
+                                       "[$LAIN_MODEL; #{RECORDED}]"
+    end
+
+    # The run's profile: what was typed, then the environment, then the
+    # built-in provider. A resumed or forked chat lays this over its recorded
+    # profile ({Lain::CLI::ChatLaunch#profile}), which is why the typed fields
+    # travel with it.
+    #
+    # @param options [Hash] Thor's parse of a command declaring this band
+    # @return [Lain::CLI::RunProfile]
+    def self.profile(options)
+      Lain::CLI::RunProfile.from_options(options).with_defaults(
+        provider: Lain::CLI::EnvDefaults.string("LAIN_PROVIDER", Lain::CLI::RunProfile::DEFAULT_PROVIDER),
+        api_base: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
+        model: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
+        num_ctx: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
+        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH")
+      )
     end
 
     def self.sampling(thor)
@@ -765,27 +791,26 @@ class LainCLI < Thor
     # insistence (`sampling` reached Metrics/MethodLength at five flags;
     # extract, never loosen).
     #
-    # The property both defaults must hold: they RESOLVE TO nil when the
-    # variable is unset. {Lain::CLI::Backend}'s sampler loop keeps a key only
-    # when its value is non-nil, so an unset knob contributes nothing and the
-    # payload stays byte-identical to before this method existed.
-    # {Lain::CLI::EnvDefaults.numeric} answers nil for an unset variable, which
-    # is exactly that absence -- so reading the environment is safe here in a
-    # way a LITERAL default would not be: a literal materializes the key and
-    # puts an `options` object on every ollama request in the process, a wire
-    # change for callers that never asked for one. `backend_spec.rb`'s
-    # no-options example is what fails if this stops holding.
+    # Both are profile flags, so neither has a Thor `default:` ({endpoint}
+    # says why), and {profile} reads their variables. The property that
+    # reading must hold: they RESOLVE TO nil when the variable is unset.
+    # {Lain::CLI::Backend}'s sampler loop keeps a key only when its value is
+    # non-nil, so an unset knob contributes nothing and the payload stays
+    # byte-identical. A literal fallback would put an `options` object on every
+    # ollama request in the process, a wire change for callers that never
+    # asked for one. `backend_spec.rb`'s no-options examples are what fail if
+    # this stops holding.
     def self.throughput(thor)
-      thor.method_option :num_batch, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH"),
+      thor.method_option :num_batch, type: :numeric,
                                      desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \
                                            "prefill on this box, 2048 is the measured setting. A local-SERVER " \
                                            "knob: it is sent on ollama-cloud too, where its effect is " \
-                                           "unmeasured [$LAIN_NUM_BATCH]"
-      thor.method_option :num_ctx, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
+                                           "unmeasured [$LAIN_NUM_BATCH; #{RECORDED}]"
+      thor.method_option :num_ctx, type: :numeric,
                                    desc: "Ollama context length for the request; unset serves the model's own. " \
                                          "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
                                          "is unmeasured and nothing refuses a value above the model's trained " \
-                                         "maximum [$LAIN_NUM_CTX]"
+                                         "maximum [$LAIN_NUM_CTX; #{RECORDED}]"
     end
   end
 
@@ -944,7 +969,7 @@ class LainCLI < Thor
     end
   end
 
-  # The opt-in surfaces that answer a PARKED approval ahead of the human, both
+  # The opt-in surfaces that answer a PARKED approval beside the human, both
   # of them meta-agents racing the person the queue is already asking. Grouped
   # into a declarer of their own on {ModelFlags}' rule -- the second one pushed
   # the Thor class past Metrics/ClassLength, and two flags naming one idea are
@@ -966,8 +991,9 @@ class LainCLI < Thor
       thor.method_option :secret_oracle, type: :boolean, default: false,
                                          desc: "Wire an extra approval surface: a LOCAL model (ollama, never a " \
                                                "remote provider whatever --provider says) triages parked reads " \
-                                               "that WOULD release sensitive regions, ahead of the human. It is " \
-                                               "shown the path and the region count, never the file's contents"
+                                               "that WOULD release sensitive regions, racing the human's own " \
+                                               "surfaces. It is shown the path and the region count, never the " \
+                                               "file's contents"
     end
   end
 
@@ -1094,7 +1120,7 @@ class LainCLI < Thor
   # turn can still be seen.
   def chat
     ExecFlags.refuse_unusable!(options)
-    launch = Lain::CLI::ChatLaunch.new(options, **project_override)
+    launch = Lain::CLI::ChatLaunch.new(options, profile: ModelFlags.profile(options), **project_override)
     launch.call { |notice| say notice }
     exit launch.exit_status if options[:non_interactive]
   rescue Lain::Error => e

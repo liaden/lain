@@ -36,10 +36,14 @@ RSpec.describe Lain::CLI::Backend::Endpoint do
   # `URI.parse("http://").host` is `""`, not `nil` -- a naive `uri.host.nil?`
   # check misses this and lets an empty host straight through to Faraday,
   # which is the exact failure class this whole card exists to refuse, just
-  # spelled differently from the `localhost:11434` typo above.
-  it "refuses an empty host the same way as a missing one" do
+  # spelled differently from the `localhost:11434` typo above. It HAS a
+  # scheme, so the refusal must not send the operator looking for one.
+  it "refuses an empty host as having no host, without claiming a scheme is missing" do
     expect { endpoint("http://").url }
-      .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /scheme is required/)
+      .to raise_error(Lain::CLI::Backend::InvalidEndpoint) { |error|
+        expect(error.message).to include(%(--api-base "http://" has no host))
+        expect(error.message).not_to include("scheme")
+      }
   end
 
   # The reachable real-world trigger: `--api-base "http://$OLLAMA_HOST"` with
@@ -47,7 +51,7 @@ RSpec.describe Lain::CLI::Backend::Endpoint do
   # misconfiguration, not a hand-typed flag.
   it "refuses an empty host with a path, as an unset $OLLAMA_HOST would interpolate" do
     expect { endpoint("http:///x").url }
-      .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /scheme is required/)
+      .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /has no host/)
   end
 
   # The ordinary case: a well-formed http(s) base is accepted VERBATIM --

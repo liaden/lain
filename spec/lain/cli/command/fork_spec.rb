@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+require "json"
+require "shellwords"
+require "tmpdir"
+
 RSpec.describe Lain::CLI::Command::Fork do
   subject(:fork_command) { described_class.new(environment: { "TMUX" => "/tmp/tmux-1000/default,42,0" }) }
 
@@ -265,5 +269,84 @@ RSpec.describe Lain::CLI::Command::Fork do
       expect(text).to match(/no turns|nothing.*recorded|no head/i)
       expect(calls).to be_empty
     end
+  end
+end
+
+# The child a /fork opens is `lain chat --fork <selector>` and nothing else, so
+# which backend it talks to is decided by the header it forks, not by argv: the
+# pane command carries no backend flag and no secret. Driven end to end -- the
+# real command composes the pane command, and that command's own argv goes
+# through the exe's Thor parse and the real ChatLaunch backend resolution. Only
+# the conversation (Wiring), the editor views and the daily reap are stubbed.
+RSpec.describe Lain::CLI::Command::Fork, "the child's backend" do
+  load File.expand_path("../../../../exe/lain", __dir__) unless defined?(LainCLI)
+
+  around do |example|
+    Dir.mktmpdir("lain-fork-profile") do |dir|
+      env = %w[LAIN_PROVIDER LAIN_API_BASE LAIN_MODEL LAIN_NUM_CTX LAIN_NUM_BATCH].to_h { |name| [name, nil] }
+      with_env(env.merge("XDG_STATE_HOME" => dir)) { example.run }
+    end
+  end
+
+  let(:recorded_base) { "http://127.0.0.1:11500" }
+  let(:timeline) do
+    Lain::Timeline.empty(store: Lain::Store.new)
+                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+  end
+  let(:session_path) do
+    context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
+    profile = { "provider" => "ollama", "api_base" => recorded_base, "num_batch" => 2048 }
+    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile:),
+               *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+               Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
+    File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson").tap do |path|
+      File.write(path, records.map { |record| "#{JSON.generate(record)}\n" }.join)
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+    stub_const("Lain::CLI::GcSchedule::SPAWN", ->(*, **) {})
+  end
+
+  def composed_command
+    surface = instance_double(Lain::CLI::TmuxSurface)
+    placement = Lain::CLI::TmuxSurface::Placement.new(kind: :window, target: "fork", degraded: false, reason: nil)
+    composed = nil
+    allow(surface).to receive(:window) do |command:, **|
+      composed = command
+      placement
+    end
+    chronicle = instance_double(Lain::CLI::Chronicle, journal_path: session_path, catch_up: nil)
+    env = build_command_env(agent: instance_double(Lain::Agent, timeline:), chronicle:, tmux_surface: surface,
+                            fork_point: Lain::CLI::ForkPoint.new(dir: File.dirname(session_path)))
+    described_class.new(environment: { "TMUX" => "/tmp/tmux-1000/default,1,0" }).call("", env)
+    composed
+  end
+
+  # The argv the pane would exec, cut off the recipe's exports.
+  def child_argv(command) = command.shellsplit.drop_while { |word| word != "exec" }.drop(2)
+
+  def resolved_child(argv)
+    seen = {}
+    wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+    allow(wiring).to receive(:run) { |backend:, resumed:, **| seen.update(backend:, resumed:) }
+    allow(Lain::CLI::Wiring).to receive(:new).and_return(wiring)
+    views = instance_double(Lain::CLI::LiveViews, views: nil, fleet: nil)
+    allow(Lain::CLI::LiveViews).to receive(:new).and_return(views)
+    LainCLI.start(argv, debug: true)
+    seen
+  end
+
+  it "runs the child of an ollama session on ollama at the recorded api base, silently" do
+    argv = child_argv(composed_command)
+    child = resolved_child(argv)
+
+    expect(argv & %w[--provider --api-base --model --num-ctx --num-batch]).to be_empty
+    expect(child.fetch(:backend).run_profile)
+      .to have_attributes(provider: "ollama", api_base: recorded_base, model: "qwen3:4b", num_batch: 2048)
+    expect(child.fetch(:resumed).notices).to be_empty
   end
 end

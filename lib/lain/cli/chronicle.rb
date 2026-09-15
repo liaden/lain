@@ -187,11 +187,15 @@ module Lain
       # Write the OPEN header, pinning exactly what the Agent renders with. A
       # resumed chat passes `resumed_from:` and `written:` through to the scribe.
       # `message_journal` is the tee when --nvim wrapped one, so Q/A message
-      # records fan to the live views while the file gets them once.
+      # records fan to the live views while the file gets them once. `profile`
+      # is the backend the run resolved, which the header records so a chat
+      # forked or resumed from this file defaults to it.
       # @see SessionRecord::Scribe#initialize
-      def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [])
+      def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
+                profile: RunProfile::UNRECORDED)
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
-                                            resumed_from:, written:, message_journal: @tee)
+                                            resumed_from:, written:, message_journal: @tee,
+                                            profile: profile.to_header)
         self
       end
 

@@ -138,8 +138,10 @@ module Lain
       #   file, carrying edges the ChildTurn beside it already holds for the same
       #   digest. It earns its place on the WIRE, not in the record; the
       #   duplicated bytes are the accepted price of not routing the wide one.
+      # @param profile [Hash{String=>Object}] the run profile's header fields
+      #   (`CLI::RunProfile#to_header`); empty writes none
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                     message_journal: nil)
+                     message_journal: nil, profile: {})
         @journal = journal
         @message_journal = message_journal || journal
         @written = WrittenChain.new(written)
@@ -147,7 +149,7 @@ module Lain
         # is the only question asked of it -- unlike {WrittenChain}, where the
         # ORDER is the claim.
         @spawned = Set.new
-        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:)
+        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:)
       end
 
       # The {Event::ChainWriter} observer duck: journal an off-render-chain
