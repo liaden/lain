@@ -250,9 +250,18 @@ RSpec.describe Lain::CLI::Survey, :seam do
         .to raise_error(Lain::Review::Bounds::TooLarge, /--unbounded\z/)
     end
 
-    it "refuses a tree over the line ceiling too, which is the other shape" do
+    # Under the FILE ceiling (two documents, default max_files) but over the
+    # LINE one -- the shape {Bounds#check_corpus_files!} cannot catch, since it
+    # never reads a byte, and {Session#present} catches once the corpus is
+    # built. It still names itself and still offers the one remedy that is
+    # real for a tree a human can re-walk: `--unbounded`, said last.
+    it "refuses a tree over the line ceiling too, naming itself and offering --unbounded last" do
       expect { bounded(max_lines: 1).present(@root) }
-        .to raise_error(Lain::Review::Bounds::TooLarge, /lines/)
+        .to raise_error(Lain::Review::Bounds::TooLarge) { |error|
+          expect(error.message).to start_with("#{Lain::Review::Bounds::CORPUS} is")
+          expect(error.message).to include("rendered lines")
+          expect(error.message).to match(/--unbounded\z/)
+        }
     end
 
     it "journals no round when the file ceiling refuses, since the corpus never opened" do

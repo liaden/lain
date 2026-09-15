@@ -153,10 +153,19 @@ module Lain
         end
 
         def partition_section(partition)
-          ([legible(partition.label)] + partition.files.map { |file| "  #{row(file)}" }).join("\n")
+          ([displayed_path(partition.label)] + partition.files.map { |file| "  #{row(file)}" }).join("\n")
         end
 
-        def row(file) = "#{STATE_MARKERS.fetch(file.state.to_s)} #{legible(file.path).sub(%r{\A(?:\.\./)+}, "")}"
+        def row(file) = "#{STATE_MARKERS.fetch(file.state.to_s)} #{displayed_path(file.path)}"
+
+        # A leading climb ("../../../etc/foo/bar.rb") is the hops from the
+        # walk's `named_from` out to a tree merely BESIDE it, ahead of the
+        # name's own path, so a row -- or a `:by_directory` group's own label,
+        # built off the same climbed paths -- surveyed outside the project root
+        # reads as a traversal rather than a name. Dropped for DISPLAY only,
+        # `Frontend::Neovim::ReviewView#displayed_path`'s mirror: `file.path`
+        # itself stays untouched, since that is what a gesture resolves through.
+        def displayed_path(path) = legible(path).sub(%r{\A(?:\.\./)+}, "")
 
         # git (and a commit subject) yields BYTES, not characters -- the house
         # precedent is `Isolation::Worktree::Handback#unmerged` (`force_encoding`,

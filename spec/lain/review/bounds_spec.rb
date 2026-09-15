@@ -66,10 +66,10 @@ RSpec.describe Lain::Review::Bounds do
   # defaults to empty, which makes the refusal's ADVICE measure nothing, so a
   # probe over it isolates the DECISION; a probe that wants the advice measured
   # hands over groups of its own.
-  def unchunkable_view(count:, rendered_lines: 1, partitions: [])
+  def unchunkable_view(count:, rendered_lines: 1, partitions: [], sides: Lain::Review::Source::BOTH_SIDES)
     instance_double(Lain::Review::Changeset,
                     files: unchunkable_files(count:, rendered_lines:),
-                    partitions:, supports?: true)
+                    partitions:, supports?: true, sides:)
   end
 
   # A group of unchunkable files, for the advice half: {Bounds#cumulative_advice}
@@ -141,6 +141,22 @@ RSpec.describe Lain::Review::Bounds do
     diff = named.map { |path, body| file_section(path, body) }.join
     commits = [commit_record(sha: "c0", paths: named.map(&:first))]
     Lain::Review::Changeset.new(source: fake_source(diff:, commits:))
+  end
+
+  # A source with no old side, {Source::HEAD_SIDE_ONLY}'s own shape -- a corpus,
+  # without a real {Survey::Walk} to build one from. Built the way
+  # `commitless_changeset` is, wrapped in {DiffSource} for the model-value half
+  # and answering no `#commits`, plus a singleton override for the one message
+  # that tells {Bounds} it is surveyed as it stands: {Source::Corpus} answers
+  # this identically, off the same `#sides` the port already declares.
+  def surveyed_changeset(dirs)
+    named = dirs.flat_map { |dir, sizes| dir_files(dir, sizes) }
+    diff = named.map { |path, body| file_section(path, body) }.join
+    data = Data.define(:diff, :base_ref, :head_ref)
+               .new(diff: diff.b, base_ref: "b" * 40, head_ref: "h" * 40)
+    source = DiffSource.over(data)
+    def source.sides = Lain::Review::Source::HEAD_SIDE_ONLY
+    Lain::Review::Changeset.new(source:)
   end
 
   # ONE commit per directory, each owning exactly that directory's files --
@@ -439,6 +455,46 @@ RSpec.describe Lain::Review::Bounds do
 
         expect { bounds.check_presentation!(commitless_changeset("a" => [20], "b" => [20]), scope: :cumulative) }
           .to raise_error(described_class::TooLarge, /no scope that presents this changeset whole/)
+      end
+    end
+
+    # A source SURVEYED AS IT STANDS -- {Source::HEAD_SIDE_ONLY}, a corpus's own
+    # shape -- names itself and offers the one remedy a re-walk changes, ahead of
+    # nothing this object cannot already compute: {#cumulative_advice}'s own
+    # candidate search, unchanged, with `--unbounded` said last.
+    describe "a source surveyed as it stands, with no old side" do
+      it "is under the file ceiling but over the line ceiling: names itself and offers --unbounded last" do
+        bounds = described_class.new(max_files: 10, max_lines: 10)
+        changeset = surveyed_changeset("a" => [2, 2], "b" => [2, 2])
+
+        expect { bounds.check_presentation!(changeset, scope: :cumulative) }
+          .to raise_error(described_class::TooLarge) { |error|
+            expect(error.message).to start_with("#{described_class::CORPUS} is 12 rendered lines")
+            expect(error.message).to include("present it per directory (scope: by_directory) instead")
+            expect(error.message).to match(/--unbounded\z/)
+          }
+      end
+
+      it "still offers --unbounded when no narrower scope presents it either" do
+        bounds = described_class.new(max_files: 10, max_lines: 5)
+        changeset = surveyed_changeset("a" => [20], "b" => [20])
+
+        expect { bounds.check_presentation!(changeset, scope: :cumulative) }
+          .to raise_error(described_class::TooLarge,
+                          /no scope that presents this changeset whole, or raise the ceiling with --unbounded\z/)
+      end
+
+      # `/review` keeps its sentences: a diff source answers {Source::BOTH_SIDES}
+      # and gets exactly the words it always has, with no flag its reader cannot
+      # type appended to them.
+      it "leaves a diff source's cumulative refusal exactly as it was" do
+        bounds = described_class.new(max_files: 10, max_lines: 12)
+
+        expect { bounds.check_presentation!(changeset_from([[20]]), scope: :cumulative) }
+          .to raise_error(described_class::TooLarge) { |error|
+            expect(error.message).to start_with("the cumulative view is")
+            expect(error.message).not_to include("--unbounded")
+          }
       end
     end
 

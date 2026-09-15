@@ -103,7 +103,14 @@ module Lain
       # reasoning would hold if that changed, since `elided` (`65_review.lua`)
       # preserves a head AND a tail, so the token a reader cannot guess is the
       # one that wants an end.
-      CORPUS_NARROWING = "survey a subdirectory instead, or raise the ceiling with --unbounded"
+      #
+      # Shared with {#cumulative_advice_for}'s own last word: a walk refused for
+      # too many files and a walk refused for too many lines are the same tree,
+      # so the escape is the same flag, spelled once here rather than twice.
+      UNBOUNDED_REMEDY = "raise the ceiling with --unbounded"
+
+      # `.freeze` by hand, {Partition::Whole::ADVICE}'s reason: this interpolates.
+      CORPUS_NARROWING = "survey a subdirectory instead, or #{UNBOUNDED_REMEDY}".freeze
 
       # What a corpus refusal calls the thing it is refusing, in {#guard!}'s
       # subject position. A survey is of a TREE and has no revision, so there is
@@ -283,10 +290,35 @@ module Lain
 
       def check_cumulative!(view)
         files = view.files
-        guard!(files.size, max_files, "files", "the cumulative view") { cumulative_advice(view) }
-        guard!(Size.lines_in(files), max_lines, "rendered lines", "the cumulative view") do
-          cumulative_advice(view)
-        end
+        subject = cumulative_subject(view)
+        guard!(files.size, max_files, "files", subject) { cumulative_advice_for(view) }
+        guard!(Size.lines_in(files), max_lines, "rendered lines", subject) { cumulative_advice_for(view) }
+      end
+
+      # Asked of the view's own {Source#sides} rather than its class: a source
+      # with no old side is the one this port already has a name for --
+      # {Source::HEAD_SIDE_ONLY}'s own doc says "a corpus, and anything else
+      # surveyed as it stands" -- so a future survey-shaped source earns
+      # {CORPUS}'s words with no edit here, and this object never asks what kind
+      # of source it holds.
+      def surveyed_as_it_stands?(view) = view.sides == Source::HEAD_SIDE_ONLY
+
+      # {CORPUS} everywhere a source surveyed as it stands is refused, so the
+      # file ceiling ({#check_corpus_files!}) and the line ceiling say the same
+      # word for the same reason rather than two words that happen to agree.
+      def cumulative_subject(view) = surveyed_as_it_stands?(view) ? CORPUS : "the cumulative view"
+
+      # {#cumulative_advice}'s narrower scopes, plus the one remedy that is real
+      # only for a tree a human can re-walk at a smaller root: {UNBOUNDED_REMEDY},
+      # named LAST, {CORPUS_NARROWING}'s own placement. A diff source keeps
+      # exactly {#cumulative_advice}'s sentence -- `/review` has no `--unbounded`
+      # to offer, and naming a flag its reader cannot type would be worse advice
+      # than none.
+      def cumulative_advice_for(view)
+        advice = cumulative_advice(view)
+        return advice unless surveyed_as_it_stands?(view)
+
+        "#{advice}, or #{UNBOUNDED_REMEDY}"
       end
 
       def check_commits!(view) = check_partitioned!(view, COMMIT_STRATEGY)

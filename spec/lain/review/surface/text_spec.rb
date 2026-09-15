@@ -91,6 +91,22 @@ RSpec.describe Lain::Review::Surface::Text do
       expect(sink.string).to include("touch b.rb and c.rb")
     end
 
+    # `Corpus::Prefix.between`'s climb lands in a `:by_directory` group's own
+    # LABEL too -- `File.dirname` of a climbed row is a climbed directory -- so
+    # the header this surface draws needs the same strip the row already gets,
+    # or a survey rendered outside the project root reads its OWN heading as a
+    # traversal.
+    it "drops a survey's leading climb from a group header too, at :by_directory scope" do
+      climbing = file_entry(path: "../../../etc/foo/bar.rb", state: :unreviewed)
+      grouped = changeset(files: [climbing],
+                          commits: [Lain::Review::Partition.new(label: "../../../etc/foo", files: [climbing])])
+
+      surface.present(grouped, scope: :by_directory)
+
+      expect(sink.string).to include("etc/foo\n")
+      expect(sink.string).not_to include("../../../etc")
+    end
+
     # The axis reaching the renderer, against a REAL {Review::Partition} rather
     # than a Struct: a directory label heads the files under it, and the same
     # renderer that draws the commit walk draws it.
