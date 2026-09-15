@@ -109,9 +109,11 @@ RSpec.describe Lain::Sensitivity do
       expect(classify("#{home}/.ssh/id_dsa")).to be_denied
     end
 
-    it "leaves the rest of ~/.ssh alone, so the rule is id_* and not the directory" do
+    # `.ssh/config` names hosts, users and identity files, so it is asked about
+    # -- but asked about is the gated tier, and nothing here makes it a denial.
+    it "leaves the rest of ~/.ssh undenied, so the rule is id_* and not the directory" do
       expect(classify("#{home}/.ssh/known_hosts")).to be_ordinary
-      expect(classify("#{home}/.ssh/config")).to be_ordinary
+      expect(classify("#{home}/.ssh/config")).to be_gated
     end
 
     # One example per denied rule. Dropping any single entry from the table must
@@ -295,6 +297,51 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  # The credential files an automatic reader released verbatim, because this
+  # tier was sized for a world where a human is still asked. Widening costs a
+  # prompt on `read_file` and a withheld listing row for each, which is this
+  # half's stated bargain.
+  describe "gated, the named credential files" do
+    {
+      "config/master.key" => "a Rails master key",
+      "certs/server.key" => "any private key file",
+      "config/credentials.yml.enc" => "Rails encrypted credentials",
+      "#{SensitivitySpecSupport::HOME}/.pgpass" => "a postgres password file",
+      "#{SensitivitySpecSupport::HOME}/.bash_history" => "a shell history",
+      "#{SensitivitySpecSupport::HOME}/.zsh_history" => "another shell's history",
+      "#{SensitivitySpecSupport::HOME}/.gem/credentials" => "a rubygems API key",
+      "#{SensitivitySpecSupport::HOME}/.ssh/config" => "an ssh client config",
+      "#{SensitivitySpecSupport::HOME}/.config/rclone/rclone.conf" => "an rclone remote config",
+      "#{SensitivitySpecSupport::HOME}/.local/share/keyrings/login.keyring" => "a login keyring",
+      "#{SensitivitySpecSupport::HOME}/.local/share/keyrings/user.keystore" => "anything under a keyrings directory"
+    }.each do |path, what|
+      it "gates #{what} for its credential shape" do
+        expect(classify(path)).to have_attributes(level: :gated, reason: :credential)
+      end
+    end
+
+    it "gates a bare private key anywhere, not only inside .ssh" do
+      %w[id_rsa deploy/id_ed25519 backup/id_ecdsa id_rsa.old].each do |path|
+        expect(classify(path)).to have_attributes(level: :gated, reason: :credential)
+      end
+    end
+
+    it "leaves the public half ordinary, and keeps a key inside .ssh denied" do
+      expect(classify("deploy/id_ed25519.pub")).to be_ordinary
+      expect(classify("id_rsa.pub")).to be_ordinary
+      expect(classify("#{home}/.ssh/id_rsa")).to be_denied
+    end
+
+    it "gates a DSA key outside .ssh too, the algorithm the first list forgot" do
+      expect(classify("backup/id_dsa")).to have_attributes(level: :gated, reason: :credential)
+      expect(classify("backup/id_dsa.pub")).to be_ordinary
+    end
+
+    it "offers, for every built-in gated entry, a sample the entry itself matches" do
+      expect(described_class::GATED.reject { |rule| rule.matches?(rule.sample(home), home) }).to be_empty
+    end
+  end
+
   # A live credential read, MEASURED rather than reasoned about: a child spawned
   # the way this codebase spawns one -- `Exec.child_env` over `WorkerEnv#env` --
   # inherits `ANTHROPIC_API_KEY`, because that scrub names only bundler and rspec
@@ -419,6 +466,40 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  # A home-anchored exemption names a PLACE. At that exact path it lifts
+  # whatever is there; beneath it, it may lift a personal directory's gate but
+  # never a credential's, so `exempt = ["~/src"]` cannot ungate every `.env` and
+  # key in every project under it.
+  describe "a home-anchored exemption, at its path and beneath it" do
+    def with(*exempt) = described_class.new(home:, cwd:, rules: Lain::Sensitivity::Rules.from({ "exempt" => exempt }))
+
+    it "keeps a credential-shaped name beneath an exempted directory gated" do
+      src = with("~/src")
+
+      expect(src.classify("#{home}/src/app/config/master.key")).to have_attributes(level: :gated, reason: :credential)
+      expect(src.classify("#{home}/src/id_rsa")).to be_gated
+      expect(src.classify("#{home}/src/app/.env")).to be_gated
+      expect(src.classify("#{home}/src/app/README.md")).to be_ordinary
+    end
+
+    it "opens a personal directory without opening the credentials inside it" do
+      downloads = with("~/Downloads")
+
+      expect(downloads.classify("#{home}/Downloads")).to have_attributes(level: :ordinary, reason: :exempt)
+      expect(downloads.classify("#{home}/Downloads/x.pdf")).to have_attributes(level: :ordinary, reason: :exempt)
+      expect(downloads.classify("#{home}/Downloads/.env")).to be_gated
+      expect(downloads.classify("#{home}/Downloads/x.key")).to be_gated
+    end
+
+    it "still lifts the one file it names exactly" do
+      named = with("~/.gitconfig", "~/src/app/.env")
+
+      expect(named.classify("#{home}/.gitconfig")).to have_attributes(level: :ordinary, reason: :exempt)
+      expect(named.classify("#{home}/src/app/.env")).to have_attributes(level: :ordinary, reason: :exempt)
+      expect(named.classify("#{home}/src/other/.env")).to be_gated
+    end
+  end
+
   # Precedence is expressed as ONE ordered list rather than a check, so the
   # order is the whole rule and every step of it needs its own example. Reordering
   # any adjacent pair must turn exactly one of these red.
@@ -475,6 +556,51 @@ RSpec.describe Lain::Sensitivity do
 
     it "still accepts a specific exemption, which is the key's whole purpose" do
       expect { Lain::Sensitivity::Rules.from({ "exempt" => [".gitconfig", "~/.gitconfig"] }) }.not_to raise_error
+    end
+
+    # `.*` is not in the unbounded list and turned off every dot-named
+    # credential anyway. The line is drawn by what a pattern LIFTS: each
+    # compiled exemption is probed against one sample per built-in gated entry,
+    # and more than one lifted is a class rather than a file.
+    it "refuses an exemption that lifts more than one built-in gated entry, naming them" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => [".*"] }, path: "/p/.lain/config.toml") }
+        .to raise_error(Lain::Config::Refusal,
+                        %r{\A/p/\.lain/config\.toml: .*exempt.*lifts.*"\.env".*"\.envrc".*"\.gitconfig"})
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*.key*"] }) }
+        .to raise_error(Lain::Config::Refusal, /\*\.key.*\*\.keyring/)
+    end
+
+    it "accepts an exemption that lifts exactly one entry, however it is spelled" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*.pem", "~/Downloads", ".envrc"] }) }
+        .not_to raise_error
+    end
+
+    # The probe's placeholder basename is a name no config would write, so an
+    # exemption that happens to share it is not charged with lifting every
+    # directory entry the placeholder stands in for.
+    it "does not refuse an ordinary name for colliding with the probe's own placeholder" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => %w[sample file x] }) }.not_to raise_error
+    end
+
+    # A `.` or `..` segment never survives into a compiled home-anchored path,
+    # so the entry reads as an exemption and lifts nothing.
+    it "refuses a home-anchored pattern with a dot segment, which can never match" do
+      ["~/.", "~/..", "~/../..", "~/./", "~/src/../.env"].each do |pattern|
+        expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }) }
+          .to raise_error(Lain::Config::Refusal, /can never match/)
+      end
+    end
+
+    # A home-anchored pattern is a literal subtree, never a glob, so `~/**`
+    # compiled to a directory literally named `**` and lifted nothing while
+    # reading as though it lifted everything.
+    it "refuses a home-anchored pattern holding a glob, which can never match" do
+      ["~/**", "~/*.env", "~/.config/?"].each do |pattern|
+        expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }) }
+          .to raise_error(Lain::Config::Refusal, /can never match/)
+        expect { Lain::Sensitivity::Rules.from({ "denied" => [pattern] }) }
+          .to raise_error(Lain::Config::Refusal, /can never match/)
+      end
     end
   end
 

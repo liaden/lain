@@ -12,23 +12,27 @@ module Lain
     #
     # == A conjunction of independent predicates, and that shape is the point
     #
-    # Five hold, all of them, or the rule says nothing:
+    # Every one holds, or the rule says nothing:
     #
     # 1. the tool is the one whose input is a shell command;
     # 2. the verdict ALLOWS, so a term exists to read at all;
     # 3. every stage's argv0 is a BARE NAME, and every one is on {PROGRAMS};
     # 4. every word of every stage classifies ORDINARY;
     # 5. no stage carries a flag that takes it outside its own arguments;
-    # 6. no word traverses a path-aliasing pseudo-filesystem.
+    # 6. no word traverses a path-aliasing pseudo-filesystem;
+    # 7. THE ROOT PREDICATE: every word, and the call's own cwd, lands under
+    #    the project root -- as written, and as the filesystem resolves it.
     #
     # {#approvable?} is the whole conjunction on one line and every predicate is
     # total over a term on its own, so another is one more `&&` plus one more
     # method. That is not tidiness, and it has been TESTED rather than claimed:
-    # predicate 6 below was added after the rest shipped, and it cost one `&&`,
-    # one method and its constant -- no existing predicate's logic changed,
-    # verified against the diff. The `PATH`-trust ladder this chunk starts on
-    # has four costed rungs above it, and predicate 7 ("the resolved path is
-    # under a trusted prefix") bolts on the same way.
+    # predicates 6 and 7 were each added after the rest shipped, and each cost
+    # one `&&` and one method here -- no existing predicate's logic changed.
+    # Predicate 7 also cost a second message on the injected factory
+    # (`#confinement`) and the lexical test it shares with
+    # {Risk::OutsideRoot}, extracted as {Risk::Root}. The `PATH`-trust rung
+    # ("the program `execvp` finds is under a trusted prefix") is still above
+    # this one, and bolts on the same way.
     #
     # == Predicate 6: a path can be spelled so the classifier cannot see it
     #
@@ -44,6 +48,32 @@ module Lain
     # name: ...)` can reach it, and a real classifier fix means resolving before
     # classifying -- filesystem access, a TOCTOU window, and the design the plan
     # defers. Refusing the WORD needs none of that.
+    #
+    # == The root predicate: automatic approval reads inside the project
+    #
+    # MEASURED before it existed: `.pgpass`, `grep TOKEN .bash_history` and
+    # `/var/log/auth.log` were each approved with nobody asked, because the
+    # classifier names credential SHAPES and no table of shapes is a boundary.
+    #
+    # WHAT IT GUARANTEES: at the moment of the decision, every word of the term
+    # and the call's cwd land under the root twice over -- lexically under the
+    # root as the session spells it, and, after `File.realpath` of the longest
+    # prefix on disk, under the root's own real path. A
+    # symlink in the checkout (`h -> $HOME`, `link -> /`), a dangling link, and
+    # a `link/..` that climbs from the target all refuse, and so does anything
+    # that cannot be resolved. It does NOT survive a link created between the
+    # decision and the exec; no allowlisted program creates one.
+    #
+    # Every word is checked, not only the path-shaped ones, because a bare `..`
+    # climbs out with no separator in it; a grep pattern that happens to read
+    # as an absolute path is refused too, which costs a prompt. A session whose
+    # root holds `$HOME`, or was never detected, confines nothing at all --
+    # {CLI::Wiring::BoardBuild.confinement} says why.
+    #
+    # The real-path half lives HERE and not in {Sensitivity}: this rule
+    # authorizes an exec that follows links, while the classifier's contract is
+    # that it makes no syscall. The classifier alone still reads
+    # `h/.config/gh/hosts.yml` as ordinary.
     #
     # == Predicate 4 is "is ORDINARY", never "is not denied"
     #
@@ -119,8 +149,9 @@ module Lain
       # caught -- MEASURED, all three.
       #
       # `/dev` at large is NOT here; only `dev/fd`. `/dev/stdin` and
-      # `/etc/shadow` belong to the read-surface question predicate 7 answers,
-      # and folding them in would be a tier change on an unmeasured argument.
+      # `/etc/shadow` are the root predicate's to refuse, since both lie
+      # outside any project, and folding them in here would be a tier change on
+      # an unmeasured argument.
       #
       # It over-refuses a checkout holding a `proc`, `sys` or `dev/fd`
       # directory. One prompt, failing closed -- the same bargain the
@@ -281,11 +312,14 @@ module Lain
         "rev" => Flags.new
       }.freeze
 
-      # @param sensitivity [#call] `cwd -> #classify`, a {Sensitivity} FACTORY
-      #   rather than one classifier: a bash call names its own working
-      #   directory, and a classifier built at wiring time would anchor a
-      #   relative word under whatever directory the agent started in --
-      #   approving `cat id_rsa` from `~/.ssh`.
+      # @param sensitivity [#call, #confinement] `cwd -> #classify`, a
+      #   {Sensitivity} FACTORY rather than one classifier: a bash call names its
+      #   own working directory, and a classifier built at wiring time would
+      #   anchor a relative word under whatever directory the agent started in --
+      #   approving `cat config` from inside `.git`. Its `#confinement(cwd)`
+      #   answers the root predicate from the same resolution of that cwd, so
+      #   the two cannot disagree about where a relative word lands, and it must
+      #   fail CLOSED where `#call` falls back.
       #
       #   REQUIRED, with no Null default, on the ladder's `faults:` precedent:
       #   a permissive default is how a guard ships green forever, and a rule
@@ -322,11 +356,11 @@ module Lain
       private
 
       # THE CONJUNCTION. Each predicate is total over a term by itself, so the
-      # order is short-circuiting for cost and for nothing else, and a sixth
+      # order is short-circuiting for cost and for nothing else, and another
       # goes here plus one method below.
       def approvable?(term, cwd)
         bare_names?(term) && allowlisted?(term) && ordinary_words?(term, cwd) &&
-          unflagged?(term) && unaliased?(term)
+          unflagged?(term) && unaliased?(term) && confined?(term, cwd)
       end
 
       def judged?(call) = call.tool_name == TOOL
@@ -350,6 +384,13 @@ module Lain
       # Predicate 6, and the shape every later rung copies: one method over the
       # term alone, total by itself, reached by one more `&&` above.
       def unaliased?(term) = term.flatten.none? { |word| word.match?(ALIASING) }
+
+      # The root predicate. The factory folds the call's own cwd into the
+      # answer: a cwd outside the root confines nothing, so no word passes.
+      def confined?(term, cwd)
+        confinement = @sensitivity.confinement(cwd)
+        term.flatten.all? { |word| confinement.contains?(word) }
+      end
 
       def programs(term) = term.map(&:first)
     end

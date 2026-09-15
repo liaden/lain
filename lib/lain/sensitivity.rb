@@ -20,8 +20,8 @@ module Lain
   #
   # Lexical matching is a decision, not an omission: a symlink named `notes.md`
   # pointing at `~/.ssh/id_ed25519` classifies ordinary. It is what
-  # {Approval::Risk::OutsideRoot} (`risk.rb:192-232`) already chose so that it
-  # agrees with {Workspace::Restore} about what "outside the root" means, and
+  # {Approval::Risk::Root} already chose so that it agrees with
+  # {Workspace::Restore} about what "outside the root" means, and
   # resolving links here would both disagree with that and put a syscall in a
   # classifier whose whole contract is that it makes none. The hole has a name
   # and a spec rather than a stat.
@@ -90,7 +90,7 @@ module Lain
       def explanation = EXPLANATIONS.fetch(reason)
     end
 
-    Rule = Data.define(:level, :reason, :under, :inside, :name, :except)
+    Rule = Data.define(:level, :reason, :under, :inside, :name, :except, :exact)
 
     # One rule, as three independent locators, any of which may be absent:
     # `under` is a home-anchored subtree, `inside` is a directory name that must
@@ -101,6 +101,8 @@ module Lain
     # `under` and `inside` are the two halves of the ruling on anchoring:
     # `inside` matches wherever it sits, which is right for `.ssh/id_*`, and
     # `under` is pinned to the injected home, which is right for `Cookies`.
+    # `exact` narrows `under` from a subtree to its one path, which is how a
+    # home-anchored exemption is split in two (see {Sensitivity#initialize}).
     class Rule
       # Every rule here is about dotfiles, so a glob that could not match one
       # would be an elaborate way of matching nothing.
@@ -120,15 +122,57 @@ module Lain
         new(level:, reason:, under: nil, inside: nil, name:, except:)
       end
 
+      # The basename a sample carries when the rule names none. A name no
+      # config writes, so an exemption is never charged with lifting a
+      # directory entry for sharing the placeholder's spelling.
+      SAMPLE = "\u2400probe"
+      STAR = "*"
+
+      def initialize(level:, reason:, under:, inside:, name:, except:, exact: false) = super
+
+      def homed? = !under.nil?
+      def credential? = reason == :credential
+
+      # This rule at its home-anchored path only. A rule with no `under` has
+      # no path to be exact about, so it is its own exact form.
+      def exactly = homed? ? with(exact: true) : self
+
+      # Whether this rule, as an exemption in the place {Sensitivity#initialize}
+      # puts it, lifts `gated`: at its exact path it is consulted before every
+      # built-in entry, beneath that only before the personal directories.
+      #
+      # @param gated [Rule] a built-in gated entry
+      # @param home [String] the home both are anchored on
+      def lifts?(gated, home) = (gated.credential? ? exactly : self).matches?(gated.sample(home), home)
+
       def verdict = Verdict.new(level:, reason:)
 
       # @param path [String] already lexically normalized and home-rewritten
       # @param home [String] the injected home
       def matches?(path, home) = under?(path, home) && inside?(path) && named?(File.basename(path))
 
+      # A path this rule matches, so a question about what another rule would
+      # LIFT can be asked without a filesystem to look in. A star matches the
+      # empty string, so dropping each one gives the shortest name the glob
+      # answers for -- the one a broad exemption is likeliest to catch.
+      #
+      # @param home [String] the home a homed rule anchors on
+      # @return [String]
+      def sample(home)
+        [under.nil? ? home : anchored(home), inside, name.nil? ? SAMPLE : name.delete(STAR)]
+          .compact.join(File::SEPARATOR)
+      end
+
+      # How a refusal names this rule to the person who wrote the config.
+      def label = [under && "~/#{under}".chomp(File::SEPARATOR), inside, name].compact.join(File::SEPARATOR)
+
       private
 
-      def under?(path, home) = under.nil? || descends?(path, anchored(home))
+      def under?(path, home)
+        return true if under.nil?
+
+        exact ? path == anchored(home) : descends?(path, anchored(home))
+      end
 
       def anchored(home) = under.empty? ? home : "#{home}/#{under}"
 
@@ -161,6 +205,12 @@ module Lain
     # "may widen, may never narrow" rule, expressed as an ORDER rather than as a
     # check somebody has to remember to write.
     #
+    # What one exemption may lift is capped at ONE built-in gated entry, and
+    # that is the whole guarantee: it stops a single broad glob (`.*`) from
+    # turning a class off by accident. It is not a table-wide cap -- `*.key`
+    # is one entry and still a class of files, and a config listing every
+    # gated name on its own line lifts them all, deliberately, one line each.
+    #
     #   [sensitivity]
     #   denied = ["*.secret"]
     #   gated  = ["*.private"]
@@ -187,6 +237,18 @@ module Lain
       SHAPES = %(a basename glob ("*.secret") or a home-anchored path ("~/.netrc"))
       # Patterns that match every path there is. Legal where a key can only add.
       UNBOUNDED = ["*", "**", "~", HOME].freeze
+      # A home-anchored pattern compiles to a LITERAL subtree matched against
+      # a cleaned path, so a glob character, a `.` or `..` segment, or an empty
+      # one names a directory no cleaned path ever has.
+      GLOB_METACHARACTERS = /[*?\[{]/
+      UNCLEAN_SEGMENTS = ["", ".", ".."].freeze
+      LITERAL = "can never match: a home-anchored pattern is a literal, clean path -- no glob, no empty, " \
+                "`.` or `..` segment"
+      # What an exemption is probed against. Any absolute path would do; the
+      # samples and a home-anchored exemption only have to agree on one.
+      PROBE_HOME = "/home/probe"
+      WHOLESALE = "lifts %<count>d built-in gated entries (%<entries>s), and one exemption may lift at most " \
+                  "one -- name each file or directory on its own line"
 
       # The table as `config.toml` spells it, which is how every refusal here
       # names it.
@@ -223,11 +285,32 @@ module Lain
       # leaks it into the fstring table for the life of the process.
       def self.rule(key, pattern, path: nil)
         check!(key, pattern, path:)
+        compiled = located(key, pattern, path:)
+        lifted = key == EXEMPT ? lifted_by(compiled) : []
+        raise malformed(key, pattern, wholesale(lifted), path:) if lifted.size > 1
+
+        compiled
+      end
+
+      def self.located(key, pattern, path: nil)
         level, reason = VERDICTS.fetch(key)
         return Rule.homed(pattern.delete_prefix(HOME).freeze, level:, reason:) if pattern.start_with?(HOME)
         raise malformed(key, pattern, "is #{SHAPES}", path:) if pattern.include?("/")
 
         Rule.named(pattern.dup.freeze, level:, reason:)
+      end
+
+      # The unbounded list caught `*` and missed `.*`, which ungated every
+      # dot-named credential in one line. Enumerating spellings cannot close
+      # that, so an exemption is judged by what it LIFTS, and more than one
+      # built-in entry refuses. That caps one pattern; it caps nothing across
+      # the table (see the class comment).
+      def self.lifted_by(exemption)
+        Sensitivity::GATED.select { |gated| exemption.lifts?(gated, PROBE_HOME) }
+      end
+
+      def self.wholesale(lifted)
+        format(WHOLESALE, count: lifted.size, entries: lifted.map { |gated| gated.label.inspect }.join(", "))
       end
 
       # A pattern that survives compilation and then raises inside
@@ -239,6 +322,14 @@ module Lain
         raise malformed(key, pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
         raise malformed(key, pattern, "must not be blank", path:) if pattern.strip.empty?
         raise malformed(key, pattern, "matches everything", path:) if unbounded?(key, pattern)
+        raise malformed(key, pattern, LITERAL, path:) if unmatchable_home?(pattern)
+      end
+
+      def self.unmatchable_home?(pattern)
+        return false unless pattern.start_with?(HOME)
+
+        subtree = pattern.delete_prefix(HOME)
+        subtree.match?(GLOB_METACHARACTERS) || subtree.split(File::SEPARATOR, -1).intersect?(UNCLEAN_SEGMENTS)
       end
 
       # `denied = "*.secret"` -- a single value where the shape is a list.
@@ -265,7 +356,8 @@ module Lain
       # under `denied` or `gated` can only ever add, so they stay legal.
       def self.unbounded?(key, pattern) = key == EXEMPT && UNBOUNDED.include?(pattern)
 
-      private_class_method :compile, :rule, :check!, :unbounded?, :not_a_list, :malformed
+      private_class_method :compile, :rule, :located, :lifted_by, :wholesale, :check!, :unbounded?, :unmatchable_home?,
+                           :not_a_list, :malformed
 
       # Validated in the constructor too, {Config::Answers}' precedent: a value
       # built by hand carries rules that never came through {.from}.
@@ -310,10 +402,28 @@ module Lain
 
     # Worth asking about. A spurious match here costs one prompt, so these are
     # the half that widens.
+    #
+    # It was sized for a world where a human is still asked, and an automatic
+    # approver asks nobody: `cat config/master.key`, `.pgpass`, a shell history
+    # and a bare `id_rsa` were each released verbatim by one. `*.key` is what
+    # covers Rails' `config/master.key`, so there is no second entry for it.
+    #
+    # Names match case-SENSITIVELY. On Linux `server.KEY` is a different file,
+    # but a toolchain that writes `.KEY` or `.PEM` still wrote a key, and on a
+    # case-insensitive filesystem `CONFIG/MASTER.KEY` opens the lowercase one.
+    # Those spellings are ordinary here today.
     GATED = [
-      *%w[.env .env.* .envrc *.pem *.p12 credentials.json secrets.y*ml .git-credentials
-          .npmrc .pypirc .gitconfig terraform.tfstate *.tfvars]
+      *%w[.env .env.* .envrc *.pem *.p12 *.key *.keyring credentials.json credentials.yml.enc secrets.y*ml
+          .git-credentials .npmrc .pypirc .pgpass .gitconfig rclone.conf terraform.tfstate *.tfvars *_history]
         .map { |name| Rule.named(name, level: :gated, reason: :credential) },
+      # A private key copied out of `.ssh`, which is where the DENIED rule
+      # reaches. Gated rather than denied because outside `.ssh` the name is
+      # ambiguous enough that a denial nobody can lift would be the wrong error.
+      *%w[id_rsa* id_dsa* id_ed25519* id_ecdsa*]
+        .map { |name| Rule.named(name, except: "*.pub", level: :gated, reason: :credential) },
+      Rule.within(".gem", name: "credentials", level: :gated, reason: :credential),
+      Rule.within(".ssh", name: "config", level: :gated, reason: :credential),
+      Rule.within("keyrings", level: :gated, reason: :credential),
       *%w[Downloads Documents Desktop Pictures]
         .map { |dir| Rule.homed(dir, level: :gated, reason: :out_of_scope) },
       # The process filesystem, and these two files only. MEASURED, not
@@ -354,6 +464,9 @@ module Lain
     # The Null Object at the end of the chain, so no caller and no branch here
     # asks whether a rule was found.
     ORDINARY = Rule.new(level: :ordinary, reason: :none, under: nil, inside: nil, name: nil, except: nil)
+
+    # GATED split by what a home-anchored exemption may reach beneath its path.
+    CREDENTIALS, PERSONAL = GATED.partition(&:credential?).map(&:freeze)
 
     # A path this classifier cannot read. GATED and not ordinary: gated reaches
     # a human and is liftable, which is the right posture for input nobody can
@@ -397,13 +510,20 @@ module Lain
 
     # @param home [String, Pathname] the user's home directory, INJECTED -- never read from ENV here
     # @param cwd [String, Pathname] what a relative path resolves against, also injected
+    # The order is the precedence. A home-anchored exemption appears TWICE:
+    # exactly at its path before every built-in gated entry, so `~/.gitconfig`
+    # lifts that file, and as a subtree after the credential entries but before
+    # the personal directories, so `~/Downloads` opens the directory while
+    # `~/Downloads/.env` and `~/src/app/config/master.key` still gate.
+    #
     # @param rules [Rules] what this project added, and what it exempted
     def initialize(home:, cwd:, rules: Rules.empty)
       @home = anchor(:home, home)
       @cwd = anchor(:cwd, cwd)
       self.class.check!(home: @home)
 
-      @rules = [*DENIED, *rules.denied, *rules.exempt, *GATED, *rules.gated, ORDINARY].freeze
+      @rules = [*DENIED, *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS, *rules.exempt.select(&:homed?),
+                *PERSONAL, *rules.gated, ORDINARY].freeze
       freeze
     end
 

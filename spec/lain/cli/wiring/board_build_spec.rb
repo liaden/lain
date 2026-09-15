@@ -622,6 +622,139 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "leaves a reader of a path outside the project root parking for a human" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat #{home}/notes.txt", "cwd" => root)) do
+          expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage rules])
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "does not approve a call whose cwd escapes the root" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat README.md", "cwd" => "/")) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    # `$HOME` as the root is intent when a flag says so, and it is still no
+    # boundary: everything the user owns lies under it.
+    it "approves nothing automatically when the project root is the home directory" do
+      in_tree do |_root, home|
+        FileUtils.mkdir_p(home)
+        project = Lain::Project.new(root: home, cwd: home, kind: :home, detected_by: :flag)
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+
+        while_parked(board, bash_of("cat README.md", "cwd" => home)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    # No marker was found, so the root is merely wherever the process started --
+    # evidence of nothing, and no boundary to approve inside.
+    it "approves nothing automatically when no project was detected" do
+      in_tree do |root, home|
+        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+
+        while_parked(board, bash_of("cat README.md", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "leaves a named credential file inside the root to a human, on both read paths" do
+      in_tree do |root, home|
+        key = File.join(root, "config", "master.key")
+        FileUtils.mkdir_p(File.dirname(key))
+        File.write(key, "0123456789abcdef")
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat config/master.key", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+        expect(board.sensitivity.gates?(read_of(key))).to be(true)
+        expect(board.sensitivity.classify(key)).to have_attributes(level: :gated, reason: :credential)
+      end
+    end
+
+    # A flag or config root ABOVE home holds every file its user owns: measured,
+    # `cat home/notes.txt` was approved there with nobody asked.
+    it "approves nothing automatically when the project root lies above the home directory" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(home)
+        base = File.dirname(root)
+        project = Lain::Project.new(root: base, cwd: base, kind: :project, detected_by: :flag)
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+
+        while_parked(board, bash_of("cat home/notes.txt", "cwd" => base)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    # A symlink in the checkout -- git stores them, so a clone can ship one --
+    # spells a file outside the root with a path that is lexically inside it.
+    # The approving rule checks where the path really lands.
+    it "leaves a read through an in-root symlink to outside the root parking for a human" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(home, ".config", "gh"))
+        File.symlink(home, File.join(root, "h"))
+        File.symlink("/", File.join(root, "link"))
+        board = board_over(root, home)
+
+        %w[h/.config/gh/hosts.yml link/etc/shadow].each do |path|
+          while_parked(board, bash_of("cat #{path}", "cwd" => root)) do
+            expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+          end
+        end
+      end
+    end
+
+    # The cwd a bash call runs in is the CLEANED one: `inner/../h` is `h`, and
+    # `h` links to home, so the read below is of home's own credential file.
+    it "parks a call whose cleaned cwd lands outside the root through a symlink" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p([File.join(root, "lib", "deep"), File.join(home, ".config", "gh")])
+        File.write(File.join(home, ".config", "gh", "hosts.yml"), "oauth_token: ghp_FAKE\n")
+        File.symlink(home, File.join(root, "h"))
+        File.symlink(File.join(root, "lib", "deep"), File.join(root, "inner"))
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat .config/gh/hosts.yml", "cwd" => "inner/../h")) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "still approves the public half of a key pair with nobody asked" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        expect(board.policy_switch.call(bash_of("cat id_ed25519.pub", "cwd" => root), nil)).to be(true)
+        expect(rulings.last).to include("rung" => "rules", "verdict" => "allow")
+      end
+    end
+  end
+
+  # An exemption subtracts from the gated half, so one pattern broad enough to
+  # lift a whole class of credential names is the table turned off by a
+  # different spelling -- `.*` loaded and ungated every dot-named credential.
+  describe "an exemption that lifts a class of credentials" do
+    it "refuses the chat at load, naming the config file and the entries it would lift" do
+      in_tree(config: %([sensitivity]\nexempt = [".*"]\n)) do |root, home|
+        expect { board_for(root, home) }
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.toml.*exempt.*\.env.*\.envrc}m)
+      end
+    end
+
     # APPENDED and not prepended, which is the precedence: a human's remembered
     # refusal of the whole tool still wins over an allowlisted pipeline.
     it "keeps a remembered answer ahead of it, so a human's refusal still wins" do
@@ -678,6 +811,75 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
       expect(factory.call("bad\0dir").denied?("/home/u/.ssh/id_rsa")).to be(true)
       expect(factory.call(nil).denied?("/home/u/.ssh/id_rsa")).to be(true)
+    end
+
+    # The same fallback would be fail-OPEN for the root predicate: the session's
+    # cwd is inside the root by construction, so falling back to it would place
+    # an unresolvable call inside the project. The root answer fails CLOSED.
+    it "confines nothing for a cwd nothing could resolve, where the classifier falls back" do
+      in_tree do |root, home|
+        factory = described_class.new(home:, cwd: root, root: Lain::Approval::Risk::Root.new(root))
+
+        expect(factory.confinement(nil).contains?("README.md")).to be(true)
+        expect(factory.confinement("lib").contains?("../README.md")).to be(true)
+        expect(factory.confinement("bad\0dir").contains?("README.md")).to be(false)
+        expect(factory.confinement(42).contains?("README.md")).to be(false)
+        expect(factory.confinement("/").contains?(root.delete_prefix("/"))).to be(false)
+      end
+    end
+
+    # A root that is not a real directory has no real path to be under, and
+    # the real half of the question fails closed on it.
+    it "confines nothing under a root that does not exist" do
+      factory = described_class.new(home: "/home/u", cwd: "/home/u/work",
+                                    root: Lain::Approval::Risk::Root.new("/home/u/work"))
+
+      expect(factory.confinement(nil).contains?("README.md")).to be(false)
+    end
+
+    # Closed by default, so a factory built without a root -- the triage rung's
+    # own examples build one -- can never be the thing that approves.
+    it "confines nothing when it was given no root" do
+      expect(described_class.new(home: "/home/u", cwd: "/home/u/work").confinement(nil).contains?("x")).to be(false)
+    end
+  end
+
+  describe ".classifiers" do
+    def confined?(project, home, word)
+      described_class.classifiers(project:, paths: paths_at(home), table: Lain::Sensitivity::Rules.empty)
+                     .confinement(nil).contains?(word)
+    end
+
+    it "confines a detected project to its root" do
+      in_tree do |root, home|
+        expect(confined?(project_at(root), home, "README.md")).to be(true)
+        expect(confined?(project_at(root), home, "../elsewhere")).to be(false)
+      end
+    end
+
+    it "confines nothing when the root is the home directory or nothing was detected" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(home)
+        homed = Lain::Project.new(root: home, cwd: home, kind: :home, detected_by: :flag)
+        undetected = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
+
+        expect(confined?(homed, home, "README.md")).to be(false)
+        expect(confined?(undetected, home, "README.md")).to be(false)
+      end
+    end
+
+    # Equality missed a root spelled differently from HOME, and a root ABOVE
+    # it -- `--root /home` -- holds everything its users own just as surely.
+    it "confines nothing when the root contains the home directory, however HOME is spelled" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(home)
+        base = File.dirname(root)
+        above = Lain::Project.new(root: base, cwd: base, kind: :project, detected_by: :flag)
+        same = Lain::Project.new(root: home, cwd: home, kind: :project, detected_by: :git)
+
+        expect(confined?(above, home, "home/notes.txt")).to be(false)
+        expect(confined?(same, "#{home}/", "notes.txt")).to be(false)
+      end
     end
   end
 

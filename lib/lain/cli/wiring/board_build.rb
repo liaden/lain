@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "pathname"
+
 module Lain
   module CLI
     class Wiring
@@ -95,8 +97,8 @@ module Lain
         # rebuilt here.
         #
         # @param remembered [Array<Lain::Approval::Rule>] {Project::Consent#rules}
-        # @param factory [#call] the `cwd -> #classify` factory, on
-        #   {Lain::Approval::ComposedTerm}'s terms
+        # @param factory [#call, #confinement] the `cwd -> #classify` factory,
+        #   on {Lain::Approval::ComposedTerm}'s terms
         # @return [Array<Lain::Approval::Rule>]
         def approving(remembered, factory)
           [*remembered, Lain::Approval::ComposedTerm.new(sensitivity: factory)].freeze
@@ -210,11 +212,34 @@ module Lain
         #
         # @param project [Lain::Project] supplies the cwd a relative one resolves
         #   against -- the session's, exactly as {Wiring#chat_env} sends the tools
+        #   -- and the root an approved word must stay under
         # @param paths [Paths]
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
         # @return [Classifiers]
         def classifiers(project:, paths:, table:)
-          Classifiers.new(home: paths.home, cwd: project.cwd, rules: table)
+          Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: confinement(project:, paths:))
+        end
+
+        # The boundary an automatic approval reads inside. A root holding the
+        # home directory is no boundary, since everything its user owns lies
+        # under it -- whether the root IS home or sits above it -- and a root
+        # nothing detected is only wherever the process started. Each confines
+        # NOTHING, and nothing is approved without a human.
+        #
+        # @param project [Lain::Project]
+        # @param paths [Paths]
+        # @return [Lain::Approval::Risk::Root, Lain::Approval::Risk::Root::Nowhere]
+        def confinement(project:, paths:)
+          return Lain::Approval::Risk::Root::NOWHERE if unconfined?(project, paths)
+
+          Lain::Approval::Risk::Root.new(project.root)
+        end
+
+        # `kind` is the resolver's answer over home's real spellings; containment
+        # covers a root above home and a HOME written with a trailing slash.
+        def unconfined?(project, paths)
+          project.detected_by == :none || project.kind == :home ||
+            Lain::Approval::Risk::Root.new(project.root).contains?(paths.home)
         end
 
         # Two failures, two postures, and the line between them is what the
@@ -287,18 +312,91 @@ module Lain
         # one per gated call meant a `Ractor.make_shareable` walk to reach one
         # pure function. Only `#resolve`, the part that touches the model's
         # string, stays inside the rescue.
+        #
+        # == The root answer fails the OTHER way, and reads the disk
+        #
+        # {#confinement} resolves the same cwd for the rule that approves, and
+        # there the session fallback would be fail-OPEN: the session's cwd is
+        # under the root by construction, so an unresolvable call would be
+        # placed inside the project. It confines nothing instead.
+        #
+        # It is also the one place in this boundary that asks the filesystem.
+        # The classifier stays lexical by contract, but the approver authorizes
+        # an exec that follows every symlink the path crosses -- a link a clone
+        # can ship -- so a word must land under the root both as written and
+        # as the kernel will resolve it. Resolution can only REMOVE an approval.
         class Classifiers
+          # Where a path really lands: the real path of its longest existing
+          # prefix, with the part not on disk yet appended and cleaned. Cleaning
+          # only AFTER resolution matters -- `link/..` is the link target's
+          # parent to the kernel, and lexical cleaning would call it the cwd.
+          #
+          # A DANGLING link is not a missing file: it names a target that can be
+          # created later, outside the root, and the next read would follow it.
+          # It has no landing, so it raises.
+          module Landing
+            module_function
+
+            # @param path [String] absolute and uncleaned, as the call wrote it
+            # @return [String] absolute and clean
+            # @raise [SystemCallError, ArgumentError] when no prefix resolves
+            def of(path)
+              File.realpath(path)
+            rescue Errno::ENOENT
+              parent = File.dirname(path)
+              raise if parent == path || File.symlink?(path)
+
+              Pathname.new("#{of(parent)}#{File::SEPARATOR}#{File.basename(path)}").cleanpath.to_s
+            end
+          end
+
+          # A cwd-anchored question about the root, answered twice: lexically
+          # from the directory the call named, and again where that path really
+          # lands, under the root's own real path. Either answer failing, or
+          # failing to resolve, is a no.
+          class Confinement
+            # @param root [#contains?] the root as the session spells it
+            # @param cwd [String] the call's cwd, lexically resolved
+            # @param landing [String] the directory the command will really run in:
+            #   the call's cwd as {Lain::WorkerEnv#resolve} cleans it, the base a
+            #   word's uncleaned path is joined to
+            # @param real_root [#contains?] the root's own real path
+            def initialize(root, cwd, landing: cwd, real_root: root)
+              @root = root
+              @cwd = cwd.dup.freeze
+              @landing = landing.dup.freeze
+              @real_root = real_root
+              freeze
+            end
+
+            def contains?(path) = @root.contains?(path, from: @cwd) && really?(path)
+
+            private
+
+            def really?(path)
+              @real_root.contains?(Landing.of(path.start_with?(File::SEPARATOR) ? path : "#{@landing}/#{path}"))
+            rescue StandardError
+              false
+            end
+          end
+
           # @param home [String] the HOME the home-anchored rules resolve against
           # @param cwd [String] the session's working directory, which a
           #   call's own relative `cwd` resolves against
           # @param rules [Lain::Sensitivity::Rules] the compiled `[sensitivity]` table
+          # @param root [#contains?] the project root an approved word must stay
+          #   under; confining nothing by default, so a factory built without
+          #   one can never be what approves
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home` or `cwd`
           #   is not something a classifier can be anchored on
-          def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty)
+          def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty,
+                         root: Lain::Approval::Risk::Root::NOWHERE)
             @home = home
             @rules = rules
+            @root = root
             @worker_env = Lain::WorkerEnv.new(cwd:, env: {})
             @session = Lain::Sensitivity.new(home:, cwd:, rules:)
+            @nowhere = Confinement.new(Lain::Approval::Risk::Root::NOWHERE, @worker_env.cwd)
             freeze
           end
 
@@ -309,6 +407,29 @@ module Lain
             Lain::Sensitivity.new(home: @home, cwd: @worker_env.resolve(cwd), rules: @rules)
           rescue StandardError
             @session
+          end
+
+          # The call's own cwd must itself lie under the root, lexically and
+          # really, or nothing does: every word the call names resolves from
+          # there. It is asked of the root BEFORE {Lain::WorkerEnv#resolve}
+          # sees it, because the root refuses a leading `~` lexically where
+          # `resolve` would hand it to getpwnam.
+          #
+          # @param cwd [String, nil] as on {#call}
+          # @return [Confinement] never nil, and never raising
+          def confinement(cwd)
+            return @nowhere unless @root.contains?(cwd || @worker_env.cwd, from: @worker_env.cwd)
+
+            # The cwd is judged CLEANED, unlike a word: the command is spawned in
+            # exactly this string, so `inner/../h` runs in `h` whatever `inner`
+            # links to, while a word's `..` is resolved by the kernel from there.
+            landing = @worker_env.resolve(cwd)
+            real_root = Lain::Approval::Risk::Root.new(File.realpath(@root))
+            return @nowhere unless real_root.contains?(Landing.of(landing))
+
+            Confinement.new(@root, landing, landing:, real_root:)
+          rescue StandardError
+            @nowhere
           end
         end
       end

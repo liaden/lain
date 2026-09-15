@@ -22,15 +22,14 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
-  # The `cwd -> #classify` factory, on {CLI::Wiring::BoardBuild::Classifiers}'
-  # shape and total for its reason: `cwd` is model-controlled, so a raise here
-  # would be a fault, and a fault suppresses an allow rather than producing one.
-  def factory_for(home, session_cwd, rules: Lain::Sensitivity::Rules.empty)
-    lambda do |cwd|
-      Lain::Sensitivity.new(home:, cwd: cwd ? File.expand_path(cwd, session_cwd) : session_cwd, rules:)
-    rescue StandardError
-      Lain::Sensitivity.new(home:, cwd: session_cwd, rules:)
-    end
+  # The REAL factory a session's wiring hands this rule, on escalation_spec's
+  # precedent: a second copy of a security-relevant total factory is one that can
+  # drift, and these examples would then exercise the copy while a live session
+  # ran on the other. The session cwd doubles as the project root unless an
+  # example says otherwise.
+  def factory_for(home, session_cwd, root: Lain::Approval::Risk::Root.new(session_cwd),
+                  rules: Lain::Sensitivity::Rules.empty)
+    Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: session_cwd, rules:, root:)
   end
 
   def rule_for(home, session_cwd, **rest) = described_class.new(sensitivity: factory_for(home, session_cwd, **rest))
@@ -345,22 +344,174 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
         expect(rule.decide(call_of("cat README.md", cwd: root))).to be_allow
         expect(rule.decide(call_of("cat lib/process/runner.rb", cwd: root))).to be_allow
-        expect(rule.decide(call_of("cat /devfd/3", cwd: root))).to be_allow
+        expect(rule.decide(call_of("cat devfd/3", cwd: root))).to be_allow
       end
     end
 
-    # THE BOUNDARY, pinned in the direction that says what this predicate is
-    # NOT. `/dev` at large is not here: `/dev/stdin`, `/dev/null` and
-    # `/dev/urandom` are still approved, and they belong to the read-surface
-    # question predicate 7 answers. Folding them in would be an unmeasured
-    # widening wearing a blocker's clothes, and this example is what makes the
-    # next card's scope visible rather than something it has to re-derive.
-    it "does not reach /dev at large, which is predicate 7's question and not this one" do
+    # `/dev` at large is not this predicate's: the pattern names `dev/fd` only.
+    # `/dev/stdin` and `/dev/null` are refused now, but by the root predicate,
+    # because they lie outside the project -- the read-surface question this
+    # comment used to defer to a later rung is answered there.
+    it "leaves /dev at large to the root predicate, which refuses it from outside the project" do
       in_tree do |root, home|
         rule = rule_for(home, root)
 
-        expect(rule.decide(call_of("cat /dev/stdin", cwd: root))).to be_allow
-        expect(rule.decide(call_of("cat /dev/null", cwd: root))).to be_allow
+        expect(described_class::ALIASING.match?("/dev/stdin")).to be(false)
+        expect(rule.decide(call_of("cat /dev/stdin", cwd: root))).to be_nil
+        expect(rule.decide(call_of("cat /dev/null", cwd: root))).to be_nil
+      end
+    end
+  end
+
+  # Automatic approval is sized for a reader nobody watches, so what it may
+  # read stops at the project. Every word and the call's own cwd resolve
+  # LEXICALLY under the root, on {Approval::Risk::OutsideRoot}'s terms -- no
+  # stat, no realpath, and a leading `~` refused rather than expanded.
+  describe "the project root" do
+    it "refuses a reader of a path under home but outside the root" do
+      in_tree do |root, home|
+        outside = ["cat #{home}/notes.txt", "cat ../home/notes.txt", "head -5 README.md #{home}/notes.txt"]
+        expect_allowed_by_the_verdict(*outside)
+
+        rule = rule_for(home, root)
+        expect(outside.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * outside.size)
+      end
+    end
+
+    it "refuses a call whose own cwd escapes the root, however ordinary its words" do
+      in_tree do |root, home|
+        rule = rule_for(home, root)
+
+        expect(rule.decide(call_of("cat README.md", cwd: "/"))).to be_nil
+        expect(rule.decide(call_of("cat README.md", cwd: home))).to be_nil
+        expect(rule.decide(call_of("cat README.md", cwd: ".."))).to be_nil
+      end
+    end
+
+    it "still approves from a cwd below the root, and with no cwd named at all" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "lib"))
+        rule = rule_for(home, root)
+
+        expect(rule.decide(call_of("cat ../README.md", cwd: "lib"))).to be_allow
+        expect(rule.decide(call_of("cat README.md"))).to be_allow
+      end
+    end
+
+    # A bare `..` carries no separator, so a shape test on "path-like" words
+    # would wave it through. Every word is resolved instead.
+    it "refuses a word that climbs out without a separator" do
+      in_tree do |root, home|
+        expect(rule_for(home, root).decide(call_of("wc -l ..", cwd: root))).to be_nil
+      end
+    end
+
+    # The factory falls back to the SESSION's classifier for a cwd it cannot
+    # resolve, which is right for a deny and wrong for an allow: a cwd nobody
+    # could place is not evidence that the call stays inside the project.
+    it "fails closed on a cwd the factory cannot resolve" do
+      in_tree do |root, home|
+        rule = rule_for(home, root)
+
+        expect(rule.decide(call_of("cat README.md", cwd: "bad\0dir"))).to be_nil
+      end
+    end
+
+    # Lexically inside, really outside: a symlink in the checkout. Measured
+    # before the real-path half existed, `cat h/.config/gh/hosts.yml` was
+    # approved while the direct spelling of the same file was DENIED.
+    it "refuses a word that reaches outside the root through a symlink" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(home, ".config", "gh"))
+        File.symlink(home, File.join(root, "h"))
+        File.symlink("/", File.join(root, "link"))
+        File.symlink(File.join(home, "absent"), File.join(root, "dangling"))
+        FileUtils.mkdir_p(File.join(root, "lib"))
+        File.symlink("/usr", File.join(root, "lib", "up"))
+        rule = rule_for(home, root)
+
+        through = ["cat h/.config/gh/hosts.yml", "cat link/etc/shadow", "cat dangling", "cat dangling/x",
+                   "cat lib/up/../etc/passwd", "cat #{root}/h/notes.txt"]
+        expect(through.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * through.size)
+      end
+    end
+
+    it "refuses a call whose cwd reaches outside the root through a symlink" do
+      in_tree do |root, home|
+        File.symlink(home, File.join(root, "h"))
+
+        expect(rule_for(home, root).decide(call_of("cat notes.txt", cwd: "h"))).to be_nil
+      end
+    end
+
+    # The command runs in the cwd `WorkerEnv#resolve` CLEANS, so `inner/../h`
+    # runs in `h` -- `$HOME` -- whatever `inner` links to. Judging the uncleaned
+    # spelling instead climbed out of `inner`'s real target and back into the
+    # root, approving a read of home.
+    it "judges a cwd the way the command will run in it, cleaned before it is resolved" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "lib", "deep"))
+        File.symlink(home, File.join(root, "h"))
+        File.symlink(File.join(root, "lib", "deep"), File.join(root, "inner"))
+        rule = rule_for(home, root)
+
+        expect(rule.decide(call_of("cat notes.txt", cwd: "inner/../h"))).to be_nil
+        expect(rule.decide(call_of("cat README.md", cwd: "inner/.."))).to be_allow
+      end
+    end
+
+    # Resolution only ever REMOVES an approval: a link that stays inside the
+    # root, and a path that does not exist yet, are approved as before.
+    it "still approves a symlink that stays inside the root, and a path not yet on disk" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "docs"))
+        File.symlink(File.join(root, "docs"), File.join(root, "manual"))
+        rule = rule_for(home, root)
+
+        expect(rule.decide(call_of("cat manual/intro.md", cwd: root))).to be_allow
+        expect(rule.decide(call_of("cat not/yet/here.md", cwd: root))).to be_allow
+      end
+    end
+
+    # The root itself may be spelled through a link; what must hold is that the
+    # path lands under the root's OWN real path.
+    it "judges against the root's real path when the root is reached through a link" do
+      in_tree do |root, home|
+        linked = File.join(File.dirname(root), "repo-link")
+        File.symlink(root, linked)
+
+        expect(rule_for(home, linked).decide(call_of("cat README.md", cwd: linked))).to be_allow
+      end
+    end
+
+    it "approves nothing when the session confines nothing" do
+      in_tree do |root, home|
+        rule = rule_for(home, root, root: Lain::Approval::Risk::Root::NOWHERE)
+
+        expect(rule.decide(call_of("cat README.md | head -20", cwd: root))).to be_nil
+      end
+    end
+  end
+
+  # The GATED tier was sized for "a human is still asked". This rule asks
+  # nobody, so a credential file the table did not name was released to the
+  # model verbatim -- measured, with a fake token coming back intact.
+  describe "a named credential file inside the root" do
+    it "refuses every name the widened credential tier added" do
+      in_tree do |root, home|
+        named = ["cat config/master.key", "cat config/credentials.yml.enc", "cat .pgpass", "cat server.key",
+                 "grep TOKEN .bash_history", "cat .gem/credentials", "cat .ssh/config", "cat rclone.conf",
+                 "cat login.keyring", "cat keyrings/login", "cat id_rsa", "cat deploy/id_ed25519", "cat id_ecdsa"]
+        expect_allowed_by_the_verdict(*named)
+
+        rule = rule_for(home, root)
+        expect(named.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * named.size)
+      end
+    end
+
+    it "still approves the public half of a key pair" do
+      in_tree do |root, home|
+        expect(rule_for(home, root).decide(call_of("cat id_ed25519.pub", cwd: root))).to be_allow
       end
     end
   end
@@ -416,14 +567,14 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
   describe "the cwd the classifier is anchored on" do
     # The CALL's own, never the session's. A classifier built once at wiring
-    # time would resolve `id_rsa` under whatever directory the agent started in
-    # and approve a read of a private key.
+    # time would resolve `config` under whatever directory the agent started in
+    # and approve a read of a repository's credential-bearing `.git/config`.
     it "is the call's, so a relative word under a protected directory is refused" do
       in_tree do |root, home|
         rule = rule_for(home, root)
 
-        expect(rule.decide(call_of("cat id_rsa", cwd: File.join(home, ".ssh")))).to be_nil
-        expect(rule.decide(call_of("cat id_rsa", cwd: root))).to be_allow
+        expect(rule.decide(call_of("cat config", cwd: File.join(root, ".git")))).to be_nil
+        expect(rule.decide(call_of("cat config", cwd: root))).to be_allow
       end
     end
   end
