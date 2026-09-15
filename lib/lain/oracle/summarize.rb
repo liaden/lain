@@ -36,6 +36,15 @@ module Lain
       # Deliberately says the summary REPLACES the text in a later prompt: a
       # summarizer that does not know it is writing the only surviving record
       # writes a table of contents instead of a substitute.
+      #
+      # THE LAST LINE IS NOT DECORATION -- the same reasoning
+      # {Oracle::SecretRead::TEMPLATE} states in full: a provider that ignores
+      # the structured-output format constraint (measured on the hosted
+      # `ollama-cloud` arm, which declares the same {Provider::Ollama::
+      # Deployment::CAPABILITIES} the local arm does) gets exactly what a
+      # template asking only "Summarize it" asked for -- prose, which
+      # {Oracle::Model::JsonDecoder} cannot decode. Asking in words too costs
+      # nothing on a provider the format constraint already binds.
       TEMPLATE = <<~ERB
         A tool returned this result:
 
@@ -44,6 +53,9 @@ module Lain
         Summarize it. The summary will REPLACE this text in a later prompt, so
         state the facts a reader would otherwise have to go back to the original
         for. Do not editorialize and do not offer to help.
+
+        Reply with a JSON object and nothing else, in exactly this shape:
+        {"summary": "..."}
       ERB
 
       # @param tier [Symbol] folded into the Definition's digest, so a heuristic

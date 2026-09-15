@@ -190,6 +190,58 @@ RSpec.describe Lain::Oracle::Recorded do
     end
   end
 
+  # ---- Scenario: a failed oracle call journals its own failure ---------------
+
+  describe "a failed oracle call" do
+    let(:raising_tier) do
+      Class.new do
+        def ask(_inputs) = raise Lain::Oracle::UndecodableAnswer, "oracle reply was not decodable JSON"
+        def model = nil
+        def usage = {}
+      end.new
+    end
+
+    let(:journaling) { described_class::Journaling.new(inner: raising_tier, definition:, journal:) }
+
+    # Swallows the very error the "re-raises" example below pins, so the other
+    # examples can assert on what landed in the journal beside it.
+    def fire_and_swallow
+      Sync { journaling.ask(subject: "aspirin").await }
+    rescue Lain::Oracle::UndecodableAnswer
+      nil
+    end
+
+    it "re-raises the inner tier's own error" do
+      expect { Sync { journaling.ask(subject: "aspirin").await } }
+        .to raise_error(Lain::Oracle::UndecodableAnswer)
+    end
+
+    it "journals oracle_failed naming the tier, the oracle, and the error class" do
+      fire_and_swallow
+
+      expect(journal_io).to be_valid_ndjson
+      failures = Lain::Journal.records(journal_io.string.each_line, type: "oracle_failed").to_a
+      expect(failures.size).to eq(1)
+      expect(failures.first).to include("tier" => "model", "oracle_digest" => definition.digest,
+                                        "error_class" => "Lain::Oracle::UndecodableAnswer")
+    end
+
+    it "journals no oracle_answer for the failed call" do
+      fire_and_swallow
+
+      expect(oracle_answers.to_a).to be_empty
+    end
+
+    # AC: a recorded failure is not an answer -- Recorded never reads an
+    # `oracle_failed` line as a substitute for a missing `oracle_answer`.
+    it "still raises Unrecorded on replay: an oracle_failed line is not an answer" do
+      fire_and_swallow
+
+      expect { Sync { replay.ask(subject: "aspirin").await } }
+        .to raise_error(described_class::Unrecorded)
+    end
+  end
+
   # ---- Scenario: replaying a session with oracles is byte-identical ----------
 
   describe "DryReplay byte-identity with oracle substitution active" do

@@ -29,4 +29,16 @@ RSpec.describe Lain::Oracle::Summarize do
   it "addresses a model answer and a heuristic answer separately" do
     expect(definition.digest).not_to eq(described_class.definition(tier: :heuristic).digest)
   end
+
+  # AC: the template asks for JSON. Bare format constraints go unheard on a
+  # provider that ignores them -- measured on the hosted `ollama-cloud` arm,
+  # which declares the same structured_output capability the local arm does --
+  # so the question asks in words too, the same reasoning
+  # {Lain::Oracle::SecretRead::TEMPLATE} states.
+  it "asks for JSON matching the answer schema, in words, not only via the format constraint" do
+    rendered = definition.render(Lain::Oracle::Eager::DEFAULT_SLOT => "a large tool result")
+
+    expect(rendered).to match(/JSON object/i)
+    expect(rendered).to include(%({"summary":))
+  end
 end

@@ -20,13 +20,14 @@ module Lain
     # seam that later reads {#held} treats an absent summary as a miss, falling
     # back to the deterministic record rather than a blocking summarize.
     #
-    # A failed fire does NOT therefore journal nothing.
-    # {Provider::Journaled} records the outbound request BEFORE dispatch and the
-    # capacity gate sits INSIDE `Ollama#complete`, so a summary the endpoint
-    # refuses leaves a {Telemetry::RequestSent} with no {Telemetry::OracleAnswer}
-    # after it. That PAIR is the skip, and the shape to read the journal for: the
-    # answer's absence is the signal. Only a fire that dies before the provider is
-    # reached -- a half-written `.lain/summarizers.rb` -- journals nothing.
+    # A failed fire does NOT therefore journal nothing. {Recorded::Journaling},
+    # which sits directly inside this boundary on the live path, names the
+    # failure as a {Telemetry::OracleFailed} before re-raising into this rescue
+    # -- {Provider::Journaled} has already recorded the outbound
+    # {Telemetry::RequestSent}, so the pair reads as attempt-then-failure rather
+    # than an attempt a reader has to notice nothing ever answered. Only a fire
+    # that dies before reaching {Recorded::Journaling} -- a half-written
+    # `.lain/summarizers.rb` -- journals nothing.
     class Eager
       # The slot the summarizer template reads its source text from. Fixing it
       # here keeps `#fire`'s two arguments -- a digest to key on and the text to

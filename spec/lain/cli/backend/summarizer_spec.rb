@@ -127,9 +127,12 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
   # made that false: {Lain::Provider::Journaled} cuts its record BEFORE dispatch,
   # while the capacity gate sits INSIDE `Ollama#complete` (`ollama.rb:188`). So a
   # summary skipped for capacity -- that very case -- now leaves an attempt where
-  # it used to leave silence. Two doctrine comments were false with nothing red
-  # to catch them, which is the exact shape this work exists to end; they are
-  # corrected, and this is what would go red if they drifted back.
+  # it used to leave silence, and {Lain::Oracle::Recorded::Journaling} now names
+  # the refusal itself as a {Lain::Telemetry::OracleFailed} rather than leaving
+  # a reader to infer it from the missing answer. Doctrine comments were false
+  # with nothing red to catch them, which is the exact shape this work exists
+  # to end; they are corrected, and this is what would go red if they drifted
+  # back.
   describe "an eager fire the endpoint refuses for capacity" do
     # A REAL gate on a REAL provider, because the ordering claim is about where
     # the gate sits relative to the record, and a double raising Busy from
@@ -157,12 +160,12 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
       end
     end
 
-    it "leaves the attempt and no answer, because the gate refuses after the record is cut" do
+    it "leaves the attempt and its own failure, no answer, because the gate refuses after the record is cut" do
       eager = Lain::Oracle::Eager.new(oracle:)
 
       fire_against_a_held_slot(eager)
 
-      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::RequestSent])
+      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::RequestSent, Lain::Telemetry::OracleFailed])
     end
 
     it "still holds no summary: the record is an attempt, never a result" do

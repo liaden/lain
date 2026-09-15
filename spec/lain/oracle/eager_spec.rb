@@ -128,7 +128,7 @@ RSpec.describe Lain::Oracle::Eager do
 
     # A tier that raises the moment it is asked, wrapped in the SAME journaling
     # decorator a live tier uses -- so we prove the failure both holds nothing
-    # and never reaches the journal write.
+    # AND leaves its own record, in place of the journal staying silent.
     let(:raising_tier) do
       Class.new do
         def ask(_inputs) = raise "oracle unavailable"
@@ -139,14 +139,42 @@ RSpec.describe Lain::Oracle::Eager do
 
     let(:oracle) { Lain::Oracle::Recorded::Journaling.new(inner: raising_tier, definition:, journal:) }
 
-    it "holds nothing and journals nothing when the oracle raises" do
+    it "holds nothing but journals oracle_failed when the oracle raises" do
       Sync do
         eager = described_class.new(oracle:)
         eager.fire("src-1", "a large tool result").wait
 
         expect(eager.held("src-1")).to be_nil
-        expect(journal_io.string).to be_empty
+        expect(journal_io).to be_valid_ndjson
+        expect(journal_io).to include_journal_record("oracle_failed", oracle_digest: definition.digest,
+                                                                      error_class: "RuntimeError")
       end
+    end
+
+    # AC: an undecodable summary is recorded and the turn continues. Driven
+    # through the REAL live chain (Provider::Journaled wrapping a provider,
+    # Model decoding its reply, Recorded::Journaling recording the call) rather
+    # than a bare double, so the request_sent/oracle_failed PAIR this proves is
+    # the one a real endpoint refusal actually leaves.
+    it "journals request_sent and oracle_failed naming UndecodableAnswer, and the turn completes" do
+      markdown_reply = Lain::Response.new(content: [{ "type" => "text", "text" => "Sure, here it is:\n- a fact" }],
+                                          stop_reason: :end_turn)
+      provider = Lain::Provider::Journaled.new(provider: Lain::Provider::Mock.new(responses: [markdown_reply]),
+                                               journal:)
+      model_tier = Lain::Oracle::Model.new(definition:, provider:, model: "local-summarizer")
+      journaling = Lain::Oracle::Recorded::Journaling.new(inner: model_tier, definition:, journal:)
+
+      Sync do
+        eager = described_class.new(oracle: journaling)
+        eager.fire("src-1", "a large tool result").wait
+
+        expect(eager.held("src-1")).to be_nil # the turn completes: nothing raised, nothing held
+      end
+
+      expect(journal_io).to be_valid_ndjson
+      expect(journal_io).to include_journal_record("request_sent")
+      expect(journal_io).to include_journal_record("oracle_failed", oracle_digest: definition.digest,
+                                                                    error_class: "Lain::Oracle::UndecodableAnswer")
     end
 
     # A ScriptError, not a StandardError: {Summarizer::Base} raises exactly this
