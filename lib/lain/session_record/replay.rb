@@ -16,7 +16,10 @@ module Lain
     # {Telemetry::CompactionCut} folds into {Session#record_compaction_cut} in
     # recorded order too, which is how a resumed session renders a committed
     # cut's replacement byte for byte instead of asking a model for it again,
-    # and does not fire a plan step a recorded commit already consumed.
+    # and does not fire a plan step a recorded commit already consumed. Every
+    # cut is folded, the superseded ones included: which of them a chain
+    # renders is the compaction source's question, and a rewind below a
+    # collapse holds the cuts it re-wrote.
     #
     # The manifest needs no third record type: a run's `turn` / `memory_root`
     # chain is already what {Bench::Session::MemoryReplay} reconstructs a
@@ -136,11 +139,27 @@ module Lain
       # refusal resume and fork already turn into "cannot resume <file>".
       def restore_cuts(fresh)
         Journal.records(@records, type: COMPACTION_CUT_TYPE).each do |record|
-          fresh.record_compaction_cut(Telemetry::CompactionCut.new(**cut_fields(record)))
+          cut = Telemetry::CompactionCut.new(**cut_fields(record))
+          superseded(fresh, cut)
+          fresh.record_compaction_cut(cut)
         end
       rescue Session::UnrecordedParent => e
         raise Bench::Session::Corrupt, "the compaction_cut record chain is incomplete: #{e.message}; " \
                                        "a cut's parent record is missing from the session file"
+      end
+
+      # A collapse carries the seam it re-wrote and names the cuts whose ranges
+      # it replaces, which a chain below its commit head still holds. One of
+      # those missing is the same damage a missing parent is -- the record
+      # would fold to a session rendering ranges twice -- so it is refused
+      # here, where the fold happens.
+      def superseded(fresh, cut)
+        cut.supersedes.each do |address|
+          fresh.compaction_cut(address)
+        rescue KeyError
+          raise Bench::Session::Corrupt, "the compaction_cut at #{cut.digest} supersedes #{address}, which is " \
+                                         "not a cut this session record holds"
+        end
       end
 
       def cut_fields(record)

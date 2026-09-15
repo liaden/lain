@@ -107,4 +107,78 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       expect(session.compaction_cuts.size).to eq(1)
     end
   end
+
+  describe "a collapse over the cuts it holds" do
+    # Two advances, at 6 and at 8 turns, so two cuts hold on the longer chain.
+    def two_advances
+      line = timeline(6)
+      advance(line)
+      longer = grow(line, 7..8)
+      advance(longer)
+      longer
+    end
+
+    def grow(line, indices)
+      indices.inject(line) { |grown, index| grown.commit(role: role_at(index), content: [block(index)]) }
+    end
+
+    def collapse(line)
+      current = on(line)
+      snapshot = Lain::Compaction::SummarySnapshot.take(messages: current.stretch.messages,
+                                                        eager: Lain::Compaction::Source::NoSummaries)
+      current.advance(derived.collapsed(current.stretch, pins: Lain::Context::PinnedMessages::NONE, snapshot:))
+      session.compaction_cuts.last
+    end
+
+    it "is offered only while more than one cut holds" do
+      line = timeline(6)
+      advance(line)
+      expect(on(line)).not_to be_collapsible
+
+      expect(on(two_advances)).to be_collapsible
+    end
+
+    it "shows the summarizer the held replacements, and the turns between them, as the stretch it collapses" do
+      line = two_advances
+
+      stretch = on(line).stretch.messages
+
+      expect(stretch).to eq(on(line).messages.first(stretch.size))
+      expect(stretch.size).to eq(2)
+    end
+
+    it "records a collapse cut that supersedes every cut it held, past the last of them" do
+      line = two_advances
+      advances = session.compaction_cuts.dup
+
+      cut = collapse(line)
+
+      expect(cut).to have_attributes(kind: "collapse", supersedes: advances.map(&:address),
+                                     parent: advances.last.address, digest: advances.last.digest,
+                                     head: Lain::Event.stands_on(line.head))
+      expect(cut.spans).to eq([[line.to_a[0].digest, line.to_a[5].digest]])
+    end
+
+    it "holds the collapse alone, folding the cuts it supersedes out of the seam" do
+      line = two_advances
+      cut = collapse(line)
+
+      held = on(line)
+
+      expect(held.seam.collapses).to eq(cut.collapses)
+      expect(held).not_to be_collapsible
+      expect(held.messages.size).to eq(3)
+    end
+
+    it "records the advance past a collapse as the collapse's child" do
+      line = two_advances
+      cut = collapse(line)
+      longer = grow(line, 9..10)
+
+      advanced = advance(longer)
+
+      expect(advanced).to have_attributes(kind: "advance", supersedes: [], parent: cut.address)
+      expect(on(longer).seam.collapses).to eq(cut.collapses + advanced.collapses)
+    end
+  end
 end

@@ -496,6 +496,26 @@ RSpec.describe Lain::Compaction::Derivation do
                                   [later.to_a[6].digest, later.to_a[8].digest]])
       end
 
+      # What a collapse of held cuts hands a derivation: one range standing for
+      # what two earlier ranges collapsed. The summary text was written from
+      # the earlier replacements, but the range is still over the SOURCE turns,
+      # so the derivation stays non-recursive and its fibre names raw digests.
+      it "holds one range over the raw turns two earlier ranges collapsed, as one replacement" do
+        earlier = fixtures.history(9)
+        later = extended(earlier, 3)
+        two = seam_of(later, cut: seam_of(earlier))
+        one = described_class::Seam.new(
+          digest: two.digest,
+          collapses: [{ "span" => two.spans.flatten.values_at(0, -1), "content" => [fixtures.text("both, again")] }]
+        )
+
+        derived = described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3)
+                                 .derive(later, cut: one).to_a
+
+        expect(derived.map(&:content).first(2)).to eq([[fixtures.text("both, again")], later.to_a[9].content])
+        expect(derived.first.causal_parents).to match_array(later.to_a[0..8].map(&:digest))
+      end
+
       it "yields the held cut back unchanged when nothing after it collapsed" do
         earlier = fixtures.history(9)
         cut = seam_of(earlier)

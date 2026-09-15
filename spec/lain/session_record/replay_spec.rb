@@ -72,6 +72,15 @@ RSpec.describe Lain::SessionRecord::Replay do
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
 
+  def todo(content) = Struct.new(:content, :status).new(content, "completed")
+
+  # The same chain, grown to `size` turns under {#timeline}'s roles.
+  def grown_to(line, size)
+    ((line.length + 1)..size).inject(line) do |chain, index|
+      chain.commit(role: index.odd? ? "user" : "assistant", content: [text(index)])
+    end
+  end
+
   describe "a committed compaction cut" do
     it "renders the recorded replacement on resume without asking the summarizer again" do
       line = timeline(6)
@@ -116,11 +125,63 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(Lain::Canonical.dump(resumed)).to eq(Lain::Canonical.dump(recorded))
     end
 
+    # A collapse re-summarizes the held replacements, and the record is the
+    # only place that second summary survives: a resume must render it from
+    # there, and must hold it alone, not beside the cuts it superseded.
+    it "renders a collapse of held cuts byte-identically on resume, without asking the summarizer" do
+      recording = Lain::Session.new(journal:)
+      recorder = stepping(counting_oracle_class.new, journal)
+      completed = 0
+      step = lambda do |line|
+        completed += 1
+        recording.write_todos(Array.new(completed) { |index| todo("step #{index}") })
+        rendered(recorder, line, recording)
+      end
+      line = [6, 8, 10, 12].inject(timeline(4)) do |grown, size|
+        grown = grown_to(grown, size)
+        step.call(grown)
+        grown
+      end
+      live = step.call(line)
+      resumed_oracle = counting_oracle_class.new
+      resumed_session = described_class.new(journal_io.string.each_line).session
+
+      resumed = rendered(stepping(resumed_oracle, Lain::Channel::Null.instance), line, resumed_session)
+
+      cuts = resumed_session.compaction_cuts
+      expect(cuts.map(&:kind)).to eq(%w[advance advance advance advance collapse])
+      expect(cuts.last.supersedes).to eq(cuts.first(4).map(&:address))
+      expect(resumed_oracle.asks).to eq(0)
+      expect(Lain::Canonical.dump(resumed)).to eq(Lain::Canonical.dump(live))
+    end
+
+    # A collapse names the cuts it replaces by address, as a child names its
+    # parent; one the record does not hold would render a seam missing ranges.
+    it "refuses a collapse superseding a cut the record does not hold, as a corrupt session record" do
+      writer = Lain::Session.new(journal:)
+      parent = %w[blake3:one blake3:two].inject(nil) do |previous, digest|
+        cut = Lain::Telemetry::CompactionCut.new(digest:, head: digest, strategy: "eager", kind: "advance",
+                                                 parent: previous, supersedes: [], plan_step_completions: 0,
+                                                 collapses: [{ "span" => [digest, digest], "content" => [] }])
+        writer.record_compaction_cut(cut)
+        cut.address
+      end
+      writer.record_compaction_cut(
+        Lain::Telemetry::CompactionCut.new(digest: "blake3:two", head: "blake3:two", strategy: "eager",
+                                           kind: "collapse", parent:, supersedes: ["blake3:lost", parent],
+                                           plan_step_completions: 0,
+                                           collapses: [{ "span" => %w[blake3:one blake3:two], "content" => [] }])
+      )
+
+      expect { described_class.new(journal_io.string.each_line).session }
+        .to raise_error(Lain::Bench::Session::Corrupt, /supersedes.*blake3:lost/)
+    end
+
     it "folds every cut in recorded order, parent before child" do
       writer = Lain::Session.new(journal:)
       %w[blake3:one blake3:two].inject(nil) do |parent, digest|
-        cut = Lain::Telemetry::CompactionCut.new(digest:, head: digest, strategy: "eager", parent:,
-                                                 plan_step_completions: 0,
+        cut = Lain::Telemetry::CompactionCut.new(digest:, head: digest, strategy: "eager", kind: "advance", parent:,
+                                                 supersedes: [], plan_step_completions: 0,
                                                  collapses: [{ "span" => [digest, digest], "content" => [] }])
         writer.record_compaction_cut(cut)
         cut.address
@@ -136,8 +197,8 @@ RSpec.describe Lain::SessionRecord::Replay do
     # report as "cannot resume <file>".
     it "refuses a cut whose parent the record does not hold, as a corrupt session record" do
       Lain::Session.new(journal:).record_compaction_cut(
-        Lain::Telemetry::CompactionCut.new(digest: "blake3:one", head: "blake3:one", strategy: "eager", parent: nil,
-                                           plan_step_completions: 0,
+        Lain::Telemetry::CompactionCut.new(digest: "blake3:one", head: "blake3:one", strategy: "eager",
+                                           kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0,
                                            collapses: [{ "span" => %w[blake3:one blake3:one], "content" => [] }])
       )
       orphaned = journal_io.string.each_line.map { |line| JSON.parse(line).merge("parent" => "blake3:lost") }

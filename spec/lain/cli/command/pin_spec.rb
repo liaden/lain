@@ -133,9 +133,9 @@ RSpec.describe Lain::CLI::Command::Pin do
       turns = built.timeline.to_a
       target = turns[1].digest
       cut = Lain::Telemetry::CompactionCut.new(
-        digest: turns[2].digest, head: built.timeline.head_digest, strategy: "identity", parent: nil,
-        collapses: [{ "span" => [turns[0].digest, turns[1].digest],
-                      "content" => [{ "type" => "text", "text" => "summary" }] }],
+        digest: turns[2].digest, head: built.timeline.head_digest, strategy: "identity", kind: "advance", parent: nil,
+        supersedes: [], collapses: [{ "span" => [turns[0].digest, turns[1].digest],
+                                      "content" => [{ "type" => "text", "text" => "summary" }] }],
         plan_step_completions: 0
       )
       session.record_compaction_cut(cut)
@@ -162,9 +162,9 @@ RSpec.describe Lain::CLI::Command::Pin do
       target = turns[1].digest
       foreign = "blake3:#{"a" * 64}"
       cut = Lain::Telemetry::CompactionCut.new(
-        digest: turns[2].digest, head: built.timeline.head_digest, strategy: "identity", parent: nil,
-        collapses: [{ "span" => [foreign, turns[1].digest],
-                      "content" => [{ "type" => "text", "text" => "summary" }] }],
+        digest: turns[2].digest, head: built.timeline.head_digest, strategy: "identity", kind: "advance", parent: nil,
+        supersedes: [], collapses: [{ "span" => [foreign, turns[1].digest],
+                                      "content" => [{ "type" => "text", "text" => "summary" }] }],
         plan_step_completions: 0
       )
       session.record_compaction_cut(cut)

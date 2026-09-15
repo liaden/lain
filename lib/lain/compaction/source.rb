@@ -27,13 +27,20 @@ module Lain
     # and only a frozen array of finished messages crosses into it.
     #
     # A committed compaction is HELD. The session records its cut -- the
-    # source digest it collapsed up to, the head it was committed at, and each
-    # newly collapsed range's replacement -- and every later turn derives from
-    # the source root with those ranges held at their recorded bytes, so a
-    # signal that clears renders the same replacement rather than the full
-    # history, and the prefix a provider caches stops moving. A cut advances
-    # only when a later compaction commits past it, and retreats when the
-    # head's chain stops containing its commit head ({HeldCut}).
+    # source digest it collapsed up to, the turn the committing render stood
+    # on, and each newly collapsed range's replacement -- and every later turn
+    # derives from the source root with those ranges held at their recorded
+    # bytes, so a signal that clears renders the same replacement rather than
+    # the full history, and the prefix a provider caches stops moving. A cut
+    # advances only when a later compaction commits past it, and retreats when
+    # the head's chain stops containing its commit head ({HeldCut}).
+    #
+    # Held cuts RE-COLLAPSE. Once nothing past them is droppable an advance can
+    # make no more room, and summaries would otherwise accumulate one per
+    # advance with no remedy; so a signal over an empty head asks the same
+    # policy about the stretch those cuts render, and commits one cut that
+    # supersedes them. Its ranges are still over the source turns -- only the
+    # summarizer's input is earlier replacements.
     #
     # This object is NOT `Ractor.shareable?` and must not become so: it holds
     # the mutable {Cold} and the live {Oracle::Eager}. What it hands BACK is
@@ -232,8 +239,13 @@ module Lain
         # @return [CompactionDecision] what the journal is owed regardless
         attr_reader :decision
 
+        # A turn that COMPACTED is not stalled whatever its head held: a
+        # collapse of the cuts that hold commits over an empty head by
+        # construction, and telling an operator to start a new session on the
+        # turn that just made room is the stall report firing on its remedy.
+        #
         # @return [Boolean]
-        def stalled? = @decision.nothing_droppable && warranted?
+        def stalled? = @decision.nothing_droppable && !@decision.compacted && warranted?
 
         # What an operator is told. Two clauses and a remedy, because the
         # report is useless without the last one: a human reading "nothing can
@@ -484,10 +496,16 @@ module Lain
         need = need_for(head:, usage:, session:, resolution:)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
         provenance = resolution.provenance
-        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) if head.empty? || !need.needed?
+        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) unless movable?(need, head, held_cut)
 
         weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:)
       end
+
+      # Is there a move at all: something droppable past the cuts that hold,
+      # or -- with nothing there -- more than one held cut to re-collapse into
+      # one. Nothing droppable AND one cut is the stall, and it is the whole of
+      # what this turn can say about it.
+      def movable?(need, head, held_cut) = need.needed? && (!head.empty? || held_cut.collapsible?)
 
       # Which signals fired AND are allowed to have fired -- one question, so
       # one method. {Need} answers the first half from the numbers it is given;
@@ -570,8 +588,7 @@ module Lain
         return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) unless timely?(need, head)
 
         unadvanced = held_cut.messages
-        snapshot = SummarySnapshot.take(messages: head.messages, eager: @eager)
-        outcome = @derived.over(held_cut.timeline, walk: held_cut.walk, pins:, snapshot:, cut: held_cut.seam)
+        outcome = derivation_for(held_cut, head, pins)
         return defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome:) if outcome.refused?
 
         scheduler = scheduler_for(outcome.replay)
@@ -582,6 +599,23 @@ module Lain
 
         commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
       end
+
+      # An advance collapses what is droppable past the cut. With nothing there
+      # and more than one cut held, the SAME policy is offered the stretch
+      # those cuts render instead, and rewrites it as one -- the only way a
+      # session whose every summary is already held makes room again.
+      def derivation_for(held_cut, head, pins)
+        return collapsed(held_cut, pins) if head.empty?
+
+        @derived.over(held_cut.timeline, walk: held_cut.walk, pins:, cut: held_cut.seam,
+                                         snapshot: snapshot_of(head.messages))
+      end
+
+      def collapsed(held_cut, pins)
+        @derived.collapsed(held_cut.stretch, pins:, snapshot: snapshot_of(held_cut.stretch.messages))
+      end
+
+      def snapshot_of(messages) = SummarySnapshot.take(messages:, eager: @eager)
 
       # {Scheduler#evaluate} is the PURE half of the policy and never reads the
       # combinator its scheduler was built around, which is what lets the

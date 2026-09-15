@@ -792,7 +792,8 @@ RSpec.describe Lain::Session do
   describe "the compaction cuts it records" do
     def cut(digest, parent: nil)
       Lain::Telemetry::CompactionCut.new(
-        digest:, head: "#{digest}-head", strategy: "eager", parent:, plan_step_completions: 0,
+        digest:, head: "#{digest}-head", strategy: "eager", kind: "advance", parent:, supersedes: [],
+        plan_step_completions: 0,
         collapses: [{ "span" => ["blake3:root", digest], "content" => [{ "type" => "text", "text" => "s" }] }]
       )
     end
@@ -1063,7 +1064,7 @@ RSpec.describe Lain::Session do
 
     it "records no compaction cut and counts no completed plan step" do
       cut = Lain::Telemetry::CompactionCut.new(digest: "blake3:one", head: "blake3:one", strategy: "eager",
-                                               parent: nil, plan_step_completions: 0,
+                                               kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0,
                                                collapses: [{ "span" => %w[blake3:one blake3:one], "content" => [] }])
 
       expect(null.record_compaction_cut(cut)).to be(null)

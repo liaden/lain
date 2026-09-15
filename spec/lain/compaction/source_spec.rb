@@ -1814,6 +1814,229 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  # Summaries accumulate one per advance, and once nothing past them is
+  # droppable no advance can make room. A collapse commits one cut that
+  # supersedes the held ones: its range is over raw turns, and only the
+  # summarizer's input is the held replacements' text.
+  describe "held cuts that re-collapse" do
+    let(:session) { recording_session }
+    let(:oracle) { SourceSpecSpanOracle.new("a span summary") }
+
+    def cuts = records.select { |record| record["type"] == "compaction_cut" }
+
+    def derivations = records.select { |record| record["type"] == "context_derived" }
+
+    def grow(line, count = 2)
+      (1..count).inject(line) do |grown, _|
+        grown.commit(role: role_at(grown.length + 1), content: [block(grown.length + 1)])
+      end
+    end
+
+    def at(line, index) = Lain::Timeline.new(head_digest: line.to_a[index].digest, store: line.store)
+
+    # Plan steps compact and nothing else does; a hard cap of 1 forces the step
+    # even while warm.
+    def stepping(strategy: Lain::Compaction::Strategy::SummarizeConversation.new(oracle:), **overrides)
+      source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1, strategy:, **overrides)
+    end
+
+    def step(built, line)
+      complete_a_step(session, session.plan_step_completions + 1)
+      render(context_for(built, line), line).messages
+    end
+
+    # Four advances, each committed on its own step: 6, 8, 10 and 12 turns
+    # under keep_last 2, which leaves nothing droppable past the fourth.
+    def four_advances(built)
+      [6, 8, 10, 12].inject(nil) do |line, size|
+        grown = line.nil? ? timeline(size) : grow(line)
+        step(built, grown)
+        grown
+      end
+    end
+
+    def replacement?(message)
+      message["content"].any? { |block| block["text"].to_s.start_with?("a span summary") }
+    end
+
+    it "collapses four held advances into one cut that supersedes them, rendering one replacement" do
+      built = stepping
+      line = four_advances(built)
+      advances = session.compaction_cuts.dup
+
+      messages = step(built, line)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance advance advance advance collapse])
+      expect(cuts.last).to include("supersedes" => advances.map(&:address), "parent" => advances.last.address,
+                                   "digest" => advances.last.digest, "strategy" => built.collapse_strategy)
+      expect(cuts.last["collapses"].map { |collapse| collapse["span"] })
+        .to eq([[line.to_a[0].digest, line.to_a[9].digest]])
+      expect(messages.count { |message| replacement?(message) }).to eq(1)
+      expect(messages.size).to eq(3)
+    end
+
+    it "writes the collapse from the held replacements' text, never from the raw turns" do
+      asked = []
+      recording = Class.new(SourceSpecSpanOracle) do
+        define_method(:ask) do |inputs = {}|
+          asked << inputs
+          super(inputs)
+        end
+      end.new("a span summary")
+      built = stepping(strategy: Lain::Compaction::Strategy::SummarizeConversation.new(oracle: recording))
+      line = four_advances(built)
+      summaries = session.compaction_cuts.flat_map(&:collapses).map { |collapse| collapse["content"].first["text"] }
+
+      step(built, line)
+
+      expect(recording.asks).to eq(5)
+      expect(asked.last.values.join).to include(*summaries)
+      expect(asked.last.values.join).not_to include(block(1)["text"])
+    end
+
+    it "journals the collapse as a compacting decision over a head with nothing droppable" do
+      built = stepping
+      line = four_advances(built)
+
+      step(built, line)
+
+      expect(decisions.last).to include("compacted" => true, "nothing_droppable" => true)
+    end
+
+    it "holds the collapse on later renders without collapsing it again" do
+      built = stepping
+      line = four_advances(built)
+      collapsed = step(built, line)
+
+      held = Array.new(2) { step(built, line) }
+
+      expect(cuts.size).to eq(5)
+      expect(held).to all(eq(collapsed))
+      expect(oracle.asks).to eq(5)
+    end
+
+    # The un-flagged control arm re-collapses too: its replacements attest what
+    # they stood for, and an attestation of attestations is smaller again. The
+    # Context it hands back must still cross into a shareable pipeline.
+    it "collapses under the un-flagged control arm, and still hands back a shareable Context" do
+      built = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1)
+      line = four_advances(built)
+      complete_a_step(session, session.plan_step_completions + 1)
+
+      context = context_for(built, line)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance advance advance advance collapse])
+      expect(context).to be_deeply_frozen
+    end
+
+    it "does not collapse a single held cut" do
+      built = stepping
+      line = timeline(6)
+      step(built, line)
+
+      step(built, line)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance])
+    end
+
+    it "advances past a collapse, and holds the collapse's range beneath the new one" do
+      built = stepping
+      line = four_advances(built)
+      step(built, line)
+      longer = grow(line)
+
+      messages = step(built, longer)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance advance advance advance collapse advance])
+      expect(cuts.last["parent"]).to eq(session.compaction_cuts[4].address)
+      expect(messages.count { |message| replacement?(message) }).to eq(2)
+    end
+
+    # A rewind below the collapse's commit head is a forward run from there: it
+    # holds the latest advance still on the chain, with every summary that run
+    # sent, and not the collapse committed later in time.
+    it "retreats past a collapse to the advance a rewind below it still holds" do
+      built = stepping
+      line = four_advances(built)
+      step(built, line)
+      third = session.compaction_cuts[2]
+      rewound = at(line, 9)
+
+      messages = render(context_for(built, rewound), rewound).messages
+
+      expect(derivations.last["compaction_cut"]).to eq(third.digest)
+      expect(messages.count { |message| replacement?(message) }).to eq(3)
+    end
+
+    it "does not commit a collapse while the summarizer fails, and asks again on the next render" do
+      built = stepping
+      line = four_advances(built)
+      allow(oracle).to receive(:ask).and_raise(Lain::Error, "the summarizer is down")
+
+      2.times { step(built, line) }
+
+      expect(cuts.size).to eq(4)
+      expect(oracle).to have_received(:ask).twice
+      expect(decisions.last(2).map { |record| record["compacted"] }).to eq([false, false])
+    end
+
+    it "declines a collapse that would not shrink the render" do
+      verbose = Class.new(SourceSpecSpanOracle) do
+        def ask(inputs = {})
+          answer = super
+          asks < 5 ? answer : answer.class.new("#{answer.summary} #{"that goes on and on " * 400}")
+        end
+      end.new("a span summary")
+      built = stepping(strategy: Lain::Compaction::Strategy::SummarizeConversation.new(oracle: verbose))
+      line = four_advances(built)
+
+      step(built, line)
+
+      expect(verbose.asks).to eq(5)
+      expect(cuts.size).to eq(4)
+      expect(decisions.last).to include("compacted" => false, "would_not_shrink" => true)
+    end
+
+    # Pins are cut points in a collapse as in an advance: a turn pinned
+    # between two held ranges is retained, verbatim and in position.
+    it "keeps a pinned turn between held ranges verbatim, in position" do
+      built = stepping(strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+      line = timeline(6)
+      step(built, line)
+      longer = grow(line, 4)
+      session.record_pin(longer.to_a[4].digest)
+      step(built, longer)
+      pinned = { "role" => longer.to_a[4].role, "content" => longer.to_a[4].content }
+      longest = grow(longer, 2)
+      step(built, longest)
+
+      messages = step(built, longest)
+
+      expect(cuts.map { |record| record["kind"] }.last).to eq("collapse")
+      expect(messages).to include(pinned)
+      expect(messages.index(pinned)).to eq(1)
+    end
+
+    describe "a withdrawal after a collapse" do
+      it "keeps the collapse, and does not commit it again" do
+        built = stepping
+        line = four_advances(built)
+        step(built, line)
+        collapse = session.compaction_cuts.last
+
+        2.times do |attempt|
+          reasked = at(line, 10).commit(role: "user", content: [block(90 + attempt)])
+          step(built, reasked)
+        end
+
+        expect(cuts.size).to eq(5)
+        expect(derivations.last(2).map { |record| record["spans"] })
+          .to all(eq(collapse.spans))
+        expect(oracle.asks).to eq(5)
+      end
+    end
+  end
+
   # The fallback. {Compaction::Derivation} validates its own projection and
   # RAISES rather than shipping a chain the Messages API would reject, so the
   # turn renders uncompacted -- which is the right answer once and the
@@ -2112,9 +2335,9 @@ RSpec.describe Lain::Compaction::Source do
   # ever be tested through the thing that routes it -- and why the predicate
   # below could over-fire for a whole round without an example able to say so.
   describe Lain::Compaction::Source::Diagnosis do
-    def decision(signals:, nothing_droppable: true, used: 7_500, window: 8_192)
+    def decision(signals:, nothing_droppable: true, used: 7_500, window: 8_192, compacted: false)
       Lain::Compaction::Source::CompactionDecision.new(
-        compacted: false, signals:, head_bytes: 2, summary_hits: 0, summary_misses: 0,
+        compacted:, signals:, head_bytes: 2, summary_hits: 0, summary_misses: 0,
         cold: false, would_not_shrink: false, window_tokens: window, used_tokens: used,
         provenance: :published, nothing_droppable:
       )
@@ -2145,6 +2368,13 @@ RSpec.describe Lain::Compaction::Source do
 
     it "is not stalled while the head still had something to drop" do
       expect(over(empty_head, signals: [:approaching_window], nothing_droppable: false)).not_to be_stalled
+    end
+
+    # A collapse of the cuts that hold commits over an empty head by
+    # construction: the turn that made room is the one turn this must not
+    # report as stuck.
+    it "is not stalled on a turn that compacted over a head with nothing to drop" do
+      expect(over(empty_head, signals: [:approaching_window], compacted: true)).not_to be_stalled
     end
 
     it "names the boundary's refusal, and not keep_last, when the cut was declined" do

@@ -144,6 +144,31 @@ module Lain
           replayed(PinCuts.new(inner: @strategy || Held.new(snapshot), pins:), timeline, walk, cut)
         end
 
+        # The held cuts re-written as one: the policy is offered the stretch
+        # they already rendered -- their replacements, and the turns they
+        # retained between them -- and what it answers is recorded as ranges
+        # over the SOURCE turns, so the derivation still starts at the source
+        # root and holds no derived head.
+        #
+        # It is how a session whose every summary is already held makes room
+        # again: an advance has nothing droppable left to collapse, and ten
+        # accumulated summaries become one.
+        #
+        # @param stretch [#recollapsed] the stretch the held seam renders
+        # @param pins [Context::PinnedMessages] cut points, as for an advance
+        # @param snapshot [SummarySnapshot] the eager tier over that stretch,
+        #   for the un-flagged policy
+        # @return [Outcome] the Null outcome when nothing merged, so a caller
+        #   that cannot make room can say so rather than commit a cut that
+        #   changed nothing
+        def collapsed(stretch, pins:, snapshot:)
+          policy = @strategy || Held.new(snapshot)
+          seam = stretch.recollapsed(policy, pins)
+          return Outcome::NOTHING if seam.equal?(stretch.cut)
+
+          held(stretch.timeline, walk: stretch.walk, cut: seam).with(hits: policy.hits, misses: policy.misses)
+        end
+
         # This turn's chain with `cut` held and NOTHING new collapsed: what a
         # turn renders once a compaction has committed and no signal warrants
         # another. The policy is never asked, so a model-backed one is never

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # The record a committed compaction leaves: the seam it froze, the head it was
-# committed at, the arm that collapsed it, the ranges this advance NEWLY
-# collapsed, and a link to the cut it advanced past. The EMITTER is spec'd where
+# committed at, the arm that collapsed it, which kind of cut it is, the ranges
+# it collapsed, the cuts it supersedes, and a link to the cut it moved past. The EMITTER is spec'd where
 # it lives -- `spec/lain/compaction/source_spec.rb` for when a cut commits and
 # `spec/lain/session_record/replay_spec.rb` for what a resume does with one;
 # what is asserted here is the VALUE.
@@ -12,12 +12,42 @@ RSpec.describe Lain::Telemetry::CompactionCut do
   let(:summary) { [{ "type" => "text", "text" => "what was asked, found and decided" }] }
   let(:collapse) { { "span" => %w[blake3:aaa blake3:ccc], "content" => summary } }
   let(:fields) do
-    { digest: "blake3:ccc", head: "blake3:fff", strategy: "eager", parent: nil, collapses: [collapse],
-      plan_step_completions: 1 }
+    { digest: "blake3:ccc", head: "blake3:fff", strategy: "eager", kind: "advance", parent: nil,
+      supersedes: [], collapses: [collapse], plan_step_completions: 1 }
+  end
+  let(:collapsing) do
+    fields.merge(kind: "collapse", parent: "blake3:two", supersedes: %w[blake3:one blake3:two])
   end
 
   it "carries the seam, where it was committed, by which arm, and what this advance collapsed" do
     expect(record).to have_attributes(**fields)
+  end
+
+  it "carries the cuts a collapse supersedes, by their record addresses" do
+    expect(described_class.new(**collapsing)).to have_attributes(kind: "collapse",
+                                                                 supersedes: %w[blake3:one blake3:two])
+  end
+
+  it "refuses a kind it does not know" do
+    expect { described_class.new(**fields, kind: "squash") }
+      .to raise_error(ArgumentError, /kind must be one of advance, collapse, handoff/)
+  end
+
+  # An advance extends the seam past the cuts it holds; if it also claimed to
+  # supersede one, a held render would drop ranges nothing re-recorded.
+  it "refuses an advance that supersedes a cut" do
+    expect { described_class.new(**fields, supersedes: %w[blake3:one]) }
+      .to raise_error(ArgumentError, /an advance supersedes no cut/)
+  end
+
+  it "refuses a collapse that supersedes fewer than two cuts, which collapses nothing together" do
+    expect { described_class.new(**collapsing, supersedes: %w[blake3:two]) }
+      .to raise_error(ArgumentError, /a collapse supersedes at least two cuts/)
+  end
+
+  it "refuses supersedes that is not a list of addresses" do
+    expect { described_class.new(**collapsing, supersedes: "blake3:one") }
+      .to raise_error(ArgumentError, /supersedes must be a list of cut addresses/)
   end
 
   it "answers the endpoints of each range it newly collapsed, in order" do
@@ -30,8 +60,8 @@ RSpec.describe Lain::Telemetry::CompactionCut do
   it "journals under a type a reader can discriminate without inspecting its shape" do
     expect(record.journal_type).to eq("compaction_cut")
     expect(record.to_journal).to eq("type" => "compaction_cut", "digest" => "blake3:ccc", "head" => "blake3:fff",
-                                    "strategy" => "eager", "parent" => nil, "collapses" => [collapse],
-                                    "plan_step_completions" => 1)
+                                    "strategy" => "eager", "kind" => "advance", "parent" => nil,
+                                    "supersedes" => [], "collapses" => [collapse], "plan_step_completions" => 1)
   end
 
   # A resume folds this back from JSON, where every key is a String; a record
@@ -100,5 +130,6 @@ RSpec.describe Lain::Telemetry::CompactionCut do
 
   it "is deeply frozen, content included" do
     expect(Ractor.shareable?(record)).to be(true)
+    expect(Ractor.shareable?(described_class.new(**collapsing))).to be(true)
   end
 end
