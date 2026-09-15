@@ -10,6 +10,11 @@ require "tmpdir"
 # by this rule, so an example resting on one would pass against a rule that
 # approved everything.
 RSpec.describe Lain::Approval::ComposedTerm do
+  # A real `ssh-keygen` public line, fixed so no spec depends on the binary.
+  let(:public_key_line) do
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGRIVMdBD52mo93GQUaBiP1vMNsCtBXvXV5RzHSnbH8E dev@example.com\n"
+  end
+
   # A real tree, because the classifier resolves relative words against a cwd
   # and the home-anchored rules need a home that is not the developer's.
   def in_tree
@@ -34,6 +39,16 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
   def rule_for(home, session_cwd, **rest) = described_class.new(sensitivity: factory_for(home, session_cwd, **rest))
 
+  # On disk, because the rule reads what a file holds: an approval asserted
+  # over a file that does not exist passes without a byte being asked about.
+  def on_disk(root, name, body, mode: 0o644)
+    File.join(root, name).tap do |path|
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      File.chmod(mode, path)
+    end
+  end
+
   def call_of(command, cwd: nil, verdict: Lain::Shell::Verdict.new)
     tool = Lain::Tools::Bash.new(verdict:)
     Lain::Approval::Rule::Call.for(tool:, input: { "command" => command, "cwd" => cwd }.compact)
@@ -50,6 +65,9 @@ RSpec.describe Lain::Approval::ComposedTerm do
   describe "a term whose every stage and every word is safe" do
     it "approves it, and the decision names this rule" do
       in_tree do |root, home|
+        readme = on_disk(root, "README.md", "# A project\n\nRun the suite before believing it.\n")
+        expect(File.file?(readme)).to be(true)
+
         decision = rule_for(home, root).decide(call_of("cat README.md | head -20", cwd: root))
 
         expect(decision).to have_attributes(verdict: :allow, rule: "composed_term", tool: "bash", gated: true)
@@ -509,9 +527,87 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
+    # Over the real file: its base64 blob is a high-entropy run, so the
+    # approval holds only while the detector knows a public key is not a secret.
     it "still approves the public half of a key pair" do
       in_tree do |root, home|
+        pub = on_disk(root, "id_ed25519.pub", public_key_line)
+        expect(File.file?(pub)).to be(true)
+
         expect(rule_for(home, root).decide(call_of("cat id_ed25519.pub", cwd: root))).to be_allow
+      end
+    end
+  end
+
+  # The classifier judges a NAME, so a key under an ordinary one -- measured, a
+  # 0600 `deploy_key` and a PKCS#8 block pasted into a notes file -- was
+  # printed to the model with nobody asked, while `read_file` of the same bytes
+  # masked it. The rule now asks the file itself.
+  describe "a file whose name says nothing about what it holds" do
+    # Literal and obviously fake, never sliced from the detector's tables.
+    let(:pkcs8) do
+      "-----BEGIN PRIVATE KEY-----\n" \
+        "MIIBVgIBADANBgkqhkiG9w0BAQEFAASCAUAwggE8AgEAAkEAqwertyuiop\n" \
+        "asdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890abcdef\n" \
+        "-----END PRIVATE KEY-----\n"
+    end
+
+    def write_file(root, name, body, mode)
+      File.join(root, name).tap do |path|
+        File.write(path, body)
+        File.chmod(mode, path)
+      end
+    end
+
+    it "refuses a file its owner closed to everyone else, whatever it is called" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(root)
+        write_file(root, "deploy_key", "nothing that looks like a secret\n", 0o600)
+        expect_allowed_by_the_verdict("cat deploy_key")
+
+        expect(rule_for(home, root).decide(call_of("cat deploy_key", cwd: root))).to be_nil
+      end
+    end
+
+    it "refuses a world-readable file whose bytes carry a private key" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(root)
+        write_file(root, "notes.txt", "deploy notes\n#{pkcs8}", 0o644)
+        expect_allowed_by_the_verdict("cat notes.txt")
+
+        expect(rule_for(home, root).decide(call_of("cat notes.txt", cwd: root))).to be_nil
+      end
+    end
+
+    it "still approves an ordinary world-readable file that exists" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(root)
+        write_file(root, "README.md", "# A project\n\nNothing secret here.\n", 0o644)
+
+        expect(rule_for(home, root).decide(call_of("cat README.md | head -20", cwd: root))).to be_allow
+      end
+    end
+
+    # `tail` prints exactly the bytes a bounded scan never read, so a file
+    # larger than the scan is not vouched for.
+    it "refuses a tail of a file larger than the content scan, whose key lies past it" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(root)
+        key_line = "API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n"
+        write_file(root, "app.log", "#{"log line\n" * (80 * 1024 / 9)}#{key_line}", 0o644)
+        expect_allowed_by_the_verdict("tail -n 1 app.log")
+
+        expect(rule_for(home, root).decide(call_of("tail -n 1 app.log", cwd: root))).to be_nil
+      end
+    end
+
+    it "asks through any stage of the pipeline, not only the first" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(root)
+        write_file(root, "README.md", "# A project\n", 0o644)
+        write_file(root, "deploy_key", "opaque\n", 0o600)
+
+        expect(rule_for(home, root).decide(call_of("cat README.md | grep -n x deploy_key", cwd: root))).to be_nil
       end
     end
   end

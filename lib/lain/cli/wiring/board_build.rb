@@ -97,7 +97,7 @@ module Lain
         # rebuilt here.
         #
         # @param remembered [Array<Lain::Approval::Rule>] {Project::Consent#rules}
-        # @param factory [#call, #confinement] the `cwd -> #classify` factory,
+        # @param factory [#call, #confinement, #content] the `cwd -> #classify` factory,
         #   on {Lain::Approval::ComposedTerm}'s terms
         # @return [Array<Lain::Approval::Rule>]
         def approving(remembered, factory)
@@ -320,11 +320,13 @@ module Lain
         # under the root by construction, so an unresolvable call would be
         # placed inside the project. It confines nothing instead.
         #
-        # It is also the one place in this boundary that asks the filesystem.
-        # The classifier stays lexical by contract, but the approver authorizes
-        # an exec that follows every symlink the path crosses -- a link a clone
-        # can ship -- so a word must land under the root both as written and
-        # as the kernel will resolve it. Resolution can only REMOVE an approval.
+        # It and {#content} are the one place in this boundary that asks the
+        # filesystem. The classifier stays lexical by contract, but the approver
+        # authorizes an exec that follows every symlink the path crosses -- a
+        # link a clone can ship -- and prints whatever the file holds, so a word
+        # must land under the root both as written and as the kernel will
+        # resolve it, and its bytes must be ones a masked read would have sent.
+        # Both can only REMOVE an approval.
         class Classifiers
           # Where a path really lands: the real path of its longest existing
           # prefix, with the part not on disk yet appended and cleaned. Cleaning
@@ -371,12 +373,74 @@ module Lain
 
             def contains?(path) = @root.contains?(path, from: @cwd) && really?(path)
 
+            # @param path [String] a word as the call wrote it
+            # @return [String] the path the kernel will open for it
+            # @raise [SystemCallError, ArgumentError] when no prefix resolves
+            def landing_of(path) = Landing.of(path.start_with?(File::SEPARATOR) ? path : "#{@landing}/#{path}")
+
             private
 
             def really?(path)
-              @real_root.contains?(Landing.of(path.start_with?(File::SEPARATOR) ? path : "#{@landing}/#{path}"))
+              @real_root.contains?(landing_of(path))
             rescue StandardError
               false
+            end
+          end
+
+          # What a word's file holds, asked of the file itself. The classifier
+          # judges a NAME, so a key under an ordinary one -- `deploy_key`, a
+          # hardlink, a block pasted into notes -- reads as ordinary, and the
+          # program the approver lets run prints it.
+          #
+          # A regular file is admitted only when its owner left it readable by
+          # everyone, which the tools that write a credential decline to do, and
+          # when its bytes carry no region `read_file` would have masked. A word
+          # naming nothing on disk, or a directory, has no bytes to ask about.
+          # Only a word the confinement contains is ever opened, so no file
+          # outside the root is read to answer, and anything else that exists --
+          # a FIFO, a socket, a device -- is refused unopened, since opening or
+          # reading one can block the ladder.
+          class Content
+            # Paid on every judged call, so bounded -- and a file larger than
+            # this is refused rather than half-read: `tail` prints exactly the
+            # bytes a prefix scan never saw, and what was not read is not vouched
+            # for.
+            SCAN_BOUND = 64 * 1024
+            WORLD_READABLE = 0o004
+
+            # The landing is already resolved, so a link at the open is a swap;
+            # non-blocking, so a FIFO swapped in cannot hold the open.
+            OPEN_FLAGS = File::RDONLY | File::NONBLOCK | File::NOFOLLOW
+
+            # @param confinement [Confinement] the same call's root answer
+            def initialize(confinement)
+              @confinement = confinement
+              freeze
+            end
+
+            def admits?(word) = @confinement.contains?(word) && releasable?(word)
+
+            private
+
+            def releasable?(word)
+              path = @confinement.landing_of(word)
+              return true if !File.exist?(path) || File.directory?(path)
+
+              File.file?(path) && File.open(path, OPEN_FLAGS) { |file| unsealed?(file) }
+            rescue StandardError
+              false
+            end
+
+            # The descriptor is asked again, because the path can be swapped
+            # between the check above and the open. One byte past the bound is
+            # read rather than the size trusted, so a file growing after the stat
+            # is still refused.
+            def unsealed?(file)
+              stat = file.stat
+              return false unless stat.file? && stat.mode.anybits?(WORLD_READABLE)
+
+              bytes = file.read(SCAN_BOUND + 1).to_s
+              bytes.bytesize <= SCAN_BOUND && Lain::Sensitivity::Regions.detect(bytes).empty?
             end
           end
 
@@ -431,6 +495,14 @@ module Lain
           rescue StandardError
             @nowhere
           end
+
+          # Built over {#confinement} for the same cwd, so the file whose bytes
+          # are asked about is the one the root answer placed, and a call that
+          # confines nothing admits nothing.
+          #
+          # @param cwd [String, nil] as on {#call}
+          # @return [Content] never nil, and never raising
+          def content(cwd) = Content.new(confinement(cwd))
         end
       end
     end

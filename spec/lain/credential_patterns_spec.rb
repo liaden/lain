@@ -2,13 +2,14 @@
 
 RSpec.describe Lain::CredentialPatterns do
   # The write side's four, transcribed from the table as it read before the
-  # move. Written out rather than referenced so these examples compare the
-  # shipped regexps against a literal, not against themselves.
+  # move, the key block since widened from its header to its whole span. Written
+  # out rather than referenced so these examples compare the shipped regexps
+  # against a literal, not against themselves.
   let(:write_side_today) do
     {
       "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
-      "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----/,
+      "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
       "credential assignment" => /\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i
     }
   end
@@ -62,6 +63,40 @@ RSpec.describe Lain::CredentialPatterns do
       bodies = ["sk-#{"a" * 20}", "my key is sk-#{"a" * 20}", "KEY=sk-#{"a" * 20}"]
 
       expect(bodies).to all(match(key))
+    end
+  end
+
+  # The whole block is one span, so a mask built from it covers the short last
+  # base64 line that no entropy run reaches. A block the text cuts off before
+  # its END -- a bounded read, a window -- is covered to the end of the text.
+  describe "the private key block" do
+    let(:block) { described_class.for(:content).fetch("pem private key block") }
+    let(:pem) do
+      "-----BEGIN RSA PRIVATE KEY-----\n" \
+        "MIIG5AIBAAKCAYEAqwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXC\n" \
+        "Zm9vYmFy==\n" \
+        "-----END RSA PRIVATE KEY-----\n"
+    end
+
+    it "spans BEGIN through END, the short last line inside it" do
+      expect(block.match("before\n#{pem}after\n")[0]).to eq(pem.chomp)
+    end
+
+    it "spans to the end of the text when no END follows" do
+      truncated = pem.lines.first(3).join
+
+      expect(block.match("before\n#{truncated}")[0]).to eq(truncated)
+    end
+
+    it "keeps two blocks apart rather than spanning the text between them" do
+      text = "#{pem}ordinary line\n#{pem}"
+
+      expect(text.to_enum(:scan, block).map { Regexp.last_match[0] }).to eq([pem.chomp] * 2)
+    end
+
+    it "is the same shape on the write side, which refuses on the header alone" do
+      expect(described_class.for(:write).fetch("pem private key block")).to equal(block)
+      expect(block).to match("-----BEGIN OPENSSH PRIVATE KEY-----")
     end
   end
 

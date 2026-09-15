@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "openssl"
 require "stringio"
 require "tmpdir"
 
@@ -150,6 +151,24 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       expect(content).to include(format(Lain::Sensitivity::Regions::PLACEHOLDER, 1))
       expect(described_class.const_defined?(:PLACEHOLDER, false)).to be(false)
+    end
+
+    # The entropy detector reaches each full 64-character line of a key, and not
+    # a short last one, so a mask built from those runs leaked the tail of half
+    # the 3072-bit keys `openssl genrsa` writes (PKCS#8, whose last line is 24
+    # characters). A real key, chosen so its last line is one the entropy
+    # detector alone does not see -- the precondition is asserted, so this
+    # cannot pass on a key that never exercised the gap.
+    it "masks every line of an RSA key between BEGIN and END" do
+      pem = Enumerator.produce { OpenSSL::PKey::RSA.generate(3072).private_to_pem }.lazy.take(24)
+                      .find { |candidate| Lain::Sensitivity::Regions.detect(candidate.lines[-2]).empty? }
+      expect(pem).to be_a(String)
+      body = pem.lines[1..-2].map(&:chomp)
+      path = write("deploy.pem", pem)
+
+      content = read(path).fetch(:result).content
+
+      expect(body.select { |line| content.include?(line) }).to be_empty
     end
 
     it "leaves a file with no regions byte-identical, and parks nothing" do

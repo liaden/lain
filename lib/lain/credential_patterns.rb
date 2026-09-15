@@ -61,10 +61,18 @@ module Lain
     # INSIDE hyphenated prose ("ask-someone-to-help-..."), refusing a benign
     # write under a pattern name it never honestly matched: a real key stands
     # alone, never run into by a preceding word char or hyphen.
+    #
+    # The key block is one span from BEGIN through its END, because the read
+    # side masks the span: matching the header alone left each base64 line to
+    # the entropy detector, which misses a short last line -- half the 3072-bit
+    # PKCS#8 keys `openssl genrsa` writes kept their tail in a masked read.
+    # Text that ends before an END is covered to its end, since a bounded read
+    # or a window can cut a block off; the write side still refuses on the
+    # header alone.
     WRITE = unreserved(
       "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
-      "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----/,
+      "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
       "credential assignment" => /\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i
     )
 

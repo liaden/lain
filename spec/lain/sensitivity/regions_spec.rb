@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "openssl"
+
 RSpec.describe Lain::Sensitivity::Regions do
   def detect(content) = described_class.detect(content)
 
@@ -168,6 +170,179 @@ RSpec.describe Lain::Sensitivity::Regions do
     context "when the content is ordinary prose" do
       it "reports nothing" do
         expect(detect(prose)).to be_empty
+      end
+    end
+
+    # A public key is public by definition, and its base64 blob is exactly the
+    # run the entropy detector exists to find: every real `.pub`, known_hosts
+    # and authorized_keys file reported a region, so `read_file` parked on it
+    # and automatic approval refused `cat id_ed25519.pub`. Real `ssh-keygen`
+    # and OpenSSL output, fixed here so no spec depends on either binary.
+    context "when the content is public-key material" do
+      let(:ed25519) do
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGRIVMdBD52mo93GQUaBiP1vMNsCtBXvXV5RzHSnbH8E dev@example.com"
+      end
+      let(:ecdsa) do
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBHaaO7lZ2p88MMLPMBsE7loQRZ2exV5P8jE/" \
+          "bNKfHah1Wk5mx97onXKSHZX/5Q3ekqx+RKgmhzfVseDp/Pt9hbc= ci@example.com"
+      end
+      let(:rsa) do
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDi+iTijohI1wFF/u6XFNB68z9AuqsmxpLBAAtBh5jIb2ZrsjdemruStwW6sS" \
+          "SreOd24pNu1eAQAtriwlPHxJQiUJU+OM5eb8XW+pXsKPRfLiydRp6wsji/Fe0/OlzDEM6Z5CVmhgHsUJENSKjGyGC73NE7FsrT" \
+          "t8VfNcTkzHb18j/Lakb32GaKHtMW/e1MxoQcjXsU+q9eQN9XQohS3nnKHaUNXIpKrDJaF0xrJmCyrqMa14DmLZsl+41NgrFdZf" \
+          "xnrSJWHa+HGZocqkjSkcNB5Xq3mdMLZQDTJjGfHnqbyLSrI+Z6quY8Q18WrssDy4JM6u3SDNm334bEJLKo7blR dev@example.com"
+      end
+      let(:pem_public) do
+        "-----BEGIN PUBLIC KEY-----\n" \
+          "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEEqLZqfP50K+z6ugZCcMvznsfNKm3\n" \
+          "kGLxuY1KbqTsdEfeoCI93bNaaDVQwitfuWhftAwhK9qnoloVYfeVgSPu3g==\n" \
+          "-----END PUBLIC KEY-----\n"
+      end
+      let(:pem_private) do
+        "-----BEGIN PRIVATE KEY-----\n" \
+          "MIIBVgIBADANBgkqhkiG9w0BAQEFAASCAUAwggE8AgEAAkEAqwertyuiop\n" \
+          "asdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890abcdef\n" \
+          "-----END PRIVATE KEY-----\n"
+      end
+
+      def masked?(content, text) = detect(content).any? { |region| region.bytes.include?(text) }
+
+      def ssh_string(bytes) = [bytes.bytesize].pack("N") + bytes.b
+
+      def ssh_line(type, *fields) = "#{type} #{[([type] + fields).map { ssh_string(_1) }.join].pack("m0")}"
+
+      it "reports nothing for an OpenSSH public key line of each type" do
+        expect([ed25519, ecdsa, rsa].map { |line| detect("#{line}\n") }).to all(be_empty)
+      end
+
+      it "reports nothing for an authorized_keys line with options, or a known_hosts line" do
+        content = %(from="10.0.0.0/8",no-pty #{ed25519}\ngithub.com,140.82.112.3 #{rsa}\n)
+
+        expect(detect(content)).to be_empty
+      end
+
+      it "reports nothing for a PEM public key block" do
+        expect(detect(pem_public)).to be_empty
+      end
+
+      # A shape alone would unmask any token written after a key-type word. The
+      # blob of a real key names its own type.
+      it "still reports a token behind a key-type word whose blob does not name that type" do
+        forged = "ssh-ed25519 AAAAkJ8fQ2mZ4vX7pL0aB3nR6yT9uW1cE5dG8hK2jM4qS7vY0zA3 dev@example.com\n"
+
+        expect(detect(forged)).not_to be_empty
+      end
+
+      it "still reports a secret sitting where a public key's comment goes" do
+        content = "#{ed25519.delete_suffix(" dev@example.com")} sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n"
+
+        expect(masked?(content, "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE")).to be(true)
+      end
+
+      it "still masks a private block that follows a public one" do
+        content = "#{pem_public}#{pem_private}"
+
+        expect(detect(content).size).to eq(1)
+        expect(masked?(content, pem_private.chomp)).to be(true)
+      end
+
+      it "still masks a private block written inside public armour" do
+        content = "-----BEGIN PUBLIC KEY-----\n#{pem_private}-----END PUBLIC KEY-----\n"
+
+        expect(masked?(content, pem_private.lines[1].chomp)).to be(true)
+      end
+
+      it "still masks an OpenSSH private key" do
+        key = "-----BEGIN OPENSSH PRIVATE KEY-----\n" \
+              "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n" \
+              "QyNTUxOQAAACBkSFTHQQ+dpqPdxkFGgYj9bzDbArQV711eUcx0p2x/BAAAAJiFPjsMhT47\n" \
+              "-----END OPENSSH PRIVATE KEY-----\n"
+
+        expect(masked?(key, key.chomp)).to be(true)
+      end
+
+      it "reports nothing for a PKCS#1 RSA PUBLIC KEY block" do
+        block = "-----BEGIN RSA PUBLIC KEY-----\n" \
+                "MIIBCgKCAQEAwz3qQmvsVVedOdJ21oVPsXTEVzKgoiCE2ab/Z4yhVcojPJ7gO38n\n" \
+                "roJvGmZ8UJW5QinDVKdykgiZ5mzue4hncOAJ481PvTRRVSvKKk6ZAHlTBxKBZbvb\n" \
+                "CHdEzfIQ0oFhtZ6rs+fjLy3l3UfnJkFNWaWkZoe+PWyhbOHbHa7cLMSRLl6lhZoL\n" \
+                "sHCshaqJcVQt7GVSkD5OpPFfixStbCnRLj+tmGGLQ1p5ivb7Pcrqms2fAPHehxzH\n" \
+                "4jtGmj5GMYgTKpVykUFSM77YDAKHe7xtlUPx/jufjIiNvK22nrad7LwH0/XAGC3m\n" \
+                "omznL4EnSzz7vbhaE3iQwX4ElBCm5N+woQIDAQAB\n" \
+                "-----END RSA PUBLIC KEY-----\n"
+
+        expect(detect(block)).to be_empty
+      end
+
+      # No hardware token writes one here, so the security-key variants are
+      # assembled in their wire format: the key, then the application string.
+      it "reports nothing for a security-key line of either type" do
+        ed = ssh_line("sk-ssh-ed25519@openssh.com", "\x11".b * 32, "ssh:")
+        ec = ssh_line("sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", "\x04".b + ("\x22".b * 64), "ssh:")
+
+        expect([ed, ec].map { |line| detect("#{line} dev@example.com\n") }).to all(be_empty)
+      end
+
+      # The exemption is for a public key's exact wire format. Anything past the
+      # fields a type defines -- a private seed, a payload, a glued token -- is
+      # bytes the format does not account for, and is not public.
+      describe "a blob that is not exactly a public key" do
+        let(:aws_secret) { "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" }
+        let(:ed25519_blob) { ed25519.split[1] }
+
+        it "masks the private section's layout written behind the type word" do
+          line = ssh_line("ssh-ed25519", Random.new(7).bytes(32), Random.new(8).bytes(64))
+
+          expect(masked?("#{line} dev@example.com\n", line.split[1])).to be(true)
+        end
+
+        it "masks the type string followed by arbitrary bytes" do
+          line = "ssh-ed25519 #{[ssh_string("ssh-ed25519") + "payload: #{aws_secret}"].pack("m0")}"
+
+          expect(masked?("#{line}\n", line.split[1])).to be(true)
+        end
+
+        it "masks a secret glued onto a real unpadded blob" do
+          expect(masked?("ssh-ed25519 #{ed25519_blob}#{aws_secret} dev@example.com\n", aws_secret)).to be(true)
+          expect(masked?("ssh-ed25519 #{ed25519_blob}3f5a9c2e1d7b4a6f8e0c2b5d7a9f1e3c5b7d9f2a\n",
+                         "3f5a9c2e1d7b4a6f8e0c2b5d7a9f1e3c5b7d9f2a")).to be(true)
+        end
+
+        it "grants no exemption to a type it does not parse" do
+          fields = (0..3).map { |seed| Random.new(seed).bytes(20) }
+          line = ssh_line("ssh-dss", *fields)
+
+          expect(detect("#{line}\n")).not_to be_empty
+        end
+      end
+
+      # Armour is a label anyone can write. A private body under a public label
+      # is still a private body, and it is masked WHOLE: left to the entropy
+      # detector line by line, a short last line would survive, which is the
+      # gap the private block's own span closes.
+      describe "a private body relabelled as public" do
+        def relabel(pem, from, to) = pem.gsub(from, to)
+
+        def whole_block?(pem) = detect(pem).map(&:bytes) == [pem.chomp]
+
+        it "masks a PKCS#8 private body under PUBLIC KEY armour as one block" do
+          pem = relabel(OpenSSL::PKey::RSA.generate(2048).private_to_pem, "PRIVATE KEY", "PUBLIC KEY")
+
+          expect(whole_block?(pem)).to be(true)
+        end
+
+        it "masks a PKCS#1 private body under RSA PUBLIC KEY armour as one block" do
+          pem = relabel(OpenSSL::PKey::RSA.generate(2048).to_pem, "RSA PRIVATE KEY", "RSA PUBLIC KEY")
+
+          expect(whole_block?(pem)).to be(true)
+        end
+
+        it "masks armour whose body is not DER at all" do
+          pem = "-----BEGIN PUBLIC KEY-----\nkJ8fQ2mZ4vX7pL0aB3nR6yT9uW1cE5dG8hK2jM4qS7vY0zA3\nAbC=\n" \
+                "-----END PUBLIC KEY-----\n"
+
+          expect(whole_block?(pem)).to be(true)
+        end
       end
     end
 

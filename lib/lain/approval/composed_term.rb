@@ -21,15 +21,17 @@ module Lain
     # 5. no stage carries a flag that takes it outside its own arguments;
     # 6. no word traverses a path-aliasing pseudo-filesystem;
     # 7. THE ROOT PREDICATE: every word, and the call's own cwd, lands under
-    #    the project root -- as written, and as the filesystem resolves it.
+    #    the project root -- as written, and as the filesystem resolves it;
+    # 8. THE CONTENT PREDICATE: no word names a file closed to other users, or
+    #    one whose first bytes carry a region a masked read would withhold.
     #
     # {#approvable?} is the whole conjunction on one line and every predicate is
     # total over a term on its own, so another is one more `&&` plus one more
     # method. That is not tidiness, and it has been TESTED rather than claimed:
-    # predicates 6 and 7 were each added after the rest shipped, and each cost
-    # one `&&` and one method here -- no existing predicate's logic changed.
-    # Predicate 7 also cost a second message on the injected factory
-    # (`#confinement`) and the lexical test it shares with
+    # predicates 6, 7 and 8 were each added after the rest shipped, and each
+    # cost one `&&` and one method here -- no existing predicate's logic changed.
+    # Predicates 7 and 8 also each cost a message on the injected factory
+    # (`#confinement`, `#content`), and 7 the lexical test it shares with
     # {Risk::OutsideRoot}, extracted as {Risk::Root}. The `PATH`-trust rung
     # ("the program `execvp` finds is under a trusted prefix") is still above
     # this one, and bolts on the same way.
@@ -74,6 +76,17 @@ module Lain
     # authorizes an exec that follows links, while the classifier's contract is
     # that it makes no syscall. The classifier alone still reads
     # `h/.config/gh/hosts.yml` as ordinary.
+    #
+    # == The content predicate: a name is not what a file holds
+    #
+    # MEASURED before it existed: a PKCS#8 key in `ops_readme.txt`, a hardlink
+    # to a key in `~/.ssh`, a 0600 `deploy_key` and `.vault-token` were each
+    # printed to the model with nobody asked, while `read_file` of the same
+    # bytes masked them. Predicate 4 can only ever judge the name. So an
+    # existing regular file must be readable by everyone, fit the bounded scan
+    # (64 KiB), and carry no region; {CLI::Wiring::BoardBuild::Classifiers::Content}
+    # holds the mechanics. It too lives outside {Sensitivity}, for the same
+    # reason.
     #
     # == Predicate 4 is "is ORDINARY", never "is not denied"
     #
@@ -312,14 +325,15 @@ module Lain
         "rev" => Flags.new
       }.freeze
 
-      # @param sensitivity [#call, #confinement] `cwd -> #classify`, a
+      # @param sensitivity [#call, #confinement, #content] `cwd -> #classify`, a
       #   {Sensitivity} FACTORY rather than one classifier: a bash call names its
       #   own working directory, and a classifier built at wiring time would
       #   anchor a relative word under whatever directory the agent started in --
       #   approving `cat config` from inside `.git`. Its `#confinement(cwd)`
       #   answers the root predicate from the same resolution of that cwd, so
       #   the two cannot disagree about where a relative word lands, and it must
-      #   fail CLOSED where `#call` falls back.
+      #   fail CLOSED where `#call` falls back. Its `#content(cwd)` answers the
+      #   content predicate over that same resolution, and fails closed too.
       #
       #   REQUIRED, with no Null default, on the ladder's `faults:` precedent:
       #   a permissive default is how a guard ships green forever, and a rule
@@ -360,7 +374,7 @@ module Lain
       # goes here plus one method below.
       def approvable?(term, cwd)
         bare_names?(term) && allowlisted?(term) && ordinary_words?(term, cwd) &&
-          unflagged?(term) && unaliased?(term) && confined?(term, cwd)
+          unflagged?(term) && unaliased?(term) && confined?(term, cwd) && plain_content?(term, cwd)
       end
 
       def judged?(call) = call.tool_name == TOOL
@@ -390,6 +404,13 @@ module Lain
       def confined?(term, cwd)
         confinement = @sensitivity.confinement(cwd)
         term.flatten.all? { |word| confinement.contains?(word) }
+      end
+
+      # The content predicate. Last because it opens files, and for no other
+      # reason: the factory answers it over its own root answer.
+      def plain_content?(term, cwd)
+        content = @sensitivity.content(cwd)
+        term.flatten.all? { |word| content.admits?(word) }
       end
 
       def programs(term) = term.map(&:first)

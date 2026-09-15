@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "openssl"
+
 module Lain
   class Sensitivity
     # The sensitive spans of a file's bytes, each addressed by its own content.
@@ -91,6 +93,21 @@ module Lain
       HEX = /\A[0-9a-fA-F]+\z/
       BASE64 = %r{\A[A-Za-z0-9+/=_-]+\z}
       ASSIGNMENT = /\A[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*(\S.*)\z/m
+      # Public-key material is public by definition, and its base64 blob is
+      # exactly the run the entropy detector exists to find -- so every `.pub`,
+      # known_hosts and authorized_keys file reported a region, `read_file`
+      # parked on it, and automatic approval refused `cat id_ed25519.pub`. A
+      # candidate wholly inside one of these spans is dropped; one reaching
+      # past it is kept. The OpenSSH span is the type and the blob, never the
+      # comment after them. A shape is only a claim, so {PublicKey} parses
+      # what it claims before any span is granted.
+      # Public armour around anything that is not a public key -- a relabelled
+      # private body, or no DER at all -- is one region, named for what such a
+      # block is most likely to be, and whole for the reason that shape's own
+      # span is: line by line, a short last line survives the entropy detector.
+      DISGUISED_KEY = "pem private key block"
+      OPENSSH_PUBLIC = %r{(?<![\w-])((?:ssh|ecdsa-sha2|sk)-[a-z0-9@.-]+) (AAAA[A-Za-z0-9+/]+={0,3})(?![A-Za-z0-9+/=])}
+      PEM_PUBLIC = %r{-----BEGIN ((?:RSA )?PUBLIC KEY)-----\r?\n([A-Za-z0-9+/=\r\n]+)-----END \1-----}
       # `.b` returns a NEW, MUTABLE String, so `frozen_string_literal` does not
       # reach this one and it has to be frozen by hand.
       BOM = "\xEF\xBB\xBF".b.freeze
@@ -157,7 +174,23 @@ module Lain
                      reason: candidate[:reason], detector: candidate[:detector])
         end
 
-        def candidates(scanned) = pattern_candidates(scanned) + entropy_candidates(scanned)
+        def candidates(scanned)
+          public, disguised = matches(scanned, PEM_PUBLIC).partition { |block| PublicKey.pem?(block[1], block[2]) }
+
+          outside(pattern_candidates(scanned) + entropy_candidates(scanned), public_spans(scanned, public)) +
+            disguised.map { span(_1.begin(0), _1[0], DISGUISED_KEY, :pattern) }
+        end
+
+        def outside(candidates, spans)
+          candidates.reject { |candidate| spans.any? { _1.cover?(candidate[:start]...candidate[:finish]) } }
+        end
+
+        def public_spans(scanned, blocks) = openssh_spans(scanned) + blocks.map { _1.begin(0)..._1.end(0) }
+
+        def openssh_spans(scanned)
+          matches(scanned, OPENSSH_PUBLIC).select { |key| PublicKey.openssh?(key[1], key[2]) }
+                                          .map { _1.begin(1)..._1.end(2) }
+        end
 
         def pattern_candidates(scanned)
           CredentialPatterns.for(:content).flat_map do |name, shape|
@@ -240,6 +273,83 @@ module Lain
           -token.each_char.tally.each_value.sum { |count| (count / length) * Math.log2(count / length) }
         end
       end
+
+      # Whether bytes that look like a public key ARE one, parsed exactly. The
+      # exemption above unmasks whatever it covers, so a label or a type word
+      # is never enough: a private seed written in a public key's layout, a
+      # payload after the type, a token glued onto a real blob, and a private
+      # body under public armour must all stay regions. Every field a type
+      # defines must be present and nothing may follow them; a type not listed
+      # here, and any failure to parse, is not public.
+      module PublicKey
+        ANY = ->(bytes) { !bytes.empty? }
+        ED25519 = ->(bytes) { bytes.bytesize == 32 }
+
+        def self.curve(name) = ->(bytes) { bytes == name }
+
+        # The fields after the type string, in the RFC 4253, 5656 and 8709
+        # wire layouts and OpenSSH's PROTOCOL.u2f for the security-key types,
+        # whose last field is the application string.
+        OPENSSH = {
+          "ssh-ed25519" => [ED25519],
+          "ssh-rsa" => [ANY, ANY],
+          "ecdsa-sha2-nistp256" => [curve("nistp256"), ANY],
+          "ecdsa-sha2-nistp384" => [curve("nistp384"), ANY],
+          "ecdsa-sha2-nistp521" => [curve("nistp521"), ANY],
+          "sk-ssh-ed25519@openssh.com" => [ED25519, ANY],
+          "sk-ecdsa-sha2-nistp256@openssh.com" => [curve("nistp256"), ANY, ANY]
+        }.freeze
+
+        # SubjectPublicKeyInfo is an algorithm and a BIT STRING; RSAPublicKey is
+        # a modulus and an exponent. Both private forms open with a version
+        # INTEGER and carry more members, so neither can pass as these.
+        PEM = {
+          "PUBLIC KEY" => lambda do |node|
+            node.is_a?(OpenSSL::ASN1::Sequence) && node.value.size == 2 &&
+              node.value[0].is_a?(OpenSSL::ASN1::Sequence) &&
+              node.value[0].value.first.is_a?(OpenSSL::ASN1::ObjectId) &&
+              node.value[1].is_a?(OpenSSL::ASN1::BitString)
+          end,
+          "RSA PUBLIC KEY" => lambda do |node|
+            node.is_a?(OpenSSL::ASN1::Sequence) && node.value.size == 2 &&
+              node.value.all?(OpenSSL::ASN1::Integer)
+          end
+        }.freeze
+
+        module_function
+
+        # @param type [String] the key-type word
+        # @param blob [String] its base64, which must be canonical
+        def openssh?(type, blob)
+          fields = OPENSSH.fetch(type, nil)
+          strings = fields && exact_strings(blob.unpack1("m0"), fields.size + 1)
+
+          !strings.nil? && strings.first == type && fields.zip(strings.drop(1)).all? { |field, got| field.call(got) }
+        rescue ArgumentError
+          false
+        end
+
+        # @param label [String] `PUBLIC KEY` or `RSA PUBLIC KEY`
+        # @param body [String] the armoured base64
+        def pem?(label, body)
+          PEM.fetch(label).call(OpenSSL::ASN1.decode(body.delete("\r\n").unpack1("m0")))
+        rescue StandardError
+          false
+        end
+
+        # `count` length-prefixed strings, or nil unless they consume `bytes`
+        # exactly. A length running past the end overshoots the offset, so one
+        # comparison refuses both a short blob and a trailing payload.
+        def exact_strings(bytes, count)
+          strings, offset = count.times.inject([[], 0]) do |(read, at), _|
+            length = bytes.byteslice(at, 4)&.unpack1("N") || bytes.bytesize
+            [read << bytes.byteslice(at + 4, length).to_s, at + 4 + length]
+          end
+          strings if offset == bytes.bytesize
+        end
+      end
+      private_constant :PublicKey
+
       Region = Data.define(:start, :bytes, :reason, :detector, :digest)
 
       # One sensitive span, and the digest that is its identity.

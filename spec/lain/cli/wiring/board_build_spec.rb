@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "stringio"
+require "timeout"
 require "tmpdir"
 
 # The unit's own seam. {Lain::CLI::Wiring} drives this module with everything
@@ -734,8 +735,57 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    # The name classifier reads no bytes, so a key under an ordinary name was
+    # released by `cat` while `read_file` of the same file masked it. Driven
+    # through the assembled board, over files on disk.
+    it "leaves a 0600 file behind an ordinary name parking for a human" do
+      in_tree do |root, home|
+        key = File.join(root, "deploy_key")
+        File.write(key, "opaque bytes\n")
+        File.chmod(0o600, key)
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat deploy_key", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "leaves a world-readable file holding a private key parking for a human" do
+      in_tree do |root, home|
+        notes = File.join(root, "notes.txt")
+        File.write(notes, "-----BEGIN PRIVATE KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASCAUAwggE8AgEAAkEAqwertyuiop\n" \
+                          "-----END PRIVATE KEY-----\n")
+        File.chmod(0o644, notes)
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat notes.txt", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "approves an ordinary read of a file that exists, with nobody asked" do
+      in_tree do |root, home|
+        readme = File.join(root, "README.md")
+        File.write(readme, "# A project\n\nNothing to see.\n")
+        File.chmod(0o644, readme)
+        board = board_over(root, home)
+
+        expect(board.policy_switch.call(bash_of("cat README.md | head -20", "cwd" => root), nil)).to be(true)
+        expect(rulings.last).to include("rung" => "rules", "verdict" => "allow")
+      end
+    end
+
+    # Over the real file, whose base64 blob is a high-entropy run: the approval
+    # holds only while the detector knows a public key is not a secret.
     it "still approves the public half of a key pair with nobody asked" do
       in_tree do |root, home|
+        pub = File.join(root, "id_ed25519.pub")
+        line = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGRIVMdBD52mo93GQUaBiP1vMNsCtBXvXV5RzHSnbH8E dev@example.com"
+        File.write(pub, "#{line}\n")
+        File.chmod(0o644, pub)
+        expect(File.file?(pub)).to be(true)
         board = board_over(root, home)
 
         expect(board.policy_switch.call(bash_of("cat id_ed25519.pub", "cwd" => root), nil)).to be(true)
@@ -841,6 +891,152 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # own examples build one -- can never be the thing that approves.
     it "confines nothing when it was given no root" do
       expect(described_class.new(home: "/home/u", cwd: "/home/u/work").confinement(nil).contains?("x")).to be(false)
+    end
+
+    describe "#content" do
+      def confined_factory(home, root) = described_class.new(home:, cwd: root, root: Lain::Approval::Risk::Root.new(root))
+
+      def put(root, name, body, mode: 0o644)
+        File.join(root, name).tap do |path|
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, body)
+          File.chmod(mode, path)
+        end
+      end
+
+      it "admits a world-readable regular file with no region in it" do
+        in_tree do |root, home|
+          put(root, "lib/app.rb", "puts 1\n")
+
+          expect(confined_factory(home, root).content(nil).admits?("lib/app.rb")).to be(true)
+          expect(confined_factory(home, root).content("lib").admits?("app.rb")).to be(true)
+        end
+      end
+
+      it "refuses a regular file that is not world-readable" do
+        in_tree do |root, home|
+          put(root, "deploy_key", "opaque\n", mode: 0o640)
+
+          expect(confined_factory(home, root).content(nil).admits?("deploy_key")).to be(false)
+        end
+      end
+
+      it "refuses a world-readable file whose first bytes carry a region" do
+        in_tree do |root, home|
+          put(root, "notes.txt", "API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
+
+          expect(confined_factory(home, root).content(nil).admits?("notes.txt")).to be(false)
+        end
+      end
+
+      # The scan is bounded because it is paid on every judged call, and what it
+      # did not read it does not vouch for: `tail` prints exactly those bytes.
+      it "refuses a file larger than the scan, whatever lies past it" do
+        in_tree do |root, home|
+          put(root, "big.log", "#{"x" * (64 * 1024)}\nplain\n")
+          put(root, "exact.log", "x" * (64 * 1024))
+          factory = confined_factory(home, root)
+
+          expect(factory.content(nil).admits?("big.log")).to be(false)
+          expect(factory.content(nil).admits?("exact.log")).to be(true)
+        end
+      end
+
+      it "judges the file a symlink lands on, not the link" do
+        in_tree do |root, home|
+          put(root, "keys/deploy", "opaque\n", mode: 0o600)
+          File.symlink(File.join(root, "keys", "deploy"), File.join(root, "keylink"))
+
+          expect(confined_factory(home, root).content(nil).admits?("keylink")).to be(false)
+        end
+      end
+
+      # A word that names nothing on disk -- a flag, a pattern, a file not yet
+      # there -- has no bytes to ask about; and `grep -n foo lib` reads no
+      # directory as content.
+      it "admits a word naming nothing, and a directory" do
+        in_tree do |root, home|
+          FileUtils.mkdir_p(File.join(root, "lib"))
+          FileUtils.chmod(0o700, File.join(root, "lib"))
+          factory = confined_factory(home, root)
+
+          expect(%w[-n foo missing.txt lib].map { |word| factory.content(nil).admits?(word) }).to all(be(true))
+        end
+      end
+
+      # Nothing outside the root is opened to answer, and the content answer
+      # fails closed wherever the root answer does.
+      it "admits nothing the confinement does not contain" do
+        in_tree do |root, home|
+          FileUtils.mkdir_p([root, home])
+          outside = put(home, "notes.txt", "plain\n")
+          factory = confined_factory(home, root)
+
+          expect(factory.content(nil).admits?(outside)).to be(false)
+          expect(factory.content("bad\0dir").admits?("missing.txt")).to be(false)
+          expect(described_class.new(home:, cwd: root).content(nil).admits?("missing.txt")).to be(false)
+        end
+      end
+
+      # A FIFO blocks an open for read until a writer arrives, and a device can
+      # block a read forever. Neither may hang the ladder, and neither is a file
+      # whose bytes can be asked about, so neither is admitted.
+      it "refuses a named pipe without blocking on it" do
+        in_tree do |root, home|
+          FileUtils.mkdir_p(root)
+          File.mkfifo(File.join(root, "pipe"))
+          factory = confined_factory(home, root)
+
+          allow(File).to receive(:open).and_call_original
+
+          answer = Timeout.timeout(2) { factory.content(nil).admits?("pipe") }
+
+          expect(answer).to be(false)
+          expect(File).not_to have_received(:open).with(File.join(root, "pipe"), anything)
+        end
+      end
+
+      # The path is judged, then opened, and it can change in between. Each swap
+      # below is REAL, made on disk the moment the pre-open check has answered.
+      describe "a path swapped between the check and the open" do
+        def swap_after_check(path)
+          allow(File).to receive(:file?).and_wrap_original do |original, asked|
+            original.call(asked).tap { yield if asked == path }
+          end
+        end
+
+        # Opened non-blocking, or the open waits for a writer forever; and the
+        # descriptor is asked again, or a writer-less FIFO reads as an empty,
+        # clean file.
+        it "refuses a regular file that became a named pipe, without blocking" do
+          in_tree do |root, home|
+            path = put(root, "notes.txt", "plain\n")
+            swap_after_check(path) do
+              File.delete(path)
+              File.mkfifo(path)
+            end
+
+            answer = Timeout.timeout(2) { confined_factory(home, root).content(nil).admits?("notes.txt") }
+
+            expect(answer).to be(false)
+          end
+        end
+
+        # The word's landing is already resolved, so a link at the open is a
+        # swap, and following it would read a file nothing placed in the root.
+        it "refuses a regular file that became a link to a clean file outside the root" do
+          in_tree do |root, home|
+            outside = put(home, "clean.txt", "plain\n")
+            path = put(root, "notes.txt", "plain\n")
+            swap_after_check(path) do
+              File.delete(path)
+              File.symlink(outside, path)
+            end
+
+            expect(confined_factory(home, root).content(nil).admits?("notes.txt")).to be(false)
+          end
+        end
+      end
     end
   end
 
