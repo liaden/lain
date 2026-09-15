@@ -344,9 +344,74 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
   First launch favours the critical path and the cards that unblock most (T4, T6, T5, T3, T7, T10,
   T15, T16) alongside T1, T2, T8, T11; T9 and T21 (leaves) start as slots free.
 
+- **T15 escalated (a third production Gate policy).** `CLI::ToolGuard::Asking` (`tool_guard.rb:46-48`)
+  wraps `PolicySwitch` for every child's gate. Orchestrator ruling: add `cli/tool_guard.rb` and
+  `approval/queue.rb` to T15's Files, and give both `#rule`. Gate normalises a bare callable once at
+  construction through one named adapter, rather than asking only `#rule`, so the ~20 specs that
+  hand Gate a lambda (several held by T1, T4 and T16) stay untouched. Every production policy
+  answers `#rule` itself. The sentence is chosen by rung: only a triage or rules refusal says
+  unliftable, and every surfaces refusal, a timeout included, keeps today's sentence.
+
+- **T11 escalated (retired rows pinned by a spec).** The only references were the table's own spec
+  rows, so the rows and their pins were removed together.
+- **T21 escalated (two seams).** (1) A chunk child cannot be tool-less, since every catalog role holds
+  `read_file`. Ruling: a new read-only `diff_critic` role spawned via `RoleSpawn#within` in a
+  detached checkout of the reviewed head. (2) The window book reaches `Command::Surface` only via
+  `window: backend.context_window` in `Wiring#assemble_surface`, which the orchestrator applies at
+  T21's landing, after T4.
+- **T1 surprise → T1 fix round.** A timeout of a non-ASCII command makes mixlib's timeout message
+  raise an encoding error, and `Exec::Core#killed` builds its message the same way. `exec/local.rb`
+  and `exec/core.rb` are added to T1's fix round as a deliberate scope expansion. The tool name in
+  `ResultBlock.of`'s refusal needs one line in `tool_runner.rb`, applied after T3 lands.
+- **Commit-hook flake under agent load.** `62_approval_spec`'s "two parked approvals" (a recorded
+  load flake) tripped 2 of 4 landing commits; each was retried green.
+
+### Follow-ups found in flight (not cards)
+
+- `Bench::CLI::RunRecorder` never journals `capability_degraded`, so the cache-ratio withholding
+  only fires on hand-built journals (T9's review).
+- `Approval::Gate.from_journal` and `LocalLanding::Approvals.from` still raise a bare `ArgumentError`
+  on a malformed `approved` (T5). Those files belong to T17 and T19; each card is told.
+- F116 is not closed until T19's lock lands, because an unlocked landing checkout that merged once
+  still reads "folded into" (T10's review). A retained checkout left mid-rebase still blocks the
+  retry's `git switch` (F99 remainder).
+- `LocalLanding::Approvals.from` treats `approved: "maybe"` as not approved without a word (T5 review),
+  which is T19's to decide. `Approval::Gate#absorb` (`gate.rb:344`) raises a bare `ArgumentError`
+  from `epic_submit.rb:399, 424`, which is T17's.
+- **Human decision owed (T8 review S3).** `Sensitivity`'s path classifier is lexical, so a symlink
+  inside the project (`link -> /`) may carry a read tool past the gated and denied tiers. T8's fix
+  round adds a real-path check to `ComposedTerm`'s automatic approval only (fail closed). Whether
+  the classifier itself should resolve links is a boundary ruling, not taken here. **Observed in T8's
+  fix round:** with `h -> $HOME` inside the project, `read_file h/.config/gh/hosts.yml` classifies
+  ordinary and returns the token file verbatim, although the direct spelling is denied, and
+  `read_file link/etc/shadow` reaches the tool with nobody asked.
+- T8 review S5: subagent children are judged by rules built over the parent's `project.cwd`, while
+  a child's `bash` runs in its own worktree. This predates the chunk and is a follow-up card.
+- Open decision (T8 review S4): whether `exempt` needs a table-wide cap, since many one-entry
+  patterns can together lift the table.
+- Predates the chunk (T4 review): a mode switch under `--no-journal --nvim` raises `NoMethodError`,
+  because `JournalTee` has no `#record`.
+- T4's fix round takes `cli/conductor.rb`, so that `Supervisor#stop` runs before `Chronicle#close`.
+  A signal-driven shutdown otherwise raised and hung. T13 takes the file afterwards, from `HEAD`.
+- **T7 review rulings.**
+  - The plan-step edge is consumed only by a **committed** compaction, not by a warm defer. Without
+    that, the signal never compacted in a real chat.
+  - A cut holds while the head it was **committed at** is on the chain; "the cut wins over
+    `keep_last`" is dropped.
+  - `compaction_cut` records are deltas with a parent content digest, since whole records grew
+    quadratically.
+  - The latch state is journaled for replay, a retreat is journaled, and a cut names its strategy
+    (a cut from another strategy is not held).
+- **Open decisions for the human (T7 review).** S4: held replacements never re-collapse, so ten cuts
+  under summarize-conversation render ten summaries, with no remedy once the window fills past the
+  cut. S5: a `/pin` on a turn inside a held range is silently ignored.
+- T6: the question-arrival line still reads "(/inbox here, or the inbox buffer in nvim)", not
+  "lain://inbox", because `tty.rb` is T13's. T13 aligns the wording.
+
 ### Landed
 
-(none yet)
+- T11 `5154d819` · T16 `13b5e71c` · T9 `a0683dd8` · T10 `4b0778f8` · T15 `0cf8d2f1` · T5 `60998de4` · T1 `cf3505a3`
+  · T2 `7b9d9589` · T4 `69df4d08` · T3 `04a9d40a` (with the tool-name call site T1 left owed) · T8 `c6f64656`
 
 ---
 
