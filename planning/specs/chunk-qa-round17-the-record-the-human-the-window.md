@@ -429,6 +429,49 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
   - The `--auto-approve` help text in `exe/lain` and `docs/commands.md:38` still describes the old
     opt-in surface.
   - T29 rewords `method.md`'s reason for banning `+auto_approve`, but keeps the ban.
+- **T24 is redesigned on measured evidence.** The review ran a real ollama 0.32.12 against the
+  production wiring.
+  - **Why the pre-send estimate failed.** It broke three ways:
+    - a stale smaller runner made the window book refuse every prompt forever;
+    - a refused request yields no reading, so compaction never fired (the card's "compaction first"
+      trigger);
+    - tokens per byte vary 3.3x by content, so the half-estimate witness had both a hole (ollama's
+      mode B silently drops old messages) and a sticky false alarm.
+  - **Ruling.** Send `"truncate": false` to ollama. The server then refuses an over-window prompt with
+    HTTP 400 carrying the exact prompt count and context size. `RequestBudget` translates that into
+    `window_pressure over_window`, a refusal that names the moves, and a believed reading so compaction
+    fires.
+  - **Also dropped:** the refused prompt's user turn does not stay on the head, and the calibration
+    and the ratio witness are gone.
+  - **AC changes.** AC1, AC3 and AC5 are restated to match. Open decision 2 (window-relative
+    per-tool bounds) still stands.
+- **A second deliberate file share: T28 and T27 both hold `frontend/tty.rb`, `cli/wiring.rb` and
+  `tty_spec.rb`.** T27 edits the typeahead hold and the `goal_off` route; T28 edits `render_arrival`
+  and the `tty_factory` predicate. They are merged at landing. T13's integration check caught one
+  real cross-card break: the epic seat builds `HumanReplies` without a question queue, so a null
+  object now stands in for it.
+- **Integration check 2, partial (2026-09-14):**
+  - `bin/comment-census --check-tickets`: 0 unclassified. The one ambiguous `C1` in
+    `frontend/completion.rb` is Unicode's control block and predates the chunk.
+  - `rake core:build`, then `rspec --tag core spec/lain/core/grep_parity_spec.rb`: 16 examples,
+    0 failures, T2's added witness included.
+  - `cargo test` and `cargo clippy -D warnings`: clean.
+- **T27 review ruling:** a `/`-command line read at a `[y/N]` is never a decision. It is held for
+  `you>` and the prompt reopens (fail-closed). Before this, `/goal off` typed at a drawn approval
+  denied the call and was lost, so the goal ran on.
+- Follow-up (T27 review): `Switchboard#apply` journals a no-op `policy_switch escalation ->
+  escalation` on every layer flip, which is noise for bench readers.
+- **Follow-ups from T24's re-review:**
+  - `WindowBook` keeps a stale smaller runner's context after ollama reloads a bigger one, so
+    occupancy reads about 100% and compaction can fire early.
+  - The Anthropic "prompt is too long" 400 is not translated, because its numbers are only in message
+    text.
+  - Whether ollama.com refuses rather than truncates an over-window prompt is unverified; a 200 with
+    `truncate: false` was confirmed.
+- **Follow-up (T22 review S4):** adopted actors are not lineages to `Bench::Session::Lineages`. In a
+  real epic session about 140 of 194 child turns are invisible to consolidate, improve and friction.
+- **T25:** a concurrent submit and re-submit may both write one stage_transition pair. That is
+  accepted as `Epic::InFlight`'s at-least-once rule, since the fold takes the last start.
 - Follow-ups (T20 review N1): store pre-images in the content store by digest, since the log keeps
   every turn's bytes for the whole session.
 - **T17 review rulings.**
@@ -450,6 +493,8 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
   · T2 `7b9d9589` · T4 `69df4d08` · T3 `04a9d40a` (with the tool-name call site T1 left owed) · T8 `c6f64656`
   · T7 `acfed808` · T6 `caa2c5f7` · T18 `dac580d4` · T12 `afb5e73f` · T14 `bfe984e9` · T19 `51b0be4d`
   · T23 `1cfdf970` · T21 `3ec1dc79` (with the middleware-phase supervision) · T17 `7016ab7d` · T20 `3af82b61`
+  · T26 `c3ccaa39` · T25 `f13d276d` · T22 `ad045078` · T24 `4cf30b98` · T13 `70c0782f` · T27 `cb816f58`
+  · T28 `9d47a7b1`
 
 ---
 
