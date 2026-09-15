@@ -22,6 +22,27 @@ module Lain
       # for the same reason: a line begins and ends inside one call, so the
       # scope owns its own ensure and a caller cannot forget it.
       class LineScope
+        # Whether anything is waiting on the human while ONE line dispatches: a
+        # parked call or a listed question, whichever line it arrived in. The
+        # cockpit's command reader is open exactly while this says so -- a
+        # prompt drawn under every dispatched line is the ghost `human>` a
+        # cockpit is rid of, and one left open after its reason holds the
+        # terminal the interrupt countdown needs.
+        #
+        # One per line and handed to BOTH halves by {#serve}, because the two
+        # kinds of waiting are watched by two objects that share nothing else;
+        # each says what "outstanding" means for its own. A LEVEL, asked afresh
+        # every time, rather than a latch: a line blocked on a call announced
+        # during an earlier line is as blocked as one whose call arrived now.
+        class Attention
+          def initialize = @watched = []
+
+          # @yieldreturn [Boolean] whether this surface has something waiting
+          def track(&outstanding) = @watched << outstanding
+
+          def outstanding? = @watched.any?(&:call)
+        end
+
         # @param replies [HumanReplies] the ask_human reply surfaces for one line
         # @param surfaces [ApprovalSurfaces] the watchers over the parked-approval
         #   queue; spawns nothing under --non-interactive, where there is no queue
@@ -52,11 +73,13 @@ module Lain
         # reaches a `Pending#oldest` that is by then the loop's own item.
         #
         # THE RULE ABOVE IS NARROWER than "at most one fiber holds the terminal
-        # read", and is only what this method enforces: on an ORDINARY line both
-        # surfaces spawn, so a question and a gated call arriving together put
-        # two reads on one stdin with no `/inbox` in sight. Closing that needs
-        # the two surfaces to arbitrate for the read, a design call and not a
-        # guard -- do not read the heading as claiming it has been made.
+        # read", and is only what this method enforces: on an ORDINARY line of a
+        # PLAIN chat both surfaces spawn, so a question and a gated call arriving
+        # together put two reads on one stdin with no `/inbox` in sight. A
+        # cockpit does not have that race, by the human's ruling rather than by
+        # arbitration: with an editor attached neither surface reads an answer,
+        # and the one read left is {HumanReplies::CommandLine}'s, open while the
+        # {Attention} both halves share reports something outstanding.
         #
         # The withholding costs little, and in the safe direction: every
         # non-terminal surface still watches, the reply queue keeps its items,
@@ -70,10 +93,11 @@ module Lain
         def serve(owns_terminal: false)
           Sync do |task|
             live = []
-            live.push(*@replies.surfaces(task)) unless owns_terminal
+            attention = Attention.new
+            live.push(*@replies.surfaces(task, attention:)) unless owns_terminal
             # `*nil` adds nothing, which is the --non-interactive shape: no queue was wired,
             # so `watch` answers nil rather than an empty set.
-            live.push(*@surfaces.watch(task, terminal: !owns_terminal))
+            live.push(*@surfaces.watch(task, terminal: !owns_terminal, attention:))
             yield
           ensure
             live.each { |surface| surface&.stop }

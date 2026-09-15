@@ -145,6 +145,12 @@ class RecordingCommand
   end
 end
 
+# A registered `/word` that reads the terminal itself and says so, as
+# `/approve` does -- a declarer that is NOT `/inbox`.
+class TerminalReadingCommand < RecordingCommand
+  def serves_replies? = true
+end
+
 # The command that blows up ANSWERING whether it reads the terminal, which is
 # the one raise nothing wraps: {Lain::CLI::Command::Registry#invoke} guards the
 # CALL, and `#serves_replies?` is asked before any call is made. Its own class
@@ -619,6 +625,24 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       expect(ruby.calls).to eq(["1 + 1"])
       expect(ask_human.pending?).to be(true)
+    end
+
+    # `serves_replies?` means "this command reads the terminal itself", and
+    # `/inbox` is no longer the only command that says so. Read here as the
+    # inbox detour, a second declarer never ran and the human's next line
+    # answered the parked set instead.
+    it "runs a command that reads the terminal itself, rather than taking it for the /inbox detour" do
+      approve = TerminalReadingCommand.new("approve", returns: "bash: approved")
+      registry.register(approve)
+      typed = ["/approve", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(approve.calls).to eq([""])
+      expect(output.string).to include("bash: approved")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
     end
 
     it "keeps /inbox item-scoped: it answers the set the loop is parked on, never the oldest listed" do
@@ -1595,6 +1619,207 @@ RSpec.describe Lain::CLI::HumanReplies do
     def answer_set(text)
       set = Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")])
       Lain::Question::AnswerSet.new(questions: set, text:)
+    end
+  end
+
+  # A COCKPIT: an editor is attached, so lain://inbox and lain://approval are
+  # where the human answers. The chat pane opens no `human>` for a question --
+  # it says one line and lists the question -- and what it reads, while
+  # something is outstanding, is a command. A line of prose typed there is held
+  # for `you>`, never taken as an answer.
+  describe "a cockpit's chat, with an editor attached" do
+    let(:editor) { RecordingEditorRail.new }
+    let(:ruby) { RecordingCommand.new("ruby", returns: "=> 2") }
+    let(:registry) do
+      Lain::CLI::Command::Registry.new([ruby, Lain::CLI::Command::Inbox.new])
+                                  .bind(build_command_env(replies:))
+    end
+    let(:attention) { Lain::CLI::Repl::LineScope::Attention.new }
+
+    before do
+      replies.bind_editor(editor)
+      replies.bind_commands(registry)
+    end
+
+    # The line's surfaces alone, over the attention the line hands them, for a
+    # fixed window: running out the clock is the success in most of these.
+    def line_for(duration: 0.3, &during)
+      Sync do |task|
+        surfaces = replies.surfaces(task, attention:)
+        begin
+          during&.call(task)
+          settle_for(task, duration)
+        ensure
+          surfaces.each(&:stop)
+        end
+      end
+    end
+
+    # Counts the reads open at this instant, so "the read was closed" is a
+    # measurement rather than an inference from what was printed.
+    def typed_at_command_line(*lines)
+      @open_reads = 0
+      @reads = 0
+      allow(conductor).to receive(:read_reply) do
+        @reads += 1
+        @open_reads += 1
+        lines.empty? ? Async::Task.current.sleep(30) : lines.shift
+      ensure
+        @open_reads -= 1
+      end
+    end
+
+    def outstanding = attention.track { true }
+
+    it "announces a question in one line and opens no human> read for it" do
+      typed_at_command_line
+
+      line_for { Sync { announced(ask_human, "which db?") } }
+
+      expect(output.string.lines.grep(/which db\?/).size).to eq(1)
+      expect(conductor).not_to have_received(:read_reply).with(tty, "human> ")
+      expect(ask_human.pending?).to be(true)
+    end
+
+    it "lists what it announced, so /inbox and pending? still see it after the line" do
+      typed_at_command_line
+
+      line_for { Sync { announced(ask_human, "which db?") } }
+
+      expect(replies.pending?).to be(true)
+      expect(questions).to be_empty # listed, not re-queued: the next line has nothing to re-announce
+    end
+
+    it "opens no read at all on a line with nothing outstanding" do
+      typed_at_command_line
+
+      line_for
+
+      expect(conductor).not_to have_received(:read_reply)
+    end
+
+    it "opens its read while the line's attention reports anything outstanding, on either surface" do
+      typed_at_command_line
+
+      line_for { outstanding }
+
+      expect(conductor).to have_received(:read_reply).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+    end
+
+    it "holds a line of prose for you>, says so, and answers nothing with it" do
+      typed_at_command_line("yes please")
+
+      line_for { Sync { announced(ask_human, "which db?") } }
+
+      expect(replies.take_held).to eq("yes please")
+      expect(output.string).to include("held as your next prompt: yes please")
+      expect(ask_human.pending?).to be(true)
+    end
+
+    # An unregistered `/word` may be a SKILL, which only `you>` dispatches.
+    it "holds a /word no command claims, rather than refusing it" do
+      typed_at_command_line("/critique the diff")
+
+      line_for { outstanding }
+
+      expect(replies.take_held).to eq("/critique the diff")
+    end
+
+    it "runs a registered command where it was typed, and holds nothing" do
+      typed_at_command_line("/ruby 1 + 1")
+
+      line_for { outstanding }
+
+      expect(ruby.calls).to eq(["1 + 1"])
+      expect(output.string).to include("=> 2")
+      expect(replies.take_held).to be_nil
+    end
+
+    it "drains the inbox at /inbox, answering the oldest question listed" do
+      typed_at_command_line("/inbox", "postgres")
+
+      line_for(duration: 0.5) { Sync { announced(ask_human, "which db?") } }
+
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+      expect(conductor).to have_received(:read_reply).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+                                                     .at_least(:once)
+      expect(replies.take_held).to be_nil
+    end
+
+    it "holds several lines in the order they were typed" do
+      typed_at_command_line("first", "second")
+
+      line_for { outstanding }
+
+      expect([replies.take_held, replies.take_held, replies.take_held]).to eq(["first", "second", nil])
+    end
+
+    it "stops reading when the stream ends, rather than spinning on it" do
+      allow(conductor).to receive(:read_reply).and_return(nil)
+
+      line_for { outstanding }
+
+      expect(conductor).to have_received(:read_reply).once
+    end
+
+    # Enter is the natural reaction to a prompt appearing mid-stream, and a
+    # held blank line would be dispatched as an empty prompt to the model.
+    it "neither holds nor dispatches a blank or whitespace-only line" do
+      typed_at_command_line("", "   ", "/ruby 1 + 1")
+
+      line_for { outstanding }
+
+      expect(replies.take_held).to be_nil
+      expect(output.string).not_to include("held as your next prompt")
+      expect(ruby.calls).to eq(["1 + 1"])
+    end
+
+    # A question listed in an earlier line is still waiting on the human, and a
+    # line blocked on it has no other way to reach `/inbox` from the chat.
+    it "opens its read in a later line for a question listed during an earlier one" do
+      typed_at_command_line
+      line_for { Sync { announced(ask_human, "which db?") } }
+
+      typed_at_command_line
+      line_for
+
+      expect(@reads).to eq(1)
+    end
+
+    it "closes its read once the question it was open for is answered elsewhere, and says so" do
+      typed_at_command_line
+      session = nil
+
+      line_for(duration: 0.4) do |task|
+        session = replies.session_surfaces(task)
+        Sync { announced(ask_human, "which db?") }
+        pumped_until(task, reason: "the read opened") { @open_reads.positive? }
+        editor.push(["reply", ["postgres"]])
+        pumped_until(task, reason: "the read closed") { @open_reads.zero? }
+      ensure
+        session&.each(&:stop)
+      end
+
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+      expect(output.string).to include(Lain::CLI::HumanReplies::CommandLine::CLOSED)
+    end
+
+    it "closes an open read when the line ends" do
+      typed_at_command_line
+
+      line_for { outstanding }
+
+      expect(@open_reads).to eq(0)
+      expect(output.string.lines.last).to include(Lain::CLI::HumanReplies::CommandLine::CLOSED)
+    end
+
+    it "refuses a line the record cannot carry where it was typed, and keeps reading" do
+      typed_at_command_line("\xff\xfe".b.force_encoding(Encoding::UTF_8), "after")
+
+      line_for { outstanding }
+
+      expect(output.string).to include("error:")
+      expect(replies.take_held).to eq("after")
     end
   end
 

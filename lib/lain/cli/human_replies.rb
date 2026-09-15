@@ -122,6 +122,7 @@ module Lain
         @changeset_review = NoReview
         @reviews = Reviews.new
         @inbox = Pending.new
+        @held = []
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
         # READERS, never the surfaces: every one is bound after this returns, so
         # resolving each per call is what makes a late bind visible without
@@ -251,7 +252,31 @@ module Lain
       # {Repl#respond} -- the fiber that parks on one is the dispatching fiber,
       # so the surface answering it has to be its sibling. The editor's consumer
       # is deliberately not here; see {#session_surfaces}.
-      def surfaces(task) = [answers.spawn(task)]
+      #
+      # WITH AN EDITOR ATTACHED nothing here reads an answer: lain://inbox and
+      # lain://approval are where a cockpit's human answers, and a `human>` in
+      # the chat pane beside them is a reader that typeahead lands in. The line
+      # gets {CommandLine} instead, which announces and reads only commands --
+      # kept because a line parked on its own call never settles, so without it
+      # `/approve` could not be typed at all until nvim was used.
+      #
+      # @param task [Async::Task] the line's task, which the surface is spawned on
+      # @param attention [Repl::LineScope::Attention] raised by an arrival on
+      #   either surface, and what opens the cockpit's command read
+      def surfaces(task, attention: Repl::LineScope::Attention.new)
+        [@editor.attached? ? command_line.spawn(task, attention) : answers.spawn(task)]
+      end
+
+      # A line the human typed in the chat that was neither a command nor an
+      # answer, waiting to be dispatched at `you>`. Held HERE, on the object
+      # that outlives every line, so the line it was typed during can be torn
+      # down -- a Ctrl-C stops its fibers -- without taking the text with it.
+      def hold(line) = @held << line
+
+      # The oldest held line, or nil when nothing is held. {Repl#next_text}
+      # asks this before it reads, so a held line is dispatched first and in
+      # the order it was typed.
+      def take_held = @held.shift
 
       # The reply surfaces that live for the whole CONVERSATION, started on the
       # repl's own Sync rather than on an ask's -- today just the editor's
@@ -286,6 +311,16 @@ module Lain
       def answers
         @answers ||= AnswerLoop.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
                                     resolve: method(:resolve_reply))
+      end
+
+      # {#answers}' cockpit counterpart. `drain:` is `/inbox`, which a cockpit
+      # still answers from the chat when the human asks it to; `notice:` is the
+      # frontend's one-line note, reached as {Wiring} reaches it for the run's
+      # line to the human.
+      def command_line
+        @command_line ||= CommandLine.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
+                                          notice: @tty.method(:render_warning),
+                                          hold: method(:hold), drain: method(:drain_at_prompt))
       end
 
       # The null resolved HERE and nowhere else, which is why
@@ -605,6 +640,138 @@ module Lain
         end
       end
 
+      # A cockpit's chat for one DISPATCHED LINE: every question arrival
+      # announced as one line and listed, and a read that runs only commands.
+      #
+      # AN ARRIVAL IS LISTED, NEVER SERVED. It goes onto the pending list and
+      # stays there until some surface settles it, so `/inbox`, lain://inbox and
+      # `#pending?` all see it -- and nothing re-queues it, because nothing here
+      # took it off a list a human reads. That is what keeps a question answered
+      # in nvim from being re-announced under every later line.
+      #
+      # THE READ IS OPEN WHILE SOMETHING IS OUTSTANDING, and only then: a
+      # prompt drawn under every dispatched line is the ghost a cockpit is rid
+      # of, and an open read holds the terminal -- {Conductor#read_reply}
+      # suppresses the interrupt countdown for its span. So it opens when the
+      # line's {Repl::LineScope::Attention} reports a parked call or a listed
+      # question, from this line or an earlier one, and it is closed when
+      # nothing is, when the line ends, or when the stream does. A registered
+      # command runs where it was typed, owning the terminal for as long as it
+      # reads; `/inbox` drains; anything else -- prose, or a `/word` no command
+      # claims, which may be a skill -- is HELD for `you>` and said to be, since
+      # a line nobody was told about reads as swallowed.
+      class CommandLine
+        PROMPT = "command> "
+        HELD = "held as your next prompt: %s"
+
+        # Said when a read is closed under its prompt, which also ends the row
+        # that prompt was drawn on -- otherwise the next `you>` lands beside it.
+        CLOSED = "(command> closed)"
+
+        # The stream ended: no further read opens in this line.
+        ENDED = Object.new.freeze
+
+        # How often a closed reader asks whether to open, and an open one
+        # whether its reason is gone -- {Repl::ApprovalSurfaces::Arrivals}' tick.
+        TICK = 0.05
+
+        def initialize(questions:, inbox:, tty:, reply:, notice:, hold:, drain:)
+          @questions = questions
+          @inbox = inbox
+          @tty = tty
+          @reply = reply
+          @notice = notice
+          @hold = hold
+          @drain = drain
+        end
+
+        # The reader is the noting fiber's CHILD, so stopping the one fiber
+        # {#spawn} hands back stops both, and a line still starts one surface
+        # here whichever kind of chat it is.
+        def spawn(task, attention)
+          attention.track { !@inbox.empty? }
+          task.async do |noting|
+            noting.async { read_while_outstanding(attention) }
+            loop { noted(@questions.dequeue) }
+          end
+        end
+
+        private
+
+        # Listed before anything that can yield, so an unwind between the
+        # dequeue and the note cannot drop the item from both places at once.
+        # A note that failed to render is reported rather than allowed to end
+        # the fiber every later arrival is noted on; the question is listed and
+        # outstanding whether or not it was said.
+        def noted(item)
+          @inbox << item
+          @tty.render_arrival(item.question, from: item.from)
+        rescue StandardError => e
+          @tty.render_error(e.message)
+        end
+
+        # Each read answers a line, nil for a read closed with nothing typed,
+        # or {ENDED}.
+        def read_while_outstanding(attention)
+          reads = Enumerator.produce { read_once(attention) }.lazy
+          reads.take_while { |read| !read.equal?(ENDED) }.compact.each { |line| served(line) }
+        end
+
+        # The read runs in a child so it can be RACED against its reason: a
+        # read with nothing left to wait for is stopped, and the ensure is what
+        # closes it on every other way out, the line's own stop included.
+        def read_once(attention)
+          park_until { attention.outstanding? }
+          reading = Async::Task.current.async { heard }
+          park_until { reading.finished? || !attention.outstanding? }
+          reading.finished? ? reading.wait : nil
+        ensure
+          close(reading)
+        end
+
+        def park_until
+          Async::Task.current.sleep(TICK) until yield
+        end
+
+        # A read that raised ends this line's reading in words rather than as a
+        # task failure: retrying it every tick would render the same error
+        # forever.
+        def heard
+          @reply.command_line(PROMPT) || ENDED
+        rescue StandardError => e
+          @tty.render_error(e.message)
+          ENDED
+        end
+
+        # Guarded because it runs inside the ensure of an unwinding line, where
+        # a raise would replace the stop that is climbing.
+        def close(reading)
+          return if reading.nil? || reading.completed?
+
+          reading.stop
+          @notice.call(CLOSED)
+        rescue StandardError
+          nil
+        end
+
+        # `StandardError` for {AnswerLoop#exchange}'s reason: this fiber is the
+        # only way to type `/approve` while the line is parked, so a drain that
+        # raised must be reported rather than end it. {Reply::UnknownArm} is the
+        # one raise that climbs, as it does at the reply prompt.
+        def served(line)
+          @reply.commanded(line, hold: method(:held), drain: @drain)
+        rescue Reply::UnknownArm
+          raise
+        rescue StandardError => e
+          @tty.render_error(e.message)
+        end
+
+        def held(line)
+          @hold.call(line)
+          @notice.call(format(HELD, line))
+        end
+      end
+
       # The approval list nobody wired, and a fourth object because it is a
       # fourth fact: a run can have an editor, its views and a changeset review
       # all bound and still have no approval list -- an unattended run wires no
@@ -882,6 +1049,7 @@ module Lain
           @conductor = conductor
           @inbox = inbox
           @commands = commands
+          @detour = Command::Registry.new([Command::Inbox.new])
         end
 
         # @see HumanReplies#bind_commands the only caller, and where the reason
@@ -908,7 +1076,39 @@ module Lain
         # {HumanReplies#drain_at_prompt} for what refusing here destroyed.
         def at_prompt = accepted { drained(answering: @inbox.oldest, ended: "") }
 
+        # {CommandLine}'s one read.
+        #
+        # @return [String, nil] the line, or nil when the stream ended
+        def command_line(prompt) = heard(prompt)
+
+        # What a line typed at {CommandLine} becomes, classified by the SAME
+        # {#classify} both reply prompts use. Nothing here is an answer: prose
+        # and an unclaimed `/word` go to `hold`, `/inbox` to `drain`, and a
+        # command has already run. A line the record cannot carry is refused
+        # where it was typed, as at the reply prompt -- checked BEFORE blankness,
+        # which would read undecodable bytes as nothing and drop them unsaid.
+        #
+        # A BLANK line is nothing at all: Enter is what a human presses at a
+        # prompt appearing mid-stream, and held it became an empty prompt sent
+        # to the model.
+        def commanded(line, hold:, drain:)
+          refusable do
+            readable = legible(line)
+            routed(readable, hold:, drain:) unless Blankness.blank?(readable)
+          end
+        end
+
         private
+
+        def routed(line, hold:, drain:)
+          arm = classify(line)
+          case arm
+          when :prose, :unmatched then hold.call(line)
+          when :replies then drain.call
+          when :handled then nil
+          else raise UnknownArm, unknown_arm(arm)
+          end
+        end
 
         # Routed through the conductor rather than the tty directly, so the
         # conductor KNOWS Reline owns stdin for the span and suppresses its
@@ -977,12 +1177,18 @@ module Lain
         # between them. As `line.strip == "/inbox"` and nothing else, every
         # OTHER registered `/word` was recorded as the human's answer.
         #
-        # A command that SERVES REPLIES is not a session command at all: it is
-        # this surface under another name, `/inbox` is the only one, and it is
-        # deliberately NOT routed through `dispatch`, because {Command::Inbox}
-        # drains `@inbox.oldest` -- the defect {#for} records as fixed. The
-        # predicate is the command's own claim, so the exception lives with the
-        # command rather than as a literal here.
+        # `/inbox` is not a session command here: it is this surface under
+        # another name, and it is deliberately NOT routed through `dispatch`,
+        # because {Command::Inbox} drains `@inbox.oldest` -- the defect {#for}
+        # records as fixed.
+        #
+        # TWO PREDICATES, because `serves_replies?` means "reads the terminal
+        # itself" and `/inbox` is no longer the only command that does:
+        # `/approve` asks its `[y/N]` too. Read as the detour, that claim
+        # swallowed `/approve` here -- it never ran, and the human's next line
+        # answered the parked set. So the claim is the command's own, and which
+        # command it is gets asked of a registry holding `/inbox` alone, rather
+        # than of a literal.
         #
         # `:unmatched` comes from the FALLTHROUGH block, the only thing that can
         # say a command did NOT claim the line: a command's outcome may be any
@@ -998,7 +1204,7 @@ module Lain
         # @return [Symbol] :prose, :replies, :handled, or :unmatched
         def classify(line)
           return :prose if prose?(line)
-          return :replies if @commands.serves_replies?(line)
+          return :replies if @commands.serves_replies?(line) && @detour.serves_replies?(line)
 
           arm = :handled
           outcome = @commands.dispatch(line) { arm = :unmatched }

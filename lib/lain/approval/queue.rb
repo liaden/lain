@@ -288,7 +288,19 @@ module Lain
       ensure
         pending.deny(surface: ABANDONED_SURFACE)
         @parked.delete(pending)
+        retire_arrivals
         record_evidence(Pending) { pending }
+      end
+
+      # Only undecided work stays buffered. A surface that observes the parked
+      # set rather than consuming arrivals -- all a cockpit has -- would
+      # otherwise leave every decided pending, input and all, referenced here
+      # for the rest of the session. Non-blocking pops and pushes with no
+      # yield between them, so no park or settle interleaves, and a live
+      # pending keeps its place in line.
+      def retire_arrivals
+        buffered = Array.new(@arrivals.size) { @arrivals.dequeue(timeout: 0) }
+        @arrivals.enqueue(*buffered.compact.reject(&:decided?))
       end
 
       # Evidence about a turn must never COST the turn. Both writes sit on

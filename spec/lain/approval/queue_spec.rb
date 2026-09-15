@@ -511,6 +511,42 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  # A cockpit's chat reads no approval, so NOTHING dequeues: the editor and the
+  # chat's arrival note both observe the parked set. An arrival buffer that
+  # kept every decided pending would keep each one -- its input included, a
+  # whole file body for a write -- for the life of the session.
+  describe "a decided pending leaves the arrival buffer" do
+    # The buffer is not observable through the queue's own messages -- that it
+    # holds nothing a surface could still be handed is the whole claim -- so
+    # this reads it, as signoff_queue_spec reads its parked set.
+    def retained = queue.instance_variable_get(:@arrivals).size
+
+    it "retains nothing after ten calls are parked and decided with no consumer" do
+      Sync do |task|
+        10.times do |index|
+          run = task.async { queue.call(tool_call("dangerous", { "n" => index }), nil) }
+          queue.first.approve(surface: "nvim")
+          run.wait
+        end
+      end
+
+      expect(retained).to eq(0)
+    end
+
+    it "still hands a consumer the live pending parked behind a decided one, in order" do
+      Sync do |task|
+        first = task.async { queue.call(tool_call("dangerous", { "n" => 1 }), nil) }
+        second = task.async { queue.call(tool_call("dangerous", { "n" => 2 }), nil) }
+        third = task.async { queue.call(tool_call("dangerous", { "n" => 3 }), nil) }
+        queue.first.deny(surface: "nvim")
+        first.wait
+
+        expect([queue.dequeue.input, queue.dequeue.input]).to eq([{ "n" => 2 }, { "n" => 3 }])
+        [second, third].each(&:stop)
+      end
+    end
+  end
+
   describe "first answer wins" do
     it "makes the second surface's answer a no-op: single-shot resolution, no double-run" do
       runs = []

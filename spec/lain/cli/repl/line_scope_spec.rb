@@ -15,10 +15,17 @@ module LineScopeSpecSupport
     def self.spawn(task) = task.async { loop { Async::Task.current.sleep(POLL) } }
   end
 
-  # The reply seam as the scope asks it ({Lain::CLI::HumanReplies#surfaces}).
+  # The reply seam as the scope asks it ({Lain::CLI::HumanReplies#surfaces}),
+  # recording the attention it was handed.
   class Replies
     def initialize(body) = @body = body
-    def surfaces(task) = @body.call(task)
+
+    attr_reader :attention
+
+    def surfaces(task, attention:)
+      @attention = attention
+      @body.call(task)
+    end
   end
 
   # The approval seam ({Lain::CLI::Repl::ApprovalSurfaces#watch}), which answers
@@ -28,10 +35,11 @@ module LineScopeSpecSupport
   class Approvals
     def initialize(body) = @body = body
 
-    attr_reader :terminal
+    attr_reader :terminal, :attention
 
-    def watch(task, terminal: true)
+    def watch(task, terminal:, attention:)
       @terminal = terminal
+      @attention = attention
       @body.call(task)
     end
   end
@@ -151,6 +159,53 @@ RSpec.describe Lain::CLI::Repl::LineScope do
     Sync { described_class.new(replies: LineScopeSpecSupport::Replies.new(nothing), surfaces: seam).serve { nil } }
 
     expect(seam.terminal).to be(true)
+  end
+
+  # A cockpit's command reader is opened by an arrival on EITHER surface -- a
+  # question on the reply half, a parked call on the approval half -- so both
+  # have to be raising the one thing the reader awaits.
+  it "hands both halves the SAME attention for the line" do
+    replies = LineScopeSpecSupport::Replies.new(nothing)
+    approvals = LineScopeSpecSupport::Approvals.new(nothing)
+
+    Sync { described_class.new(replies:, surfaces: approvals).serve { nil } }
+
+    expect(replies.attention).to be_a(described_class::Attention)
+    expect(approvals.attention).to be(replies.attention)
+  end
+
+  it "hands each line a fresh attention, so one line's arrival opens no reader in the next" do
+    approvals = LineScopeSpecSupport::Approvals.new(nothing)
+    scope = described_class.new(replies: LineScopeSpecSupport::Replies.new(nothing), surfaces: approvals)
+
+    attentions = Array.new(2) { Sync { scope.serve { approvals.attention } } }
+
+    expect(attentions.first).not_to be(attentions.last)
+  end
+
+  # A LEVEL, read afresh on every ask: the cockpit's command reader opens while
+  # anything is outstanding and closes when nothing is, and each surface of the
+  # line says what "outstanding" means for the things it watches.
+  describe described_class::Attention do
+    it "reports nothing outstanding when no surface has said what to watch" do
+      expect(described_class.new.outstanding?).to be(false)
+    end
+
+    it "reports outstanding while ANY watched surface has something waiting" do
+      attention = described_class.new
+      attention.track { false }
+      attention.track { true }
+
+      expect(attention.outstanding?).to be(true)
+    end
+
+    it "asks again each time, so a settled surface stops counting" do
+      waiting = [:call]
+      attention = described_class.new
+      attention.track { waiting.any? }
+
+      expect { waiting.clear }.to change(attention, :outstanding?).from(true).to(false)
+    end
   end
 
   # The ensure is the whole point: a line that raises past the boundary's rescue

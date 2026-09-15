@@ -153,10 +153,15 @@ module Lain
       # BETWEEN asks, after a turn has fully settled and its surfaces stopped; a
       # driving goal answers the next prompt as a typed line would, and Null (no
       # goal) answers nil cheaply so the human prompt is read as before.
+      #
+      # A line the human typed while the last one dispatched, and was told was
+      # HELD ({HumanReplies#hold}), comes first: it was typed before anything
+      # the driver would say next, and it is what a human who typed it expects
+      # to run.
       def next_text(action)
         return if action == :quit || !reads_a_line?
 
-        @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
+        @replies.take_held || @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
       end
 
       # Whether any line is coming: not once the conductor has closed the

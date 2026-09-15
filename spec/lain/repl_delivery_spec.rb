@@ -67,7 +67,9 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
 
   # The ask_human reply fibers are out of scope here; respond stops whatever
   # surfaces this hands back, and an empty set keeps the Sync from parking.
-  let(:replies) { instance_spy(Lain::CLI::HumanReplies, surfaces: []) }
+  # Nothing is held, stated: a spy answers itself to an unstubbed message, and
+  # a held line that is a spy is dispatched as the next prompt.
+  let(:replies) { instance_spy(Lain::CLI::HumanReplies, surfaces: [], take_held: nil) }
 
   # An EMPTY command registry (by default) bound over a doubles-only Env:
   # every line falls through to the middleware phase, which is the seam under

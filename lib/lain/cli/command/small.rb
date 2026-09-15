@@ -148,6 +148,13 @@ module Lain
 
         def usage = "/approve -- answer each pending tool approval y/N"
 
+        # THIS command reads the terminal itself, for {Inbox#serves_replies?}'s
+        # reason: the `[y/N]` it asks goes through the same stdin a watcher
+        # started around the line would read, and a `y` then lands on whichever
+        # of the two won it. Typed at a reply prompt it still RUNS -- that
+        # prompt's `/inbox` detour asks which command it is, not this.
+        def serves_replies? = true
+
         def call(_args, env)
           undecided = env.approvals.each.reject(&:decided?)
           return "no pending approvals" if undecided.empty?

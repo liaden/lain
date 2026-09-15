@@ -452,7 +452,7 @@ RSpec.describe Lain::CLI::Repl do
       # DISPATCHED LINE now, not around the ask -- so a command that never
       # reaches #respond still asks this collaborator for them.
       Lain::CLI::Repl.new(agent: instance_double(Lain::Agent, timeline: nil), tty:,
-                          replies: instance_double(Lain::CLI::HumanReplies, surfaces: []), commands:,
+                          replies: instance_double(Lain::CLI::HumanReplies, surfaces: [], take_held: nil), commands:,
                           chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
                      .converse(first_prompt: "/anything")
     end
@@ -501,6 +501,54 @@ RSpec.describe Lain::CLI::Repl do
       warm = Lain::Renderable.new.plain("cache ").with(:warm, "warm")
 
       expect(settled_output(warm, enabled: false)).not_to include("\e[")
+    end
+  end
+
+  # A line a cockpit's command reader HELD while a line dispatched is the
+  # human's next prompt: it was typed before anything that could come after the
+  # line settles, so it is dispatched before the goal driver is asked and
+  # before `you>` is read again.
+  describe "a held line" do
+    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit") }
+    let(:replies) do
+      Lain::CLI::HumanReplies.new(tty: instance_double(Lain::Frontend::TTY), conductor:,
+                                  questions: Async::Queue.new, ask_human: ReplRecordedAnswers.new)
+    end
+    let(:dispatched) { [] }
+    # The first line holds what the human typed during it, exactly as the
+    # command reader does; every line is recorded as it is dispatched.
+    let(:commands) do
+      Struct.new(:dispatched, :replies) do
+        def dispatch(text)
+          dispatched << text
+          replies.hold("yes please") if dispatched.one?
+          nil
+        end
+
+        def serves_replies?(_text) = false
+      end.new(dispatched, replies)
+    end
+
+    def converse_with(goal_driver: Lain::CLI::GoalDriver::Null)
+      described_class.new(agent: instance_double(Lain::Agent, timeline: nil), tty: instance_double(Lain::Frontend::TTY),
+                          replies:, commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:, goal_driver:)
+                     .converse(first_prompt: "run the tests")
+    end
+
+    it "dispatches the held line as the next prompt, before you> is read" do
+      converse_with
+
+      expect(dispatched).to eq(["run the tests", "yes please"])
+      expect(conductor).to have_received(:read_prompt).once
+    end
+
+    it "dispatches it ahead of a standing goal's next prompt" do
+      goal_driver = instance_double(Lain::CLI::GoalDriver, poll: nil)
+      allow(goal_driver).to receive(:poll).and_return("keep going", nil)
+
+      converse_with(goal_driver:)
+
+      expect(dispatched).to eq(["run the tests", "yes please", "keep going"])
     end
   end
 

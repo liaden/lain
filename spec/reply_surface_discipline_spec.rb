@@ -26,6 +26,12 @@ module ReplySurfaceDiscipline
   READERS = %w[read_reply drain_at_prompt drain_inbox].freeze
   RECEIVER_READERS = %w[prompt].freeze
 
+  # `#decide` is as generic as `prompt`, so it counts only on a receiver NAMED
+  # for the approval prompt it asks through: `/approve`'s `@prompt.decide`, a
+  # `[y/N]` read no name above could see.
+  PROMPT_RECEIVERS = %w[@prompt prompt].freeze
+  PROMPT_READERS = %w[decide].freeze
+
   # A command file that reads the terminal, and where it does it. `klass` is
   # the SIMPLE name of the enclosing `class` node the read was found inside
   # (nil for a read at module level, which no shipped file has) -- carried
@@ -77,7 +83,18 @@ module ReplySurfaceDiscipline
     def inspect_node(node)
       case node[0]
       when :@ident then record(node, READERS)
-      when :call then record(node.last, RECEIVER_READERS)
+      when :call
+        record(node.last, RECEIVER_READERS)
+        record(node.last, PROMPT_READERS) if PROMPT_RECEIVERS.include?(receiver_name(node[1]))
+      end
+    end
+
+    def receiver_name(node)
+      return unless node.is_a?(Array)
+
+      case node[0]
+      when :var_ref, :vcall then receiver_name(node[1])
+      when :@ivar, :@ident then node[1]
       end
     end
 
@@ -95,6 +112,16 @@ module ReplySurfaceDiscipline
     def named = command.class.to_s
   end
 
+  # A command CLASS whose reads the Scanner attributed to it by name. Asked of
+  # the class rather than of a built instance, because a declaration is a method
+  # and `/approve` -- a terminal reader -- takes a collaborator no guard can
+  # invent. `allocate` gives the predicate a receiver without running a
+  # constructor; a declaration is a constant answer, never one that reads state.
+  Declared = Struct.new(:klass) do
+    def declared? = klass.method_defined?(:serves_replies?) && klass.allocate.serves_replies?
+    def named = klass.to_s
+  end
+
   # The file whose command class this guard could not reach or build. Its own
   # object, and it answers `declared?` false like any other failure, because the
   # FIX is different and a reader who is shown a bare `uninitialized constant`
@@ -103,10 +130,10 @@ module ReplySurfaceDiscipline
     def declared? = false
 
     def named
-      "#{file} -- could not reach its command class (#{reason}). This guard maps " \
-        "<name>.rb to Lain::CLI::Command::<CamelCase> and builds it with no arguments, " \
-        "so a new command must be required from lib/lain/cli/command.rb, and one whose " \
-        "constructor takes arguments needs this mapping widened"
+      "#{file} -- could not reach its command class (#{reason}). This guard finds a " \
+        "command under Lain::CLI::Command by the class a read was found in, so a new " \
+        "command must be required from lib/lain/cli/command.rb (a guess by file name maps " \
+        "<name>.rb to <CamelCase> and builds it with no arguments)"
     end
   end
 
@@ -128,13 +155,12 @@ module ReplySurfaceDiscipline
     Unreachable.new(file.basename.to_s, e.message)
   end
 
-  # The same construction, told the class NAME directly -- what
-  # {.terminal_readers} uses once the Scanner has already found which class a
-  # read lives in by walking the syntax tree, rather than guessing one name
-  # per file.
+  # The class a read was found in, told by NAME -- what {.terminal_readers}
+  # uses once the Scanner has already found which class a read lives in by
+  # walking the syntax tree, rather than guessing one name per file.
   def built_for(klass_name, file)
-    Built.new(Lain::CLI::Command.const_get(klass_name).new)
-  rescue NameError, ArgumentError => e
+    Declared.new(Lain::CLI::Command.const_get(klass_name))
+  rescue NameError => e
     Unreachable.new(file.basename.to_s, e.message)
   end
 
@@ -192,9 +218,9 @@ end
 RSpec.describe "reply-surface discipline" do
   # Not `be_empty`: the guard is worthless if the scan silently stops matching,
   # and `/inbox` is the one shipped command that reads the human's answer.
-  it "finds the command that reads the terminal, so the scan is known to work" do
+  it "finds the commands that read the terminal, so the scan is known to work" do
     expect(ReplySurfaceDiscipline.terminal_readers.map { |subject, _reads| subject.named })
-      .to include("Lain::CLI::Command::Inbox")
+      .to include("Lain::CLI::Command::Inbox", "Lain::CLI::Command::Approve")
   end
 
   it "requires every command that reads the terminal to declare it serves replies" do
@@ -208,29 +234,24 @@ RSpec.describe "reply-surface discipline" do
     }
   end
 
-  # The reason this example sits HERE rather than beside the reply
-  # prompt: `serves_replies?` now has TWO readers that mean different things by
-  # it, and only one of them is written above.
+  # `serves_replies?` has TWO readers that once meant different things by it.
   #
   # {Lain::CLI::Repl::LineScope} reads it as "this line reads the terminal
   # itself, so open no second reader over it" -- the rule this file enforces.
-  # {Lain::CLI::HumanReplies::Reply#typed} reads it as "this line is the inbox
-  # detour, so drain THIS parked item instead of dispatching" -- which is the
-  # only way the reply prompt can keep `/inbox` item-scoped without a string
-  # literal (see that method, and Open decision 5 of the QA round 6 chunk).
+  # {Lain::CLI::HumanReplies::Reply#classify} used to read it as "this line is
+  # the inbox detour, so drain THIS parked item instead of dispatching", which
+  # was true only because `/inbox` was the sole declarer -- and `/approve`,
+  # whose `[y/N]` read this file now sees, is a second one. Swallowed at
+  # `human> ` it would never have run, and the human's next line would have
+  # answered the parked set.
   #
-  # The second reading is true of `/inbox` and of nothing else, and it is true
-  # by accident of `/inbox` being the sole declarer. A SECOND declarer -- the
-  # very command this file exists to require the declaration from -- would be
-  # swallowed at `human> `: it would never run, and the human's next line would
-  # answer the parked set instead. Measured at review: zero calls, silently.
-  #
-  # So this pins the coincidence until the two readings are given two
-  # predicates. If you are here because you added a terminal-reading command and
-  # this went red, that is the guard working: the fix is a distinct predicate
-  # for the reply prompt's own detour, not deleting this example.
-  it "pins /inbox as the ONLY declarer, which the reply prompt's detour depends on" do
-    expect(ReplySurfaceDiscipline.declarers.map(&:to_s)).to eq(["Lain::CLI::Command::Inbox"])
+  # So the reply prompt asks WHICH command a declaring line names, and this pins
+  # the declarers it has been checked against. A third one belongs here after
+  # the same check: `human_replies_spec` runs a declarer that is not `/inbox` at
+  # the reply prompt, and that example is what a new declarer must keep green.
+  it "pins the declarers the reply prompt's detour has been checked against" do
+    expect(ReplySurfaceDiscipline.declarers.map(&:to_s))
+      .to contain_exactly("Lain::CLI::Command::Approve", "Lain::CLI::Command::Inbox")
   end
 
   # The census must be known to SEE the commands, or the example above passes by
@@ -269,6 +290,17 @@ RSpec.describe "reply-surface discipline" do
     RUBY
 
     expect(ReplySurfaceDiscipline::Scanner.new("probe.rb").scan(source)).to be_empty
+  end
+
+  it "flags decide on an approval prompt, and not decide on anything else (self-test)" do
+    source = <<~RUBY
+      class Probe
+        def call(_a, env) = env.approvals.each { |pending| @prompt.decide(pending) }
+        def other(policy) = policy.decide(:yes)
+      end
+    RUBY
+
+    expect(ReplySurfaceDiscipline::Scanner.new("probe.rb").scan(source).map(&:name)).to eq(["decide"])
   end
 
   it "flags a receiver call on prompt, which is the terminal read a command can hide (self-test)" do

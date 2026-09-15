@@ -53,15 +53,21 @@ module Lain
         end
 
         # The terminal keyword is false for a line that reads the terminal
-        # ITSELF, and then {#approval_surface} -- the ONE surface here that
-        # reads stdin, through the same `conductor.read_reply(tty, ...)` a
-        # `/inbox` drain would be parked on -- is not spawned.
+        # ITSELF, and then the terminal's own surface is not spawned.
         # {Repl::LineScope#serve} holds the rule and what withholding it costs.
         #
-        # It is also the only surface that CONSUMES the queue's arrivals, so
-        # such a line leaves that buffer undrained for its duration -- harmless,
-        # because every other surface reads the parked set and never needed an
-        # arrival to find a pending.
+        # WHICH terminal surface depends on the editor. A plain chat gets
+        # {#approval_surface}, the ONE surface here that reads stdin, through the
+        # same `conductor.read_reply(tty, ...)` a `/inbox` drain would be parked
+        # on. A cockpit gets {Arrivals}, which reads nothing: lain://approval is
+        # where the human answers there, and a `[y/N]` in the chat pane beside it
+        # is a second reader for a line typed ahead to land in.
+        #
+        # {#approval_surface} is also the only surface that CONSUMES the queue's
+        # arrivals, so a line without it leaves that buffer undrained --
+        # harmless, because every other surface reads the parked set and never
+        # needed an arrival to find a pending, and {Approval::Queue#dequeue}
+        # skips the decided ones a later reader would otherwise meet.
         #
         # `if terminal` rather than `terminal &&`: `[*false]` is `[false]` where
         # `[*nil]` is empty, and this one splat reads a Boolean where the others
@@ -74,11 +80,107 @@ module Lain
         # approval_surfaces_spec pins both the SIZE of this set and the class of
         # every member -- so that upgrade fails in a test rather than in a
         # session's shutdown path.
-        def watch(task, terminal: true)
-          @approvals && [*(task.async { approval_surface.watch(@approvals) } if terminal),
+        #
+        # @param task [Async::Task] the line's task, which every watcher is spawned on
+        # @param terminal [Boolean] false for a line that reads the terminal itself
+        # @param attention [LineScope::Attention] told, in a cockpit, that an
+        #   undecided parked call is outstanding, so the chat's command reader
+        #   is open while one is
+        def watch(task, terminal: true, attention: LineScope::Attention.new)
+          @approvals && [*(terminal_surface(task, attention) if terminal),
                          *(@auto_surface && task.async { @auto_surface.watch(@approvals) }),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
                          *(@editor && task.async { @editor.watch(@approvals) })]
+        end
+
+        private
+
+        # In a cockpit the parked set is outstanding whichever line parked it:
+        # a line blocked on a call announced earlier still needs `/approve`.
+        def terminal_surface(task, attention)
+          return task.async { approval_surface.watch(@approvals) } unless @editor
+
+          attention.track { @approvals.any? { |pending| !pending.decided? } }
+          task.async { arrivals.watch(@approvals) }
+        end
+
+        # Memoized for {Arrivals}' reason: it remembers what it has announced,
+        # and that memory spans every line a call stays parked through.
+        def arrivals = @arrivals ||= Arrivals.new(notice: @tty.method(:render_warning))
+      end
+
+      class ApprovalSurfaces
+        # A parked call announced in a cockpit's chat pane as ONE line naming
+        # where it is answered, and nothing read.
+        #
+        # It OBSERVES the parked set rather than draining the arrival queue,
+        # because {Frontend::ApprovalPolicy} is the one consumer that queue may
+        # have (`spec/approval_consumer_discipline_spec.rb`), and it POLLS for the
+        # reason {Frontend::Neovim::ApprovalView} does: a sibling fiber on the
+        # reactor, woken by its own tick, needs nothing from the queue to find a
+        # pending.
+        #
+        # A call is announced ONCE however many lines it outlives, and forgotten
+        # the moment it leaves the parked set, so the memory is bounded by what
+        # is parked right now.
+        #
+        # `notice:` is the frontend's one-line note ({Frontend::TTY#render_warning},
+        # reached as {CLI::Wiring} reaches it for the run's line to the human).
+        class Arrivals
+          TICK = 0.05
+
+          # The requester is a wired name, never model text. The CALL is
+          # `inspect`ed, so a newline or an escape in a model-written command
+          # cannot break the line or forge another; the preamble is the
+          # sentence every human surface leads with. The buffer is a format
+          # argument rather than interpolated here because `lain/frontend`
+          # loads after `lain/cli`.
+          NOTE = "! %<preamble>s%<requester>s asks to run %<tool>s(%<input>s)  -- answer in %<buffer>s, or /approve"
+          UNANNOUNCED = "the chat could not announce a parked call (%<failure>s) -- lain://approval still lists it"
+
+          def initialize(notice:)
+            @notice = notice
+            @announced = Set.new.compare_by_identity
+          end
+
+          def watch(queue)
+            loop do
+              sweep(queue)
+              Async::Task.current.sleep(TICK)
+            end
+          end
+
+          private
+
+          # The snapshot is taken before anything is written, and a write is
+          # where this fiber can yield, so a park or a settle landing mid-sweep
+          # is met on the next tick rather than inside this one.
+          def sweep(queue)
+            parked = queue.reject(&:decided?)
+            @announced.keep_if { |pending| parked.include?(pending) }
+            parked.select { |pending| @announced.add?(pending) }.each { |pending| announce(pending) }
+          end
+
+          # Guarded for {Frontend::ApprovalPolicy#asked}'s reason: this fiber
+          # announces every later call, and the likeliest raise is the terminal
+          # going away -- unguarded it ended the watcher and left Async's own
+          # warning in the chat pane. A call whose note failed is not retried;
+          # lain://approval lists it regardless.
+          def announce(pending)
+            @notice.call(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.requester,
+                                      tool: pending.tool, input: pending.input.inspect,
+                                      buffer: Frontend::Neovim::ApprovalView::BUFFER))
+          rescue StandardError => e
+            report(e)
+          end
+
+          # Through the same note, once, and swallowed if that fails too: a
+          # terminal that cannot take the note cannot take the note about it.
+          def report(error)
+            @notice.call(format(UNANNOUNCED, failure: "#{error.class}: #{error.message}"))
+          rescue StandardError
+            nil
+          end
         end
       end
     end

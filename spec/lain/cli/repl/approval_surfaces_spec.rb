@@ -55,14 +55,27 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # park/decide path can show that.
   let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.5) }
   let(:auto_surface) { ApprovalSurfacesSpecSupport::SpySurface.new }
-  let(:tty) { instance_double(Lain::Frontend::TTY) }
+  # A REAL terminal over a StringIO, because a cockpit's chat announces a parked
+  # call through the frontend's own one-line note, and what it printed is half
+  # of what these examples assert.
+  let(:output) { StringIO.new }
+  let(:tty) do
+    Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
+                            history_path: File.join(@dir, "history"))
+  end
   # The seam {#approval_surface}'s reader routes through. "y" is the ONLY way a
   # pending can end up approved at all, so an approval is proof this reader ran
   # -- on the TTY surface's own fiber, since the gated fiber is parked.
   let(:conductor) { instance_double(Lain::CLI::Conductor, read_reply: "y") }
-
   let(:editor) { ApprovalSurfacesSpecSupport::SpySurface.new }
   let(:secret_surface) { ApprovalSurfacesSpecSupport::SpySurface.new }
+
+  around do |example|
+    Dir.mktmpdir do |dir|
+      @dir = dir
+      example.run
+    end
+  end
 
   def surfaces(approvals: queue, auto: nil, attached: nil, secret: nil)
     described_class.new(approvals:, auto_surface: auto, secret_surface: secret, tty:, conductor:)
@@ -200,12 +213,12 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     # The size AND the class of every member, because that is what the splat's
     # comment claims and a size alone would survive an `Async::Task` gaining
     # `to_a` -- the exact upgrade this pin exists to catch.
-    it "makes four with every opt-in surface up, and the human still answers through all of them" do
+    it "makes four with every opt-in surface up, one of them the chat's note rather than its read" do
       result = fan_out(auto: auto_surface, attached: editor, secret: secret_surface)
 
       expect(result[:watched].size).to eq(4)
       expect(result[:watched]).to all(be_an_instance_of(Async::Task))
-      expect(result[:verdict]).to be(true)
+      expect(conductor).not_to have_received(:read_reply)
     end
 
     it "spawns nothing for it by default, which is every chat launched without the flag" do
@@ -215,14 +228,21 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  # These two examples and the one above are the closest anything came to
+  # These examples and the one above are the closest anything came to
   # pinning the editor surface's ABSENCE as correct, and they did not: the
   # counts they assert are counts for the inputs they give, and an unattached
   # editor really is one. What was missing was any example giving the other
   # input at all -- which is the same shape as a capability with no reachable
   # construction, one step further out.
-  describe "--nvim: the editor's own approval list is the third peer" do
-    it "spawns a fiber for it too, so a parked call is drawn where the human is looking" do
+  #
+  # With the editor attached the chat pane READS NOTHING for a parked call: the
+  # human's ruling puts the answer in lain://approval, and a `[y/N]` beside it
+  # is a second reader for a line typed ahead to land in. What the chat keeps is
+  # one line saying where to look.
+  describe "--nvim: the editor's own approval list answers, and the chat only announces" do
+    def notes = output.string.lines.grep(%r{lain://approval})
+
+    it "spawns a fiber for it beside the chat's note, so a parked call is drawn where the human is looking" do
       expect(fan_out(attached: editor)[:watched].size).to eq(2)
     end
 
@@ -232,11 +252,82 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(editor.queues).to contain_exactly(be(queue))
     end
 
-    it "makes three with --auto-approve, and the human surface still answers through all of them" do
+    it "opens no terminal read for the parked call, so nothing typed in the chat can decide it" do
+      result = fan_out(attached: editor)
+
+      expect(conductor).not_to have_received(:read_reply)
+      expect(decisions.last.fetch("surface")).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+      expect(result[:verdict]).to be(false)
+    end
+
+    it "announces the parked call in the chat as one line naming the call and where to answer it" do
+      fan_out(attached: editor)
+
+      expect(notes).to contain_exactly(a_string_including("! agent asks to run bash(", "ls", "/approve"))
+    end
+
+    # A call outlives lines: the one a subagent parked is still parked when the
+    # human dispatches the next. "This just arrived" is false by then.
+    it "announces a call once however many lines it stays parked through" do
+      Sync do |task|
+        built = surfaces(attached: editor)
+        gated = task.async { queue.call(effect, nil) }
+        2.times do
+          watched = built.watch(task)
+          task.sleep(0.1)
+          watched.each(&:stop)
+        end
+        gated.stop
+      end
+
+      expect(notes.size).to eq(1)
+    end
+
+    it "tells the line's attention a call is outstanding while it is parked, and not after" do
+      attention = Lain::CLI::Repl::LineScope::Attention.new
+
+      readings = Sync do |task|
+        watched = surfaces(attached: editor).watch(task, attention:)
+        gated = task.async { queue.call(effect, nil) }
+        parked = attention.outstanding?
+        queue.first.approve(surface: Lain::Frontend::Neovim::ApprovalView::SURFACE)
+        gated.wait
+        [parked, attention.outstanding?].tap { watched.each(&:stop) }
+      end
+
+      expect(readings).to eq([true, false])
+    end
+
+    # The note's own write can fail -- the characteristic failure is the
+    # terminal going away -- and the fiber announcing every later call must not
+    # die of it, or leave Async's own warning in the chat pane instead.
+    it "reports a note that failed to render once, and keeps announcing later calls" do
+      notes = 0
+      allow(tty).to receive(:render_warning).and_wrap_original do |original, *args|
+        notes += 1
+        raise Errno::EPIPE if notes == 1
+
+        original.call(*args)
+      end
+
+      alive = Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        first = task.async { queue.call(effect, nil) }
+        pumped_until(task, reason: "the first note was attempted") { notes.positive? }
+        second = task.async { queue.call(ApprovalSurfacesSpecSupport::Effect.new("bash", { "command" => "pwd" }, "tu_2"), nil) }
+        pumped_until(task, reason: "the second call was announced") { output.string.include?("pwd") }
+        watched.first.running?.tap { (watched + [first, second]).each(&:stop) }
+      end
+
+      expect(alive).to be(true)
+      expect(output.string.lines.grep(/could not announce/).size).to eq(1)
+    end
+
+    it "makes three with --auto-approve, and still reads nothing at the terminal" do
       result = fan_out(auto: auto_surface, attached: editor)
 
       expect(result[:watched].size).to eq(3)
-      expect(result[:verdict]).to be(true)
+      expect(conductor).not_to have_received(:read_reply)
     end
 
     it "spawns nothing for an editor that is not attached, which is every headless chat" do

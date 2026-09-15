@@ -45,8 +45,6 @@ module ErrorTaxonomyDiscipline
       "six raise sites in /pin and /unpin, no caller and no spec that names it",
     "Lain::CLI::Epic::UnreadableHome" =>
       "carries a body that composes its sentence, so its name is not the only thing it holds",
-    "Lain::CLI::HumanReplies::Reply::UnknownArm" =>
-      "two raise sites over a closed set of arms; nothing reads the class back",
     "Lain::CLI::Worktrees::NotARepository" =>
       "two raise sites in `lain worktrees gc`; the isolation backend's same-named sibling IS rescued",
     "Lain::Grader::TestHarness::Adapter::Unparseable" =>

@@ -212,8 +212,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       allow(conductor).to receive(:supervise) { |_task, _head, &turn| Struct.new(:response).new(turn.call) }
       allow(conductor).to receive(:read_prompt).and_return("go", "quit")
       # The human is not at the terminal, which is the whole situation the card
-      # describes: the TTY surface asks and nobody answers, so the ONLY thing
-      # that can settle this call is the editor.
+      # describes: whatever the chat reads, nobody types, so the ONLY thing that
+      # can settle this call is the editor.
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(60) }
       presser = Thread.new do
         wait_until_editor(timeout: 20) { buffer_lines("lain://approval").join.include?("pwd") }
@@ -228,21 +228,23 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                         "verdict" => "approve")
     end
 
-    # QA round 8's finding, and the REACHABILITY half of it: the surface that
-    # has to let go of its read is the one {Repl::ApprovalSurfaces} builds for
-    # itself, reading through `conductor.read_reply` -- not one an example wired.
+    # QA round 8's finding, and the REACHABILITY half of it. The terminal was
+    # the casualty then: having taken the first arrival it stayed inside a read
+    # no human would answer, so the second gated call of the turn was never put
+    # in front of the human at all.
     #
-    # The editor was never the casualty here; it observes the parked set and
-    # answered both calls before this card as it does after. THE TERMINAL was.
-    # Having taken the first arrival it stayed inside a read no human would ever
-    # answer, so the second gated call of the turn was never rendered at the
-    # terminal at all -- and on `--no-nvim` there would have been nobody else to
-    # ask. So the discriminating assertion is what the TERMINAL was asked to
-    # render, which is why the reader records before it parks.
-    it "asks at the terminal about the second gated call too, once the editor has answered the first" do
+    # In a cockpit the terminal asks NOTHING -- lain://approval is where the
+    # human answers, and a `[y/N]` in the chat beside it is a reader for
+    # typeahead to land in. What survives of the finding is its reachability
+    # claim, through the real {Lain::CLI::Repl}: the chat still TELLS the human
+    # about the second call once the editor has answered the first, and opens a
+    # y/N read for neither. The reader records before it parks, so a y/N read
+    # that opened is seen even though nobody answers it.
+    it "announces the second gated call too, once the editor answered the first, and asks y/N about neither" do
       queue = Lain::Approval::Queue.new(journal:, timeout: 60)
       settled = Thread::Queue.new
       prompts = []
+      chat = StringIO.new
       allow(agent).to receive(:ask) do
         %w[pwd whoami].each_with_index do |command, index|
           settled.push(queue.call(ApprovalSeamSupport::Effect.new("bash", { "command" => command },
@@ -261,11 +263,19 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         approve_in_editor("whoami", after: "pwd")
       end
 
-      Timeout.timeout(45) { repl_over(queue).run(**repl_session) }
+      Dir.mktmpdir do |dir|
+        Timeout.timeout(45) { repl_over(queue, tty: chat_tty(chat, dir)).run(**repl_session) }
+      end
 
       expect(presser.join(5)).to be_truthy
       expect(Timeout.timeout(10) { [settled.pop, settled.pop] }).to eq([true, true])
-      expect(prompts.join).to include("pwd").and include("whoami")
+      expect(prompts.grep(%r{\[y/N\]})).to be_empty
+      expect(chat.string.lines.grep(%r{lain://approval}).join).to include("pwd").and include("whoami")
+    end
+
+    def chat_tty(output, dir)
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
+                              history_path: File.join(dir, "history"))
     end
 
     # Wait for the row to be the one on screen, then press y on it. `after:` is
@@ -283,10 +293,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # The REAL HumanReplies, undelegated: repl_spec wraps it in a double that
     # no-ops `bind_editor` precisely so its own examples keep the rail they set,
     # and that is the wiring under test here.
-    def repl_over(approvals)
-      replies = Lain::CLI::HumanReplies.new(tty: null_tty, conductor:, questions: Async::Queue.new,
+    def repl_over(approvals, tty: null_tty)
+      replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
                                             ask_human: Lain::Tools::AskHuman::Directory.new)
-      Lain::CLI::Repl.new(agent:, tty: null_tty, replies:, commands:, approvals:, conductor:,
+      Lain::CLI::Repl.new(agent:, tty:, replies:, commands:, approvals:, conductor:,
                           chronicle: Lain::CLI::Chronicle::Null.new)
     end
 
