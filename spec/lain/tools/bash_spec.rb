@@ -431,6 +431,11 @@ RSpec.describe Lain::Tools::Bash do
   describe "what the model is told about the two arms" do
     let(:command_field) { tool.input_schema.dig("properties", "command", "description") }
 
+    # `--exec docker` ends the CONTAINER on a timeout too, not just the
+    # client -- a fact only the model's own reading of these two fields can
+    # tell it, since a container it started is otherwise invisible to it.
+    let(:timeout_field) { tool.input_schema.dig("properties", "timeout", "description") }
+
     it "conditions the shell on the command not being fully understood" do
       expect(tool.description).to include("fully understood")
       expect(tool.description).not_to include("Runs a shell command via `sh -c`")
@@ -512,6 +517,11 @@ RSpec.describe Lain::Tools::Bash do
                  "most README.md", "mysql -e select"]
 
       expect(unnamed.map { |command| Lain::Shell::Verdict.new.call(command) }).to all(be_abstain)
+    end
+
+    it "says a container backend stops and removes the container too, on both channels" do
+      expect(tool.description).to include("stopped and removed")
+      expect(timeout_field).to include("stopped and removed")
     end
   end
 

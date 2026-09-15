@@ -135,7 +135,9 @@ module Lain
                                               "the picture."
         field :cwd, :string, description: "Working directory for the command. Defaults to the current directory."
         field :timeout, :integer,
-              description: "Seconds to allow before the command's whole process group is killed. " \
+              description: "Seconds to allow before the command's whole process group is killed -- and, " \
+                           "under a container backend, before its container is stopped and removed too, " \
+                           "rather than left running behind the killed client. " \
                            "Defaults to #{DEFAULT_TIMEOUT}, max #{MAX_TIMEOUT}."
 
         validates :timeout, numericality: { greater_than: 0, less_than_or_equal_to: MAX_TIMEOUT }, allow_nil: true
@@ -239,7 +241,9 @@ module Lain
           "stderr. A command that is fully understood runs as argv with no " \
           "shell process at all, wherever the backend running it takes argv; " \
           "`sh -c` runs the rest. The command's whole process group is killed " \
-          "if it runs past its timeout."
+          "if it runs past its timeout, and under a container backend the " \
+          "container itself is stopped and removed, not just the client that " \
+          "started it."
       end
 
       # Tier 3: the model fully controls `command`.

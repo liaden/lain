@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "securerandom"
+
 module Lain
   module Exec
     # The container backend: one `docker run --rm` per command, the project
@@ -30,14 +32,19 @@ module Lain
       # project's commands against the project's own toolchain.
       DEFAULT_IMAGE = "alpine:latest"
 
-      # `--rm` because nothing here names, reuses or reaps a container, so
-      # nothing may leave one behind. `--quiet` because an image absent locally
+      # `--rm` asks the DAEMON to drop the container once it stops on its own;
+      # it does nothing for one a timeout has to end, which is what
+      # {#call}'s rescue is for. `--quiet` because an image absent locally
       # makes the client narrate its pull progress onto the same stderr the
       # command's output rides, and a tool result carrying transfer noise reads
       # to the model as the command's own. Measured not to touch the command's
       # streams: a forced fresh pull loses every `Trying to pull`/`Copying blob`
       # line while stdout, stderr and a failed pull's diagnostic survive.
-      RUN = [CLI, "run", "--rm", "--quiet"].freeze
+      # `--init` runs an init process as PID 1 so ordinary signals reach the
+      # command even where the image's own entrypoint does not reap or forward
+      # them -- unrelated to, and not a substitute for, the timeout cleanup
+      # below: an init still relays a TERM the command itself traps or ignores.
+      RUN = [CLI, "run", "--rm", "--quiet", "--init"].freeze
 
       # An ALLOWLIST, because a denylist is the wrong shape for an unbounded
       # problem: the ten-name one this replaced missed `LD_LIBRARY_PATH` (this
@@ -77,6 +84,8 @@ module Lain
         @project = project
         @exec = exec
         @user_mapping = UserMapping.new(user:, prober:)
+        @names = Names.new
+        @cleanup = Cleanup.new(exec:, cwd: project)
         freeze
       end
 
@@ -111,26 +120,46 @@ module Lain
       # @param timeout [Numeric] seconds before the client's process group is
       #   killed. `docker run` proxies signals to the container's PID 1 in
       #   non-TTY mode, so the ordinary TERM reaches the command; a container
-      #   that ignores TERM outlives the client's KILL, a leak this backend
-      #   names rather than manages.
+      #   that ignores TERM outlives the client's own KILL, which is why the
+      #   deadline's end also asks the daemon directly to stop and drop it.
       # @param stdout_sink [#<<] where stdout bytes are pumped as they arrive
       # @param stderr_sink [#<<] where stderr bytes are pumped as they arrive
       # @return [Capture] what ran, whatever its exit status
-      # @raise [Timeout] when the deadline passed and the client was killed
+      # @raise [Timeout] when the deadline passed, the client was killed and
+      #   its container asked to stop directly -- the message names the
+      #   container when that asking could not be confirmed within its own
+      #   bounded deadline
       # @raise [Unsupported] when handed a PIPED term
       def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new)
         crossing = crossing(env)
-        @exec.call(command: [argv(command, cwd, crossing.keys, timeout)], cwd: @project, env: crossing,
+        name = @names.next
+        @exec.call(command: [argv(command, cwd, crossing.keys, timeout, name)], cwd: @project, env: crossing,
                    timeout:, stdout_sink:, stderr_sink:)
+      rescue Timeout => e
+        raise Timeout, with_cleanup_note(name, e.message)
       end
 
       private
 
+      # WHY the client's own death is not the container's: {Local}'s TERM/KILL
+      # ends the docker CLIENT's process group, and a non-TTY `docker run`
+      # relays TERM into the container's PID 1 only while the client is still
+      # alive to do the relaying -- once the KILL lands on the client, a
+      # container that trapped or outlived the TERM keeps running with nobody
+      # left to signal it. So the named container is asked to stop directly,
+      # through the same backend the client itself ran through, and the
+      # message says so when that asking could not be confirmed.
+      def with_cleanup_note(name, message)
+        return message if @cleanup.call(name)
+
+        "#{message}\ncontainer #{name} may still be running -- cleanup could not confirm it stopped"
+      end
+
       # `timeout` reaches here for the probe and NOT for the run: the run's
       # deadline is the inner backend's to enforce, but the question asked
       # before it is spent from the same budget.
-      def argv(command, cwd, names, timeout)
-        RUN + @user_mapping.flags(timeout) + mounts(cwd) + ["--workdir", cwd] +
+      def argv(command, cwd, names, timeout, container_name)
+        RUN + ["--name", container_name] + @user_mapping.flags(timeout) + mounts(cwd) + ["--workdir", cwd] +
           envs(names) + [@image] + entrypoint(command)
       end
 
@@ -188,8 +217,9 @@ module Lain
       # this probe will not ask, since it contacts a daemon and can hang. The
       # way out of a wrong answer is `--exec local`.
       #
-      # Holds the only mutable state in this file, which is why it is an object
-      # of its own and {Docker} itself stays frozen. THE MEMO TAKES NO LOCK, and
+      # Holds mutable state, which is why it is an object of its own and
+      # {Docker} itself stays frozen ({Names} is the file's other one, and
+      # takes a lock, for the reason given there). THE MEMO TAKES NO LOCK, and
       # not because two commands cannot overlap: {CLI::Wiring::BaseTools.build}
       # hands the whole tool floor ONE backend and {Tools::Subagent} IS
       # `parallel_safe?`, so siblings fan out as concurrent fibers through this
@@ -271,7 +301,103 @@ module Lain
         end
       end
 
-      private_constant :UserMapping, :Prober
+      # WHY a name at all: a timeout's cleanup has to find the one container
+      # THIS call started, not merely one running the same image, and `--name`
+      # is the only handle the client offers for that before the container has
+      # even started. The pid rides along for READABILITY -- `docker ps` under
+      # a real incident names the lain process that started a container -- but
+      # is not what makes a name unique: the OS reuses a pid, and a process
+      # that crashed before its own cleanup ran (or whose cleanup itself could
+      # not confirm the container stopped -- see {Cleanup}) can leave one
+      # behind named from that same pid. A later process handed the same pid
+      # would then ask `docker run --name` for the exact name a leftover
+      # already holds, refused outright rather than merely colliding in a way
+      # that reads clean -- measured: podman answers "container name ... is
+      # already in use", surfaced as an ordinary nonzero-exit tool result with
+      # nothing pointing at pid reuse as the cause. The per-instance entropy is
+      # what actually carries uniqueness ACROSS process lifetimes; the pid and
+      # the sequence are for a human reading `docker ps`, not for this.
+      #
+      # The lock earns its keep here where {UserMapping}'s memo goes without
+      # one: two siblings racing an unlocked `+=` could read the same counter
+      # value, and unlike a memoised Array where every racer computes the same
+      # answer, two containers given the SAME name is not a benign duplicate --
+      # `docker run --name` refuses the second one outright.
+      class Names
+        def initialize(pid: Process.pid, entropy: SecureRandom.hex(4))
+          @pid = pid
+          @entropy = entropy
+          @sequence = 0
+          @lock = Mutex.new
+        end
+
+        # @return [String] `lain-<pid>-<entropy>-<n>`, unique for the life of
+        #   this object and never repeated by a different one, pid reuse
+        #   included
+        def next = @lock.synchronize { "lain-#{@pid}-#{@entropy}-#{@sequence += 1}" }
+      end
+
+      # WHAT A CLIENT'S OWN DEATH DOES NOT REACH. {Local}'s timeout kills the
+      # docker CLIENT's process group; a non-TTY `docker run` relays TERM into
+      # the container's PID 1 only while the client is alive to relay it, so a
+      # container that trapped or outlived the TERM is left running the moment
+      # the client is gone. `docker kill` then `docker rm -f` are what actually
+      # end it, asked directly by name, through the SAME injected exec the
+      # client itself ran through -- reusing its one kill implementation rather
+      # than a second one here, so a `DOCKER_HOST` that never answers bounds
+      # this the same way it bounds an ordinary run.
+      #
+      # Spent from a budget of its OWN. Without one, a black-holed daemon would
+      # turn a caller's bounded timeout into an unbounded hang on the way out
+      # of it -- the one thing a timeout exists to refuse.
+      class Cleanup
+        DEADLINE = 5.0
+
+        def initialize(exec:, cwd:, clock: RunClock::MONOTONIC)
+          @exec = exec
+          @cwd = cwd
+          @clock = clock
+        end
+
+        # @param name [String] the container the timed-out call started
+        # @return [Boolean] whether both `docker kill` and `docker rm -f` were
+        #   put to the daemon inside the deadline, whatever it answered --
+        #   asking is the most a timeout's own message can promise, and a
+        #   daemon that answers "no such container" already agrees it is gone.
+        #
+        # BOTH are attempted even where `kill` itself failed or ran out of
+        # time: `rm -f` forces a running container to stop too, so it is a
+        # second chance at the same outcome rather than a step that only
+        # makes sense once the first succeeded.
+        def call(name)
+          ends_by = @clock.call + DEADLINE
+          killed = run(["docker", "kill", name], ends_by)
+          removed = run(["docker", "rm", "-f", name], ends_by)
+          killed && removed
+        end
+
+        private
+
+        # {Timeout} ONLY -- what {Exec}'s own contract promises for "this did
+        # not finish in time," {Unenforced} included as its subclass. A wider
+        # rescue here would read an unrelated bug anywhere in the exec chain
+        # (a bad argument, a real `NoMethodError`) as an ordinary unconfirmed
+        # cleanup, reporting "may still be running" with no hint anything
+        # actually broke -- the opposite of this codebase's loud-failure
+        # preference, and worse than raising: a bug swallowed here now looks
+        # exactly like a legitimately unresponsive daemon.
+        def run(argv, ends_by)
+          remaining = ends_by - @clock.call
+          return false unless remaining.positive?
+
+          @exec.call(command: [argv], cwd: @cwd, env: {}, timeout: remaining)
+          true
+        rescue Timeout
+          false
+        end
+      end
+
+      private_constant :UserMapping, :Prober, :Names, :Cleanup
     end
   end
 end

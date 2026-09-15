@@ -170,6 +170,22 @@ RSpec.describe Lain::Exec::Docker do
 
   def flag_values(name) = argv.each_cons(2).select { |flag, _| flag == name }.map(&:last)
 
+  def name_flag(one_argv) = one_argv.each_cons(2).find { |flag, _| flag == "--name" }&.last
+
+  # A second recording double, independent of the `let(:inner)` above --
+  # for the examples asking about TWO backends rather than about the one
+  # `subject(:backend)` is built from.
+  def recording_inner
+    Class.new do
+      attr_reader :command
+
+      def call(command:, **)
+        @command = command
+        Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+      end
+    end.new
+  end
+
   describe "the docker invocation it builds" do
     # STRUCTURE, not the first four elements: what follows `--rm` depends on
     # which client is answering (see "how the calling user reaches the
@@ -179,6 +195,49 @@ RSpec.describe Lain::Exec::Docker do
       run
 
       expect(argv.first(3)).to eq(%w[docker run --rm])
+    end
+
+    # THE PREFIX THE CLEANUP DEPENDS ON: an init as pid 1 relays ordinary
+    # signals the image's own entrypoint might not, and a name is the only
+    # handle a timeout's rescue has to find this ONE container again.
+    it "runs an init process and names the container it starts" do
+      run
+
+      expect(argv).to include("--init")
+      expect(flag_values("--name").first).to match(/\Alain-#{Process.pid}-[0-9a-f]+-\d+\z/)
+    end
+
+    it "names each container uniquely, so two calls never collide" do
+      run
+      first = flag_values("--name").first
+
+      run
+      second = flag_values("--name").first
+
+      expect(second).not_to eq(first)
+    end
+
+    # A pid ALONE would not have survived a crash: the OS reuses one, and a
+    # process that crashed before its own cleanup ran (or whose cleanup could
+    # not confirm a container stopped) can leave a `lain-<pid>-...` container
+    # behind for a LATER process that is handed the same pid. Two backends
+    # here genuinely share Process.pid -- there is only one process running
+    # this example -- which is exactly that scenario: what makes their first
+    # names differ is each backend's own entropy, not anything about pid.
+    it "does not repeat a name across two backends sharing a pid, standing in for pid reuse after a crash" do
+      one_inner = recording_inner
+      two_inner = recording_inner
+      one = described_class.new(image: "img:1", project:, exec: one_inner, user: "1000:1000")
+      two = described_class.new(image: "img:1", project:, exec: two_inner, user: "1000:1000")
+
+      one.call(command: "echo hi", cwd: project, env: {}, timeout: 5)
+      two.call(command: "echo hi", cwd: project, env: {}, timeout: 5)
+
+      name_one = name_flag(one_inner.command.first)
+      name_two = name_flag(two_inner.command.first)
+
+      expect([name_one, name_two]).to all(be_a(String))
+      expect(name_one).not_to eq(name_two)
     end
 
     it "puts the image immediately before what the container is asked to run" do
@@ -584,6 +643,119 @@ RSpec.describe Lain::Exec::Docker do
     end
   end
 
+  # THE RESCUE. {Local} raising once the docker CLIENT's own group has been
+  # killed is simulated directly -- what happens next is this backend's own
+  # code, never {Shell::Pipeline}'s, so it needs no real client and no real
+  # container to exercise. The `:seam` block below covers the real thing this
+  # stands in for.
+  describe "what a timeout does to its container" do
+    # Answers three argv shapes: the run itself (always a timeout, as a
+    # killed client's would look from here), and the two cleanup commands the
+    # rescue sends afterwards -- each independently `:ok`, `:fails` (a
+    # nonzero exit, still an answer) or `:hangs` (raises the way a daemon
+    # that never replies would, without actually spending wall-clock time on
+    # it -- {Cleanup} trusts its `exec:` to enforce the timeout it was
+    # handed, which is `Local`'s job and not this double's to re-prove).
+    #
+    def cleanup_answer(argv, kill:, remove:)
+      mode = { "kill" => kill, "rm" => remove }[argv[1]]
+      raise Lain::Exec::Timeout, "sleep never returned" if mode.nil?
+      raise Lain::Exec::Timeout, "#{argv.join(" ")} never answered" if mode == :hangs
+
+      Lain::Exec::Capture.new(exit_status: mode == :fails ? 1 : 0, stdout: "", stderr: "")
+    end
+
+    # `Class.new`, not a named `class` statement: the latter's constant
+    # scoping follows where the block is WRITTEN, not the `describe` it runs
+    # inside, and would land on `Object` -- this file's own top comment names
+    # exactly that hazard.
+    def timing_out_inner(kill: :ok, remove: :ok)
+      outer = self
+      Class.new do
+        attr_reader :commands
+
+        define_method(:initialize) { @commands = [] }
+
+        define_method(:call) do |command:, timeout:, **|
+          argv = command.first
+          @commands << { argv:, timeout: }
+          outer.cleanup_answer(argv, kill:, remove:)
+        end
+      end.new
+    end
+
+    # `prober:` is stubbed rather than left to the default: {UserMapping}
+    # asks the SAME `exec:` its own `docker --version`, which would otherwise
+    # be a fourth command in `inner.commands` ahead of the three this section
+    # is about.
+    def backend_with(kill: :ok, remove: :ok)
+      inner = timing_out_inner(kill:, remove:)
+      [Lain::Exec::Docker.new(project:, exec: inner, prober: ->(_timeout) {}), inner]
+    end
+
+    def run_on(backend, timeout: 5) = backend.call(command: "sleep 5", cwd: project, env: {}, timeout:)
+
+    def name_in(argv) = argv.each_cons(2).find { |flag, _| flag == "--name" }&.last
+
+    it "runs docker kill then docker rm -f, naming the container the run itself named" do
+      backend, inner = backend_with
+
+      expect { run_on(backend) }.to raise_error(Lain::Exec::Timeout)
+
+      run_argv, kill_argv, rm_argv = inner.commands.map { |call| call[:argv] }
+      container_name = name_in(run_argv)
+
+      expect(kill_argv).to eq(%W[docker kill #{container_name}])
+      expect(rm_argv).to eq(%W[docker rm -f #{container_name}])
+    end
+
+    it "keeps the timeout's own message once cleanup confirms the container is gone" do
+      backend, = backend_with
+
+      expect { run_on(backend) }.to raise_error(Lain::Exec::Timeout, "sleep never returned")
+    end
+
+    # A nonzero exit still counts as an answer: a daemon that says "no such
+    # container" already agrees the container is gone, which is a different
+    # fact from never having replied at all.
+    it "keeps the timeout's own message when the daemon answers nonzero" do
+      backend, = backend_with(kill: :fails, remove: :fails)
+
+      expect { run_on(backend) }.to raise_error(Lain::Exec::Timeout, "sleep never returned")
+    end
+
+    it "says the container may still be running when cleanup could not confirm it stopped" do
+      backend, inner = backend_with(kill: :hangs)
+
+      expect { run_on(backend) }.to raise_error(Lain::Exec::Timeout) do |error|
+        container_name = name_in(inner.commands.first[:argv])
+        expect(error.message).to include("sleep never returned", container_name, "may still be running")
+      end
+    end
+
+    # `docker rm -f` forces a running container to stop too, so it is a
+    # second chance at the same outcome rather than a step that only makes
+    # sense once `docker kill` already succeeded.
+    it "still attempts docker rm -f when docker kill could not be confirmed" do
+      backend, inner = backend_with(kill: :hangs)
+
+      expect { run_on(backend) }.to raise_error(Lain::Exec::Timeout)
+
+      expect(inner.commands.map { |call| call[:argv][1] }).to eq(%w[run kill rm])
+    end
+
+    # Bounded by a deadline of cleanup's OWN: a caller's generous timeout must
+    # not license an unbounded wait on the way OUT of a call that already
+    # timed out.
+    it "spends at most its own deadline on cleanup, never the command's" do
+      backend, inner = backend_with
+
+      expect { run_on(backend, timeout: 600) }.to raise_error(Lain::Exec::Timeout)
+
+      expect(inner.commands.drop(1).map { |call| call[:timeout] }).to all(be <= 5.0)
+    end
+  end
+
   # The real thing. Everything above decides an argv; this is the only place a
   # container actually starts, and it is why the backend is worth having.
   describe "in a real container", :seam do
@@ -657,6 +829,102 @@ RSpec.describe Lain::Exec::Docker do
 
     it "raises the seam's one Timeout when the command outlives its deadline" do
       expect { run_real("sleep 30", timeout: 1) }.to raise_error(Lain::Exec::Timeout)
+    end
+
+    # THE BLOCKER THIS ROUND FIXED, run for real: killing the docker CLIENT
+    # alone never reached this container, because a non-TTY `docker run`
+    # relays TERM into it only while the client is still alive to relay it.
+    #
+    # Compared against the RUNNING SET before and after, rather than filtered
+    # by `lain-*`: a name this backend never assigned is exactly what the
+    # defect looked like, so a filter keyed on the fix would find nothing
+    # leaked and pass for the wrong reason.
+    it "leaves no container behind for a command that traps and outlives TERM" do
+      before_ids = `docker ps -q`.split("\n")
+
+      expect { run_real(%(sh -c "trap "" TERM; sleep 600"), timeout: 1) }.to raise_error(Lain::Exec::Timeout)
+
+      after_ids = `docker ps -q`.split("\n")
+      expect(after_ids - before_ids).to be_empty
+    end
+  end
+
+  # An unreachable daemon's cleanup, proven for real rather than against a
+  # double: this box's `docker` is a shell shim to podman, and while it does
+  # NOT honor `DOCKER_HOST` (a raw
+  # `DOCKER_HOST=tcp://192.0.2.1:2375 docker kill x` answers in well under a
+  # second, from the LOCAL socket, unaffected), podman's own remote client
+  # DOES honor `CONTAINER_HOST`, inherited by the shim's `exec podman "$@"` --
+  # so a genuinely black-holed daemon is reachable here, just not under the
+  # variable's more familiar name.
+  #
+  # That fact is BOXED, not assumed: a real Docker Engine client reads
+  # neither variable as a signal to hang, so trusting the name alone would
+  # either hang this suite forever on a box where it has no effect, or -- had
+  # the probe below not been bounded -- silently exercise an ordinary local
+  # call and pass for the wrong reason. The probe answers the same way
+  # {DockerBackendAvailability} does: bounded, once per group, named in the
+  # skip.
+  describe "an unreachable daemon, for real", :seam do
+    def black_hole = "tcp://192.0.2.1:2375"
+
+    # Bounded at 1s (plus the local backend's own TERM->KILL grace): if the
+    # client answers within that, CONTAINER_HOST changed nothing for THIS
+    # client, and the scenario below cannot be reached honestly.
+    def container_host_reaches_a_black_hole?
+      ENV["CONTAINER_HOST"] = black_hole
+      Lain::Exec::Local.new.call(command: [%w[docker kill lain-t44-container-host-probe]],
+                                 cwd: Dir.pwd, env: {}, timeout: 1)
+      false
+    rescue Lain::Exec::Timeout
+      true
+    ensure
+      ENV.delete("CONTAINER_HOST")
+    end
+
+    # Same two-hook split as the block above, for the same reason: `skip` is
+    # not usable inside `before(:context)`, and the probes this group needs
+    # (a docker client, a daemon, the image, AND a real hang) are each
+    # expensive enough that asking twice is the wrong default.
+    before(:context) do # rubocop:disable RSpec/BeforeAfterAll
+      @unavailable = DockerBackendAvailability.unavailability
+      @reaches_black_hole = @unavailable.nil? && container_host_reaches_a_black_hole?
+    end
+
+    before do
+      skip("Lain::Exec::Docker :seam skipped -- #{@unavailable}") if @unavailable
+      skip("CONTAINER_HOST has no effect on this box's docker client") if @unavailable.nil? && !@reaches_black_hole
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-exec-docker-blackhole") do |dir|
+        @project = File.realpath(dir)
+        example.run
+      end
+    end
+
+    it "raises within the cleanup deadline, names the container, and leaks no container" do
+      before_ids = `docker ps -q`.split("\n")
+      backend = described_class.new(project: @project)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = with_env("CONTAINER_HOST" => black_hole) do
+        backend.call(command: "sleep 2", cwd: @project, env: {}, timeout: 1)
+        nil
+      rescue Lain::Exec::Timeout => e
+        e
+      end
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      expect(error).to be_a(Lain::Exec::Timeout)
+      expect(error.message).to match(/lain-.*may still be running/)
+      # Generous: the run's own timeout+grace, then Cleanup's own 5s budget,
+      # then ITS grace -- comfortably under a minute on a box this slow, and
+      # nowhere near what an UNBOUNDED wait on a black hole would look like.
+      expect(elapsed).to be < 30
+
+      after_ids = `docker ps -q`.split("\n")
+      expect(after_ids - before_ids).to be_empty
     end
   end
 end
