@@ -375,13 +375,34 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
   end
 
+  # The plan check an issue's launch and `lain epic land` both ask reads the
+  # approvals straight off the journals, with no sign-off fold in front of it
+  # to have refused a damaged line first.
+  describe "a plan check over a sign-off it could not read whole" do
+    it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
+      write_research
+      write_epic
+      home.plan("a").write("the plan for a\n")
+      File.write(File.join(sessions_dir, "damaged.ndjson"),
+                 "#{JSON.generate(decision(digest: "blake3:damaged", stage: "issue_plan").to_journal
+                                    .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
+
+      expect { command.ensure_plan_approved!("a") }.to raise_error(Lain::Error) { |error|
+        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error.message).to include("gate_decision", "blake3:damaged", "approved")
+        expect(error.message).not_to include("\n")
+      }
+    end
+  end
+
   # Scenario: an unconstructable policy refuses loudly.
   #
-  # The seam exercised here is the `interactive` recipe's `asker`, which a
-  # session with no TTY does not have. An `adjudicated` stage in a session that
-  # wired no role spawn and brief refuses the same way -- the last example --
-  # and in both cases it is {Policies::Refusal}, raised by `for_all` at
-  # WIRING time, naming the stage, the policy, and the seam.
+  # Two seams, refused on two scopes. An `adjudicated` stage in a session that
+  # wired no role spawn and brief is refused for EVERY stage at wiring time --
+  # the last example -- because that is a process wired wrong. A missing asker
+  # is a fact about the terminal this command was run from, and this command
+  # decides one stage: so it is refused, before anything is decided, only when
+  # the stage being submitted is the one that would ask.
   describe "a policy this session cannot construct" do
     before do
       write_research
@@ -390,15 +411,33 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def unaskable = command(gates: hands_off.merge("epic_plan" => "interactive"), input: nil)
 
-    it "names the stage, the policy, and the missing seam" do
-      expect { unaskable.submit("epic_plan") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*asker/m)
+    # Scenario: an unattended submit of an interactive stage refuses in words
+    it "says stdin is not a terminal, naming the stage and the policies that would proceed" do
+      expect { unaskable.submit("epic_plan") }.to raise_error(Lain::Error) { |error|
+        expect(error).to be_a(Lain::Approval::Gate::Policies::Refusal)
+        expect(error.kind).to eq(:missing_seam)
+        expect(error.message).to match(/epic_plan.*interactive.*stdin is not a terminal/)
+        expect(error.message).to include('epic_plan = "hands_off"', '"deferred"')
+        expect(error.message).not_to include("adjudicated", "\n")
+      }
     end
 
-    # Refused at wiring, so it refuses for a stage nobody is submitting too.
-    it "refuses even when the stage being submitted is buildable" do
-      expect { unaskable.submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan/)
+    # Scenario: an unattended submit of a hands-off stage proceeds
+    it "decides a hands_off stage while the stages it is not submitting are left interactive" do
+      said = command(gates: { "research" => "hands_off" }, input: nil).submit("research")
+
+      expect(said).to include("approved", research_digest)
+      expect(gate_decisions.map { |record| record.values_at("stage", "policy") }).to eq([%w[research hands_off]])
+    end
+
+    # No wired path builds one, but the sentence must not depend on that: a
+    # caller that hands over live streams and still no asker gets a reason.
+    it "names the missing asker itself when the streams could have carried a question" do
+      askerless = described_class.new(root:, paths:, config: config(hands_off.merge("epic_plan" => "interactive")),
+                                      input: tty, output: StringIO.new, asker: nil)
+
+      expect { askerless.submit("epic_plan") }
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*but this session wired no asker, so/)
     end
 
     it "journals no gate_decision" do
@@ -406,7 +445,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       # EVERY refusal this factory makes, so a bare class match would be
       # satisfied by an unknown-policy or unknown-seam refusal too.
       expect { unaskable.submit("epic_plan") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*asker/m)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*not a terminal/m)
 
       expect(gate_decisions).to be_empty
     end
@@ -513,6 +552,173 @@ RSpec.describe Lain::CLI::EpicSubmit do
     ensure
       journal&.close
     end
+
+    # Scenario: the production epic seat retires its gate's question on the live feed
+    #
+    # Assembled the way the chat's epic driver assembles this command: the
+    # chat's own asker, writing its question through the chronicle's observer,
+    # and the chronicle's RECORD journal, whose tee is the one the status feed
+    # rides. Nothing between them is doubled; only the gate's window is short.
+    describe "the chat's epic seat", :seam do
+      let(:feed_path) { File.join(@tmp, "state.json") }
+      let(:feed) { Lain::StatusFeed.new(path: feed_path) }
+      let(:session_journal) { Lain::Journal.open(File.join(sessions_dir, "chat.ndjson")) }
+      let(:chronicle) do
+        Lain::CLI::Chronicle.new(journal: session_journal).tap do |chronicle|
+          chronicle.wrap_tee(feed)
+          chronicle.wrap_memory(Lain::Memory::Recorder.new)
+          chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 64), toolset: Lain::Toolset.new)
+        end
+      end
+      let(:asker) do
+        Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new), observer: chronicle.observer)
+      end
+
+      after { session_journal.close }
+
+      def inbox_count = JSON.parse(File.read(feed_path)).fetch("inbox_count")
+
+      def seat
+        described_class.new(root:, paths:, config: config(hands_off.merge("research" => "interactive")), asker:,
+                            journal: chronicle.record_journal)
+      end
+
+      # The human's side of the gate, run beside the submit the way the chat's
+      # drain runs beside the driver: it waits for the question, then acts.
+      def submitted_while
+        Sync do |task|
+          task.async do
+            task.yield until asker.pending?
+            yield asker.last_question
+          end
+          seat.submit("research")
+        end
+      end
+
+      def verdicts = gate_decisions.map { |record| record.values_at("approved", "answered_by") }
+
+      # The cockpit's own answer gesture: <CR> on the inbox row opens
+      # lain://question, the human writes beneath the gate's question, and `:w`
+      # hands the parsed document to the chat's reply drain as
+      # `question_answered`. What reaches the asker is the RENDERED answer set,
+      # so a reading of that rendering as the human's words denied every
+      # approval written this way.
+      describe "an approval written in lain://question" do
+        let(:rail) do
+          Class.new do
+            def initialize = @commands = Thread::Queue.new
+            def push(command) = @commands.push(command)
+            def pop(non_block) = @commands.pop(non_block)
+            def attached? = true
+          end.new
+        end
+        let(:editor) do
+          Class.new do
+            attr_reader :opened
+
+            def initialize = @opened = []
+            def open_question(lines, digest) = (@opened << [lines, digest]) && nil
+          end.new
+        end
+        let(:question_view) do
+          Lain::Frontend::Neovim::QuestionView.new(
+            rpc: editor, submit: ->(digest, answers) { rail.push(["question_answered", [digest, answers]]) }
+          )
+        end
+        let(:replies) do
+          tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
+                                        history_path: File.join(@tmp, "history"))
+          Lain::CLI::HumanReplies.new(tty:, conductor: nil, ask_human: asker, questions: nil).tap do |drain|
+            drain.bind_editor(rail)
+          end
+        end
+
+        # The document as the editor was handed it, with the human's answer
+        # written beneath the question the way a comment is: indented two spaces.
+        # A window short enough that a reply that never arrives fails the example
+        # rather than hanging it.
+        def written_and_saved(reply)
+          stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 5)
+          Sync do |task|
+            surfaces = replies.session_surfaces(task)
+            task.async do
+              task.yield until asker.pending?
+              write_beneath(asker.last_question, reply)
+            end
+            seat.submit("research").tap { surfaces.each(&:stop) }
+          end
+        end
+
+        # <CR> opens the set; the human writes; `:w` hands it on.
+        def write_beneath(question, reply)
+          expect(question_view.open(Lain::Question::Set.from_body(question.body), question.digest)).to be_nil
+          expect(question_view.wrote([*editor.opened.last.first, "", "  #{reply}"], question.digest)).to be_nil
+        end
+
+        it "approves when the human writes approve and saves" do
+          expect(written_and_saved("approve")).to include("approved")
+
+          expect(verdicts).to eq([[true, "human"]])
+        end
+
+        it "denies as the human's own denial when the human writes deny and saves" do
+          expect(written_and_saved("deny")).to include("denied")
+
+          expect(verdicts).to eq([[false, "human"]])
+        end
+      end
+
+      # Scenario: a reply is classified, and only a word the question names is a
+      # human's verdict. Typed at `human>` or sent by `:LainReply`, the reply
+      # reaches the asker as the words themselves.
+      describe "a reply in words" do
+        {
+          "approve" => true, "approved" => true, "y" => true, "yes" => true,
+          "  YES \n" => true, "Approve." => true, "approved!" => true,
+          "deny" => false, "denied" => false, "n" => false, "No." => false
+        }.each do |reply, approved|
+          it "reads #{reply.inspect} as the human #{approved ? "approving" : "denying"}" do
+            submitted_while { |question| asker.reply(reply, question.digest) }
+
+            expect(verdicts).to eq([[approved, "human"]])
+          end
+        end
+
+        ["lgtm", "approve it", "", "approve?", "yes?"].each do |reply|
+          it "denies #{reply.inspect} as unrecognised, carrying the reply in the reason" do
+            said = submitted_while { |question| asker.reply(reply, question.digest) }
+
+            expect(said).to include("denied")
+            expect(verdicts).to eq([[false, "unrecognised"]])
+            expect(gate_decisions.first["reason"]).to include(reply.inspect)
+          end
+        end
+
+        # Scenario: end of input is not a human's answer
+        it "records end of input at the reply prompt as eof" do
+          submitted_while { |question| asker.reply(Lain::Tools::AskHuman::Unanswered.new, question.digest) }
+
+          expect(verdicts).to eq([[false, "eof"]])
+        end
+      end
+
+      it "counts the gate's question while it waits and none once its window closes" do
+        stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 0.2)
+        while_waiting = nil
+
+        said = Sync do |task|
+          task.async do
+            task.yield until asker.pending?
+            while_waiting = inbox_count
+          end
+          seat.submit("research")
+        end
+
+        expect(said).to include("denied")
+        expect(while_waiting).to eq(1)
+        expect(inbox_count).to eq(0)
+      end
+    end
   end
 
   # Re-submitting a digest that already carries an approval. The Gate's registry
@@ -590,13 +796,23 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # and printed a backtrace at a user standing at a half-answered gate.
     it "refuses a half-wired terminal as a missing seam, not a NoMethodError" do
       expect { command(gates: hands_off.merge("research" => "interactive"), output: nil).submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /research.*interactive.*asker/m)
+        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /research.*interactive.*nowhere to write/m)
     end
 
-    it "fails closed on end of input" do
+    it "denies an unrecognised reply as unrecognised, never as the human's denial" do
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("maybe\n")).submit("research")
+
+      expect(said).to include("denied")
+      expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") })
+        .to eq([[false, "unrecognised"]])
+    end
+
+    # Scenario: end of input is not a human's answer
+    it "fails closed on end of input, and records nobody's answer as eof" do
       said = command(gates: hands_off.merge("research" => "interactive"), input: tty(nil)).submit("research")
 
       expect(said).to include("denied")
+      expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "eof"]])
     end
   end
 

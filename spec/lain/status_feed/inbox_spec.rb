@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 # The human inbox as {Lain::StatusFeed} publishes it: Event::Projection#pending
 # folded incrementally, retired ONLY by a committed turn's causal edges -- and
 # reached through the two carriers that name those edges, a replayed `:turn`
@@ -112,6 +114,29 @@ RSpec.describe Lain::StatusFeed::Inbox do
       inbox.retire(child_consumption(question.digest).digests)
 
       inbox.arrived(question)
+
+      expect(inbox.pending_size).to eq(0)
+    end
+  end
+
+  # AN EPIC GATE'S QUESTION is cited by no committed turn at all -- a gate is
+  # not a tool call -- so the gate journals the consumption itself, naming no
+  # turn. Read back off the record here, the way any replay would fold it, so
+  # the claim is that the record a settled gate writes is one `#retire` takes.
+  describe "a settled gate's consumption" do
+    it "retires the question a timed-out gate named in its own record" do
+      io = StringIO.new
+      asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
+      artifact = Data.define(:digest, :gate_question).new(digest: "blake3:impl", gate_question: "Approve it?")
+      Sync do
+        Lain::Approval::Gate.new(journal: Lain::Journal.new(io:), timeout: 0.02)
+                            .call(artifact, asker:, stage: "implementation", epic_slug: "demo")
+      end
+      inbox = described_class.new(store:)
+      inbox.arrived(asker.last_question)
+
+      Lain::Journal.records(io.string.lines, type: "questions_consumed")
+                   .each { |record| inbox.retire(record["digests"]) }
 
       expect(inbox.pending_size).to eq(0)
     end

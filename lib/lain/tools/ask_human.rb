@@ -201,6 +201,11 @@ module Lain
         # instance can put words in this record's mouth. {AskHuman#perform}
         # reads it for the same reason.
         def recorded = { "unanswered" => REFUSAL }
+
+        # The words nobody wrote. Nil rather than the refusal sentence, which
+        # is lain's and not a reply: a reader deciding something from what the
+        # human said must find that nothing was said.
+        def words = nil
       end
 
       class NoPendingQuestion < Error; end
@@ -784,6 +789,12 @@ module Lain
       # asked, and the append-only store never loses that. What changes is only
       # that nobody is waiting for its answer any more -- the posture
       # {#awaited} already takes when a stop is raised at its park.
+      #
+      # So a withdrawal retires nothing from an inbox: every reader folding the
+      # record goes on listing the Q until something names it consumed. For
+      # this tool's own call that is the commit delivering the answer; a caller
+      # with no such commit names it itself, as {Approval::Gate} does on the
+      # journal its verdict went to.
       #
       # NAMED, never inferred, exactly as {#reply} names the set it answers: a
       # stale handle must not release a set asked after it. A set that was

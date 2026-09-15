@@ -2,11 +2,19 @@
 
 module Lain
   module Telemetry
-    # The consumption edges of a SPAWNED chain's turn, and nothing else of it.
-    # A relayed question is addressed to the child's PARENT correlation, so the
-    # child's own answering turn is the only one that can consume it -- and that
-    # turn is kept off the telemetry tee, which left the live inbox surfaces
-    # listing a question nothing ever retired.
+    # The questions something consumed, named for the inbox readers that fold
+    # the tee. Two producers write it, and `turn` tells them apart:
+    #
+    # * a SPAWNED chain's turn, naming that turn. A relayed question is addressed
+    #   to the child's PARENT correlation, so the child's own answering turn is
+    #   the only one that can consume it -- and that turn is kept off the
+    #   telemetry tee, which left the live inbox surfaces listing a question
+    #   nothing ever retired.
+    # * a settled {Approval::Gate}, with `turn: nil`. A gate is no tool call, so
+    #   no committed turn ever cites the question it asked; the gate names it
+    #   consumed itself, however its wait ended. A nil `turn` means exactly
+    #   that no turn did the consuming -- read `digests`, never `turn`, to
+    #   retire.
     #
     # {ChildTurn} carries the same edges and is not routed instead: it costs the
     # child's whole transcript (measured in its own doc) where this is a flat

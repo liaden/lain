@@ -213,6 +213,15 @@ RSpec.describe Lain::Epic::Submission do
   end
 
   describe "gate_question" do
+    # The question is the only place a human learns which replies decide, so it
+    # names both vocabularies and says what becomes of anything else.
+    it "says what approves, what denies, and that any other reply is recorded as unrecognised and denies" do
+      question = described_class.research(text: "notes", slug: "demo").gate_question
+
+      expect(question).to include("approve", "approved", "y", "yes", "deny", "denied", "n", "no")
+      expect(question).to include("any other reply is recorded as unrecognised and denies")
+    end
+
     it "names the stage, the slug, and the issue count for an epic_plan" do
       submission = described_class.epic_plan(graph: three_issue_graph, slug: "demo")
 

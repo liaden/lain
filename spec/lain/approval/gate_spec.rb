@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "json"
 require "stringio"
 
 # Approval::Gate is the artifact gate: any artifact answering #digest and
@@ -169,6 +170,97 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
+  # A SETTLED GATE RETIRES ITS QUESTION. The asker's withdrawal frees the asker,
+  # but the Q stays in the record, and every inbox reader that folds the record
+  # lists it until something names it consumed. A gate is not a tool call, so no
+  # committed turn ever cites its question: the gate says so itself, however it
+  # settled.
+  describe "a gate that settles retires the question it asked" do
+    let(:store) { Lain::Store.new }
+    let(:asker) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:)) }
+
+    def consumptions
+      Lain::Journal.records(journal_io.string.lines, type: "questions_consumed").to_a
+    end
+
+    def asked_digest = asker.last_question.digest
+
+    it "names the question once its window closes" do
+      call(gate(timeout: 0.02), asker:, stage: "implementation")
+
+      expect(consumptions.map { |record| record["digests"] }).to eq([[asked_digest]])
+    end
+
+    # A promise that names its question and resolves with a verdict: the shape
+    # the chat's asker has once the epic seat has read the human's words.
+    it "names the question once it is answered" do
+      named = Lain::Tools::AskHuman::Pending.new("blake3:question")
+      answering = Object.new.tap { |duck| duck.define_singleton_method(:ask) { |_question| named } }
+
+      approved = Sync do |task|
+        deciding = task.async { gate.call(plan, asker: answering, stage: "implementation", epic_slug: "demo") }
+        named.resolve(described_class::Answer.approve("human"))
+        deciding.wait
+      end
+
+      expect(approved).to be(true)
+      expect(consumptions.map { |record| record["digests"] }).to eq([["blake3:question"]])
+    end
+
+    it "names the question when its wait is cancelled rather than answered" do
+      Sync do |task|
+        asking = task.async { gate(timeout: 30).call(plan, asker:, stage: "implementation", epic_slug: "demo") }
+        task.yield until asker.pending?
+        asking.stop
+      end
+
+      expect(consumptions.map { |record| record["digests"] }).to eq([[asked_digest]])
+    end
+
+    it "journals the verdict before the retirement" do
+      call(gate(timeout: 0.02), asker:, stage: "implementation")
+
+      expect(Lain::Journal.records(journal_io.string.lines).map { |record| record["type"] }.to_a)
+        .to eq(%w[gate_decision questions_consumed])
+    end
+
+    # The CLI's own prompt and every standing answer write no question into any
+    # record, so there is nothing for a reader to list and nothing to retire.
+    it "journals no retirement for an asker whose promise names no question" do
+      call(gate, asker: approve_asker)
+
+      expect(consumptions).to be_empty
+    end
+  end
+
+  # The gate reads a verdict and nothing else: which words approve, and which
+  # surface typed them, is decided before an Answer reaches it. So an answer
+  # that carries a reason of its own -- a reply nobody could classify, say --
+  # has that reason journaled beside the verdict.
+  describe "an answer that carries its own reason" do
+    it "journals the answer's reason over the caller's" do
+      unclassified = described_class::Answer.new(approved: false, surface: "unrecognised",
+                                                 reason: "the reply \"lgtm\" names no verdict")
+      asker = scripted_asker { |promise, _q| promise.resolve(unclassified) }
+
+      call(gate, asker:, reason: "the caller's note")
+
+      expect(decisions.first).to include("answered_by" => "unrecognised",
+                                         "reason" => "the reply \"lgtm\" names no verdict")
+    end
+
+    it "journals the caller's reason when the answer carries none" do
+      call(gate, asker: approve_asker, reason: "the caller's note")
+
+      expect(decisions.first).to include("reason" => "the caller's note")
+    end
+
+    it "keeps a carried reason frozen, so the answer stays shareable" do
+      expect(described_class::Answer.new(approved: false, surface: +"unrecognised", reason: +"why"))
+        .to be_deeply_frozen
+    end
+  end
+
   describe "approval is monotonic" do
     it "keeps approved? true through approve -> deny while both decisions are journaled" do
       subject_gate = gate(timeout: 0.02)
@@ -272,6 +364,23 @@ RSpec.describe Lain::Approval::Gate do
       rebuilt = nil
       expect { rebuilt = described_class.from_journal(interleaved, journal:) }.not_to raise_error
       expect(rebuilt.approved?(plan.digest)).to be(true)
+    end
+
+    # A damaged line is a Lain::Error naming the record in one sentence, the way
+    # the sign-off queue's own fold refuses it -- never a bare ArgumentError a
+    # human reads as a backtrace from `lain epic land`.
+    it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
+      damaged = JSON.generate(Lain::Approval::GateDecision.new(artifact_digest: "blake3:maybe", epic_slug: "demo",
+                                                               stage: "issue_plan", approved: true,
+                                                               answered_by: "human", policy: "interactive",
+                                                               latency: 1.0, issue_id: "a")
+                                                          .to_journal.merge("approved" => "maybe"))
+
+      expect { described_class.from_journal([damaged], journal:) }.to raise_error(Lain::Error) { |error|
+        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error.message).to include("gate_decision", "blake3:maybe", "approved", "demo/issue_plan/a")
+        expect(error.message).not_to include("\n")
+      }
     end
   end
 

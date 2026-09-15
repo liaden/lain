@@ -121,6 +121,21 @@ module Lain
           def initialize(queue:, asker:, journal:, role_spawn: nil, brief: nil)
             super
           end
+
+          # The same wiring, for a stage this session will never put to its
+          # asker: a session with none is handed {Nobody} there, so that stage
+          # still builds and every OTHER seam it needs is still checked.
+          def unasked = asker.nil? ? with(asker: Nobody) : self
+        end
+
+        # The asker of a session that has none, standing in only for the stages
+        # {.for_all} was told this session does not decide. Refusing rather
+        # than answering, so a caller that reached for one of those policies
+        # anyway gets a named refusal and never a verdict nobody gave.
+        module Nobody
+          UNASKED = "this session has nobody to put a gate's question to, and was built to decide other stages"
+
+          def self.ask(_question) = raise(Refusal.new(UNASKED, kind: :missing_seam, seams: ["asker"]))
         end
 
         # The seams a policy needs and how to build it from them. Both members
@@ -142,15 +157,21 @@ module Lain
           # @raise [Refusal] `:missing_seam`, naming every seam this recipe
           #   needs and deps lacks
           def build(deps, stage:, policy:)
-            # `nil?`, not falsiness: {Deps} documents the adjudication seams as
-            # NIL-able, so a seam deliberately wired to `false` is wired.
-            missing = seams.select { |seam| deps.public_send(seam).nil? }
+            missing = missing(deps)
             raise Refusal.missing_seam(missing, stage:, policy:) unless missing.empty?
 
             construct(deps, stage, policy)
           end
 
+          # @param deps [Deps] the session's wiring
+          # @return [Boolean] whether that wiring carries every seam this needs
+          def runs_on?(deps) = missing(deps).empty?
+
           private
+
+          # `nil?`, not falsiness: {Deps} documents the adjudication seams as
+          # NIL-able, so a seam deliberately wired to `false` is wired.
+          def missing(deps) = seams.select { |seam| deps.public_send(seam).nil? }
 
           # A policy that refused its OWN construction. Re-raised with the
           # stage on it because only the factory knows which `[epics.gates]`
@@ -199,6 +220,13 @@ module Lain
         # @return [Array<String>] every configurable policy name
         def self.names = CATALOG.keys
 
+        # The policies a session wired this way could run at all, which is what
+        # a refusal names as the way forward.
+        #
+        # @param deps [Deps] the session's wiring
+        # @return [Array<String>] catalog names, in catalog order
+        def self.runnable(deps) = CATALOG.select { |_name, recipe| recipe.runs_on?(deps) }.keys
+
         # @param name [Object] a configured value, of any type -- membership is
         #   tested against the known STRINGS directly, so an Integer simply is
         #   not one
@@ -228,12 +256,35 @@ module Lain
         # exists to prevent. Resolving every stage up front makes it a startup
         # refusal.
         #
+        # == Except the asker, for the stages a session will not decide
+        #
+        # A missing role spawn is a process wired wrong, and is refused for
+        # every stage. A missing asker is a fact about where the session runs
+        # -- no terminal -- and it matters only at a stage that asks. A
+        # one-stage session (`lain epic submit`) says which stage it decides in
+        # `asking:`, so an unattended `hands_off` submit is not refused over a
+        # stage it was never going to reach; the stages outside it are built
+        # over {Nobody} with every other seam still checked. The default is
+        # every stage, which is the long session this method exists for.
+        #
         # @param config [#gate_policy_for] the loaded {Lain::Config}
         # @param deps [Deps] the session's wiring
+        # @param asking [Array<String>] the stages this session will put to its
+        #   asker, when it has one
         # @return [Hash{String => Policy}] frozen, keyed by stage in pipeline order
         # @raise [Refusal] for ANY stage, before the session runs
-        def self.for_all(config:, deps:)
-          Epic::STAGES.to_h { |stage| [stage, self.for(stage:, config:, deps:)] }.freeze
+        # @raise [Epic::UnknownStage] when `asking` names a stage the pipeline
+        #   does not hold -- a typo there would silently stop every stage asking
+        def self.for_all(config:, deps:, asking: Epic::STAGES)
+          unknown = asking - Epic::STAGES
+          unless unknown.empty?
+            raise Epic::UnknownStage, "asking names #{unknown.join(", ")}, which the pipeline does not hold " \
+                                      "(its stages are #{Epic::STAGES.join(", ")})"
+          end
+
+          Epic::STAGES.to_h do |stage|
+            [stage, self.for(stage:, config:, deps: asking.include?(stage) ? deps : deps.unasked)]
+          end.freeze
         end
 
         def self.recipe(policy, stage)

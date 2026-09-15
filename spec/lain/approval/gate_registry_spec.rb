@@ -90,12 +90,12 @@ RSpec.describe "Lain::Approval::Gate.from_journal" do
 
     it "raises rather than registering an approval when `approved` arrives as the STRING \"false\"" do
       expect { rebuild([decision(digest: "d", approved: "false")]) }
-        .to raise_error(ArgumentError, /approved/)
+        .to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /approved/)
     end
 
     it "raises rather than registering nil when artifact_digest is missing" do
       expect { rebuild([decision(digest: nil, approved: true)]) }
-        .to raise_error(ArgumentError, /artifact_digest/)
+        .to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /artifact_digest/)
     end
 
     it "never reaches a turn_usage record with the fold at all -- from_journal's type filter runs first" do

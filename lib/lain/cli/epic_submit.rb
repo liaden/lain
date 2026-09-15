@@ -51,13 +51,19 @@ module Lain
       # who just typed the command, this process has no second fiber to hand the
       # reactor to while a `gets` blocks, and a bare CLI's refusal is Ctrl-C. The
       # fail-closed default still holds for every reply that is not affirmative,
-      # EOF included.
+      # EOF included -- and EOF is journaled as {Lain::Epic::GateReply::EOF},
+      # because nobody typed the denial it stands for.
       class Prompt
-        AFFIRMATIVE = %w[y yes approve].freeze
-
         # Spelled the way {CLI::EpicQueue} already spells a human sign-off: one
         # string, no second constant to drift.
         SURFACE = EpicQueue::HUMAN
+
+        # Why a session on these streams has nobody to ask, in the words the
+        # refusal of an interactive stage says it.
+        NO_TERMINAL = "stdin is not a terminal"
+        NO_OUTPUT = "there is nowhere to write the gate's question"
+        # For a caller that handed over working streams and no asker anyway.
+        NO_ASKER = "this session wired no asker"
 
         # nil for a session with no terminal, and the nil is the CONTRACT rather
         # than a missing Null Object: {Approval::Gate::Policies::Deps} reads a nil
@@ -71,10 +77,15 @@ module Lain
         # escaped `exe/lain`'s rescue and printed a backtrace at a user standing
         # at a half-asked gate.
         def self.on(input:, output:)
-          return unless input.respond_to?(:tty?) && input.tty?
-          return unless output.respond_to?(:write)
+          new(input:, output:) if unheard(input:, output:).nil?
+        end
 
-          new(input:, output:)
+        # @return [String, nil] why these streams cannot carry a question, or
+        #   nil when they can
+        def self.unheard(input:, output:)
+          return NO_TERMINAL unless input.respond_to?(:tty?) && input.tty?
+
+          NO_OUTPUT unless output.respond_to?(:write)
         end
 
         def initialize(input:, output:)
@@ -91,8 +102,62 @@ module Lain
 
         private
 
-        def answer(reply)
-          Approval::Gate::Answer.new(approved: AFFIRMATIVE.include?(reply.to_s.strip.downcase), surface: SURFACE)
+        def answer(reply) = Lain::Epic::GateReply.answer(reply, surface: SURFACE)
+      end
+
+      # The asker the chat lends this command, heard in the words its gate's
+      # question names. That asker resolves with what the human WROTE -- bare
+      # words at `human>` and `:LainReply`, a rendered answer set carrying them
+      # from lain://question -- and {Approval::Gate} reads verdicts, not words.
+      # So the reading happens here, where the question's vocabulary and the
+      # chat's asker meet, and the gate stays blind to which surface spoke.
+      #
+      # It forwards `#withdraw` and, through {Hearing}, `#digest`, so the gate
+      # still frees the asker and still retires the question it asked.
+      class Heard
+        # nil stays nil: {Approval::Gate::Policies::Deps} reads a nil asker as
+        # "nobody can be asked", and wrapping it would hide exactly that.
+        def self.over(asker) = asker && new(asker)
+
+        def initialize(asker)
+          @asker = asker
+        end
+
+        def ask(question) = Hearing.of(@asker.ask(question))
+
+        def withdraw(hearing)
+          @asker.withdraw(hearing.promise) if @asker.respond_to?(:withdraw)
+        end
+      end
+
+      # One asked question's promise, awaited as a verdict. A value that is
+      # already one passes through untouched: a standing answer, or this
+      # command's own {Prompt}.
+      class Hearing
+        # Only a promise naming its question answers `#digest`, because the gate
+        # retires exactly the questions that do.
+        def self.of(promise) = promise.respond_to?(:digest) ? Named.new(promise) : new(promise)
+
+        attr_reader :promise
+
+        def initialize(promise)
+          @promise = promise
+        end
+
+        def await = verdict(@promise.await)
+
+        private
+
+        def verdict(resolved)
+          return resolved if resolved.respond_to?(:approved?)
+
+          Lain::Epic::GateReply.answer(resolved.respond_to?(:words) ? resolved.words : resolved,
+                                       surface: Prompt::SURFACE)
+        end
+
+        # A hearing whose question is in the record.
+        class Named < Hearing
+          def digest = promise.digest
         end
       end
 
@@ -338,6 +403,7 @@ module Lain
         @paths = paths
         @config = config
         @asker = asker
+        @unheard = Prompt.unheard(input:, output:) || Prompt::NO_ASKER
         @journal = journal ? Lent.new(journal) : Owned.new(paths)
         @role_spawn = role_spawn
         @brief = brief
@@ -448,11 +514,29 @@ module Lain
       end
 
       # `for_all`, never `for`: resolving one stage at a time refuses LATE, and
-      # late is exactly the failure the factory exists to prevent.
+      # late is exactly the failure the factory exists to prevent. Only the
+      # asker is scoped to the submitted stage, because this command decides
+      # that one stage and no other can ever ask it anything.
       def policy_for(stage, queue, journal)
-        deps = Approval::Gate::Policies::Deps.new(queue:, asker: @asker, journal:, role_spawn: @role_spawn,
-                                                  brief: @brief)
-        Approval::Gate::Policies.for_all(config: @config, deps:).fetch(stage.name)
+        deps = Approval::Gate::Policies::Deps.new(queue:, asker: Heard.over(@asker), journal:,
+                                                  role_spawn: @role_spawn, brief: @brief)
+        Approval::Gate::Policies.for_all(config: @config, deps:, asking: [stage.name]).fetch(stage.name)
+      rescue Approval::Gate::Policies::Refusal => e
+        raise unless e.seams == ["asker"]
+
+        raise unattended(e, deps)
+      end
+
+      # The factory's sentence names a seam, which is the wiring's word for it.
+      # A human who ran this from cron needs the reason and the line to change.
+      def unattended(refusal, deps)
+        proceeding = Approval::Gate::Policies.runnable(deps).map(&:inspect).join(" or ")
+        Approval::Gate::Policies::Refusal.new(
+          "epic stage #{refusal.stage.inspect} is configured for the #{refusal.policy.inspect} gate policy, but " \
+          "#{@unheard}, so nobody can answer it; set #{refusal.stage} = #{proceeding} in [epics.gates] to decide " \
+          "it unattended",
+          kind: refusal.kind, stage: refusal.stage, policy: refusal.policy, seams: refusal.seams
+        )
       end
 
       # Plural for {CLI::SessionJournals}' reason: an epic spans days and

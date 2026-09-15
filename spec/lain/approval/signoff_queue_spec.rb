@@ -12,6 +12,22 @@ require "stringio"
 # tool call and blocks a fiber on it). Nothing parks here; a deferral returns at
 # once having refused.
 RSpec.describe Lain::Approval::SignoffQueue do
+  # ONE sentence for a damaged sign-off record, whichever fold reaches it: the
+  # queue's own and the gate registry's both build their refusal here.
+  describe described_class::UnreadableRecord, ".for" do
+    it "names the record's digest, its partition and the cause, in one line" do
+      record = { "artifact_digest" => "blake3:torn", "epic_slug" => "demo", "stage" => "issue_plan",
+                 "issue_id" => "a" }
+
+      refusal = described_class.for(record, ArgumentError.new("approved must be true or false, got maybe"))
+
+      expect(refusal).to be_a(Lain::Error)
+      expect(refusal.message).to eq('the gate_decision record for "blake3:torn" in "demo/issue_plan/a" cannot be ' \
+                                    "read (approved must be true or false, got maybe) -- repair the line or move " \
+                                    "its session file aside; nothing was decided")
+    end
+  end
+
   def park(queue, digest: "blake3:plan", epic_slug: "alpha", stage: "research", **overrides)
     queue.park(artifact_digest: digest, epic_slug:, stage:, **overrides)
   end

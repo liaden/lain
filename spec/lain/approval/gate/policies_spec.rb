@@ -295,6 +295,96 @@ RSpec.describe Lain::Approval::Gate::Policies do
     end
   end
 
+  # A one-stage session says which stage it decides. A missing asker is then
+  # refused only there, while every other seam is still refused for every stage.
+  describe ".for_all(asking:)" do
+    let(:askerless) { described_class::Deps.new(queue:, asker: nil, journal:) }
+
+    it "builds a hands_off stage it decides, with no asker at all, beside interactive stages it does not" do
+      built = described_class.for_all(config: config_with(research: "hands_off"), deps: askerless,
+                                      asking: ["research"])
+
+      expect(built.fetch("research")).to be_a(Lain::Approval::Gate::Policy::HandsOff)
+      expect(built.values_at("epic_plan", "issue_plan", "implementation"))
+        .to all(be_a(Lain::Approval::Gate::Policy::Interactive))
+    end
+
+    it "refuses the missing asker at the one stage it decides, naming the seam" do
+      expect { described_class.for_all(config: Lain::Config.empty, deps: askerless, asking: ["research"]) }
+        .to raise_error(described_class::Refusal) { |error|
+          expect(error.kind).to eq(:missing_seam)
+          expect(error.stage).to eq("research")
+          expect(error.seams).to eq(["asker"])
+        }
+    end
+
+    it "still refuses a seam a stage it does not decide is missing" do
+      config = config_with(research: "hands_off", epic_plan: "adjudicated")
+
+      expect { described_class.for_all(config:, deps: askerless, asking: ["research"]) }
+        .to raise_error(described_class::Refusal, /epic_plan.*adjudicated.*role_spawn, brief/m)
+    end
+
+    it "builds the stages it does not decide over Nobody, never over the nil it was handed" do
+      built = described_class.for_all(config: config_with(research: "hands_off"), deps: askerless,
+                                      asking: ["research"])
+
+      expect { decide(built.fetch("epic_plan"), stage: "epic_plan") }
+        .to raise_error(described_class::Refusal, /nobody to put a gate's question to/)
+    end
+
+    it "leaves a session that has an asker exactly as it was" do
+      built = described_class.for_all(config: Lain::Config.empty, deps:, asking: ["research"])
+
+      expect(decide(built.fetch("epic_plan"), stage: "epic_plan")).to be(true)
+    end
+
+    # A typo here would quietly stop every stage from asking.
+    it "refuses a stage name the pipeline does not hold" do
+      expect { described_class.for_all(config: Lain::Config.empty, deps:, asking: ["reserch"]) }
+        .to raise_error(Lain::Epic::UnknownStage, /reserch/)
+    end
+  end
+
+  describe ".runnable" do
+    it "names the policies an askerless session with no adjudication seams can run" do
+      expect(described_class.runnable(described_class::Deps.new(queue:, asker: nil, journal:)))
+        .to eq(%w[hands_off deferred])
+    end
+
+    it "names every policy for a session wired with every seam" do
+      wired = described_class::Deps.new(queue:, asker:, journal:, role_spawn: ->(*) {}, brief: ->(*) { "" })
+
+      expect(described_class.runnable(wired)).to eq(described_class.names)
+    end
+  end
+
+  describe "Recipe#runs_on?" do
+    let(:recipe) { Lain::Approval::Gate::Policies::CATALOG.fetch("interactive") }
+
+    it "answers true when every declared seam is present" do
+      expect(recipe.runs_on?(deps)).to be(true)
+    end
+
+    it "answers false when a declared seam is nil" do
+      expect(recipe.runs_on?(Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:))).to be(false)
+    end
+  end
+
+  describe described_class::Nobody do
+    it "refuses to ask, by name, as a missing asker" do
+      expect { described_class.ask("Approve?") }.to raise_error(Lain::Approval::Gate::Policies::Refusal) { |error|
+        expect(error.kind).to eq(:missing_seam)
+        expect(error.seams).to eq(["asker"])
+        expect(error.message).to include("nobody to put a gate's question to")
+      }
+    end
+
+    it "is shareable, since it stands in a frozen dependencies value" do
+      expect(Ractor.shareable?(described_class)).to be(true)
+    end
+  end
+
   describe "the dependencies value" do
     it "is frozen -- one value passed around, never mutated by a recipe" do
       expect(deps).to be_frozen

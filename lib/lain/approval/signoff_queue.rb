@@ -63,7 +63,20 @@ module Lain
       # {Lain::Error}, because the carriers below refuse with ArgumentError --
       # right for a caller that built the value wrong, a backtrace for a human
       # whose journal holds a damaged line.
-      class UnreadableRecord < Error; end
+      #
+      # {Approval::Gate.from_journal} folds the same record type and refuses it
+      # through {.for} too, so one damaged line reads the same whichever fold
+      # reaches it first.
+      class UnreadableRecord < Error
+        # @param record [Hash{String=>Object}] the damaged journal record
+        # @param cause [ArgumentError] the carrier's refusal of it
+        # @return [UnreadableRecord] one line, naming the record by digest and partition
+        def self.for(record, cause)
+          address = record.values_at("epic_slug", "stage", "issue_id").compact.join("/")
+          new("the #{JOURNAL_TYPE} record for #{record["artifact_digest"].inspect} in #{address.inspect} cannot " \
+              "be read (#{cause.message}) -- repair the line or move its session file aside; nothing was decided")
+        end
+      end
 
       # SignoffQueue's OWN construction contracts, not {Approval::Contracts}.
       module Contracts
@@ -296,16 +309,9 @@ module Lain
         Journal.records(entries, type: JOURNAL_TYPE).each_with_object(new) do |record, queue|
           queue.apply(record)
         rescue ArgumentError => e
-          raise UnreadableRecord, unreadable(record, e)
+          raise UnreadableRecord.for(record, e)
         end
       end
-
-      def self.unreadable(record, cause)
-        address = record.values_at("epic_slug", "stage", "issue_id").compact.join("/")
-        "the #{JOURNAL_TYPE} record for #{record["artifact_digest"].inspect} in #{address.inspect} cannot be read " \
-          "(#{cause.message}) -- repair the line or move its session file aside; nothing was decided"
-      end
-      private_class_method :unreadable
 
       # A deferral parks; anything else is terminal and drains the address it
       # answers -- a DENIAL included, since a refused artifact is not awaiting

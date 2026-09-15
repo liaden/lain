@@ -23,9 +23,10 @@ module Lain
       #   inbox_count in agreement (the parity spec holds them to it), and
       # * a {Telemetry::QuestionsConsumed} retires the digests it names outright:
       #   the SPAWNED chain's carrier, whose own doc holds why the child's turn
-      #   cannot ride this tee. The same :turn-edges-only rule under a different
-      #   name -- but NOT the same delivery guarantee; {#consume} says what that
-      #   costs.
+      #   cannot ride this tee, and a settled epic gate's, written with
+      #   `turn: nil` because no turn ever cites a gate's question. The same
+      #   retirement under a different name -- but NOT the same delivery
+      #   guarantee; {#consume} says what that costs.
       #
       # Consumption is a standing digest Set, {StatusFeed}'s own shape, so a
       # replayed log that delivers the consuming turn before the question
@@ -323,7 +324,9 @@ module Lain
         # exists.
         #
         # A SPAWNED chain's turn brings its edges under its own name, as a
-        # {Lain::Telemetry::QuestionsConsumed}, whose doc holds why it is narrow.
+        # {Lain::Telemetry::QuestionsConsumed}, whose doc holds why it is narrow;
+        # a settled {Lain::Approval::Gate} writes the same record with
+        # `turn: nil`, and only its digests are read.
         # It needs no chain walk and so no rescue: a second, narrower never-raise
         # promise here is how the two surfaces start disagreeing. Shaped like
         # {Lain::StatusFeed#observe_consumption} for that same reason.

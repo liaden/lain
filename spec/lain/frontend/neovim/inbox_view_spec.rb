@@ -1194,6 +1194,74 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(inbox_count).to eq(0)
     end
 
+    # AN EPIC GATE'S QUESTION. The gate asks through the chat's own asker and is
+    # no tool call, so no committed turn ever cites what it asked: it names the
+    # question consumed itself, on the journal its verdict goes to. Driven here
+    # through the real asker and the real gate over one fan-out standing in for
+    # the tee, because the claim is that BOTH readers retire it, on the records
+    # production actually writes.
+    describe "an epic gate's question" do
+      # What the buffer last drew: `#update` answers nil when nothing moved, so
+      # the rendering on screen is the last one it did answer.
+      let(:drawn) { [] }
+      let(:tee) do
+        Object.new.tap do |sink|
+          readers = [feed, view, drawn]
+          sink.define_singleton_method(:record) do |entry|
+            readers[0] << entry
+            lines = readers[1].update(entry)
+            readers[2].replace(lines) unless lines.nil?
+            sink
+          end
+        end
+      end
+      let(:asker) do
+        Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:),
+                                  observer: ->(event) { tee.record(Lain::Telemetry::Message.from_event(event)) })
+      end
+      let(:submission) do
+        Data.define(:digest, :gate_question).new(digest: "blake3:impl", gate_question: folding_question)
+      end
+
+      # The chat's asker as the epic seat hands it to its gate, which is what
+      # reads the human's words as a verdict.
+      def deciding(task, timeout:)
+        task.async do
+          Lain::Approval::Gate.new(journal: tee, timeout:)
+                              .call(submission, asker: Lain::CLI::EpicSubmit::Heard.over(asker),
+                                                stage: "implementation", epic_slug: "demo")
+        end
+      end
+
+      def asked(task, timeout:)
+        deciding(task, timeout:).tap do
+          task.yield until asker.pending?
+          expect(questions_in(drawn)).to eq(inbox_count).and eq(1)
+        end
+      end
+
+      # Scenario: a timed-out gate's question leaves every reader
+      it "leaves both when the gate's window closes" do
+        Sync { |task| asked(task, timeout: 0.2).wait }
+
+        expect(drawn).to eq(["(no questions pending)"])
+        expect(questions_in(drawn)).to eq(inbox_count).and eq(0)
+      end
+
+      # Scenario: an answered gate's question leaves every reader
+      it "leaves both once the gate is answered through the inbox" do
+        approved = Sync do |task|
+          gate = asked(task, timeout: 5)
+          asker.reply("approve", asker.last_question.digest)
+          gate.wait
+        end
+
+        expect(approved).to be(true)
+        expect(drawn).to eq(["(no questions pending)"])
+        expect(questions_in(drawn)).to eq(inbox_count).and eq(0)
+      end
+    end
+
     # The tripwire for the day that gap could re-open: every Telemetry record
     # answering BOTH readers must be the one record that names a committed
     # turn's payment. A new one appearing fails here rather than silently

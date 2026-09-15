@@ -108,6 +108,50 @@ module Lain
       end
     end
 
+    # What a human's reply to {Submission#gate_question} decides. It lives beside
+    # the question because the question is the only place a human is told which
+    # words count, so the words it names and the words read back are one list.
+    #
+    # Only a word the question names is a human's verdict. Anything else still
+    # denies -- an approval is the one reading nobody may guess into -- but is
+    # journaled as {UNRECOGNISED} with the reply in its reason, because
+    # "the human denied this" would be a claim nobody made. End of input is
+    # {EOF} for the same reason.
+    module GateReply
+      APPROVALS = %w[approve approved y yes].freeze
+      DENIALS = %w[deny denied n no].freeze
+
+      UNRECOGNISED = "unrecognised"
+      EOF = "eof"
+
+      # How a reply is spoken, as opposed to what it says: case, surrounding
+      # space and a closing full stop or exclamation mark. Only those two: a
+      # trailing `?` turns "approve" into a question back, and an ellipsis into
+      # a hesitation, and neither is a verdict anybody gave.
+      TRAILING_PUNCTUATION = /[.!]+\z/
+
+      INSTRUCTION = "Reply #{APPROVALS.join(", ")} to approve, or #{DENIALS.join(", ")} to deny; " \
+                    "any other reply is recorded as #{UNRECOGNISED} and denies.".freeze
+
+      # @param words [String, nil] what the human wrote; nil when nothing was
+      # @param surface [String] who is credited with a recognised verdict
+      # @return [Approval::Gate::Answer]
+      def self.answer(words, surface:)
+        return Approval::Gate::Answer.deny(EOF) if words.nil?
+
+        word = words.to_s.strip.downcase.sub(TRAILING_PUNCTUATION, "")
+        return Approval::Gate::Answer.approve(surface) if APPROVALS.include?(word)
+        return Approval::Gate::Answer.deny(surface) if DENIALS.include?(word)
+
+        Approval::Gate::Answer.new(approved: false, surface: UNRECOGNISED, reason: unrecognised(words))
+      end
+
+      def self.unrecognised(words)
+        "the reply #{words.to_s.inspect} is none of #{(APPROVALS + DENIALS).join(", ")}, so the gate denied it"
+      end
+      private_class_method :unrecognised
+    end
+
     # One artifact bound to one stage of an epic's pipeline: the gate's whole
     # duck ({#digest}, {#gate_question}), for the four shapes the pipeline
     # produces. {Approval::Gate} never learns which constructor built the value.
@@ -253,7 +297,7 @@ module Lain
         # `-"..."` rather than a plain literal: a shareable Submission must not
         # be the one thing on it that hands back a mutable String, or a caller
         # mutating the return value would read as this record's state changing.
-        -"Approve the #{stage} stage for #{slug.inspect}? (#{fact}) Reply approve or deny."
+        -"Approve the #{stage} stage for #{slug.inspect}? (#{fact}) #{GateReply::INSTRUCTION}"
       end
     end
   end

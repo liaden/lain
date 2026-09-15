@@ -150,6 +150,40 @@ RSpec.describe Lain::Question::AnswerSet do
     end
   end
 
+  # The rendering is what the model reads; the words are what the human wrote.
+  # A reader that has to decide something from the reply -- an epic gate's
+  # approve or deny -- reads the words, never the grammar wrapped around them.
+  describe "the words beside the rendering" do
+    let(:free_text) { Lain::Question::Set.new(questions: [Lain::Question.new(id: "question", body: "Approve?")]) }
+
+    it "renders a String that still carries a free-text answer's own words" do
+      reply = described_class.new(questions: free_text,
+                                  answers: [Lain::Question::Answer.new(question_id: "question", comment: "approve")])
+                             .render
+
+      expect(reply).to be_a(String).and include("> approve")
+      expect(reply.words).to eq("approve")
+    end
+
+    it "carries a prose reply's text as its words" do
+      expect(described_class.new(questions: free_text, text: "  deny  ").render.words).to eq("  deny  ")
+    end
+
+    it "carries no words for a set nobody answered" do
+      expect(described_class.new(questions: free_text).render.words).to eq("")
+    end
+
+    it "is deeply frozen, so it can ride a tool result" do
+      expect(described_class.new(questions: free_text, text: +"approve").render).to be_deeply_frozen
+    end
+
+    it "refuses a copy that lost the words it carried, by name" do
+      husk = described_class.new(questions: free_text, text: "approve").render.encode("UTF-8", "UTF-8")
+
+      expect { husk.words }.to raise_error(ArgumentError, /lost the words/)
+    end
+  end
+
   describe "rendering for the model" do
     it "names each question, its chosen labels, and the comment" do
       rendered = answered.render

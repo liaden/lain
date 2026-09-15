@@ -85,8 +85,15 @@ module Lain
       # walk in `be_deeply_frozen`, which reaches for it only on the FAILURE path.
       def to_h = { questions:, answers:, text: }
 
-      # A String, because that is what a {Tool::Result} carries.
-      def render = Rendering.new(self).to_s
+      # A String, because that is what a {Tool::Result} carries -- and a
+      # {Reply}, so a reader deciding something from what the human wrote reads
+      # {#words} rather than the grammar the rendering wraps them in.
+      def render = Reply.new(Rendering.new(self).to_s, words:)
+
+      # What the human wrote, unrendered: the prose reply, or every comment the
+      # answers carry. Selections are not words, so a set answered only by
+      # ticking carries none.
+      def words = prose? ? text : answers.filter_map(&:comment).join("\n")
 
       # Plain wire form for {Canonical}: the question set's own body plus what
       # came back. A fresh copy, so the emitter can add its own keys beside ours.
@@ -185,6 +192,32 @@ module Lain
 
           raise ArgumentError, "question #{question.id.inspect} does not offer #{stranger.inspect} " \
                                "(it offers #{offered.empty? ? "no options at all" : offered.join(", ")})"
+        end
+      end
+
+      # The rendering the model reads, still carrying the words it rendered.
+      #
+      # A String subclass for {Tools::AskHuman::Unanswered}'s reason: the reply
+      # seam is String-shaped from the editor to the tool result, so the words
+      # ride on the value that already travels it rather than on a second
+      # argument every surface would have to learn. The one reader that needs
+      # them -- an epic gate asking approve or deny -- used to read the
+      # rendering instead, and the rendering of "approve" is not "approve".
+      class Reply < String
+        def initialize(rendering, words:)
+          super(rendering)
+          @words = words.dup.freeze
+          freeze
+        end
+
+        # `String#encode` and friends hand back THIS class with the ivar
+        # dropped. Refused by name, for {Tools::AskHuman::Announcement#carried!}'s
+        # reason: a nil read as "no words" would be a verdict nobody gave.
+        def words
+          return @words unless @words.nil?
+
+          raise ArgumentError, "this reply lost the words it carried -- String#encode copies the bytes without " \
+                               "them. Read the original reply."
         end
       end
 

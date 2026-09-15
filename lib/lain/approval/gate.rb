@@ -168,7 +168,9 @@ module Lain
     # The gate depends only on `#ask(question) -> Promise`. Who answered rides
     # the promise's resolved value, process-local coordination -- so no new meta
     # key is added to any replayable event, and the gate stays blind to which
-    # surface spoke.
+    # surface spoke. What the promise resolves with is an {Answer}: turning a
+    # human's words into one is the job of whoever put the question in those
+    # words, never this class's.
     class Gate
       include Enumerable
 
@@ -198,15 +200,19 @@ module Lain
 
       # A verdict plus the surface that gave it. Deeply frozen, so it is
       # Ractor-shareable like every value that crosses a fiber boundary.
-      Answer = Data.define(:approved, :surface) do
+      #
+      # `reason` is what the ANSWERING side knows about its own verdict -- a
+      # reply it could not classify, say -- and it is journaled over whatever
+      # reason the caller forwarded, because it is the more specific account.
+      Answer = Data.define(:approved, :surface, :reason) do
         def self.approve(surface) = new(approved: true, surface:)
         def self.deny(surface) = new(approved: false, surface:)
 
-        def initialize(approved:, surface:)
+        def initialize(approved:, surface:, reason: nil)
           surface = -surface.to_s
           Contracts::Answer.check!(approved:, surface:)
 
-          super
+          super(approved:, surface:, reason: reason&.dup&.freeze)
         end
 
         def approved? = approved
@@ -239,7 +245,9 @@ module Lain
       #
       # @param artifact [#digest, #gate_question] the thing being gated
       # @param asker [#ask] the `ask_human`-shaped duck; `#ask` returns a
-      #   {Lain::Promise} the answering surface resolves with an {Answer}
+      #   {Lain::Promise} the answering surface resolves with an {Answer}. A
+      #   promise that answers `#digest` names a question in the record, which
+      #   the gate retires once it settles.
       # @param stage [#to_s] the stage this gate sits on
       # @param epic_slug [#to_s] the epic it belongs to; with `stage`, the
       #   partition key a sign-off queue folds decisions on
@@ -270,6 +278,7 @@ module Lain
         answer.approved?
       ensure
         withdrawn(asker, asked)
+        retired(asked)
       end
 
       def approved?(digest) = @approved.include?(digest)
@@ -339,19 +348,31 @@ module Lain
       #
       # @param entries [Enumerable<Hash, String>] see {.from_journal}
       # @return [self]
+      #
+      # Refused as {SignoffQueue::UnreadableRecord}, the queue's own refusal
+      # over the same record type: the canary's ArgumentError is right for a
+      # caller that built a value wrong, and a backtrace for a human whose
+      # journal holds a damaged line.
       def absorb(entries)
         Journal.records(entries, type: SignoffQueue::JOURNAL_TYPE).each do |decision|
-          Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
-          @approved << decision["artifact_digest"] if decision["approved"]
+          register(decision)
+        rescue ArgumentError => e
+          raise SignoffQueue::UnreadableRecord.for(decision, e)
         end
         self
+      end
+
+      def register(decision)
+        Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
+        @approved << decision["artifact_digest"] if decision["approved"]
       end
 
       # `evidence_digest`/`reason` are FORWARDED, never derived: this class
       # gathers nothing and judges nothing, so the only honest value is the one
       # its caller handed down. A later path adds a VALUE here, never a column.
-      def record(answer, **decided)
-        @journal.record(GateDecision.new(approved: answer.approved?, answered_by: answer.surface, **decided))
+      def record(answer, reason:, **decided)
+        @journal.record(GateDecision.new(approved: answer.approved?, answered_by: answer.surface,
+                                         reason: answer.reason || reason, **decided))
       end
 
       # A WAIT THAT ENDED STOPS BEING OUTSTANDING, HOWEVER IT ENDED. The window
@@ -374,6 +395,30 @@ module Lain
       # and `asked` is nil when the ask itself raised, which abandons nothing.
       def withdrawn(asker, asked)
         asker.withdraw(asked) if asker.respond_to?(:withdraw)
+      rescue StandardError
+        nil
+      end
+
+      # A WITHDRAWAL FREES THE ASKER; IT RETIRES NOTHING. The question stays in
+      # the record, and every inbox reader folding the record lists it until
+      # something names it consumed. For a tool call that is the committed turn
+      # delivering the answer, and a gate has no turn: so the gate names the
+      # question itself, on the journal its verdict went to, however the wait
+      # ended -- answered, expired, or stopped from outside.
+      #
+      # That journal has to be one the live views ride. A gate handed a
+      # journal no inbox reader folds retires the question in the file and
+      # leaves it listed on every screen.
+      #
+      # Only a promise naming a question has one to retire: a synchronous
+      # prompt and a standing answer write nothing a reader could list. TOTAL
+      # for {#withdrawn}'s reason, and from the same ensure -- a retirement that
+      # fails must not overturn a verdict already journaled, nor replace the
+      # error a failed verdict is already raising.
+      def retired(asked)
+        return unless asked.respond_to?(:digest)
+
+        @journal.record(Telemetry::QuestionsConsumed.new(turn: nil, digests: [asked.digest]))
       rescue StandardError
         nil
       end
