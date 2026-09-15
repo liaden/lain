@@ -104,9 +104,17 @@ module Lain
       #   Null by default and never anything else in production use of this
       #   class (see the class doc) -- injectable only so a spec can assert
       #   the default stays Null.
-      def initialize(entries, oracle: Grader::FrustrationRepair::NullOracle.instance)
+      # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>] the
+      #   subagent work the graders index beside the session's own turns. A
+      #   caller holding the session's path reads them from it
+      #   ({Bench::Session::Lineages.read}), which is the only way a resumed
+      #   session's chain can be followed; by default they are read off the
+      #   entries alone.
+      def initialize(entries, oracle: Grader::FrustrationRepair::NullOracle.instance,
+                     lineages: Bench::Session::Lineages.recorded_in(entries))
         @entries = entries.to_a.freeze
         @oracle = oracle
+        @lineages = lineages
       end
 
       # @return [String] the rendered report; never printed here (output
@@ -131,7 +139,7 @@ module Lain
       # it: each would otherwise build its own over the same in-memory array,
       # and this class already needs a third for {#retried_tool_name}.
       def call_index
-        @call_index ||= Grader::ToolCallIndex.new(@entries)
+        @call_index ||= Grader::ToolCallIndex.new(@entries, lineages: @lineages)
       end
 
       def rephrase_lines

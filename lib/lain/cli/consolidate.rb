@@ -50,23 +50,26 @@ module Lain
       #   filename missing its ".ndjson" suffix
       # @return [String]
       # @raise [SessionFile::SessionNotFound]
+      # @raise [Bench::Session::Corrupt] naming the file and its damage
       def report(selector)
-        outcomes = @consolidation.call(entries(selector))
+        outcomes = @consolidation.call(lineages(selector))
         return "consolidate: no completed subagent lineages found." if outcomes.empty?
 
         ["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
-         *outcomes.map { |outcome| "  - lineage #{outcome.root}: #{outcome.result}" }].join("\n")
+         *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n")
       end
 
       # Which lineages the pass WOULD clerk, spawning nothing.
       #
       # @return [String]
       # @raise [SessionFile::SessionNotFound]
-      def dry_report(selector) = @consolidation.dry_run(entries(selector))
+      def dry_report(selector) = @consolidation.dry_run(lineages(selector))
 
       private
 
-      def entries(selector) = Journal.records(File.foreach(SessionFile.resolve(selector, paths: @paths)))
+      # Read whole, so a damaged session refuses by name rather than reporting
+      # the lineages its damage left readable.
+      def lineages(selector) = Bench::Session::Lineages.read(SessionFile.resolve(selector, paths: @paths))
     end
   end
 end

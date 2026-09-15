@@ -46,10 +46,14 @@ module Lain
       ROLE = :harness_improver
 
       # The session's {Friction::Report} beside a per-turn digest summary. A
-      # pure function of the journal records -- no provider is touched -- so
+      # pure function of the session's record -- no provider is touched -- so
       # the dry-run surface and the live spawn render the SAME scaffold, and
       # "what it would see" cannot disagree with "what it saw".
-      Scaffold = Data.define(:records) do
+      #
+      # A subagent's turns are summarized under the parent turn that spawned
+      # them. They are no `turn` records, so without `lineages` a session whose
+      # real work happened in children read as a parent that only delegated.
+      Scaffold = Data.define(:records, :lineages) do
         def render
           <<~PROMPT
             You are reviewing one completed lain session to find what would make lain ITSELF better.
@@ -59,7 +63,7 @@ module Lain
             Friction report (mechanical signals and the knob each already points at):
             #{friction}
 
-            Session digest summary (#{turns.size} turn(s) -- cite these digests as the evidence behind any note):
+            Session digest summary (#{turn_count} turn(s) -- cite these digests as the evidence behind any note):
             #{summary}
 
             Record one improvement_write per finding, each citing the digests above. Prefer nothing
@@ -72,18 +76,28 @@ module Lain
         # Fully qualified: a bare `Friction` resolves in this lexical scope to
         # {CLI::Friction}, the USER-facing report command, not the domain
         # {Lain::Friction::Report} this pass reasons from.
-        def friction = Lain::Friction::Report.new(records).render
+        def friction = Lain::Friction::Report.new(records, lineages:).render
 
         def turns = records.select { |record| record["type"].to_s == "turn" }
 
-        def summary = turns.map { |turn| render_turn(turn) }.join("\n")
+        def turn_count = turns.size + lineages.sum { |lineage| lineage.child_turns.size }
 
-        def render_turn(turn)
-          "[#{turn["role"]}] #{turn["digest"]} #{trace(turn)}".rstrip
+        def summary
+          (turns.map { |turn| line(turn["role"], turn["digest"], turn["content"]) } +
+            lineages.flat_map { |lineage| lineage_lines(lineage) }).join("\n")
         end
 
-        def trace(turn)
-          Array(turn["content"]).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
+        def lineage_lines(lineage)
+          ["subagent #{lineage.spawn.digest}, spawned from #{lineage.spawned_from}:",
+           *lineage.child_turns.map { |turn| "  #{line(turn.role, turn.digest, turn.content)}" }]
+        end
+
+        def line(role, digest, content)
+          "[#{role}] #{digest} #{trace(content)}".rstrip
+        end
+
+        def trace(content)
+          Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
         end
 
         # An unknown block kind summarizes to nil and `filter_map` drops it,
@@ -97,8 +111,8 @@ module Lain
       end
 
       # One object rather than a pair, so {#report} and {#dry_report} each read
-      # the journal once and cannot disagree about which session they describe.
-      Review = Data.define(:session, :scaffold)
+      # the session once and cannot disagree about which session they describe.
+      Review = Data.define(:session, :prompt)
 
       # The exe's assembly seam. Under `--dry-run` the provider is
       # {Provider::Unreachable}, so no API key is fetched and nothing can
@@ -143,9 +157,10 @@ module Lain
       #   filename missing its ".ndjson" suffix
       # @return [String]
       # @raise [SessionFile::SessionNotFound]
+      # @raise [Bench::Session::Corrupt] naming the file and its damage
       def report(selector)
         review = review_of(selector)
-        result = build_improver(review.session).ask(review.scaffold.render).text
+        result = build_improver(review.session).ask(review.prompt).text
         "improve: ran a harness_improver pass over session #{review.session}\n#{result}"
       end
 
@@ -156,17 +171,26 @@ module Lain
       def dry_report(selector)
         review = review_of(selector)
         "improve: harness_improver would review session #{review.session} " \
-          "(provider untouched)\n\n#{review.scaffold.render}"
+          "(provider untouched)\n\n#{review.prompt}"
       end
 
       private
 
-      # A pure function of the journal -- no provider touched -- so the dry
-      # surface and the live spawn read the SAME session id and scaffold.
+      # A pure function of the session file -- no provider touched -- so the
+      # dry surface and the live spawn read the SAME session id and scaffold.
+      # The lineages are read whole, so a damaged session refuses by name.
       def review_of(selector)
         path = SessionFile.resolve(selector, paths: @paths)
-        Review.new(session: File.basename(path, ".ndjson"),
-                   scaffold: Scaffold.new(Journal.records(File.foreach(path)).to_a))
+        lineages = Bench::Session::Lineages.read(path).to_a
+        Review.new(session: File.basename(path, ".ndjson"), prompt: prompt_for(path, lineages))
+      end
+
+      # Rendered here, where the path is still known. {Bench::Session::Lineages.read}
+      # names the file in its own refusals; this names it in the graders'.
+      def prompt_for(path, lineages)
+        Scaffold.new(records: Journal.records(File.foreach(path)).to_a, lineages:).render
+      rescue Lain::Error => e
+        raise Lain::Error, "#{path}: #{e.message}"
       end
 
       def build_improver(session)

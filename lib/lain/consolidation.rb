@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 module Lain
-  # The court-clerk consolidation pass: offline, it walks a session Journal's
-  # COMPLETED SUBAGENT lineages -- turns whose chain root carries `spawned_from`
-  # meta, grouped by that root -- and spawns the shipped `court_clerk` role once
-  # per lineage to distill it into durable memory.
+  # The court-clerk consolidation pass: offline, it takes a session's COMPLETED
+  # SUBAGENT lineages, as {Bench::Session::Lineages} reads them off the record,
+  # and spawns the shipped `court_clerk` role once per lineage to distill it into
+  # durable memory.
   #
   # FRESH-ROOT IS NOT NEGOTIABLE. The clerk READS a lineage's record; were it to
   # INHERIT the parent's prompt, "reading a record" would silently become
@@ -24,8 +24,10 @@ module Lain
   class Consolidation
     ROLE = :court_clerk
 
-    # `root` is the evidence a memory cites.
-    Outcome = Data.define(:root, :result)
+    # `spawn` is the evidence a memory cites: the digest of the lineage's
+    # `:spawn`, the address `lain watch` and the fleet already know it by. Twin
+    # spawns of one prompt from one head share it even when they answer apart.
+    Outcome = Data.define(:spawn, :result)
 
     # Every spawn collaborator is REQUIRED, so a forgotten one is a loud
     # ArgumentError at the wiring site rather than a nil checked one spawn later.
@@ -52,29 +54,23 @@ module Lain
       @journal = journal
     end
 
-    # Never spawns. The dry-run surface and the live pass share this, so "what
-    # would run" and "what ran" can never disagree.
+    # Never spawns. The dry-run surface and the live pass read the same
+    # lineages, so "what would run" and "what ran" can never disagree.
     #
-    # @param entries [Enumerable<Hash, String>] the {Journal.records} duck
-    # @return [Array<Lineage>] in journal (first-seen-root) order
-    def lineages(entries)
-      Lineage.from_records(Journal.records(entries, type: "turn").to_a)
-    end
-
-    # @return [Array<Outcome>] one per lineage, in journal order
-    def call(entries)
-      lineages(entries).map { |lineage| spawn_clerk(lineage) }
-    end
-
-    # The lineages the pass WOULD spawn, touching no provider.
-    #
+    # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
     # @return [String]
-    def dry_run(entries)
-      grouped = lineages(entries)
-      return "consolidate: no completed subagent lineages found." if grouped.empty?
+    def dry_run(lineages)
+      scaffolds = lineages.map { |lineage| Scaffold.new(lineage) }
+      return "consolidate: no completed subagent lineages found." if scaffolds.empty?
 
-      ["consolidate: #{grouped.size} lineage(s) would each get one court_clerk pass",
-       *grouped.map { |lineage| "  - lineage #{lineage.root} (#{lineage.turn_count} turns)" }].join("\n")
+      ["consolidate: #{scaffolds.size} lineage(s) would each get one court_clerk pass",
+       *scaffolds.map { |scaffold| "  - lineage #{scaffold.spawn} (#{scaffold.turn_count} turns)" }].join("\n")
+    end
+
+    # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
+    # @return [Array<Outcome>] one per lineage, in the order they were recorded
+    def call(lineages)
+      lineages.map { |lineage| spawn_clerk(Scaffold.new(lineage)) }
     end
 
     private
@@ -82,8 +78,8 @@ module Lain
     # A reader, not `@recorder`, so the keyword shorthand reads at its senders.
     attr_reader :recorder
 
-    def spawn_clerk(lineage)
-      Outcome.new(root: lineage.root, result: build_clerk.ask(lineage.scaffold).text)
+    def spawn_clerk(scaffold)
+      Outcome.new(spawn: scaffold.spawn, result: build_clerk.ask(scaffold.render).text)
     end
 
     # The point of this class is the last argument: a tool-phase guard stack the
@@ -136,79 +132,38 @@ module Lain
     # nested class declared inside that block scopes to the enclosing module, not
     # the Data class.
 
-    # A completed subagent lineage, its turns in journal order.
-    Lineage = Data.define(:root, :turns) do
-      # The walk follows `parent`, never `spawned_from`, so grouping stays
-      # unambiguous; `spawned_from` is consulted only to tell a subagent root from
-      # a main-chain one.
-      def self.from_records(records)
-        by_digest = records.to_h { |record| [record["digest"], record] }
-        # digest => its chain root, for THIS call only: every turn in a lineage
-        # climbs the same edges, so without it an N-turn chain walks to the root
-        # N times. An artifact of this record slice, never a cache outliving it.
-        roots = {}
-        records.group_by { |record| chain_root(record["digest"], by_digest, roots) }
-               .filter_map { |root, turns| new(root:, turns:) if subagent_root?(by_digest[root]) }
-      end
+    # The record one clerk reads: one lineage's child turns, rendered. Its ROLE
+    # supplies the persona.
+    Scaffold = Data.define(:lineage) do
+      def spawn = lineage.spawn.digest
 
-      # Three ways the walk ends: a `parent` of nil is a genuine chain root; a
-      # `parent` naming a digest OUTSIDE this slice ends on a missing digest, so
-      # {from_records} groups that lineage under a non-subagent root and DROPS it
-      # (a headless tail from a partial journal is never spawned, rather than
-      # crashing); and a digest an earlier walk resolved answers from `roots`.
-      def self.chain_root(digest, by_digest, roots)
-        walked = []
-        while (parent = unresolved_parent(digest, by_digest, roots))
-          walked << digest
-          digest = parent
-        end
-        walked << digest # the terminal too, so a later walk stops here
-        root = roots.fetch(digest, digest)
-        walked.each { |step| roots[step] = root }
-        root
-      end
-      private_class_method :chain_root
+      def turn_count = lineage.child_turns.size
 
-      # nil where the walk ends: an already resolved digest, a record outside this
-      # slice, or a genuine root.
-      def self.unresolved_parent(digest, by_digest, roots)
-        record = by_digest[digest]
-        record && !roots.key?(digest) ? record["parent"] : nil
-      end
-      private_class_method :unresolved_parent
-
-      def self.subagent_root?(record)
-        !record.nil? && !record.dig("meta", "spawned_from").nil?
-      end
-      private_class_method :subagent_root?
-
-      def turn_count = turns.size
-
-      # The per-lineage record the clerk reads; its ROLE supplies the persona.
-      def scaffold
+      def render
         <<~PROMPT
           You are consolidating one completed subagent lineage into durable memory.
 
-          Lineage root (cite this as the evidence/source of every memory you write): #{root}
+          Lineage spawn (cite this as the evidence/source of every memory you write): #{spawn}
+          Spawned from parent turn: #{lineage.spawned_from}
           Turns in this lineage: #{turn_count}
 
           Transcript:
           #{transcript}
 
-          Write the memories worth keeping from this lineage, each sourced to the lineage root above.
+          Write the memories worth keeping from this lineage, each sourced to the lineage spawn above.
         PROMPT
       end
 
       # Deterministic, one line per turn.
       def transcript
-        turns.map { |turn| render_turn(turn) }.join("\n")
+        lineage.child_turns.map { |turn| render_turn(turn) }.join("\n")
       end
 
       private
 
       def render_turn(turn)
-        summaries = Array(turn["content"]).grep(Hash).filter_map { |block| summarize(block) }
-        "[#{turn["role"]}] #{summaries.join(" ")}".rstrip
+        summaries = Array(turn.content).grep(Hash).filter_map { |block| summarize(block) }
+        "[#{turn.role}] #{summaries.join(" ")}".rstrip
       end
 
       # A closed `case`: an unknown block kind summarizes to nil and `filter_map`

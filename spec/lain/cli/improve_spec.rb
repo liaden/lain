@@ -11,10 +11,30 @@ require "tmpdir"
 # {CLI::Friction} by AUDIENCE: that pass tells the USER which knob to turn;
 # this one tells the lain DEV what lain should grow.
 RSpec.describe Lain::CLI::Improve do
-  # The committed friction fixture reused as the session under review: it
-  # produces two real friction signals (rephrase_loop on bash, tool_steering on
-  # grep), so the scaffold carries genuine signal lines to assert on.
+  # The committed friction fixture's conversation as the session under review:
+  # it produces two real friction signals (rephrase_loop on bash, tool_steering
+  # on grep), so the scaffold carries genuine signal lines to assert on. The
+  # fixture's own digests are placeholders a report spec asserts on, and this
+  # pass reads a session whole, so its turns are re-committed to real content
+  # addresses here rather than copied.
   def fixture_path = File.join(__dir__, "..", "..", "fixtures", "friction", "frustrating.ndjson")
+
+  def write_frustrating_session(path)
+    header, *turns = File.foreach(fixture_path).map { |line| JSON.parse(line) }
+    toolset = Lain::Bench::Session::RecordedToolset.new(schema: header["tools"])
+    records = Lain::Bench::Session.write([], timeline: recommitted(turns), context: recorded_context(header), toolset:)
+    File.write(path, records.map { |record| JSON.generate(record) }.join("\n"))
+  end
+
+  def recommitted(turns)
+    turns.inject(Lain::Timeline.empty) do |chain, turn|
+      chain.commit(role: turn.fetch("role").to_sym, content: turn.fetch("content"), meta: turn.fetch("meta"))
+    end
+  end
+
+  def recorded_context(header)
+    Lain::Context.new(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"), system: header["system"])
+  end
 
   let(:context) { Lain::Context.new(model: "improver-model", max_tokens: 256) }
   let(:journal) { [] }
@@ -30,7 +50,7 @@ RSpec.describe Lain::CLI::Improve do
       @session_dir = File.join(root, "sessions")
       @improvements_path = File.join(root, "improvements.ndjson")
       FileUtils.mkdir_p(@session_dir)
-      FileUtils.cp(fixture_path, File.join(@session_dir, "s1.ndjson"))
+      write_frustrating_session(File.join(@session_dir, "s1.ndjson"))
       @slots = Lain::Prompt::Slots.load(root:)
       example.run
     end
@@ -184,6 +204,71 @@ RSpec.describe Lain::CLI::Improve do
       expect(report).to include("would review session s1")
       expect(report).to include("rephrase_loop") # the friction render is present
       expect(written_improvements).to be_empty
+    end
+  end
+
+  # A subagent's turns are no `turn` records -- the chat recorded them as
+  # `child_turn`s under a `:spawn` -- so the summary reads them through the
+  # session's lineages, or the improver never sees the work a child did.
+  describe "a session that spawned a subagent" do
+    let(:spawned) do
+      RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_s", "subagent", { "prompt" => "survey the flaky specs" }]),
+                           text_response("parent done")],
+        child_responses: [tool_response(["tu_e", "echo", { "text" => "spec/a_spec.rb" }]),
+                          text_response("one flaky spec")]
+      ).run
+    end
+
+    def child_digests = spawned.of_type(Lain::SessionRecord::CHILD_TURN_TYPE).map { |record| record["digest"] }
+
+    it "summarizes each child's turns by digest under the parent turn that spawned it" do
+      spawned.write(File.join(@session_dir, "s2.ndjson"))
+      spawn = spawned.of_type("message").find { |record| record["kind"] == "spawn" }
+
+      report = improve(Lain::Provider::Unreachable.new).dry_report("s2")
+
+      expect(report).to include(*child_digests, "survey the flaky specs", "called echo", "one flaky spec")
+      expect(report).to include("spawned from #{spawn.dig("payload", "spawned_from")}")
+    end
+
+    it "reviews a resumed session that spawned, listing the child it ran" do
+      prior = RecordedSpawnSession.new(parent_responses: [text_response("hello")], child_responses: []).run
+      prior.write(File.join(@session_dir, "prior.ndjson"))
+      resumed = RecordedSpawnSession.new(
+        resuming: [prior, "prior.ndjson"],
+        parent_responses: [tool_response(["tu_s", "subagent", { "prompt" => "resumed child" }]), text_response("ok")],
+        child_responses: [text_response("resumed child done")]
+      ).run("again")
+      resumed.write(File.join(@session_dir, "resumed.ndjson"))
+
+      expect(improve(Lain::Provider::Unreachable.new).dry_report("resumed"))
+        .to include("would review session resumed", "resumed child done")
+    end
+
+    it "reviews a live session whose child is still running, listing the child that completed" do
+      live = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "first" }]),
+                           tool_response(["tu_b", "subagent", { "prompt" => "second" }]), text_response("done")],
+        child_responses: [text_response("first done"), tool_response(["tu_snap", "snapshot", {}]),
+                          text_response("second done")]
+      ).run
+      File.write(File.join(@session_dir, "live.ndjson"), live.snapshots.first)
+
+      report = improve(Lain::Provider::Unreachable.new).dry_report("live")
+
+      expect(report).to include("first done")
+      expect(report).not_to include("second done")
+    end
+
+    it "refuses a session whose child_turn line is torn, naming the file" do
+      lines = spawned.lines
+      torn = lines.index { |line| JSON.parse(line)["type"] == Lain::SessionRecord::CHILD_TURN_TYPE }
+      lines[torn] = "#{lines[torn][0, 40]}\n"
+      File.write(File.join(@session_dir, "torn.ndjson"), lines.join)
+
+      expect { improve(Lain::Provider::Unreachable.new).dry_report("torn") }
+        .to raise_error(Lain::Error, /torn\.ndjson: /)
     end
   end
 

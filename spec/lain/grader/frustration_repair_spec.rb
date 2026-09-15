@@ -147,32 +147,47 @@ RSpec.describe Lain::Grader::FrustrationRepair do
     end
   end
 
-  describe "attribution across a spawned_from fan-out" do
-    it "attributes across the spawn boundary to the same-chain failure, not the intervening subagent turns" do
-      store = Lain::Store.new
-      parent_root = Lain::Timeline.empty(store:).commit(role: :user, content: text("do the big task"))
-      failed = parent_root.commit(role: :assistant,
-                                  content: [tool_use("tu_1", "dosing_lookup",
-                                                     { "drug" => "asprin" })])
-      after_fail = failed.commit(role: :user, content: [tool_result("tu_1", "unknown drug", is_error: true)])
-      spawn_turn = after_fail.commit(role: :assistant,
-                                     content: [tool_use("tu_spawn", "subagent", { "prompt" => "child task" })])
+  # Across a spawn, over the records a chat actually writes: a real Scribe
+  # observing a real spawn, so the child's turns are `child_turn` records under
+  # a `:spawn` and never `turn` records carrying lineage in their meta.
+  describe "attribution across a recorded spawn" do
+    def digest_of(records, &) = records.find(&).fetch("digest")
 
-      child_root = Lain::Timeline.empty(store:)
-                                 .commit(role: :user, content: text("child task"),
-                                         meta: { "spawned_from" => spawn_turn.head_digest })
-      child_done = child_root.commit(role: :assistant, content: text("child is done"))
+    def calls?(record, name)
+      Array(record["content"] || record.dig("payload", "content")).any? do |block|
+        block["type"] == "tool_use" && block["name"] == name
+      end
+    end
 
-      spawn_result = spawn_turn.commit(role: :user, content: [tool_result("tu_spawn", "spawned", is_error: false)])
-      retry_turn = spawn_result.commit(role: :assistant,
-                                       content: [tool_use("tu_2", "dosing_lookup", { "drug" => "aspirin" })])
+    it "attributes a child's repeat of a failing call to the parent turn that spawned it" do
+      session = RecordedSpawnSession.new(
+        tools: [BoomTool.new], child_tools: [BoomTool.new],
+        parent_responses: [tool_response(["tu_b1", "boom", {}], ["tu_s", "subagent", { "prompt" => "try boom" }]),
+                           text_response("parent done")],
+        child_responses: [tool_response(["tu_c1", "boom", {}]), text_response("child gave up")]
+      ).run
+      spawning = digest_of(session.of_type("turn")) { |record| calls?(record, "subagent") }
+      repeat = digest_of(session.of_type(Lain::SessionRecord::CHILD_TURN_TYPE)) { |record| calls?(record, "boom") }
 
-      entries = journal_turns(retry_turn) + journal_turns(child_done)
-      found = described_class.new.signals(entries)
+      found = described_class.new.signals(session.records)
 
-      expect(found.size).to eq(1)
-      expect(found.first.turn_digest).to eq(retry_turn.head_digest)
-      expect(found.first.caused_by).to eq([failed.head_digest])
+      expect(found.map(&:turn_digest)).to eq([repeat])
+      expect(found.first.caused_by).to eq([spawning])
+    end
+
+    it "attributes a parent's retry to its own earlier failure, not to the child turns in between" do
+      session = RecordedSpawnSession.new(
+        tools: [BoomTool.new], child_tools: [BoomTool.new],
+        parent_responses: [tool_response(["tu_b1", "boom", {}]),
+                           tool_response(["tu_s", "subagent", { "prompt" => "child task" }]),
+                           tool_response(["tu_b2", "boom", {}]), text_response("parent done")],
+        child_responses: [tool_response(["tu_c1", "boom", {}]), text_response("child done")]
+      ).run
+      parent_booms = session.of_type("turn").select { |record| calls?(record, "boom") }.map { |r| r.fetch("digest") }
+
+      signal = described_class.new.signals(session.records).find { |found| found.turn_digest == parent_booms.last }
+
+      expect(signal.caused_by).to eq([parent_booms.first])
     end
   end
 

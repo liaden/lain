@@ -2,39 +2,30 @@
 
 require "tmpdir"
 
-# The court-clerk consolidation pass. Offline, it walks a session Journal's
-# COMPLETED SUBAGENT lineages (turns whose chain root carries `spawned_from`
-# meta, grouped by that root), renders each lineage's transcript into the
-# court-clerk scaffold, and spawns the shipped `court_clerk` role once per
-# lineage -- FRESH-ROOT (the clerk reads the record, it never inherits the
-# parent's prompt). The clerk's tools are guarded by a dispatch chain THIS class
-# builds over {CLI::ToolGuard.detached}, because the spawn seam supplies none.
+# The court-clerk consolidation pass. Offline, it takes a session's COMPLETED
+# SUBAGENT lineages as {Lain::Bench::Session::Lineages} reads them, renders each
+# lineage's child transcript into the court-clerk scaffold, and spawns the
+# shipped `court_clerk` role once per lineage -- FRESH-ROOT (the clerk reads the
+# record, it never inherits the parent's prompt). The clerk's tools are guarded
+# by a dispatch chain THIS class builds over {CLI::ToolGuard.detached}, because
+# the spawn seam supplies none.
 RSpec.describe Lain::Consolidation do
-  let(:store) { Lain::Store.new }
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:context) { Lain::Context.new(model: "clerk-model", max_tokens: 256) }
   let(:journal) { [] }
-  let(:main) { Lain::Timeline.empty(store:).commit(role: :user, content: text("orchestrate the work")) }
-  # Two completed subagent lineages hanging off the main chain's head.
-  let(:lineage_a) { lineage("investigate the login bug", "the token TTL was zero", spawned_from: main.head_digest) }
-  let(:lineage_b) { lineage("audit the payment path", "the retry was unbounded", spawned_from: main.head_digest) }
-  let(:root_a) { lineage_a.first }
-  let(:root_b) { lineage_b.first }
-  # Journal order: main, then A's turns, then B's -- the order the pass folds in.
-  let(:records) { turn_records(main) + turn_records(lineage_a.last) + turn_records(lineage_b.last) }
-
-  def text(body) = [{ "type" => "text", "text" => body }]
-
-  def turn_records(timeline) = timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) }
-
-  # A main (non-subagent) chain plus a fresh-root subagent lineage whose root
-  # commit carries `spawned_from` -- exactly the shape {Tools::Subagent} leaves
-  # on the Journal.
-  def lineage(task, finding, spawned_from:)
-    root = Lain::Timeline.empty(store:)
-                         .commit(role: :user, content: text(task), meta: { "spawned_from" => spawned_from })
-    [root.head_digest, root.commit(role: :assistant, content: text(finding))]
+  # A chat that spawned two one-shot subagents, both completed, recorded by a
+  # real Scribe.
+  let(:session) do
+    RecordedSpawnSession.new(
+      parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "investigate the login bug" }]),
+                         tool_response(["tu_b", "subagent", { "prompt" => "audit the payment path" }]),
+                         text_response("orchestrated")],
+      child_responses: [text_response("the token TTL was zero"), text_response("the retry was unbounded")]
+    ).run
   end
+  let(:lineages) { Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(session.lines)).to_a }
+  let(:spawn_a) { lineages.first.spawn.digest }
+  let(:spawn_b) { lineages.last.spawn.digest }
 
   around do |example|
     Dir.mktmpdir do |root|
@@ -73,36 +64,42 @@ RSpec.describe Lain::Consolidation do
   end
 
   describe "each completed lineage gets one clerk pass" do
-    it "spawns one clerk per lineage, lands one memory each, and each names its lineage root" do
+    it "spawns one clerk per lineage, lands one memory each, and each names its lineage spawn" do
       provider = Lain::Provider::Mock.new(responses: [
-                                            tool_response(memory_write("lineage-a", "root #{root_a}: login bug")),
+                                            tool_response(memory_write("lineage-a", "spawn #{spawn_a}: login bug")),
                                             text_response("clerked A"),
-                                            tool_response(memory_write("lineage-b", "root #{root_b}: payment path")),
+                                            tool_response(memory_write("lineage-b", "spawn #{spawn_b}: payment path")),
                                             text_response("clerked B")
                                           ])
 
-      outcomes = consolidation(provider).call(records)
+      outcomes = consolidation(provider).call(lineages)
 
       # Two lineages -> two spawns (each child ran its own two-step loop, so four
       # provider round trips), two memories in the shared index.
-      expect(outcomes.map(&:root)).to contain_exactly(root_a, root_b)
+      expect(outcomes.map(&:spawn)).to eq([spawn_a, spawn_b])
       expect(recorder.index.count).to eq(2)
-      expect(recorder.index.fetch("lineage-a").body).to include(root_a)
-      expect(recorder.index.fetch("lineage-b").body).to include(root_b)
+      expect(recorder.index.fetch("lineage-a").body).to include(spawn_a)
+      expect(recorder.index.fetch("lineage-b").body).to include(spawn_b)
 
-      # The scaffold that reached each clerk named its lineage root as evidence.
+      # The scaffold that reached each clerk named its lineage spawn as evidence.
       seen = prompts_seen(provider)
-      expect(seen.any? { |text| text.include?(root_a) }).to be(true)
-      expect(seen.any? { |text| text.include?(root_b) }).to be(true)
+      expect(seen.any? { |text| text.include?(spawn_a) }).to be(true)
+      expect(seen.any? { |text| text.include?(spawn_b) }).to be(true)
     end
 
-    it "excludes non-subagent (main) chains -- only lineages with spawned_from roots are clerked" do
-      provider = Lain::Provider::Mock.new(responses: [
-                                            tool_response(memory_write("lineage-a", "a")), text_response,
-                                            tool_response(memory_write("lineage-b", "b")), text_response
-                                          ])
+    it "hands each clerk its child's transcript, never the parent's conversation" do
+      scaffold = described_class::Scaffold.new(lineages.first)
 
-      expect(consolidation(provider).call(records).size).to eq(2)
+      expect(scaffold.transcript).to eq("[user] investigate the login bug\n[assistant] the token TTL was zero")
+      expect(scaffold.render).to include(lineages.first.spawned_from)
+      expect(scaffold.render).not_to include("orchestrated")
+    end
+
+    it "clerks nothing for a session that spawned nothing" do
+      quiet = RecordedSpawnSession.new(parent_responses: [text_response("no spawn")], child_responses: []).run
+
+      expect(consolidation(Lain::Provider::Unreachable.new)
+               .call(Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(quiet.lines)))).to eq([])
     end
   end
 
@@ -115,7 +112,7 @@ RSpec.describe Lain::Consolidation do
                                             tool_response(memory_write("lineage-b", "clean note")), text_response("B")
                                           ])
 
-      consolidation(provider).call(records)
+      consolidation(provider).call(lineages)
 
       # A's PEM write was withheld before the recorder; B's clean write landed --
       # the refusal contained itself and the pass moved on.
@@ -141,7 +138,7 @@ RSpec.describe Lain::Consolidation do
         "asdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890abcdef\n-----END PRIVATE KEY-----"
     end
     # One lineage, so one scripted pair of responses answers one clerk spawn.
-    let(:records) { turn_records(main) + turn_records(lineage_a.last) }
+    let(:lineages) { super().first(1) }
 
     def improve = Lain::CLI::Improve.new(provider: Lain::Provider::Unreachable.new, context:, slots:)
 
@@ -153,7 +150,7 @@ RSpec.describe Lain::Consolidation do
                                             tool_response(memory_write("lineage-a", "-----")), text_response("A done")
                                           ])
 
-      consolidation(provider).call(records)
+      consolidation(provider).call(lineages)
 
       expect(recorder.index.key?("lineage-a")).to be(false)
       expect(journal_records(journal, "write_refused").first.to_journal["pattern"])
@@ -169,7 +166,7 @@ RSpec.describe Lain::Consolidation do
                                               text_response("clerked A")
                                             ])
 
-        consolidation(provider).call(records)
+        consolidation(provider).call(lineages)
 
         expect(tool_results_seen(provider)).to include("<redacted:1>")
         expect(tool_results_seen(provider)).not_to include("MIIBVgIBADAN")
@@ -205,61 +202,30 @@ RSpec.describe Lain::Consolidation do
     end
   end
 
-  # Grouping is one walk per turn. chain_root climbs the render-parent edge
-  # to the top for EVERY turn, so without a digest=>root memo shared across the
-  # one from_records call an N-turn lineage re-reads the root's parent edge N
-  # times -- quadratic over an array already in memory. The memo lives for the
-  # call and no longer.
-  describe "grouping walks each parent edge once per from_records call" do
-    let(:deep) do
-      root = Lain::Timeline.empty(store:).commit(role: :user, content: text("deep task"),
-                                                 meta: { "spawned_from" => main.head_digest })
-      (1..11).inject(root) { |chain, step| chain.commit(role: :assistant, content: text("step #{step}")) }
-    end
-
-    it "reads each turn's parent edge once, not once per descendant" do
-      records = turn_records(deep)
-      records.each { |record| allow(record).to receive(:[]).and_call_original }
-
-      grouped = Lain::Consolidation::Lineage.from_records(records)
-
-      expect(grouped.map(&:turn_count)).to eq([12])
-      expect(records).to all(have_received(:[]).with("parent").at_most(:twice))
-    end
-
-    it "still groups a lineage under its chain root, and drops a headless tail" do
-      headless = turn_records(deep).drop(1)
-
-      expect(Lain::Consolidation::Lineage.from_records(turn_records(deep)).map(&:root)).to eq([deep.to_a.first.digest])
-      expect(Lain::Consolidation::Lineage.from_records(headless)).to eq([])
-    end
-  end
-
   describe "#dry_run" do
     it "names the lineages that would be clerked, through a provider that cannot be reached" do
-      report = consolidation(Lain::Provider::Unreachable.new).dry_run(records)
+      report = consolidation(Lain::Provider::Unreachable.new).dry_run(lineages)
 
-      expect(report).to include(root_a, root_b)
+      expect(report).to include(spawn_a, spawn_b)
       expect(report).to include("2 lineage")
     end
 
-    it "says so when a journal holds no completed subagent lineages" do
-      main_only = turn_records(main)
-
-      expect(consolidation(Lain::Provider::Unreachable.new).dry_run(main_only))
+    it "says so when a session holds no completed subagent lineages" do
+      expect(consolidation(Lain::Provider::Unreachable.new).dry_run([]))
         .to include("no completed subagent lineages")
     end
   end
 
-  # The on-demand CLI surface: it resolves a session file and hands the records
-  # to the pass, returning a String (only the frontend prints).
+  # The on-demand CLI surface: it resolves a session file, reads its lineages
+  # whole, and hands them to the pass, returning a String (only the frontend
+  # prints).
   describe Lain::CLI::Consolidate do
     let(:paths) { instance_double(Lain::Paths, sessions_dir: @session_dir) }
 
     around do |example|
       Dir.mktmpdir do |session_dir|
         @session_dir = session_dir
-        File.write(File.join(session_dir, "s1.ndjson"), records.map { |record| JSON.generate(record) }.join("\n"))
+        session.write(File.join(session_dir, "s1.ndjson"))
         example.run
       end
     end
@@ -274,7 +240,7 @@ RSpec.describe Lain::Consolidation do
 
       report = cli(provider).report("s1")
 
-      expect(report).to include("2 lineage", root_a, root_b, "A done", "B done")
+      expect(report).to include("2 lineage", spawn_a, spawn_b, "A done", "B done")
     end
 
     # A separate METHOD, not `report(dry_run: true)`: the dry surface reports on
@@ -283,6 +249,24 @@ RSpec.describe Lain::Consolidation do
     it "renders the dry-run plan through a provider that cannot be reached" do
       expect(cli(Lain::Provider::Unreachable.new).dry_report("s1"))
         .to include("would each get one court_clerk pass")
+    end
+
+    it "names both lineages a chat session recorded on --dry-run" do
+      expect(cli(Lain::Provider::Unreachable.new).dry_report("s1")).to include("2 lineage(s)", spawn_a, spawn_b)
+    end
+
+    # A Lain::Error, which the exe maps to a refusal and exit status 1. Reading
+    # past the damage would report fewer lineages than the chat ran, with nothing
+    # to say why.
+    it "refuses a session with a torn child_turn line, naming the file and the damage" do
+      lines = session.lines
+      torn = lines.index { |line| JSON.parse(line)["type"] == Lain::SessionRecord::CHILD_TURN_TYPE }
+      lines[torn] = "#{lines[torn][0, 40]}\n"
+      path = File.join(@session_dir, "torn.ndjson")
+      File.write(path, lines.join)
+
+      expect { cli(Lain::Provider::Unreachable.new).dry_report("torn") }
+        .to raise_error(Lain::Error, /torn\.ndjson: line \d+ is torn/)
     end
 
     it "raises the shared SessionFile refusal, listing what it looked at" do

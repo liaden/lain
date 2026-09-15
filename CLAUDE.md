@@ -219,8 +219,13 @@ interpreter. Tools are capabilities, not permissions. `Provider` is
 one round trip, never a loop — Lain owns the loop, because the loop is the object of study.
 
 - **`Workspace` is sent, not stored**: it renders into the Request, never onto the Timeline. A
-  subagent gets a *fresh* root whose `meta["spawned_from"]` names the parent's head, so lineage
-  survives while the child never inherits the parent's prompt.
+  subagent's chain starts at a *fresh* root by default (the `inherit` prefix starts it on the
+  parent's head instead), and its lineage lives in events beside the chains, never in turn
+  `meta`: a `:spawn` names the parent's head as `spawned_from`, its completion `:message` names
+  that spawn and the child's final turn, and the session file holds each child turn as a
+  `child_turn` record, once per digest. So lineage survives while a fresh child never inherits
+  the parent's prompt. `Bench::Session::Lineages` reads completed lineages back from the Store;
+  `lain watch`'s `LineageFilter` follows the same records as they arrive.
 - **`Project` splits root from cwd**: **root** is the authority boundary (what `.lain/` governs),
   **cwd** is where a relative path resolves. `$HOME` is never *inferred* as a root.
 - **The secret boundary is three places, and the split is forced** — a path classifier answers

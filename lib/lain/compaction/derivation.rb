@@ -71,9 +71,9 @@ module Lain
     # are not taken here either: a pin is a CUT POINT in a strategy's proposal,
     # not a shield the derivation applies afterwards.
     #
-    # `meta` is DROPPED, as both compaction projections already do, so a
-    # derived event never carries `spawned_from` and subagent lineage must
-    # still be read off the session timeline.
+    # `meta` is DROPPED, as both compaction projections already do. Nothing
+    # lineage needs is lost by it: subagent lineage rides `:spawn` and
+    # completion events in the shared Store, never a turn's meta.
     class Derivation
       # The derived chain's projection is not a conversation the Messages API
       # would accept. Raised rather than repaired: this class is the production

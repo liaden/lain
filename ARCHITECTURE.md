@@ -115,8 +115,16 @@ the shellout and flood decisions, are argued in [`docs/concurrency.md`](docs/con
 What is *sent* to the model versus what is *stored* in the Timeline is the distinction the whole
 design turns on. `Workspace` renders into the `Request` and is never appended to the Timeline.
 
-A subagent gets a fresh root over the shared `Store`. `meta["spawned_from"]` names the parent's
-head for causal lineage, and the child's prompt chain never includes the parent's conversation.
+A subagent's chain lives in the shared `Store` and starts at a fresh root by default, so the child's
+prompt chain never includes the parent's conversation; the `inherit` prefix arm is the exception,
+starting the child on the parent's head to share its cached prefix. Causal lineage is not on any
+turn: a `:spawn` event names the parent's head as `spawned_from`, the completion `:message` names
+that spawn and the child's final turn, and the session file records each child turn as a
+`child_turn` record, once per digest -- a turn equal to one already written gets none, which is why
+a reader walks the Store rather than the records. `Bench::Session::Lineages` reads a file's
+completed lineages back from the rebuilt Store for `lain consolidate`, `lain improve` and
+friction's `Grader::ToolCallIndex`; `lain watch`'s `LineageFilter` follows the same message records
+live, and the fleet surfaces key on the spawn digest.
 Only the child's final result re-enters the parent's Timeline, as an ordinary `tool_result`.
 
 ```mermaid
@@ -131,7 +139,7 @@ flowchart TB
   RESP -->|commit: text + thinking + tool_use| TL
   RESP -->|tool_use| TR["ToolRunner"]
   TR -->|ONE user turn, all tool_results| TL
-  TR -.->|spawn: fresh root<br/>meta.spawned_from| CH["child Timeline<br/>shared Store"]
+  TR -.->|spawn: fresh root<br/>:spawn event names the head| CH["child Timeline<br/>shared Store"]
   CH -.->|final result only| TR
   REQ -.->|digest| C{{"prompt cache prefix<br/>tools → system → messages"}}
 ```

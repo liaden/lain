@@ -122,45 +122,141 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
   end
 
-  describe "lineage across a spawned_from fan-out" do
-    it "resolves a child chain's outcome back to its causing turn via causal lineage" do
-      parent_chain = Lain::Timeline.empty(store:).commit(role: :user, content: text("do the big task"))
-      spawn_turn = parent_chain.commit(role: :assistant,
-                                       content: [tool_use("tu_spawn", "subagent", { "prompt" => "child task" })])
-
-      child_root = Lain::Timeline.empty(store:)
-                                 .commit(role: :user, content: text("child task"),
-                                         meta: { "spawned_from" => spawn_turn.head_digest })
-      child_call_turn = child_root.commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
-      child_result_turn = child_call_turn.commit(role: :user, content: [tool_result("tu_1", "hi")])
-
-      spawn_result_turn = spawn_turn.commit(role: :user, content: [tool_result("tu_spawn", "spawned")])
-
-      entries = journal_turns(spawn_result_turn) + journal_turns(child_result_turn)
-      index = described_class.new(entries)
-
-      lineage = index.lineage(child_call_turn.head_digest).to_a
-
-      expect(lineage).to eq([child_call_turn.head_digest, child_root.head_digest,
-                             spawn_turn.head_digest, parent_chain.head_digest])
+  # Lineage is read where a chat records it -- a `:spawn`, a completion
+  # `message` and the child's `child_turn` records -- so every session here is
+  # written by a real Scribe observing a real spawn.
+  describe "lineage across a recorded spawn" do
+    def spawn_session(prefix: :fresh, prompt: "child task")
+      RecordedSpawnSession.new(
+        prefix:,
+        parent_responses: [tool_response(["tu_spawn", "subagent", { "prompt" => prompt }]), text_response("done")],
+        child_responses: [tool_response(["tu_1", "echo", { "text" => "hi" }]), text_response("child done")]
+      ).run
     end
 
-    it "agrees no matter how the parent and child chains were interleaved on disk" do
-      parent_chain = Lain::Timeline.empty(store:).commit(role: :user, content: text("do the big task"))
-      spawn_turn = parent_chain.commit(role: :assistant,
-                                       content: [tool_use("tu_spawn", "subagent", { "prompt" => "child task" })])
-      child_root = Lain::Timeline.empty(store:)
-                                 .commit(role: :user, content: text("child task"),
-                                         meta: { "spawned_from" => spawn_turn.head_digest })
+    def turn_digest(session, type, &) = session.of_type(type).find(&).fetch("digest")
 
-      entries = journal_turns(spawn_turn) + journal_turns(child_root)
-      ordered = described_class.new(entries)
-      shuffled = described_class.new(entries.reverse)
-
-      expect(ordered.lineage(child_root.head_digest).to_a).to eq(shuffled.lineage(child_root.head_digest).to_a)
+    def calls?(record, name)
+      Array(record.dig("payload", "content") || record["content"]).any? do |block|
+        block["name"] == name
+      end
     end
 
-    it "stops at a chain root with no spawned_from meta -- an ordinary (non-subagent) chain" do
+    def calling(session, name)
+      turn_digest(session, Lain::SessionRecord::CHILD_TURN_TYPE) { |record| calls?(record, name) }
+    end
+
+    def texts_root(records, text)
+      records.find { |record| record.dig("payload", "content", 0, "text") == text }.fetch("digest")
+    end
+
+    def spawning(session)
+      turn_digest(session, "turn") { |record| record["content"].any? { |block| block["name"] == "subagent" } }
+    end
+
+    it "indexes the child's calls beside the parent's, each paired with its own outcome" do
+      session = spawn_session
+      call = described_class.new(session.records).calls.fetch(calling(session, "echo")).first
+
+      expect([call.name, call.is_error, call.result]).to eq(["echo", false, "hi"])
+    end
+
+    it "walks a fresh child's turn back through its root to the parent turn that spawned it" do
+      session = spawn_session
+      parent_root = session.agent.timeline.to_a.first.digest
+      child_root = session.of_type(Lain::SessionRecord::CHILD_TURN_TYPE).first.fetch("digest")
+
+      lineage = described_class.new(session.records).lineage(calling(session, "echo")).to_a
+
+      expect(lineage).to eq([calling(session, "echo"), child_root, spawning(session), parent_root])
+    end
+
+    it "walks an inheriting child's turn straight onto the parent chain at its spawn point" do
+      session = spawn_session(prefix: :inherit)
+
+      lineage = described_class.new(session.records).lineage(calling(session, "echo")).to_a
+
+      expect(lineage).to include(spawning(session))
+      expect(lineage.last).to eq(session.agent.timeline.to_a.first.digest)
+    end
+
+    it "agrees whether the child's records were written before or after the parent's turns" do
+      session = spawn_session
+      flat, turns = session.records.partition { |record| record["type"] != "turn" }
+      header, flat = flat.partition { |record| record["type"] == "session" }
+
+      written = described_class.new(session.records).lineage(calling(session, "echo")).to_a
+      reordered = described_class.new(header + turns + flat).lineage(calling(session, "echo")).to_a
+
+      expect(reordered).to eq(written)
+    end
+
+    # A fresh child seeded with the human's opening text commits the parent's
+    # own root turn: one event, recorded once. It is a root of the parent's
+    # chain, so it gains no spawn edge -- which would otherwise loop the walk
+    # back down that chain forever.
+    it "ends a child walk at a root it shares with the parent chain, rather than cycling" do
+      session = spawn_session(prompt: RecordedSpawnSession::OPENING)
+
+      # Bounded, so a cycle fails here rather than hanging the run.
+      lineage = described_class.new(session.records).lineage(calling(session, "echo")).take(16)
+
+      expect(lineage.uniq).to eq(lineage)
+      expect(lineage.last).to eq(session.agent.timeline.to_a.first.digest)
+    end
+
+    # A child and its grandchild given the same fresh prompt commit one root,
+    # claimed from two heads. Either edge is wrong for one of them, and keeping
+    # the child's loops the grandchild's walk through the child forever.
+    it "ends a walk at a root two nested spawns share, rather than cycling" do
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_s", "subagent", { "prompt" => "same task" }]), text_response("done")],
+        child_responses: [tool_response(["tu_g", "subagent", { "prompt" => "same task" }]), text_response("child")],
+        grandchild_responses: [tool_response(["tu_1", "echo", { "text" => "hi" }]), text_response("grandchild")]
+      ).run
+      shared = session.of_type(Lain::SessionRecord::CHILD_TURN_TYPE).first.fetch("digest")
+
+      # Bounded, so a cycle fails here rather than hanging the run.
+      lineage = described_class.new(session.records).lineage(calling(session, "echo")).take(16)
+
+      expect(lineage.uniq).to eq(lineage)
+      expect(lineage.last).to eq(shared)
+    end
+
+    # A live file: the grandchild finished, the child that spawned it has not,
+    # so the child's turns are no completed lineage this index holds.
+    it "ends a walk at the root of a child spawned from a turn still in progress" do
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_s", "subagent", { "prompt" => "child task" }]), text_response("done")],
+        child_responses: [tool_response(["tu_g", "subagent", { "prompt" => "grandchild task" }]),
+                          tool_response(["tu_snap", "snapshot", {}]), text_response("child")],
+        grandchild_responses: [tool_response(["tu_1", "echo", { "text" => "hi" }]), text_response("grandchild")]
+      ).run
+      live = Lain::Journal.records(session.snapshots.first.each_line).to_a
+      echo = live.find { |record| record["type"] == Lain::SessionRecord::CHILD_TURN_TYPE && calls?(record, "echo") }
+
+      lineage = described_class.new(live).lineage(echo.fetch("digest")).to_a
+
+      expect(lineage.last).to eq(texts_root(live, "grandchild task"))
+    end
+
+    # A resumed file's first turn continues a head its prior file holds: the
+    # slice ends there, which is not the dangling predecessor a torn slice is.
+    it "ends a resumed file's walk at the head it continues, rather than refusing it as dangling" do
+      prior = RecordedSpawnSession.new(parent_responses: [text_response("hello")], child_responses: []).run
+      resumed = RecordedSpawnSession.new(
+        resuming: [prior, "prior.ndjson"],
+        parent_responses: [tool_response(["tu_e", "echo", { "text" => "again" }]), text_response("done")],
+        child_responses: []
+      ).run("again")
+      echo = turn_digest(resumed, "turn") { |record| calls?(record, "echo") }
+
+      lineage = described_class.new(resumed.records).lineage(echo).to_a
+
+      expect(lineage.last).to eq(resumed.of_type("turn").first.fetch("digest"))
+    end
+
+    it "stops at a chain root no spawn names -- an ordinary (non-subagent) chain" do
       turn = Lain::Timeline.empty(store:).commit(role: :user, content: text("hi"))
                            .commit(role: :assistant, content: text("hello"))
 
@@ -211,6 +307,21 @@ RSpec.describe Lain::Grader::ToolCallIndex do
 
       expect { lineage = index.lineage(chain.head_digest).to_a }.not_to raise_error
       expect(lineage.last).to eq(chain.to_a.first.digest)
+    end
+
+    # A file that resumes nothing continues no other file's chain: its
+    # `rewound` records name turns it wrote, so a missing one is a hole.
+    it "raises for a missing turn a rewound record names, when the slice resumes from no file" do
+      chain = Lain::Timeline.empty(store:)
+                            .commit(role: :user, content: text("hi"))
+                            .commit(role: :assistant, content: text("hello"))
+                            .commit(role: :user, content: text("thanks"))
+      missing_digest = chain.rewind.head_digest
+      entries = journal_turns(chain).reject { |record| record.fetch("digest") == missing_digest } +
+                [Lain::SessionRecord.rewound(from: chain.head_digest, to: missing_digest)]
+
+      expect { described_class.new(entries).lineage(chain.head_digest).to_a }
+        .to raise_error(Lain::Error, /#{Regexp.escape(missing_digest)}/)
     end
 
     it "raises naming the missing digest when a predecessor is absent from the entry set" do

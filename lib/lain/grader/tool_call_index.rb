@@ -33,10 +33,22 @@ module Lain
       # `call.args` in place would otherwise leak into every later read.
       Call = Data.define(:tool_use_id, :name, :args, :is_error, :result)
 
+      # A subagent's turns are indexed beside the parent's. They are no `turn`
+      # records -- a chat records them as `child_turn`s under a `:spawn` -- so
+      # they come from {Bench::Session::Lineages}, in the `turn` record shape
+      # everything below reads.
+      #
       # @param entries [Enumerable<Hash, String>] the {Journal.records} duck
-      def initialize(entries)
-        @turns = Journal.records(entries, type: "turn").to_a.freeze
+      # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>] the
+      #   subagent lineages `entries` record; read off them by default
+      def initialize(entries, lineages: Bench::Session::Lineages.recorded_in(entries))
+        records = Journal.records(entries).to_a
+        own = records.select { |record| record["type"].to_s == "turn" }
+        read = lineages.to_a
+        @turns = (own + child_records(read)).uniq { |record| record.fetch("digest") }.freeze
         @by_digest = @turns.to_h { |record| [record.fetch("digest"), record] }.freeze
+        @spawned_from = spawn_edges(read, own.to_set { |record| record.fetch("digest") })
+        @continued = continued_heads(records)
       end
 
       # @return [Hash{String=>Array<Call>}] issuing turn digest => its paired
@@ -58,11 +70,11 @@ module Lain
       end
 
       # The causal lineage of `turn_digest`: itself, then each render-parent
-      # within its own chain, and -- at a chain root whose meta names
-      # `spawned_from` -- the turn it was spawned from, continuing into the
-      # PARENT chain. The walk follows the content addresses the records carry,
-      # never the order entries happen to sit in the journal, so it agrees no
-      # matter how the parent and child chains were interleaved on disk.
+      # within its own chain, and -- at a subagent's root -- the parent turn its
+      # spawn ran from, continuing into the PARENT chain. The walk follows the
+      # content addresses the records carry, never the order entries happen to
+      # sit in the journal, so it agrees no matter how the parent and child
+      # chains were interleaved on disk.
       #
       # @param turn_digest [String]
       # @return [Enumerator<String>] turn digests, nearest first
@@ -85,8 +97,8 @@ module Lain
       # digest rather than the walk silently ending one step early.
       def record_for(digest)
         @by_digest.fetch(digest) do
-          # A referenced predecessor (a turn's `parent` or root `spawned_from`)
-          # names a digest absent from this index's entry set. Loud, because a
+          # A referenced predecessor (a turn's `parent` or a child root's spawn
+          # point) names a digest absent from this index's entry set. Loud, because a
           # partial journal slice must never read as a shorter-but-genuine chain
           # root -- the lineage walk could not tell the two apart.
           raise Error, "lineage references turn #{digest.inspect}, which is absent from " \
@@ -96,15 +108,58 @@ module Lain
       end
 
       # A turn's render-parent within its own chain, or -- only at a root,
-      # where there is no render-parent -- the turn named by its
-      # `spawned_from` meta. `||` is exactly this precedence: a non-root turn
-      # always has a `parent` and is never consulted for `spawned_from`. A
-      # digest present with NEITHER field is a legitimate root and answers
-      # nil here without raising -- the dangling-lineage refusal is for a
-      # predecessor digest that is itself absent from the entry set, not for the
-      # absence of a predecessor field.
+      # where there is no render-parent -- the parent turn its spawn ran from.
+      # `||` is exactly this precedence: a non-root turn always has a `parent`
+      # and is never looked up as a spawn's root. A digest present with NEITHER
+      # is a legitimate root and answers nil here without raising -- the
+      # dangling-lineage refusal is for a predecessor digest that is itself
+      # absent from the entry set, not for the absence of a predecessor.
       def predecessor(record)
-        record["parent"] || record.dig("meta", "spawned_from")
+        digest = record["parent"] || @spawned_from[record.fetch("digest")]
+        @continued.include?(digest) ? nil : digest
+      end
+
+      # Where a resumed file's own turns continue a chain its prior files hold:
+      # the head it resumed from, and any turn it rewound to. A walk ends there
+      # -- this entry set is one file -- rather than refusing a head that is
+      # not missing, only recorded elsewhere. A file that resumes nothing
+      # continues nothing, so there its rewound targets are its own turns and
+      # a missing one is still a hole.
+      def continued_heads(records)
+        resumed = records.filter_map { |record| record.dig("resumed_from", "head") if record["type"] == "session" }
+        return Set.new.freeze if resumed.empty?
+
+        rewound = records.filter_map { |record| record["to"] if record["type"] == SessionRecord::REWOUND_TYPE }
+        (resumed + rewound).reject { |digest| @by_digest.key?(digest) }.to_set.freeze
+      end
+
+      def child_records(lineages)
+        lineages.flat_map { |lineage| lineage.child_turns.map { |turn| SessionRecord.turn(turn) } }
+      end
+
+      # child root digest => the parent turn its spawn ran from. An inheriting
+      # child's lowest turn renders onto that turn already, so only a root needs
+      # the edge, and only onto a turn this index holds: a spawn from a child
+      # still running names a turn no completed lineage carries, and the walk
+      # ends at the root rather than at a turn it cannot see. Content addressing
+      # makes two more cases ambiguous, and both get none: a root that is ALSO a
+      # turn of the session's own chain (a fresh child seeded with the human's
+      # opening text commits that very turn), and a root two spawns from
+      # different heads share. An edge from either could walk the lineage back
+      # onto a chain it came from, and never end.
+      def spawn_edges(lineages, own)
+        spawn_roots(lineages).group_by { |root, _head| root.digest }
+                             .transform_values { |claims| claims.map(&:last).uniq }
+                             .reject { |root, heads| own.include?(root) || heads.size > 1 }
+                             .transform_values(&:first)
+                             .select { |_root, head| @by_digest.key?(head) }.freeze
+      end
+
+      # [child root, the turn its spawn ran from], for every child that has a
+      # root of its own.
+      def spawn_roots(lineages)
+        lineages.map { |lineage| [lineage.child_turns.first, lineage.spawned_from] }
+                .select { |root, _head| !root.nil? && root.parent.nil? }
       end
 
       # The `type` test is a raw key read and stays one: {Response::ToolUse.wrap}
