@@ -256,6 +256,52 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
   end
 
+  # The goal layer belongs to the standing-goal driver: the switch a chat hands
+  # this command is the driver's guard over the board's, so the layer can only
+  # show a goal that stands, and lowering it ends that goal.
+  describe "the goal layer, over a real board and a real driver" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+    let(:board) do
+      Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: tools,
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+    end
+    let(:driver) do
+      Lain::CLI::GoalDriver.new(journal:, layer: Lain::CLI::GoalDriver::Layer.new(-> { board.mode_switch }))
+    end
+    let(:env) { env_for(driver.guarding(board.mode_switch)) }
+
+    it "refuses +goal with no standing goal, naming /goal <objective>, and switches nothing" do
+      expect { command.call("plan +goal", env) }.to raise_error(Lain::Error, %r{/goal <objective>})
+      expect(board.mode_switch.current).to eq(Lain::Mode.new(posture: :accept_edits))
+      expect(flips).to be_empty
+    end
+
+    it "takes +goal while a goal stands, since the layer is already the driver's" do
+      driver.start("ship the parser")
+
+      expect(command.call("+goal", env)).to end_with("goal (GOAL)")
+    end
+
+    it "stops the standing goal on -goal, and on the reset" do
+      %w[-goal !].each do |args|
+        driver.start("ship the parser")
+        command.call(args, env)
+
+        expect(driver).not_to be_active, "#{args} left the goal standing"
+        expect(board.mode_switch.layers).not_to include(:goal)
+      end
+    end
+
+    it "leaves a standing goal alone when a flip keeps its layer" do
+      driver.start("ship the parser")
+      command.call("plan +notify", env)
+
+      expect(driver).to be_active
+      expect(board.mode_switch.layers.names).to eq(%i[goal notify])
+    end
+  end
+
   def posture_names = Lain::Mode::Posture::NAMES.map(&:to_s)
 
   def layer_names = Lain::Mode::Layer::NAMES.map(&:to_s)

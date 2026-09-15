@@ -290,11 +290,15 @@ RSpec.describe Lain::CLI::GoalDriver do
 
       # Pinning nothing on a rewritten prompt is the safe direction, but it
       # must not also be a silent one -- once per run, when the run ends.
+      # A stop carries no timeline, so the run's last words wait for the
+      # driver's next look at one ({#settle_pin}), which the Repl takes before
+      # every line.
       it "journals the objective going unprotected when the run ends without a pin" do
         driver.start("make the specs green", session:)
         driver.poll(agent.timeline)
 
         driver.stop
+        driver.settle_pin(agent.timeline)
 
         expect(session.pins).to be_empty
         expect(pin_records).to be_empty
@@ -316,6 +320,21 @@ RSpec.describe Lain::CLI::GoalDriver do
         expect(miss_records.size).to eq(1)
       end
 
+      # `:LainGoalOff` and `/mode -goal` stop the driver from outside, at any
+      # moment -- mid-iteration, before any poll has seen the objective's turn.
+      it "pins a goal stopped from outside at its next look at the timeline, and journals no miss" do
+        driver.start("make the specs green", session:)
+        agent.ask(driver.poll(agent.timeline))
+
+        driver.stop
+        driver.settle_pin(agent.timeline)
+        driver.settle_pin(agent.timeline)
+
+        expect(session.pins.size).to eq(1)
+        expect(pin_records.size).to eq(1)
+        expect(miss_records).to be_empty
+      end
+
       it "says nothing either way for a goal that never drove a turn" do
         driver.start("make the specs green", session:)
         driver.stop
@@ -326,8 +345,75 @@ RSpec.describe Lain::CLI::GoalDriver do
     end
   end
 
-  describe "quiescence (only the observable half is wired -- see handback)" do
-    it "defers -- drives nothing, stays active -- while a parked approval blocks the fleet" do
+  # The driver owns the `goal` layer: it raises it when a goal starts standing
+  # and lowers it whichever way the goal ends, over the mode switch a real chat
+  # holds, so `/mode` and the prompt's lighter say what the driver is doing.
+  describe "the goal layer" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:board) do
+      Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8",
+                                 toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }),
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+    end
+    let(:unfinished) { settled_with("continuing to work") }
+
+    def driver_over(board, **options)
+      described_class.new(journal:, layer: described_class::Layer.new(-> { board.mode_switch }), **options)
+    end
+
+    def raised? = board.mode_switch.layers.include?(:goal)
+
+    def goal_flips
+      flips = Lain::Journal.records(journal_io.string.lines, type: "mode_switch")
+      flips.select { |flip| flip["surface"] == "goal" }.to_a
+    end
+
+    it "is raised when a goal starts standing, and journaled as the goal's own flip" do
+      driver = driver_over(board)
+      driver.start("make the specs green")
+
+      expect(raised?).to be(true)
+      expect(goal_flips.map { |flip| flip["to_layers"] }).to eq([["goal"]])
+    end
+
+    it "is lowered when the agent signals the goal is met" do
+      driver = driver_over(board)
+      driver.start("make the specs green")
+      driver.poll(unfinished)
+      driver.poll(settled_with("done -- #{described_class::DONE}"))
+
+      expect([driver.active?, raised?]).to eq([false, false])
+    end
+
+    it "is lowered at the cap, on /goal off, and on an interrupt" do
+      endings = {
+        cap: ->(driver) { 2.times { driver.poll(unfinished) } },
+        off: lambda(&:stop),
+        interrupt: ->(driver) { driver.interrupt.poll(unfinished) }
+      }
+
+      endings.each do |ending, finish|
+        driver = driver_over(board, cap: 1)
+        driver.start("make the specs green")
+        finish.call(driver)
+
+        expect(raised?).to be(false), "the goal layer outlived the goal's #{ending} ending"
+      end
+    end
+
+    it "journals no flip for a goal layer that is already down, so an idle poll writes nothing" do
+      driver = driver_over(board)
+      3.times { driver.poll(unfinished) }
+      driver.stop
+
+      expect(goal_flips).to be_empty
+    end
+  end
+
+  # Whether the fleet is quiet is the wiring's to answer -- a parked approval or
+  # a pending human question -- so the driver is handed the question, not the fleet.
+  describe "quiescence" do
+    it "defers -- drives nothing, stays active -- while the fleet is unquiet" do
       open = false
       driver = described_class.new(journal:, quiescent: -> { open })
       driver.start("make the specs green")

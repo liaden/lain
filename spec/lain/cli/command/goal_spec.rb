@@ -51,12 +51,50 @@ RSpec.describe Lain::CLI::Command::Goal do
   end
 
   describe "/goal off" do
-    it "clears the standing goal and confirms it inline" do
+    it "clears the standing goal and says the driver stopped" do
       goal.call("make the specs green", env)
       text = goal.call("off", env)
 
       expect(driver).not_to be_active
-      expect(text).to be_a(String).and match(/off/i)
+      expect(text).to be_a(String).and match(/off/i).and include("stopped")
+    end
+
+    it "says there was nothing to stop when no goal stood" do
+      expect(goal.call("off", env)).to include("no standing goal")
+    end
+  end
+
+  # The command and `/mode` over the switch a real chat holds, with the driver
+  # holding the goal layer the way the wiring hands it one.
+  describe "the goal layer, over a real board" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:board) do
+      Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8",
+                                 toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }),
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
+    end
+    let(:driver) do
+      Lain::CLI::GoalDriver.new(journal:, layer: Lain::CLI::GoalDriver::Layer.new(-> { board.mode_switch }))
+    end
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [text_response("working on it"),
+                                           text_response("done -- #{Lain::CLI::GoalDriver::DONE}")])
+    end
+    let(:mode_env) { instance_double(Lain::CLI::Command::Env, mode_switch: driver.guarding(board.mode_switch)) }
+
+    def mode = Lain::CLI::Command::Mode.new.call("", mode_env)
+
+    it "lists goal while a standing goal drives, and no goal layer once it reaches the done marker" do
+      goal.call("ship the parser", env)
+      agent.ask(driver.poll(agent.timeline))
+      during = mode
+
+      agent.ask(driver.poll(agent.timeline))
+      driver.poll(agent.timeline)
+
+      expect(during).to include("goal (GOAL)")
+      expect(driver).not_to be_active
+      expect(mode).not_to include("goal")
     end
   end
 

@@ -49,6 +49,11 @@ module Lain
       # thread.
       IDLE_TICK = 0.1
 
+      # What `:LainGoalOff` says, in the chat pane when it stopped a goal and in
+      # the editor when there was none.
+      GOAL_STOPPED = "goal off from the editor -- the driver stopped before its next iteration"
+      NO_GOAL = ":LainGoalOff stops a standing goal, and none is driving"
+
       # The editor that is not there ({Sink::Null}'s shape), so neither the
       # consumer loop nor the refusal path asks whether one was bound.
       # `attached?` is the one distinction still worth drawing: a fiber polling
@@ -111,9 +116,12 @@ module Lain
       # lone {Tools::AskHuman} for a single-asker caller. Which object it is has
       # stopped mattering here, which is the point -- this class no longer knows
       # WHICH agent is stuck.
-      def initialize(tty:, conductor:, ask_human:, questions:)
+      #
+      # `goal:` is the chat's standing-goal driver, which the editor can stop.
+      def initialize(tty:, conductor:, ask_human:, questions:, goal: GoalDriver::Null)
         @tty = tty
         @conductor = conductor
+        @goal = goal
         @ask_human = ask_human
         @questions = questions
         # "Nothing is bound yet" stated as the bind it is, rather than as a
@@ -453,8 +461,19 @@ module Lain
         @routes ||= {
           "reply" => ->(args) { reply(args) },
           "question_answered" => ->(args) { answer_document(args) },
-          "review_done" => ->(args) { @reviews.settle(args) }
+          "review_done" => ->(args) { @reviews.settle(args) },
+          "goal_off" => ->(_args) { goal_off }
         }.merge(@gestures.routes).freeze
+      end
+
+      # `:LainGoalOff`. The drive shows in the chat pane, so that is where its
+      # stop is said; with nothing driving, the editor is told instead, where
+      # the command was typed.
+      def goal_off
+        return report(NO_GOAL) unless @goal.active?
+
+        @goal.stop
+        @tty.method(:render_warning).call(GOAL_STOPPED)
       end
 
       # The wire's `["reply", [answer, line, generation]]`. The ROW rides beside

@@ -499,6 +499,28 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(approval.decision).to eq(:deny)
   end
 
+  # A `/command` typed at the drawn `[y/N]` was meant for the chat -- `/goal off`
+  # while a goal's iteration waits on the call -- so the prompt says it does not
+  # take one, and the terminal holds it for `you>` and asks again.
+  describe "what the prompt takes as an answer" do
+    def asked
+      prompt = nil
+      described_class.new(output:, reader: lambda { |question|
+        prompt = question
+        "n"
+      }).decide(pending)
+      prompt
+    end
+
+    it "takes a verdict of any kind, an empty line included" do
+      expect(%w[y yes n no maybe].push("").map { |line| asked.takes?(line) }).to all(be(true))
+    end
+
+    it "does not take a /command, leading blanks or not" do
+      expect(["/goal off", "  /approve"].map { |line| asked.takes?(line) }).to eq([false, false])
+    end
+  end
+
   it "keeps the affirmative pattern a private implementation detail" do
     expect { described_class::AFFIRMATIVE }.to raise_error(NameError, /private constant/)
   end

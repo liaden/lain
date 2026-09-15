@@ -89,12 +89,34 @@ RSpec.describe Lain::CLI::Command::Surface do
   end
 
   # The run's ONE mode switch reaches a command through the Env and nowhere
-  # else: `identity`, not merely a switch that answers the same posture, because
-  # `/mode` mutates the slot and a second instance would leave the Gate reading
-  # a posture no command can move.
-  it "hands the run's one mode switch through, so /mode writes the slot the gate reads" do
-    with_project do |root|
-      expect(build_surface(root).env.mode_switch).to be(mode_switch)
+  # else: `identity` of the slot, not merely a switch that answers the same
+  # posture, because `/mode` mutates the slot and a second instance would leave
+  # the Gate reading a posture no command can move. A command reaches it through
+  # the standing-goal driver's guard, since the `goal` layer is that driver's to
+  # raise, so reads and writes are asserted to land on the one slot.
+  context "with the board's mode switch" do
+    let(:mode_switch) do
+      instance_double(Lain::CLI::Switchboard::BoundSwitch, current: Lain::Mode.new(posture: :plan), switch: :switched)
+    end
+
+    it "hands the run's one mode switch through, so /mode writes the slot the gate reads" do
+      with_project do |root|
+        env_switch = build_surface(root).env.mode_switch
+
+        expect([env_switch.current, env_switch.switch(Lain::Mode.new(posture: :auto), surface: "tty")])
+          .to eq([Lain::Mode.new(posture: :plan), :switched])
+        expect(mode_switch).to have_received(:switch).with(Lain::Mode.new(posture: :auto), surface: "tty")
+      end
+    end
+
+    it "guards the goal layer: /mode +goal with no standing goal reaches no slot" do
+      with_project do |root|
+        raising = Lain::Mode.new(posture: :plan, layers: [:goal])
+
+        expect { build_surface(root).env.mode_switch.switch(raising, surface: "tty") }
+          .to raise_error(Lain::Error, %r{/goal <objective>})
+        expect(mode_switch).not_to have_received(:switch)
+      end
     end
   end
 

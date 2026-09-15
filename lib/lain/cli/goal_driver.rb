@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module CLI
     # The standing-goal driver: a live, mutable seam the Repl polls between asks
@@ -18,10 +20,14 @@ module Lain
     #
     # `quiescent:` is the sequencing guard: the driver drives NOTHING while the
     # fleet is unquiet (a parked approval, a pending human question), so a
-    # driven turn never races a decision the human still owes. Only the
-    # approval half is wired today; the human-question inbox has no public
-    # predicate, and reaching through internals for one is not worth it. The
-    # default is always-quiescent, so an unwired driver drives freely.
+    # driven turn never races a decision the human still owes. {Wiring} answers
+    # both halves; the default is always-quiescent, so an unwired driver drives
+    # freely.
+    #
+    # The driver owns the mode's `goal` layer ({Layer}): up while a goal
+    # stands, down however it ends. So the layer is never raised by hand -- the
+    # switch `/mode` writes through is {#guarding}'s, which refuses it with no
+    # goal standing and ends the goal when it is lowered.
     class GoalDriver
       DEFAULT_CAP = 5
 
@@ -70,16 +76,83 @@ module Lain
         def self.settle_pin(_timeline) = self
 
         def self.close = self
+
+        # A session with no live driver still refuses a `goal` layer nothing drives.
+        def self.guarding(switch) = Guard.new(switch:, driver: self)
+      end
+
+      # The mode's `goal` layer, moved by the driver through the session's mode
+      # switch and attributed to the goal surface. A reader of the switch rather
+      # than the switch, because {Wiring} memoizes the driver before a chat's
+      # board exists. A flip the layer is already at is not written: a goal
+      # ending is every poll's question, and the Journal would carry a flip per
+      # idle prompt.
+      class Layer
+        NAME = :goal
+
+        # The layer of a driver no mode switch was handed: nothing to move.
+        module Unswitched
+          def self.enable = nil
+
+          def self.disable = nil
+        end
+
+        # @param switch [#call] answers the mode switch, which answers
+        #   `#current` and `#switch(mode, surface:)`
+        def initialize(switch) = @switch = switch
+
+        def enable = move(:enable)
+
+        def disable = move(:disable)
+
+        private
+
+        def move(toggle)
+          switch = @switch.call
+          before = switch.current
+          after = before.with(layers: before.layers.public_send(toggle, NAME))
+          switch.switch(after, surface: SURFACE) unless after == before
+        end
+      end
+
+      # The mode switch as the human writes it, over the one the driver moves.
+      # The `goal` layer says a goal is standing, so raising it with none would
+      # be a lighter that lies, and lowering it is the human saying stop. It
+      # decides on the whole folded mode, so `/mode plan +goal` is refused whole
+      # and `/mode !` stops the goal as `-goal` does.
+      class Guard
+        REFUSAL = "the goal layer shows a standing goal, and none is set -- /goal <objective> sets one and raises it"
+
+        delegate :current, :posture, :layers, :describe, to: :@switch
+
+        def initialize(switch:, driver:)
+          @switch = switch
+          @driver = driver
+        end
+
+        def switch(mode, surface:)
+          lowering = standing?(current) && !standing?(mode)
+          raise Lain::Error, REFUSAL if standing?(mode) && !standing?(current) && !@driver.active?
+
+          @switch.switch(mode, surface:).tap { @driver.stop if lowering }
+        end
+
+        private
+
+        def standing?(mode) = mode.layers.include?(Layer::NAME)
       end
 
       # @param journal [#record] where each driven iteration lands as evidence
       # @param cap [Integer] the iteration ceiling, reused through {Agent::Budget}
       # @param quiescent [#call] answers whether the fleet is quiet enough to drive
-      def initialize(journal:, cap: DEFAULT_CAP, quiescent: -> { true })
+      # @param layer [#enable, #disable] the `goal` mode layer this driver moves
+      def initialize(journal:, cap: DEFAULT_CAP, quiescent: -> { true }, layer: Layer::Unswitched)
         @journal = journal
         @cap = cap
         @quiescent = quiescent
+        @layer = layer
         @current = Null
+        @stopped = []
       end
 
       def active? = @current.active?
@@ -93,19 +166,25 @@ module Lain
       # to {Session::Null}, so a driver started without one pins nowhere.
       def start(goal, session: Session::Null.instance)
         @current = Run.new(goal:, journal: @journal, cap: @cap, session:)
+        @layer.enable
         self
       end
 
-      # `/goal off`: retire to idle. `close` FIRST -- this is the last moment
-      # the retiring Run can say whether its objective ever got protected, and
-      # after the swap there is no one to ask.
+      # `/goal off`, `:LainGoalOff`, `/mode -goal`: retire to idle. The Run is
+      # kept for its last words rather than closed here, because a stop carries
+      # no timeline and can land before any look at one has found the
+      # objective's turn -- mid-iteration, from the editor -- and closing then
+      # would journal an objective that went unprotected while it was on the
+      # chain all along. {#settle_pin} says them.
       def stop
-        @current.close
-        @current = Null
-        self
+        @stopped << @current if @current.active?
+        retire
       end
 
       def goal = @current.goal
+
+      # The mode switch the human's `/mode` writes through ({Guard}).
+      def guarding(switch) = Guard.new(switch:, driver: self)
 
       # A Ctrl-C or a supervising timeout stops the driving from outside; the
       # delegate records it and reports it on the next poll.
@@ -127,12 +206,22 @@ module Lain
       # the delegate for the Null, so a pin after it would find nobody left to
       # pin. Idempotent, so calling it every poll is free.
       def poll(timeline, &notice)
-        @current.settle_pin(timeline)
+        settle_pin(timeline)
         return nil unless @quiescent.call
 
         prompt = @current.poll(timeline, &notice)
-        @current = Null unless @current.active?
+        retire unless @current.equal?(Null) || @current.active?
         prompt
+      end
+
+      # One look at the timeline for the objective's turn: the standing Run's,
+      # and the last words of every Run stopped since the last look. The Repl
+      # takes it before a held line can run, since that line may be the stop.
+      def settle_pin(timeline)
+        @stopped.each { |run| run.last_look(timeline) }
+        @stopped = []
+        @current.settle_pin(timeline)
+        self
       end
 
       # The active delegate: one objective, its own iteration budget, and the
@@ -173,6 +262,13 @@ module Lain
         # nothing to have failed to protect.
         def close
           @pin.close if driven?
+        end
+
+        # A stopped Run's pin, settled if its turn is on `timeline` and closed
+        # either way.
+        def last_look(timeline)
+          settle_pin(timeline)
+          close
         end
 
         # A stop reason retires the Run and yields its notice; otherwise it
@@ -310,6 +406,14 @@ module Lain
         def objective_turn?(turn)
           turn.role == "user" && text_of(turn.content) == @prompt
         end
+      end
+
+      private
+
+      def retire
+        @current = Null
+        @layer.disable
+        self
       end
     end
   end

@@ -51,6 +51,9 @@ module Lain
       # How a prompt another surface decided ends its line.
       CLOSED = "-- decided by %<surface>s: %<verdict>s"
 
+      # What a line typed for the chat rather than for the prompt begins with.
+      COMMAND = "/"
+
       # The `[y/N]` prompt as the reader is handed it: its text, still a String,
       # and the call it asks about. A read the call was decided out from under is
       # STOPPED, and the line it drew is left looking live -- a human's `n` typed
@@ -71,6 +74,13 @@ module Lain
         def closed
           yield format(CLOSED, surface: @pending.surface, verdict:) if decided_elsewhere?
         end
+
+        # Whether `line` is an answer to this prompt at all. A `/command` is not:
+        # typed at the drawn prompt it was meant for the chat -- `/goal off` while
+        # a goal's iteration waits on this call -- and read as a verdict it was
+        # both a denial nobody gave and a command lost. The terminal holds it for
+        # `you>` and asks again ({TTY#prompt_afresh}), so it still decides nothing.
+        def takes?(line) = !line.lstrip.start_with?(COMMAND)
 
         private
 

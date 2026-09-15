@@ -178,6 +178,97 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # What the human typed while nothing was reading -- a standing goal drives
+  # turns with no prompt open -- asked for between reads. Whole lines are held
+  # for `you>`; a line still being typed is nobody's yet, so it is kept and
+  # handed to whichever read comes next. The kernel's buffer is swept by
+  # {Lain::Frontend::LineEditor.typed_ahead}, stubbed here with what it would
+  # have taken; the seam over a real terminal is in repl_spec.
+  describe "#hold_typed_ahead" do
+    let(:terminal) { described_class.new(channel:, output:, input: tty_input, pastel: Pastel.new(enabled: false)) }
+
+    def typed(*sweeps) = allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return(*sweeps)
+
+    it "holds each whole line typed so far, in the order typed, and says so" do
+      typed("/goal off\rkeep going\r")
+      terminal.hold_typed_ahead
+
+      expect([terminal.take_held, terminal.take_held, terminal.take_held]).to eq(["/goal off", "keep going", nil])
+      expect(output.string).to include("held as your next prompt: /goal off")
+    end
+
+    it "reads nothing from a stream that is not a terminal, so its next line is read at the prompt" do
+      input.string = "a prompt\n"
+      tty.hold_typed_ahead
+
+      expect(tty.take_held).to be_nil
+      expect(tty.prompt).to eq("a prompt")
+    end
+
+    it "keeps a line still being typed, and runs it whole once a later sweep finds its end" do
+      typed("/goal o", "ff\r")
+      terminal.hold_typed_ahead
+      held_early = terminal.take_held
+      terminal.hold_typed_ahead
+
+      expect([held_early, terminal.take_held]).to eq([nil, "/goal off"])
+      expect(output.string).not_to include("discarded")
+    end
+
+    it "types a kept line back ahead of the next prompt's read, where the human finishes it" do
+      typed("hel")
+      gate = []
+      allow(Reline::IOGate).to receive(:ungetc) { |byte| gate.unshift(byte) }
+      allow(Reline).to receive(:readmultiline) { gate.pack("C*") }
+
+      terminal.hold_typed_ahead
+
+      expect(terminal.prompt).to eq("hel")
+    end
+
+    it "types a kept line back once, never into a second read" do
+      typed("hel")
+      pushed = []
+      allow(Reline::IOGate).to receive(:ungetc) { |byte| pushed << byte }
+      allow(Reline).to receive(:readmultiline).and_return("hello", "next")
+
+      terminal.hold_typed_ahead
+      2.times { terminal.prompt }
+
+      expect(pushed.size).to eq(3)
+    end
+
+    it "holds a /command typed at a prompt that does not take one, and asks again" do
+      typed("", "", "")
+      allow(Reline).to receive(:readmultiline).and_return("/goal off", "n")
+      prompt = Class.new(String) { def takes?(line) = !line.start_with?("/") }.new("[y/N] ")
+
+      expect(terminal.prompt_afresh(prompt)).to eq("n")
+      expect(terminal.take_held).to eq("/goal off")
+      expect(output.string).to include("held as your next prompt: /goal off")
+    end
+
+    # `human>` classifies its own `/command` lines, so a prompt with no say in
+    # what it takes hands the line straight back.
+    it "hands a /command back from a prompt that does not say what it takes" do
+      typed("")
+      allow(Reline).to receive(:readmultiline).and_return("/inbox")
+
+      expect(terminal.prompt_afresh("human> ")).to eq("/inbox")
+      expect(terminal.take_held).to be_nil
+    end
+
+    it "is joined to the rest at an answer's prompt rather than taken as the answer" do
+      typed("/goal o", "", "")
+      allow(Reline).to receive(:readmultiline).and_return("ff", "n")
+
+      terminal.hold_typed_ahead
+
+      expect(terminal.prompt_afresh("[y/N] ")).to eq("n")
+      expect(terminal.take_held).to eq("/goal off")
+    end
+  end
+
   # The prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
   # shows a warmth glyph -- a snapshot taken once, right before Reline waits
   # (interface-integration.md's fixed-prompt limitation), never mid-wait.

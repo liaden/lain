@@ -47,8 +47,9 @@ module Lain
       HELD = "held as your next prompt: %s"
       DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"
 
-      # A drained line whose rest is still to be typed at the prompt, read as
-      # the rest rather than as an answer ({#read_past_typeahead}).
+      # A read that was not the answer -- the rest of a drained line, or a line
+      # the prompt does not take -- after which the prompt opens again
+      # ({#read_past_typeahead}).
       UNFINISHED = Object.new.freeze
 
       # @param channel [Lain::Channel] drained by {#run}'s background thread
@@ -106,6 +107,7 @@ module Lain
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
         @typeahead = Typeahead.new(input:)
+        @unfinished = Typeahead::NOTHING
         @held = []
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
@@ -213,6 +215,22 @@ module Lain
 
       # The oldest held line, or nil when nothing is held, in the order typed.
       def take_held = @held.shift
+
+      # What the human has typed while no read was open -- a standing goal
+      # drives turns with no prompt drawn -- asked for without opening one, and
+      # under {LineEditor.exclusively} so it never runs beside a read. Each whole
+      # line is held ({#hold}). A line still being typed is nobody's yet: it is
+      # kept, and the next read starts from it -- typed back into the line editor
+      # at a prompt, joined to what follows at an answer's prompt -- so it is
+      # neither run half-typed nor lost.
+      def hold_typed_ahead
+        LineEditor.exclusively do
+          typed = @typeahead.drain(@unfinished)
+          typed.lines.each { |line| hold(line) }
+          @unfinished = typed
+        end
+        nil
+      end
 
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
@@ -333,7 +351,10 @@ module Lain
       # through, which unwinds straight past a trailing statement.
       def read_line_with_history(text)
         composed = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}")
-        line = @line_editor.read(composed.editor_line(@output))
+        line = LineEditor.exclusively do
+          @typeahead.type_back(take_unfinished)
+          @line_editor.read(composed.editor_line(@output))
+        end
         @history.append(line) if line
         line
       ensure
@@ -378,17 +399,26 @@ module Lain
       # A line the human was still typing when the prompt drew is not an answer
       # at either end: judged alone, "Say " then "yes" approved. So the first
       # line the prompt reads is the rest of it -- joined, held whole, and the
-      # prompt opens again, empty.
+      # prompt opens again, empty. A line the prompt does not take is held and
+      # asked again the same way ({ApprovalPolicy::Asked#takes?}).
       def read_past_typeahead(text)
-        typed = put_aside(@typeahead.drain)
+        typed = put_aside(@typeahead.drain(take_unfinished))
         line = LineEditor.before_first_draw(-> { typed = put_aside(@typeahead.drain(typed), noted: typed) }) do
           prompt(text)
         end
-        return line if line.nil? || !typed.unfinished?
+        return line if line.nil? || (!typed.unfinished? && takes?(text, line))
 
         hold("#{typed.partial}#{line}")
         UNFINISHED
       end
+
+      # Asked of the prompt by message, as {#close_prompt} asks it for its
+      # closing line: a `[y/N]` says a `/command` is no answer to it, while
+      # `human>` takes every line and classifies its commands itself.
+      def takes?(text, line) = !text.respond_to?(:takes?) || text.takes?(line)
+
+      # The line {#hold_typed_ahead} kept, handed to exactly one read.
+      def take_unfinished = @unfinished.tap { @unfinished = Typeahead::NOTHING }
 
       # `noted` is the sweep already said, whose unfinished line is not said twice.
       def put_aside(typed, noted: Typeahead::NOTHING)
@@ -815,6 +845,14 @@ module Lain
         # sweep, if there was one.
         def drain(after = NOTHING)
           Typed.from(after.partial.b + (terminal? ? LineEditor.typed_ahead(@input) : ""))
+        end
+
+        # An unfinished line put back where the next read takes its first keys
+        # from, as the keys they were: Reline's gate buffer, which both its gates
+        # read ahead of the terminal. Byte by byte from the end, since each
+        # `ungetc` goes in front of the last.
+        def type_back(typed)
+          typed.partial.b.bytes.reverse_each { |byte| ::Reline::IOGate.ungetc(byte) } if typed.unfinished?
         end
 
         private

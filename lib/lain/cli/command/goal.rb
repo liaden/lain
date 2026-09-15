@@ -48,9 +48,13 @@ module Lain
           "goal set: #{objective} -- driving after each turn until #{GoalDriver::DONE}, the cap, or /goal off"
         end
 
+        # Read before the stop, which leaves every driver idle, so the reply can
+        # say whether anything was driving to stop.
         def turn_off
+          return "goal off -- no standing goal was driving" unless @driver.active?
+
           @driver.stop
-          "goal off -- the driver stops re-prompting; type your next line at you>"
+          "goal off -- the driver stopped before its next iteration; type your next line at you>"
         end
 
         # Bare `/goal`: name the objective in force, or say there is none.

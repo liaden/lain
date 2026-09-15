@@ -808,7 +808,7 @@ module Lain
       # HERE rather than inside Repl so the Env's replies reader and the Repl's
       # collaborator are one object.
       def build_repl(tty:, agent:, backend:)
-        @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:)
+        @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:, goal: goal_driver)
         @command_surface = assemble_surface(agent:, library: backend.library, window: backend.context_window, tty:)
         # Bound rather than injected: the registry is built FROM this object, so
         # no constructor ordering exists in which HumanReplies could take one.
@@ -841,8 +841,13 @@ module Lain
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 
-      # Memoized, so the surface and the Repl poll ONE instance.
-      def goal_driver = @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? })
+      # Memoized, so the surface, the Repl and the editor's `:LainGoalOff` reach
+      # ONE instance. Its layer reads the board's switch late, since the board is
+      # built with the agent and this can be asked for first.
+      def goal_driver
+        @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? },
+                                        layer: GoalDriver::Layer.new(-> { @switchboard.mode_switch }))
+      end
 
       # The judge's model is named once here, so the options asked for and the
       # model they ride to cannot come to disagree.

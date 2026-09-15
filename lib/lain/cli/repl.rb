@@ -158,10 +158,24 @@ module Lain
       # HELD ({HumanReplies#hold}), comes first: it was typed before anything
       # the driver would say next, and it is what a human who typed it expects
       # to run.
+      #
+      # The goal's objective pin settles before a held line is taken, because
+      # that line may be the `/goal off` that ends the goal the pin protects.
       def next_text(action)
         return if action == :quit || !reads_a_line?
 
-        @replies.take_held || @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
+        @goal_driver.settle_pin(@agent.timeline)
+        held_line || @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
+      end
+
+      # While a goal drives, `you>` never opens, so what the human typed during
+      # an iteration -- `/goal off`, above all -- sits unread until the cap. The
+      # terminal is asked for it first, and a whole line joins the held ones.
+      # Only then: with no goal standing the next read is `you>`, which reads
+      # typeahead as the line it is and lets the human still edit it.
+      def held_line
+        @tty.hold_typed_ahead if @goal_driver.active?
+        @replies.take_held
       end
 
       # Whether any line is coming: not once the conductor has closed the

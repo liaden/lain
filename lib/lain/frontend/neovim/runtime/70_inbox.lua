@@ -188,3 +188,9 @@ vim.api.nvim_create_autocmd("BufEnter", {
     vim.keymap.set("n", "<CR>", "<Cmd>LainOpen<CR>", { buffer = ev.buf, desc = OPEN_DESC })
   end,
 })
+
+-- :LainGoalOff stops the chat's standing goal before its next iteration. It sits
+-- beside the inbox's verbs because it is the same errand -- the human reaching
+-- the agents from the editor rather than the chat pane, which a driving goal
+-- never hands back a prompt in -- and it names no row, so it is typable anywhere.
+define("LainGoalOff", agent_command("goal_off"))

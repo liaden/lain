@@ -339,6 +339,11 @@ buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteCompose`,
 `:LainNoteDone` and `:LainThread`.
 
+`:LainGoalOff` stops the chat's standing goal (`/goal <objective>`) before its
+next iteration, as `/goal off` does in the chat pane -- which a driving goal
+never hands back a prompt in. The chat pane says the driver stopped; with no
+goal driving, the editor says so instead.
+
 In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
 set your cursor is on in `lain://question` (|lain-question|) for you to tick
 and `:w`. Answer one and lain opens the next set you have NOT answered; answer

@@ -59,8 +59,11 @@ module Lain
           # The inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
+          # Commands write the mode through the goal driver's guard, because the
+          # `goal` layer is that driver's to raise ({GoalDriver::Guard}).
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                              model_switch:, mode_switch:, snapshots:, epic_driver: epic_driver(epic, chronicle))
+                              model_switch:, mode_switch: goal_driver.guarding(mode_switch), snapshots:,
+                              epic_driver: epic_driver(epic, chronicle))
         end
 
         attr_reader :env, :goal_driver

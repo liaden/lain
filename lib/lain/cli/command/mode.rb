@@ -25,6 +25,10 @@ module Lain
       # have been asked about, would break. So it rebuilds a whole {Lain::Mode}
       # rather than moving the posture within the one in force.
       #
+      # The `goal` layer is the standing-goal driver's: the switch a chat hands
+      # this command is {GoalDriver::Guard}, which refuses `+goal` with no goal
+      # standing and stops the goal when a flip lowers it.
+      #
       # `!` arrives as an ARGUMENT (`/mode !`), not as part of the command word:
       # {Skill::Invocation}'s identifier is `[\w-]+`, so `/mode!` matches no shape
       # at all and falls through to the skill middleware as ordinary prose.
