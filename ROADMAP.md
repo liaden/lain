@@ -1843,6 +1843,39 @@ XDG path relative, which put machine state back inside the user's repository)
    pre-images (item 46's follow-up). `/critique` over a held review goes Docent-style over the
    changeset's objects, verified by a manual `/critique` of lain on itself. 29 cards, 6 waves.
 
+48. **Planned (2026-09-15, panel-reviewed)** — `planning/specs/chunk-qa-round18-fix-at-the-owner.md`:
+   the QA round-18 discharge (`planning/qa-findings-round18-2026-09-15.md`, with the research pass in
+   `planning/qa-round18-research/`), taken as one chunk that fixes each finding at its owner and deletes
+   what the owner makes redundant. There are no production users, so nothing is aliased.
+   - **The record.** A `tool_use` turn reaches the session file before its tools run. Stopped asks carry
+     a typed reason. Failed and stopped children leave a record.
+   - **One backend.** A RunProfile is recorded in the header and used by `/fork`, `--resume`, bench,
+     epic and the journal passes.
+   - **The window.**
+     - Static per-tool ceilings, and readable-text `web_fetch`.
+     - A read counts only while it is on the chain, and seen windows add up.
+     - Readings are tagged with their head.
+     - Held cuts re-collapse, and a handoff state document is the fallback when no cut can make room.
+   - **The human.**
+     - One input rail, with a tmux input pane beside the chat transcript.
+     - Every approval surface is conversation-scoped.
+     - `/stop` stops the running ask, and the fleet shows as a tree in `lain://status`.
+   - **Authority.**
+     - Modes become scope (`checkout`/`plan`, where plan confines work to a spike worktree) × approval
+       (`ask`/`auto`, keeping the triage and rule denies); `manual` and `accept_edits` are deleted.
+     - Automatic approval checks content before and after the call.
+     - A leased child is judged against its own worktree.
+     - Config patterns can be anchored to the project root.
+   - **Project memory.** One store, kept strictly apart from compaction.
+   - **Also:** positive-evidence epic stages, keep-or-delete on epic re-runs, the reviewed head as a
+     changeset's NEW side, closable review rounds, bounded `bash` capture, and docker timeouts that end
+     their container.
+   - **Size:** 48 cards in 8 waves.
+   - **Panel verdict: REQUEST-CHANGES, with every blocker applied** (socket naming, the profile's real
+     write path, the docent/judge split, the project-memory view, and waves recomputed over spec files).
+   - **Before executing:** ratify the planner's choices listed in the plan's Intent, and commit the
+     round-18 QA documents.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
