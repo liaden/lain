@@ -32,9 +32,9 @@ RSpec.describe Lain::Approval::ComposedTerm do
   # drift, and these examples would then exercise the copy while a live session
   # ran on the other. The session cwd doubles as the project root unless an
   # example says otherwise.
-  def factory_for(home, session_cwd, root: Lain::Approval::Risk::Root.new(session_cwd),
+  def factory_for(home, session_cwd, confinement: Lain::Approval::Risk::Root.new(session_cwd),
                   rules: Lain::Sensitivity::Rules.empty)
-    Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: session_cwd, rules:, root:)
+    Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: session_cwd, rules:, root: session_cwd, confinement:)
   end
 
   def rule_for(home, session_cwd, **rest) = described_class.new(sensitivity: factory_for(home, session_cwd, **rest))
@@ -111,6 +111,19 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
         rule = rule_for(home, root)
         expect(gated.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * gated.size)
+      end
+    end
+
+    # An exemption is a person saying one file needs no prompt when a person
+    # reads it. This rule reads with nobody, so it does not take that word.
+    it "refuses a credential an exemption lifted, though the classifier now calls it ordinary" do
+      in_tree do |root, home|
+        on_disk(root, ".gitconfig", "[user]\n  name = dev\n")
+        factory = factory_for(home, root, rules: Lain::Sensitivity::Rules.from({ "exempt" => [".gitconfig"] }))
+        expect_allowed_by_the_verdict("cat .gitconfig")
+        expect(factory.call(root).classify(".gitconfig")).to have_attributes(level: :ordinary, reason: :exempt)
+
+        expect(described_class.new(sensitivity: factory).decide(call_of("cat .gitconfig", cwd: root))).to be_nil
       end
     end
 
@@ -504,7 +517,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
     it "approves nothing when the session confines nothing" do
       in_tree do |root, home|
-        rule = rule_for(home, root, root: Lain::Approval::Risk::Root::NOWHERE)
+        rule = rule_for(home, root, confinement: Lain::Approval::Risk::Root::NOWHERE)
 
         expect(rule.decide(call_of("cat README.md | head -20", cwd: root))).to be_nil
       end

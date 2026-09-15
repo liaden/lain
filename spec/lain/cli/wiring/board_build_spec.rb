@@ -831,6 +831,118 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  # A committed config names project files from the root, wherever the checkout
+  # lives. Driven from a real config file through the board every attended chat
+  # is built from, and through the real tools its listing half guards.
+  describe "a project-anchored [sensitivity] pattern, on the production path" do
+    def write(root, name, body, mode: 0o644)
+      File.join(root, name).tap do |path|
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, body)
+        File.chmod(mode, path)
+      end
+    end
+
+    def listed(board, root, name, tool, input)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+      stack = Lain::Middleware::Stack.new([Lain::Middleware::WithholdSecretPaths.new(filter: board.sensitivity.filter)])
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input:)
+      stack.call({ effect:, context: session }) do |inner|
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
+        inner.merge(result: tool.call(input, invocation))
+      end.fetch(:result).content
+    end
+
+    it "refuses a read inside an anchored denied directory, and withholds it from a listing and a grep", :seam do
+      in_tree(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home|
+        write(root, "vault/a.txt", "TOKEN=inside\n")
+        write(root, "notes.txt", "TOKEN=outside\n")
+        board = board_for(root, home)
+
+        expect(board.sensitivity.denial(read_of("vault/a.txt"))).to have_attributes(reason: :configured)
+        expect(board.sensitivity.denial(read_of(File.join(root, "vault", "a.txt")))).not_to be_nil
+        listing = listed(board, root, "list_files", Lain::Tools::ListFiles.new, { "path" => ".", "recursive" => true })
+        hits = listed(board, root, "grep", Lain::Tools::Grep.new, { "pattern" => "TOKEN", "path" => "." })
+
+        expect(listing).to include("notes.txt", "withheld (configured)")
+        expect(listing).not_to include("vault")
+        expect(hits).to include("notes.txt:1:", "1 match withheld (configured)")
+        expect(hits).not_to include("inside")
+      end
+    end
+
+    it "reads an anchored exempt file without a prompt, while cat of it still parks for a human" do
+      in_tree(config: %([sensitivity]\nexempt = ["/fixtures/.env"]\n)) do |root, home|
+        fixture = write(root, "fixtures/.env", "PLAIN=value\n")
+        write(root, ".env", "PLAIN=value\n")
+        board = board_over(root, home)
+
+        expect(board.sensitivity.gates?(read_of(fixture))).to be(false)
+        expect(board.sensitivity.gates?(read_of("fixtures/.env"))).to be(false)
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+        while_parked(board, bash_of("cat fixtures/.env", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "withholds a directory's contents from a read, a listing and a grep when the denial has no trailing slash",
+       :seam do
+      in_tree(config: %([sensitivity]\ndenied = ["/vault"]\n)) do |root, home|
+        write(root, "vault/a.txt", "TOKEN=inside\n")
+        write(root, "notes.txt", "TOKEN=outside\n")
+        board = board_for(root, home)
+
+        listing = listed(board, root, "list_files", Lain::Tools::ListFiles.new, { "path" => ".", "recursive" => true })
+        hits = listed(board, root, "grep", Lain::Tools::Grep.new, { "pattern" => "TOKEN", "path" => "." })
+
+        expect(board.sensitivity.denial(read_of("vault/a.txt"))).to have_attributes(reason: :configured)
+        expect(listing).not_to include("vault")
+        expect(hits).to include("notes.txt:1:")
+        expect(hits).not_to include("inside")
+      end
+    end
+
+    it "refuses an exemption naming a directory that exists, though it carries no trailing slash" do
+      in_tree(config: %([sensitivity]\nexempt = ["/fixtures"]\n)) do |root, home|
+        write(root, "fixtures/.env", "PLAIN=value\n")
+
+        expect { board_for(root, home) }
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.toml.*exempt.*"/fixtures"}m)
+      end
+    end
+
+    it "refuses an anchored directory exemption at load, naming the pattern" do
+      in_tree(config: %([sensitivity]\nexempt = ["/fixtures/"]\n)) do |root, home|
+        expect { board_for(root, home) }
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.toml.*exempt.*"/fixtures/"}m)
+      end
+    end
+
+    # The same table reaches the triage and approving rungs through the factory,
+    # anchored on the same root the policy uses.
+    it "anchors the factory's classifiers on the project root, not on the call's cwd" do
+      in_tree(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home|
+        FileUtils.mkdir_p(File.join(root, "lib"))
+        project = project_at(root)
+        factory = described_class.classifiers(project:, paths: paths_at(home), table: described_class.rules(project:))
+
+        expect(factory.call(File.join(root, "lib")).classify("../vault/a.txt")).to be_denied
+        expect(factory.call("bad\0dir").classify(File.join(root, "vault", "a.txt"))).to be_denied
+      end
+    end
+
+    it "anchors on the project root even where the root confines nothing" do
+      in_tree(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home|
+        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+
+        expect(board.policy_switch.call(bash_of("cat #{root}/vault/a.txt", "cwd" => root), nil)).to be(false)
+        expect(rulings.first).to include("rung" => "triage", "verdict" => "deny")
+      end
+    end
+  end
+
   # The factory's own seam. Everything it needs to anchor on comes from the
   # WIRING -- `home` from {Paths}, `cwd` from the resolved {Project} -- so a
   # value it cannot use is a startup bug and belongs at startup. Built eagerly
@@ -868,7 +980,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # an unresolvable call inside the project. The root answer fails CLOSED.
     it "confines nothing for a cwd nothing could resolve, where the classifier falls back" do
       in_tree do |root, home|
-        factory = described_class.new(home:, cwd: root, root: Lain::Approval::Risk::Root.new(root))
+        factory = described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))
 
         expect(factory.confinement(nil).contains?("README.md")).to be(true)
         expect(factory.confinement("lib").contains?("../README.md")).to be(true)
@@ -882,19 +994,21 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # the real half of the question fails closed on it.
     it "confines nothing under a root that does not exist" do
       factory = described_class.new(home: "/home/u", cwd: "/home/u/work",
-                                    root: Lain::Approval::Risk::Root.new("/home/u/work"))
+                                    confinement: Lain::Approval::Risk::Root.new("/home/u/work"))
 
       expect(factory.confinement(nil).contains?("README.md")).to be(false)
     end
 
-    # Closed by default, so a factory built without a root -- the triage rung's
-    # own examples build one -- can never be the thing that approves.
-    it "confines nothing when it was given no root" do
+    # Closed by default, so a factory built without a confinement -- the triage
+    # rung's own examples build one -- can never be the thing that approves.
+    it "confines nothing when it was given no confinement" do
       expect(described_class.new(home: "/home/u", cwd: "/home/u/work").confinement(nil).contains?("x")).to be(false)
     end
 
     describe "#content" do
-      def confined_factory(home, root) = described_class.new(home:, cwd: root, root: Lain::Approval::Risk::Root.new(root))
+      def confined_factory(home, root)
+        described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))
+      end
 
       def put(root, name, body, mode: 0o644)
         File.join(root, name).tap do |path|

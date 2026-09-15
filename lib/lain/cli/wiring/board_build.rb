@@ -201,7 +201,7 @@ module Lain
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
         # @return [Lain::Sensitivity]
         def classifier(project:, paths:, table:)
-          Lain::Sensitivity.new(home: paths.home, cwd: project.cwd, rules: table)
+          Lain::Sensitivity.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root)
         end
 
         # A THIRD reader of the same table, and the one the approval ladder
@@ -212,12 +212,14 @@ module Lain
         #
         # @param project [Lain::Project] supplies the cwd a relative one resolves
         #   against -- the session's, exactly as {Wiring#chat_env} sends the tools
-        #   -- and the root an approved word must stay under
+        #   -- and the root the table's patterns are anchored on and an approved
+        #   word must stay under
         # @param paths [Paths]
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
         # @return [Classifiers]
         def classifiers(project:, paths:, table:)
-          Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: confinement(project:, paths:))
+          Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root,
+                          confinement: confinement(project:, paths:))
         end
 
         # The boundary an automatic approval reads inside. A root holding the
@@ -258,11 +260,16 @@ module Lain
         # and nothing else, and it is SAID, because a boundary narrowing in
         # silence is the failure this whole file is about.
         #
+        # An exemption naming a directory is refused here too, where the root
+        # is on disk to ask: the table itself makes no syscall.
+        #
         # @param project [Lain::Project]
         # @param notice [#call, nil]
         # @return [Lain::Sensitivity::Rules]
         def rules(project:, notice: nil)
-          Config.sensitivity(root: project.root)
+          root = project.root
+          Config.sensitivity(root:).exempting_files!(->(anchored) { File.directory?(File.join(root, anchored)) },
+                                                     path: ProjectDir.new(root:).config)
         rescue Config::Malformed => e
           (notice || SILENT).call(format(UNREADABLE, reason: e.message))
           Lain::Sensitivity::Rules.empty
@@ -448,18 +455,23 @@ module Lain
           # @param cwd [String] the session's working directory, which a
           #   call's own relative `cwd` resolves against
           # @param rules [Lain::Sensitivity::Rules] the compiled `[sensitivity]` table
-          # @param root [#contains?] the project root an approved word must stay
+          # @param root [String, nil] the project root its `/`-anchored patterns
+          #   are read from, on {Lain::Sensitivity}'s terms. Apart from
+          #   `confinement` because a root that confines nothing still anchors a
+          #   denial.
+          # @param confinement [#contains?] the root an approved word must stay
           #   under; confining nothing by default, so a factory built without
           #   one can never be what approves
-          # @raise [ArgumentError] from {Lain::Sensitivity}, when `home` or `cwd`
-          #   is not something a classifier can be anchored on
-          def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty,
-                         root: Lain::Approval::Risk::Root::NOWHERE)
+          # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
+          #   or `root` is not something a classifier can be anchored on
+          def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil,
+                         confinement: Lain::Approval::Risk::Root::NOWHERE)
             @home = home
             @rules = rules
             @root = root
+            @confinement = confinement
             @worker_env = Lain::WorkerEnv.new(cwd:, env: {})
-            @session = Lain::Sensitivity.new(home:, cwd:, rules:)
+            @session = Lain::Sensitivity.new(home:, cwd:, rules:, root:)
             @nowhere = Confinement.new(Lain::Approval::Risk::Root::NOWHERE, @worker_env.cwd)
             freeze
           end
@@ -468,7 +480,7 @@ module Lain
           #   nil when it named none, and anything else JSON permits
           # @return [#classify] never nil, and never raising
           def call(cwd)
-            Lain::Sensitivity.new(home: @home, cwd: @worker_env.resolve(cwd), rules: @rules)
+            Lain::Sensitivity.new(home: @home, cwd: @worker_env.resolve(cwd), rules: @rules, root: @root)
           rescue StandardError
             @session
           end
@@ -482,16 +494,16 @@ module Lain
           # @param cwd [String, nil] as on {#call}
           # @return [Confinement] never nil, and never raising
           def confinement(cwd)
-            return @nowhere unless @root.contains?(cwd || @worker_env.cwd, from: @worker_env.cwd)
+            return @nowhere unless @confinement.contains?(cwd || @worker_env.cwd, from: @worker_env.cwd)
 
             # The cwd is judged CLEANED, unlike a word: the command is spawned in
             # exactly this string, so `inner/../h` runs in `h` whatever `inner`
             # links to, while a word's `..` is resolved by the kernel from there.
             landing = @worker_env.resolve(cwd)
-            real_root = Lain::Approval::Risk::Root.new(File.realpath(@root))
+            real_root = Lain::Approval::Risk::Root.new(File.realpath(@confinement))
             return @nowhere unless real_root.contains?(Landing.of(landing))
 
-            Confinement.new(@root, landing, landing:, real_root:)
+            Confinement.new(@confinement, landing, landing:, real_root:)
           rescue StandardError
             @nowhere
           end

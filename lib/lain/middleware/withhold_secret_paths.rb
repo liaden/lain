@@ -323,11 +323,14 @@ module Lain
       # A single-FILE `grep` is the one case where the target is not a directory:
       # it labels every hit with the model's own spelling, so the join produces
       # the true path with the row appended. That is a path no file has, and it
-      # is still the right thing to classify: every rule here matches on a
-      # prefix, a whole segment, or the basename, and appending the row preserves
-      # all three -- so a reading of it is exactly as strict as a reading of the
-      # true path, never less. A `stat` to tell the two targets apart would put
-      # IO in the middle of a middleware to buy nothing.
+      # is still the right thing to classify: every rule that withholds matches
+      # on a prefix, a whole segment, or the basename, and appending the row
+      # preserves all three. The rules that match one EXACT path are exemptions,
+      # which the appended path never matches, so a reading of it can only be
+      # stricter than a reading of the true path, never less: a grep over one
+      # exempted file withholds what `read_file` of it shows. A `stat` to tell
+      # the two targets apart would put IO in the middle of a middleware to buy
+      # nothing.
       #
       # UTF-8, like {#rows}, so a row and its base join without an encoding
       # clash -- and as {Tools::ListFiles#perform} reads its own root, so a

@@ -154,6 +154,18 @@ RSpec.describe Lain::CLI::Survey, :seam do
       expect(command.present(@root)).to include(verdict.explanation)
     end
 
+    # The survey builds its own classifier from the project's table, so an
+    # anchored pattern there has to reach it with the root it is anchored on.
+    it "withholds a path a project-anchored pattern denies" do
+      write(".lain/config.toml", %([sensitivity]\ndenied = ["/vault/"]\n))
+      write("vault/keys.md", document("# Keys", "", "Nothing a survey should list."))
+
+      rendered = command.present(@root)
+
+      expect(rendered).to include("vault/keys.md", "named by this project's sensitivity config")
+      expect(rendered).not_to include("[ ] vault/keys.md")
+    end
+
     it "names a binary file and says that is why" do
       write("logo.png", "\x89PNG\r\n\x1A\n\x00\x00\x00\rIHDR")
 

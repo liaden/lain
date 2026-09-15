@@ -245,7 +245,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
 
       shown = content(list("home", recursive: true))
 
-      expect(shown.split("\n")).to eq([".ssh", ".ssh/id_rsa.pub", "6 paths withheld (out_of_scope, protected)"])
+      expect(shown.split("\n")).to eq([".ssh/id_rsa.pub", "7 paths withheld (credential, out_of_scope, protected)"])
     end
   end
 

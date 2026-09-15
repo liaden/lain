@@ -141,7 +141,7 @@ module Lain
       # Each half of the question asked of the half of the Project that answers
       # it: the table under the root, the anchor at the cwd.
       def classifier(project)
-        Lain::Sensitivity.new(home: @paths.home, cwd: project.cwd,
+        Lain::Sensitivity.new(home: @paths.home, cwd: project.cwd, root: project.root,
                               rules: Config.sensitivity(root: project.root))
       end
 

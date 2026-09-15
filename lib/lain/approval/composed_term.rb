@@ -17,7 +17,7 @@ module Lain
     # 1. the tool is the one whose input is a shell command;
     # 2. the verdict ALLOWS, so a term exists to read at all;
     # 3. every stage's argv0 is a BARE NAME, and every one is on {PROGRAMS};
-    # 4. every word of every stage classifies ORDINARY;
+    # 4. every word of every stage classifies ORDINARY, and not by exemption;
     # 5. no stage carries a flag that takes it outside its own arguments;
     # 6. no word traverses a path-aliasing pseudo-filesystem;
     # 7. THE ROOT PREDICATE: every word, and the call's own cwd, lands under
@@ -97,6 +97,12 @@ module Lain
     # that widens."* Measured, all five reach `allow`, so "not denied" approves
     # every one. Requiring `ordinary` also catches `Sensitivity::MALFORMED`, so
     # a word the classifier could not READ cannot pass as un-denied.
+    #
+    # An ordinary verdict whose reason is `exempt` does not count. The
+    # `[sensitivity] exempt` key tells a HUMAN's prompt that one file is not
+    # worth asking about; it lifts the prompt, never this approval. Measured,
+    # one basename exemption for a fixture `.env` approved `cat` of every
+    # `.env` in the tree with nobody asked.
     #
     # And it classifies EVERY word itself, whatever the spelling.
     # {Escalation::Triage::Command} DOWNGRADES a denied word with no separator
@@ -388,8 +394,10 @@ module Lain
 
       def ordinary_words?(term, cwd)
         classifier = @sensitivity.call(cwd)
-        term.flatten.all? { |word| classifier.classify(word).ordinary? }
+        term.flatten.all? { |word| unexempted?(classifier.classify(word)) }
       end
+
+      def unexempted?(verdict) = verdict.ordinary? && !verdict.exempt?
 
       def unflagged?(term)
         term.all? { |program, *arguments| PROGRAMS.fetch(program, UNLISTED).admits?(arguments) }

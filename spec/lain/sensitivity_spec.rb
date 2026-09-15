@@ -203,7 +203,7 @@ RSpec.describe Lain::Sensitivity do
     it "keeps the rule narrow: .ssh alone is not the secret, id_* is" do
       expect(classify("/root/.ssh/known_hosts")).to be_ordinary
       expect(classify("/root/.ssh/authorized_keys")).to be_ordinary
-      expect(classify("#{home}/.ssh")).to be_ordinary
+      expect(classify("#{home}/.ssh")).to have_attributes(level: :gated, reason: :credential)
     end
 
     # A whole-subtree rule has to cover the subtree's ROOT, or a listing shows
@@ -338,7 +338,53 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "offers, for every built-in gated entry, a sample the entry itself matches" do
-      expect(described_class::GATED.reject { |rule| rule.matches?(rule.sample(home), home) }).to be_empty
+      anchors = Lain::Sensitivity::Anchors.new(home:, root: cwd)
+
+      unmatched = described_class::GATED.reject do |rule|
+        rule.samples(anchors).all? { |path| rule.matches?(path, anchors) }
+      end
+
+      expect(unmatched).to be_empty
+    end
+  end
+
+  # Credential stores an automatic reader could still reach by name, each with
+  # the path its tool really writes.
+  describe "gated, the credential stores the first table missed" do
+    {
+      "#{SensitivitySpecSupport::HOME}/.ssh/deploy" => "a key in ~/.ssh under a name that is not id_*",
+      "#{SensitivitySpecSupport::HOME}/.ssh/keys/github" => "a key nested beneath ~/.ssh",
+      "#{SensitivitySpecSupport::HOME}/.vault-token" => "a HashiCorp Vault token",
+      "project/.vault-token" => "a Vault token wherever it sits",
+      "#{SensitivitySpecSupport::HOME}/.cargo/credentials.toml" => "a crates.io token",
+      "#{SensitivitySpecSupport::HOME}/.config/gcloud/application_default_credentials.json" =>
+        "gcloud application default credentials",
+      "#{SensitivitySpecSupport::HOME}/.terraform.d/credentials.tfrc.json" => "a Terraform Cloud token",
+      "#{SensitivitySpecSupport::HOME}/.azure/msal_token_cache.json" => "anything under ~/.azure",
+      "#{SensitivitySpecSupport::HOME}/.kube/config.bak" => "a kubeconfig backup",
+      "#{SensitivitySpecSupport::HOME}/.kube/config-staging" => "a second kubeconfig"
+    }.each do |path, what|
+      it "gates #{what} for its credential shape" do
+        expect(classify(path)).to have_attributes(level: :gated, reason: :credential)
+      end
+    end
+
+    it "leaves the public keys and known hosts in ~/.ssh ordinary" do
+      expect(classify("#{home}/.ssh/deploy.pub")).to be_ordinary
+      expect(classify("#{home}/.ssh/known_hosts")).to be_ordinary
+    end
+
+    it "keeps the kubeconfig itself denied, and the rest of ~/.kube ordinary" do
+      expect(classify("#{home}/.kube/config")).to be_denied
+      expect(classify("#{home}/.kube/cache/discovery.json")).to be_ordinary
+    end
+
+    it "gates a kube config backup on the path read_file asks about" do
+      policy = Lain::Sensitivity::Policy.new(sensitivity:)
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                        input: { "path" => "#{home}/.kube/config.bak" })
+
+      expect(policy.gates?(read)).to be(true)
     end
   end
 
@@ -500,6 +546,117 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  # A leading `/` anchors a pattern at the project root, which a committed
+  # config can name wherever the checkout lives. A trailing `/` is a directory
+  # and everything beneath it, and only the keys that add may say that.
+  describe "a project-anchored pattern" do
+    let(:root) { "/srv/project" }
+
+    def rooted(table, cwd: root) = described_class.new(home:, cwd:, root:, rules: Lain::Sensitivity::Rules.from(table))
+
+    it "denies an anchored directory, everything beneath it, and nothing of the same name elsewhere" do
+      vault = rooted({ "denied" => ["/vault/"] })
+
+      expect(vault.classify("#{root}/vault")).to have_attributes(level: :denied, reason: :configured)
+      expect(vault.classify("vault/a.txt")).to have_attributes(level: :denied, reason: :configured)
+      expect(vault.classify("#{root}/vault/deep/b.txt")).to be_denied
+      expect(vault.classify("#{root}/lib/vault/a.txt")).to be_ordinary
+      expect(vault.classify("/srv/other/vault/a.txt")).to be_ordinary
+      expect(vault.classify("#{root}/vaults/a.txt")).to be_ordinary
+    end
+
+    it "resolves a relative word from a cwd below the root against the root's anchor" do
+      vault = rooted({ "denied" => ["/vault/"] }, cwd: "#{root}/lib")
+
+      expect(vault.classify("../vault/a.txt")).to be_denied
+      expect(vault.classify("vault/a.txt")).to be_ordinary
+    end
+
+    it "gates an anchored directory at the gated strength" do
+      ops = rooted({ "gated" => ["/ops/"] })
+
+      expect(ops.classify("ops/deploy.sh")).to have_attributes(level: :gated, reason: :configured)
+    end
+
+    # A key that restricts must fail closed on the spelling a person is most
+    # likely to write, and a file has nothing beneath it to over-reach into.
+    it "covers what lies beneath an anchored denied or gated path, with or without the trailing separator" do
+      denied = rooted({ "denied" => ["/vault"] })
+      gated = rooted({ "gated" => ["/ops"] })
+
+      expect(denied.classify("vault")).to be_denied
+      expect(denied.classify("vault/a.txt")).to have_attributes(level: :denied, reason: :configured)
+      expect(denied.classify("vaults/a.txt")).to be_ordinary
+      expect(gated.classify("ops/deploy.sh")).to have_attributes(level: :gated, reason: :configured)
+    end
+
+    it "lifts the one file an anchored exemption names, and no other file of that name" do
+      fixture = rooted({ "exempt" => ["/fixtures/.env"] })
+
+      expect(fixture.classify("fixtures/.env")).to have_attributes(level: :ordinary, reason: :exempt)
+      expect(fixture.classify(".env")).to be_gated
+      expect(fixture.classify("fixtures/deep/.env")).to be_gated
+      expect(fixture.classify("/srv/other/fixtures/.env")).to be_gated
+    end
+
+    it "never lifts a built-in denial, however it is anchored" do
+      verdict = rooted({ "exempt" => ["/.netrc"] }).classify(".netrc")
+
+      expect(verdict).to have_attributes(level: :denied, reason: :protected)
+    end
+
+    it "refuses an anchored directory as an exemption, naming the pattern" do
+      ["/fixtures/", "/"].each do |pattern|
+        named = %r{\A/p/\.lain/config\.toml: .*exempt.*#{Regexp.escape(pattern.inspect)}}
+
+        expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }, path: "/p/.lain/config.toml") }
+          .to raise_error(Lain::Config::Refusal, named)
+      end
+    end
+
+    # The table cannot look at the disk, so the loader that can says which
+    # anchored paths are directories; a trailing separator needs no disk.
+    it "refuses an anchored exemption the loader finds is a directory, naming the pattern and the file" do
+      rules = Lain::Sensitivity::Rules.from({ "exempt" => ["/fixtures", "/fixtures/.env"] })
+      directories = ->(anchored) { anchored == "fixtures" }
+
+      expect { rules.exempting_files!(directories, path: "/p/.lain/config.toml") }
+        .to raise_error(Lain::Config::Refusal, %r{\A/p/\.lain/config\.toml: .*exempt.*"/fixtures"})
+      expect(rules.exempting_files!(->(_anchored) { false })).to equal(rules)
+    end
+
+    it "refuses an anchored pattern holding a glob or an unclean segment, which can never match" do
+      ["/vault/*", "/*.env", "//vault", "/a/../b", "/./x", "/a//b"].each do |pattern|
+        expect { Lain::Sensitivity::Rules.from({ "denied" => [pattern] }) }
+          .to raise_error(Lain::Config::Refusal, /can never match/)
+      end
+    end
+
+    it "refuses to build a classifier over anchored patterns when it was given no root to anchor them on" do
+      rules = Lain::Sensitivity::Rules.from({ "denied" => ["/vault/"] })
+
+      expect { described_class.new(home:, cwd:, rules:) }.to raise_error(ArgumentError, /root/)
+      expect { described_class.new(home:, cwd:, rules:, root: "relative") }.to raise_error(ArgumentError, /root/)
+    end
+
+    it "needs no root for a table that anchors nothing there" do
+      expect(described_class.new(home:, cwd:, rules: Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"] }))
+               .classify("a.secret")).to be_denied
+    end
+
+    it "compiles every shape of pattern to a rule its own sample matches, so the exemption probe means something" do
+      anchors = Lain::Sensitivity::Anchors.new(home:, root:)
+      table = { "denied" => ["/vault/", "/vault", "~/.secrets", "*.secret"], "exempt" => ["/fixtures/.env", "/.env"] }
+      compiled = Lain::Sensitivity::Rules.from(table).then { |rules| [*rules.denied, *rules.exempt] }
+
+      expect(compiled.reject { |rule| rule.samples(anchors).all? { |path| rule.matches?(path, anchors) } }).to be_empty
+    end
+
+    it "stays deeply frozen with a root" do
+      expect(Ractor.shareable?(rooted({ "denied" => [+"/vault/"], "exempt" => [+"/fixtures/.env"] }))).to be(true)
+    end
+  end
+
   # Precedence is expressed as ONE ordered list rather than a check, so the
   # order is the whole rule and every step of it needs its own example. Reordering
   # any adjacent pair must turn exactly one of these red.
@@ -578,6 +735,45 @@ RSpec.describe Lain::Sensitivity do
     # The probe's placeholder basename is a name no config would write, so an
     # exemption that happens to share it is not charged with lifting every
     # directory entry the placeholder stands in for.
+    # A sample is only worth probing when it is a file somebody could really
+    # exempt, judged by the entry that carries it rather than by a denial.
+    it "probes every built-in gated entry with a sample that entry, and no denial, judges" do
+      probe = Lain::Sensitivity::Rules::PROBE
+      shadowed = described_class::GATED.select do |gated|
+        gated.samples(probe).any? { |path| described_class::DENIED.any? { |denied| denied.matches?(path, probe) } }
+      end
+
+      expect(shadowed.map(&:label)).to be_empty
+    end
+
+    # One sample per key type the id_* rows already name, so a glob over any
+    # of them is counted against the keys kept under other names in ~/.ssh.
+    %w[rsa dsa ecdsa ed25519].each do |type|
+      it "counts *_#{type} as lifting the ~/.ssh entry too, so the per-entry cap refuses it" do
+        expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*_#{type}"] }) }
+          .to raise_error(Lain::Config::Refusal, %r{lifts 2 .*"id_#{type}\*".*"~/\.ssh"})
+      end
+    end
+
+    it "counts *.bak against the kube backups entry, and against nothing else" do
+      exemption = Lain::Sensitivity::Rules.from({ "exempt" => ["*.bak"] }).exempt.first
+      probe = Lain::Sensitivity::Rules::PROBE
+
+      expect(described_class::GATED.select { |gated| exemption.lifts?(gated, probe) }.map(&:label))
+        .to eq(["~/.kube/config*"])
+    end
+
+    it "lifts exactly one entry with the obvious exemption for each credential store the first table missed" do
+      probe = Lain::Sensitivity::Rules::PROBE
+      %w[.vault-token ~/.cargo/credentials.toml application_default_credentials.json
+         ~/.terraform.d/credentials.tfrc.json ~/.kube/config.bak ~/.ssh/github_ed25519
+         ~/.azure/msal_token_cache.json].each do |pattern|
+        exemption = Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }).exempt.first
+
+        expect(described_class::GATED.count { |gated| exemption.lifts?(gated, probe) }).to eq(1), pattern
+      end
+    end
+
     it "does not refuse an ordinary name for colliding with the probe's own placeholder" do
       expect { Lain::Sensitivity::Rules.from({ "exempt" => %w[sample file x] }) }.not_to raise_error
     end
@@ -640,9 +836,9 @@ RSpec.describe Lain::Sensitivity do
     # A path-shaped pattern that is not home-anchored has no defined meaning
     # here, and silently never matching is the failure Config::Answers exists to
     # refuse. Loud now, widenable later.
-    it "refuses a path-shaped pattern that is not home-anchored" do
+    it "refuses a path-shaped pattern that is not anchored" do
       expect { described_class.from({ "denied" => ["config/secrets/prod.key"] }) }
-        .to raise_error(Lain::Config::Refusal, /home-anchored/)
+        .to raise_error(Lain::Config::Refusal, /home-anchored.*project-anchored/)
     end
 
     it "names the config file in a refusal when it was given one" do
