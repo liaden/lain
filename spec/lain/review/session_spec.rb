@@ -1702,4 +1702,177 @@ RSpec.describe Lain::Review::Session do
       expect(log.uniq.size).to eq(corpus_size)
     end
   end
+
+  describe "the target a round is opened on" do
+    it "journals the target its opener named" do
+      open_session(target: "branch feature")
+
+      expect(records_of("changeset_opened").last).to include("target" => "branch feature")
+    end
+
+    it "answers it from the record after a resume" do
+      open_session(target: "branch feature")
+
+      expect(described_class.from_journal(entries, changeset:, journal:, surface:).opened.target)
+        .to eq("branch feature")
+    end
+  end
+
+  # A round let go with no verdict. The record goes on the journal FIRST, the
+  # rule every other record of a round keeps, and a judged round is refused so
+  # the round `/review-submit` would post is still the one held.
+  describe "closing a round" do
+    it "journals the close against the changeset it held, naming who closed it" do
+      session = open_session
+
+      session.close(by: "human")
+
+      expect(records_of("changeset_closed").map { |record| record.except("ts") })
+        .to eq([{ "type" => "changeset_closed", "changeset_digest" => session.digest, "closed_by" => "human" }])
+    end
+
+    it "journals no verdict when it closes" do
+      open_session.close(by: "refusal")
+
+      expect(records_of("review_verdict")).to be_empty
+    end
+
+    it "refuses to close a round a human already judged, leaving the judgement the one that stands" do
+      session = open_session(policy: Lain::Review::Verdict::Policy::Permissive.new)
+      session.submit("approve")
+
+      expect { session.close(by: "human") }.to raise_error(described_class::AlreadySettled, /approve/)
+      expect(records_of("changeset_closed")).to be_empty
+    end
+
+    it "refuses a second close, so a journal never shows one round let go twice" do
+      session = open_session
+      session.close(by: "human")
+
+      expect { session.close(by: "human") }.to raise_error(described_class::Closed, /already closed/)
+      expect(records_of("changeset_closed").size).to eq(1)
+    end
+
+    it "refuses a verdict over a round that was closed" do
+      session = open_session(policy: Lain::Review::Verdict::Policy::Permissive.new)
+      session.close(by: "human")
+
+      expect { session.submit("approve") }.to raise_error(described_class::Closed, /closed/)
+      expect(records_of("review_verdict")).to be_empty
+    end
+
+    it "rebuilds from the journal as closed, so a resumed round takes no verdict either" do
+      open_session(policy: Lain::Review::Verdict::Policy::Permissive.new).close(by: "human")
+
+      resumed = described_class.from_journal(entries, changeset:, journal:, surface:,
+                                                      policy: Lain::Review::Verdict::Policy::Permissive.new)
+
+      expect(resumed).to be_closed
+      expect { resumed.submit("approve") }.to raise_error(described_class::Closed)
+    end
+
+    # A refusal after the bind closes whatever is still open and nothing else:
+    # a gesture may already have ended the round, and the refusal must not be
+    # turned into that gesture's refusal.
+    it "closes an open round when asked to close only if it is still open" do
+      session = open_session
+
+      expect(session.close_unless_ended(by: "refusal")).to be_a(Lain::Review::ChangesetClosed)
+      expect(session).to be_closed
+    end
+
+    it "journals nothing and raises nothing over a round already judged or closed" do
+      judged = open_session(policy: Lain::Review::Verdict::Policy::Permissive.new)
+      judged.submit("approve")
+      closed = open_session
+      closed.close(by: "human")
+
+      expect([judged.close_unless_ended(by: "refusal"), closed.close_unless_ended(by: "refusal")]).to eq([nil, nil])
+      expect(records_of("changeset_closed").size).to eq(1)
+    end
+
+    it "refuses a closer outside the closed set before anything is journaled" do
+      session = open_session
+
+      expect { session.close(by: "timeout") }.to raise_error(ArgumentError, /closed_by/)
+      expect(records_of("changeset_closed")).to be_empty
+    end
+  end
+
+  # A round ends ONCE. `/review close` runs on the chat's thread and a verdict
+  # on the editor's, so the guard and the record it guards are one step: a
+  # journal slow enough to hold the first writer mid-record is what lets the
+  # second arrive inside the window on purpose.
+  describe "a close and a verdict arriving together" do
+    let(:io) do
+      Class.new(StringIO) do
+        def write(*)
+          sleep 0.2
+          super
+        end
+      end.new
+    end
+
+    it "ends the round exactly once, and tells the loser in words" do
+      session = open_session(policy: Lain::Review::Verdict::Policy::Permissive.new)
+
+      closer = Thread.new do
+        session.close(by: "human")
+        :closed
+      rescue Lain::Error => e
+        e.message
+      end
+      sleep 0.05
+      judged = begin
+        session.submit("approve")
+      rescue Lain::Error => e
+        e.message
+      end
+
+      outcomes = [closer.value, judged]
+      expect(records_of("changeset_closed").size + records_of("review_verdict").size).to eq(1)
+      expect(outcomes.grep(/already (closed|judged)/).size).to eq(1)
+    end
+  end
+
+  # What a resumed chat asks of the session it resumed: did that one leave a
+  # round on this target neither judged nor closed. Asked of the LAST round,
+  # which is the one a chat still held when it stopped.
+  describe "a round left open on a target" do
+    def left_open?(target) = described_class.left_open?(entries, target:)
+
+    it "answers yes for an open round on the same target" do
+      open_session(target: "/work/big")
+
+      expect(left_open?("/work/big")).to be(true)
+    end
+
+    it "answers no for a round on another target" do
+      open_session(target: "/work/big")
+
+      expect(left_open?("/work/small")).to be(false)
+    end
+
+    it "answers no once that round was judged" do
+      open_session(target: "/work/big", policy: Lain::Review::Verdict::Policy::Permissive.new).submit("approve")
+
+      expect(left_open?("/work/big")).to be(false)
+    end
+
+    it "answers no once that round was closed, whoever closed it" do
+      open_session(target: "/work/big").close(by: "refusal")
+
+      expect(left_open?("/work/big")).to be(false)
+    end
+
+    it "answers no for a round recorded before rounds named their target" do
+      open_session
+
+      expect(left_open?("/work/big")).to be(false)
+    end
+
+    it "answers no for a journal that opened no round at all" do
+      expect(left_open?("/work/big")).to be(false)
+    end
+  end
 end

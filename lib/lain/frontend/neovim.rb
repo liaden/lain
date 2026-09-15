@@ -87,6 +87,7 @@ module Lain
 
         def self.wrote_annotation(_note) = UNOPENED
         def self.wrote_verdict(_verdict) = UNOPENED
+        def self.wrote_close = UNOPENED
       end
 
       # @param channel [Lain::Channel] drained by {#run}'s background thread
@@ -239,7 +240,7 @@ module Lain
       # ONE object to both: the same review is reached from two rails, which
       # differ only in whether lain can refuse what arrives on them.
       #
-      # @param review [#wrote_annotation, #wrote_verdict, nil] nil restores
+      # @param review [#wrote_annotation, #wrote_verdict, #wrote_close, nil] nil restores
       #   {NoReviewWrites}, so closing a review is a bind like any other and no
       #   caller writes an unbind of its own
       # @return [void]
@@ -320,6 +321,7 @@ module Lain
         # ending the session over a note.
         def review_annotated(note) = @review.call.wrote_annotation(note)
         def review_verdict_given(verdict) = @review.call.wrote_verdict(verdict)
+        def review_close_given = @review.call.wrote_close
       end
       private_constant :FrontendListener
 

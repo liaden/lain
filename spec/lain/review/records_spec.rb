@@ -2,13 +2,13 @@
 
 require "stringio"
 
-# The review surface's five journal records. They are Journalable Data values
+# The review surface's six journal records. They are Journalable Data values
 # like every other Lain::Telemetry event, and their `type` strings are DURABLE
 # discriminators a later reader joins on, so every one is pinned as a literal
 # here rather than derived -- a spec that recomputes `underscore` would agree
 # with a rename that broke every recorded journal.
 #
-# Three of the five are invisible to spec/journalable_surface_spec.rb's registry
+# Three of the six are invisible to spec/journalable_surface_spec.rb's registry
 # sweep: their guards refuse every uniform dummy GenericBuild offers, so they
 # land on that sweep's named blind-spot list beside eight of the nine epic
 # records. The uniqueness example at the bottom of this file is what covers them,
@@ -75,6 +75,58 @@ RSpec.describe Lain::Review::ChangesetOpened do
   # which is exactly the drift a shared vocabulary avoids.
   it "accepts any named source rather than restating the source registry" do
     expect(opened(source: "github_pr").source).to eq("github_pr")
+  end
+
+  # The TARGET is what a human would call the same review: a survey of `big/`
+  # whose files changed since is still that survey, while its digest is not.
+  describe "the target a round was opened on" do
+    let(:record) { opened(target: "/work/big") }
+
+    it_behaves_like "a review journal record", "changeset_opened"
+
+    it "carries the target the round was opened on" do
+      expect(opened(target: " /work/big\n").target).to eq("/work/big")
+    end
+
+    # A round opened by a caller that names no target journals exactly the
+    # record it always did, and one read back from before the field existed
+    # rebuilds rather than refusing.
+    it "journals no target key at all when none was named" do
+      expect(opened.to_journal).not_to have_key("target")
+      expect(opened.target).to be_nil
+    end
+
+    it "refuses a blank target, which would match every other blank one" do
+      expect { opened(target: "  ") }.to raise_error(ArgumentError, /target/)
+    end
+  end
+end
+
+# A round let go without a verdict: by a human's close, or by a refusal raised
+# after its rails were bound. The two are told apart on the record, because one
+# is a decision and the other is a ceiling.
+RSpec.describe Lain::Review::ChangesetClosed do
+  def closed(**overrides)
+    described_class.new(changeset_digest: "cafe", closed_by: "human", **overrides)
+  end
+
+  let(:record) { closed }
+
+  it_behaves_like "a review journal record", "changeset_closed"
+
+  it "says who let the round go, from a closed set" do
+    expect(Lain::Review::CLOSED_BY).to eq(%w[human refusal])
+    expect(Lain::Review::CLOSED_BY).to contain_exactly(described_class::BY_HUMAN, described_class::BY_REFUSAL)
+    expect(closed(closed_by: :refusal).closed_by).to eq("refusal")
+    expect { closed(closed_by: "timeout") }.to raise_error(ArgumentError, %r{closed_by must be one of human/refusal})
+  end
+
+  it "refuses a close of nothing" do
+    expect { closed(changeset_digest: nil) }.to raise_error(ArgumentError, /changeset_digest/)
+  end
+
+  it "carries no verdict, because closing is not a judgement" do
+    expect(closed.to_h.keys).to contain_exactly(:changeset_digest, :closed_by)
   end
 end
 
@@ -360,12 +412,12 @@ RSpec.describe "the review records' journal discriminators" do
 
   it "collides with none of the includers already in the registry" do
     reviews = [Lain::Review::ChangesetOpened, Lain::Review::CorpusExtended, Lain::Review::HunkMarked,
-               Lain::Review::ReviewVerdict, Lain::Review::AnnotationPlaced]
+               Lain::Review::ReviewVerdict, Lain::Review::AnnotationPlaced, Lain::Review::ChangesetClosed]
     taken = (discriminators_in_the_registry - reviews).map { |klass| klass.allocate.journal_type }
 
     expect(reviews.map { |klass| klass::JOURNAL_TYPE })
       .to contain_exactly("changeset_opened", "corpus_extended", "hunk_marked", "review_verdict",
-                          "annotation_placed")
+                          "annotation_placed", "changeset_closed")
     expect(reviews.map { |klass| klass.allocate.journal_type } & taken).to be_empty
   end
 

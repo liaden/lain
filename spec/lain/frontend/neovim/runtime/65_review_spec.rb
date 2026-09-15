@@ -11,6 +11,20 @@ require "stringio"
 # deliberately. Measured on nvim 0.12: with no UI attached nvim never raises the
 # hit-enter prompt at all, so a headless editor cannot witness the defect -- and
 # `nvim_ui_attach` is also what makes `&columns` real.
+# The chat's one held round at the two messages a close sends it, standing in
+# for the outbox: that capability is deletable and named in code only by its own
+# row (`deletability_spec.rb`), and nothing here is about posting a review.
+class ClosingHeldRound
+  def initialize(session) = (@session = session)
+
+  def close
+    @session.close(by: Lain::Review::ChangesetClosed::BY_HUMAN)
+    "branch feature"
+  end
+
+  def release(_session) = self
+end
+
 RSpec.describe Lain::Frontend::Neovim, :nvim do
   include NeovimRuntime
 
@@ -190,6 +204,84 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         text = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(text).to include("lain:").and include("no review is open here")
         expect(text).not_to include("stack traceback")
+      end
+    end
+  end
+
+  # `:LainReviewClose`, against a real editor and the real review model: the
+  # close crosses the wire as an ANSWERED verb, reaches the bound handover on the
+  # RPC thread, and what the human then sees is read back out of nvim itself.
+  describe "closing a changeset review from the editor" do
+    def close_diff
+      <<~DIFF
+        diff --git a/a.rb b/a.rb
+        index 1111111..2222222 100644
+        --- a/a.rb
+        +++ b/a.rb
+        @@ -1,3 +1,3 @@ def alpha
+         one
+        -two
+        +TWO
+      DIFF
+    end
+
+    def close_source
+      commit = Lain::Review::Source::Commit.new(
+        sha: -("c" * 40), subject: -"touch a", body: "",
+        numstat: [Lain::Review::Source::FileStat.new(path: -"a.rb", added: 1, deleted: 1)].freeze
+      )
+      DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: close_diff.b, commits: [commit].freeze,
+                                                                         base_ref: -("b" * 40), head_ref: -("h" * 40)))
+    end
+
+    def messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+
+    # A round opened, bound and drawn the way `/review` does it, on the
+    # frontend's own surface and rails.
+    def opened_round(frontend, io)
+      session = Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source: close_source),
+                                           journal: Lain::Journal.new(io:), source: "local_branch",
+                                           surface: frontend.review_surface, target: "branch feature",
+                                           policy: Lain::Review::Verdict::Policy::Permissive.new)
+      closing = Lain::Review::Handover::Closing.new(outbox: ClosingHeldRound.new(session), rails: frontend,
+                                                    surface: frontend.review_surface)
+      frontend.bind_changeset_review(Lain::Review::Handover.new(session:, closing:))
+      session.present(scope: :cumulative)
+      wait_until_editor { buffer_lines("lain://review").grep(/a\.rb/).any? }
+    end
+
+    it "closes the round, draws the placeholder, and a verdict afterwards says no review is open" do
+      io = StringIO.new
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        opened_round(frontend, io)
+
+        inspector.command("LainReviewClose")
+        wait_until_editor { buffer_lines("lain://review").first == Lain::Review::Surface::Neovim::NOTHING_UNDER_REVIEW }
+        inspector.command("LainReviewVerdict approve")
+
+        expect(buffer_lines("lain://review").join("\n")).to include("branch feature")
+        expect(Lain::Journal.records(io.string.lines, type: "changeset_closed").to_a.map { |line| line["closed_by"] })
+          .to eq(["human"])
+        expect(wait_until_editor { messages[/no review is open here/] }).to be_truthy
+        expect(messages).not_to include("stack traceback")
+        expect(io.string).not_to include("review_verdict")
+      end
+    end
+
+    it "refuses :LainReviewClose with no review open, in words and without a traceback" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        outcome = inspector.exec_lua(<<~LUA, [])
+          local ok, err = pcall(vim.cmd, "LainReviewClose")
+          return { ok = ok, err = tostring(err) }
+        LUA
+
+        expect(outcome).to include("ok" => true)
+        expect(wait_until_editor { messages[/lain: no review is open here/] }).to be_truthy
+        expect(messages).not_to include("stack traceback")
       end
     end
   end

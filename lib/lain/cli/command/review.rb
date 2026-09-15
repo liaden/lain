@@ -56,7 +56,82 @@ module Lain
         # {Review::Partition::STRATEGIES}, which this class body cannot name
         # (see the class doc). {#usage} fills it in from a method body.
         USAGE = "/review <pull-request|branch> [--base <ref>] [--scope %<scopes>s] [--permissive] -- " \
-                "open a changeset review in the attached editor"
+                "open a changeset review in the attached editor; /review close lets the open round go " \
+                "without a verdict (a branch named close is refs/heads/close)"
+
+        # The word that closes the chat's open round instead of naming a target.
+        # It shadows a branch literally called `close`, which `refs/heads/close`
+        # still reaches.
+        CLOSE = "close"
+
+        # `/review close --base main` is a close with a typo in it or a review of
+        # a branch named close, and guessing which would do one of them wrongly.
+        CLOSE_TAKES_NOTHING = "/review close takes nothing after it -- to review a branch named close, " \
+                              "say refs/heads/close"
+
+        # Said beside whatever `/review close` answers, whenever this repository
+        # HAS a branch the word shadows: a human who meant that branch has to
+        # learn the spelling that reaches it from the answer they got instead.
+        CLOSE_BRANCH_HINT = "a branch named close is reviewed with /review refs/heads/close"
+
+        # What a branch named close is, spelled the way git resolves it alone.
+        CLOSE_REF = "refs/heads/close"
+
+        # Where a local branch lives, which a target may spell out.
+        BRANCH_REFS = "refs/heads/"
+
+        # The review rounds the sessions this chat resumed left behind, read for
+        # one banner. Every EARLIER file of the resume chain is asked, newest
+        # first, and the first one holding any round decides: a resumed chat has
+        # a fresh outbox, so no later session can have ended an earlier one's
+        # round.
+        #
+        # IT DEGRADES, and that is the point of it being its own object. The
+        # banner is advice about history and guards nothing, so a file it cannot
+        # read -- gone, or holding a record today's guards refuse -- must never
+        # stop a new round opening. It says what it could not read instead, which
+        # keeps the failure in front of the human. A TORN line is not damage: the
+        # journal reader drops it by contract, and a killed session leaves one.
+        class EarlierRounds
+          UNREADABLE = "could not read the review rounds in %<file>s (%<reason>s) -- if a round was open " \
+                       "there, its notes are not carried over either"
+
+          # Nothing about a round in that file: ask the one before it.
+          NO_ROUND = Object.new.freeze
+          private_constant :NO_ROUND
+
+          # @param journal_path [String, nil] this chat's own session file
+          def initialize(journal_path)
+            @journal_path = journal_path
+            freeze
+          end
+
+          # @param target [String] what this round is being opened on
+          # @return [String, nil] the banner, a note naming what could not be
+          #   read, or nothing
+          def banner(target)
+            earlier.reverse.lazy.map { |file| answer(file, target) }.reject { |said| NO_ROUND.equal?(said) }.first
+          rescue SystemCallError, Lain::Error => e
+            format(UNREADABLE, file: "the sessions #{File.basename(@journal_path)} resumed", reason: e.message)
+          end
+
+          private
+
+          def earlier
+            return [] if @journal_path.nil? || !File.file?(@journal_path)
+
+            Lain::CLI::Resume::ChainWalk.new(dir: File.dirname(@journal_path)).paths(@journal_path)[0...-1]
+          end
+
+          def answer(file, target)
+            replay = Lain::Review::Session::Replay.new(File.foreach(file))
+            return NO_ROUND if replay.opened.nil?
+
+            format(Lain::Review::Session::NOT_CARRIED_OVER, target:) if replay.open_on?(target)
+          rescue SystemCallError, ArgumentError, Lain::Error => e
+            format(UNREADABLE, file: File.basename(file), reason: e.message)
+          end
+        end
 
         # The refusal a headless chat gets. It names the flag that attaches an
         # editor, because that is a fact the human can act on.
@@ -69,11 +144,11 @@ module Lain
         # mirror of {Command::Survey::ALREADY_OPEN}: one chat has one set of
         # gesture rails, so a second SURFACE would rebind them to a sidebar the
         # survey's marks cannot reach. A second `/review` over a `/review` still
-        # rebinds; see {#drawn} for why that recovery has to stay open.
+        # rebinds, and `/review close` is the way past an open survey.
         SURVEY_OPEN = "%<target>s is already open in this chat, and one chat draws one review at a time -- " \
                       "a changeset review opened over it would rebind the gesture rails to a sidebar the " \
-                      "survey's marks cannot reach. Run `lain review open <target>` for a text rendering " \
-                      "outside this chat."
+                      "survey's marks cannot reach. Run `/review close` to let it go without a verdict, " \
+                      "or `lain review open <target>` for a text rendering outside this chat."
 
         # A default argument is evaluated in the METHOD body at call time, which
         # is why naming `Lain::Review::Bounds` below is safe where a constant in
@@ -110,16 +185,30 @@ module Lain
         # @param args [String] the target, and this command's three flags
         # @param env [Env] read for the run's {HumanReplies} (the editor, and
         #   both rails) and its {Chronicle} (the journal this round lands in)
-        # @return [String] the headline and where to read the review
+        # @return [String] the headline and where to read the review, or what
+        #   a close let go of
         # @raise [Lain::Error] no editor, an unknown flag, an unresolvable ref,
         #   an ambiguous target, an undeclared scope, a changeset past a
-        #   ceiling -- each already worded by whoever owns the refusal
+        #   ceiling, nothing open to close -- each already worded by whoever
+        #   owns the refusal
         def call(args, env)
           parsed = parse(args.to_s)
           return usage if parsed.target.nil?
+          return closed(parsed, env) if parsed.target == CLOSE
 
           opened(parsed, env, policy: policy_for(parsed))
         end
+
+        # The banner a resumed chat owes a human reopening a target an earlier
+        # session left open, or nil ({EarlierRounds}). PUBLIC because
+        # {Command::Survey} owes the same banner and reads it from here,
+        # {Survey.source_name}'s reason one command over. Asked before the new
+        # round is journaled, so the answer is about the earlier sessions alone.
+        #
+        # @param env [Env] read for the chat's session file
+        # @param target [String] what this round is being opened on
+        # @return [String, nil]
+        def self.not_carried_over(env, target) = EarlierRounds.new(env.journal_path).banner(target)
 
         private
 
@@ -158,7 +247,8 @@ module Lain
         # beside it for the same reason, which is why {#wired} is one step. The
         # surface is checked before the round is journaled: a surface that cannot
         # answer the port must not leave a round on record that nothing ever
-        # drew.
+        # drew. A draw that refuses lets go of both again
+        # ({Lain::Review::Handover::Closing#drawing}).
         #
         # The FOCUS is last, and only if the draw returned: a review that raised
         # on a ceiling is not one to put anybody in front of. It happens ONCE
@@ -172,9 +262,41 @@ module Lain
           Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = resolved_target(parsed)
+          banner = self.class.not_carried_over(env, target_of(resolved))
           session = round(resolved, surface, env, policy:)
-          wired(resolved, session, env, scope, surface)
-          drawn(resolved, session, scope).tap { surface.focus }
+          closing = closing_for(env, surface)
+          wired(resolved, session, env, handover(session, env, scope, surface, closing))
+          closing.drawing(session) { drawn(resolved, session, scope, banner) }.tap { surface.focus }
+        end
+
+        # `/review close`: whatever round the chat holds, let go without a
+        # verdict. A headless chat holds none, so the null surface it falls back
+        # to is never drawn on -- the outbox refuses first.
+        def closed(parsed, env)
+          raise Error, CLOSE_TAKES_NOTHING if [parsed.base, parsed.scope, parsed.permissive].any?
+
+          hinted(close_branch_hint) { closing_for(env, env.replies.review_surface || Lain::Review::Surface::Null.new).call }
+        end
+
+        # The close's own answer, or its refusal, with {CLOSE_BRANCH_HINT} beside
+        # it when there is a branch the word shadowed.
+        def hinted(hint)
+          [yield, hint].compact.join("\n")
+        rescue Lain::Error => e
+          raise e if hint.nil?
+
+          raise e.class, "#{e.message} -- #{hint}"
+        end
+
+        def close_branch_hint
+          shell = @shell_out_factory.call("git", "-C", @root, "rev-parse", "--verify", "--quiet", "--end-of-options",
+                                          CLOSE_REF, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+          shell.run_command
+          CLOSE_BRANCH_HINT if shell.exitstatus.zero?
+        end
+
+        def closing_for(env, surface)
+          Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
         end
 
         # {Lain::CLI::Review::Target}'s own words, reached rather than
@@ -194,9 +316,9 @@ module Lain
         end
 
         # The KIND is the question, not `open?`: a second `/review` over a
-        # `/review` rebinds, which is {#drawn}'s documented recovery from a
-        # bounded refusal. What may not happen is a changeset review drawn over
-        # an open SURVEY, because the two share one set of gesture rails.
+        # `/review` rebinds, which is how a human takes a second look at a
+        # branch. What may not happen is a changeset review drawn over an open
+        # SURVEY, because the two share one set of gesture rails.
         #
         # The word is asked of {Command::Survey}, the one place it is derived. A
         # SETTLED survey is not in the way: {SURVEY_OPEN}'s rationale is "a
@@ -216,16 +338,22 @@ module Lain
         # so a branch round is held with nowhere to post rather than not held at
         # all -- a round that was never held would answer "no changeset review is
         # open" about one that plainly is.
-        def wired(resolved, session, env, scope, surface)
-          env.replies.bind_changeset_review(handover(session, env, scope, surface))
+        def wired(resolved, session, env, handover)
+          env.replies.bind_changeset_review(handover)
           @outbox.hold(session:, number: resolved.number, label: resolved.label)
         end
 
         def round(resolved, surface, env, policy:)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source: resolved.source),
                                      journal: env.chronicle.record_journal, source: resolved.name, surface:,
-                                     bounds: @bounds, policy:)
+                                     bounds: @bounds, policy:, target: target_of(resolved))
         end
+
+        # The TARGET journaled is the label the human reads -- `branch feature`,
+        # `pull request 12` -- which is what "the same review" means to them, with
+        # a `refs/heads/` spelling of a branch read as the branch it names. The
+        # headline keeps the spelling typed.
+        def target_of(resolved) = resolved.label.sub(" #{BRANCH_REFS}", " ")
 
         # What `--permissive` means, asked of the class that owns both the word
         # and the rule it swaps -- the sentence offering the flag lives there.
@@ -247,12 +375,13 @@ module Lain
         # is drawn. The SCOPE rides along because a gesture that changed a row
         # has to redraw, and the grouping on screen is the one thing that rail
         # cannot ask anybody for -- a session takes it and forgets it.
-        def handover(session, env, scope, surface)
+        def handover(session, env, scope, surface, closing)
           view = env.replies.review_view
           view.reviewing(session.changeset)
           docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
                                             journal: env.chronicle.record_journal)
-          Lain::Review::Handover.new(session:, view:, docent:, redraw: Lain::Review::Handover::Redraw.new(scope:))
+          Lain::Review::Handover.new(session:, view:, docent:, closing:,
+                                     redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
 
         # A String answer is the surface's REFUSAL (`spec/support/shared_examples/
@@ -261,14 +390,13 @@ module Lain
         # the rails ARE bound.
         #
         # A view past a {Lain::Review::Bounds} ceiling is the other outcome and
-        # is NOT a String -- {Lain::Review::Session#present} raises -- so the
-        # round it refused stays open with its rails bound. That is the honest
-        # state, and the next `/review` rebinds them; narrowing it would mean
-        # checking the ceiling here too, which is the second caller that moving
-        # the guard onto `Session#present` deleted.
-        def drawn(resolved, session, scope)
+        # is NOT a String -- {Lain::Review::Session#present} raises -- which
+        # {Lain::Review::Handover::Closing#drawing} answers by letting the round
+        # go.
+        def drawn(resolved, session, scope, banner)
           refusal = session.present(scope:)
           [Lain::Review::OpenedBanner.call(headline(resolved, session, scope), sides: session.changeset.sides),
+           banner,
            refusal.is_a?(String) ? refusal : nil].compact.join("\n")
         end
 

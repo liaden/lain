@@ -41,7 +41,7 @@ module Lain
       # of these before it builds a session, so a resume cannot double the record
       # it is reading.
       class Replay
-        # The five record types a round is made of.
+        # The six record types a round is made of.
         #
         # This filter is NOT what makes a foreign record harmless -- {#fold}'s
         # independent type tests already ignore anything else, and a mutation pass
@@ -51,7 +51,7 @@ module Lain
         # Rust tracing span in a long session's journal. A bound on what is held,
         # not a correctness guard.
         TYPES = [ChangesetOpened::JOURNAL_TYPE, CorpusExtended::JOURNAL_TYPE, HunkMarked::JOURNAL_TYPE,
-                 AnnotationPlaced::JOURNAL_TYPE, ReviewVerdict::JOURNAL_TYPE].freeze
+                 AnnotationPlaced::JOURNAL_TYPE, ReviewVerdict::JOURNAL_TYPE, ChangesetClosed::JOURNAL_TYPE].freeze
 
         # @return [ChangesetOpened, nil] the head of the last round, or nil when
         #   the journal opened no review at all
@@ -76,10 +76,24 @@ module Lain
           @annotations = []
           @extensions = []
           @judgement = Verdict::None
+          @closed = false
           round.drop(1).each { |record| fold(record) }
           @annotations.freeze
           @extensions.freeze
         end
+
+        # @return [Boolean] whether the round was let go without a verdict
+        def closed? = @closed
+
+        # Neither judged nor closed: the round a chat still held when this
+        # journal stopped. False with no round at all.
+        #
+        # @return [Boolean]
+        def open? = !opened.nil? && judgement.verdict.empty? && !closed?
+
+        # @param target [String] what a round would be opened on
+        # @return [Boolean] whether the round is open, and was opened on it
+        def open_on?(target) = open? && opened.target == target
 
         # Every path this round accreted, oldest first -- what a resume walks to
         # rebuild the corpus as it stood, and the only thing that can say so.
@@ -123,7 +137,7 @@ module Lain
 
         def opened_from(record)
           ChangesetOpened.new(source: record["source"], base_ref: record["base_ref"],
-                              head_ref: record["head_ref"], digest: record["digest"])
+                              head_ref: record["head_ref"], digest: record["digest"], target: record["target"])
         end
 
         # Independent tests rather than a `case`, so there is no branch a further
@@ -148,7 +162,12 @@ module Lain
           @extensions << extension(record) if type == CorpusExtended::JOURNAL_TYPE
           @annotations << annotation(record) if type == AnnotationPlaced::JOURNAL_TYPE
           keep_first(judgement_of(record)) if type == ReviewVerdict::JOURNAL_TYPE
+          close(closure_of(record)) if type == ChangesetClosed::JOURNAL_TYPE
         end
+
+        # Takes the REBUILT record for {#keep_first}'s reason: a malformed close
+        # aborts the fold rather than counting.
+        def close(_closure) = @closed = true
 
         # The record is REBUILT before the first-wins rule is applied, never
         # after. Written as `... if type == ... && @judgement.verdict.empty?`
@@ -172,6 +191,10 @@ module Lain
                                line: record["line"], anchor_text: record["anchor_text"],
                                text: record["text"], kind: record["kind"],
                                drifted: record["drifted"], revision: record["revision"])
+        end
+
+        def closure_of(record)
+          ChangesetClosed.new(changeset_digest: record["changeset_digest"], closed_by: record["closed_by"])
         end
 
         def judgement_of(record)

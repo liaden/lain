@@ -14,7 +14,14 @@ module Lain
     # `base_ref` is the resolved merge base rather than the branch the human
     # named: the two differ the moment the base advances, and every old-side
     # anchor is computed against the merge base.
-    ChangesetOpened = Data.define(:source, :base_ref, :head_ref, :digest) do
+    #
+    # `target` is what the human NAMED -- a surveyed tree, a branch, a pull
+    # request -- and the one member a later chat can compare with what it is
+    # asked to open: the digest moves whenever a file does, and a survey of
+    # `big/` whose files changed is still the survey of `big/`. Optional, and
+    # absent from the line when nil, so a record written before rounds named
+    # their target reads back as naming none rather than refusing.
+    ChangesetOpened = Data.define(:source, :base_ref, :head_ref, :digest, :target) do
       include Telemetry::Journalable
       include Declarative
 
@@ -23,19 +30,24 @@ module Lain
         attribute :base_ref
         attribute :head_ref
         attribute :digest
+        attribute :target
         validates :source, presence: { message: Wire.refusal("must name what produced the changeset") }
         validates :base_ref, presence: { message: Wire.refusal("must name the resolved merge base") }
         validates :head_ref, presence: { message: Wire.refusal("must name the head under review") }
         validates :digest, presence: { message: Wire.refusal("must address the changeset") }
+        validates :target, presence: { message: Wire.refusal("must name what the round was opened on") },
+                           allow_nil: true
       end
 
-      def initialize(source:, base_ref:, head_ref:, digest:)
+      def initialize(source:, base_ref:, head_ref:, digest:, target: nil)
         values = { source: Wire.token(source), base_ref: Wire.token(base_ref),
-                   head_ref: Wire.token(head_ref), digest: Wire.token(digest) }
+                   head_ref: Wire.token(head_ref), digest: Wire.token(digest), target: Wire.token(target) }
         self.class.check!(**values)
 
         super(**values)
       end
+
+      def to_journal = target.nil? ? super.except("target") : super
     end
 
     class ChangesetOpened
@@ -207,14 +219,53 @@ module Lain
       # See {ChangesetOpened::JOURNAL_TYPE}.
       JOURNAL_TYPE = "annotation_placed"
     end
+
+    # Who let a round go without a verdict: a human's close, or a refusal raised
+    # after the round's rails were bound. Kept apart because one is a decision
+    # about the review and the other is a ceiling nobody chose.
+    CLOSED_BY = %w[human refusal].freeze
+
+    # A round let go with no judgement. It carries NO verdict, and that is the
+    # point of it being its own record: a close journaled as a verdict would be
+    # read by every policy and fold as a decision the human never made. The
+    # digest joins it to the round, as {ReviewVerdict}'s does.
+    ChangesetClosed = Data.define(:changeset_digest, :closed_by) do
+      include Telemetry::Journalable
+      include Declarative
+
+      declare do
+        attribute :changeset_digest
+        attribute :closed_by
+        validates :changeset_digest, presence: { message: Wire.refusal("must address the round it closed") }
+        validates :closed_by, inclusion: { in: CLOSED_BY,
+                                           message: Wire.refusal("must be one of #{CLOSED_BY.join("/")}") }
+      end
+
+      def initialize(changeset_digest:, closed_by:)
+        values = { changeset_digest: Wire.token(changeset_digest), closed_by: Wire.token(closed_by) }
+        self.class.check!(**values)
+
+        super(**values)
+      end
+    end
+
+    class ChangesetClosed
+      # See {ChangesetOpened::JOURNAL_TYPE}.
+      JOURNAL_TYPE = "changeset_closed"
+
+      # {CLOSED_BY}'s two members, named where a caller spells one. The record's
+      # own guard refuses either spelling drifting out of that set.
+      BY_HUMAN = "human"
+      BY_REFUSAL = "refusal"
+    end
   end
 end
 
-# The four above are the records of a review ROUND -- opened, marked, annotated,
-# judged -- and every one of them is written by a gesture the human made about
-# the changeset. {Lain::Review::CorpusExtended} is a record of the changeset
-# ITSELF changing, which is a different subject and the one this module body had
-# no room left for, so it is this file's subtree rather than a fifth stanza here.
+# The five above are the records of a review ROUND -- opened, marked, annotated,
+# and judged or closed. {Lain::Review::CorpusExtended} is a record of the
+# changeset ITSELF changing, which is a different subject and the one this module
+# body had no room left for, so it is this file's subtree rather than a sixth
+# stanza here.
 # It is reached from method bodies only, so this placement is free -- and it must
 # precede `session/replay.rb`, whose `TYPES` names it at class-body time.
 require_relative "records/corpus_extended"

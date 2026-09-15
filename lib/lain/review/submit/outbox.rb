@@ -26,6 +26,11 @@ module Lain
       # BRANCH is a perfectly good review with no pull request under it, so the
       # round stays held and stays open -- what is missing is a destination.
       #
+      # A ROUND LEAVES BY BEING REPLACED OR CLOSED, never by being judged: the
+      # judged round is exactly the one `/review-submit` posts. {#close} is the
+      # human's way out short of a verdict, and {#release} is how a round refused
+      # after it was held lets go of itself and of nothing else.
+      #
       # SENT AT MOST ONCE, AND NEVER RETRIED. {Forge::Gh#submit_review}'s
       # constraint, enforced where a human can trip over it: an accepted POST
       # creates a NEW review every time. That holds for a REFUSED first attempt
@@ -46,6 +51,8 @@ module Lain
         # empty string, so a report that somehow reaches it says something true
         # instead of a blank.
         NOTHING_HELD = "no open changeset review"
+
+        NOTHING_TO_CLOSE = "no review round is open in this chat, so there is nothing to close"
 
         NOT_A_PULL_REQUEST = "this review was opened on %<label>s, which has no pull request to post a " \
                              "review to -- the annotations and the verdict are on the journal either way. " \
@@ -90,6 +97,34 @@ module Lain
         def hold(session:, number:, label:)
           @held = Held.new(session:, number:, label: -label.to_s)
           @sent = nil
+          self
+        end
+
+        # Let the held round go without a verdict. The CLOSE is the session's to
+        # journal, where every record of a round lands, so this forwards the word
+        # {#submit}-fashion and then lets go -- and a session that refuses (a
+        # judged round) raises before anything is let go, so the round a human
+        # has just judged is still the one `/review-submit` posts.
+        #
+        # @return [String] how the closed round was named on screen
+        # @raise [Error] with no round held
+        # @raise [Session::AlreadySettled] for a judged round
+        def close
+          held = @held or raise Error, NOTHING_TO_CLOSE
+          held.session.close(by: ChangesetClosed::BY_HUMAN)
+          release(held.session)
+          held.label
+        end
+
+        # Let go of `session` if it is the round held, and of nothing else.
+        # IDENTITY, because the refusal calling this belongs to one round: a
+        # survey holds only once it has drawn, so when it refuses, whatever is
+        # held is somebody else's -- a settled review the chat may still post.
+        #
+        # @param session [Review::Session] the round to let go of
+        # @return [self]
+        def release(session)
+          @held = @sent = nil if held_session.equal?(session)
           self
         end
 

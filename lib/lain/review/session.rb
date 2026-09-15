@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "monitor"
+
 module Lain
   module Review
     # The review AGGREGATE: one changeset, the marks and notes left on it, and
@@ -28,6 +30,11 @@ module Lain
     # {Surface::Null#verdict} answers never reaches this object. {#verdict} in
     # turn answers {Verdict::None} rather than nil, so no CALLER nil-checks
     # either.
+    #
+    # A ROUND ENDS ONCE, by a verdict or by a close, and the two arrive on
+    # different threads -- `/review close` on the chat's, `:LainReviewVerdict`
+    # on the editor's RPC thread. So each ending's guard, record and state are
+    # one step under one lock, and the loser is refused in words.
     #
     # ANNOTATIONS ARE ROUND-SCOPED: produced, consumed, then historical. Nothing
     # re-anchors a note onto a later round, which is what lets lain skip the
@@ -69,11 +76,23 @@ module Lain
       # decision nobody took.
       class AlreadySettled < Error; end
 
+      # A verdict, or a second close, over a round already let go without one.
+      class Closed < Error; end
+
       # Every scope a caller may name, which is every strategy that registered.
       # Read off {Partition::STRATEGIES}' keys rather than restated, so
       # shipping a strategy is the whole of making it reachable -- that is the
       # property, and a literal list here is exactly what used to break it.
       SCOPES = Partition::STRATEGIES.keys.freeze
+
+      # What a resumed chat says when it opens a round on a target the session
+      # it resumed left open. Nothing is carried over, deliberately -- see the
+      # class doc on round-scoped annotations -- so the sentence is the whole of
+      # what that earlier round costs the human: they must not believe its notes
+      # are on the sidebar they are reading.
+      NOT_CARRIED_OVER = "%<target>s was still open in a session this chat resumed from -- this is a new " \
+                         "round, and the notes and marks left there are not carried over; they stay on that " \
+                         "session's journal"
 
       # The changeset's content address, and what {ReviewVerdict} judges.
       #
@@ -118,11 +137,12 @@ module Lain
       # @param surface [#present, #annotate, #mark] where it is drawn
       # @param policy [Verdict::Policy] admissibility, injected
       # @param bounds [Bounds] the sizes past which {#present} refuses
+      # @param target [String, nil] what the human named, for {.left_open?}
       # @return [Session]
       def self.open(changeset:, journal:, source:, surface: Surface::Null.new,
-                    policy: Verdict::Policy.default, bounds: Bounds.new)
+                    policy: Verdict::Policy.default, bounds: Bounds.new, target: nil)
         opened = ChangesetOpened.new(source:, base_ref: changeset.base_ref,
-                                     head_ref: changeset.head_ref, digest: digest(changeset))
+                                     head_ref: changeset.head_ref, digest: digest(changeset), target:)
         journal << opened
         new(changeset:, journal:, surface:, policy:, opened:, bounds:)
       end
@@ -153,6 +173,19 @@ module Lain
         end
 
         new(changeset:, journal:, surface:, policy:, opened: replay.opened, bounds:, replay:)
+      end
+
+      # Whether the LAST round in `entries` was opened on `target` and is still
+      # neither judged nor closed. The last round because it is the one a chat
+      # still held when it stopped: opening a round replaces the one before it.
+      # A round recorded before rounds named their target names none, so it
+      # matches nothing.
+      #
+      # @param entries [Enumerable<Hash, String>] journal lines or records
+      # @param target [String]
+      # @return [Boolean]
+      def self.left_open?(entries, target:)
+        Replay.new(entries).open_on?(target)
       end
 
       # @return [Review::Changeset] the whole, unfiltered changeset -- the only
@@ -189,6 +222,8 @@ module Lain
         @marks = replay.marks(opened.base_ref).reconcile(changeset)
         @annotations = replay.annotations.dup
         @judgement = replay.judgement
+        @closed = replay.closed?
+        @ending = Monitor.new
         @recorded_digest = replay.digest(opened)
       end
       private_class_method :new
@@ -199,6 +234,9 @@ module Lain
 
       # @return [String] what produced the changeset
       def source = @opened.source
+
+      # @return [Boolean] whether this round was let go without a verdict
+      def closed? = @closed
 
       # Whether the changeset has moved UNDER this round -- a different question
       # from whether it has moved since the round opened, and the difference is
@@ -408,16 +446,55 @@ module Lain
       # @param verdict [String, Symbol] a member of {Review::VERDICTS}
       # @return [String] the verdict, in the vocabulary's own spelling
       # @raise [AlreadySettled] if this round already has one
+      # @raise [Closed] if this round was let go without one
       # @raise [Verdict::Policy::Incomplete] if the policy refuses
       # @raise [Verdict::Policy::Blocked] if the policy refuses over a blocker
       def submit(verdict)
-        refuse_second_verdict!
-        judged = ReviewVerdict.new(verdict:, changeset_digest: digest)
-        @policy.admit!(judged.verdict, changeset: @changeset, marks: @marks, annotations:)
-        @journal << judged
-        @judgement = judged
-        Surface.acknowledge(@surface, judged.verdict)
-        judged.verdict
+        @ending.synchronize do
+          refuse_closed!
+          refuse_second_verdict!
+          judged = ReviewVerdict.new(verdict:, changeset_digest: digest)
+          @policy.admit!(judged.verdict, changeset: @changeset, marks: @marks, annotations:)
+          @journal << judged
+          @judgement = judged
+          Surface.acknowledge(@surface, judged.verdict)
+          judged.verdict
+        end
+      end
+
+      # Let the round go without a verdict. Journal-first, as {.open} and
+      # {#submit} are: the record is built (so the closer is judged by the record
+      # that owns the vocabulary), journaled, and only then held as closed.
+      #
+      # A JUDGED ROUND IS REFUSED. Its verdict is what `/review-submit` posts, and
+      # a close journaled after it would leave a reader unable to say whether the
+      # round ended in a judgement or without one.
+      #
+      # @param by [String] a member of {Review::CLOSED_BY}
+      # @return [ChangesetClosed] the record, as journaled
+      # @raise [AlreadySettled] if this round was judged
+      # @raise [Closed] if it was already closed
+      def close(by:)
+        @ending.synchronize do
+          refuse_closing_settled!
+          refuse_closed!
+          closed = ChangesetClosed.new(changeset_digest: digest, closed_by: by)
+          @journal << closed
+          @closed = true
+          closed
+        end
+      end
+
+      # {#close}, for a caller that does not care whether something else ended
+      # the round first: a refusal raised after the bind, where a gesture may
+      # already have landed and must not turn the refusal into its own. Asked
+      # and done under the ending lock, so nothing ends the round in between.
+      #
+      # @param by [String] a member of {Review::CLOSED_BY}
+      # @return [ChangesetClosed, nil] the record, or nil when the round had
+      #   already ended
+      def close_unless_ended(by:)
+        @ending.synchronize { close(by:) if verdict.empty? && !closed? }
       end
 
       private
@@ -452,6 +529,19 @@ module Lain
 
         raise AlreadySettled, "this round was already judged #{verdict.inspect} -- a second verdict leaves a " \
                               "journal whose reader cannot tell which of the two stands"
+      end
+
+      def refuse_closed!
+        return unless closed?
+
+        raise Closed, "this round was already closed without a verdict -- open another with /review or /survey"
+      end
+
+      def refuse_closing_settled!
+        return if verdict.empty?
+
+        raise AlreadySettled, "this round was already judged #{verdict.inspect}, so there is nothing to close -- " \
+                              "the judgement stands, and /review-submit still posts it"
       end
 
       # The verdict is judged ONCE, against the changeset {#judgement} names, and

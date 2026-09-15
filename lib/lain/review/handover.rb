@@ -79,6 +79,91 @@ module Lain
         def self.hold(_anchor) = nil
       end
 
+      # Nobody wired a close to this review: an epic stage's, which ends with the
+      # verdict its baton is parked on. Refused in words, on the rail's law.
+      module Unclosable
+        NOT_CLOSABLE = "this review is not one a close reaches -- it ends with its verdict; nothing was closed"
+
+        def self.call = raise(Error, NOT_CLOSABLE)
+      end
+
+      # Everything a round holds that it has to let go of when it ends without a
+      # verdict: the outbox slot, both gesture rails, and the sidebar, which would
+      # otherwise go on showing a round nothing is bound to. Built by whoever
+      # opened the round, since those three are the opener's and not the
+      # session's.
+      #
+      # The SIDEBAR is told through the port's `refuse`, which is the one message
+      # that declines a review in words, and its answer is discarded: a fact
+      # about the editor, not about the round -- {Session#submit}'s reading of
+      # `settle`.
+      class Closing
+        CLOSED = "%<target>s was closed without a verdict -- nothing is bound to it now and its notes stay on " \
+                 "the journal; open another with /review or /survey"
+
+        # @param outbox [Submit::Outbox] the run's one open review
+        # @param rails [#bind_changeset_review] both gesture rails, whose nil is
+        #   the unbind ({CLI::HumanReplies})
+        # @param surface [#refuse] where the round was drawn
+        def initialize(outbox:, rails:, surface:)
+          @outbox = outbox
+          @rails = rails
+          @surface = surface
+          freeze
+        end
+
+        # A human's close, of whatever round the chat holds.
+        #
+        # @return [String] the sentence saying what was closed
+        # @raise [Lain::Error] with nothing held, or over a judged round -- and
+        #   then nothing is let go
+        def call
+          closed = format(CLOSED, target: @outbox.close)
+          let_go(closed)
+          closed
+        end
+
+        # Draw `session`, and let it go if the draw refuses: a ceiling, or a
+        # scope its source cannot answer, raised AFTER the opener bound the
+        # rails. The refusal is raised on, since it is still the answer to what
+        # the human typed. The guard itself stays in {Session#present} alone;
+        # this only cleans up after it.
+        #
+        # @param session [Session] the round being drawn
+        # @return [Object] whatever the block answered
+        # @raise [Bounds::TooLarge, Session::UnsupportedScope] after letting go
+        def drawing(session)
+          yield
+        rescue Bounds::TooLarge, Session::UnsupportedScope => e
+          refused(session, e.message)
+          raise
+        end
+
+        # A refusal raised after `session`'s rails were bound. The round is on
+        # the journal already, so it is closed there as the refusal's, which is
+        # what lets a resumed chat read it as not left open -- unless a gesture
+        # in the bind-before-draw window already ended it, and then nothing more
+        # is journaled. Everything is let go either way, the undrawn round
+        # included even when judged: nobody saw what that verdict judged.
+        #
+        # @param session [Session] the round the refusal ended
+        # @param refusal [String] the refusal's own words, drawn where the
+        #   sidebar was
+        # @return [void]
+        def refused(session, refusal)
+          session.close_unless_ended(by: ChangesetClosed::BY_REFUSAL)
+          @outbox.release(session)
+          let_go(refusal)
+        end
+
+        private
+
+        def let_go(sentence)
+          @rails.bind_changeset_review(nil)
+          @surface.refuse(sentence)
+        end
+      end
+
       # Nothing is drawing this review, so no row of it is on a screen and there
       # is none to draw again. {Detached}'s reading one collaborator over: an
       # `open` or a `mark` is something an EDITOR sends, so a review nothing
@@ -189,14 +274,16 @@ module Lain
       # @param evidence [#anchor] what a note's position is read against --
       #   the round's own changeset ({Changeset#anchor}), which every caller
       #   already holds through the session, so no wiring can forget it
+      # @param closing [#call] what the editor's close lets go of ({Closing})
       def initialize(session:, view: Detached, baton: Unheld, docent: Unattended, redraw: Undrawn,
-                     evidence: session.changeset)
+                     evidence: session.changeset, closing: Unclosable)
         @session = session
         @view = view
         @baton = baton
         @docent = docent
         @redraw = redraw
         @evidence = evidence
+        @closing = closing
       end
 
       # @return [Review::Session] the aggregate this rail records against
@@ -228,6 +315,18 @@ module Lain
       def wrote_verdict(verdict)
         @session.submit(verdict)
         @baton.settle
+        nil
+      rescue Lain::Error, ArgumentError => e
+        e.message
+      end
+
+      # `:LainReviewClose`: the round let go without a verdict. ANSWERED, like
+      # {#wrote_verdict}, because a close can be refused -- a judged round, a
+      # review nothing wired a close to -- and then nothing was let go.
+      #
+      # @return [String, nil] a refusal in words, or nothing when it closed
+      def wrote_close
+        @closing.call
         nil
       rescue Lain::Error, ArgumentError => e
         e.message

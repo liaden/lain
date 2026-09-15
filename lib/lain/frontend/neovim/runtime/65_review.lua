@@ -278,6 +278,25 @@ define("LainAnnotate", function()
   end)
 end)
 
+-- Let the open changeset review or survey go without a verdict: the round is
+-- journaled closed, its rails and outbox let go, and Ruby redraws the sidebar as a
+-- placeholder naming what was closed.
+--
+-- ANSWERED, like `:LainReviewVerdict`, because a close can be refused -- a round
+-- already judged, or nothing open at all -- and the refusal arrives as the
+-- request's ERROR. It is echoed on the rail and never re-raised, for the
+-- traceback reason `:LainReviewDone` below records.
+--
+-- It sits HERE rather than beside `:LainReviewVerdict` in `46_sidebar.lua`
+-- because a close is typed from whichever window the human is in, and needs
+-- nothing from the sidebar's buffer.
+define("LainReviewClose", function()
+  local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_close", {})
+  if not taken then
+    _G.__lain.review_refused(refusal)
+  end
+end)
+
 -- Hand the review back. The command refuses rather than sending on a
 -- modified buffer: the Ruby side settles from what is ON DISK, so unsaved edits
 -- would be a review of bytes nobody has.

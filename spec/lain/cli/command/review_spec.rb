@@ -2,6 +2,7 @@
 
 require "async"
 require "fileutils"
+require "json"
 require "mixlib/shellout"
 require "neovim"
 require "stringio"
@@ -82,6 +83,16 @@ class ReviewCommandEditor
   def bind_changeset_review(review) = @bound = review
 end
 
+# A journal whose writes park, so a second thread can reach a round's terminal
+# guards while the first is still writing -- the only way to make the window
+# between a check and its record wide enough to land in on purpose.
+class ReviewCommandSlowIO < StringIO
+  def write(*)
+    sleep 0.3
+    super
+  end
+end
+
 RSpec.describe Lain::CLI::Command::Review do
   let(:command) do
     described_class.new(root: @repo, outbox:, shell_out_factory: Mixlib::ShellOut.public_method(:new))
@@ -108,7 +119,8 @@ RSpec.describe Lain::CLI::Command::Review do
                                 questions:)
   end
 
-  let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+  # `journal_path: nil` is a chat recording to no file, so it resumed nothing.
+  let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal, journal_path: nil) }
   let(:env) { build_command_env(replies:, chronicle:) }
 
   # A `main` and a `feature` carrying TWO commits, because `--base`'s default is
@@ -596,6 +608,272 @@ RSpec.describe Lain::CLI::Command::Review do
     end
   end
 
+  # `/review close`: the one way a round leaves the chat short of a verdict.
+  describe "closing the round this chat has open" do
+    let(:registry) { Lain::CLI::Command::Registry.new([command]).bind(env) }
+
+    def closes = Lain::Journal.records(record.string.lines, type: "changeset_closed").to_a
+
+    it "journals the close as the human's, lets the outbox go and unbinds the rails" do
+      attached
+      command.call("feature", env)
+      digest = editor.bound.session.digest
+
+      answer = registry.dispatch("/review close") { raise "fallthrough must not run" }
+
+      expect(answer).to include("branch feature").and include("closed")
+      expect(closes.map { |line| line.values_at("changeset_digest", "closed_by") }).to eq([[digest, "human"]])
+      expect(outbox).not_to be_open
+      expect(editor.bound).to be_nil
+    end
+
+    it "draws the close where the sidebar was" do
+      attached
+      command.call("feature", env)
+
+      command.call("close", env)
+
+      expect(sink.string.lines.last).to include("closed")
+    end
+
+    # The rails were unbound, so the review the editor held is nothing a
+    # verdict can reach -- and the round itself refuses one too, for whoever
+    # still holds it.
+    it "refuses a verdict on the closed round" do
+      attached
+      command.call("feature --permissive", env)
+      closed = editor.bound
+
+      command.call("close", env)
+
+      expect(closed.wrote_verdict("approve")).to include("closed")
+      expect(record.string).not_to include("review_verdict")
+    end
+
+    it "refuses when no round is open, naming that there is nothing to close" do
+      attached
+
+      expect { command.call("close", env) }
+        .to raise_error(Lain::Error, Lain::Review::Submit::Outbox::NOTHING_TO_CLOSE)
+    end
+
+    # A judged round is the one `/review-submit` posts; closing it would lose
+    # the review a human has just finished.
+    it "refuses a judged round and goes on holding it, so /review-submit still reaches it" do
+      attached
+      command.call("feature --permissive", env)
+      editor.bound.wrote_verdict("approve")
+
+      expect { command.call("close", env) }.to raise_error(Lain::Review::Session::AlreadySettled)
+      expect(outbox).to be_open
+      expect(editor.bound).to be_a(Lain::Review::Handover)
+    end
+
+    # `/review close` on the chat's thread and `:LainReviewVerdict` on the
+    # editor's: exactly one of them ends the round, the other is told so in
+    # words, and the outbox holds what the winner left.
+    describe "racing a verdict from the editor" do
+      let(:record) { ReviewCommandSlowIO.new }
+
+      it "journals exactly one of the close and the verdict, and the outbox matches the one that won" do
+        attached
+        command.call("feature --permissive", env)
+        handover = editor.bound
+
+        closer = Thread.new do
+          command.call("close", env)
+        rescue Lain::Error => e
+          e.message
+        end
+        sleep 0.05
+        verdict = handover.wrote_verdict("approve")
+        closed = closer.value
+
+        kinds = Lain::Journal.records(record.string.lines).map { |line| line["type"] }.to_a
+        ended = kinds & %w[review_verdict changeset_closed]
+        expect(ended.size).to eq(1)
+        expect(outbox.open?).to eq(ended == %w[review_verdict])
+        expect([verdict, closed].grep(/already (closed|judged)/).size).to eq(1)
+      end
+    end
+
+    describe "a branch literally named close" do
+      before { git(@repo, "branch", "close", "feature") }
+
+      it "names refs/heads/close beside the refusal when nothing is open" do
+        attached
+
+        expect { command.call("close", env) }
+          .to raise_error(Lain::Error, a_string_including("nothing to close").and(include("refs/heads/close")))
+      end
+
+      it "closes the open round and names refs/heads/close beside it" do
+        attached
+        command.call("feature", env)
+
+        expect(command.call("close", env)).to include("closed").and include("refs/heads/close")
+        expect(outbox).not_to be_open
+      end
+    end
+
+    it "names no branch hint when there is no branch named close" do
+      attached
+      command.call("feature", env)
+
+      expect(command.call("close", env)).not_to include("refs/heads/close")
+    end
+
+    it "refuses a flag after close, rather than reading the line as a branch named close" do
+      attached
+
+      expect { command.call("close --base main", env) }.to raise_error(Lain::Error, /close takes nothing/)
+    end
+
+    # THE CARD'S FIRST CRITERION, end to end: an unsettled survey used to lock
+    # `/review` out of the chat for its whole life, because nothing let go of
+    # a round short of a verdict.
+    describe "a survey nobody settled" do
+      let(:survey) do
+        home = File.join(@repo, ".home")
+        Lain::CLI::Command::Survey.new(outbox:, cwd: @repo, ledger: Lain::Sensitivity::Ledger.new,
+                                       sensitivity: Lain::Sensitivity.new(home:, cwd: @repo))
+      end
+
+      before do
+        FileUtils.mkdir_p(File.join(@repo, "docs"))
+        File.write(File.join(@repo, "docs", "notes.md"), "# Notes\n\nOne line of prose.\n")
+      end
+
+      it "is freed by /review close, so /review opens and the journal holds the survey round's close" do
+        attached
+        survey.call(File.join(@repo, "docs"), env)
+        survey_digest = editor.bound.session.digest
+        expect { command.call("feature", env) }.to raise_error(Lain::Error, /already open/)
+
+        registry.dispatch("/review close") { raise "fallthrough must not run" }
+        answer = registry.dispatch("/review feature") { raise "fallthrough must not run" }
+
+        expect(answer).to include("branch feature")
+        expect(closes.map { |line| line.values_at("changeset_digest", "closed_by") })
+          .to eq([[survey_digest, "human"]])
+      end
+    end
+  end
+
+  # A resumed chat starts from the session it resumed, and nothing of that
+  # session's open review round is carried into it: a round is round-scoped.
+  # A `/review` of the same target says so, rather than letting a human believe
+  # the notes they left there are on the sidebar they are now reading.
+  describe "reopening a target in a resumed chat" do
+    # The earlier chat, which opened a review of `earlier` and stopped with it
+    # open, written where its session file would be; then the resumed one,
+    # whose header names that file.
+    def resumed(dir, earlier: "feature")
+      prior = StringIO.new
+      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new)
+                     .call(earlier, build_command_env(replies:,
+                                                      chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)))
+      File.write(File.join(dir, "earlier.ndjson"), prior.string)
+      current = File.join(dir, "resumed.ndjson")
+      File.write(current, "#{JSON.generate("type" => Lain::SessionRecord::HEADER_TYPE,
+                                           "resumed_from" => { "file" => "earlier.ndjson", "head" => "x" })}\n")
+      build_command_env(replies:, chronicle: chronicle_on(journal, current))
+    end
+
+    def chronicle_on(on, path) = instance_double(Lain::CLI::Chronicle, record_journal: on, journal_path: path)
+
+    it "records the target a round was opened on" do
+      attached
+
+      command.call("feature", env)
+
+      expect(Lain::Journal.records(record.string.lines, type: "changeset_opened").first)
+        .to include("target" => "branch feature")
+    end
+
+    it "opens a new round with a banner saying the earlier notes are not carried over" do
+      attached
+      Dir.mktmpdir("lain-review-resumed") do |dir|
+        answer = command.call("feature", resumed(dir))
+
+        expect(answer).to include("not carried over").and include("branch feature")
+      end
+    end
+
+    it "says nothing about an earlier round on another target" do
+      git(@repo, "branch", "other", "feature")
+      attached
+      Dir.mktmpdir("lain-review-resumed") do |dir|
+        answer = command.call("feature", resumed(dir, earlier: "other"))
+
+        expect(answer).not_to include("not carried over")
+      end
+    end
+
+    # `refs/heads/feature` is the branch `feature`, and a human reopening it by
+    # the other spelling is reopening the same review.
+    it "journals a branch by its name, whichever way the ref was spelled" do
+      attached
+
+      command.call("refs/heads/feature", env)
+
+      expect(Lain::Journal.records(record.string.lines, type: "changeset_opened").first)
+        .to include("target" => "branch feature")
+    end
+
+    it "says so when the earlier round was opened as refs/heads/feature" do
+      attached
+      Dir.mktmpdir("lain-review-resumed") do |dir|
+        expect(command.call("feature", resumed(dir, earlier: "refs/heads/feature"))).to include("not carried over")
+      end
+    end
+
+    # The banner is advice about history, and guards nothing: an earlier file
+    # this chat cannot read must never stop a new round opening. It says what it
+    # could not read instead, so the failure is still in front of the human.
+    describe "an earlier session file it cannot read" do
+      def resumed_over(dir, earlier_lines)
+        File.write(File.join(dir, "earlier.ndjson"), earlier_lines.join) unless earlier_lines.nil?
+        current = File.join(dir, "resumed.ndjson")
+        File.write(current, "#{JSON.generate("type" => Lain::SessionRecord::HEADER_TYPE,
+                                             "resumed_from" => { "file" => "earlier.ndjson", "head" => "x" })}\n")
+        build_command_env(replies:, chronicle: chronicle_on(journal, current))
+      end
+
+      it "opens the round over a MISSING earlier file, naming the file it could not read" do
+        attached
+        Dir.mktmpdir("lain-review-resumed") do |dir|
+          answer = command.call("feature", resumed_over(dir, nil))
+
+          expect(answer).to include("branch feature").and include("could not read").and include("earlier.ndjson")
+          expect(editor.bound).to be_a(Lain::Review::Handover)
+        end
+      end
+
+      it "opens the round over a MALFORMED earlier review record, naming the file" do
+        attached
+        malformed = JSON.generate("type" => "changeset_opened", "source" => "local_branch", "base_ref" => "",
+                                  "head_ref" => "x", "digest" => "d", "target" => "branch feature")
+        Dir.mktmpdir("lain-review-resumed") do |dir|
+          answer = command.call("feature", resumed_over(dir, ["#{malformed}\n"]))
+
+          expect(answer).to include("could not read").and include("earlier.ndjson")
+          expect(editor.bound).to be_a(Lain::Review::Handover)
+        end
+      end
+
+      it "opens the round over a TORN trailing line, which is a killed session and not damage" do
+        attached
+        Dir.mktmpdir("lain-review-resumed") do |dir|
+          answer = command.call("feature", resumed_over(dir, ['{"type":"changeset_opened","sou']))
+
+          expect(answer).to include("branch feature")
+          expect(answer).not_to include("could not read")
+        end
+      end
+    end
+  end
+
   # THE REGRESSION THIS GROUP EXISTS FOR. The size guard was originally called
   # from {Lain::CLI::Review#present} and nowhere else -- the TEXT command -- so
   # the editor path had no ceiling at all and `/review` of an
@@ -608,8 +886,9 @@ RSpec.describe Lain::CLI::Command::Review do
   # bytes an attached editor would have received rather than off a spy's
   # bookkeeping.
   describe "the size past which it refuses to draw in the editor" do
-    # The same real outbox the rest of this file uses: a bounded refusal must
-    # leave it holding NOTHING, which is a claim a spy could not make honestly.
+    # The same real outbox the rest of this file uses: a bounded refusal
+    # leaves it holding NOTHING (asserted below), which a spy could not say
+    # honestly.
     def bounded(**ceilings)
       described_class.new(root: @repo, outbox:, bounds: Lain::Review::Bounds.new(**ceilings),
                           shell_out_factory: Mixlib::ShellOut.public_method(:new))
@@ -633,7 +912,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect { command.call("wide", env) }
         .to raise_error(Lain::Review::Bounds::TooLarge,
                         a_string_including("ceiling of #{Lain::Review::Bounds::DEFAULT_MAX_FILES}"))
-      expect(sink.string).to be_empty
+      expect(sink.string).not_to include("wide_0.rb")
     end
 
     it "refuses a changeset past a ceiling, in Bounds' own words" do
@@ -643,12 +922,87 @@ RSpec.describe Lain::CLI::Command::Review do
         .to raise_error(Lain::Review::Bounds::TooLarge, /2 files.*ceiling of 1.*scope: commits/m)
     end
 
-    it "draws nothing into the editor when it refuses, so no sidebar claims to hold the changeset" do
+    it "draws only the refusal where the sidebar was, so no sidebar claims to hold the changeset" do
       attached
 
       expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
 
-      expect(sink.string).to be_empty
+      expect(sink.string).not_to include("README")
+      expect(sink.string).to include("refused:").and include("ceiling of 1")
+    end
+
+    # The round was bound and held before the draw refused, because a human
+    # fast enough to answer between the two needs a rail that routes. Once the
+    # draw refuses, nothing is left bound: no outbox a `/critique` or a
+    # `/review-submit` would read, and no rail a verdict could land on.
+    it "leaves nothing bound when it refuses: the outbox is not open and the rails are unbound" do
+      attached
+
+      expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+
+      expect(outbox).not_to be_open
+      expect(editor.bound).to be_nil
+    end
+
+    it "journals the refused round as closed by the refusal, with no verdict" do
+      attached
+
+      expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+
+      expect(Lain::Journal.records(record.string.lines, type: "changeset_closed").to_a.map { |line| line["closed_by"] })
+        .to eq(["refusal"])
+      expect(record.string).not_to include("review_verdict")
+    end
+
+    # A refusal of a SECOND round lets go of the first as well: its rails were
+    # rebound to the refused round before the draw, so a verdict routed to
+    # either would land on a round nobody is looking at.
+    # BIND BEFORE DRAW leaves a window a fast human can gesture in, on purpose.
+    # A gesture landing there must not turn the refusal into something else:
+    # the ceiling is still what the human is told, and nothing is left bound.
+    describe "a gesture that lands between the bind and the refusal" do
+      # The gesture runs at the start of the round's draw, which is after the
+      # bind and before the ceiling can refuse.
+      def gesture_during_draw(&gesture)
+        landing = gesture
+        allow(Lain::Review::Session).to receive(:open).and_wrap_original do |open, **kwargs|
+          open.call(**kwargs).tap do |session|
+            allow(session).to receive(:present).and_wrap_original do |present, **scope|
+              landing.call
+              present.call(**scope)
+            end
+          end
+        end
+      end
+
+      it "still refuses in the ceiling's words and leaves nothing bound when a verdict settled the round first" do
+        attached
+        gesture_during_draw { editor.bound.wrote_verdict("approve") }
+
+        expect { bounded(max_files: 1).call("feature --permissive", env) }
+          .to raise_error(Lain::Review::Bounds::TooLarge)
+        expect(editor.bound).to be_nil
+        expect(outbox).not_to be_open
+      end
+
+      it "still refuses in the ceiling's words when a close landed first" do
+        attached
+        gesture_during_draw { editor.bound.wrote_close }
+
+        expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+        expect(editor.bound).to be_nil
+        expect(Lain::Journal.records(record.string.lines, type: "changeset_closed").count).to eq(1)
+      end
+    end
+
+    it "leaves nothing bound when it refuses a second round opened over a first" do
+      attached
+      command.call("feature", env)
+
+      expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+
+      expect(outbox).not_to be_open
+      expect(editor.bound).to be_nil
     end
 
     # The remedy the refusal names, taken: two commits of one file each fit a

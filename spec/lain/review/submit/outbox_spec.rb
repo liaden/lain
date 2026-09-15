@@ -272,9 +272,9 @@ RSpec.describe Lain::Review::Submit::Outbox do
       expect(executor.calls.last.fetch(:number)).to eq(4271)
     end
 
-    # The note on the card, pinned: nothing here reopens or closes anything, so
-    # the settled round leaves the same way every other one does -- replaced.
-    it "lets a later round replace it, which is the only way a held round is ever let go" do
+    # A settled round is never CLOSED (see "closing the round it holds"), so it
+    # leaves the way it always did: replaced by the next round.
+    it "lets a later round replace it" do
       held
       settled
       other = round
@@ -283,6 +283,68 @@ RSpec.describe Lain::Review::Submit::Outbox do
 
       expect(outbox.held_verdict).to be_empty
       expect(outbox.target).to eq("pull request 99")
+    end
+  end
+
+  # The one way a human lets a round go short of a verdict. The session journals
+  # the close, because the session is where every record of a round lands; the
+  # outbox forwards the word and lets go of the round it held.
+  describe "closing the round it holds" do
+    it "journals the close through the held session and holds nothing afterwards" do
+      held
+
+      outbox.close
+
+      expect(session).to be_closed
+      expect(outbox).not_to be_open
+      expect(outbox.target).to eq(described_class::NOTHING_HELD)
+    end
+
+    it "answers how the closed round was named on screen, for the sentence that says it closed" do
+      held(number: nil, label: "survey of /work/big")
+
+      expect(outbox.close).to eq("survey of /work/big")
+    end
+
+    it "refuses with nothing held, naming that there is nothing to close" do
+      expect { outbox.close }.to raise_error(Lain::Error, described_class::NOTHING_TO_CLOSE)
+    end
+
+    # The judged round is the one `/review-submit` posts, so a close that let
+    # go of it would lose the review a human has only just finished.
+    it "refuses a settled round and goes on holding it, so /review-submit still posts it" do
+      @session = round(policy: Lain::Review::Verdict::Policy.strict_unless(permissive: true))
+      held
+      settled
+
+      expect { outbox.close }.to raise_error(Lain::Review::Session::AlreadySettled)
+      expect(outbox).to be_open
+      expect(outbox.submit(executor:)).to be_ok
+    end
+  end
+
+  # A round refused after it was held lets go of THAT round and nothing else:
+  # a survey holds only once it drew, so its refusal must not drop a settled
+  # review the chat still holds.
+  describe "releasing one round" do
+    it "lets go of the round it names" do
+      held
+
+      outbox.release(session)
+
+      expect(outbox).not_to be_open
+    end
+
+    it "keeps holding a different round" do
+      held
+
+      outbox.release(round)
+
+      expect(outbox.target).to eq("pull request 4271")
+    end
+
+    it "answers itself with nothing held" do
+      expect(outbox.release(session)).to equal(outbox)
     end
   end
 

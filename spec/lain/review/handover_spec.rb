@@ -121,6 +121,43 @@ module ClosedSink
   def write(*) = raise(IOError, "the editor's socket is gone")
 end
 
+# The rails a close lets go of, recorded: {Lain::CLI::HumanReplies}' one
+# message that binds both of them, whose nil is the unbind.
+class RecordingReviewRails
+  def initialize(bound) = (@bound = bound)
+
+  attr_reader :bound
+
+  def bind_changeset_review(review) = @bound = review
+end
+
+# The one round a chat holds, at the two messages a close sends it. A stand-in
+# rather than the real outbox, which is a deletable capability no file outside
+# its own row may name (`deletability_spec.rb`); the real one is driven through
+# a close end to end in `command/review_spec.rb`, and pinned in its own spec.
+class RecordingCloseOutbox
+  def initialize(session:, label:)
+    @session = session
+    @label = label
+  end
+
+  def open? = !@session.nil?
+  def target = @label
+
+  def close
+    raise Lain::Error, "nothing to close" unless open?
+
+    @session.close(by: Lain::Review::ChangesetClosed::BY_HUMAN)
+    @session = nil
+    @label
+  end
+
+  def release(session)
+    @session = nil if @session.equal?(session)
+    self
+  end
+end
+
 RSpec.describe Lain::Review::Handover do
   # `session_spec.rb`'s fixture, at the size this card needs: one file with two
   # hunks (so a row names more than one key and a partial mark is expressible)
@@ -377,6 +414,119 @@ RSpec.describe Lain::Review::Handover do
     # would mean the baton was not the seam.
     it "takes no arguments at all, which is what makes it genuinely null" do
       expect(Lain::Review::Handover::Unheld.method(:settle).arity).to eq(0)
+    end
+  end
+
+  # `:LainReviewClose`: a round let go with no verdict. The handover is bound to
+  # both rails, so it is what the editor's close reaches -- but what a close lets
+  # go of (the outbox, the rails, the sidebar) is the opener's, so it arrives as
+  # a collaborator.
+  describe "a close written in the editor" do
+    let(:transcript) { StringIO.new }
+    let(:drawn_on) { Lain::Review::Surface::Text.new(sink: transcript) }
+    let(:outbox) { RecordingCloseOutbox.new(session:, label: "branch feature") }
+    let(:rails) { RecordingReviewRails.new(:bound) }
+    let(:closing) { described_class::Closing.new(outbox:, rails:, surface: drawn_on) }
+
+    it "journals the close as the human's and answers nothing, which is how the editor's command succeeds" do
+      expect(handover(closing:).wrote_close).to be_nil
+      expect(records_of("changeset_closed").map { |record| record.values_at("changeset_digest", "closed_by") })
+        .to eq([[session.digest, "human"]])
+    end
+
+    it "lets go of everything the round held: the outbox, both rails, and the sidebar's contents" do
+      handover(closing:).wrote_close
+
+      expect(outbox).not_to be_open
+      expect(rails.bound).to be_nil
+      expect(transcript.string).to include("branch feature").and include("closed")
+    end
+
+    it "answers a judged round's refusal in words and keeps everything it held" do
+      session.submit("approve")
+
+      expect(handover(closing:).wrote_close).to include("already judged")
+      expect(outbox).to be_open
+      expect(rails.bound).to eq(:bound)
+      expect(records_of("changeset_closed")).to be_empty
+    end
+
+    # An epic stage's review ends with its verdict, which is what its baton is
+    # waiting on; nothing binds a close to it, and the default says so in words
+    # rather than raising on the rail.
+    it "answers in words from a review nobody wired a close to, journaling nothing" do
+      expect(handover.wrote_close).to eq(described_class::Unclosable::NOT_CLOSABLE)
+      expect(records_of("changeset_closed")).to be_empty
+    end
+  end
+
+  # A ceiling or scope refusal raised AFTER the rails were bound. The round is on
+  # the journal already, so it is closed there too -- as the refusal's, not the
+  # human's -- and nothing it held is left behind.
+  describe "a refusal after the round was bound" do
+    let(:transcript) { StringIO.new }
+    let(:rails) { RecordingReviewRails.new(:bound) }
+    let(:outbox) { RecordingCloseOutbox.new(session: nil, label: nil) }
+    let(:closing) do
+      described_class::Closing.new(outbox:, rails:, surface: Lain::Review::Surface::Text.new(sink: transcript))
+    end
+
+    it "journals the round closed by the refusal, with no verdict" do
+      closing.refused(session, "2 files is past the ceiling of 1")
+
+      expect(records_of("changeset_closed").map { |record| record["closed_by"] }).to eq(["refusal"])
+      expect(records_of("review_verdict")).to be_empty
+    end
+
+    it "unbinds both rails and draws the refusal where the sidebar was" do
+      closing.refused(session, "2 files is past the ceiling of 1")
+
+      expect(rails.bound).to be_nil
+      expect(transcript.string).to include("2 files is past the ceiling of 1")
+    end
+
+    it "lets go of the refused round when the outbox held it" do
+      outbox = RecordingCloseOutbox.new(session:, label: "branch feature")
+      closing = described_class::Closing.new(outbox:, rails:, surface: Lain::Review::Surface::Null.new)
+
+      closing.refused(session, "too large")
+
+      expect(outbox).not_to be_open
+    end
+
+    # A survey holds only once it drew, so the round the outbox holds when a
+    # survey refuses is somebody else's -- a settled review the chat may still post.
+    # A gesture can land between the bind and the refusal. Whatever it did, the
+    # refusal still lets go of everything and journals no second ending.
+    it "still lets go of everything when a verdict settled the round first, journaling no close" do
+      outbox = RecordingCloseOutbox.new(session:, label: "branch feature")
+      closing = described_class::Closing.new(outbox:, rails:, surface: Lain::Review::Surface::Null.new)
+      session.submit("approve")
+
+      closing.refused(session, "too large")
+
+      expect(rails.bound).to be_nil
+      expect(outbox).not_to be_open
+      expect(records_of("changeset_closed")).to be_empty
+    end
+
+    it "still lets go of everything when a close landed first, journaling one close" do
+      session.close(by: "human")
+
+      closing.refused(session, "too large")
+
+      expect(rails.bound).to be_nil
+      expect(records_of("changeset_closed").size).to eq(1)
+    end
+
+    it "keeps holding a round that is not the refused one" do
+      other = Lain::Review::Session.open(changeset:, journal:, source: "local_branch", policy:)
+      outbox = RecordingCloseOutbox.new(session: other, label: "pull request 12")
+      closing = described_class::Closing.new(outbox:, rails:, surface: Lain::Review::Surface::Null.new)
+
+      closing.refused(session, "too large")
+
+      expect(outbox.target).to eq("pull request 12")
     end
   end
 

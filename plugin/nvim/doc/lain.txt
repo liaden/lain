@@ -332,7 +332,8 @@ your own `:highlight link` overrides any of them without a fight:
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
-`:LainReviewVerdict {verdict}`, `:LainApprove`, `:LainDeny`, `:LainSurveyAdd`
+`:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`, `:LainDeny`,
+`:LainSurveyAdd`
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|
 below), and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
@@ -516,6 +517,17 @@ Its argument is required and completes with <Tab>.
                             is refused rather than attempted -- and a review
                             opened on a BRANCH is refused by name, since there
                             is no pull request under it to post to.
+
+                                                         *:LainReviewClose*
+
+    :LainReviewClose        Let the open changeset review or survey go
+                            WITHOUT a verdict -- the same as `/review close`
+                            at the chat's `you>` prompt. The round is recorded
+                            as closed, nothing is bound to it any more, and
+                            the sidebar shows what was closed in place of its
+                            rows. Your notes stay in lain's journal. A round
+                            you have already given a verdict is refused, and
+                            stays the one `/review-submit` posts.
 
                                                               *:LainThread*
                                                               *lain://thread*

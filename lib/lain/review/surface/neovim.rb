@@ -69,6 +69,11 @@ module Lain
         # a 40-column line, prefix included.
         SETTLED = "this review is settled: %<verdict>s"
 
+        # The first line of the sidebar a declined review leaves behind, ahead
+        # of the reason. Parenthesized like {Frontend::Neovim::ReviewView::PLACEHOLDERS},
+        # so it reads as a state of the sidebar rather than as a row to open.
+        NOTHING_UNDER_REVIEW = "(nothing under review)"
+
         # The session nobody bound. {Frontend::Neovim::ReviewView::Unwired}'s
         # honesty, one object over: it answers the one message this surface sends
         # it, so no path here asks whether a session exists, and it REFUSES,
@@ -206,8 +211,25 @@ module Lain
           @rpc.review_refused(format(SETTLED, verdict:))
         end
 
-        # @return [String, nil]
-        def refuse(message) = @rpc.review_refused(message)
+        # Decline the review, naming why -- and that is an END of the round in
+        # the editor, as {#settle} is: torn down first, for {#settle}'s reason,
+        # then the sidebar redrawn as a placeholder carrying the reason, so no
+        # sidebar goes on claiming to show a round nothing is bound to. The
+        # sentence then rides the notice rail too, which is what puts it in
+        # `:messages`.
+        #
+        # The placeholder carries NO STAMP: it is no rendering of this view's, so
+        # a gesture on it is refused as coming from an unrendered buffer. One
+        # line per line of the reason, because a buffer line cannot hold a
+        # newline. The sides are the whole vocabulary, since a declined round
+        # presents none and the layout has to be told something.
+        #
+        # @return [String, nil] the notice's answer, {#settle}'s convention
+        def refuse(message)
+          @rpc.review_settled
+          @rpc.set_review([NOTHING_UNDER_REVIEW, *message.to_s.split("\n")], nil, Review::SIDES)
+          @rpc.review_refused(message)
+        end
 
         # The one gesture that travels the OTHER way: the editor marked a hunk,
         # and the session is what records it. Unchanged in both arguments and

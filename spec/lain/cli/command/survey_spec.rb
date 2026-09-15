@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "neovim"
 require "stringio"
 require "tmpdir"
@@ -143,7 +144,8 @@ RSpec.describe Lain::CLI::Command::Survey do
                                 questions:)
   end
 
-  let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+  # `journal_path: nil` is a chat recording to no file, so it resumed nothing.
+  let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal, journal_path: nil) }
   let(:env) { build_command_env(replies:, chronicle:) }
 
   around do |example|
@@ -867,11 +869,9 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
 
     # THE STRANDING PAIR, and the defect this guard would otherwise CREATE.
-    # Nothing in a chat closes a round -- `Outbox` answers `hold`, `open?`,
-    # `submit`, `held_source` and `target`, and none of them lets go -- so a
-    # refusal that held a round while drawing NOTHING locks `/review` out of
-    # that cockpit for the rest of the session, over a survey the human never
-    # saw. That is this card's own stated failure ("an opened review that
+    # Only a verdict or a human's `/review close` lets a round go, so a refusal
+    # that held a round while drawing NOTHING would lock `/review` out of that
+    # cockpit over a survey the human never saw. That is this card's own stated failure ("an opened review that
     # nothing drew and no gesture could reach") reached through the guard the
     # card added.
     #
@@ -890,6 +890,35 @@ RSpec.describe Lain::CLI::Command::Survey do
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
+    # The rails half of the same refusal. They were bound before the draw, for
+    # the human fast enough to gesture between the two, and a verdict landing
+    # on a survey nobody saw -- `--permissive` would even admit one -- is what
+    # is left if the refusal does not let them go.
+    it "leaves the rails unbound and draws the refusal where the sidebar was when the LINE ceiling refuses" do
+      attached
+      bounded = described_class.new(outbox:, ledger:, sensitivity:, cwd: @root,
+                                    bounds: Lain::Review::Bounds.new(max_lines: 1))
+
+      expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+
+      expect(editor.bound).to be_nil
+      expect(sink.string).to include("refused:").and include("lines")
+      expect(sink.string).not_to include("notes.md")
+      expect(Lain::Journal.records(record.string.lines, type: "changeset_closed").to_a.map { |line| line["closed_by"] })
+        .to eq(["refusal"])
+    end
+
+    it "keeps holding a settled changeset review when a survey opened over it refuses" do
+      attached
+      outbox.hold(session: settled_changeset_round, number: 12, label: "pull request 12")
+      bounded = described_class.new(outbox:, ledger:, sensitivity:, cwd: @root,
+                                    bounds: Lain::Review::Bounds.new(max_lines: 1))
+
+      expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+
+      expect(outbox.target).to eq("pull request 12")
+    end
+
     it "holds nothing when the scope is one a corpus cannot answer, for the same reason" do
       attached
 
@@ -897,6 +926,7 @@ RSpec.describe Lain::CLI::Command::Survey do
         .to raise_error(Lain::Review::Session::UnsupportedScope)
 
       expect(outbox).not_to be_open
+      expect(editor.bound).to be_nil
       expect { Lain::CLI::Command::Review.new(root: @root, outbox:).call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
@@ -959,6 +989,108 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(editor.bound).to be_a(Lain::Review::Handover)
       expect(editor.bound).not_to equal(first)
+    end
+  end
+
+  # A resumed chat carries none of the review round the session it resumed
+  # left open -- a round is round-scoped -- so a survey of the same TARGET says
+  # so. The target is the tree a human named, not its content: a survey of
+  # `big/` whose files changed since is still the survey of `big/`.
+  describe "reopening a survey in a resumed chat" do
+    before { two_documents }
+
+    def chronicle_on(on, path) = instance_double(Lain::CLI::Chronicle, record_journal: on, journal_path: path)
+
+    # The earlier chat's session file, and whatever it did before stopping --
+    # in its own outbox, since it was its own chat.
+    def earlier(dir)
+      prior = StringIO.new
+      held = Lain::Review::Submit::Outbox.new
+      yield described_class.new(cwd: @root, outbox: held, ledger:, sensitivity:),
+            build_command_env(replies:, chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)), held
+      File.write(File.join(dir, "earlier.ndjson"), prior.string)
+    end
+
+    # The resumed chat: a header naming the earlier file, as `--resume` writes it.
+    def resumed(dir)
+      current = File.join(dir, "resumed.ndjson")
+      File.write(current, "#{JSON.generate("type" => Lain::SessionRecord::HEADER_TYPE,
+                                           "resumed_from" => { "file" => "earlier.ndjson", "head" => "x" })}\n")
+      build_command_env(replies:, chronicle: chronicle_on(journal, current))
+    end
+
+    def in_session_dir(&) = Dir.mktmpdir("lain-survey-resumed", &)
+
+    it "opens a new round with the not-carried-over banner" do
+      attached
+      in_session_dir do |dir|
+        earlier(dir) { |survey, earlier_env| survey.call(@root, earlier_env) }
+
+        answer = command.call(@root, resumed(dir))
+
+        expect(answer).to include("not carried over").and include(@root)
+        expect(editor.bound).to be_a(Lain::Review::Handover)
+      end
+    end
+
+    it "still says so when the tree changed between the two sessions" do
+      attached
+      in_session_dir do |dir|
+        earlier(dir) { |survey, earlier_env| survey.call(@root, earlier_env) }
+        write("notes.md", document("# Notes", "", "A line written after the earlier chat stopped."))
+        write("added.md", document("# Added", "", "A file the earlier survey never saw."))
+
+        expect(command.call(@root, resumed(dir))).to include("not carried over")
+      end
+    end
+
+    it "says so for the same tree named another way" do
+      attached
+      in_session_dir do |dir|
+        earlier(dir) { |survey, earlier_env| survey.call("#{@root}/", earlier_env) }
+
+        expect(command.call(File.join(@root, "."), resumed(dir))).to include("not carried over")
+      end
+    end
+
+    # The tree, not the spelling of the way to it: a link to the directory the
+    # earlier chat surveyed reaches the same files.
+    it "says so for the same tree reached through a symlink" do
+      File.symlink(@root, File.join(@tmp, "linked"))
+      attached
+      in_session_dir do |dir|
+        earlier(dir) { |survey, earlier_env| survey.call(@root, earlier_env) }
+
+        expect(command.call(File.join(@tmp, "linked"), resumed(dir))).to include("not carried over")
+      end
+    end
+
+    it "says nothing when the earlier chat closed that survey" do
+      attached
+      in_session_dir do |dir|
+        earlier(dir) do |survey, earlier_env, held|
+          survey.call(@root, earlier_env)
+          Lain::CLI::Command::Review.new(root: @root, outbox: held).call("close", earlier_env)
+        end
+
+        expect(command.call(@root, resumed(dir))).not_to include("not carried over")
+      end
+    end
+
+    it "says nothing about an earlier survey of another tree" do
+      write("sub/inner.md", document("# Inner", "", "Prose below the root."))
+      attached
+      in_session_dir do |dir|
+        earlier(dir) { |survey, earlier_env| survey.call(File.join(@root, "sub"), earlier_env) }
+
+        expect(command.call(@root, resumed(dir))).not_to include("not carried over")
+      end
+    end
+
+    it "says nothing in a chat that resumed nothing" do
+      attached
+
+      expect(command.call(@root, env)).not_to include("not carried over")
     end
   end
 

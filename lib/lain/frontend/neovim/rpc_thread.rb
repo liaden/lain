@@ -553,15 +553,16 @@ module Lain
       #
       # `anchor_text` and `revision` still cross this boundary, off the buffer
       # and `47_diff.lua`'s `b:lain_review_revision` stamp, but neither is
-      # recorded: {Review::Handover} reads a note's evidence and revision out of
-      # the reviewed revision ({Review::Changeset#anchor}). They are still judged
-      # here as the editor's shape.
+      # recorded: {Review::Handover} reads a note's evidence and revision
+      # through the evidence it was built with, out of the reviewed objects or
+      # the survey's projection. They are still judged here as the editor's
+      # shape.
       #
-      # `drifted` is the EDITOR's for a harder reason: drift is the anchor text
-      # against the line the number NOW names, and that line lives in the buffer
-      # the human is looking at -- not in the diff a session holds, not on disk,
-      # nowhere Ruby can reach without keeping a copy free to disagree with the
-      # screen. For a 'fileformat=dos' file it certainly would disagree: nvim
+      # `drifted` is recorded as the EDITOR measured it, because drift is the
+      # anchor text against the line the number NOW names, and that line lives
+      # in the buffer the human is looking at -- not in the diff a session
+      # holds, not on disk, nowhere Ruby can reach without keeping a copy free
+      # to disagree with the screen. For a 'fileformat=dos' file it certainly would disagree: nvim
       # strips the carriage returns the buffer never shows while git's bytes
       # carry them, so a Ruby-side comparison reports drift on every line.
       #
@@ -693,6 +694,17 @@ module Lain
           batch.lazy.filter_map { |note| refused(note) }.first
         end
         private_class_method :refused_batch
+
+        # `:LainReviewClose` carries nothing, so the only shape to judge is the
+        # arguments themselves -- {flat}'s reason still holds for an empty verb.
+        #
+        # @param args [Array, nil] the verb's one array of arguments, empty
+        # @return [String, nil] as {annotation}
+        def self.close(args)
+          return flat(args) unless args.is_a?(Array)
+
+          yield
+        end
 
         # @param args [Array, nil] the verb's one array of arguments, holding the
         #   verdict alone
@@ -898,7 +910,8 @@ module Lain
             "review_notes" => ->(args) { ReviewWrite.notes(args[1], &annotated) },
             "review_verdict" => lambda { |args|
               ReviewWrite.verdict(args[1]) { |verdict| listener.review_verdict_given(verdict) }
-            } }
+            },
+            "review_close" => ->(args) { ReviewWrite.close(args[1]) { listener.review_close_given } } }
         end
       end
 
@@ -1003,6 +1016,15 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #review_verdict_given"
           end
 
+          # Answered for {#review_verdict_given}'s reason: a close can be refused
+          # (a judged round), and an editor told it closed would stop showing a
+          # round that is still bound.
+          #
+          # @return [String, nil] the failure the command must report, or nil
+          def review_close_given
+            raise NotImplementedError, "#{self.class} must implement #review_close_given"
+          end
+
           # The no-op Listener, so an {RpcThread} (or {Router}) built with none
           # of these reactions wired never needs an `if listener` guard.
           class Null < Listener
@@ -1028,6 +1050,7 @@ module Lain
             def question_abandoned(_digest) = nil
             def review_annotated(_note) = UNREVIEWABLE
             def review_verdict_given(_verdict) = UNREVIEWABLE
+            def review_close_given = UNREVIEWABLE
           end
         end
 

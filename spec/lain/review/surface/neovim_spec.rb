@@ -496,11 +496,24 @@ RSpec.describe Lain::Review::Surface::Neovim do
     end
   end
 
+  # Declining the review is an END of it in the editor, as a verdict is: the
+  # sidebar would otherwise go on showing a round nothing is bound to, and the
+  # human would go on marking it.
   describe "#refuse" do
-    it "sends the caller's own sentence down the review's notice rail" do
+    it "tears the round down, draws the sentence where the sidebar was, then says it on the notice rail" do
       surface.refuse("this changeset is too large to review here")
 
-      expect(inlet.posted).to eq([[:review_refused, "this changeset is too large to review here"]])
+      expect(inlet.posted.map(&:first)).to eq(%i[review_settled set_review review_refused])
+      expect(inlet.posted.last).to eq([:review_refused, "this changeset is too large to review here"])
+    end
+
+    it "draws a placeholder naming the sentence, one line per line of it, with no stamp a gesture could cite" do
+      surface.refuse("too large\nnarrow it")
+
+      _, lines, generation, sides = inlet.posted.fetch(1)
+      expect(lines).to eq([described_class::NOTHING_UNDER_REVIEW, "too large", "narrow it"])
+      expect(generation).to be_nil
+      expect(sides).to eq(Lain::Review::SIDES)
     end
   end
 
@@ -740,6 +753,15 @@ RSpec.describe Lain::Review::Surface::Neovim do
       deliver
 
       expect(sidebar_stamp).to eq(2)
+    end
+
+    it "draws a refusal into lain://review, over the changeset it replaces" do
+      surface.present(two_commit_changeset, scope: :cumulative)
+      surface.refuse("this changeset is too large to review here")
+      deliver
+
+      expect(sidebar_lines)
+        .to eq([described_class::NOTHING_UNDER_REVIEW, "this changeset is too large to review here"])
     end
 
     it "puts a refusal in the editor's own message history" do

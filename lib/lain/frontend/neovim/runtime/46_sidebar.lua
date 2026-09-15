@@ -180,9 +180,9 @@ end, {
 -- hop back to the sidebar to say so.
 --
 -- It lives in the sidebar's module rather than in `65_review.lua` because that
--- file is the EPIC document rail (`:LainReviewDone` hands one document back);
--- this concludes the CHANGESET review whose navigator this module is. The two
--- share a word and nothing else.
+-- file's `:LainReviewDone` is the EPIC document rail; this concludes the
+-- CHANGESET review whose navigator this module is. `:LainReviewClose` sits there
+-- anyway, since it needs nothing of the sidebar's.
 --
 -- THE VOCABULARY IS NOT RESTATED HERE, where MARK_KEYS above had to restate
 -- one. Nothing in this command needs a member by name, so whatever the human

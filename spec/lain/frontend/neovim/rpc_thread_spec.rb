@@ -28,6 +28,11 @@ class RecordingReviewWrites
     @wrote << [:verdict, verdict]
     @refusal
   end
+
+  def wrote_close
+    @wrote << [:close]
+    @refusal
+  end
 end
 
 # {RpcThread::Listener}'s own contract, plain Ruby -- no editor needed. The
@@ -76,6 +81,11 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread::Listener do
       expect { listener.review_verdict_given("approve") }
         .to raise_error(NotImplementedError, /must implement #review_verdict_given/)
     end
+
+    it "refuses a review close" do
+      expect { listener.review_close_given }
+        .to raise_error(NotImplementedError, /must implement #review_close_given/)
+    end
   end
 end
 
@@ -105,6 +115,7 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread::Listener::Null do
   it "refuses both review writes rather than claiming they were recorded" do
     expect(null.review_annotated({ "side" => "new" })).to eq(described_class::UNREVIEWABLE)
     expect(null.review_verdict_given("approve")).to eq(described_class::UNREVIEWABLE)
+    expect(null.review_close_given).to eq(described_class::UNREVIEWABLE)
     expect(described_class::UNREVIEWABLE).to include("no review surface")
   end
 
@@ -905,6 +916,25 @@ RSpec.describe Lain::Frontend::Neovim::Router do
     end
   end
 
+  # ANSWERED like a verdict, because a close can be refused -- a judged round,
+  # or a review nothing wired a close to -- and the editor's command has to hear
+  # that rather than an ack.
+  describe "a close write's wire shape" do
+    it "hands the close to the listener and returns its answer" do
+      allow(listener).to receive(:review_close_given).and_return("this round was already judged")
+
+      expect(router.answer(["review_close", []])).to eq("this round was already judged")
+      expect(listener).to have_received(:review_close_given)
+    end
+
+    it "refuses flat arguments before the listener hears anything" do
+      allow(listener).to receive(:review_close_given)
+
+      expect(router.answer(%w[review_close now])).to include("ONE array")
+      expect(listener).not_to have_received(:review_close_given)
+    end
+  end
+
   it "hands the write's verdict straight back from the listener" do
     allow(listener).to receive(:question_written).and_return("line 6: no")
 
@@ -1001,6 +1031,23 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
 
     expect(session).to have_received(:respond)
       .with(7, nil, Lain::Frontend::Neovim::NoReviewWrites::UNOPENED).twice
+  end
+
+  it "carries a close to the bound review and answers that it was taken" do
+    frontend.bind_changeset_review(review)
+
+    dispatch("review_close", [])
+
+    expect(review.wrote).to eq([[:close]])
+    expect(session).to have_received(:respond).with(7, true, nil)
+  end
+
+  # What a verdict after a close meets: the close unbound the rails, so nothing
+  # is open to take either write.
+  it "refuses a close when no review is open, naming that none is" do
+    dispatch("review_close", [])
+
+    expect(session).to have_received(:respond).with(7, nil, Lain::Frontend::Neovim::NoReviewWrites::UNOPENED)
   end
 
   # Why the listener holds a bound ACCESSOR rather than the review itself: a

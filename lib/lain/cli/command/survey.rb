@@ -60,7 +60,8 @@ module Lain
         # The refusal a second review SURFACE gets, naming the one already open.
         ALREADY_OPEN = "%<target>s is already open in this chat, and one chat draws one review at a time -- " \
                        "a survey opened over it would rebind the gesture rails to a sidebar that review's " \
-                       "marks cannot reach. Run `lain survey <path>` for a text rendering outside this chat."
+                       "marks cannot reach. Run `/review close` to let it go without a verdict, or " \
+                       "`lain survey <path>` for a text rendering outside this chat."
 
         # A flag it DOES declare, whose value is missing or is itself a flag.
         # Apart from {UNKNOWN_FLAG} because the remedy is the opposite one: a
@@ -179,10 +180,12 @@ module Lain
         #
         # BIND BEFORE DRAW, because a human fast enough to press `<CR>` between
         # the two would send a gesture nothing could route. HOLD AFTER, because
-        # {#refuse_second_surface!} reads the hold and nothing in a chat lets go
-        # of a round: {Lain::Review::Session#present} can still raise, and a round
-        # held through that would lock `/review` out for the rest of the session
-        # over a survey the human never saw.
+        # {#refuse_second_surface!} reads the hold: {Lain::Review::Session#present}
+        # can still raise, and a round held through that would lock `/review` out
+        # over a survey the human never saw. A draw that refuses lets go of the
+        # bind again ({Lain::Review::Handover::Closing#drawing}), and the outbox
+        # releases only that round -- which it never held -- so a settled review
+        # the chat still holds stays held.
         #
         # FOCUS IS LAST and only if the draw returned: somebody yanked into a
         # tabpage holding nothing is worse off than left reading the refusal. It
@@ -201,19 +204,19 @@ module Lain
           # this one line whether the human named it or not.
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: @sensitivity)
+          banner = Review.not_carried_over(env, target_of(walk))
           session = round(walk, ceilings, surface, env, policy:)
+          closing = Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
           # The gesture rails, complete before a human can touch the sidebar.
-          env.replies.bind_changeset_review(handover(session, env, scope, surface))
-          shown(walk, session, scope, surface)
+          env.replies.bind_changeset_review(handover(session, env, scope, surface, closing))
+          closing.drawing(session) { drawn_and_held(walk, session, scope, banner) }.tap { surface.focus }
         end
-
-        # Its own name because the two halves answer different questions -- what
-        # lain keeps, and where the human ends up -- and only the first can fail.
-        def shown(walk, session, scope, surface) = drawn_and_held(walk, session, scope).tap { surface.focus }
 
         # One method so it cannot be read as two independent steps: the hold
         # happens only if the draw returned.
-        def drawn_and_held(walk, session, scope) = drawn(walk, session, scope).tap { held(walk, session) }
+        def drawn_and_held(walk, session, scope, banner)
+          drawn(walk, session, scope, banner).tap { held(walk, session) }
+        end
 
         # What `--unbounded` means, asked of {Lain::CLI::Survey} rather than
         # answered here: TWO of the three ceilings lift and `max_critique_lines`
@@ -245,12 +248,17 @@ module Lain
         # human standing in this one. Not the project root either -- that sits at
         # the repository top while a monorepo chat stands in a subtree, and
         # naming from it would break the `/survey .` that works today.
+        #
+        # The TARGET journaled is the walk root's REALPATH, so `big`, `big/`,
+        # `./big` and a link to it are the one tree they name.
         def round(walk, ceilings, surface, env, policy:)
           source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),
                                      journal: env.chronicle.record_journal, source: self.class.source_name,
-                                     surface:, bounds: ceilings, policy:)
+                                     surface:, bounds: ceilings, policy:, target: target_of(walk))
         end
+
+        def target_of(walk) = File.realpath(walk.root)
 
         # The round, where the rest of the chat can see it -- taken only once
         # something was drawn, per {#opened}. `number:` is nil and always will
@@ -270,20 +278,22 @@ module Lain
         # cannot ask anybody for -- a session takes it and forgets it. The DOCENT
         # is assembled here for the same reason: this is the one place holding
         # the round's changeset, the run's role spawn and the chat's own journal.
-        def handover(session, env, scope, surface)
+        def handover(session, env, scope, surface, closing)
           view = env.replies.review_view
           view.reviewing(session.changeset)
           docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
                                             journal: env.chronicle.record_journal)
-          Lain::Review::Handover.new(session:, view:, docent:, redraw: Lain::Review::Handover::Redraw.new(scope:))
+          Lain::Review::Handover.new(session:, view:, docent:, closing:,
+                                     redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
 
-        def drawn(walk, session, scope)
+        def drawn(walk, session, scope, banner)
           answer = session.present(scope:)
           files = session.changeset.files
           headline = format(Lain::CLI::Survey::HEADLINE, root: walk.root, scope:, count: files.size,
                                                          noun: noun(files.size))
           [Lain::Review::OpenedBanner.call(headline, sides: session.changeset.sides),
+           banner,
            disclosure(walk.withheld),
            answer.is_a?(String) ? answer : nil].compact.join("\n")
         end
