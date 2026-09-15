@@ -127,7 +127,8 @@ RSpec.describe Lain::Isolation::Gc, :seam do
   describe "a checkout still at the commit it was cut at" do
     def fresh_checkout
       Lain::Isolation::WorkingBranch.epic("fresh", repo_root: @repo_root)
-      File.join(@root, "landing").tap { |dir| run_git(@repo_root, "worktree", "add", "-q", dir, "epic/fresh") }
+      File.join(@root, "landings", "fresh")
+          .tap { |dir| run_git(@repo_root, "worktree", "add", "-q", dir, "epic/fresh") }
     end
 
     it "is kept, and the report says nothing has landed since it was cut" do
@@ -302,7 +303,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
   describe "the epic driver's landing checkout" do
     def landing_checkout
       Lain::CLI::EpicDriver::Factory::LandingCheckout.new(
-        repo_root: @repo_root, path: File.join(@root, "landing"),
+        repo_root: @repo_root, path: File.join(@root, "landings", "demo"),
         branch: Lain::Isolation::WorkingBranch.epic("demo", repo_root: @repo_root)
       ).cut
     end

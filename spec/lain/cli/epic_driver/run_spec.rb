@@ -165,14 +165,23 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     end
   end
 
+  # A plan reader that refuses the issues named, the way reading a plan does.
+  def plans_refusing(refusals)
+    lambda do |id|
+      raise refusals.fetch(id) if refusals.key?(id)
+
+      plans.call(id)
+    end
+  end
+
   # The loop, assembled over the fakes an example set up.
   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
-               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil)
+               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans)
     live = { now: 0 }
     supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
     settled = landing || RunSpecLanding.new(statuses)
-    run = described_class.new(progress: progress_over(issues, statuses), plans:, actors:, supervisor:, gate:,
+    run = described_class.new(progress: progress_over(issues, statuses), plans: subjects, actors:, supervisor:, gate:,
                               landing: settled, width:, budget:,
                               red_only: red_only || described_class::Identical,
                               **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}))
@@ -252,6 +261,130 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(actors.launched.map(&:first)).to eq(["a"])
       expect(result.reported.map(&:issue_id)).to eq(["c"])
       expect(result.reported.first.reason).to include("issue_plan")
+    end
+  end
+
+  # A refused launch takes no room, so the fill offers the next startable issue
+  # in its place: a run whose every launch in one fill refused would otherwise
+  # have nothing live to settle, and stop with approved issues never mentioned.
+  describe "a refused launch" do
+    def no_subject = Lain::Error.new("the plan for a declares no test subject")
+
+    it "reports the refused issue and launches the next one" do
+      statuses = { "a" => "in_flight", "b" => "in_flight" }
+      run, actors, landing = run_over(issues: [issue("a"), issue("b")], statuses:,
+                                      reports: { "b" => anchored("sha-b") }, width: 1,
+                                      subjects: plans_refusing("a" => no_subject))
+
+      result = run.call
+
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to include("declares no test subject")
+      expect(actors.launched.map(&:first)).to eq(["b"])
+      expect(landing.landed).to eq([%w[b sha-b]])
+    end
+
+    # Three issues survive the refusals at width 2, so a fill that stopped
+    # counting room would have all three live at once.
+    it "keeps refilling past several refusals without ever exceeding the width" do
+      ids = %w[a b c d e f]
+      statuses = ids.to_h { |id| [id, "in_flight"] }
+      reports = ids.to_h { |id| [id, anchored("sha-#{id}")] }
+      refusals = %w[a b d].to_h { |id| [id, Lain::Error.new("the plan for #{id} declares no test subject")] }
+      run, actors = run_over(issues: ids.map { |id| issue(id) }, statuses:, reports:, width: 2,
+                             subjects: plans_refusing(refusals))
+
+      result = run.call
+
+      expect(actors.launched.map(&:first)).to eq(%w[c e f])
+      expect(actors.concurrency.max).to eq(2)
+      expect(result.reported.map(&:issue_id)).to contain_exactly("a", "b", "d")
+      expect(result.landed.map(&:issue_id)).to contain_exactly("c", "e", "f")
+    end
+
+    # The refill offers only what the fold calls startable: approving the plan
+    # is the one writer of pending -> in_flight, never this loop.
+    it "never starts a pending issue in a refused one's place" do
+      statuses = { "a" => "in_flight", "c" => "pending" }
+      run, actors = run_over(issues: [issue("a"), issue("c")], statuses:, reports: {}, width: 1,
+                             subjects: plans_refusing("a" => no_subject))
+
+      result = run.call
+
+      expect(actors.launched).to be_empty
+      expect(result.reported.map(&:issue_id)).to contain_exactly("a", "c")
+    end
+  end
+
+  # A journal the loop cannot read is nobody's issue in particular: every
+  # plan read would meet the same damage, so it ends the run rather than being
+  # reported once per issue.
+  describe "a sign-off journal that cannot be read" do
+    [Lain::CLI::SessionJournals::Unreadable.new("the session journal x.ndjson is damaged at line 1"),
+     Lain::Approval::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")].each do |torn|
+      it "refuses the whole run over #{torn.class.name.split("::").last}, and launches nothing" do
+        statuses = { "a" => "in_flight", "b" => "in_flight" }
+        run, actors = run_over(issues: [issue("a"), issue("b")], statuses:, reports: {}, width: 1,
+                               subjects: plans_refusing("a" => torn))
+
+        expect { run.call }.to raise_error(torn.class, torn.message)
+        expect(actors.launched).to be_empty
+      end
+    end
+
+    # A Result that already carries a landing survives whatever comes after it:
+    # the work is on the branch, so the reply has to say so, and the damage
+    # ends the run in words instead.
+    def torn_record = Lain::Approval::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")
+
+    it "ends the run in words, keeping what already landed, when a later plan read meets it" do
+      statuses = { "a" => "in_flight", "b" => "in_flight" }
+      run, actors, landing = run_over(issues: [issue("a", blocks: ["b"]), issue("b")], statuses:,
+                                      reports: { "a" => anchored("sha-a"), "b" => anchored("sha-b") }, width: 1,
+                                      subjects: plans_refusing("b" => torn_record))
+
+      result = run.call
+
+      expect(landing.landed).to eq([%w[a sha-a]])
+      expect(actors.launched.map(&:first)).to eq(["a"])
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.stopped).to include("the gate_decision record cannot be read")
+      expect(result.to_s).to include("landed a at sha-a", "the gate_decision record cannot be read")
+    end
+
+    # At width 2 a sibling is still working when the refill meets the damage:
+    # it is reported as left where it stood, never silently dropped.
+    it "strands a sibling still live, reports it, and keeps the landing" do
+      statuses = { "a" => "in_flight", "b" => "in_flight", "c" => "in_flight" }
+      run, actors, landing, supervisor = run_over(issues: [issue("a"), issue("b"), issue("c")], statuses:,
+                                                  reports: { "a" => anchored("sha-a"), "b" => anchored("sha-b") },
+                                                  width: 2, subjects: plans_refusing("c" => torn_record))
+
+      result = run.call
+
+      expect(actors.launched.map(&:first)).to eq(%w[a b])
+      expect(landing.landed).to eq([%w[a sha-a]])
+      expect(supervisor.retired).to eq(["a"])
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.map { |entry| [entry.issue_id, entry.reason] }).to eq([["b", described_class::UNSETTLED]])
+      expect(result.stopped).to start_with("the run stopped because a session journal could not be read")
+      expect(Ractor.shareable?(result)).to be(true)
+    end
+
+    it "ends the run in words, keeping what already landed, when a later fold meets it" do
+      statuses = { "a" => "in_flight", "b" => "in_flight" }
+      folds = progress_over([issue("a"), issue("b")], statuses)
+      torn = Lain::CLI::SessionJournals::Unreadable.new("the session journal x.ndjson is damaged at line 9")
+      live = { now: 0 }
+      supervisor = RunSpecSupervisor.new({ "a" => anchored("sha-a") }, live)
+      run = described_class.new(progress: -> { statuses.value?("done") ? raise(torn) : folds.call }, plans:,
+                                actors: RunSpecActors.new(supervisor, live), supervisor:, gate: RunSpecGate.new,
+                                landing: RunSpecLanding.new(statuses), width: 1, red_only: described_class::Identical)
+
+      result = run.call
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.stopped).to include("damaged at line 9")
     end
   end
 

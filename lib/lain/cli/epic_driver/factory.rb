@@ -62,9 +62,13 @@ module Lain
         UNMOUNTED = "this chat is in no epic, so there is nothing to implement -- start one with " \
                     "`lain chat --epic SLUG`, and `lain epic status` lists the epics this project has"
 
-        # Where lain checks out the epic's branch to land on, under the same
-        # worktree root the issue actors lease from.
-        LANDING = "landing"
+        # Where lain checks out an epic's branch to land on, under the same
+        # worktree root the issue actors lease from: one checkout per epic, at
+        # `landings/<slug>`, so two epics in one project land side by side.
+        # Not `landing/`: that was the older per-project checkout itself, and a
+        # checkout nested inside one still standing goes with it when gc
+        # force-removes the old tree.
+        LANDING = "landings"
 
         # No epic mounted, so no epic to drive. A refusing Null rather than nil:
         # the command is registered in every chat, reads this through the Env
@@ -514,7 +518,8 @@ module Lain
         def landing_checkout
           return LandingCheckout::InPlace.new(root: @root) if working_branch.current_in?(parent)
 
-          LandingCheckout.new(repo_root: @root, path: File.join(worktree_root, LANDING), branch: working_branch).cut
+          LandingCheckout.new(repo_root: @root, path: File.join(worktree_root, LANDING, slug),
+                              branch: working_branch).cut
         end
 
         # THE PROJECT'S LAYOUT, from the project root. Every checkout this run
@@ -656,6 +661,9 @@ module Lain
         GATE_PARKED = "its implementation gate has not approved %<sha>s, so nothing landed"
 
         UNCARRIED = "it could not be carried any further, so nothing landed"
+
+        UNREADABLE = "the run stopped because a session journal could not be read, so it carried nothing further: " \
+                     "%<why>s"
 
         NOT_LANDED = "the landing queue left its work off the working branch (%<kind>s), so it waits on its ref"
 
@@ -826,8 +834,15 @@ module Lain
           @asking = Asking.new(gate:, interrupt:)
         end
 
+        # A session journal that cannot be read ends the whole run, whether the
+        # fold or a plan read meets it. Before anything has landed that is a
+        # refusal, raised; after, the landings are on the branch and the reply
+        # has to say so, so the run stops in words instead.
+        #
         # @return [Result] what landed, what was reported, and why the loop
         #   stopped when it stopped early
+        # @raise [CLI::SessionJournals::Unreadable, Approval::SignoffQueue::UnreadableRecord]
+        #   when the run meets one before it has landed anything
         def call
           @landed = []
           @reported = []
@@ -835,11 +850,15 @@ module Lain
           @stopped = nil
           drive
           result
+        rescue CLI::SessionJournals::Unreadable, Approval::SignoffQueue::UnreadableRecord => e
+          unreadable(e)
         end
 
         private
 
         # Fold, report what cannot run, fill the width, settle one, fold again.
+        # An empty fill means nothing is startable: {#fill} has already offered
+        # every untouched issue a refused launch left room for.
         # The refold is the whole of the dependency order: an issue blocked by
         # the one that just landed becomes runnable because the fold now says
         # its blocker is done, and nothing else here knows about the graph.
@@ -864,6 +883,14 @@ module Lain
           nil
         end
 
+        def unreadable(error)
+          raise error if @landed.empty?
+
+          @stopped = format(UNREADABLE, why: error.message)
+          strand
+          result
+        end
+
         # An early stop leaves whatever is still working where it stands: its
         # commits are its own actor's to anchor, and this run will not be the
         # thing that reports them landed.
@@ -872,9 +899,15 @@ module Lain
           @live = []
         end
 
+        # A refused launch takes no room, so each startable issue is offered in
+        # turn while the width has any. Iterating one pass rather than
+        # re-entering per refusal keeps an epic of many broken plans at one
+        # frame.
         def fill(folded)
-          startable(folded).take(@bounds.width - @live.size).each { |issue| launch(issue) }
+          startable(folded).each { |issue| launch(issue) if room? }
         end
+
+        def room? = @live.size < @bounds.width
 
         def startable(folded) = ready(folded) { |issue| issue.status == STARTABLE }
 
@@ -898,11 +931,17 @@ module Lain
         # A refusal stops THIS issue and nothing else: the plan is not approved,
         # or it declares no subject to write tests for, and either way a human
         # has to look. The rest of the run keeps moving.
+        #
+        # A sign-off journal that cannot be read is not this issue's: every plan
+        # read after it meets the same damage, so it goes to {#call} to end the
+        # run, rather than being reported once per issue.
         def launch(issue)
           subject = @plans.call(issue.id)
           launched = @actors.call(issue.id, subject: subject.subject, level: subject.level,
                                             attempt: @attempts.call(issue.id))
           @live << Live.new(issue_id: issue.id, launch: launched)
+        rescue CLI::SessionJournals::Unreadable, Approval::SignoffQueue::UnreadableRecord
+          raise
         rescue StandardError => e
           @reported << Reported.new(issue_id: issue.id, reason: e.message)
         end

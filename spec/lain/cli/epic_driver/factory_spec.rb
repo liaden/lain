@@ -26,7 +26,8 @@ end
 class FactorySpecActors
   Launch = Data.define(:actor, :worker_id, :branch, :tests)
 
-  def initialize(fleet, log, repo, scrub, files: {}, idle: [])
+  def initialize(fleet, log, repo, scrub, files: {}, idle: [], slug: "demo")
+    @slug = slug
     @fleet = fleet
     @log = log
     @repo = repo
@@ -36,16 +37,16 @@ class FactorySpecActors
   end
 
   def call(issue_id, subject:, level: nil, attempt: 1) # rubocop:disable Lint/UnusedMethodArgument
-    @log << [:launched, issue_id, attempt, git(@repo, "rev-parse", "refs/heads/epic/demo")]
+    @log << [:launched, issue_id, attempt, git(@repo, "rev-parse", "refs/heads/epic/#{@slug}")]
     red = nil
-    actor = @fleet.adopt(role: "factory-spec", worker_id: "issue.demo.#{issue_id}.#{attempt}") do |worker_env|
+    actor = @fleet.adopt(role: "factory-spec", worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}") do |worker_env|
       @log << [:leased, issue_id, git(worker_env.cwd, "rev-parse", "HEAD")]
       red = commit(worker_env.cwd, "red for #{issue_id}", "red_#{issue_id}.txt" => "red for #{issue_id}\n")
       commit(worker_env.cwd, "work for #{issue_id}", "#{issue_id}.txt" => "work for #{issue_id}\n", **@files) unless
         @idle.include?(issue_id)
       FactorySpecActor.new(worker_env)
     end
-    Launch.new(actor:, worker_id: "issue.demo.#{issue_id}.#{attempt}", branch: "lain/issue/demo/#{issue_id}",
+    Launch.new(actor:, worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}", branch: "lain/issue/#{@slug}/#{issue_id}",
                tests: Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: red))
   end
 
@@ -93,12 +94,13 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   let(:hands_off) { Lain::Epic::STAGES.to_h { |stage| [stage, "hands_off"] } }
   let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: hands_off)) }
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@root, "state"), "HOME" => @root }) }
-  let(:home) { Lain::Epic::Home.resolve(config:, paths:, root: repo, slug: "demo") }
   let(:log) { [] }
   let(:scrub) { Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }
   let(:provider) { Lain::Provider::Mock.new(responses: []) }
 
   def repo = File.join(@root, "repo")
+
+  def home(slug = "demo") = Lain::Epic::Home.resolve(config:, paths:, root: repo, slug:)
 
   def shell(dir, *args)
     raise "refusing to run git outside the fixture: #{dir}" unless dir.start_with?("#{@root}/")
@@ -112,27 +114,29 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def epic_tip = git(repo, "rev-parse", "refs/heads/epic/demo")
 
-  def contains?(sha) = shell(repo, "merge-base", "--is-ancestor", sha, "refs/heads/epic/demo").exitstatus.zero?
+  def contains?(sha, slug: "demo")
+    shell(repo, "merge-base", "--is-ancestor", sha, "refs/heads/epic/#{slug}").exitstatus.zero?
+  end
 
   def issue(id, blocks: [], status: "in_flight")
     Lain::Epic::Issue.new(id:, title: "the #{id} issue", blocks:, status:,
                           criteria: "```gherkin\nScenario: s\n  Given g\n  When w\n  Then t\n```\n")
   end
 
-  def write_epic(issues)
-    home.write_epic(Lain::Epic::Graph.new(issues:))
-    issues.each { |each| home.plan(each.id).write("Subject: app/models/order.rb\n\nthe plan for #{each.id}\n") }
+  def write_epic(issues, slug: "demo")
+    home(slug).write_epic(Lain::Epic::Graph.new(issues:))
+    issues.each { |each| home(slug).plan(each.id).write("Subject: app/models/order.rb\n\nthe plan for #{each.id}\n") }
   end
 
-  def approve_plan(id)
-    journaled(Lain::Approval::GateDecision.new(artifact_digest: approved_plan(id).digest, epic_slug: "demo",
+  def approve_plan(id, slug: "demo")
+    journaled(Lain::Approval::GateDecision.new(artifact_digest: approved_plan(id, slug).digest, epic_slug: slug,
                                                stage: "issue_plan", approved: true, answered_by: "human",
                                                policy: "hands_off", latency: 0.0, issue_id: id))
   end
 
-  def approved_plan(id)
-    Lain::Epic::Submission.issue_plan(text: home.plan(id).read, slug: "demo", issue_id: id,
-                                      criteria_digest: home.read_epic.fetch(id).criteria_digest)
+  def approved_plan(id, slug)
+    Lain::Epic::Submission.issue_plan(text: home(slug).plan(id).read, slug:, issue_id: id,
+                                      criteria_digest: home(slug).read_epic.fetch(id).criteria_digest)
   end
 
   def journaled(decision)
@@ -165,8 +169,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     end
   end
 
-  def mount
-    Lain::CLI::EpicMount.for(chronicle: Lain::CLI::Chronicle::Null.new, options: { epic: "demo" },
+  def mount(slug = "demo")
+    Lain::CLI::EpicMount.for(chronicle: Lain::CLI::Chronicle::Null.new, options: { epic: slug },
                              told: ->(_text) {}, root: repo, paths:, config:)
   end
 
@@ -177,14 +181,14 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
-  def driven(width: 2, grading: nil, files: {}, idle: [])
-    factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub, files:, idle:) },
-                        record: chronicle, grading:).run(width:)
+  def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo")
+    actors = ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub, files:, idle:, slug:) }
+    factory_over(mount(slug), actors:, record: chronicle, grading:).run(width:)
   end
 
   def worktree_root = Lain::CLI::IsolationBackend.worktree_root(repo, paths:)
 
-  def landing_checkout = File.join(worktree_root, described_class::LANDING)
+  def landing_checkout(slug = "demo") = File.join(worktree_root, "landings", slug)
 
   # The lock line git reports for a registered checkout, "" when it holds none.
   def lock_of(dir)
@@ -499,6 +503,45 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(Lain::Config).to have_received(:test_layout).once
     end
 
+    # Each epic lands in a checkout of its own, so an earlier epic's checkout
+    # standing in the project neither blocks a second epic nor is re-pointed
+    # under it -- which is also what lets two epics run at once.
+    it "cuts a separate landing checkout for a second epic, leaving the first epic's standing" do
+      write_epic([issue("p", status: "pending")], slug: "plans")
+      factory_over(mount("plans"), record: chronicle).run(width: 1)
+      write_epic([issue("a")], slug: "tiny")
+      approve_plan("a", slug: "tiny")
+      git(repo, "switch", "-q", "main")
+
+      result = driven(width: 1, slug: "tiny")
+
+      expect(result.reported).to be_empty
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(contains?(result.landed.first.sha, slug: "tiny")).to be(true)
+      expect(git(landing_checkout("tiny"), "symbolic-ref", "HEAD")).to eq("refs/heads/epic/tiny")
+      expect(git(landing_checkout("plans"), "symbolic-ref", "HEAD")).to eq("refs/heads/epic/plans")
+    end
+
+    # The per-project checkout an older layout cut stood at `landing`. The
+    # per-epic ones sit under a different name, so none can be a directory
+    # inside it, and reaping the old checkout -- `worktree remove --force`
+    # deletes its whole tree -- cannot take a live landing checkout with it.
+    it "keeps its landing checkout disjoint from a legacy one, so removing the legacy one leaves it intact" do
+      legacy = File.join(worktree_root, "landing")
+      git(repo, "worktree", "add", "-q", "--detach", legacy, "main")
+      write_epic([issue("a")])
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+
+      result = driven(width: 1)
+      git(repo, "worktree", "remove", "--force", legacy)
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(landing_checkout).not_to start_with("#{legacy}/")
+      expect(git(landing_checkout, "symbolic-ref", "HEAD")).to eq("refs/heads/epic/demo")
+      expect(git(repo, "worktree", "list", "--porcelain")).to include("worktree #{landing_checkout}\n")
+    end
+
     # A lock that still holds is somebody else's run, or a human's: breaking
     # it would put two landings in one checkout.
     it "refuses to merge in a landing checkout something else still holds, and leaves that lock alone" do
@@ -528,6 +571,22 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(result.reported.map(&:issue_id)).to eq(["a"])
       expect(result.reported.first.reason).to include("declares no test subject")
       expect(log).to be_empty
+    end
+
+    # A refused launch holds no room at width 1, so the issue behind it is
+    # launched in its place rather than the run ending with nothing live.
+    it "launches the next issue when the first one's plan declares no subject" do
+      write_epic([issue("a"), issue("b")])
+      home.plan("a").write("the plan for a, with no subject line\n")
+      %w[a b].each { |id| approve_plan(id) }
+      git(repo, "switch", "-q", "main")
+
+      result = driven(width: 1)
+
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to include("declares no test subject")
+      expect(result.landed.map(&:issue_id)).to eq(["b"])
+      expect(log.select { |row| row.first == :launched }.map { |row| row[1] }).to eq(["b"])
     end
 
     # Scenario: the driver will not start issues over an unreadable sign-off.
