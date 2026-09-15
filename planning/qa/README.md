@@ -276,6 +276,21 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round18-2026-09-15.md`](../qa-findings-round18-2026-09-15.md) — round 18, the
+  discharge chunk's integration check 9: a full round over all eighteen scenarios, nine of them in
+  parallel fork contexts with their own sandboxes.
+  - **The round-17 discharge mostly holds.** F88–F93 are fixed on the paths round 17 drove, and so
+    are most MED-HIGH/MEDIUM items.
+  - **Most of what is new is the same class arriving one route past each fix.** A key file under an
+    ordinary name is still auto-approved by content (F131). Consolidate now finds lineages and stores
+    nothing (F134). Every non-chat command still drops `num_batch` (F154). A *failed* child never
+    leaves the fleet (F137).
+  - **New HIGHs:** `/fork`/`/btw` start the child on Anthropic (F132); a note journals a masked secret
+    (F133); a crash mid-spawn strands the session (F135).
+  - **`rails-blog` §1 reached composed compaction and then wedged:** the `keep_last` tail alone filled
+    the window (F173). A session can also be pinned at a guessed window for good (F136).
+  - **Process:** four contexts re-derived the isolation grep wrong, so it is now `$QA/isolation.sh`
+    (P40); the driver's own `bench arms` thrashed the shared runner for 65 minutes (P41).
 - [`../qa-findings-round17-2026-09-14.md`](../qa-findings-round17-2026-09-14.md) — round 17, a full
   round over all eighteen, four scenarios of it driven in parallel fork contexts with their own
   sandboxes. **Six HIGH:** any non-ASCII byte in `bash` output tears the ask (F88) and the dangling

@@ -89,6 +89,14 @@ correctly-spelled pass shows **several** `XDG_*` lines per pane (`XDG_CONFIG_HOM
 `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`) plus `TMPDIR`; one line back — `TMPDIR` alone — means the
 pattern is wrong, not that the sandbox leaked.
 
+**Round 18 settled this by taking the pattern out of the driver's hands: run `$QA/isolation.sh`.**
+Four contexts in that round re-typed the check and four wrote a new wrong spelling —
+`^(XDG_(CONFIG|STATE|CACHE|RUNTIME)|TMPDIR)=…` (the `_HOME` sits between the group and the `=`), and a
+nested group under `grep -c` that counted one line per pane. Every one matched `TMPDIR` alone. The
+positive control caught all four, but a recipe re-derived wrong four times in one round is the recipe's
+defect. The helper prints `N of 5 sandbox variables` per pane and exits 1 unless every pane reads 5, and
+exits 1 on a server with no panes, so an empty check cannot pass.
+
 3. **`PANE_ENV` forwards `LAIN_*` and nothing else.** Anything else the run depends on must be
    exported into the shell that *starts the tmux server*, and a variable changed mid-run does not
    reach a pane at all. This is why `LAIN_NUM_BATCH=2048` is the right lever rather than
@@ -210,6 +218,9 @@ only worth having if it is read rather than skimmed:
    at its last rung — but either one answers the questions this method exists to ask **without the
    driver reading the command**, and the layer's judge is a model that has approved a key read
    spelled around the triage rung (`secret-boundary.md` §5b). `/mode !` resets to the floor.
+   **Never put `auto` in a `/mode` GRAMMAR probe either.** `/mode` takes the last of contradictory
+   tokens, so `/mode accept_edits auto` lands on the approve-all rung (round 18, P46, about 20 s,
+   nothing dispatched). Probe the grammar with `plan`/`manual`/`accept_edits` and layer words only.
 
    **What sanctions a section is three conditions, not its appearance on a list.** A section may
    raise the posture only if it (a) names an approve-all gate as its own subject in its heading,
@@ -378,6 +389,15 @@ defect **generator**: one intended prompt became **4 `turn` records, 4 `request_
 
 Round 4 drove every act this way and produced **zero** duplicated turns. Keep the rule.
 
+**A quiet journal is not a finished turn, and round 18 had four contexts learn it separately (P45).**
+The journal is silent while a call is parked for a human, while a child's approval waits mid-`/critique`,
+and during a contended provider wait of 30–90 s. `drive.sh` returning "quiet" in any of those reads the
+cockpit before the turn is over, and the next send lands as typeahead. Use `$QA/waitq.sh` (quiet, or
+something parked in `lain://approval`/`lain://inbox`), and before calling a turn done, check that the
+chat pane's **last line** is a bare `you>`. Anchor that check to the end of the line, because an echoed
+`you> <text>` line also starts with `you>`. Answer through `$QA/answer.sh` and `$QA/reply.sh`, which read
+every parked call whole and address the buffer's own window rather than a window number.
+
 **And do not type at all while an approval is drawn -- the Enter IS the answer, and it denies.**
 The rule above bounds how many times you send; this one bounds *when*. At a drawn `[y/N]` prompt —
 every parked call in a `--no-nvim` chat, and the one `/approve` drew in a cockpit — the newline a
@@ -448,6 +468,25 @@ disagrees with it:
 ```bash
 tr '\0' '\n' < /proc/$(pgrep -P "$(pgrep -x ollama | head -1)" | head -1)/cmdline | paste -sd' '
 ```
+
+**And a driver's OTHER lain commands can manufacture it for everyone, for as long as they run (round
+18, P41).** `LAIN_NUM_BATCH` is read by `lain chat` alone. `lain bench arms`, `lain epic submit`'s
+adjudication, `lain consolidate` and `lain improve` send no `num_batch`. Run beside a chat that does,
+each re-keys the one runner the other just loaded. Round 18 ran `bench arms` beside a `rails-blog`
+cockpit, and ollama reloaded `qwen3-coder` alternately at `-b 512` and `-b 2048` roughly every 30 s for
+65 minutes. That contaminated every context's timings, and it pinned a new session's window at a guess
+for its whole life (findings F136/F154), which silently voided that scenario's compaction act.
+**Before trusting any latency, reload or window-provenance reading, look for the alternation, and do not
+run a non-chat model command while a chat with `LAIN_NUM_BATCH` is live:**
+
+```bash
+command grep 'msg="starting llama-server"' "$QA/records/ollama-serve.log" \
+  | sed -E 's/.*time=([^ ]+).* -b ([0-9]+).*/\1 b=\2/' | tail -20    # alternating b= values is the thrash
+```
+
+**Check the session's window provenance early, not at the end.** A session whose first three probes
+missed a resident runner stays `8192/guessed` for good (F136). Read the first few `compaction_decision`
+records for `provenance: "probed"` before spending an act that depends on compaction.
 
 ### Drive nvim over RPC, not tmux keys
 

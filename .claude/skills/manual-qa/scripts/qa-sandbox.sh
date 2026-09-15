@@ -459,6 +459,80 @@ case "${1:-}" in
 esac
 EOF
 
+# --- the isolation gate, spelled once -----------------------------------------
+# Round 18: four contexts re-typed this check and four got a variant wrong --
+# `^(XDG_(CONFIG|STATE)|TMPDIR)=`, a nested group under `grep -c` -- each
+# matching TMPDIR alone, which reads exactly like a leak or a pass. The pattern
+# is not the thing to re-derive, so it lives here and nowhere else.
+cat > "$QA/isolation.sh" <<'EOF'
+#!/usr/bin/env bash
+# isolation.sh -- every pane on this round's server must carry the five sandbox
+# variables (XDG_CONFIG/STATE/CACHE/RUNTIME_HOME/DIR, TMPDIR) pointing under $QA.
+# Exits 1 naming the first pane that carries fewer.
+. "$(dirname "$0")/env.sh"
+: "${QA_SOCK:?refusing: QA_SOCK is unset}"
+pids=$(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_pid}') || { echo "no tmux server on -L $QA_SOCK"; exit 1; }
+[ -n "$pids" ] || { echo "no panes on -L $QA_SOCK -- nothing was checked"; exit 1; }
+bad=0
+for p in $pids; do
+  n=$(tr '\0' '\n' < "/proc/$p/environ" | command grep -E '^(XDG_CONFIG_HOME|XDG_STATE_HOME|XDG_CACHE_HOME|XDG_RUNTIME_DIR|TMPDIR)=' \
+      | command grep -cF "=$QA/")
+  printf 'pane pid %s (%s): %s of 5 sandbox variables\n' "$p" "$(cat "/proc/$p/comm")" "$n"
+  [ "$n" -eq 5 ] || bad=1
+done
+exit "$bad"
+EOF
+
+# --- wait for a turn to settle, or for the human to be needed -----------------
+# A journal-quiet window is not completion: a parked call and a contended
+# provider wait are both silent. Round 18 had four contexts write this loop.
+cat > "$QA/waitq.sh" <<'EOF'
+#!/usr/bin/env bash
+# waitq.sh [quiet_s] [max_s] -- return when the pinned journal is quiet for quiet_s,
+# or lain://approval / lain://inbox holds something (a cockpit), or max_s passes.
+. "$(dirname "$0")/env.sh"
+J="${LAIN_QA_JOURNAL:?pin the journal}"; Q="${1:-45}"; MAX="${2:-1200}"; start=$SECONDS; last=-1; still=0
+while :; do
+  n=$(wc -l < "$J"); if [ "$n" = "$last" ]; then still=$((still+3)); else still=0; last=$n; fi
+  a=$("$QA/nv.sh" buf lain://approval 1 2>/dev/null); i=$("$QA/nv.sh" buf lain://inbox 1 2>/dev/null)
+  case "$a" in *"no approvals pending"*|"") ;; *) echo "[APPROVAL PARKED after $((SECONDS-start))s]"; exit 0;; esac
+  case "$i" in *"no questions pending"*|"") ;; *) echo "[QUESTION PARKED after $((SECONDS-start))s]"; exit 0;; esac
+  [ $still -ge "$Q" ] && { echo "[quiet after $((SECONDS-start))s -- check the prompt line before calling it done]"; exit 0; }
+  [ $((SECONDS-start)) -ge "$MAX" ] && { echo "[TIMEOUT]"; exit 1; }
+  sleep 3
+done
+EOF
+
+# --- answer a parked call or question BY BUFFER, never by window number -------
+# A review's thread pane opens by itself and renumbers windows; `:2wincmd w`
+# has typed into it in rounds 17 and 18. These address the buffer's own window.
+cat > "$QA/answer.sh" <<'EOF'
+#!/usr/bin/env bash
+# answer.sh approve|deny [row] -- print every parked call whole, then answer one in lain://approval
+. "$(dirname "$0")/env.sh"
+calls=$("$QA/nv.sh" expr "join(getbufvar(bufnr('lain://approval'), 'lain_approval_calls', []), \"\n\")")
+[ -n "$calls" ] || { echo "nothing parked"; exit 1; }
+echo "CALLS: $calls"
+W=$("$QA/nv.sh" expr "bufwinid(bufnr('lain://approval'))")
+[ "$W" != "-1" ] || { echo "lain://approval has no window in this tab -- map getwininfo() first"; exit 1; }
+"$QA/nv.sh" send "<Esc>:call win_gotoid($W)<CR>"; sleep 0.3
+[ "$("$QA/nv.sh" expr 'bufname()')" = "lain://approval" ] || { echo "focus failed"; exit 1; }
+cmd=LainApprove; [ "$1" = deny ] && cmd=LainDeny
+"$QA/nv.sh" send ":${2:-1}<CR>:$cmd<CR>"; sleep 1.5
+"$QA/nv.sh" buf lain://approval 2
+EOF
+cat > "$QA/reply.sh" <<'EOF'
+#!/usr/bin/env bash
+# reply.sh '<answer>' -- answer the first question in lain://inbox with :LainReply
+. "$(dirname "$0")/env.sh"
+W=$("$QA/nv.sh" expr "bufwinid(bufnr('lain://inbox'))")
+"$QA/nv.sh" send "<Esc>:call win_gotoid($W)<CR>"; sleep 0.3
+[ "$("$QA/nv.sh" expr 'bufname()')" = "lain://inbox" ] || { echo "focus failed"; exit 1; }
+"$QA/nv.sh" buf lain://inbox 1
+"$QA/nv.sh" send ":1<CR>:LainReply $1<CR>"; sleep 2
+"$QA/nv.sh" buf lain://inbox 1
+EOF
+
 # --- a counting TCP listener: turns "how many attempts" into a number --------
 cat > "$QA/counter.rb" <<'EOF'
 # ruby counter.rb <count-file> [port]   -- accept, hard-RST, count.
@@ -553,7 +627,7 @@ loop do
 end
 EOF
 
-chmod +x "$QA/drive.sh" "$QA/peek.sh" "$QA/nv.sh"
+chmod +x "$QA/drive.sh" "$QA/peek.sh" "$QA/nv.sh" "$QA/isolation.sh" "$QA/waitq.sh" "$QA/answer.sh" "$QA/reply.sh"
 cp "$QA/env.sh" "$QA/records/env.snapshot" 2>/dev/null || true
 date -u +%Y-%m-%dT%H:%M:%SZ > "$QA/records/round-start"
 
@@ -570,14 +644,13 @@ started   $(cat "$QA/records/round-start")   <- close-out negative check uses th
   tmux -L $SOCK show-options -g default-size         # VERIFY: must print 220x50, not an error
   lain up --socket $SOCK --session lain-qa \$QA/project -- --provider ollama --model qwen3-coder:30b
 
-verify isolation BEFORE act 1:
-  for p in \$(tmux -L $SOCK list-panes -a -F '#{pane_pid}'); do
-    tr '\\0' '\\n' < /proc/\$p/environ | command grep -E '^(XDG_|TMPDIR)'
-  done
+verify isolation BEFORE act 1 (never re-type the grep -- four contexts got it wrong in round 18):
+  \$QA/isolation.sh          # exits 1 unless every pane carries all 5 sandbox variables
 
 PIN THE JOURNAL before driving anything -- drive.sh refuses without it:
   export LAIN_QA_JOURNAL=\$(ls -t "\$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1)
 
 helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  (\$QA/panes.sh: pane resolution, sourced by the first two)
+         \$QA/waitq.sh  \$QA/answer.sh  \$QA/reply.sh  \$QA/isolation.sh
 other:   \$QA/counter.rb  \$QA/pathcount.rb  \$QA/proxy.rb
 EOF

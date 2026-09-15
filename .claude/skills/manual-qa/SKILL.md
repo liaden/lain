@@ -87,9 +87,10 @@ Then, following `planning/qa/bench.md`: start or confirm the model server, recor
 
 **Three gates, and a failure in any of them stops the round rather than being worked around:**
 
-1. Every cockpit pane's `/proc/<pid>/environ` shows the sandbox `XDG_*` and `TMPDIR`. An *empty*
-   result means re-check with `command grep` (under an agent shell `grep` is often a function) —
-   it does not mean abort. A pane that really disagrees aborts.
+1. Every cockpit pane's `/proc/<pid>/environ` shows the sandbox `XDG_*` and `TMPDIR`: **run
+   `$QA/isolation.sh`, and never re-type the grep.** Round 18 had four contexts re-derive it and write
+   four wrong spellings, each matching `TMPDIR` alone. The helper exits 1 unless every pane carries
+   all five. Forks get the same helper in their own sandbox. A pane that really disagrees aborts.
 2. `~/.lain` does not exist.
 3. The machine is quiet (`uptime`, and check for orphaned spinners from earlier agent work).
 
