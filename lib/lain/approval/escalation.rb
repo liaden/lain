@@ -60,6 +60,16 @@ module Lain
     # Each consulted rung's Ruling is journaled, not merely the settled one:
     # this is the only place {Shell::Verdict}'s answer has ever been written
     # down, and a verdict nobody records is a layer nobody can measure.
+    #
+    # == The context may bar automatic approval, and learns who approved
+    #
+    # {Middleware::WithholdAutomaticOutput} runs a command under a context
+    # answering `automatic_approval_barred?` and `ruled`. A barred command's
+    # automatic allow is read as an abstention, so it reaches a human or
+    # nobody, and the settled ruling is handed back so the layer knows whether
+    # a human approved what it is about to scan. Duck-typed, on
+    # {PolicySwitch::Requested}'s terms: every other context is judged as
+    # before.
     class Escalation
       # A name, not a nil, so journal readers never guard.
       LADDER = "ladder"
@@ -68,6 +78,7 @@ module Lain
       LAUNDERED = "an allow was suppressed because a rung faulted"
       HONOURED = "a human authorized this despite a fault at"
       RUNG_BROKE = "the rung itself failed, which is not an answer"
+      BARRED = "an automatic allow does not answer for a command whose automatically approved output was withheld"
       TYPE = "escalation"
 
       # What one rung said, and everything a journal needs to attribute it.
@@ -164,6 +175,11 @@ module Lain
         over(Remainder.new, label: "auto", tools:, journal:, rules:, triage:)
       end
 
+      # Whether the context a call is judged in bars it from automatic approval.
+      def self.barred?(context)
+        context.respond_to?(:automatic_approval_barred?) && context.automatic_approval_barred?
+      end
+
       def self.over(bottom, label:, tools:, journal:, rules:, triage:)
         new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), bottom], journal:, label:)
       end
@@ -217,7 +233,7 @@ module Lain
         decided = @consulted.lazy
                             .filter_map { |rung, name| decisive(consult(rung, name, effect, context), &remember) }
                             .first
-        answer(decided, faulted, effect)
+        witnessed(answer(decided, faulted, effect), context)
       end
 
       # @return [Boolean] whether the call may be performed
@@ -229,7 +245,7 @@ module Lain
 
       def ask(rung, name, effect, context)
         ruling = rung.call(effect, context)
-        return ruling if ruling.is_a?(Ruling)
+        return barred(ruling, context) if ruling.is_a?(Ruling)
 
         # Raised INSIDE the consult, so a rung answering a non-Ruling becomes a
         # fault like any other broken rung rather than a NoMethodError far from
@@ -239,6 +255,17 @@ module Lain
         # A rung's own failure -- a failed spawn, an unreadable config -- is a
         # fault and never an approval. Deny-when-unsure binds every rung.
         Ruling.fault(rung: name, because: "#{RUNG_BROKE}: #{e.class}: #{e.message}")
+      end
+
+      def barred(ruling, context)
+        return ruling unless ruling.allow? && !ruling.human? && Escalation.barred?(context)
+
+        Ruling.abstain(rung: ruling.rung, because: "#{BARRED}: #{ruling.reason}")
+      end
+
+      def witnessed(ruling, context)
+        context.ruled(ruling) if context.respond_to?(:ruled)
+        ruling
       end
 
       def decisive(ruling)
@@ -600,16 +627,28 @@ module Lain
       # `ask`: a call no rung above decided is approved. AUTOMATIC authority,
       # so an allow reached over a faulted rung is suppressed like any other
       # machine's -- a broken rule never becomes a free pass.
+      #
+      # A barred command is refused, and FINAL: there is no queue under `auto`
+      # to park it on, so no approval at this level lifts it. The model cannot
+      # switch modes, so it is told who can and that retrying will not help.
       class Remainder
         NAME = "auto"
         BECAUSE = "approval is auto, and no rung above refused this call"
+        REFUSED = "approval is auto, and this command is barred from automatic approval"
+        TOLD = "this command's automatically approved output held a credential, so only a human may approve " \
+               "it, and no approval is possible while approval is auto -- a human must switch to /mode ask " \
+               "to approve it"
 
         # Frozen on {Triage}'s terms: a rung holds no state.
         def initialize = freeze
 
         def name = NAME
 
-        def call(_effect, _context) = Ruling.allow(rung: NAME, because: BECAUSE)
+        def call(_effect, context)
+          return Ruling.deny(rung: NAME, because: REFUSED, final: true, told: TOLD) if Escalation.barred?(context)
+
+          Ruling.allow(rung: NAME, because: BECAUSE)
+        end
       end
 
       # The asking rung: {Approval::Queue}, where a call parks for whatever

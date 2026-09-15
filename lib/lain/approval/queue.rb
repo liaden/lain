@@ -129,7 +129,12 @@ module Lain
         # silently stops watching for the rest of the session. This is the one
         # constructor that can enforce "Null Object over nil" for every reader
         # at once.
-        def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE)
+        #
+        # `humans_only` is a call whose automatically approved output was
+        # withheld: only a person may decide it, so {Queue#automatic} leaves it
+        # out of what a machine surface is offered.
+        def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE, humans_only: false)
+          @humans_only = humans_only == true
           @tool = effect.name
           @tool_use_id = effect.tool_use_id
           @input = effect.input
@@ -165,6 +170,8 @@ module Lain
           true
         end
         # rubocop:enable Naming/PredicateMethod
+
+        def humans_only? = @humans_only
 
         def approve(surface:) = decide(true, surface:)
         def deny(surface:) = decide(false, surface:)
@@ -252,6 +259,13 @@ module Lain
       # draining the arrival queue.
       def each(&block) = @parked.each(&block)
 
+      # The parked calls an AUTOMATIC surface may judge: every one but a call
+      # only a human may decide. A snapshot, collected with no yield, on
+      # {QueueSurface#sweep}'s terms.
+      #
+      # @return [Array<Pending>]
+      def automatic = reject(&:humans_only?)
+
       private
 
       # Journaled BEFORE the pending is parked, never between the two mutations
@@ -259,7 +273,8 @@ module Lain
       # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
       # yield point between them.
       def admit(effect, context, outstanding)
-        pending = Pending.new(effect:, requester: requester_for(context), clock: @clock, outstanding:)
+        pending = Pending.new(effect:, requester: requester_for(context), clock: @clock, outstanding:,
+                              humans_only: Escalation.barred?(context))
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)

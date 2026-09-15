@@ -291,7 +291,8 @@ RSpec.describe "Subagent gating" do
 
     let(:guards) do
       [Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
-       Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout]
+       Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+       Lain::Middleware::WithholdAutomaticOutput]
     end
 
     def child(posture: :schema, sensitivity: path_policy, role: :dev)
@@ -507,7 +508,7 @@ RSpec.describe "Subagent gating" do
       expect(parent_layers.map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       expect(child_layers.map(&:class)).to eq(parent_layers.map(&:class))
       expect(runner.handler).to be_a(Lain::Effect::Handler::Live)
       [parent_layers, child_layers].each do |layers|

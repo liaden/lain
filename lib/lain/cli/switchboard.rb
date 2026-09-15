@@ -192,7 +192,8 @@ module Lain
         seed(Mode.new(layers:), journal:)
         # After the seed, which is what makes the policy switch it carries.
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
-                                              test_layout:, policy: @policy_switch, denial:)
+                                              test_layout:, policy: @policy_switch, denial:,
+                                              bar: Middleware::WithholdAutomaticOutput::Bar.new)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY

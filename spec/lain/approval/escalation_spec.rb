@@ -1046,6 +1046,83 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
+  # A command whose automatically approved output held a credential is barred
+  # from automatic approval, and the bar rides the context the call is judged
+  # in, so the ladder's deterministic rungs stay what they were.
+  describe "a context barring automatic approval" do
+    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
+
+    def carried(barred:) = Lain::Middleware::WithholdAutomaticOutput::Carried.new(:the_session, barred:)
+
+    it "reads an automatic allow for a barred command as an abstention, so the surfaces are asked" do
+      Sync do |task|
+        built = ladder(EscalationSpecSupport::Fixed.new("rules", :allow), described_class::Surfaces.new(queue))
+        parked = task.async { built.rule(effect, carried(barred: true)) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        pending.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
+
+        expect(task.with_timeout(1) { parked.wait }).to be_allow.and be_human
+        expect(rulings.first).to include("rung" => "rules", "verdict" => "abstain")
+        expect(rulings.first["reason"]).to include(described_class::BARRED)
+      end
+    end
+
+    it "still settles an automatic allow for a command nobody barred" do
+      built = ladder(EscalationSpecSupport::Fixed.new("rules", :allow), EscalationSpecSupport::Tripwire.new)
+
+      expect(built.rule(effect, carried(barred: false))).to be_allow
+    end
+
+    it "refuses a barred command under auto approval, where no human is asked" do
+      ruling = described_class.automatic(tools:, journal:).rule(effect, carried(barred: true))
+
+      expect(ruling).to have_attributes(verdict: :deny, rung: described_class::Remainder::NAME)
+      expect(rulings.last).to include("rung" => described_class::Remainder::NAME, "verdict" => "deny")
+    end
+
+    # A refusal nobody can lift at this approval level says so, and names the
+    # one move that reaches a human.
+    # The model cannot switch modes, so it is told who can, and that no
+    # approval is possible at this level -- which is what the gate's final
+    # sentence then says too.
+    it "tells the model only a human switching to /mode ask can approve a barred command under auto approval" do
+      ruling = described_class.automatic(tools:, journal:).rule(effect, carried(barred: true))
+
+      expect(ruling).to be_final
+      expect(ruling.told).to include("a human must switch to /mode ask to approve it",
+                                     "no approval is possible while approval is auto")
+    end
+
+    it "leaves a deny for a barred command a deny" do
+      ruling = ladder(EscalationSpecSupport::Fixed.new("rules", :deny)).rule(effect, carried(barred: true))
+
+      expect(ruling).to have_attributes(verdict: :deny, rung: "rules")
+    end
+
+    it "hands the settled ruling to a context that takes one, so a human's approval is known downstream" do
+      Sync do |task|
+        context = carried(barred: false)
+        parked = task.async { ladder(described_class::Surfaces.new(queue)).rule(effect, context) }
+        task.with_timeout(1) { queue.dequeue }.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
+        task.with_timeout(1) { parked.wait }
+
+        expect(context).to be_human
+      end
+    end
+
+    it "leaves an automatically settled context automatic" do
+      context = carried(barred: false)
+
+      ladder(EscalationSpecSupport::Fixed.new("rules", :allow)).rule(effect, context)
+
+      expect(context).not_to be_human
+    end
+
+    it "judges a context that carries neither message exactly as before" do
+      expect(ladder(EscalationSpecSupport::Fixed.new("rules", :allow)).rule(effect, :the_session)).to be_allow
+    end
+  end
+
   describe ".for, which is how a session wires it" do
     let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
     let(:built) { described_class.for(queue:, tools:, journal:, rules: [EscalationSpecSupport::Raiser.new]) }

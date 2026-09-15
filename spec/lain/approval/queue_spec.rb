@@ -331,6 +331,39 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  # A command whose automatically approved output was withheld may be approved
+  # by a person only, so its pending says so and an automatic surface is never
+  # offered it.
+  describe "a call barred from automatic approval" do
+    def carried(barred:) = Lain::Middleware::WithholdAutomaticOutput::Carried.new(nil, barred:)
+
+    def parked_pendings(*contexts)
+      Sync do |task|
+        runs = contexts.map { |context| task.async { queue.adjudicate(tool_call, context) } }
+        pendings = contexts.map { task.with_timeout(1) { queue.dequeue } }
+        yield pendings
+      ensure
+        pendings&.each { |pending| pending.deny(surface: "spec") }
+        runs&.each(&:wait)
+      end
+    end
+
+    it "parks a pending only a human may decide" do
+      parked_pendings(carried(barred: true), carried(barred: false), nil) do |barred, unbarred, bare|
+        expect(barred).to be_humans_only
+        expect(unbarred).not_to be_humans_only
+        expect(bare).not_to be_humans_only
+      end
+    end
+
+    it "offers an automatic surface every parked call but that one, while every surface still sees it" do
+      parked_pendings(carried(barred: true), nil) do |barred, bare|
+        expect(queue.automatic).to eq([bare])
+        expect(queue.to_a).to eq([barred, bare])
+      end
+    end
+  end
+
   # gate.rb's doctrine, applied to the queue's OWN writes: an unattended gate
   # refuses, it never wedges. Journalling is evidence about the turn and must
   # never be able to cost the turn -- Gate sits above Handler::Live, so an
@@ -652,7 +685,7 @@ RSpec.describe Lain::Approval::Queue do
     # collaborator here has one) fails right here.
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
-        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding]])
+        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding], %i[key humans_only]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

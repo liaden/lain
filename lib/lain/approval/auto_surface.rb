@@ -50,10 +50,13 @@ module Lain
       # it on spends nothing on the role. A pending parked meanwhile is left
       # unmarked, and is judged if the layer comes on while it is still parked.
       #
+      # It sweeps {Queue#automatic} rather than the whole parked set, so a call
+      # only a human may decide is never put to the role.
+      #
       # @param queue [Approval::Queue]
       # @return [void]
       def sweep(queue)
-        super if @enabled.call
+        super(queue.automatic) if @enabled.call
       end
 
       # ORDINARY approvals only -- the ones that release nothing sensitive.

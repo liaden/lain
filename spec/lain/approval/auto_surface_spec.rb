@@ -302,6 +302,28 @@ RSpec.describe Lain::Approval::AutoSurface do
     end
   end
 
+  # A command whose automatically approved output was withheld is a human's
+  # to approve, so the queue never offers its park to this surface.
+  describe "a pending only a human may decide" do
+    let(:spawn) { AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("APPROVE") } }
+
+    it "never asks its role about a pending only a human may decide" do
+      barred = Lain::Middleware::WithholdAutomaticOutput::Carried.new(nil, barred: true)
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+
+      settled = Sync do |task|
+        gated = task.async { queue.adjudicate(effect, barred) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        described_class.new(role_spawn: spawn, enabled: AutoSurfaceSpecSupport::ENGAGED).sweep(queue)
+        task.with_timeout(2) { gated.wait }
+        pending
+      end
+
+      expect(spawn.calls).to be_empty
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+  end
+
   # What this surface will and will not judge, over a `bash` argv --
   # pinned from both sides, because the two halves mean nothing apart.
   #

@@ -280,7 +280,8 @@ class WiringAgentSpecBoard
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(
       ledger:, approvals:, sensitivity:, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-      policy: policy_switch, denial: Lain::Middleware::Gate::DENIAL
+      policy: policy_switch, denial: Lain::Middleware::Gate::DENIAL,
+      bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new
     )
   end
 
@@ -2960,7 +2961,8 @@ RSpec.describe Lain::CLI::Wiring do
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
             .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                    Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity,
+                    Lain::Middleware::Gate])
           expect(listing_guard(board).filter).to be(board.sensitivity.filter)
           expect(listing_guard(board).filter).not_to be(Lain::Sensitivity::Filter::Null.instance)
         end
@@ -3244,7 +3246,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     # An unattended run leaves {Lain::CLI::Switchboard#approvals} nil, and the
@@ -3331,7 +3333,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
+                Lain::Effect::Handler::Live])
       expect(runner.middleware.to_a.last.instance_variable_get(:@policy)).to be(board.policy_switch)
     end
 

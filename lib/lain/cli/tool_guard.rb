@@ -17,6 +17,10 @@ module Lain
     # {Middleware::GuardTestLayout} holds the writing tools against the
     # project's test layout, and is disjoint from all three.
     #
+    # {Middleware::WithholdAutomaticOutput} sits directly before the gate's two
+    # layers, because what it reads is the gate's decision: a `bash` result is
+    # scanned only when no human approved the call.
+    #
     # Then the gate's two layers: {Middleware::Sensitivity} refuses a path no
     # approval can lift, and {Middleware::Gate} asks about what a human may
     # still allow. The guards run first, so a secret write is refused before a
@@ -32,10 +36,11 @@ module Lain
     module ToolGuard
       # Everything the stack is built over, as ONE value: the run's one region
       # ledger, its approval queue (nil when nobody attends), its path policy,
-      # its test layout run, the gate's policy, and the sentence a refused call
-      # is reported in (`%<name>s` standing for the tool). A {Switchboard} holds
-      # one ({Switchboard#guard_inputs}); a run with no chat builds its own.
-      Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :denial)
+      # its test layout run, the gate's policy, the sentence a refused call
+      # is reported in (`%<name>s` standing for the tool), and the commands
+      # barred from automatic approval. A {Switchboard} holds one
+      # ({Switchboard#guard_inputs}); a run with no chat builds its own.
+      Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :denial, :bar)
 
       # The gate policy a child is asked through: the board's own, handed a
       # context that names the child, so a park says which of a fleet is asking
@@ -135,7 +140,7 @@ module Lain
         layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy)
       end
 
-      # The four guards over one set of inputs, the layout held at `roots`, and
+      # The five guards over one set of inputs, the layout held at `roots`, and
       # the gate's two layers asking `policy` -- checked closed as it is built,
       # the one check a child's stack from any builder is also held to.
       def layered(chronicle, inputs, roots, policy)
@@ -145,6 +150,7 @@ module Lain
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs)),
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
+                                 Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),
                                  Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:),
                                  Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity,
                                                       denial: inputs.denial)])
@@ -175,7 +181,8 @@ module Lain
         inputs = Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: Unreleased,
                             sensitivity: Lain::Sensitivity::Policy::Null.instance,
                             test_layout: Middleware::GuardTestLayout::Run.undeclared,
-                            policy: Middleware::Gate::ApproveAll.new, denial: Middleware::Gate::DENIAL)
+                            policy: Middleware::Gate::ApproveAll.new, denial: Middleware::Gate::DENIAL,
+                            bar: Middleware::WithholdAutomaticOutput::Bar.new)
         chronicle = Journaled.new(journal:)
         ->(worker_env) { working(chronicle, inputs, worker_env) }
       end

@@ -35,7 +35,8 @@ class ToolGuardSpecBoard
   # The one value a real {Lain::CLI::Switchboard} holds, over these same slots.
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:, policy:,
-                                                       denial: "the spec board refuses %<name>s")
+                                                       denial: "the spec board refuses %<name>s",
+                                                       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
   end
 end
 
@@ -110,11 +111,12 @@ RSpec.describe Lain::CLI::ToolGuard do
   def read_call(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
   describe "the stack it builds" do
-    it "puts the write, read, listing and test layout guards first, then the path refusal and the gate" do
+    it "puts the write, read, listing, test layout and automatic output guards first, then the path refusal and " \
+       "the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
         .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     # Everything the guards are built over is ONE value on the board, so a
@@ -123,7 +125,8 @@ RSpec.describe Lain::CLI::ToolGuard do
       inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: queue,
                                                 sensitivity: Lain::Sensitivity::Policy::Null.instance,
                                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                                                policy: ToolGuardSpecPolicy.new, denial: "no %<name>s")
+                                                policy: ToolGuardSpecPolicy.new, denial: "no %<name>s",
+                                                bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
       bare = Data.define(:guard_inputs).new(guard_inputs: inputs)
 
       read = described_class.stack(chronicle, bare).to_a.grep(Lain::Middleware::RedactSecretReads).first
@@ -278,13 +281,16 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     # A child asks the SAME policy, through a context naming the child, so a
     # park says which of a fleet is asking while the verdict stays the board's.
+    # A `bash` call is judged over the automatic output guard's context, so the
+    # session sits one delegator further down.
     it "asks a child's policy through a context naming the child" do
       board = ToolGuardSpecBoard.new
 
       dispatched(described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher"))
 
       expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
-      expect(board.policy.contexts.first.__getobj__).to be(:the_session)
+      expect(board.policy.contexts.first.__getobj__).to be_a(Lain::Middleware::WithholdAutomaticOutput::Carried)
+      expect(board.policy.contexts.first.__getobj__.__getobj__).to be(:the_session)
     end
 
     # Production never reaches the gate's adapter for a bare callable, whose
@@ -565,6 +571,168 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(content).to include("<redacted:1>").and include("harmless line")
         expect(content).not_to include(secret)
       end
+    end
+  end
+
+  # The production stack over a real board, a real ladder, a real queue and a
+  # real `bash`: a command a rule approves automatically prints a key, and
+  # nothing but the refusal reaches the model.
+  describe "an automatically approved command's credential-shaped output", :seam do
+    let(:key) do
+      "-----BEGIN OPENSSH PRIVATE KEY-----\n" \
+        "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n" \
+        "QyNTUxOQAAACBkSFTHQQ+dpqPdxkFGgYj9bzDbArQV711eUcx0p2x/BAAAAJiFPjsMhT47\n" \
+        "-----END OPENSSH PRIVATE KEY-----\n"
+    end
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        File.write(File.join(dir, "notes.txt"), key)
+        example.run
+      end
+    end
+
+    def automatic(command) = { "tool" => "bash", "input" => { "command" => command, "cwd" => @dir } }
+
+    def board_approving(*commands)
+      Lain::CLI::Switchboard.new(journal:, model: "claude-opus-4-8", toolset:,
+                                 rules: [Lain::Approval::Remembered.new(allow: commands.map { automatic(_1) })])
+    end
+
+    def run_bash(board, command, id: "tu_1")
+      layers = described_class.stack(chronicle, board).to_a
+      dispatch_call("bash", { "command" => command, "cwd" => @dir }, id:, toolset:, layers:, context: Lain::Session.new)
+    end
+
+    # The call parks, so a sibling fiber stands where a human's surface does.
+    def answered_by_human(board, command, approve:)
+      Sync do |task|
+        ran = task.async { run_bash(board, command, id: "tu_2") }
+        pending = task.with_timeout(5) { board.approvals.dequeue }
+        pending.decide(approve, surface: Lain::Frontend::ApprovalPolicy::SURFACE)
+        [pending, task.with_timeout(30) { ran.wait }]
+      end
+    end
+
+    it "composes the withholding guard on the parent's, a child's and a detached run's stack" do
+      board = ToolGuardSpecBoard.new
+      built = [described_class.stack(chronicle, board),
+               described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher"),
+               described_class.detached(journal:).call(Lain::WorkerEnv.default)]
+
+      expect(built.map { |stack| stack.to_a.grep(Lain::Middleware::WithholdAutomaticOutput).size }).to all(eq(1))
+    end
+
+    it "bars a command for the parent and its children alike, through the board's one bar" do
+      board = ToolGuardSpecBoard.new
+      parent, child = [described_class.stack(chronicle, board),
+                       described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")]
+                      .map { |stack| stack.to_a.grep(Lain::Middleware::WithholdAutomaticOutput).first }
+
+      expect(parent.bar).to be(child.bar)
+      expect(parent.bar).to be(board.guard_inputs.bar)
+    end
+
+    # Scenario: an automatically approved key print is withheld
+    it "answers a withheld refusal naming 1 region" do
+      told = Sync { run_bash(board_approving("cat notes.txt"), "cat notes.txt") }
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told.content).to include("1 credential-shaped region", "now needs a human's approval")
+      expect(told.content).not_to include("PRIVATE KEY")
+      expect(Lain::Journal.records(journal_io.string.lines, type: "automatic_output_withheld").to_a)
+        .to contain_exactly(include("tool_use_id" => "tu_1", "regions" => 1))
+    end
+
+    # Scenario: the retry goes to a human
+    it "parks the same command for a human when the model calls it again" do
+      board = board_approving("cat notes.txt")
+      Sync { run_bash(board, "cat notes.txt") }
+
+      pending, told = answered_by_human(board, "cat notes.txt", approve: false)
+
+      expect(pending).to have_attributes(tool: "bash", tool_use_id: "tu_2")
+      expect(told).to have_attributes(is_error: true)
+    end
+
+    # Under `auto` there is no queue to park on, so the retry is refused, and
+    # the refusal names the way to a human rather than promising one.
+    it "refuses the same command under auto approval, naming /mode ask as the way to a human" do
+      board = board_approving("cat notes.txt")
+      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+      Sync { run_bash(board, "cat notes.txt") }
+
+      told = Sync { run_bash(board, "cat notes.txt", id: "tu_2") }
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told.content).to include("a human must switch to /mode ask to approve it", "no approval will lift this")
+      expect(told.content).not_to include("PRIVATE KEY")
+      expect(board.approvals.each.count).to eq(0)
+    end
+
+    # With the auto_approve layer on, the model judge watches the same queue.
+    # A barred retry is a human's alone, so the judge is never asked about it
+    # and the call still waits for a person.
+    it "keeps the parked retry from an automatic surface, so a human still decides it" do
+      board = board_approving("cat notes.txt")
+      judge = Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("APPROVE") },
+                                              enabled: -> { true })
+      Sync { run_bash(board, "cat notes.txt") }
+
+      pending, told = Sync do |task|
+        ran = task.async { run_bash(board, "cat notes.txt", id: "tu_2") }
+        parked = task.with_timeout(5) { board.approvals.dequeue }
+        judge.sweep(board.approvals)
+        expect(parked).not_to be_decided
+        parked.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
+        [parked, task.with_timeout(30) { ran.wait }]
+      end
+
+      expect(pending.surface).to eq(Lain::Frontend::ApprovalPolicy::SURFACE)
+      expect(told.content).to include(key)
+    end
+
+    # The stated limit: the scan sees credential SHAPES as printed. It catches an
+    # accidental print, not a command written to reshape output past the
+    # detector, which is why the approval predicates, not this layer, keep such a
+    # command in front of a human.
+    ["fold -w 16 notes.txt", "sed 's/./& /g' notes.txt", "xxd notes.txt"].each do |reshaping|
+      it "does not see a key reshaped past the detector by `#{reshaping}`" do
+        board = board_approving
+        board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+
+        told = Sync { run_bash(board, reshaping) }
+
+        expect(told).to have_attributes(is_error: false)
+        expect(told.content).not_to include("withheld")
+      end
+    end
+
+    it "runs bash for a caller that threads no session" do
+      board = board_approving("ls")
+      layers = described_class.stack(chronicle, board).to_a
+
+      told = Sync { dispatch_call("bash", { "command" => "ls", "cwd" => @dir }, toolset:, layers:, context: nil) }
+
+      expect(told.content).to include("notes.txt")
+    end
+
+    # Scenario: a human-approved print is untouched
+    it "hands a human-approved print the file's bytes" do
+      _, told = answered_by_human(board_approving, "cat notes.txt", approve: true)
+
+      expect(told).to have_attributes(is_error: false)
+      expect(told.content).to include(key)
+    end
+
+    # Scenario: ordinary output passes
+    it "passes an automatically approved ls unchanged" do
+      told = Sync { run_bash(board_approving("ls"), "ls") }
+
+      expect(told).to have_attributes(is_error: false)
+      expect(told.content).to include("notes.txt").and include("exit status: 0")
     end
   end
 
