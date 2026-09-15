@@ -14,6 +14,17 @@ require "tmpdir"
 # The working tree carries an UNCOMMITTED marker line throughout. The property
 # is that it reaches nothing: not a child's prompt, and not what a child's own
 # read_file sees, because that read lands in the checkout rather than the tree.
+
+# A provider refusing a prompt WHOLE for not fitting the context it loaded,
+# raised the way ollama raises one: the figures on the {Lain::WindowExceeded}
+# duck, and the server's JSON body as the message. That body is what a chunk's
+# finding must not become.
+class CritiqueSeamRefusal < Lain::Error
+  include Lain::WindowExceeded
+
+  BODY = '{"error":"model requires more system memory than is available"}'
+end
+
 RSpec.describe "a critique of a held review", :seam do
   def marker = "UNCOMMITTED MARKER nobody reviewed"
 
@@ -195,6 +206,52 @@ RSpec.describe "a critique of a held review", :seam do
       expect(result.fetch(:response).text)
         .to include("chunk 1 of 2 -- first change", "lib/one.rb", "chunk 2 of 2 -- second change", "lib/two.rb")
       expect(journal.map(&:ordinal)).to eq([1, 2])
+    end
+  end
+
+  # A window sized for the changeset can still be refused by the runner that
+  # actually loads it -- ollama reloads at the request's own num_ctx -- and a
+  # chunk refused that way is the one finding nobody can read as findings.
+  describe "a chunk whose child the provider refuses as over-window" do
+    before do
+      commit({ "lib/one.rb" => "one\n" }, "first change")
+      commit({ "lib/two.rb" => "two\n" }, "second change")
+    end
+
+    def refuse_whole
+      figures = { prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama" }
+      raise CritiqueSeamRefusal.new(CritiqueSeamRefusal::BODY, **figures)
+    end
+
+    # The FIRST child only: the rest answer, so an example can tell a refusal
+    # that cost one chunk from one that cost the critique.
+    def refusing_first
+      provider = Lain::Provider::Mock.new(responses: [text("a finding")])
+      seen = 0
+      allow(provider).to receive(:complete).and_wrap_original do |original, *args, **kwargs|
+        seen += 1
+        refuse_whole if seen == 1
+        original.call(*args, **kwargs)
+      end
+      provider
+    end
+
+    it "words that chunk with the chunk and the window, keeps the other chunk's findings, and leaks no body" do
+      result, _seen = typed(stack(refusing_first), "/critique")
+
+      findings = result.fetch(:response).text
+      expect(findings).to include("chunk 1 of 2", "32768-token context", "a finding")
+      expect(findings.scan("chunk 1 of 2").size).to eq(1)
+      expect(findings).not_to include(CritiqueSeamRefusal::BODY)
+      expect(journal.map(&:outcome)).to eq(%w[refused answered])
+      expect(worktrees).to eq(1)
+    end
+
+    it "names the child in the refused chunk's own text" do
+      typed(stack(refusing_first), "/critique")
+
+      expect(journal.first.text).to start_with("chunk 1 of 2")
+      expect(journal.first.text).to include("diff_critic", "41000")
     end
   end
 

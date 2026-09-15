@@ -66,6 +66,23 @@ class SubagentSpecIsolation
   end
 end
 
+# A provider that refuses every prompt whole for not fitting the context it
+# loaded, raising it the way any provider does: the figures ride the
+# {Lain::WindowExceeded} duck and the MESSAGE is the server's own body. That
+# body is the point -- it is what a spawner must never be handed in place of
+# words it can act on.
+class SubagentSpecRefusingProvider < Lain::Provider::Mock
+  BODY = '{"error":"model requires more system memory than is available"}'
+
+  class Refusal < Lain::Error
+    include Lain::WindowExceeded
+  end
+
+  def complete(_request, **)
+    raise Refusal.new(BODY, prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama")
+  end
+end
+
 # Reports the working directory of the Session it was dispatched under, and
 # records every one it saw. A child's cwd is otherwise unobservable from
 # outside: a spawn hands back a Timeline, never the Agent, so where a GRANDchild
@@ -1114,6 +1131,79 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result.content).to include("depth")
       expect(record.spawn).to be_nil
       expect(store.size).to eq(before)
+    end
+  end
+
+  # ---- A child has a model phase of its own ---------------------------------
+  #
+  # A prompt its provider refuses WHOLE for not fitting the context is the one
+  # failure a child cannot report as an answer: no model saw it. Without a
+  # budget in front of the child's provider, whoever spawned it was handed the
+  # server's own error body -- a JSON blob naming neither the child nor what to
+  # do -- and nothing recorded that the refusal happened at all.
+  describe "a child's prompt the provider refuses whole" do
+    let(:journal) { [] }
+    let(:telemetry) { [] }
+
+    def refusing = SubagentSpecRefusingProvider.new(responses: [])
+
+    def refusing_spawn(**seam)
+      build_subagent(provider: refusing, name: "diff_critic", journal:, **seam)
+    end
+
+    def pressures(records) = records.grep(Lain::Telemetry::WindowPressure)
+
+    it "refuses in words that name the child and the task it was handed" do
+      expect { refusing_spawn.run("critique lib/a.rb") }
+        .to raise_error(Lain::Middleware::RequestBudget::OverWindow, /diff_critic.*task/)
+    end
+
+    def raised(tool)
+      tool.run("critique lib/a.rb")
+      raise "expected a refusal"
+    rescue Lain::WindowExceeded => e
+      e
+    end
+
+    it "carries the provider's own figures without carrying its body" do
+      error = raised(refusing_spawn)
+
+      expect(error).to have_attributes(prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama")
+      expect(error.message).to include("41000", "32768")
+      expect(error.message).not_to include(SubagentSpecRefusingProvider::BODY)
+    end
+
+    # The real path, not a hand-marked error: the child's own {Agent#ask}
+    # takes the prompt back and MARKS this error as it climbs, exactly as a
+    # chat's does. The chain it came off ended with the child, so the clause a
+    # chat's refusal ends with would describe a conversation the spawner
+    # cannot go back to -- and the words must stay one line either way.
+    it "is withdrawn by the child's own ask, and says nothing of it" do
+      error = raised(refusing_spawn)
+
+      expect(error).to be_withdrawn
+      expect(error.message).not_to include("withdrawn")
+      expect(error.message.lines.size).to eq(1)
+    end
+
+    # The seam's `journal` is the session file alone and `telemetry` is the tee
+    # a cockpit's live views fold. The record is the CHILD's, so it belongs in
+    # the durable half only: a HUD folding it would move the parent's occupancy
+    # onto a window and a chain the parent never rendered.
+    it "writes the record to the seam's durable journal, naming the spawn, and never to the tee" do
+      expect { refusing_spawn(telemetry:).run("critique lib/a.rb") }.to raise_error(Lain::WindowExceeded)
+
+      expect(pressures(journal).map(&:spawn)).to eq(["diff_critic"])
+      expect(pressures(journal).map(&:prompt_tokens)).to eq([41_000])
+      expect(pressures(telemetry)).to be_empty
+    end
+
+    # The child names the turn its own render stood on, off its own chain --
+    # the first user turn of a fresh root, never the parent's head.
+    it "tags the record with the child's own turn, not the parent's" do
+      expect { refusing_spawn.run("critique lib/a.rb") }.to raise_error(Lain::WindowExceeded)
+
+      expect(pressures(journal).map(&:stands_on)).to eq([nil])
     end
   end
 

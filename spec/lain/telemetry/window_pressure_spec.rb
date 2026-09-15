@@ -22,6 +22,16 @@ RSpec.describe Lain::Telemetry::WindowPressure do
     expect(JSON.parse(JSON.generate(pressure(stands_on: nil).to_journal))).to include("stands_on" => nil)
   end
 
+  # Whose prompt it was. The run's own ask names no spawn, and a child's names
+  # the one it was spawned as, so a reader folding these into a run's reading
+  # can tell a count taken against this chain's window from one taken against a
+  # child's -- without inferring it from which journal the record arrived on.
+  it "names the spawn whose prompt was refused, and nobody for the run's own ask" do
+    expect(pressure.spawn).to be_nil
+    expect(pressure(spawn: "diff_critic").spawn).to eq("diff_critic")
+    expect(pressure(spawn: "diff_critic").to_journal).to include("spawn" => "diff_critic")
+  end
+
   it "refuses a record that does not say what the count stands on" do
     expect do
       described_class.new(kind: :over_window, source: "ollama", model: "qwen3:4b", request_digest: "blake3:abc",

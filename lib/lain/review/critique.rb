@@ -97,6 +97,13 @@ module Lain
 
       NOTHING_SAID = "the critic came back with nothing to say"
 
+      # What a chunk nobody critiqued leaves in the RECORD. The record travels
+      # on its own, and a reader of one has no heading above it, so the words
+      # name the chunk themselves; the merged prose already carries
+      # {Brief#heading} and keeps the bare reason, or it would say the same
+      # thing twice running.
+      CHUNK_REFUSED = "chunk %<ordinal>d of %<count>d (%<label>s) was not critiqued: %<reason>s"
+
       EMPTY = "no file of this commit survives in the changeset, so nothing was sent"
 
       HEADLINE = "critique of %<base>s..%<head>s in %<count>d chunk%<plural>s, each read by the %<role>s role " \
@@ -175,6 +182,12 @@ module Lain
       # {Docent::Delivery}'s reason: the failure's words are the finding.
       # `Async::Stop` is not a StandardError, so a cancelled critique stays
       # cancelled and {Checkouts#hold} releases on the way out.
+      #
+      # The child's own request budget is what makes those words worth merging:
+      # a prompt the provider refused whole arrives here already said in the
+      # harness's vocabulary, with the server's body demoted to the cause. A
+      # failure with no words at all is still a finding, and gets the same
+      # sentence a critic with nothing to say gets.
       def answer(lent, brief)
         return ["empty", EMPTY] if brief.paths.empty?
 
@@ -184,7 +197,9 @@ module Lain
         outcome("refused", e.message)
       end
 
-      def outcome(outcome, words) = words.to_s.strip.empty? ? ["refused", NOTHING_SAID] : [outcome, words]
+      def outcome(outcome, words) = said?(words) ? [outcome, words] : ["refused", NOTHING_SAID]
+
+      def said?(words) = !words.to_s.strip.empty?
 
       def said(result)
         content = result.content
@@ -196,7 +211,11 @@ module Lain
       def record(brief, outcome, text)
         CritiqueChunk.new(head_ref: brief.head_ref, ordinal: brief.ordinal, count: brief.count,
                           label: brief.label, paths: brief.paths, role: @role, brief_key: brief.key,
-                          outcome:, text:)
+                          outcome:, text: outcome == "answered" ? text : chunked(brief, text))
+      end
+
+      def chunked(brief, reason)
+        format(CHUNK_REFUSED, ordinal: brief.ordinal, count: brief.count, label: brief.label, reason:)
       end
 
       def rendered(answers)

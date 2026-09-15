@@ -113,6 +113,18 @@ RSpec.describe Lain::Review::Critique do
     described_class.new(changeset:, spawn:, window:, checkouts:, journal:, slots: @slots, instructions:)
   end
 
+  # What a child's own request budget raises when its provider refuses the
+  # whole prompt: the harness's words, with the server's body demoted to the
+  # cause where no finding can pick it up.
+  def over_window
+    Lain::Middleware::RequestBudget::OverWindow.new(
+      "not answered: ollama refused the diff_critic child's task at 41000 tokens against the " \
+      "32768-token context it loaded, so no model saw it",
+      moves: ". Hand it less to read.", prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama",
+      model: "critic-model"
+    )
+  end
+
   # What the child is sent beyond its prompt, in the estimate's own unit: the
   # role's prelude, the response it may write, and the reserve for the tool
   # schemas and message framing.
@@ -178,6 +190,46 @@ RSpec.describe Lain::Review::Critique do
       expect(findings).to include("the provider fell over", "findings from child 2")
       expect(journal.map(&:outcome)).to eq(%w[refused answered])
       expect(checkouts.ended).to eq(1)
+    end
+
+    # The failure's words ARE the finding, so the finding has to read as one.
+    # The RECORD names the chunk, because it travels on its own with no heading
+    # above it; the merged prose does not, because {Brief#heading} said it one
+    # line earlier.
+    it "names the chunk in a refused record's text, and once only in the merged prose" do
+      failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("the provider fell over") })
+      findings = described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
+                                     slots: @slots, instructions: "# critique").call
+
+      expect(journal.first.text).to start_with("chunk 1 of 2")
+      expect(journal.first.text).to include("the provider fell over")
+      expect(findings.scan("chunk 1 of 2").size).to eq(1)
+      expect(findings).to include("the provider fell over")
+    end
+
+    # A failure with no words is still a finding, and the one blank-answer
+    # sentence serves the raise path as well as the answer path.
+    it "says the critic came back with nothing when a failure carries no message" do
+      failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("  ") })
+      described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
+                          slots: @slots, instructions: "# critique").call
+
+      expect(journal.first.text).to eq("chunk 1 of 2 (#{journal.first.label}) was not critiqued: " \
+                                       "#{described_class::NOTHING_SAID}")
+    end
+
+    # The child's own budget refuses an over-window prompt in words. What must
+    # not survive into a finding is the server's JSON body, which names neither
+    # the chunk nor anything a human can do.
+    it "carries the child's worded over-window refusal, and no provider payload" do
+      failing = CritiqueSpecSpawn.new(fails: { 1 => over_window })
+      findings = described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
+                                     slots: @slots, instructions: "# critique").call
+
+      expect(journal.first.text).to start_with("chunk 1 of 2")
+      expect(journal.first.text).to include("32768-token context")
+      expect(findings).not_to include("{")
+      expect(findings).to include("findings from child 2")
     end
   end
 

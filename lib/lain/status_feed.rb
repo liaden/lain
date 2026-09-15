@@ -87,9 +87,14 @@ module Lain
   #   ORACLE SPEND IS NOT IN IT, deliberately: the field's contract is that it
   #   EQUALS `Accounting#usage`, which does not count oracle spend.
   #   {#turn_usage?} holds that argument and what a `#usage` duck once cost.
-  # * `approvals_pending` -- counted, never keyed: {Telemetry::ApprovalPending}
-  #   carries the parked call's `tool_use_id` and the matching decision record
-  #   carries none, so a count is the only pairing available.
+  # * `approvals_pending` -- counted, never keyed. Both halves DO carry the
+  #   parked call's `tool_use_id` now, so a keyed pairing is available; what it
+  #   would have to be keyed by is `(tool_use_id, order within that id)`, since
+  #   one call parks more than once under one id -- a `read_file` of a gated
+  #   file parks at the path gate and again at the release. A counter answers
+  #   the one question this field asks, "how many are waiting", with no index
+  #   to keep; a keyed pairing would buy the ability to say WHICH, which
+  #   nothing on this surface renders.
   #
   #   The pair breaks in exactly ONE place, and the halves fail asymmetrically.
   #   NOT cancellation: `Async::Stop` descends from `Exception`, not
@@ -328,7 +333,15 @@ module Lain
     # for the prompt line, taken here too so the HUD and the prompt do not tell
     # two stories about the context that just overflowed. Nothing was billed,
     # so `run_tokens` is left alone.
+    #
+    # A record naming a spawn is the CHILD's and is left where it lies: its
+    # count is the child's prompt against the child's window, tagged with a
+    # turn on a chain this run never rendered, so taking it would publish an
+    # occupancy the human at this prompt cannot act on and a `stands_on` the
+    # rewind rule cannot find.
     def observe_refusal(event)
+      return unless event.spawn.nil?
+
       reading = measured(Usage.new(input_tokens: event.prompt_tokens), event.model)
       record_occupancy(reading, stands_on: event.stands_on)
     end

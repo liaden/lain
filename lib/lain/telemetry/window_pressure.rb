@@ -39,19 +39,27 @@ module Lain
     # view tags the reading as the Agent does instead of inferring it; nil is
     # the empty chain, a value, which is why the keyword has no default.
     #
+    # `spawn` names the spawned child whose prompt this was, and is nil for the
+    # run's own ask. Every other figure is measured against the refuser's own
+    # window on the chain that rendered the prompt, so a reader that folds a
+    # child's record into the run's reading tags it with a window and a chain
+    # this run never rendered -- which is why the attribution rides the record
+    # rather than being inferred from where it landed.
+    #
     # It rides the record journal, which is the tee in a cockpit, so the
     # {StatusFeed} takes the same reading the {Agent} does.
     WindowPressure = Data.define(:kind, :source, :model, :request_digest, :prompt_tokens, :window_tokens,
-                                 :stands_on) do
+                                 :stands_on, :spawn) do
       include Journalable
 
-      def initialize(kind:, source:, request_digest:, prompt_tokens:, window_tokens:, stands_on:, model: nil)
+      def initialize(kind:, source:, request_digest:, prompt_tokens:, window_tokens:, stands_on:, model: nil,
+                     spawn: nil)
         kind = kind&.to_sym
         Carriers::WindowPressure.check!(kind:, source:, request_digest:, prompt_tokens:, window_tokens:)
 
         super(kind:, source: -source.to_s, model: model && -model.to_s, request_digest: -request_digest.to_s,
               prompt_tokens: Integer(prompt_tokens), window_tokens: Integer(window_tokens),
-              stands_on: stands_on && -stands_on.to_s)
+              stands_on: stands_on && -stands_on.to_s, spawn: spawn && -spawn.to_s)
       end
     end
   end

@@ -761,10 +761,10 @@ RSpec.describe Lain::StatusFeed do
     # this surface takes it too, or the prompt line and the HUD tell a human two
     # different stories about the one context that just overflowed.
     context "when a prompt was refused for not fitting the context" do
-      def pressure(prompt_tokens:, model: "claude-opus-4-8")
+      def pressure(prompt_tokens:, model: "claude-opus-4-8", spawn: nil)
         Lain::Telemetry::WindowPressure.new(kind: :over_window, source: "ollama", model:,
                                             request_digest: "blake3:refused", prompt_tokens:, window_tokens: 8192,
-                                            stands_on: nil)
+                                            stands_on: nil, spawn:)
       end
 
       it "publishes the refused prompt's exact count as the occupancy" do
@@ -784,6 +784,20 @@ RSpec.describe Lain::StatusFeed do
         feed << pressure(prompt_tokens: 900_000)
 
         expect(published["run_tokens"]).to eq(500_005)
+      end
+
+      # A child's refusal counts ITS prompt against ITS window on a chain this
+      # run never rendered, so folding it would retag the parent's reading with
+      # a turn the parent's chain does not hold -- and leave the HUD reporting a
+      # context the human cannot act on.
+      it "leaves the parent's reading where it stood when the refusal was a child's" do
+        feed = described_class.new(path:, context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 }))
+        feed << sized_turn_usage(input_tokens: 4096, model: "qwen3:4b")
+
+        feed << pressure(prompt_tokens: 12_011, model: "qwen3:4b", spawn: "diff_critic")
+
+        expect(published["occupancy"]).to eq(4096.fdiv(8192))
+        expect(published["unmeasured_turns"]).to eq(0)
       end
     end
 

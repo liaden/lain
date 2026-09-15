@@ -1099,9 +1099,27 @@ module Lain
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain),
-            tool_middleware: child_stack(session.worker_env, allowed),
+            model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed),
             session:, budget: @budget, journal: Channel::Null.instance
           )
+        end
+
+        # The child's model phase, and its one member: a prompt the provider
+        # refuses WHOLE is the one failure a child cannot report as an answer,
+        # and without this the spawner was handed the server's own error body,
+        # naming neither the child nor anything the spawner could do about it.
+        #
+        # Its record goes to the seam's DURABLE journal and never to the
+        # telemetry tee. That is the opposite of the rule the rest of this seam
+        # follows, and for the reason that rule exists: a live view folds what
+        # it is fanned, and this count is the CHILD's -- measured against the
+        # child's window on a chain the parent never rendered -- so folding it
+        # would move the parent's HUD onto a context the human cannot act on.
+        # The record names the spawn so a reader can tell whose it is wherever
+        # it is read back.
+        def child_budget
+          voice = Middleware::RequestBudget::Child.new(name: @name)
+          Middleware::Stack.new([Middleware::RequestBudget.new(journal: @seam.journal, voice:)])
         end
 
         # `schema` renders the attenuated set, so the stack as built suffices;

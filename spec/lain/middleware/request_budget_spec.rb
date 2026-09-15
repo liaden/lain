@@ -172,5 +172,63 @@ RSpec.describe Lain::Middleware::RequestBudget do
 
       expect(refused(fixed, prompt_tokens: 12_011, window_tokens: 2048).message).to include("--num-ctx")
     end
+
+    it "records the run's own ask as nobody's spawn" do
+      refused(big)
+
+      expect(records.first).to include("spawn" => nil)
+    end
+  end
+
+  # The same middleware in front of a spawned child, where both halves of the
+  # answer change: the words, because nothing a human types moves a child's
+  # prompt, and the record, because the count was taken against the child's own
+  # window on the child's own chain.
+  describe "a spawned child's prompt" do
+    let(:budget) { described_class.new(journal:, compaction:, voice: described_class::Child.new(name: "diff_critic")) }
+    let(:big) { request(text: "the quick brown fox. " * 2_000) }
+
+    it "names the child and the task it was handed, not the chat's own prompt" do
+      message = refused(big).message
+
+      expect(message).to include("diff_critic", "task", "12011", "8192")
+      expect(message).not_to include("this prompt")
+      expect(message.lines.size).to eq(1)
+    end
+
+    it "offers only what the spawner can do, and no gesture on the chat's own chain" do
+      message = refused(big).message
+
+      expect(message).to include("larger window")
+      expect(message).not_to include("/rewind", "/unpin", "compaction", "--num-ctx")
+    end
+
+    # A child's ask withdraws its prompt exactly as a chat's does, and the
+    # chain it came off ended with the child -- so saying so describes a
+    # conversation the reader cannot go back to.
+    it "says nothing of withdrawal, though the child's own ask withdrew the prompt" do
+      error = refused(big).tap(&:withdrawn!)
+
+      expect(error).to be_withdrawn
+      expect(error.message).not_to include("withdrawn")
+      expect(error.message.lines.size).to eq(1)
+    end
+
+    it "records the refusal as the child's, naming the spawn it belongs to" do
+      refused(big)
+
+      expect(records).to contain_exactly(
+        include("kind" => "over_window", "spawn" => "diff_critic", "prompt_tokens" => 12_011)
+      )
+    end
+
+    # The compaction source a chat's budget asks is never consulted: a child has
+    # no pipeline of its own, and offering the parent's moves would send the
+    # reader to a chain the refused prompt was never rendered from.
+    it "never asks whether the parent's render left anything to compact" do
+      refused(big)
+
+      expect(compaction).not_to have_received(:droppable?)
+    end
   end
 end
