@@ -1,6 +1,6 @@
 # Chunk: round-17 — what the record keeps, who the human answers through, what the window can hold
 
-status: in-progress -- planned 2026-09-14, panel-reviewed (REVISE → fixes applied); execution started 2026-09-14
+status: done -- planned 2026-09-14, panel-reviewed (REVISE → fixes applied); executed 2026-09-14..15
 commit-mode: orchestrator-commits
 language: ruby (plus nvim runtime Lua in T27, and `planning/qa/` prose in T29)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -461,6 +461,27 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
   denied the call and was lost, so the goal ran on.
 - Follow-up (T27 review): `Switchboard#apply` journals a no-op `policy_switch escalation ->
   escalation` on every layer flip, which is noise for bench readers.
+- **Integration checks 1–3 (2026-09-15, `main` at `4c8089ab`, no other parallel_rspec running):**
+  - Check 1: `rake pspec` at 12 workers gave **18,701 examples, 0 failures, 13 pending** in 64s.
+    Every one of the 12 workers reported. That is +864 over the pre-chunk 17,837.
+  - Check 3: the three discipline specs together gave 15 examples, 0 failures.
+  - `bundle exec rubocop`: 1,577 files, no offenses.
+  - Check 2 (census, core parity, cargo) is recorded above.
+- **T29's drive record.** The command and output for each drive, 62 in phase 1 and more in phase 2,
+  is in `~/tmp/lain-T29/records/`. Strings not driven are marked `(prediction, not yet driven)` in the
+  scenarios.
+- **Possible T28 gap (T29 phase 2).** With `notify` on, a `--no-nvim` chat's inline `[y/N]` rings no
+  bell, because only one-line arrival notes ring and a plain chat draws none for approvals. That fits
+  the card's AC, which names questions, but the layer's description says approvals too. Open
+  decision, and the scenarios record it as current behaviour. `/help` has no per-layer description yet
+  (T28, deferred).
+- **Found by T29's drives against the built binary (follow-ups):**
+  - `lain chat` with stdin redirected from a regular file re-reads earlier prompts in a loop once a
+    prompt triggers a `bash` call. `/dev/null`, a pipe and a TTY are fine.
+  - `secret-boundary.md` §2's own example, `exempt = ["fixtures/.env"]`, is now refused at load by
+    T8's exempt check. Check whether that is a false positive of the per-entry probe.
+  - `lain review <branch>` in a repo with no `main` still refuses without naming `--base`; only
+    `/review` was changed.
 - **Follow-ups from T24's re-review:**
   - `WindowBook` keeps a stale smaller runner's context after ollama reloads a bigger one, so
     occupancy reads about 100% and compaction can fire early.
@@ -487,6 +508,27 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
 - T6: the question-arrival line still reads "(/inbox here, or the inbox buffer in nvim)", not
   "lain://inbox", because `tty.rb` is T13's. T13 aligns the wording.
 
+### Close-out (2026-09-15)
+
+- **All 29 cards landed on `main`.** Every card was panel-reviewed except T11 and T29, which were
+  exempt.
+  - The panel caught blockers the green suites had missed: T5, T6, T7, T8, T13 (three fail-open
+    approval paths), T17, T19, T20, T21, T22, T24, T25 and T27.
+  - T24 was redesigned on measured ollama evidence.
+  - Six cards were ported or re-landed onto a fresh `HEAD` after sibling landings: T21, T13, and the
+    wiring and TTY file shares.
+- **Integration checks 1–3 pass** (recorded above).
+- **Manual checks 4–9 are still owed:** the reachability walk; F88/F89 end to end; the nvim-first
+  cockpit (T29 drove parts of it); compaction at scale; `/critique` of lain on itself; the next
+  `/manual-qa` round.
+- **Human decisions still owed (above):**
+  - should the read tools' secret-path check resolve symlinks;
+  - the triage rung for `~`/`$HOME` spellings under automatic approval;
+  - an `exempt` table-wide cap;
+  - compaction S4 (summaries accumulate) and S5 (a pin inside a held cut);
+  - `[tests]` strictness (Open decision 1);
+  - the plain-chat notify bell on `[y/N]`.
+
 ### Landed
 
 - T11 `5154d819` · T16 `13b5e71c` · T9 `a0683dd8` · T10 `4b0778f8` · T15 `0cf8d2f1` · T5 `60998de4` · T1 `cf3505a3`
@@ -494,7 +536,7 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
   · T7 `acfed808` · T6 `caa2c5f7` · T18 `dac580d4` · T12 `afb5e73f` · T14 `bfe984e9` · T19 `51b0be4d`
   · T23 `1cfdf970` · T21 `3ec1dc79` (with the middleware-phase supervision) · T17 `7016ab7d` · T20 `3af82b61`
   · T26 `c3ccaa39` · T25 `f13d276d` · T22 `ad045078` · T24 `4cf30b98` · T13 `70c0782f` · T27 `cb816f58`
-  · T28 `9d47a7b1`
+  · T28 `9d47a7b1` · T29 `a16ff7a2`
 
 ---
 
