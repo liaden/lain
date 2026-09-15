@@ -110,6 +110,34 @@ RSpec.describe Lain::CLI::Command::Meta do
       end
     end
 
+    # {Prism.parse_success?} never evaluates the bytes it checks, so this is
+    # the one place `/meta` can say a generated script does not parse before
+    # anything runs it. The file is STILL written -- it is what `/meta run`
+    # names below -- but the reply says so instead of the ordinary
+    # "review it, then launch it" advice.
+    describe "a role reply that is prose, not Ruby" do
+      let(:body) { "Sure, here's a plan: first do the planning, then do the executing.\n" }
+
+      it "writes the file, but says it does not parse rather than handing back launch advice" do
+        text = meta.call(prompt, env)
+
+        expect(scripts.size).to eq(1)
+        expect(text).to include("does not parse")
+        expect(text).not_to include("review it, then launch it")
+      end
+
+      it "makes /meta run refuse the written script by name rather than launching it" do
+        meta.call(prompt, env)
+        slug = File.basename(scripts.first, ".rb")
+
+        text = meta.call("run #{slug}", env)
+
+        expect(tmux_surface).not_to have_received(:window)
+        expect(text).to include(slug)
+        expect(text).to include("does not parse")
+      end
+    end
+
     describe "a prompt that slugifies to nothing" do
       it "falls back to the harness's own name" do
         meta.call("!!!", env)
@@ -353,6 +381,18 @@ RSpec.describe Lain::CLI::Command::Meta do
       expect { text = meta.call("run #{slug}", env) }.not_to output.to_stdout
 
       expect(text).to include(slug)
+    end
+
+    describe "a generated script that does not parse (hand-edited after review)" do
+      before { File.write(script_path, "def broken(\n") }
+
+      it "refuses to launch it, naming the script, rather than handing a SyntaxError to sh" do
+        text = meta.call("run #{slug}", env)
+
+        expect(tmux_surface).not_to have_received(:window)
+        expect(text).to include(slug)
+        expect(text).to include("does not parse")
+      end
     end
 
     describe "a slug that names no generated script" do

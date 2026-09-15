@@ -161,6 +161,30 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  describe "--windows" do
+    # `lain up`'s pre-flight runs from the operator's OWN shell, never from
+    # inside the tmux session the pane it is about to create belongs to, so
+    # this refusal is checked only by #call -- see the pre-flight's own specs
+    # below for the case this must NOT reach.
+    it "refuses at launch outside $TMUX, naming it" do
+      chronicle_factory = spy("chronicle_factory")
+      instance = launch({ windows: true, journal: true, provider: "ollama" }, chronicle_factory:,
+                                                                              env: {})
+
+      expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, /\$TMUX/)
+      expect(chronicle_factory).not_to have_received(:call)
+    end
+
+    it "does not refuse inside $TMUX" do
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+      instance = launch({ windows: true, journal: true, provider: "ollama" }, wiring_factory: ->(**) { wiring },
+                                                                              env: { "TMUX" => "/tmp/tmux/def,1,0" })
+
+      expect { instance.call { |_notice| nil } }.not_to raise_error
+    end
+  end
+
   describe "the ensure-close bracket" do
     let(:conductor) { instance_spy(Lain::CLI::Conductor) }
     let(:wiring) { instance_double(Lain::CLI::Wiring, conductor:).tap { |double| allow(double).to receive(:run) } }
@@ -733,6 +757,14 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
     it "refuses --windows without --journal" do
       expect { preflighting(offline(windows: true, journal: false)) }
         .to raise_error(Lain::Error, /--windows needs the session journal/)
+    end
+
+    # `lain up`'s pre-flight runs from the operator's OWN, non-tmux shell, so
+    # a --windows-outside-$TMUX refusal here would stop every `lain up
+    # --windows` before it ever creates the session those panes belong to.
+    it "does NOT refuse --windows outside $TMUX -- that check is #call's alone" do
+      expect(described_class.new(offline(windows: true, journal: true), env: {}).preflight { |_notice| nil })
+        .to be_nil
     end
 
     # The pre-flight refuses a SUBSET of what chat refuses, so a refusal chat

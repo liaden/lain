@@ -52,7 +52,7 @@ module Lain
         path = journal_path
         announce_wait(path)
         File.open(path, "r") { |io| follow(io) }
-        conclude
+        conclude(path)
       end
 
       private
@@ -92,10 +92,10 @@ module Lain
 
       # The no-match verdict, spoken AND returned: an unmatched selector must
       # never end indistinguishable from a quiet actor.
-      def conclude
+      def conclude(path)
         return 0 if @filter.anchored?
 
-        @sink.puts("no spawn matched selector #{@selector.inspect}")
+        @sink.puts("no spawn matched selector #{@selector.inspect} in #{File.basename(path)}")
         1
       end
 

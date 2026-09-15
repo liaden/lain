@@ -47,6 +47,8 @@ module Lain
       # @param gc_schedule_factory [#call] builds the daily reap's {GcSchedule}
       #   for the project's root; the real one spawns with the real process
       #   spawner
+      # @param env [#[]] the environment, read for $TMUX by
+      #   {#refuse_windows_outside_tmux!}
       # @option options [Boolean] :journal whether the run records one
       # @option options [Boolean] :btw whether asides join the record
       # @option options [Boolean] :nvim whether the editor views open
@@ -64,7 +66,8 @@ module Lain
                      gc_schedule_factory: GcSchedule.public_method(:new),
                      status_feed_factory: lambda { |run_clock:, context_window:|
                        Lain::StatusFeed.new(run_clock:, context_window:)
-                     })
+                     },
+                     env: ENV)
         @options = options
         @resume_factory = resume_factory
         @chronicle_factory = chronicle_factory
@@ -74,6 +77,7 @@ module Lain
         @project_factory = project_factory
         @status_feed_factory = status_feed_factory
         @gc_schedule_factory = gc_schedule_factory
+        @env = env
       end
 
       attr_reader :wiring, :live_views
@@ -91,6 +95,7 @@ module Lain
         return preflight(&notice) if self.class.preflight?
 
         refuse_contradictory_flags!
+        refuse_windows_outside_tmux!
         # Ahead of everything that writes or spawns -- a salvaged resume, the
         # reap, the record -- so a refused run leaves none of them behind. Not
         # at construction: the probe behind it would make #preflight ask a
@@ -279,6 +284,20 @@ module Lain
 
         raise Lain::Error, "--windows needs the session journal: the fleet sink observes " \
                            "the live-view tee, which --no-journal disables"
+      end
+
+      # Checked only here, never from {#preflight}: `lain up` pre-flights
+      # `--windows` from the operator's OWN shell, which is never the tmux
+      # session the pane it is about to create belongs to, so this refusal
+      # would be false of the very process that is allowed to ask it.
+      # {FleetWindows.for} already degrades to its Null duck outside $TMUX --
+      # this refusal is what keeps that degrade from reading as a `--windows`
+      # that silently did nothing.
+      def refuse_windows_outside_tmux!
+        return unless @options[:windows] && @env["TMUX"].to_s.empty?
+
+        raise Lain::Error, "--windows opens panes in the tmux session this process is already inside, " \
+                           "and $TMUX is not set -- start tmux first, or drop --windows"
       end
 
       # A headless chat reads no line, so a run with nothing seeded has nothing

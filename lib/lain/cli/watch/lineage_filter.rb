@@ -58,7 +58,7 @@ module Lain
         # quietly (content addressing makes re-puts idempotent); only a
         # DIFFERENT matching spawn is shadowed.
         def anchors?(record, digest)
-          return false unless record["kind"].to_s == "spawn" && digest.to_s.start_with?(@selector)
+          return false unless record["kind"].to_s == "spawn" && match?(digest.to_s, @selector)
 
           @anchor = digest unless anchored?
           return true if digest == @anchor
@@ -73,6 +73,17 @@ module Lain
         # `causal_parents` for anything downstream of an admitted record.
         def chains?(record)
           @admitted.intersect?([record["from"], record["to"], *record["causal_parents"]].compact)
+        end
+
+        # Hex-only below a full "blake3:" prefix ({CLI::ForkPoint}'s idiom): a
+        # bare hex selector -- what `lain watch` prints back in {View#lines} and
+        # {Watch#shadowed} -- must still match a digest recorded with its
+        # scheme, or every prefix a human copies off the tail's own output
+        # would fail to anchor anything.
+        def match?(digest, selector)
+          return digest.start_with?(selector) if selector.start_with?("blake3:")
+
+          digest.delete_prefix("blake3:").start_with?(selector)
         end
       end
     end

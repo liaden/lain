@@ -156,6 +156,18 @@ RSpec.describe Lain::CLI::ContextPipeline do
         .to raise_error(described_class::Unknown, /repeated part "prune"/)
     end
 
+    # The explanatory tail names what "default" expands to, which is only a
+    # useful thing to say when "default" is one of the words that were typed
+    # -- a human who never wrote it should not be told what it means.
+    it "mentions what \"default\" expands to only when \"default\" is involved" do
+      expect { described_class.named("default+default") }
+        .to raise_error(described_class::Unknown, /"default" is reminder\+cache-breakpoints/)
+      expect { described_class.named("prune+dedupe-tool-calls+prune") }
+        .to raise_error(described_class::Unknown) do |error|
+          expect(error.message).not_to include("is reminder+cache-breakpoints")
+        end
+    end
+
     it "refuses a word that repeats a stage the default already holds" do
       expect { described_class.named("default+reminder") }
         .to raise_error(described_class::Unknown, /repeated part "reminder" in --context-pipeline "default\+reminder"/)

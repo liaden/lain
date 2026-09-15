@@ -274,6 +274,24 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  # The writer's pid rides IN the filename ({Journal.open}'s naming), so an
+  # open session whose writer is still running can be told apart from one a
+  # crash actually left behind -- "not gracefully closed" reads as abandoned,
+  # which is false while the process is still writing it.
+  describe "an open session whose writer process is still alive" do
+    let(:two) { chain("hi", "hello") }
+    let(:name) { "20260101T000000-#{Process.pid}.ndjson" }
+
+    before { write_session(name, [open_header] + turn_records(two)) }
+
+    it "says the session is still open in that process, not that it wasn't gracefully closed" do
+      result = resume.call
+
+      expect(result.notices.join).to include(name, "still open in process #{Process.pid}")
+      expect(result.notices.join).not_to include("not gracefully closed")
+    end
+  end
+
   # An open session whose crash left an unanswered request_sent gets one
   # salvage attempt before anything else about it is decided.
   describe "salvage on resume" do

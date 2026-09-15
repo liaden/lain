@@ -100,10 +100,16 @@ RSpec.describe Lain::CLI::Improvements do
       expect(report).not_to include("project bbbbbbbbbbbb:")
     end
 
-    it "renders the friendly no-records message when a filter matches nothing" do
+    it "renders the friendly no-records message when a project filter matches nothing at all" do
       report = cli.report(project: "cccccccccccc")
 
       expect(report).to eq("no improvements recorded yet -- looked for #{improvements_path}")
+    end
+
+    it "names the count within the project scope when --kind matches nothing there, not the empty-store message" do
+      report = cli.report(project: "aaaaaaaaaaaa", kind: "doc")
+
+      expect(report).to eq("no doc improvements among 2 recorded")
     end
 
     it "counts records and projects in the header line" do
@@ -150,8 +156,8 @@ RSpec.describe Lain::CLI::Improvements do
                         %(--kind must be one of ["knob", "bug", "missing-feature", "doc"], got "bugs"))
     end
 
-    it "still reports the friendly empty message for a valid kind that matches nothing" do
-      expect(cli.report(kind: "doc")).to eq("no improvements recorded yet -- looked for #{improvements_path}")
+    it "names the count it passed over for a valid kind that matches nothing, rather than claiming an empty store" do
+      expect(cli.report(kind: "doc")).to eq("no doc improvements among 2 recorded")
     end
   end
 

@@ -57,8 +57,9 @@ module Lain
         assert_known_kind!(kind)
         scope = resolve_project(project)
         path = @paths.improvements_path
-        records = filtered(read(path), project: scope, kind:)
-        return empty_render(path) if records.empty?
+        scoped = scoped_records(read(path), project: scope)
+        records = kind.nil? ? scoped : scoped.select { |r| r["kind"] == kind }
+        return empty_render(path, scoped:, kind:) if records.empty?
 
         render(records)
       end
@@ -112,13 +113,18 @@ module Lain
         Journal.records(File.foreach(path), type: "improvement").to_a
       end
 
-      def filtered(records, project:, kind:)
-        by_project = project.nil? ? records : records.select { |r| r["project_hash"] == project }
-        kind.nil? ? by_project : by_project.select { |r| r["kind"] == kind }
+      def scoped_records(records, project:)
+        project.nil? ? records : records.select { |r| r["project_hash"] == project }
       end
 
-      def empty_render(path)
-        "no improvements recorded yet -- looked for #{path}"
+      # An empty STORE (or an empty PROJECT scope) says so plainly; an empty
+      # KIND against a non-empty scope says how many recorded improvements the
+      # filter passed over, so `--kind knob` finding nothing does not read as
+      # "nothing has been recorded" when two `doc` notes sit right there.
+      def empty_render(path, scoped:, kind:)
+        return "no improvements recorded yet -- looked for #{path}" if scoped.empty?
+
+        "no #{kind} improvements among #{scoped.size} recorded"
       end
 
       def render(records)

@@ -3,6 +3,7 @@
 require "time"
 require "fileutils"
 require "shellwords"
+require "prism"
 
 module Lain
   module CLI
@@ -127,7 +128,10 @@ module Lain
           contents = compose(artifact, body: body_of(result), prompt:,
                                        digest: env.head_digest)
           slug = slugify(artifact, prompt)
-          generated(artifact, write(artifact, slug, contents), slug)
+          path = write(artifact, slug, contents)
+          return unparseable_written(artifact, path) unless Prism.parse_success?(contents)
+
+          generated(artifact, path, slug)
         end
 
         # The ONLY path that executes a generated script -- an explicit run verb,
@@ -145,6 +149,7 @@ module Lain
           # and nowhere else, so no slug can reach a generated DECLARATION.
           path = artifact_path(HARNESS, slug)
           return no_script(slug, path) unless File.exist?(path)
+          return unparseable_run(slug, path) unless Prism.parse_success?(File.read(path))
 
           place(env, slug, path)
         end
@@ -217,6 +222,24 @@ module Lain
 
         def generation_failed(artifact, result)
           "#{artifact.role} could not generate: #{body_of(result)}"
+        end
+
+        # {Prism.parse_success?} never evaluates the bytes it checks -- the
+        # generate half asks it BEFORE `#{artifact.advice}` would tell a human
+        # to run something the role handed back as prose, not code. The file
+        # is still written, exactly as a parseable one is: it is the reviewable
+        # artifact `run` names below, and review is the remedy this offers.
+        def unparseable_written(artifact, path)
+          "wrote #{path}, but it does not parse as Ruby -- #{artifact.role} answered with something other " \
+            "than code. Review it and try /meta again; /meta run would refuse to launch it as it stands."
+        end
+
+        # The launch half of the same check, reached independently: a script
+        # generated before this guard existed, or hand-edited after, is
+        # refused BY NAME rather than handed to `sh`/`ruby` to fail on.
+        def unparseable_run(slug, path)
+          "#{slug.inspect} (#{path}) does not parse as Ruby -- regenerate it with /meta <prompt>, or fix it " \
+            "by hand, before running it"
         end
 
         def no_script(slug, path)

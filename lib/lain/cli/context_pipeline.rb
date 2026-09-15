@@ -126,13 +126,20 @@ module Lain
       def unrepeated(words)
         stages = words.flat_map { |word| PIPELINES.fetch(word) }
         repeat = repeated(words) || repeated(stages)
-        if repeat
-          raise Unknown, "repeated part #{repeat.inspect} in #{@origin} #{@name.inspect}, #{expected}; " \
-                         "each stage renders once, and \"default\" is reminder+cache-breakpoints"
-        end
+        raise Unknown, repeated_message(repeat, words) if repeat
 
         stages
       end
+
+      # The explanation of what "renders once" means names `default`'s own
+      # expansion ONLY when `default` is one of the words typed -- naming it
+      # against `reminder+reminder` would explain a word the human never wrote.
+      def repeated_message(repeat, words)
+        "repeated part #{repeat.inspect} in #{@origin} #{@name.inspect}, #{expected}; " \
+          "each stage renders once#{default_note(words)}"
+      end
+
+      def default_note(words) = words.include?("default") ? ", and \"default\" is reminder+cache-breakpoints" : ""
 
       def repeated(parts) = parts.detect { |part| parts.count(part) > 1 }
 

@@ -50,14 +50,26 @@ module Lain
       # the error-taxonomy convention: a refusal subclasses {Lain::Error} next to
       # the owner that raises it.
       class UnknownRef < Error
+        # Which side {.unresolved} named, when it did -- "head", "base" or
+        # "pull request" -- so a caller that offered only ONE of them behind
+        # a flag (`--base`) can tell whether THAT flag caused this refusal
+        # without parsing its own words back out of the message. Nil for
+        # {.no_merge_base}, which is about neither side alone.
+        attr_reader :role
+
         def self.unresolved(role, ref, repo_root, shell)
           new("#{role} ref #{ref.inspect} does not resolve to a commit " \
-              "in #{repo_root}#{because(shell)}")
+              "in #{repo_root}#{because(shell)}", role:)
         end
 
         def self.no_merge_base(base, head, repo_root)
           new("#{base.inspect} and #{head.inspect} share no merge base " \
               "in #{repo_root}, so there is no revision to anchor the old side to")
+        end
+
+        def initialize(message, role: nil)
+          super(message)
+          @role = role
         end
 
         # git's own words, when it had any. `rev-parse --verify --quiet`

@@ -117,6 +117,28 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
+  # Every fixture above spells its digests bare (no "blake3:" scheme) for
+  # brevity; a REAL session records the full "blake3:<hex>" address
+  # ({Canonical#digest_of}), and a human copies a bare hex prefix off wherever
+  # they saw it -- `lain watch`'s own {View}, a journal line, a spawn's
+  # `lineage.rb` note -- never the scheme. This group is the one place the
+  # fixture carries the real shape, so the selector's own hex-below-the-scheme
+  # matching (`CLI::ForkPoint`'s idiom) is exercised rather than accidentally
+  # passing because every digest here happens to start with hex already.
+  describe "a bare hex prefix, against a digest recorded with its full blake3: scheme" do
+    subject(:watch) { described_class.new(selector: "c81907db9d1c", path:, sink: output, paths:) }
+
+    let(:scheme_spawn_digest) { "blake3:c81907db9d1c111122223333444455556666777788889999aaaabbbbccccdddd" }
+    let!(:path) do
+      write_journal([header_record, spawn_record(digest: scheme_spawn_digest), closed_record])
+    end
+
+    it "anchors and renders the lineage" do
+      expect(watch.run).to eq(0)
+      expect(output.string).to include("spawned from")
+    end
+  end
+
   # A one-shot's completion carries a terminal lifecycle mark now, and this
   # view prefixes any mark it finds -- so an operator tailing a one-shot reads
   # "(stopped) <result>" where the line used to be bare. That is the same
@@ -313,9 +335,9 @@ RSpec.describe Lain::CLI::Watch do
 
     let!(:path) { write_journal(opening_records + [closed_record]) }
 
-    it "says so instead of ending silent" do
+    it "says so instead of ending silent, naming the session file it searched" do
       watch.run
-      expect(output.string).to include('no spawn matched selector "beef"')
+      expect(output.string).to include('no spawn matched selector "beef"', File.basename(path))
     end
 
     it "answers exit status 1, distinguishable from a quiet actor" do

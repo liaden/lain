@@ -990,7 +990,8 @@ class LainCLI < Thor
     BACKEND = "How a shell command becomes a process " \
               "(#{Lain::CLI::ExecBackend::BACKENDS.join(", ")}): in this process, or one `docker run --rm` " \
               "per command with the project mounted. It selects a toolchain, never a confinement -- tier-3 " \
-              "approval is still the boundary. `docker` refuses a PIPELINE (a container takes one argv); " \
+              "approval is still the boundary. `docker` takes one argv, so a pipeline it cannot " \
+              "reconstruct falls back to the model's own string, run as `sh -c` INSIDE the container; " \
               "crosses a fixed set (LAIN_*, LANG/LC_*, TZ, TERM, NO_COLOR, CI) by NAME on the command " \
               "line, values kept off it; and is refused at launch for a missing client, before a session " \
               "record exists -- but the daemon is not probed until the first command, so one that is down " \

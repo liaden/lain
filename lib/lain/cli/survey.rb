@@ -106,6 +106,7 @@ module Lain
         @paths = paths
         @bounds = bounds
         @surface = surface
+        @cwd = project.cwd
         @sensitivity = classifier(project)
         @projection = Lain::Survey::Projection.new(ledger: ledger || Lain::Sensitivity::Ledger.new)
       end
@@ -144,8 +145,12 @@ module Lain
                               rules: Config.sensitivity(root: project.root))
       end
 
+      # `named_from: @cwd`, `/survey`'s own choice ({CLI::Command::Survey#round}):
+      # a corpus this process's own invocation walked is named the same way one
+      # `/survey` opened in a chat standing at the same cwd would be, so a row
+      # a human copies off one surface resolves against the other.
       def corpus(walk, ceilings)
-        Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings)
+        Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
       end
 
       def opened(walk, source, scope, ceilings)

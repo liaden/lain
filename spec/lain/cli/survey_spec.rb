@@ -70,6 +70,23 @@ RSpec.describe Lain::CLI::Survey, :seam do
 
   def sources_journaled = opened_records.map { |record| record["source"] }
 
+  # `Command::Survey#round` (the `/survey` repl command) names every row
+  # from `named_from: @cwd` -- the chat's own cwd, never the surveyed tree --
+  # so a name a human reads in the editor resolves relative to where they are
+  # standing. This process has no chat, but it has an equivalent cwd (the
+  # resolved Project's), and a row from `lain survey` on a directory OUTSIDE
+  # that cwd has to come out named the same way, or the two surfaces disagree
+  # about what to call the very file they are both looking at.
+  describe "row names, when the surveyed directory is not the invoking cwd" do
+    it "names a file relative to the cwd, not the surveyed tree itself" do
+      write("notes.md", document("# Notes"))
+
+      rendered = described_class.new(paths:, project: project_at(@tmp)).present(@root)
+
+      expect(rendered).to include("[ ] #{File.join(File.basename(@root), "notes.md")}")
+    end
+  end
+
   describe "a directory surveyed as it stands" do
     before { two_documents }
 
@@ -485,10 +502,13 @@ RSpec.describe Lain::CLI::Survey, :seam do
       expect(surveyed_from_below).not_to include("[ ] payroll.ledger")
     end
 
+    # Named "secrets/README.md" rather than bare "README.md": rows name from
+    # the invoking cwd (@here), not the surveyed tree (@here/secrets), so the
+    # same file reads the same way `/survey` would name it from this cwd.
     it "still lists what the table says nothing about, so the rules narrow and do not close" do
       denying_ledgers
 
-      expect(surveyed_from_below).to include("[ ] README.md")
+      expect(surveyed_from_below).to include("[ ] secrets/README.md")
     end
   end
 
@@ -666,9 +686,14 @@ RSpec.describe LainCLI, "the survey subcommand" do
       end
     end
 
+    # The row names from this PROCESS's own cwd, not from the surveyed tree --
+    # so a `lain survey` of a directory elsewhere on disk
+    # names the file relative to here, not bare. What this example pins is
+    # that argv reaches the lib and the lib's rendering reaches stdout; exact
+    # row naming is `survey_spec.rb`'s own describe block above.
     it "says what the lib drew, from argv all the way to stdout" do
       expect { described_class.start(["survey", @tree], debug: true) }
-        .to output(/\[ \] notes\.md/).to_stdout
+        .to output(/\[ \] .*notes\.md/).to_stdout
     end
 
     it "takes the scope from argv, so --scope reaches the grouping and not just the enum" do

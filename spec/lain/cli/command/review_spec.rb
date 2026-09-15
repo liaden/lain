@@ -241,6 +241,17 @@ RSpec.describe Lain::CLI::Command::Review do
       expect { command.call("feature --base", env) }.to raise_error(Lain::Error, /--base/)
     end
 
+    # Naming the THING a flag takes (a ref, a scope) rather than the generic
+    # "a value" -- a human told only that something is missing has to go read
+    # the usage line to learn what.
+    it "says exactly what --base takes, not merely that it takes something" do
+      attached
+
+      expect do
+        command.call("feature --base", env)
+      end.to raise_error(Lain::Error, "--base takes a ref -- #{command.usage}")
+    end
+
     # {Command::Survey#refuse_unreadable!}'s guard, which this command lacked
     # until it had a switch for the guard to matter to. A flag FOLLOWED BY A
     # SWITCH has that switch for its value: `--base --permissive` would review
@@ -272,6 +283,40 @@ RSpec.describe Lain::CLI::Command::Review do
       expect { command.call("no-such-branch", env) }.to raise_error(Lain::Review::Source::UnknownRef)
       expect(editor.bound).to be_nil
       expect(record.string).to be_empty
+    end
+  end
+
+  # `--base`'s default is {Lain::Forge::Landing::BASE} ("main"), and a
+  # repository whose trunk is called something else has this fail with no
+  # `--base` ever typed -- the one shape only THIS command can tell apart
+  # from an ordinary typo'd ref, because only it knows which ref came from a
+  # flag and which came from a default nobody asked for.
+  describe "a repository with no default base to review a branch against" do
+    around do |example|
+      git(@repo, "branch", "-D", "main")
+      example.run
+    end
+
+    it "refuses naming --base <ref>, not a bare unresolved-ref message" do
+      attached
+
+      expect { command.call("feature", env) }.to raise_error(Lain::Error, /--base <ref>/)
+    end
+
+    it "still carries the target resolver's own explanation of what failed" do
+      attached
+
+      expect { command.call("feature", env) }.to raise_error(Lain::Error, /"main".*does not resolve/)
+    end
+
+    # An EXPLICIT --base that fails to resolve is the human's own typo, not a
+    # missing default -- so it keeps the target resolver's plain words rather
+    # than being told to do the very thing they just did.
+    it "does not redirect an explicit, merely wrong --base to the same remedy" do
+      attached
+
+      expect { command.call("feature --base no-such-ref", env) }
+        .to raise_error(Lain::Review::Source::UnknownRef, /no-such-ref/)
     end
   end
 

@@ -46,6 +46,12 @@ module Lain
         # load-order reason; {#policy_for} asks that constant what it MEANS.
         SWITCHES = %w[--permissive].freeze
 
+        # What each of {FLAGS} takes, in the word a refusal names it by --
+        # naming the THING missing (a ref, a scope) rather than the generic
+        # "a value", which said nothing a human could act on beyond "retype
+        # something".
+        NEEDS_VALUE = { "base" => "a ref", "scope" => "a scope" }.freeze
+
         # A FORMAT rather than the sentence: the scopes come off
         # {Review::Partition::STRATEGIES}, which this class body cannot name
         # (see the class doc). {#usage} fills it in from a method body.
@@ -153,11 +159,11 @@ module Lain
         # `--permissive` AND quietly enable the escape -- two wrong things from
         # one typo, neither of them the word that is actually missing.
         def refuse_unreadable!(values, rest)
-          unreadable = values.select { |_, value| value.nil? || value.start_with?("--") }
-                             .keys.map { |flag| "--#{flag}" } + rest.grep(/\A--/)
-          return if unreadable.empty?
+          missing = values.select { |_, value| value.nil? || value.start_with?("--") }.keys
+          raise Error, "--#{missing.first} takes #{NEEDS_VALUE.fetch(missing.first)} -- #{usage}" if missing.any?
 
-          raise Error, "#{unreadable.join(", ")} is not a flag /review can read -- #{usage}"
+          unknown = rest.grep(/\A--/)
+          raise Error, "#{unknown.join(", ")} is not a flag /review can read -- #{usage}" if unknown.any?
         end
 
         # The whole card: resolve, build, open, BIND, HOLD, draw.
@@ -180,10 +186,26 @@ module Lain
           refuse_over_survey!
           Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
-          resolved = targets.resolve(parsed.target, base: parsed.base)
+          resolved = resolved_target(parsed)
           session = round(resolved, surface, env, policy:)
           wired(resolved, session, env, scope, surface)
           drawn(resolved, session, scope).tap { surface.focus }
+        end
+
+        # {Lain::CLI::Review::Target}'s own words, reached rather than
+        # restated -- EXCEPT for the one case only this command can tell
+        # apart from a typo'd branch: a `base` that failed to resolve because
+        # NOTHING was named for it, which means the target resolved a DEFAULT
+        # this repository does not have. That case names the flag that would
+        # fix it; an explicit `--base` that fails to resolve is the human's
+        # own typo and keeps the target resolver's plain words.
+        def resolved_target(parsed)
+          targets.resolve(parsed.target, base: parsed.base)
+        rescue Lain::Review::Source::UnknownRef => e
+          raise e unless parsed.base.nil? && e.role == "base"
+
+          raise Error, "#{e.message} -- this repository has no default base to review a branch against; " \
+                       "name one with --base <ref>"
         end
 
         # The KIND is the question, not `open?`: a second `/review` over a
