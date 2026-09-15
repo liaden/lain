@@ -33,18 +33,21 @@ module Lain
     class Variance
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task
       # @param price_book [Lain::PriceBook] how each recording's usage becomes dollars
+      # @param set_aside [Array<String>] runs of the task that measured nothing,
+      #   each named with why; listed, never counted
       # @raise [ArgumentError] on fewer than two recordings, or on a recording
       #   whose baseline cannot line up 1:1 with its model calls
       # @raise [Capability::Guard::Mismatch] when the recordings degraded different sets
       # @raise [Lain::Error] when the recordings walked different modes
       # @raise [Lain::Error] when the recordings rendered through different
       #   context pipeline stages
-      def initialize(recordings:, price_book: PriceBook.default)
+      def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
           @recordings.size < 2
 
         @price_book = price_book
+        @set_aside = set_aside.dup.freeze
         guard_pipelines!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
@@ -54,7 +57,7 @@ module Lain
       #
       # @return [String]
       def report
-        [header, determinism_section, divergence_section, distribution_section].join("\n\n")
+        [header, determinism_section, divergence_section, distribution_section, *set_aside_section].join("\n\n")
       end
 
       private
@@ -104,6 +107,12 @@ module Lain
 
       def distribution_section
         ["== Distribution ==", @compare.report].join("\n")
+      end
+
+      def set_aside_section
+        return [] if @set_aside.empty?
+
+        [["== Set aside ==", *@set_aside].join("\n")]
       end
 
       def build_compare

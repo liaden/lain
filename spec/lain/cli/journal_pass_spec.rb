@@ -14,9 +14,8 @@ load File.expand_path("../../../exe/lain", __dir__)
 # suite green.
 #
 # So the dispatch itself is the subject here. A dry pass reaching a model is the
-# card's whole thesis, and {Lain::Provider::Unreachable} only refuses at the
-# provider -- it cannot refuse a boundary that called the wrong method with a
-# REAL provider wired behind it.
+# card's whole thesis, and a pass's dry method building nothing cannot help a
+# boundary that called the live method instead.
 RSpec.describe "exe/lain journal_pass" do
   # The pass duck both `consolidate` and `improve` hand to `journal_pass`:
   # records which method the boundary chose, spawning nothing either way.
@@ -25,31 +24,25 @@ RSpec.describe "exe/lain journal_pass" do
       attr_reader :calls
 
       def initialize = @calls = []
-      def report(selector) = tap { @calls << [:report, selector] }.then { "live #{selector}" }
-      def dry_report(selector) = tap { @calls << [:dry_report, selector] }.then { "dry #{selector}" }
+      def report = tap { @calls << :report }.then { "live" }
+      def dry_report = tap { @calls << :dry_report }.then { "dry" }
     end.new
   end
 
   # `journal_pass` is private and reads Thor's `options`, so it is exercised on a
   # CLI instance built with the options hash Thor would have parsed -- the same
   # plain-hash seam Backend and Wiring are tested through.
-  def dispatch(pass, selector, **options)
-    LainCLI.new([], options).send(:journal_pass, pass, selector)
+  def dispatch(pass, **options)
+    LainCLI.new([], options).send(:journal_pass, pass)
   end
 
   it "picks #dry_report when --dry-run is set, so nothing can reach a model" do
-    expect(dispatch(pass, "s1", dry_run: true)).to eq("dry s1")
-    expect(pass.calls).to eq([[:dry_report, "s1"]])
+    expect(dispatch(pass, dry_run: true)).to eq("dry")
+    expect(pass.calls).to eq([:dry_report])
   end
 
   it "picks #report when --dry-run is absent, so a live run is not silently dry" do
-    expect(dispatch(pass, "s1", dry_run: false)).to eq("live s1")
-    expect(pass.calls).to eq([[:report, "s1"]])
-  end
-
-  it "forwards the selector unchanged, so the boundary resolves nothing itself" do
-    dispatch(pass, "/tmp/elsewhere/kept.ndjson", dry_run: true)
-
-    expect(pass.calls.first.last).to eq("/tmp/elsewhere/kept.ndjson")
+    expect(dispatch(pass, dry_run: false)).to eq("live")
+    expect(pass.calls).to eq([:report])
   end
 end

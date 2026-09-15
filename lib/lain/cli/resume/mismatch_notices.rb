@@ -3,9 +3,10 @@
 module Lain
   module CLI
     class Resume
-      # Compares what the current run resolved against what the header recorded
-      # and builds the LOUD-and-continue notices: name both, run with the flags,
-      # never a silent override in either direction.
+      # Compares what the current run resolved against what a session header
+      # recorded and builds the LOUD-and-continue notices: name both, run with
+      # the flags, never a silent override in either direction. A resumed or
+      # forked chat asks it, and so does a journal pass over a recorded session.
       #
       # Only a field the human TYPED is noticed: an untyped one resolved to the
       # recording, or to the environment where the header recorded nothing,
@@ -17,16 +18,17 @@ module Lain
         # How a notice names each field the recording can disagree about.
         LABELS = { provider: "provider", api_base: "api base", num_ctx: "num_ctx", num_batch: "num_batch" }.freeze
 
-        # @param recording [Bench::Session::Recording] the resumed file's own
-        #   rebuilt recording -- `recording.context.model` is display-only
-        #   here, the header's own recorded value
-        # @param path [String] the resumed file's own path, read directly for
-        #   the recorded profile: not one of {Context}'s constructor inputs, so
-        #   it never rides `recording.context`
-        def initialize(recording:, path:)
-          @recording = recording
+        # @param path [String] the session file's own path, whose header holds
+        #   both the recorded model and the recorded profile
+        def initialize(path:)
           @path = path
         end
+
+        # What the header recorded, for a caller that lays its typed flags over
+        # it before it has anything to compare.
+        #
+        # @return [RunProfile]
+        def recorded_profile = RunProfile.from_header(header)
 
         # @param profile [RunProfile] what the current run resolved, carrying
         #   which fields the human typed
@@ -39,7 +41,7 @@ module Lain
         private
 
         def model_notice(model)
-          recorded = @recording.context.model
+          recorded = header["model"]
           return if model.nil? || model == recorded
 
           continuing("model", recorded, model)
@@ -50,7 +52,7 @@ module Lain
         # nothing about the rest, which it never had. Within a recorded profile
         # a field left unset is likewise no value to disagree with.
         def typed_notices(profile)
-          recorded = RunProfile.from_header(header)
+          recorded = recorded_profile
           return [unrecorded_notice(profile)] unless recorded.recorded?
 
           LABELS.keys.intersection(profile.typed).map do |field|
@@ -69,8 +71,10 @@ module Lain
         end
 
         # Read straight off THIS file's own header record, the same duck
-        # {ChainWalk} already reads `resumed_from` through.
-        def header = Resume.header(@path)
+        # {ChainWalk} already reads `resumed_from` through. It is also the
+        # record a load rebuilds `context.model` from, so the model compared
+        # here is the one a resumed recording carries.
+        def header = @header ||= Resume.header(@path)
       end
     end
   end

@@ -119,6 +119,11 @@ module Lain
       # help text.
       #
       # @param options [Hash] Thor's parsed flag set for the invoked command
+      # @param profile [RunProfile] the provider, model, endpoint and runner
+      #   knobs, carrying which of them were typed. Every command hands in the
+      #   one it resolved; left out, it is read off `options`, where every field
+      #   holding a value counts as typed. A keyword, so a caller passing both
+      #   writes the option hash in braces and neither can be taken for the other.
       # @option options [String] :provider name of the chat tier's provider
       # @option options [String] :model model id for the chat tier
       # @option options [String] :api_base base URL override, ollama only
@@ -135,14 +140,9 @@ module Lain
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
-      # @param run_profile [RunProfile] the provider, model, endpoint and runner
-      #   knobs, carrying which of them were typed. A chat launch hands in the
-      #   one it resolved; any other caller's is read off `options`, where every
-      #   field holding a value counts as typed. Positional, because a keyword
-      #   would claim the braceless option hash every other caller passes.
-      def initialize(options, run_profile = RunProfile.from_options(options))
+      def initialize(options, profile: RunProfile.from_options(options))
         @options = options
-        @run_profile = run_profile
+        @run_profile = profile
         summarizer_name
         summarizer_max_tokens
         # BOTH arms, built for their refusals and dropped: `--summarizer-provider
@@ -151,12 +151,28 @@ module Lain
         # says, so `lain up` cannot open a pane that dies at the first
         # compaction. It also evaluates {#api_base} on the way in, so that flag
         # stays validated for EVERY provider.
-        [run_profile.provider, summarizer_name].each { |name| ollama_tier(name) }
+        [profile.provider, summarizer_name].each { |name| ollama_tier(name) }
         # `--num-ctx`'s SHAPE only: the trained-maximum half needs a probe, and
         # a constructor that probes is one {ChatLaunch#preflight} cannot run.
         # Still AFTER {#api_base}, unchanged: a base URL the probe will talk to
         # has to be a usable one before a window is judged against it.
         num_ctx_request.requested
+      end
+
+      # `flag` names WHICH flag was wrong: `--provider` and
+      # `--summarizer-provider` are two different mistakes to make, and a
+      # refusal that named neither would send the operator to the wrong one.
+      # A class method, so a caller that builds no Backend -- a dry run, which
+      # must read no key -- still refuses a typo by name.
+      #
+      # @param name [String, nil]
+      # @param flag [String]
+      # @return [String] the name, known
+      # @raise [UnknownProvider]
+      def self.validated(name, flag = "provider")
+        return name if PROVIDERS.include?(name)
+
+        raise UnknownProvider, "unknown #{flag} #{name.inspect}, expected one of #{PROVIDERS.inspect}"
       end
 
       # Anthropic is env-configured and reads its own credentials, so no flag
@@ -191,10 +207,15 @@ module Lain
       # @param queue [Boolean] the caller's willingness to WAIT for
       #   {Provider::Admission} to free a slot; not a property of the endpoint.
       #   Every arm takes it now, so it is forwarded unconditionally.
-      def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true)
+      # @param journal [#<<] where the provider's own records land -- a wait,
+      #   a truncated stream. This run's {#journal} by default, resolved per
+      #   event; a command that records each run into its own file hands in a
+      #   destination that follows the run instead.
+      def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true,
+                   journal: run_journal)
         case name
-        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal: run_journal, spool:)
-        else anthropic_provider(spool, channel, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
+        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal:, spool:)
+        else anthropic_provider(spool, channel, journal, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end
       end
 
@@ -458,11 +479,11 @@ module Lain
       # `flag` is whichever one SELECTED this arm, resolved by the caller that
       # knows. `--summarizer-provider anthropic` used to be refused in
       # `--provider`'s name -- a flag the operator never typed.
-      def anthropic_provider(spool, channel, queue: true, flag: OllamaTier::CHAT_FLAG)
+      def anthropic_provider(spool, channel, journal, queue: true, flag: OllamaTier::CHAT_FLAG)
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; #{flag} anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::Anthropic.new(spool:, channel:, queue:, journal: run_journal)
+        Provider::Anthropic.new(spool:, channel:, queue:, journal:)
       end
 
       # Where a provider's {Telemetry::ProviderWait} lands: this run's journal,
@@ -482,14 +503,7 @@ module Lain
 
       def summarizer_name = validated(knob(:summarizer_provider, DEFAULT_SUMMARIZER_PROVIDER), "summarizer provider")
 
-      # `flag` names WHICH flag was wrong: `--provider` and
-      # `--summarizer-provider` are two different mistakes to make, and a
-      # refusal that named neither would send the operator to the wrong one.
-      def validated(name, flag)
-        return name if PROVIDERS.include?(name)
-
-        raise UnknownProvider, "unknown #{flag} #{name.inspect}, expected one of #{PROVIDERS.inspect}"
-      end
+      def validated(name, flag) = self.class.validated(name, flag)
 
       def tier_default_model = chat_name?(summarizer_name) ? model : default_model(summarizer_name)
 

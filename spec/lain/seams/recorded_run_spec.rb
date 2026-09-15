@@ -291,8 +291,8 @@ module T14RecordedRun
   # and NO `--num-ctx`: sending one reloads the runner at a different window and
   # makes the chat recording disagree with the `/api/ps` one.
   def backend
-    Lain::CLI::Backend.new(provider: "ollama", model: MODEL, api_base: API_BASE,
-                           max_tokens: 512, temperature: 0, seed: 1)
+    Lain::CLI::Backend.new({ provider: "ollama", model: MODEL, api_base: API_BASE,
+                             max_tokens: 512, temperature: 0, seed: 1 })
   end
 
   # {Lain::Journal.records}' skipping contract is not wanted here: an unparseable

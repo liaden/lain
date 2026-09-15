@@ -17,59 +17,84 @@ module Lain
     # one signature covering both. The exe's `--dry-run` picks the method, and
     # the boolean stops at the flag it came from.
     class Consolidate
-      # The exe's assembly seam: build the pass from Thor options via {Backend}.
-      # Under `--dry-run` the provider is {Provider::Unreachable} instead of
-      # {Backend#provider}, so no API key is fetched and nothing can quietly
-      # reach a model -- which is what lets {Lain::Consolidation} require every
-      # collaborator, since "no model here" is now a thing this wiring SAYS.
+      # The exe's assembly seam. The session is resolved ONCE, here, and every
+      # later read -- the recorded profile, the lineages -- is of that file.
+      #
+      # The backend runs under what the human typed over what the session under
+      # review recorded, as a resumed chat's does. A typed field the recording
+      # disagrees with still wins, and {Resume::MismatchNotices} says so ahead
+      # of the report.
+      #
+      # It is built only when {#report} runs. A dry run builds no {Backend},
+      # so no provider, no ollama tier and no credential lookup: a session
+      # recorded on ollama-cloud dry-runs on a box with no OLLAMA_API_KEY. The
+      # provider's NAME is still checked, since that needs neither.
       #
       # @param options [Hash] the invoked command's parsed flags
-      # @option options [Boolean] :dry_run swaps the provider for an unreachable one
+      # @param selector [String] the session under review
+      # @param profile [RunProfile] what the model flag band resolved
+      # @param paths [Paths] resolves the session dir
+      # @option options [String] :provider the model flag band's provider, which
+      #   the profile was resolved from
+      # @option options [String] :model the model flag band's model id
       # @return [Consolidate]
-      def self.from_options(options)
-        backend = Backend.new(options)
-        new(consolidation: Lain::Consolidation.new(
-          provider: options[:dry_run] ? Provider::Unreachable.new : backend.provider,
-          recorder: Memory::Recorder.new,
-          context: backend.context, slots: backend.slots
-        ))
+      # @raise [SessionFile::SessionNotFound] before anything else is read
+      def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new)
+        path = SessionFile.resolve(selector, paths:)
+        mismatches = Resume::MismatchNotices.new(path:)
+        resolved = profile.over(mismatches.recorded_profile)
+        Backend.validated(resolved.provider)
+        new(path:, profile: resolved, notices: mismatches.call(profile: resolved, model: resolved.model),
+            consolidation: -> { clerk_over(Backend.new(options, profile: resolved)) })
       end
 
-      # @param consolidation [Lain::Consolidation] the pre-wired pass (provider,
-      #   recorder, slots, context); {.from_options} assembles it, an instance
-      #   only resolves the session file and renders the outcome
-      # @param paths [Paths] resolves the session dir; injectable for specs
-      def initialize(consolidation:, paths: Paths.new)
+      def self.clerk_over(backend)
+        Lain::Consolidation.new(provider: backend.provider, recorder: Memory::Recorder.new,
+                                context: backend.context, slots: backend.slots)
+      end
+      private_class_method :clerk_over
+
+      # @param path [String] the session file under review, already resolved
+      # @param profile [RunProfile] the backend the pass runs on, which a dry
+      #   run names
+      # @param consolidation [#call] answers the pre-wired {Lain::Consolidation};
+      #   called by {#report} only
+      # @param notices [Array<String>] said ahead of either report
+      def initialize(path:, profile:, consolidation:, notices: [])
+        @path = path
+        @profile = profile
         @consolidation = consolidation
-        @paths = paths
+        @notices = notices
       end
 
       # Run one court_clerk pass per completed subagent lineage.
       #
-      # @param selector [String] an explicit path, a bare filename, or a
-      #   filename missing its ".ndjson" suffix
       # @return [String]
-      # @raise [SessionFile::SessionNotFound]
       # @raise [Bench::Session::Corrupt] naming the file and its damage
-      def report(selector)
-        outcomes = @consolidation.call(lineages(selector))
-        return "consolidate: no completed subagent lineages found." if outcomes.empty?
+      def report
+        outcomes = @consolidation.call.call(lineages)
+        return said("consolidate: no completed subagent lineages found.") if outcomes.empty?
 
-        ["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
-         *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n")
+        said(["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
+              *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n"))
       end
 
-      # Which lineages the pass WOULD clerk, spawning nothing.
+      # Which lineages the pass WOULD clerk, and on what, spawning nothing.
       #
       # @return [String]
-      # @raise [SessionFile::SessionNotFound]
-      def dry_report(selector) = @consolidation.dry_run(lineages(selector))
+      # @raise [Bench::Session::Corrupt] naming the file and its damage
+      def dry_report
+        said("consolidate: would run on #{@profile.provider}, model #{@profile.model || "the provider's default"}",
+             Lain::Consolidation.dry_run(lineages))
+      end
 
       private
 
+      def said(*report) = [*@notices, *report].join("\n")
+
       # Read whole, so a damaged session refuses by name rather than reporting
       # the lineages its damage left readable.
-      def lineages(selector) = Bench::Session::Lineages.read(SessionFile.resolve(selector, paths: @paths))
+      def lineages = Bench::Session::Lineages.read(@path)
     end
   end
 end

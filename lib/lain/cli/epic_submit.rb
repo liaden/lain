@@ -385,9 +385,10 @@ module Lain
       # stage is configured to need one. The assembly lives here, not in the
       # exe, so it carries specs.
       #
-      # @param options [Hash] the invoked command's parsed flags (`provider`, `model`)
-      # @option options [String] :provider the backend provider for an adjudicated stage
-      # @option options [String] :model the model for an adjudicated stage
+      # @param options [Hash] the invoked command's parsed flags, which the
+      #   adjudication pair's {Backend} reads
+      # @param profile [RunProfile] the provider, model, endpoint and runner
+      #   knobs the model flag band resolved
       # @param input [IO, nil] as for {#initialize}
       # @param output [IO, nil] as for {#initialize}
       # @param root [String] as for {#initialize}
@@ -396,10 +397,13 @@ module Lain
       #   a pair is built at all
       # @param backend [#call] answers the {Backend} the pair spawns over;
       #   called only when some stage is adjudicated
+      # @option options [String] :provider the model flag band's provider, which
+      #   the profile was resolved from
+      # @option options [String] :model the model flag band's model id
       # @return [EpicSubmit]
-      def self.from_options(options, input:, output:, root: Project::Resolver.default_project.root,
-                            paths: Paths.new, config: Config.load(root:),
-                            backend: -> { Backend.new(Adjudication.flags(options)) })
+      def self.from_options(options, input:, output:, profile: RunProfile.from_options(options),
+                            root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+                            backend: -> { Backend.new(options, profile:) })
         pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard)
         new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief)
       end
@@ -568,10 +572,6 @@ module Lain
         Pair = Data.define(:role_spawn, :brief)
         NONE = Pair.new(role_spawn: nil, brief: nil)
 
-        # `epic submit` exposes only the provider and the model, and every
-        # model turn needs a ceiling.
-        MAX_TOKENS = 4_096
-
         # @param config [#gate_policy_for]
         def self.wanted?(config)
           Lain::Epic::STAGES.any? do |stage|
@@ -598,18 +598,6 @@ module Lain
           spawner = new(provider: built.provider, context_factory: -> { built.context }, slots: built.slots,
                         tool_middleware:)
           Pair.new(role_spawn: spawner.role_spawn, brief: Brief.new(config:, paths:, root:))
-        end
-
-        # Read key by key, so a Thor options hash and a plain one both work.
-        #
-        # @param options [Hash] the invoked command's parsed flags
-        # @option options [String] :provider the backend provider, when given
-        # @option options [String] :model the model, when given
-        # @option options [Integer] :max_tokens the per-turn ceiling; defaults to {MAX_TOKENS}
-        # @return [Hash{Symbol=>Object}] what {Backend.new} reads
-        def self.flags(options)
-          { provider: options[:provider], model: options[:model],
-            max_tokens: options[:max_tokens] || MAX_TOKENS }.compact
         end
 
         def initialize(provider:, context_factory:, slots:, tool_middleware:)

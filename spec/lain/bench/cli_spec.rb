@@ -529,6 +529,38 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  # One provider serves every arm, so its own records go to the one file this
+  # comparison has: the journal its grades and leases land in.
+  describe "#arms_report's provider" do
+    let(:journal) { Lain::Channel.new }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }) }
+    let(:uncaching) do
+      Lain::Provider::Mock.new(capabilities: [], responses: [text_response("FILE lib/widget.rb\nEND",
+                                                                           usage: Lain::Usage.new(input_tokens: 8))])
+    end
+
+    def arms(**)
+      cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"), backend:,
+                      tools: Lain::Bench::Harness::NO_TOOLS, isolation: "none", **)
+    end
+
+    it "is built over the run's journal" do
+      allow(backend).to receive(:provider).and_return(uncaching)
+
+      arms(journal:)
+
+      expect(backend).to have_received(:provider).with(journal:)
+    end
+
+    it "journals what the arms' context needs and the provider lacks, once" do
+      allow(backend).to receive(:provider).and_return(uncaching)
+
+      arms(journal:)
+
+      expect(journal.drain.grep(Lain::Telemetry::CapabilityDegraded).map(&:capability)).to eq([:prompt_caching])
+    end
+  end
+
   # The containing set is ENUMERATED rather than derived, which is only safe if
   # something reddens when the advertised set grows. This is that something.
   describe "which isolation backends contain a write" do
@@ -772,6 +804,192 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp, backend: backend(provider: "gemini")) }
           .to raise_error(Lain::CLI::UnknownProvider, /gemini/)
+      end
+    end
+
+    # The provider `record` builds for itself, over the wire: its own records
+    # have to reach the file of the run they happened in.
+    describe "the provider the backend builds" do
+      def stub_unterminated_stream
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                     body: "#{JSON.generate("model" => "qwen3:4b", "done" => false,
+                                            "message" => { "role" => "assistant", "content" => "par" })}\n")
+      end
+
+      def types_in(path) = File.foreach(path).map { |line| JSON.parse(line)["type"] }
+
+      it "lands a truncated stream in the run file it cut short" do
+        stub_unterminated_stream
+        Dir.mktmpdir do |tmp|
+          paths = cli.record(taskfile: write_taskfile(tmp), runs: 1, out: File.join(tmp, "sessions"),
+                             backend: backend(provider: "ollama", model: "qwen3:4b"))
+
+          expect(types_in(paths.first)).to include("truncated_stream", "capability_degraded")
+        end
+      end
+
+      it "gives every run file its own capability record" do
+        stub_unterminated_stream
+        Dir.mktmpdir do |tmp|
+          paths = cli.record(taskfile: write_taskfile(tmp), runs: 2, out: File.join(tmp, "sessions"),
+                             backend: backend(provider: "ollama", model: "qwen3:4b"))
+
+          expect(paths.map { |path| types_in(path).count("capability_degraded") }).to eq([1, 1])
+        end
+      end
+    end
+
+    # A run the provider refuses mid-sweep costs that run, not the sweep.
+    describe "a failed run" do
+      let(:failing) do
+        Class.new(Lain::Provider::Mock) do
+          def complete(request, **)
+            return super if @refused
+
+            @refused = true
+            raise Lain::Provider::Ollama::APIError, "connection refused"
+          end
+        end
+      end
+
+      def record_with_first_failing(tmp, runs:)
+        File.join(tmp, "sessions").tap do |out|
+          cli.record(taskfile: write_taskfile(tmp), runs:, out:, backend: backend(model: "claude-sonnet-4-6"),
+                     provider: failing.new(responses: [text_response("325-650 mg q4h", usage:,
+                                                                                       model: "claude-sonnet-4-6")]))
+        end
+      end
+
+      it "sets run 1 aside, records run 2, and variance names run 1 as failed" do
+        Dir.mktmpdir do |tmp|
+          out = record_with_first_failing(tmp, runs: 2)
+
+          expect(Dir.children(out).sort).to eq(%w[1.failed.ndjson 2.ndjson])
+          expect { cli.variance_report([out]) }
+            .to raise_error(described_class::Refusal, /1\.failed\.ndjson: failed.*at least two/m)
+        end
+      end
+
+      it "reports over the runs that recorded, listing the failed one apart with why it failed" do
+        Dir.mktmpdir do |tmp|
+          report = cli.variance_report([record_with_first_failing(tmp, runs: 3)])
+
+          expect(report).to start_with("Variance — 2 recordings")
+          expect(report).to match(/== Set aside ==\n.*1\.failed\.ndjson: failed recording /)
+          expect(report).to include("(Lain::Provider::Ollama::APIError: connection refused)")
+        end
+      end
+
+      it "says which run was set aside, and why, where it would have named the path" do
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          said = cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "claude-sonnet-4-6"),
+                            provider: failing.new(responses: [text_response("fine", usage:)]))
+
+          expect(said).to eq(["#{File.join(out, "1.failed.ndjson")} " \
+                              "(set aside: Lain::Provider::Ollama::APIError: connection refused)",
+                              File.join(out, "2.ndjson")])
+        end
+      end
+
+      # A sweep that recorded nothing is not a success, whatever each run said.
+      it "refuses when every run was set aside, naming each" do
+        refusing = Class.new(Lain::Provider::Mock) do
+          def complete(*) = raise(Lain::Provider::Ollama::APIError, "connection refused")
+        end
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+
+          expect do
+            cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "m"),
+                       provider: refusing.new)
+          end.to raise_error(described_class::Refusal, /\Ano run recorded\n.*1\.failed\.ndjson.*\n.*2\.failed\.ndjson/)
+          expect(Dir.children(out).sort).to eq(%w[1.failed.ndjson 2.failed.ndjson])
+        end
+      end
+
+      it "refuses variance over a sweep that recorded nothing without a bare path prefix" do
+        refusing = Class.new(Lain::Provider::Mock) do
+          def complete(*) = raise(Lain::Provider::Ollama::APIError, "connection refused")
+        end
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          suppress(described_class::Refusal) do
+            cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "m"),
+                       provider: refusing.new)
+          end
+
+          expect { cli.variance_report([out]) }.to raise_error(described_class::Refusal) { |refusal|
+            expect(refusal.message.lines.map(&:strip)).to all(satisfy { |line| !line.start_with?(":") })
+            expect(refusal.message.lines.last).to start_with("variance needs at least two recordings")
+          }
+        end
+      end
+    end
+
+    # A killed process leaves a run with no header. It is listed, never a
+    # reason to refuse every other recording beside it.
+    it "lists a session file with no header as set aside rather than refusing the directory" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "claude-sonnet-4-6"),
+                   provider:)
+        headerless = File.foreach(File.join(out, "2.ndjson")).reject { |line| JSON.parse(line)["type"] == "session" }
+        File.write(File.join(out, "3.ndjson"), headerless.join)
+
+        report = cli.variance_report([out])
+
+        expect(report).to start_with("Variance — 2 recordings")
+        expect(report).to match(/== Set aside ==\n.*3\.ndjson: no session header/)
+      end
+    end
+
+    # A copy of a recorded run whose every turn answered with no usage, beside
+    # the record a stream that stopped without its `done` line leaves.
+    def write_unmeasured(from, to)
+      zeroed = { "input_tokens" => 0, "output_tokens" => 0 }
+      records = File.foreach(from).map do |line|
+        record = JSON.parse(line)
+        record["type"] == "turn_usage" ? record.merge("usage" => zeroed) : record
+      end
+      truncated = { "type" => "truncated_stream", "kind" => "unterminated", "request_digest" => "blake3:ab",
+                    "frames" => 1, "accumulated_bytes" => 3, "tool_calls" => 0 }
+      File.write(to, [*records, truncated].map { |record| "#{JSON.generate(record)}\n" }.join)
+    end
+
+    # A stream cut short answers with no usage at all, and averaged in it reads
+    # as a free run.
+    it "leaves a zero-usage run beside a truncated stream out of variance, and names it" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "claude-sonnet-4-6"),
+                   provider:)
+        write_unmeasured(File.join(out, "2.ndjson"), File.join(out, "3.ndjson"))
+
+        report = cli.variance_report([out])
+
+        expect(report).to start_with("Variance — 2 recordings")
+        expect(report).to match(/== Set aside ==\n.*3\.ndjson: no usage recorded beside a truncated stream/)
+      end
+    end
+
+    # The counter-example: a stream cut short on a run that still paid for
+    # tokens measured something, and stays in the distribution.
+    it "keeps a run with usage beside a truncated stream in variance" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "claude-sonnet-4-6"),
+                   provider:)
+        File.write(File.join(out, "2.ndjson"),
+                   "#{JSON.generate("type" => "truncated_stream", "kind" => "unterminated",
+                                    "request_digest" => "blake3:ab", "frames" => 1, "accumulated_bytes" => 3,
+                                    "tool_calls" => 0)}\n", mode: "a")
+
+        report = cli.variance_report([out])
+
+        expect(report).to start_with("Variance — 2 recordings")
+        expect(report).not_to include("Set aside")
       end
     end
 

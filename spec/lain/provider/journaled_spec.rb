@@ -95,6 +95,7 @@ RSpec.describe Lain::Provider::Journaled do
       expect(provider.to_s).to eq(inner.to_s)
       expect(provider.context_window_tokens("qwen3:4b")).to eq(inner.context_window_tokens("qwen3:4b"))
       expect(provider.window_probe("qwen3:4b")).to eq(inner.window_probe("qwen3:4b"))
+      expect(provider.serves?("qwen3:4b")).to eq(inner.serves?("qwen3:4b"))
       expect(provider.trained_context_tokens("qwen3:4b")).to eq(inner.trained_context_tokens("qwen3:4b"))
     end
 
@@ -118,7 +119,7 @@ RSpec.describe Lain::Provider::Journaled do
   # is already journaled by that middleware; the measured gap is the oracle.
   describe "what is deliberately NOT wrapped" do
     it "leaves the chat provider CLI::Backend builds undecorated" do
-      backend = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3:4b", max_tokens: 64)
+      backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64 })
 
       expect(backend.provider).not_to be_a(described_class)
     end

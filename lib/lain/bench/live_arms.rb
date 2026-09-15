@@ -59,8 +59,8 @@ module Lain
 
       # The cheaper sibling a narrow task is routed to. ONE id and not a
       # per-provider table, because there is no general "a cheaper model than
-      # this one" function to write: a roster whose backend cannot serve this
-      # id is REFUSED at assembly instead of guessing.
+      # this one" function to write: a roster whose backend is not Claude's is
+      # REFUSED at assembly instead of guessing.
       CHEAP_MODEL = "claude-haiku-4-5"
 
       # What a backend must have resolved for {.default_router} to route it: an
@@ -157,6 +157,22 @@ module Lain
               "control twice under two names. Name a --cheap-model different from --model"
       end
       private_class_method :refuse_unroutable!
+
+      # Before any spend, the backend's own server is asked whether it has the
+      # `--cheap-model` it was told to route to. Only its no refuses: an arm
+      # that cannot ask, or a server that cannot answer, proceeds, because a
+      # guess is not a reason to cancel a paid run.
+      #
+      # @param provider [#serves?] the one provider every arm asks
+      # @param cheap_model [String, nil] `--cheap-model`; nil asks nothing
+      # @raise [UnroutableBackend] naming the model the server has not got
+      def self.refuse_unservable!(provider, cheap_model)
+        return if cheap_model.nil? || !provider.serves?(cheap_model).not_served?
+
+        raise UnroutableBackend,
+              "the adaptive-router arm would send narrow tasks to #{cheap_model.inspect}, and the backend's " \
+              "server says it has no such model. Name a --cheap-model it serves"
+      end
 
       # The two epic entries' labels. They differ in WHO answers the gates and in
       # nothing else, so the names are the only thing telling their rows apart.

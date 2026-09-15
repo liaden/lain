@@ -31,12 +31,11 @@ module Lain
 
     # Every spawn collaborator is REQUIRED, so a forgotten one is a loud
     # ArgumentError at the wiring site rather than a nil checked one spawn later.
-    # That is affordable only because a dry pass has a real thing to pass:
-    # {Provider::Unreachable}. When `provider:` was optional, four nils were
-    # indistinguishable from a deliberate dry run.
+    # That is affordable only because a dry pass builds none of them:
+    # {.dry_run} is asked of the class. When `provider:` was optional, four nils
+    # were indistinguishable from a deliberate dry run.
     #
-    # @param provider [Lain::Provider] the clerk's model; {Provider::Unreachable}
-    #   for a `--dry-run`, which touches no provider and so needs no API key
+    # @param provider [Lain::Provider] the clerk's model
     # @param recorder [Memory::Recorder] the shared index the clerk writes into
     # @param context [Lain::Context] the factory context the clerk persona
     #   reshapes (model/max_tokens ride through; its system is REPLACED by the
@@ -54,12 +53,13 @@ module Lain
       @journal = journal
     end
 
-    # Never spawns. The dry-run surface and the live pass read the same
-    # lineages, so "what would run" and "what ran" can never disagree.
+    # Never spawns, and needs nothing a spawn does, so a dry run builds no
+    # provider and reads no key. The dry-run surface and the live pass read
+    # the same lineages, so "what would run" and "what ran" can never disagree.
     #
     # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
     # @return [String]
-    def dry_run(lineages)
+    def self.dry_run(lineages)
       scaffolds = lineages.map { |lineage| Scaffold.new(lineage) }
       return "consolidate: no completed subagent lineages found." if scaffolds.empty?
 

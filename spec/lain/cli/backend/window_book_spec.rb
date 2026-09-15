@@ -44,7 +44,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       expect(resolution).to be_authoritative
     end
 
-    # The same set `Provider::Ollama#serves?` grants a window by: ollama appends
+    # The same set `Provider::Ollama#runs?` grants a window by: ollama appends
     # `:latest` to an untagged request before printing it back, so the book
     # exists BECAUSE the server answered for `qwen3:latest` when the operator
     # typed `qwen3`. Spending it by a narrower rule would refuse the very name

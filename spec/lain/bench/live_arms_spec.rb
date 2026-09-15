@@ -219,6 +219,34 @@ RSpec.describe Lain::Bench::LiveArms do
           .to eq(described_class::CHEAP_MODEL)
       end
     end
+
+    # Asked of the provider before anything is spent. Only the server saying it
+    # has no such model refuses: a server that could not be asked is not a no.
+    describe "a --cheap-model the backend's server cannot serve" do
+      def answering(serving, asked = [])
+        Class.new(Lain::Provider::Mock) do
+          define_method(:serves?) { |model| (asked << model) && serving }
+        end.new
+      end
+
+      it "refuses naming the model when the server says it has not got it" do
+        expect { described_class.refuse_unservable!(answering(Lain::Provider::Serving::NOT_SERVED), "nonesuch:1b") }
+          .to raise_error(described_class::UnroutableBackend, /nonesuch:1b/)
+      end
+
+      it "proceeds when the server serves it, or could not say" do
+        [Lain::Provider::Serving::SERVED, Lain::Provider::Serving::UNKNOWN].each do |serving|
+          expect { described_class.refuse_unservable!(answering(serving), "qwen3:4b") }.not_to raise_error
+        end
+      end
+
+      it "asks nothing when no --cheap-model was named" do
+        asked = []
+        described_class.refuse_unservable!(answering(Lain::Provider::Serving::NOT_SERVED, asked), nil)
+
+        expect(asked).to be_empty
+      end
+    end
   end
 
   # THE ARM IS NOT INERT, and that is proven against the REAL spawn seam rather

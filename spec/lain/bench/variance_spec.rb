@@ -254,5 +254,27 @@ RSpec.describe Lain::Bench::Variance do
       expect { described_class.new(recordings: [reference]) }
         .to raise_error(ArgumentError, /at least two/)
     end
+
+    it "counts only the recordings, never the runs set aside, toward the two" do
+      expect { described_class.new(recordings: [reference], set_aside: ["2.failed.ndjson: failed recording"]) }
+        .to raise_error(ArgumentError, /at least two/)
+    end
+  end
+
+  # Runs that could not be measured are named rather than averaged in or
+  # silently dropped: a reader of the table has to know what it is over.
+  describe "runs set aside" do
+    let(:set_aside) { ["3.failed.ndjson: failed recording", "4.ndjson: no usage recorded beside a truncated stream"] }
+
+    it "lists each one, with why, in a section of its own" do
+      report = described_class.new(recordings: [reference, diverging], set_aside:).report
+
+      expect(report).to end_with("== Set aside ==\n#{set_aside.join("\n")}")
+      expect(report).to start_with("Variance — 2 recordings")
+    end
+
+    it "adds no section when every run was measured" do
+      expect(described_class.new(recordings: [reference, diverging]).report).not_to include("Set aside")
+    end
   end
 end

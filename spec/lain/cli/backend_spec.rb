@@ -112,9 +112,9 @@ RSpec.describe Lain::CLI::Backend do
 
   # The arm is selected by a PROVIDER NAME rather than by a boolean `--cloud`,
   # and that is what makes it reachable from `lain bench arms` / `lain bench
-  # record`: both build their Backend from closed literal maps (ARMS_FLAGS,
-  # RECORD_FLAGS) that forward `provider:` and carry no key a boolean could
-  # ride in on. These examples drive the same seam those maps do.
+  # record`: both build their Backend from the model flag band, whose profile
+  # carries `provider` and has no field a boolean could ride in on. These
+  # examples drive the same seam that band does.
   describe "the ollama-cloud arm" do
     def with_key(value = "sk-ollama-test", &) = with_env("OLLAMA_API_KEY" => value, &)
 
@@ -496,7 +496,7 @@ RSpec.describe Lain::CLI::Backend do
     # table becomes a prefix rule for every LATER model name -- and untagged
     # ollama names that are prefixes of tagged ones are the ordinary case, not a
     # contrived one: ollama prints the resident runner as `qwen3:latest` and
-    # `Ollama#serves?` matches the untagged `qwen3` an operator typed. A
+    # `Ollama#runs?` matches the untagged `qwen3` an operator typed. A
     # mid-session `/model qwen3-coder:30b` then measured 32,768 against a real
     # 8,192. Exact identity is the only rule a served window can carry, because
     # the server answered about one runner.
@@ -511,13 +511,13 @@ RSpec.describe Lain::CLI::Backend do
     end
 
     # The other half of that rule, and the asymmetry it has to avoid: the book is
-    # GRANTED through `Ollama#serves?`, which matches an untagged `--model qwen3`
+    # GRANTED through `Ollama#runs?`, which matches an untagged `--model qwen3`
     # against the `qwen3:latest` a server prints back -- so a window can exist
     # BECAUSE of a name a narrower spending rule then refuses to answer for.
     # That splits the two surfaces by one tag, because Agent#occupancy divides
     # using the operator's string while StatusFeed divides using the model the
     # response echoed. One set grants and spends.
-    it "spends the window by the same names Ollama#serves? granted it by" do
+    it "spends the window by the same names Ollama#runs? granted it by" do
       serving(ps_entry("qwen3:latest", 32_768))
       book = backend_for(provider: "ollama", model: "qwen3", max_tokens: 64).context_window
 

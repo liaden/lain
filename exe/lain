@@ -98,8 +98,8 @@ class LainCLI < Thor
     # The one journal-pass shape `consolidate` and `improve` share: `--dry-run`
     # picks the METHOD, so the flag stops at the boundary that parsed it instead
     # of travelling into the pass as a boolean that changes what #report means.
-    def journal_pass(pass, selector)
-      options[:dry_run] ? pass.dry_report(selector) : pass.report(selector)
+    def journal_pass(pass)
+      options[:dry_run] ? pass.dry_report : pass.report
     end
 
     # Positionals a command has no use for. `up` forwards trailing args to the
@@ -349,6 +349,119 @@ class LainCLI < Thor
 
   extend Help
 
+  # WHO answers a turn, and how it samples: the provider, its endpoint, the
+  # model, the token ceiling, the two sampler knobs that ride `Request#extra`,
+  # and the two ollama runner knobs. Its own module on {CompactionFlags}' rule
+  # -- one question, flags that only make sense read together, and one object in
+  # lib that already owns the whole resolution ({Lain::CLI::Backend}), so this
+  # band and that object have the same boundary.
+  #
+  # ONE band for every command that asks a model -- chat, `bench record`,
+  # `bench arms`, `epic submit`, `consolidate` and `improve` -- declared above
+  # the subcommand classes so each of them can reach it. A command that read
+  # its own subset of these dropped the rest in silence: `bench arms` never
+  # sent LAIN_NUM_BATCH, and every one of its requests reloaded a runner the
+  # chat beside it had just loaded.
+  #
+  # Thor accumulates `method_option` onto the command declared NEXT, so each
+  # `.declare` sits immediately above the command it belongs to.
+  module ModelFlags
+    # The rule a chat's profile flags state: an untyped one takes what the
+    # resumed or forked session's header recorded, ahead of the environment.
+    RECORDED = "a resumed or forked chat defaults to what its session recorded"
+
+    # The same rule for a pass over a recorded session.
+    REVIEWED = "defaults to what the session under review recorded"
+
+    # WHICH endpoint answers, HOW it samples, and the runner it keys: one
+    # question per method.
+    #
+    # @param thor [Class] the Thor class the flags accumulate onto
+    # @param max_tokens [Integer] this command's ceiling when LAIN_MAX_TOKENS is unset
+    # @param ceiling [String, nil] why this command's ceiling is the one it is
+    # @param recorded [String, nil] where an untyped profile flag's default comes
+    #   from before the environment, for a command that reads one
+    def self.declare(thor, max_tokens: 4_096, ceiling: nil, recorded: nil)
+      endpoint(thor, recorded)
+      sampling(thor, max_tokens, ceiling)
+      throughput(thor, recorded)
+    end
+
+    # The five {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
+    # makes a typed `--provider anthropic` and silence the same parse, and a
+    # resumed or forked chat must know which fields the human typed before it
+    # lets the recorded profile answer the rest. {profile} supplies the
+    # environment's answer instead, under the same variable names, so a
+    # project still pins its endpoint in a direnv `.envrc`.
+    # See EnvDefaults for what is deliberately NOT env-configurable, and why.
+    def self.endpoint(thor, recorded)
+      thor.method_option :provider, type: :string,
+                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} " \
+                                          "#{help("$LAIN_PROVIDER, else #{Lain::CLI::RunProfile::DEFAULT_PROVIDER}",
+                                                  recorded)}"
+      thor.method_option :api_base, type: :string,
+                                    desc: "Override the Ollama API base (ollama arms only; https " \
+                                          "required on ollama-cloud) #{help("$LAIN_API_BASE", recorded)}"
+      thor.method_option :model, type: :string,
+                                 desc: "Model id; defaults to the selected provider's own default when unset " \
+                                       "#{help("$LAIN_MODEL", recorded)}"
+    end
+
+    # The run's profile: what was typed, then the environment, then the
+    # built-in provider. A resumed or forked chat, and a pass over a recorded
+    # session, lays this over the profile that session recorded, which is why
+    # the typed fields travel with it.
+    #
+    # @param options [Hash] Thor's parse of a command declaring this band
+    # @return [Lain::CLI::RunProfile]
+    def self.profile(options)
+      Lain::CLI::RunProfile.from_options(options).with_defaults(
+        provider: Lain::CLI::EnvDefaults.string("LAIN_PROVIDER", Lain::CLI::RunProfile::DEFAULT_PROVIDER),
+        api_base: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
+        model: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
+        num_ctx: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
+        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH")
+      )
+    end
+
+    def self.sampling(thor, max_tokens, ceiling)
+      thor.method_option :max_tokens, type: :numeric,
+                                      default: Lain::CLI::EnvDefaults.numeric("LAIN_MAX_TOKENS", max_tokens),
+                                      desc: "max_tokens per model turn#{"; #{ceiling}" if ceiling} " \
+                                            "[$LAIN_MAX_TOKENS, else #{max_tokens}]"
+      thor.method_option :temperature, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_TEMPERATURE"),
+                                       desc: "Sampler temperature, threaded into Request#extra (ollama honors it) " \
+                                             "[$LAIN_TEMPERATURE]"
+      thor.method_option :seed, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_SEED"),
+                                desc: "Sampler seed, threaded into Request#extra (ollama honors it) [$LAIN_SEED]"
+    end
+
+    # Both are profile flags, so neither has a Thor `default:` ({endpoint}
+    # says why), and {profile} reads their variables. The property that
+    # reading must hold: they RESOLVE TO nil when the variable is unset.
+    # {Lain::CLI::Backend}'s sampler loop keeps a key only when its value is
+    # non-nil, so an unset knob contributes nothing and the payload stays
+    # byte-identical. A literal fallback would put an `options` object on every
+    # ollama request in the process, a wire change for callers that never
+    # asked for one. `backend_spec.rb`'s no-options examples are what fail if
+    # this stops holding.
+    def self.throughput(thor, recorded)
+      thor.method_option :num_batch, type: :numeric,
+                                     desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \
+                                           "prefill on this box, 2048 is the measured setting. A local-SERVER " \
+                                           "knob: it is sent on ollama-cloud too, where its effect is " \
+                                           "unmeasured #{help("$LAIN_NUM_BATCH", recorded)}"
+      thor.method_option :num_ctx, type: :numeric,
+                                   desc: "Ollama context length for the request; unset serves the model's own. " \
+                                         "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
+                                         "is unmeasured and nothing refuses a value above the model's trained " \
+                                         "maximum #{help("$LAIN_NUM_CTX", recorded)}"
+    end
+
+    # A flag's defaults, in the order they answer.
+    def self.help(variable, recorded) = "[#{[variable, recorded].compact.join("; ")}]"
+  end
+
   # The epic subcommands, on the same thin-wiring rule as bench: Lain::CLI::Epic
   # resolves the home, folds the Journal, and returns a String; this class parses
   # argv, `say`s what comes back, and presents the lib's own refusals -- all
@@ -396,14 +509,13 @@ class LainCLI < Thor
 
     method_option :issue, type: :string, desc: "Which issue -- issue_plan and implementation gate one issue"
     method_option :digest, type: :string, desc: "The changeset content address -- implementation only"
-    method_option :provider, type: :string, default: "anthropic",
-                             desc: "Model provider for an adjudicated gate, built only when a stage is " \
-                                   "configured adjudicated: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
-    method_option :model, type: :string, desc: "Model id for an adjudicated gate; the provider's own default when unset"
+    # The adjudication pair's backend, built only when some stage is configured adjudicated.
+    ModelFlags.declare(self)
     desc "submit STAGE [SLUG]", "Put a stage's artifact in front of its gate and journal the verdict"
     def submit(stage, slug = nil)
       render do
-        Lain::CLI::EpicSubmit.from_options(options, input: $stdin, output: $stdout)
+        Lain::CLI::EpicSubmit.from_options(options, profile: ModelFlags.profile(options), input: $stdin,
+                                                    output: $stdout)
                              .submit(stage, slug, issue: options[:issue], digest: options[:digest])
       end
     end
@@ -523,35 +635,14 @@ class LainCLI < Thor
     method_option :n, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs),
                       desc: "how many runs"
     method_option :out, type: :string, required: true, desc: "directory the session files land in"
-    method_option :model, type: :string,
-                          desc: "Model id; defaults to the selected provider's own default when unset"
-    method_option :max_tokens, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens),
-                               desc: "max_tokens per model turn"
     method_option :system, type: :string, desc: "system prompt"
-    method_option :provider, type: :string, default: "anthropic",
-                             desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
-    method_option :api_base, type: :string,
-                             desc: "Override the Ollama API base (ollama arms only; https " \
-                                   "required on ollama-cloud)"
-    method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
-    method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
-    # Flag name → Lain::CLI::Backend option. One declarative map, so adding a
-    # sampler flag is one line here and one method_option above. The BACKEND is
-    # what Bench::CLI#record now takes -- the chat path's own single-argument
-    # shape (Lain::CLI::ChatLaunch#call) -- so these are the flags that build it,
-    # and record's remaining three (`--n`, `--out`, `--system`) are read below.
-    RECORD_FLAGS = { model: :model, max_tokens: :max_tokens, provider: :provider,
-                     api_base: :api_base, temperature: :temperature, seed: :seed }.freeze
-
+    ModelFlags.declare(self, max_tokens: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
     # One `say` of the newline-joined paths, through the SAME Boundary#render
-    # every other bench subcommand sits on -- byte-identical to the say-per-path
-    # loop this replaced (Thor appends the one trailing newline), and one fewer
-    # copy of the Lain::Error -> Thor::Error mapping. The Backend is built INSIDE
-    # the block so a refusal from its own construction presents the same way.
+    # every other bench subcommand sits on. The Backend is built INSIDE the
+    # block so a refusal from its own construction presents the same way.
     def record(taskfile)
       render do
-        backend = Lain::CLI::Backend.new(RECORD_FLAGS.to_h { |flag, key| [key, options[flag]] })
-        Lain::Bench::CLI.new.record(taskfile:, backend:, out: options[:out],
+        Lain::Bench::CLI.new.record(taskfile:, backend: model_backend, out: options[:out],
                                     runs: options[:n], system: options[:system]).join("\n")
       end
     end
@@ -568,27 +659,16 @@ class LainCLI < Thor
 
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"
-    # PROVIDERS, not a restated list: the same rule --isolation follows below,
-    # so the help text and the resolver cannot come to disagree about what a
-    # provider name means.
-    method_option :provider, type: :string, default: "anthropic",
-                             desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
-    method_option :api_base, type: :string,
-                             desc: "Override the Ollama API base (ollama arms only; https " \
-                                   "required on ollama-cloud)"
-    method_option :model, type: :string,
-                          desc: "Model id; defaults to the selected provider's own default when unset"
-    method_option :max_tokens, type: :numeric, default: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
-                               desc: "max_tokens per model turn; higher than record's, because an arm task " \
-                                     "answers with whole file bodies and a ceiling hit ends the run"
+    ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
+                             ceiling: "higher than record's, because an arm task answers with whole file " \
+                                      "bodies and a ceiling hit ends the run")
     method_option :system, type: :string,
                            desc: "System prompt for every arm. Unset teaches the FILE/END " \
                                  "trajectory format the grader parses; a blank value counts as " \
                                  "unset, since an untaught arm scores near zero"
-    method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
-    method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
     # Read LITERALLY, like --system/--isolation/--journal below: it names a
-    # model id, not a Lain::CLI::Backend field, so ARMS_FLAGS cannot carry it.
+    # model id, not a Lain::CLI::Backend field, so the model flag band does not
+    # carry it.
     # Unset on a Claude --model the router keeps its own claude-haiku-4-5;
     # unset on any other backend, or equal to --model, the roster refuses
     # rather than guessing (LiveArms.refuse_unroutable!).
@@ -614,22 +694,6 @@ class LainCLI < Thor
                             desc: "NDJSON file this run's grade records and isolation lease telemetry " \
                                   "are recorded into; --isolation leases the workers, and refuses " \
                                   "without somewhere to record them"
-    # Flag name → Lain::CLI::Backend option, RECORD_FLAGS' shape: one declarative
-    # map, so adding a sampler flag is one line here and one method_option above.
-    # Bench::CLI#arms_report takes the BACKEND these build, not the flags -- the
-    # chat path's single-argument shape -- so the four that are NOT the backend's
-    # are read literally below: `--system` (an override Backend#context takes
-    # rather than an option it reads), `--isolation` (a name for a different
-    # resolver), `--journal` (a PATH here, an open Journal there; a String
-    # answers `<<` by appending to itself, so forwarding one verbatim would
-    # quietly collect the telemetry in a local variable), and `--cheap-model`
-    # (a model id LiveArms.build routes to, not a field Backend resolves).
-    #
-    # `decompose:` and `price_book:` are absent for their own reason -- a lambda
-    # and a price table are injection seams for specs, not things an argv spells.
-    ARMS_FLAGS = { provider: :provider, api_base: :api_base, model: :model,
-                   max_tokens: :max_tokens, temperature: :temperature, seed: :seed }.freeze
-
     # The Backend is built INSIDE `render`, as `record` does: a refusal from its
     # own construction is a Lain::Error like any other, and outside the block
     # nothing would map it to Thor's contract. The `ensure` below tolerates a
@@ -638,8 +702,7 @@ class LainCLI < Thor
       refuse_journal_without_isolation!
       journal = lease_journal
       render do
-        backend = Lain::CLI::Backend.new(ARMS_FLAGS.to_h { |flag, key| [key, options[flag]] })
-        Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend:, journal:,
+        Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend: model_backend, journal:,
                                          system: options[:system], isolation: options[:isolation],
                                          cheap_model: options[:cheap_model])
       end
@@ -650,6 +713,10 @@ class LainCLI < Thor
     end
 
     no_commands do
+      # The backend the model flag band resolves: what was typed, then the
+      # environment, then the built-in provider.
+      def model_backend = Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options))
+
       # The argv door in front of Bench::CLI#arm_isolation's deliberate CRASH.
       # A journal with no isolation name to resolve it against raises a bare
       # ArgumentError there -- it refuses to silently drop an option the caller
@@ -707,112 +774,6 @@ class LainCLI < Thor
        "Bench drivers over recorded sessions, and the live arm comparison " \
        "(variance, record, sweep, plan-sweep, arms)"
   subcommand "bench", Bench
-
-  # WHO answers a turn, and how it samples: the provider, its endpoint, the
-  # model, the token ceiling, and the two sampler knobs that ride
-  # `Request#extra`. Its own module on {CompactionFlags}' rule -- one question,
-  # six flags that only make sense read together, and one object in lib that
-  # already owns the whole resolution ({Lain::CLI::Backend}), so this band and
-  # that object have the same boundary.
-  #
-  # Extracted by the same pressure that produced {CompactionFlags}:
-  # this class reached its Metrics/ClassLength budget, and the rule is extract,
-  # never loosen. A nested module's body does not count toward the enclosing
-  # class's length, so a band moved here is a band the exe stops paying for.
-  #
-  # Declaration ORDER is preserved by calling `.declare` exactly where the flags
-  # used to sit: Thor accumulates `method_option` onto the command declared
-  # NEXT, so a band that moved would silently attach to the wrong command.
-  module ModelFlags
-    # The rule every profile flag's help states: an untyped one takes what the
-    # resumed or forked session's header recorded, ahead of the environment.
-    RECORDED = "a resumed or forked chat defaults to what its session recorded"
-
-    # Split in two on {CompactionFlags}' own rule (its three methods are one
-    # question each), and by the cop's insistence: WHICH endpoint answers, then
-    # HOW it answers. The order the two are called in is the order the flags
-    # used to sit in, which is the part that must not drift.
-    def self.declare(thor)
-      endpoint(thor)
-      sampling(thor)
-      throughput(thor)
-    end
-
-    # The five {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
-    # makes a typed `--provider anthropic` and silence the same parse, and a
-    # resumed or forked chat must know which fields the human typed before it
-    # lets the recorded profile answer the rest. {profile} supplies the
-    # environment's answer instead, under the same variable names, so a
-    # project still pins its endpoint in a direnv `.envrc`.
-    # See EnvDefaults for what is deliberately NOT env-configurable, and why.
-    def self.endpoint(thor)
-      thor.method_option :provider, type: :string,
-                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} " \
-                                          "[$LAIN_PROVIDER, else #{Lain::CLI::RunProfile::DEFAULT_PROVIDER}; " \
-                                          "#{RECORDED}]"
-      thor.method_option :api_base, type: :string,
-                                    desc: "Override the Ollama API base (ollama arms only; https " \
-                                          "required on ollama-cloud) [$LAIN_API_BASE; #{RECORDED}]"
-      thor.method_option :model, type: :string,
-                                 desc: "Model id; defaults to the selected provider's own default when unset " \
-                                       "[$LAIN_MODEL; #{RECORDED}]"
-    end
-
-    # The run's profile: what was typed, then the environment, then the
-    # built-in provider. A resumed or forked chat lays this over its recorded
-    # profile ({Lain::CLI::ChatLaunch#profile}), which is why the typed fields
-    # travel with it.
-    #
-    # @param options [Hash] Thor's parse of a command declaring this band
-    # @return [Lain::CLI::RunProfile]
-    def self.profile(options)
-      Lain::CLI::RunProfile.from_options(options).with_defaults(
-        provider: Lain::CLI::EnvDefaults.string("LAIN_PROVIDER", Lain::CLI::RunProfile::DEFAULT_PROVIDER),
-        api_base: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
-        model: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
-        num_ctx: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
-        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH")
-      )
-    end
-
-    def self.sampling(thor)
-      thor.method_option :max_tokens, type: :numeric,
-                                      default: Lain::CLI::EnvDefaults.numeric("LAIN_MAX_TOKENS", 4_096),
-                                      desc: "max_tokens per model turn [$LAIN_MAX_TOKENS]"
-      thor.method_option :temperature, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_TEMPERATURE"),
-                                       desc: "Sampler temperature, threaded into Request#extra (ollama honors it) " \
-                                             "[$LAIN_TEMPERATURE]"
-      thor.method_option :seed, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_SEED"),
-                                desc: "Sampler seed, threaded into Request#extra (ollama honors it) [$LAIN_SEED]"
-    end
-
-    # The two ollama runner knobs that are not sampling behaviour -- a third
-    # method on the same rule that split {declare} in two, and by the same cop's
-    # insistence (`sampling` reached Metrics/MethodLength at five flags;
-    # extract, never loosen).
-    #
-    # Both are profile flags, so neither has a Thor `default:` ({endpoint}
-    # says why), and {profile} reads their variables. The property that
-    # reading must hold: they RESOLVE TO nil when the variable is unset.
-    # {Lain::CLI::Backend}'s sampler loop keeps a key only when its value is
-    # non-nil, so an unset knob contributes nothing and the payload stays
-    # byte-identical. A literal fallback would put an `options` object on every
-    # ollama request in the process, a wire change for callers that never
-    # asked for one. `backend_spec.rb`'s no-options examples are what fail if
-    # this stops holding.
-    def self.throughput(thor)
-      thor.method_option :num_batch, type: :numeric,
-                                     desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \
-                                           "prefill on this box, 2048 is the measured setting. A local-SERVER " \
-                                           "knob: it is sent on ollama-cloud too, where its effect is " \
-                                           "unmeasured [$LAIN_NUM_BATCH; #{RECORDED}]"
-      thor.method_option :num_ctx, type: :numeric,
-                                   desc: "Ollama context length for the request; unset serves the model's own. " \
-                                         "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
-                                         "is unmeasured and nothing refuses a value above the model's trained " \
-                                         "maximum [$LAIN_NUM_CTX; #{RECORDED}]"
-    end
-  end
 
   # The compaction band of `chat`'s flag surface: whether to compact at all, the
   # three byte knobs, and the summarizer TIER. Its own module because it is its
@@ -1056,7 +1017,7 @@ class LainCLI < Thor
   end
 
   desc "chat", "Start an interactive Lain session"
-  ModelFlags.declare(self)
+  ModelFlags.declare(self, recorded: ModelFlags::RECORDED)
   method_option :journal, type: :boolean, default: true,
                           desc: "Write a durable, replayable session journal (fsync'd); --no-journal opts out"
   method_option :resume, type: :string, banner: "[SESSION]", lazy_default: "",
@@ -1144,35 +1105,29 @@ class LainCLI < Thor
   method_option :kind, type: :string, desc: "Filter to one kind: knob, bug, missing-feature, or doc"
   def improvements = render { Lain::CLI::Improvements.new.report(project: options[:project], kind: options[:kind]) }
 
-  # The four flags both JOURNAL PASSES share -- {ModelFlags}' rule at the
-  # smaller scale that actually recurs here. `consolidate` and `improve` each
-  # spawn one model over one recorded session, so `provider`, `model` and
-  # `max_tokens` were byte-identical between them and only the two SENTENCES
-  # differed; two copies is how the pair drifts into two providers.
-  #
-  # Not {ModelFlags} itself: that band reads {Lain::CLI::EnvDefaults} and carries
-  # `api_base`/`temperature`/`seed`, none of which a one-shot pass over a journal
-  # takes.
+  # What both JOURNAL PASSES declare: the model flag band, whose profile flags
+  # default to what the session under review recorded, and a `--dry-run` that
+  # says what THIS pass would do instead of doing it.
   module JournalPassFlags
     # @param thor [Class] the Thor class the flags accumulate onto
     # @param dry_run [String] what THIS pass would do instead of doing it
-    # @param turn [String] what one turn of this pass is called
-    def self.declare(thor, dry_run:, turn:)
+    def self.declare(thor, dry_run:)
       thor.method_option :dry_run, type: :boolean, default: false, desc: dry_run
-      thor.method_option :provider, type: :string, default: "anthropic",
-                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
-      thor.method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
-      thor.method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per #{turn}"
+      ModelFlags.declare(thor, recorded: ModelFlags::REVIEWED)
     end
   end
 
   desc "consolidate SESSION", "Court-clerk pass: distill a session's completed subagent lineages into memory"
-  JournalPassFlags.declare(self, dry_run: "Report what would be clerked, no spawn, no API key", turn: "clerk turn")
-  def consolidate(selector) = render { journal_pass(Lain::CLI::Consolidate.from_options(options), selector) }
+  JournalPassFlags.declare(self, dry_run: "Report what would be clerked, no spawn, no API key")
+  def consolidate(selector)
+    render { journal_pass(Lain::CLI::Consolidate.from_options(options, selector:, profile: ModelFlags.profile(options))) }
+  end
 
   desc "improve SESSION", "Harness-improver pass: record what would make lain itself better, into the dogfood queue"
-  JournalPassFlags.declare(self, dry_run: "Report what would spawn, no provider, no API key", turn: "improver turn")
-  def improve(selector) = render { journal_pass(Lain::CLI::Improve.from_options(options), selector) }
+  JournalPassFlags.declare(self, dry_run: "Report what would spawn, no provider, no API key")
+  def improve(selector)
+    render { journal_pass(Lain::CLI::Improve.from_options(options, selector:, profile: ModelFlags.profile(options))) }
+  end
 
   desc "up [PATH] [-- CHAT_FLAGS...]", "Create/attach the lain tmux session in PATH (chat window + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION, desc: "tmux session name"

@@ -20,11 +20,10 @@ module Lain
       #
       # == Why a provider NAME rather than a `--cloud` boolean
       #
-      # `lain bench arms` and `lain bench record` build their {Backend} from
-      # closed literal maps (`ARMS_FLAGS`, `RECORD_FLAGS` in `exe/lain`), and
-      # both forward `provider:`. A boolean carries no key in either map, so the
-      # bench would silently drop it and sweep the local arm instead -- and the
-      # bench case is the whole reason the cloud arm exists.
+      # Every model-calling command builds its {Backend} from one flag band
+      # whose profile carries `provider`. A boolean is a field the profile does
+      # not have, so the bench would silently drop it and sweep the local arm
+      # instead -- and the bench case is the whole reason the cloud arm exists.
       #
       # == Both refusals fire at CONSTRUCTION, and their order is load-bearing
       #

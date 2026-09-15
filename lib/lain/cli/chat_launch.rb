@@ -204,7 +204,7 @@ module Lain
       # the compaction source off it -- and the window book is memoized per
       # Backend, so two Backends would be two probes and possibly two answers
       # across an ollama runner reload.
-      def backend = @backend ||= Backend.new(@options, profile)
+      def backend = @backend ||= Backend.new(@options, profile:)
 
       # The ONE {RunProfile} the run's backend is built from: what was typed,
       # over the profile a `--resume`d or `--fork`ed header recorded. Resolved

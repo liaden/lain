@@ -44,24 +44,17 @@ module ArmsCommand
   # One invocation of the command: what it said, and how it ended.
   Captured = Struct.new(:stdout, :stderr, :exited)
 
-  # The commands whose reads go through a declarative flag->option map rather
-  # than a literal key: the map each forwards through, and the METHOD the
-  # expansion is written in. A dynamic read is a HOLE in this guard -- the key
-  # cannot be resolved from the source -- so the maps are checked entry by entry,
-  # and the pin below fails when a NEW, UNREGISTERED dynamic site appears.
-  #
-  # `site` is declared rather than assumed equal to the command name. It happens
-  # to be the command today (each map is expanded inline in its own body), but
-  # asserting THAT equality turned a coverage invariant into a production-layout
-  # mandate: hoisting the expansion into a `no_commands` helper -- a legitimate
-  # extraction -- failed the guard for a reason unrelated to coverage. Declaring
-  # the site keeps the thing worth protecting (no dynamic read this file has not
-  # been told about) and makes a move a one-line edit here.
-  MAPS = { "arms" => { const: "ARMS_FLAGS", site: :arms },
-           "record" => { const: "RECORD_FLAGS", site: :record } }.freeze
-
-  # @return [Array<String>] every method name registered above as a dynamic reader
-  def self.registered_sites = MAPS.values.map { |entry| entry.fetch(:site).to_s }.sort
+  # The flags a model-calling command hands to Lain::CLI::Backend WHOLE rather
+  # than reading one by one: the model flag band, read off a throwaway Thor the
+  # exe's own declarer populates, so this list cannot drift from the band.
+  def self.band
+    probe = Class.new(Thor) do
+      LainCLI::ModelFlags.declare(self)
+      desc "probe", "the band alone"
+      define_method(:probe) { nil }
+    end
+    probe.commands.fetch("probe").options.keys
+  end
 
   # One resolved option read in exe/lain, and the method it was read in. A nil
   # `key` means the index was not a literal symbol.
@@ -124,13 +117,11 @@ module ArmsCommand
     scanner.reads
   end
 
-  # @return [Hash{String=>Hash}] each map-driven command's flag->option map
-  def self.maps = MAPS.transform_values { |entry| LainCLI::Bench.const_get(entry.fetch(:const)) }
-
   # Driving a real subcommand, and watching what it built. A module because TWO
-  # subcommand doors are guarded in this file: `arms` and `record` both expand a
-  # flag map into a Lain::CLI::Backend, so both need the same three observations
-  # (argv through the real parser, the captured streams, the built backends).
+  # subcommand doors are guarded in this file: `arms` and `record` both build a
+  # Lain::CLI::Backend from the model flag band, so both need the same three
+  # observations (argv through the real parser, the captured streams, the built
+  # backends).
   module Invocation
     # The REAL Thor parser over the real command, so the argv spelling
     # (`--max-tokens`), the type coercion, and the exit contract are exercised
@@ -158,8 +149,8 @@ module ArmsCommand
       e
     end
 
-    # Records every Backend the run builds as an [options, instance] PAIR, into
-    # the array given.
+    # Records every Backend the run builds as an [options, profile, instance]
+    # triple, into the array given.
     #
     # THE PAIR IS THE POINT. Asserting the flags on the constructor options and
     # the type on the entry point's kwarg, separately, proves neither that the
@@ -168,8 +159,8 @@ module ArmsCommand
     # silently dropped on this repo's highest-spend commands, with both halves
     # still green. Only object identity between the two closes that.
     def capture_backends(built)
-      allow(Lain::CLI::Backend).to receive(:new).and_wrap_original do |original, options|
-        original.call(options).tap { |backend| built << [options, backend] }
+      allow(Lain::CLI::Backend).to receive(:new).and_wrap_original do |original, options, **rest|
+        original.call(options, **rest).tap { |backend| built << [options, rest[:profile], backend] }
       end
     end
   end
@@ -226,10 +217,14 @@ RSpec.describe "lain bench arms" do
     end
 
     # record's ceiling is 1024 and this one's is 4096; two flags with one
-    # spelling in one subcommand family, so the help says why they differ.
-    it "explains why its max_tokens ceiling is not record's" do
-      expect(command.options.fetch(:max_tokens).default).to eq(Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS)
-      expect(command.options.fetch(:max_tokens).description).to include("record")
+    # spelling in one subcommand family, so each help line states its own.
+    it "states its own max_tokens ceiling, which is not record's" do
+      ceiling = Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS
+      record = LainCLI::Bench.commands.fetch("record").options.fetch(:max_tokens)
+
+      expect(command.options.fetch(:max_tokens)).to have_attributes(default: ceiling)
+      expect(command.options.fetch(:max_tokens).description).to include("else #{ceiling}", "whole file bodies")
+      expect(record.description).to include("else #{Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens)}")
     end
   end
 
@@ -253,24 +248,22 @@ RSpec.describe "lain bench arms" do
       expect(undeclared.map(&:to_s)).to eq([])
     end
 
-    # BOTH directions. A flag in the map that nothing declares is unreachable
-    # (an observed failure); a flag DECLARED that no map forwards and no line
-    # reads is its mirror -- advertised in `bench help arms`, accepted on the
-    # command line, and silently dropped.
-    it "declares every flag its map forwards, and forwards or reads every flag it declares" do
-      ArmsCommand.maps.each do |name, map|
+    # BOTH directions. A band flag a command does not declare is one it drops
+    # (an observed failure); a flag DECLARED that neither the band hands over
+    # nor a line reads is its mirror -- advertised in `bench help arms`,
+    # accepted on the command line, and silently dropped.
+    it "declares the whole model flag band, and reads every other flag it declares" do
+      %w[arms record].each do |name|
         options = LainCLI::Bench.commands.fetch(name).options.keys
-        expect(map.keys - options).to eq([])
-        expect(options - map.keys - literal).to eq([])
+        expect(ArmsCommand.band - options).to eq([])
+        expect(options - ArmsCommand.band - literal).to eq([])
       end
     end
 
-    # Every dynamic read is one MAPS registered, and every registration is a site
-    # that really reads dynamically. What this must NOT assert is that the site is
-    # named after the command -- see MAPS' own header.
-    it "leaves the map-driven reads exactly where they are registered" do
-      dynamic = reads.select { |read| read.key.nil? }
-      expect(dynamic.map { |read| read.site.to_s }.uniq.sort).to eq(ArmsCommand.registered_sites)
+    # A read whose key the source does not spell is a hole in this guard, and
+    # the band is handed over whole, so there is none left to allow for.
+    it "reads no option under a key the source does not spell" do
+      expect(reads.select { |read| read.key.nil? }.map(&:to_s)).to eq([])
     end
 
     # Keys from three different commands, so a scan that silently stopped
@@ -330,15 +323,14 @@ RSpec.describe "lain bench arms" do
       expect(kwargs).to include(journal: nil)
     end
 
-    # Every flag in the map, through the real Thor parser: a silently dropped
-    # --seed is a reproducibility hole on a bench whose whole claim is
-    # repeatability, and a dropped --provider is money spent on the wrong model.
+    # Every band flag, through the real Thor parser: a silently dropped --seed
+    # is a reproducibility hole on a bench whose whole claim is repeatability,
+    # and a dropped --provider is money spent on the wrong model.
     #
-    # The map's flags now build ONE Lain::CLI::Backend (the chat path's shape), so
-    # the wire under test is flag -> Backend option -> THAT VERY OBJECT at the
-    # entry point. Backend exposes no reader for what it was given, so the
-    # constructor argument is the observation and IDENTITY is what ties it to the
-    # run (see Invocation#capture_backends). `system:` and `isolation:` are read
+    # The band builds ONE Lain::CLI::Backend (the chat path's shape), so the wire
+    # under test is flag -> Backend option and profile -> THAT VERY OBJECT at the
+    # entry point. IDENTITY is what ties the constructor arguments to the run
+    # (see Invocation#capture_backends). `system:` and `isolation:` are read
     # literally in the command and stay assertable on the kwargs.
     it "carries every declared flag through to the entry point, on the object it hands over" do
       built = []
@@ -346,11 +338,12 @@ RSpec.describe "lain bench arms" do
 
       run("arms", "suite/tasks.yml", "--provider", "ollama", "--api-base", "http://localhost:11434",
           "--model", "qwen3", "--max-tokens", "321", "--system", "be terse",
-          "--temperature", "0.25", "--seed", "99", "--isolation", "none")
+          "--temperature", "0.25", "--seed", "99", "--num-batch", "2048", "--isolation", "none")
 
-      options, instance = built.last
-      expect(options).to include(provider: "ollama", api_base: "http://localhost:11434",
-                                 model: "qwen3", max_tokens: 321, temperature: 0.25, seed: 99)
+      options, profile, instance = built.last
+      expect(options).to include(max_tokens: 321, temperature: 0.25, seed: 99)
+      expect(profile).to have_attributes(provider: "ollama", api_base: "http://localhost:11434", model: "qwen3",
+                                         num_batch: 2048)
       expect(kwargs.fetch(:backend)).to be(instance)
       expect(kwargs).to include(system: "be terse", isolation: "none")
     end
@@ -541,15 +534,11 @@ RSpec.describe "lain bench arms" do
   end
 end
 
-# The OTHER door this file's flag-coverage guard already covers by source (its
-# `record` entries in ArmsCommand::MAPS), and the one nothing drove until now:
-# `:226` proves RECORD_FLAGS' KEYS are all declared flags and that every declared
-# flag is a key or a literal read, but nothing looked at the map's VALUES. Swap
-# `temperature` and `seed`'s targets in it and a `bench record` sweep records the
-# seed as the temperature -- on a bench whose entire claim is repeatability --
-# with the whole suite green. This card rewrote every value in that map (including
-# `provider: :provider_name` -> `provider: :provider`), so the values need a run
-# behind them, not a reading.
+# The OTHER door this file's flag-coverage guard already covers by source, and
+# the one whose VALUES need a run behind them rather than a reading: swap where
+# `temperature` and `seed` land and a `bench record` sweep records the seed as
+# the temperature -- on a bench whose entire claim is repeatability -- with every
+# declaration still in place.
 #
 # NOTHING HERE SPENDS MONEY: the entry point is a double, so no Backend#provider
 # call and no key gate is ever reached.
@@ -576,20 +565,21 @@ RSpec.describe "lain bench record" do
     run("record", "task.txt", "--out", "sessions", "--provider", "ollama", *extra)
   end
 
-  it "builds the Backend from every flag its map forwards, and hands over THAT object" do
+  it "builds the Backend from every band flag, and hands over THAT object" do
     built = []
     capture_backends(built)
 
     run_record("--api-base", "http://localhost:11434", "--model", "qwen3", "--max-tokens", "64",
-               "--temperature", "0.25", "--seed", "99")
+               "--temperature", "0.25", "--seed", "99", "--num-ctx", "8192")
 
-    options, instance = built.last
-    expect(options).to include(provider: "ollama", api_base: "http://localhost:11434",
-                               model: "qwen3", max_tokens: 64, temperature: 0.25, seed: 99)
+    options, profile, instance = built.last
+    expect(options).to include(max_tokens: 64, temperature: 0.25, seed: 99)
+    expect(profile).to have_attributes(provider: "ollama", api_base: "http://localhost:11434", model: "qwen3",
+                                       num_ctx: 8192)
     expect(kwargs.fetch(:backend)).to be(instance)
   end
 
-  # The sampler pair through the whole wire rather than at the map: Request#extra
+  # The sampler pair through the whole wire: Request#extra
   # is where a swapped `--temperature`/`--seed` actually lands, and it is what the
   # recorded session HEADER carries.
   it "renders the sampler flags into the Context under the names they were typed" do
@@ -599,7 +589,7 @@ RSpec.describe "lain bench record" do
     expect(kwargs.fetch(:backend).context.model).to eq("qwen3")
   end
 
-  # The three flags the command reads literally rather than through the map, and
+  # The three flags the command reads literally rather than through the band, and
   # the shape of the call itself -- so a flag that stopped being threaded, or a
   # loose sampler flag that came back beside the Backend, both fail here.
   it "reads its own three flags literally and passes nothing else" do

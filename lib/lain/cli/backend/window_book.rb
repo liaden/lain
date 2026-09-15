@@ -55,7 +55,7 @@ module Lain
         # is the only rule a served window can honestly carry.
         #
         # Which names those are is not this object's to decide: it spends by
-        # exactly the set {Provider::Ollama#serves?} grants by (see
+        # exactly the set {Provider::Ollama#runs?} grants by (see
         # {#initialize}). Three messages, which is the whole duck its three
         # readers send ({StatusFeed}, {Compaction::Source}, {Agent#occupancy}).
         class Served
@@ -75,7 +75,7 @@ module Lain
           def initialize(model:, window_tokens:, provenance: ContextWindow::PROBED,
                          shipped: ContextWindow.default)
             @model = -model.to_s
-            # The SAME set {Provider::Ollama#serves?} grants a window by, which
+            # The SAME set {Provider::Ollama#runs?} grants a window by, which
             # matches a runner entry against `[model, "#{model}:latest"]`
             # because ollama appends `:latest` to an untagged request before
             # printing it back -- so a book can exist BECAUSE the server

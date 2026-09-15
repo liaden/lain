@@ -46,7 +46,7 @@ RSpec.describe "a guessed context window never authorises a rewrite", :seam do
   # class's nil -- which is the whole premise of the published arm, and is
   # exercised rather than assumed only when that provider is the one built.
   def backend_for(model:, provider: "ollama")
-    Lain::CLI::Backend.new(provider:, model:, max_tokens: 1024, compact_keep: 2)
+    Lain::CLI::Backend.new({ provider:, model:, max_tokens: 1024, compact_keep: 2 })
   end
 
   # A real Agent over the run's REAL pipeline source, which is what

@@ -127,6 +127,27 @@ module Lain
       nil
     end
 
+    Serving = Data.define(:answer)
+
+    # Whether a server can answer for a model: it says it can, it says it has
+    # not got it, or nobody could say.
+    class Serving
+      SERVED = new(answer: :served)
+      NOT_SERVED = new(answer: :not_served)
+      UNKNOWN = new(answer: :unknown)
+
+      def not_served? = answer == :not_served
+    end
+
+    # Whether this endpoint serves `model`, asked before anything is spent on
+    # it. Only a server that says it has not got the model is a no: a provider
+    # with no server to ask, and a server that could not be asked, both answer
+    # {Serving::UNKNOWN}, and a caller proceeds on that.
+    #
+    # @param _model [String]
+    # @return [Serving]
+    def serves?(_model) = Serving::UNKNOWN
+
     # Raise unless the capability is present. The message names the provider, so
     # a degraded bench run says which arm lost the tactic.
     def require!(capability)
@@ -176,4 +197,3 @@ require_relative "provider/response_wal"
 require_relative "provider/anthropic"
 require_relative "provider/ollama"
 require_relative "provider/mock"
-require_relative "provider/unreachable"

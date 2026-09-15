@@ -98,7 +98,7 @@ RSpec.describe Lain::Consolidation do
     it "clerks nothing for a session that spawned nothing" do
       quiet = RecordedSpawnSession.new(parent_responses: [text_response("no spawn")], child_responses: []).run
 
-      expect(consolidation(Lain::Provider::Unreachable.new)
+      expect(consolidation(Lain::Provider::Mock.new)
                .call(Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(quiet.lines)))).to eq([])
     end
   end
@@ -140,7 +140,10 @@ RSpec.describe Lain::Consolidation do
     # One lineage, so one scripted pair of responses answers one clerk spawn.
     let(:lineages) { super().first(1) }
 
-    def improve = Lain::CLI::Improve.new(provider: Lain::Provider::Unreachable.new, context:, slots:)
+    def improve
+      Lain::CLI::Improve.new(path: "unread.ndjson", profile: Lain::CLI::RunProfile::UNRECORDED,
+                             backend: -> { raise "the guard stack needs no backend" })
+    end
 
     # `"-----"` is the body that changed answer: {Tool::Input} admits it and the
     # old NullOracle let it into the index, where the floor {CLI::ToolGuard}
@@ -181,7 +184,7 @@ RSpec.describe Lain::Consolidation do
     # path the clerk can still read by name. Pinned by identity, because giving
     # it a real policy while the gate stays Null is the mistake.
     it "mounts the listing guard over the Null filter, the posture a detached run chose" do
-      guard = consolidation(Lain::Provider::Unreachable.new)
+      guard = consolidation(Lain::Provider::Mock.new)
               .send(:guard_stack).to_a.grep(Lain::Middleware::WithholdSecretPaths).first
 
       expect(guard.filter).to equal(Lain::Sensitivity::Filter::Null.instance)
@@ -190,37 +193,37 @@ RSpec.describe Lain::Consolidation do
     # {CLI::ToolGuard.detached} builds a board, and a pass over N lineages is ONE
     # run: the clerks share its region ledger and its layout run.
     it "builds one board for the whole pass, however many lineages it clerks" do
-      pass = consolidation(Lain::Provider::Unreachable.new)
+      pass = consolidation(Lain::Provider::Mock.new)
       runs = Array.new(2) { pass.send(:guard_stack).to_a.grep(Lain::Middleware::GuardTestLayout).first.run }
 
       expect(runs.first).to equal(runs.last)
     end
 
     it "holds the same guard classes in the same order as the improve pass" do
-      expect(consolidation(Lain::Provider::Unreachable.new).send(:guard_stack).to_a.map(&:class))
+      expect(consolidation(Lain::Provider::Mock.new).send(:guard_stack).to_a.map(&:class))
         .to eq(improve.send(:guard_stack).to_a.map(&:class))
     end
   end
 
-  describe "#dry_run" do
-    it "names the lineages that would be clerked, through a provider that cannot be reached" do
-      report = consolidation(Lain::Provider::Unreachable.new).dry_run(lineages)
+  describe ".dry_run" do
+    it "names the lineages that would be clerked, asked of the class so nothing is built" do
+      report = described_class.dry_run(lineages)
 
       expect(report).to include(spawn_a, spawn_b)
       expect(report).to include("2 lineage")
     end
 
     it "says so when a session holds no completed subagent lineages" do
-      expect(consolidation(Lain::Provider::Unreachable.new).dry_run([]))
-        .to include("no completed subagent lineages")
+      expect(described_class.dry_run([])).to include("no completed subagent lineages")
     end
   end
 
-  # The on-demand CLI surface: it resolves a session file, reads its lineages
-  # whole, and hands them to the pass, returning a String (only the frontend
-  # prints).
+  # The on-demand CLI surface: it resolves a session file once, reads its
+  # lineages whole, and hands them to the pass, returning a String (only the
+  # frontend prints).
   describe Lain::CLI::Consolidate do
     let(:paths) { instance_double(Lain::Paths, sessions_dir: @session_dir) }
+    let(:anthropic) { Lain::CLI::RunProfile.from_options({ provider: "anthropic" }) }
 
     around do |example|
       Dir.mktmpdir do |session_dir|
@@ -230,29 +233,35 @@ RSpec.describe Lain::Consolidation do
       end
     end
 
-    def cli(provider) = described_class.new(consolidation: consolidation(provider), paths:)
+    def cli(provider, session: "s1")
+      described_class.new(path: File.join(@session_dir, "#{session}.ndjson"), profile: anthropic,
+                          consolidation: -> { consolidation(provider) })
+    end
 
-    it "resolves a bare session name and renders the clerk outcomes" do
+    it "renders the clerk outcomes for the session it was given" do
       provider = Lain::Provider::Mock.new(responses: [
                                             tool_response(memory_write("lineage-a", "a")), text_response("A done"),
                                             tool_response(memory_write("lineage-b", "b")), text_response("B done")
                                           ])
 
-      report = cli(provider).report("s1")
+      report = cli(provider).report
 
       expect(report).to include("2 lineage", spawn_a, spawn_b, "A done", "B done")
     end
 
     # A separate METHOD, not `report(dry_run: true)`: the dry surface reports on
-    # a different half of the pass, and a provider that CANNOT be reached proves
-    # "no spawn" by construction rather than by counting calls afterwards.
-    it "renders the dry-run plan through a provider that cannot be reached" do
-      expect(cli(Lain::Provider::Unreachable.new).dry_report("s1"))
-        .to include("would each get one court_clerk pass")
+    # a different half of the pass, and a pass that is never BUILT proves "no
+    # spawn" by construction rather than by counting calls afterwards.
+    it "renders the dry-run plan without building the pass" do
+      pass = described_class.new(path: File.join(@session_dir, "s1.ndjson"), profile: anthropic,
+                                 consolidation: -> { raise "a dry run built the clerk" })
+
+      expect(pass.dry_report).to include("would each get one court_clerk pass", "2 lineage(s)", spawn_a, spawn_b)
     end
 
-    it "names both lineages a chat session recorded on --dry-run" do
-      expect(cli(Lain::Provider::Unreachable.new).dry_report("s1")).to include("2 lineage(s)", spawn_a, spawn_b)
+    it "names the backend a dry run would clerk on" do
+      expect(cli(Lain::Provider::Mock.new).dry_report)
+        .to start_with("consolidate: would run on anthropic, model the provider's default")
     end
 
     # A Lain::Error, which the exe maps to a refusal and exit status 1. Reading
@@ -262,16 +271,10 @@ RSpec.describe Lain::Consolidation do
       lines = session.lines
       torn = lines.index { |line| JSON.parse(line)["type"] == Lain::SessionRecord::CHILD_TURN_TYPE }
       lines[torn] = "#{lines[torn][0, 40]}\n"
-      path = File.join(@session_dir, "torn.ndjson")
-      File.write(path, lines.join)
+      File.write(File.join(@session_dir, "torn.ndjson"), lines.join)
 
-      expect { cli(Lain::Provider::Unreachable.new).dry_report("torn") }
+      expect { cli(Lain::Provider::Mock.new, session: "torn").dry_report }
         .to raise_error(Lain::Error, /torn\.ndjson: line \d+ is torn/)
-    end
-
-    it "raises the shared SessionFile refusal, listing what it looked at" do
-      expect { cli(Lain::Provider::Mock.new).report("nope") }
-        .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
     end
 
     it "keeps no per-class SessionNotFound of its own" do
@@ -279,22 +282,106 @@ RSpec.describe Lain::Consolidation do
     end
 
     describe ".from_options" do
-      it "assembles Provider::Unreachable for --dry-run, so a dry pass needs no API key" do
-        pass = described_class.from_options({ dry_run: true, provider: "anthropic", max_tokens: 64 })
+      # The session under review, re-headed as a chat run on this profile.
+      def recorded_on(profile)
+        path = File.join(@session_dir, "s1.ndjson")
+        records = File.readlines(path).map { |line| JSON.parse(line) }
+                                      .map { |record| record["type"] == "session" ? record.merge(profile) : record }
+        File.write(path, records.map { |record| JSON.generate(record) }.join("\n"))
+      end
 
-        # Through the pass it holds: the assembly's choice of provider is the
-        # thing under test, and the object refuses every message that would
-        # otherwise reveal it.
-        inner = pass.instance_variable_get(:@consolidation)
-        expect(inner.instance_variable_get(:@provider)).to be_a(Lain::Provider::Unreachable)
+      def from_options(options, profile: Lain::CLI::RunProfile.from_options(options))
+        described_class.from_options({ max_tokens: 64, **options }, selector: "s1", profile:, paths:)
+      end
+
+      before { allow(Lain::CLI::Backend).to receive(:new).and_call_original }
+
+      # The environment's default provider is what an untyped flag holds by the
+      # time it reaches here, and the recording still outranks it.
+      it "follows the provider the session recorded when none was typed" do
+        recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+        untyped = Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic")
+
+        expect(from_options({}, profile: untyped).dry_report)
+          .to start_with("consolidate: would run on ollama, model qwen3:4b")
+      end
+
+      it "builds the live clerk over that same profile" do
+        recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                     body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                            "message" => { "role" => "assistant", "content" => "clerked" })}\n")
+
+        from_options({}, profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic")).report
+
+        expect(Lain::CLI::Backend).to have_received(:new)
+          .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"))
+      end
+
+      it "lets a typed provider win, and says so ahead of the report" do
+        recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+
+        report = from_options({ provider: "anthropic" }).dry_report
+
+        expect(report.lines.first).to include("recorded with provider ollama; continuing with anthropic")
+        expect(report).to include("would run on anthropic")
+      end
+
+      it "says nothing about the profile when the typed flags agree with the recording" do
+        recorded_on("provider" => "ollama")
+
+        expect(from_options({ provider: "ollama" }).dry_report).not_to include("recorded with")
+      end
+
+      # The dry run's promise is no key: a session recorded on the hosted arm
+      # must still print its plan on a box that holds no credential for it.
+      it "dry-runs a session recorded on ollama-cloud with no OLLAMA_API_KEY, building no backend" do
+        recorded_on("provider" => "ollama-cloud", "model" => "gpt-oss:120b")
+
+        report = with_env("OLLAMA_API_KEY" => nil, "ANTHROPIC_API_KEY" => nil) do
+          from_options({}, profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic"))
+            .dry_report
+        end
+
+        expect(report).to include("would run on ollama-cloud", "would each get one court_clerk pass")
+        expect(Lain::CLI::Backend).not_to have_received(:new)
+      end
+
+      # Building no backend is not the same as checking no flag: a typo in the
+      # provider's name is refused by name on a dry run too, still without a
+      # key or a tier.
+      it "refuses a mistyped --provider by name on a dry run, building no backend" do
+        report = lambda do
+          with_env("ANTHROPIC_API_KEY" => nil, "OLLAMA_API_KEY" => nil) do
+            from_options({ provider: "olama" }).dry_report
+          end
+        end
+
+        expect(&report).to raise_error(Lain::CLI::UnknownProvider, /unknown provider "olama", expected one of.*ollama/)
+        expect(Lain::CLI::Backend).not_to have_received(:new)
+      end
+
+      it "refuses an unknown session before it reads anything else" do
+        expect { described_class.from_options({ max_tokens: 64 }, selector: "nope", paths:) }
+          .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
+      end
+
+      # Resolved once: the file the profile was read from is the file the
+      # lineages are read from, whatever lands in the directory in between.
+      it "reads the lineages from the file it resolved, not from a second resolution" do
+        pass = from_options({ provider: "anthropic" })
+        File.write(File.join(@session_dir, "s1"), "a file the selector would now resolve to first\n")
+
+        expect(pass.dry_report).to include("2 lineage(s)", spawn_a, spawn_b)
       end
     end
   end
 
-  # The four-nils smell, removed: a dry run wires a REAL Null provider
-  # ({Provider::Unreachable}), so every collaborator can be required and a
-  # mis-wire is a loud ArgumentError where the wiring happened -- not a
-  # NoMethodError, or a MissingCollaborator, one spawn later.
+  # The four-nils smell, removed: a dry run builds no pass at all, so every
+  # collaborator can be required and a mis-wire is a loud ArgumentError where
+  # the wiring happened -- not a NoMethodError, or a MissingCollaborator, one
+  # spawn later.
   describe "the collaborators are required at construction" do
     it "raises ArgumentError naming the keyword the wiring forgot" do
       expect { described_class.new(recorder:, context:, slots:) }.to raise_error(ArgumentError, /provider/)
@@ -303,6 +390,10 @@ RSpec.describe Lain::Consolidation do
     it "raises for a forgotten recorder too, before any lineage is walked" do
       expect { described_class.new(provider: Lain::Provider::Mock.new, context:, slots:) }
         .to raise_error(ArgumentError, /recorder/)
+    end
+
+    it "leaves no dry-run provider behind, since a dry pass builds none" do
+      expect(Lain::Provider.const_defined?(:Unreachable, false)).to be(false)
     end
 
     it "keeps no MissingCollaborator: there is no nil left to check at use" do

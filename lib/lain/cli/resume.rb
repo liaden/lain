@@ -220,14 +220,14 @@ module Lain
       # with the salvage/open notices, a fork on the checked-out fork point with
       # the mismatch notices alone.
       def resumed_result(path, recording, outcome, current)
-        mismatched = mismatches(path, recording, current)
+        mismatched = mismatches(path, current)
         result(Door.new(verb: "resume", path:), recording.timeline, replay(path),
                open: recording.open?, notices: notices(path, recording, outcome, mismatched))
       end
 
       def fork_result(point, recording, forked, current)
         result(Door.new(verb: "fork", path: point.path), forked, replay(point.path),
-               open: recording.open?, notices: mismatches(point.path, recording, current))
+               open: recording.open?, notices: mismatches(point.path, current))
       end
 
       def fork_refusal(point, reason) = Door.new(verb: "fork", path: point.path).refuse(reason)
@@ -237,8 +237,8 @@ module Lain
       # come from {ChainWalk}, every file of the chain, oldest first.
       def replay(path) = SessionRecord::Replay.new(ChainWalk.new(dir:).entries(path))
 
-      def mismatches(path, recording, current)
-        MismatchNotices.new(recording:, path:).call(**current.to_h)
+      def mismatches(path, current)
+        MismatchNotices.new(path:).call(**current.to_h)
       end
 
       # Salvage only ever runs against an open session: a gracefully closed file

@@ -86,6 +86,23 @@ RSpec.describe Lain::Provider do
     end
   end
 
+  # Whether a server can answer for a model, asked before anything is spent on
+  # it. A provider with no server to ask cannot say either way.
+  describe "#serves?" do
+    it "answers unknown from the abstract surface" do
+      expect(described_class.new.serves?("claude-haiku-4-5")).to equal(Lain::Provider::Serving::UNKNOWN)
+    end
+
+    it "answers three values that are frozen, shareable and told apart" do
+      answers = [Lain::Provider::Serving::SERVED, Lain::Provider::Serving::NOT_SERVED,
+                 Lain::Provider::Serving::UNKNOWN]
+
+      expect(answers).to all(satisfy { |answer| Ractor.shareable?(answer) })
+      expect(answers.map(&:not_served?)).to eq([false, true, false])
+      expect(answers.uniq.size).to eq(3)
+    end
+  end
+
   # to_s is the human-facing capability list; inspect keeps the class-tagged,
   # debug-oriented form -- the DegradedSet convention (see
   # capability/degraded_set_spec.rb). Uses Provider::Mock because the abstract

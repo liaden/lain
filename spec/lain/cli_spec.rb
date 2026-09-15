@@ -10,6 +10,7 @@
 load File.expand_path("../../exe/lain", __dir__)
 
 require "prism"
+require "tmpdir"
 
 # Every Thor class `exe/lain` DEFINES, at any nesting depth, read off the source.
 #
@@ -653,7 +654,7 @@ RSpec.describe LainCLI do
 
   # `--cheap-model` names a model, not a Lain::CLI::Backend field, so it reaches
   # `Bench::CLI#arms_report` the way `--system`/`--isolation`/`--journal` do:
-  # read literally off `options`, never through `ARMS_FLAGS`.
+  # read literally off `options`, never through the model flag band.
   describe "bench arms --cheap-model" do
     it "declares the flag and forwards it to arms_report literally" do
       entry = instance_double(Lain::Bench::CLI)
@@ -669,6 +670,111 @@ RSpec.describe LainCLI do
 
       expect(described_class::Bench.commands.fetch("arms").options).to have_key(:cheap_model)
       expect(calls.last).to include(cheap_model: "qwen3:4b")
+    end
+  end
+
+  # The servability check, through the whole exe path with only the wire faked:
+  # the server's own 404 for the model is the refusal, and it comes before a
+  # single chat request.
+  describe "bench arms --cheap-model a model the server has not got" do
+    around { |example| Dir.mktmpdir("lain-arms-cheap") { |dir| (@dir = dir) && example.run } }
+
+    it "refuses naming the model, and sends no chat request" do
+      stub_request(:post, "http://localhost:11434/api/show")
+        .to_return(status: 404, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("error" => "model 'nonesuch:1b' not found"))
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      allow(Lain::Arm::Driver).to receive(:new).and_raise("the arms ran, so the check came after the spend")
+      fixture = File.expand_path("../fixtures/arms/tasks.yml", __dir__)
+      argv = ["arms", fixture, "--provider", "ollama", "--model", "qwen3:4b", "--cheap-model", "nonesuch:1b",
+              "--isolation", "worktree", "--journal", File.join(@dir, "arms.ndjson")]
+
+      expect { with_env("LAIN_PROVIDER" => nil) { described_class::Bench.start(argv, debug: true) } }
+        .to raise_error(Thor::Error, /nonesuch:1b/)
+      expect(chat).not_to have_been_requested
+    end
+  end
+
+  # A dry run builds no backend, and still refuses a provider name that is not one.
+  describe "consolidate --dry-run --provider olama" do
+    around { |example| Dir.mktmpdir("lain-consolidate-typo") { |dir| (@dir = dir) && example.run } }
+
+    it "refuses the name, offering the ones there are, before anything is built" do
+      path = File.join(@dir, "s1.ndjson")
+      File.write(path, "#{JSON.generate("type" => "session", "provider" => "ollama")}\n")
+      allow(Lain::CLI::Backend).to receive(:new).and_call_original
+
+      expect do
+        with_env("ANTHROPIC_API_KEY" => nil, "OLLAMA_API_KEY" => nil) do
+          described_class.start(["consolidate", path, "--dry-run", "--provider", "olama"], debug: true)
+        end
+      end.to raise_error(Thor::Error, /unknown provider "olama", expected one of.*ollama-cloud/)
+      expect(Lain::CLI::Backend).not_to have_received(:new)
+    end
+  end
+
+  # One flag band for every command that asks a model, so a knob a chat honours
+  # cannot be one another command silently drops.
+  describe "the model flag band on every model-calling command" do
+    band = %i[provider api_base model max_tokens temperature seed num_batch num_ctx]
+    commands = { "bench record" => -> { described_class::Bench.commands.fetch("record") },
+                 "bench arms" => -> { described_class::Bench.commands.fetch("arms") },
+                 "epic submit" => -> { described_class::Epic.commands.fetch("submit") },
+                 "consolidate" => -> { described_class.commands.fetch("consolidate") },
+                 "improve" => -> { described_class.commands.fetch("improve") } }
+
+    commands.each do |name, command|
+      it "declares the whole band on `lain #{name}`, with no provider default to outrank the environment" do
+        options = instance_exec(&command).options
+
+        expect(options.keys.map(&:to_sym)).to include(*band)
+        expect(Lain::CLI::RunProfile::FIELDS.map { |field| options.fetch(field).default }).to all(be_nil)
+      end
+    end
+
+    # The Backend a bench command builds, captured at the one Bench::CLI call
+    # it is handed to.
+    def bench_backend(argv, method, env)
+      entry = instance_double(Lain::Bench::CLI)
+      seen = []
+      allow(Lain::Bench::CLI).to receive(:new).and_return(entry)
+      allow(entry).to receive(method) { |**kwargs| (seen << kwargs.fetch(:backend)) && ["done"] }
+      expect { with_env(env) { described_class::Bench.start(argv, debug: true) } }.to output.to_stdout
+      seen.fetch(0)
+    end
+
+    def encoded_options(backend)
+      timeline = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user,
+                                                                     content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Provider::Ollama.new.encode(backend.context.render(timeline:, toolset: Lain::Toolset.new))[:options]
+    end
+
+    it "sends LAIN_NUM_BATCH on every ollama request `bench arms` encodes" do
+      backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
+                              "LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil)
+
+      expect(encoded_options(backend)).to eq(num_batch: 2048)
+    end
+
+    it "sends LAIN_NUM_BATCH on every ollama request `bench record` encodes" do
+      backend = bench_backend(%w[record task.txt --out runs --provider ollama], :record,
+                              "LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil)
+
+      expect(encoded_options(backend)).to eq(num_batch: 2048)
+    end
+
+    it "takes the provider from LAIN_PROVIDER when `bench arms` is given none" do
+      backend = bench_backend(%w[arms suite/tasks.yml], :arms_report, "LAIN_PROVIDER" => "ollama")
+
+      expect(backend.run_profile.provider).to eq("ollama")
+    end
+
+    it "sends no options object from a flagless ollama `bench arms`" do
+      backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
+                              "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil, "LAIN_SEED" => nil,
+                              "LAIN_TEMPERATURE" => nil)
+
+      expect(encoded_options(backend)).to be_nil
     end
   end
 end

@@ -378,6 +378,24 @@ module Lain
         nil
       end
 
+      # `/api/show` describes every model the server has, and answers 404 for
+      # one it has not got -- the only answer here that is a no. A described
+      # model is served; a failed round trip, any other status, or a body that
+      # is not a description is {Serving::UNKNOWN}. Asked only where
+      # {#trained_context_tokens} asks, for that method's reason.
+      #
+      # @param model [String]
+      # @return [Serving]
+      def serves?(model)
+        return Serving::UNKNOWN unless @deployment.model_metadata?
+
+        wrapping_errors { @transport.model_details(model).body }.is_a?(Hash) ? Serving::SERVED : Serving::UNKNOWN
+      rescue APIStatusError => e
+        e.status == 404 ? Serving::NOT_SERVED : Serving::UNKNOWN
+      rescue APIError
+        Serving::UNKNOWN
+      end
+
       private
 
       # The one 400 this arm translates, and only when the body names both
@@ -438,7 +456,7 @@ module Lain
       # as 262,144 -- the exact 8x over-estimate this method exists to refuse --
       # and truncates a Float besides. Both are the forbidden direction.
       def served_context_length(model, body)
-        runner = loaded_runners(body).find { |entry| serves?(entry, model.to_s) }
+        runner = loaded_runners(body).find { |entry| runs?(entry, model.to_s) }
         tokens = runner.to_h["context_length"]
         tokens if tokens.is_a?(Integer) && tokens.positive?
       end
@@ -456,7 +474,7 @@ module Lain
       # nothing the first does not -- and on a body where they disagree, reading
       # it would answer with ANOTHER model's window. `:latest` is the tag ollama
       # appends to an untagged request before printing it back.
-      def serves?(entry, model)
+      def runs?(entry, model)
         [model, "#{model}:latest"].include?(entry["model"])
       end
 

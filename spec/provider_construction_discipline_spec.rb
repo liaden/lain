@@ -25,19 +25,14 @@ require "pathname"
 #
 # == Why the scope is a class list and not an allowlist
 #
-# Only providers that reach a real endpoint are in scope. The other three are
+# Only providers that reach a real endpoint are in scope. The other two are
 # excluded BY CLASS, with reasons, rather than by allowlist entries -- which is
-# what keeps the list below at two files instead of five:
+# what keeps the list below at two files instead of four:
 #
 #   * {Lain::Provider::Mock} never touches HTTP, so a mock-backed bench or spec
 #     cannot leave an unjournaled round trip. It is constructed freely and
 #     legitimately, and a rule it had to be excused from every time would be a
 #     rule nobody trusts.
-#   * {Lain::Provider::Unreachable} RAISES on `#complete` and `#encode` by
-#     construction -- a `--dry-run` provider cannot make a round trip, so it
-#     cannot make an unjournaled one. Excluding the class is stronger than
-#     allowlisting its two call sites, because a third dry-run site needs no
-#     edit here.
 #   * `Provider::Recorded` does not exist in `lib/`.
 #
 # == The two journals, which are not the same journal
@@ -749,8 +744,8 @@ RSpec.describe "provider construction discipline" do
       expect(scan(source)).to be_empty
     end
 
-    it "ignores the providers that cannot make a round trip" do
-      expect(scan("Provider::Mock.new(responses:)\nProvider::Unreachable.new\n")).to be_empty
+    it "ignores the provider that cannot make a round trip" do
+      expect(scan("Provider::Mock.new(responses:)\n")).to be_empty
     end
 
     it "ignores an unrelated class that merely shares a provider's name" do

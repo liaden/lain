@@ -1002,7 +1002,7 @@ RSpec.describe Lain::StatusFeed do
     # ECHOED on the turn. Ollama prints an untagged request back tagged, so one
     # book is asked about `qwen3` by the prompt and `qwen3:latest` by the feed.
     #
-    # A window GRANTED through `Ollama#serves?`'s `:latest` branch and then
+    # A window GRANTED through `Ollama#runs?`'s `:latest` branch and then
     # refused to the `:latest` name splits the two surfaces by exactly one tag,
     # in the untagged-model case the served book was written for.
     it "agrees when the turn echoes the tagged name the run was started untagged with" do

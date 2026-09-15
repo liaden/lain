@@ -114,75 +114,88 @@ module Lain
       # the session once and cannot disagree about which session they describe.
       Review = Data.define(:session, :prompt)
 
-      # The exe's assembly seam. Under `--dry-run` the provider is
-      # {Provider::Unreachable}, so no API key is fetched and nothing can
-      # quietly reach a model -- which is what lets every collaborator below be
-      # required. The assembly lives here, not in the exe, so it carries specs.
+      # The exe's assembly seam. The session is resolved ONCE, here, and both
+      # the recorded profile and the scaffold are read from that file. The
+      # assembly lives here, not in the exe, so it carries specs.
+      #
+      # The backend defaults to what the session under review recorded, and a
+      # typed field that disagrees wins aloud, as {Consolidate.from_options}'s
+      # does. It is built only when {#report} spawns, so a dry run builds no
+      # provider and looks up no credential; the provider's name is still
+      # checked, since that needs neither.
       #
       # @param options [Hash] the invoked command's parsed flags
-      # @option options [Boolean] :dry_run swaps the provider for an unreachable one
+      # @param selector [String] the session under review
+      # @param profile [RunProfile] what the model flag band resolved
+      # @param paths [Paths] resolves the session dir and the improvements sink
+      # @option options [String] :provider the model flag band's provider, which
+      #   the profile was resolved from
+      # @option options [String] :model the model flag band's model id
       # @return [Improve]
-      def self.from_options(options)
-        backend = Backend.new(options)
-        new(provider: options[:dry_run] ? Provider::Unreachable.new : backend.provider,
-            context: backend.context, slots: backend.slots)
+      # @raise [SessionFile::SessionNotFound] before anything else is read
+      def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new)
+        path = SessionFile.resolve(selector, paths:)
+        mismatches = Resume::MismatchNotices.new(path:)
+        resolved = profile.over(mismatches.recorded_profile)
+        Backend.validated(resolved.provider)
+        new(path:, profile: resolved, backend: -> { Backend.new(options, profile: resolved) }, paths:,
+            notices: mismatches.call(profile: resolved, model: resolved.model))
       end
 
       # The spawn collaborators are REQUIRED: a forgotten one is a loud
-      # ArgumentError here rather than a nil checked at the spawn, and a dry
-      # run has a real thing to pass ({Provider::Unreachable}).
+      # ArgumentError here rather than a nil checked at the spawn.
       #
-      # @param provider [Lain::Provider] the improver's model;
-      #   {Provider::Unreachable} for a `--dry-run`, which touches no provider
-      # @param context [Lain::Context] the factory context the persona reshapes
-      #   (model/max_tokens ride through; its system is REPLACED by the role
-      #   prelude)
-      # @param slots [Prompt::Slots] the session slots the persona renders through
+      # @param path [String] the session file under review, already resolved
+      # @param profile [RunProfile] the backend the improver runs on, which a
+      #   dry run names
+      # @param backend [#call] answers what the spawn reads -- `#provider`,
+      #   `#context` and `#slots` -- and is called by {#report} only
       # @param journal [#<<] where the improver's turn usage and any
       #   {Telemetry::WriteRefused} land; the Null channel by default -- a real
       #   Null object, not a nil, so it stays a default rather than a mis-wire
-      # @param paths [Paths] resolves the session dir AND the improvements sink's
-      #   destination/project hash; injectable for specs
-      def initialize(provider:, context:, slots:, journal: Channel::Null.instance, paths: Paths.new)
-        @provider = provider
-        @context = context
-        @slots = slots
+      # @param paths [Paths] resolves the improvements sink's destination and
+      #   project hash; injectable for specs
+      # @param notices [Array<String>] said ahead of either report
+      def initialize(path:, profile:, backend:, journal: Channel::Null.instance, paths: Paths.new, notices: [])
+        @path = path
+        @profile = profile
+        @backend = backend
         @journal = journal
         @paths = paths
+        @notices = notices
       end
 
-      # Spawn the improver once over one session's record.
+      # Spawn the improver once over the session's record.
       #
-      # @param selector [String] an explicit path, a bare filename, or a
-      #   filename missing its ".ndjson" suffix
       # @return [String]
-      # @raise [SessionFile::SessionNotFound]
       # @raise [Bench::Session::Corrupt] naming the file and its damage
-      def report(selector)
-        review = review_of(selector)
-        result = build_improver(review.session).ask(review.prompt).text
-        "improve: ran a harness_improver pass over session #{review.session}\n#{result}"
+      def report
+        review = session_review
+        result = build_improver(review.session, @backend.call).ask(review.prompt).text
+        said("improve: ran a harness_improver pass over session #{review.session}\n#{result}")
       end
 
-      # The scaffold the improver WOULD see, spawning nothing.
+      # The scaffold the improver WOULD see, and what it would run on,
+      # spawning nothing.
       #
       # @return [String]
-      # @raise [SessionFile::SessionNotFound]
-      def dry_report(selector)
-        review = review_of(selector)
-        "improve: harness_improver would review session #{review.session} " \
-          "(provider untouched)\n\n#{review.prompt}"
+      # @raise [Bench::Session::Corrupt] naming the file and its damage
+      def dry_report
+        review = session_review
+        said("improve: harness_improver would review session #{review.session} on #{@profile.provider}, " \
+             "model #{@profile.model || "the provider's default"} (provider untouched)\n\n#{review.prompt}")
       end
 
       private
 
+      def said(report) = [*@notices, report].join("\n")
+
       # A pure function of the session file -- no provider touched -- so the
       # dry surface and the live spawn read the SAME session id and scaffold.
       # The lineages are read whole, so a damaged session refuses by name.
-      def review_of(selector)
-        path = SessionFile.resolve(selector, paths: @paths)
-        lineages = Bench::Session::Lineages.read(path).to_a
-        Review.new(session: File.basename(path, ".ndjson"), prompt: prompt_for(path, lineages))
+      def session_review
+        lineages = Bench::Session::Lineages.read(@path).to_a
+        Review.new(session: File.basename(@path, ".ndjson"), prompt: prompt_for(@path, lineages))
       end
 
       # Rendered here, where the path is still known. {Bench::Session::Lineages.read}
@@ -193,10 +206,11 @@ module Lain
         raise Lain::Error, "#{path}: #{e.message}"
       end
 
-      def build_improver(session)
+      def build_improver(session, backend)
         allowed = role.attenuate(improver_union(session))
         Agent.new(
-          provider: @provider, context: improver_context, toolset: allowed,
+          provider: backend.provider, context: role.child_context(backend.context, slots: backend.slots),
+          toolset: allowed,
           handler: Effect::Handler::Live.new, timeline: fresh_root,
           session: Session.new(worker_env: WorkerEnv.default), journal: @journal, tool_middleware: guard_stack
         )
@@ -213,8 +227,6 @@ module Lain
       # owner ({Role#spawn_policy}'s default), not a bare `Timeline.empty` that
       # could drift from it.
       def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
-
-      def improver_context = role.child_context(@context, slots: @slots)
 
       # Refusals and masks are recorded into the raw `@journal`.
       def guard_stack = ToolGuard.detached(journal: @journal).call(WorkerEnv.default)

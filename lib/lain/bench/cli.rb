@@ -46,6 +46,11 @@ module Lain
 
       # The three-section {Variance} report over recorded session files.
       #
+      # A run that measured nothing is named rather than averaged in: a
+      # recording set aside as failed, or one a killed process left with no
+      # header, has nothing to load, and a turn whose stream was cut short
+      # answers with no usage at all, which a mean would read as a free run.
+      #
       # @param sources [Array<String>] paths; a directory means every
       #   `*.ndjson` under it, in sorted filename order
       # @param price_book [Lain::PriceBook]
@@ -53,9 +58,11 @@ module Lain
       # @raise [Refusal] on a missing or empty source, a recording that cannot
       #   replay, or fewer than two recordings
       def variance_report(sources, price_book: PriceBook.default)
-        paths = session_paths(sources)
-        recordings = paths.map { |path| load_session(path) }
-        build_variance(recordings, paths, price_book).report
+        read = session_paths(sources).map { |path| [path, Journal.records(File.foreach(path)).to_a] }
+        aside, measured = read.partition { |path, records| set_aside_reason(path, records) }
+        set_aside = aside.map { |path, records| "#{path}: #{set_aside_reason(path, records)}" }
+        recordings = measured.map { |path, records| load_session(path, records) }
+        build_variance(recordings, measured.map(&:first), price_book, set_aside).report
       end
 
       # The five-arm retrieval sweep: a deterministic, offline recall@k eval
@@ -199,7 +206,8 @@ module Lain
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt
       # @raise [LiveArms::UnroutableBackend] when the resolved model has no
-      #   cheaper sibling named or servable and no `router` was given
+      #   cheaper sibling named, or the server says it has not got the one
+      #   named, and no `router` was given
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
@@ -213,6 +221,8 @@ module Lain
         # with what actually ran. The ROSTER reads the same answer: the routing
         # arm's capable branch is that model, so all four arms run what the
         # operator asked for and only the cheap branch departs from it.
+        spawn_options = journaled_provider(backend, journal, spawn_options)
+        LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
         spawn_seam = SpawnSeam.new(backend:, **spawn_options)
         arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
@@ -309,20 +319,31 @@ module Lain
       #   by default, for the reason above
       # @param instrumentation [#call] what each recorded run REPORTS through,
       #   the per-turn Context source included
-      # @return [Array<String>] the written session paths, in run order
+      # @return [Array<String>] one line per run, in run order: the written
+      #   session path, or for a run whose round trip failed, the path it was
+      #   set aside under and why
+      # @raise [Refusal] when no run recorded at all, naming each set aside
       def record(taskfile:, out:, backend:, runs: RECORD_DEFAULTS.fetch(:runs),
                  system: nil, provider: nil, tools: Harness::NO_TOOLS,
                  instrumentation: Harness::INSTRUMENTATION)
         refuse_unisolated_writes!(tools, isolation: nil, flag: nil)
         runs = check_runs(runs)
         prompts = prompts_from(taskfile)
-        provider ||= recording_provider(backend)
+        current_run = RunRecorder::CurrentRun.new
+        provider ||= recording_provider(backend, current_run)
         context = backend.context(system_override: system)
         # The attribution must name what ACTUALLY rendered: `--system` renders
         # instead of the slots, and `SlotFills.from` owns that distinction.
         attribution = Telemetry::SlotFills.from(backend.slots, override: system)
-        run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:, tools:, instrumentation:)
-        (1..runs).map { |index| run_recorder.record(File.join(out, "#{index}.ndjson")) }
+        run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:, tools:, instrumentation:,
+                                       current_run:)
+        said = (1..runs).to_h do |index|
+          path = File.join(out, "#{index}.ndjson")
+          [path, run_recorder.record(path)]
+        end
+        raise Refusal, ["no run recorded", *said.values].join("\n") if said.none? { |path, line| path == line }
+
+        said.values
       end
 
       private
@@ -473,8 +494,8 @@ module Lain
       # lives in two classes this one cannot see, and it was believed and false
       # once already. Landed as Corrupt rather than carried as itself, so this
       # command speaks ONE refusal type whichever arm fires.
-      def load_session(path)
-        replayable(Session.load(path), path)
+      def load_session(path, records)
+        replayable(Session.load(records), path)
       rescue Session::Corrupt, Store::MissingObject => e
         raise Session::Corrupt, "#{path}: #{e.message}"
       end
@@ -489,6 +510,42 @@ module Lain
         raise Refusal, "#{path}: #{e.message}"
       end
 
+      # The one arms provider, built over the journal the comparison records
+      # into, so its own records land beside the grades -- and that journal
+      # told once what the arms' context needs that this provider lacks. A
+      # provider the caller injected is the caller's to have wired.
+      def journaled_provider(backend, journal, spawn_options)
+        return spawn_options if spawn_options.key?(:provider)
+
+        journal ||= Channel::Null.instance
+        provider = backend.provider(journal:)
+        Capability::Policy.for(:degrade, journal:).resolve(backend.context, provider)
+        spawn_options.merge(provider:)
+      end
+
+      # Why a session file is listed rather than measured, or nil when it is
+      # measured. A file with no header was never finished; the reason a
+      # failed one was set aside is recorded inside it.
+      def set_aside_reason(path, records)
+        return failed_reason(records) if RunRecorder.failed?(path)
+        return "no session header" if records.none? { |record| record["type"] == Session::HEADER_TYPE }
+
+        "no usage recorded beside a truncated stream" if unmeasured?(records)
+      end
+
+      def failed_reason(records)
+        failure = records.find { |record| record["type"] == "recording_failed" }
+        failure ? "failed recording (#{failure["error_class"]}: #{failure["message"]})" : "failed recording"
+      end
+
+      # A stream cut short answers with no usage at all; only the pair says
+      # the zero is not a measurement.
+      def unmeasured?(records)
+        records.any? { |record| record["type"] == "truncated_stream" } &&
+          records.select { |record| record["type"] == "turn_usage" }
+                 .all? { |record| record["usage"].to_h.values.grep(Numeric).all?(&:zero?) }
+      end
+
       # Variance's construction-time guards (n>=2) speak in recordings; the
       # experimenter typed paths, so restore them to the message.
       #
@@ -498,10 +555,11 @@ module Lain
       # a directory of a dozen sessions refused with nothing to act on. Both are
       # Lain::Errors rather than ArgumentErrors, which is how they sailed past
       # the narrower rescue this widens.
-      def build_variance(recordings, paths, price_book)
-        Variance.new(recordings:, price_book:)
+      def build_variance(recordings, paths, price_book, set_aside)
+        Variance.new(recordings:, price_book:, set_aside:)
       rescue ArgumentError, Error => e
-        raise Refusal, "#{paths.join(", ")}: #{e.message}"
+        refused = paths.empty? ? e.message : "#{paths.join(", ")}: #{e.message}"
+        raise Refusal, [*set_aside, refused].join("\n")
       end
 
       # This command spends money per run: a sweep of zero must not read as
@@ -545,8 +603,11 @@ module Lain
       # gate fires first, but it speaks in the chat's voice. `record` is the
       # command that spends per run, so the operator hears that instead -- one
       # gate, two audiences.
-      def recording_provider(backend)
-        backend.provider
+      #
+      # Built over the run that is recording, so a truncated stream or a wait
+      # lands in that run's own file.
+      def recording_provider(backend, current_run)
+        backend.provider(journal: current_run)
       rescue Lain::CLI::Backend::MissingAPIKey
         raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it"
       end

@@ -138,8 +138,8 @@ switch:
 lain consolidate <session> --dry-run
 ```
 
-**Under `--dry-run` the provider is `Provider::Unreachable`.** No API key is fetched and nothing can
-quietly reach a model. Verify the negative: unset every provider credential in the environment and
+**Under `--dry-run` no backend is built at all.** No provider, no API key is fetched, and nothing can
+quietly reach a model; the report names the provider and model a live pass would use. Verify the negative: unset every provider credential in the environment and
 confirm the dry report still runs. A dry run that refuses on a missing key is reaching for a provider
 it promised not to.
 

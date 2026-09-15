@@ -52,8 +52,8 @@ module Lain
       #
       # A bad value coerced by one of these types is squarely the first case: `exe/lain`'s command
       # bodies rescue `Lain::Error` (see `render`/`exit_status` in `lib/lain/cli/command.rb`) to
-      # turn it into `Thor::Error` rather than a raw backtrace, exactly as `project.rb:18` and
-      # `provider/unreachable.rb:25` already do for their own user-facing failures. `ArgumentError`
+      # turn it into `Thor::Error` rather than a raw backtrace, exactly as `project.rb:18` already
+      # does for its own user-facing failures. `ArgumentError`
       # is not in that rescue's reach, so a `CoercionError < ArgumentError` would have bypassed it.
       class CoercionError < Lain::Error; end
 

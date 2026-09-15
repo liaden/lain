@@ -79,8 +79,8 @@ RSpec.describe Lain::Oracle::SecretRead do
     # thing this builder refuses to read is a working provider selector one
     # object over.
     it "refuses a knob that genuinely selects a remote summarizer tier" do
-      expect { Lain::CLI::Backend.new(summarizer_provider: "anthropic") }.not_to raise_error
-      expect { Lain::CLI::Backend.new(summarizer_provider: "not-a-provider") }
+      expect { Lain::CLI::Backend.new({ summarizer_provider: "anthropic" }) }.not_to raise_error
+      expect { Lain::CLI::Backend.new({ summarizer_provider: "not-a-provider" }) }
         .to raise_error(Lain::CLI::UnknownProvider)
 
       expect(provider_built).to be_a(Lain::Provider::Ollama)
@@ -351,7 +351,7 @@ RSpec.describe Lain::Oracle::SecretRead do
     # knobs would force a reload of it, and the chat's temperature would move
     # its verdicts.
     it "judges a qwen3-coder chat's release with none of that chat's sampler options" do
-      chat = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3-coder:30b", temperature: 0.2, num_batch: 2048)
+      chat = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3-coder:30b", temperature: 0.2, num_batch: 2048 })
       options = chat.tier_options(provider: "ollama", model: Lain::Provider::Ollama::DEFAULT_MODEL)
 
       described_class.tier(journal:, options:).ask(**inputs).await

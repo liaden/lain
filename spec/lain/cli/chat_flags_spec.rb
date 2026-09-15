@@ -47,8 +47,7 @@ module ChatFlags
   # check it both ways: the named commands really declare the flag, and the key
   # is really still read. An empty allowlist would be better; this one is honest.
   # `up`'s three arrived when {Lain::CLI::Up.from_options} took the flag ->
-  # contract translation off the exe, the same shape consolidate/improve
-  # already used -- so the reads moved from a file this glob CANNOT see into
+  # contract translation off the exe -- so the reads moved from a file this glob CANNOT see into
   # one it can. That is a net gain in coverage, not a loss: `up`'s flags now
   # get the read-implies-declared direction they never had, which is what the
   # "backs each allowlisted key" example below actually checks.
@@ -61,8 +60,7 @@ module ChatFlags
   # separately declared key `up` reads. `nvim_socket` is what replaced its
   # value form, and it is `up`'s alone -- `chat --nvim SOCKET` still spells the
   # same thing with the flag it always had.
-  ELSEWHERE = { dry_run: %w[consolidate improve], session: %w[up watch],
-                socket: %w[up], nvim_socket: %w[up] }.freeze
+  ELSEWHERE = { session: %w[up watch], socket: %w[up], nvim_socket: %w[up] }.freeze
 
   # Option reads whose key is not a literal, pinned with their reason. A
   # dynamic read is a hole in this guard -- the key cannot be resolved from the

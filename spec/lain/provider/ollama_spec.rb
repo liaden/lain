@@ -1397,6 +1397,54 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # Asked before a bench spends on a model it was told to route to: `/api/show`
+  # knows every model the server has, and a 404 is the server saying it has
+  # not got this one. Anything short of an answer is not a no.
+  describe "#serves?", :webmock do
+    let(:serving) { Lain::Provider::Serving }
+
+    def show(status, body)
+      stub_request(:post, "http://localhost:11434/api/show")
+        .to_return(status:, headers: { "Content-Type" => "application/json" }, body:)
+    end
+
+    it "answers served when the server describes the model" do
+      show(200, JSON.generate("model_info" => { "general.architecture" => "qwen3" }))
+
+      expect(described_class.new.serves?("qwen3:4b")).to equal(serving::SERVED)
+      expect(a_request(:post, "http://localhost:11434/api/show").with(body: { model: "qwen3:4b" })).to have_been_made
+    end
+
+    it "answers not served on a 404" do
+      show(404, JSON.generate("error" => "model 'nonesuch:1b' not found"))
+
+      expect(described_class.new.serves?("nonesuch:1b")).to equal(serving::NOT_SERVED)
+    end
+
+    it "answers unknown when no server answered" do
+      stub_request(:post, "http://localhost:11434/api/show").to_raise(Faraday::ConnectionFailed)
+
+      expect(described_class.new.serves?("qwen3:4b")).to equal(serving::UNKNOWN)
+    end
+
+    it "answers unknown on a server error" do
+      show(500, JSON.generate("error" => "server error"))
+
+      expect(described_class.new.serves?("qwen3:4b")).to equal(serving::UNKNOWN)
+    end
+
+    it "answers unknown on a 200 whose body is not a description" do
+      show(200, "[]")
+
+      expect(described_class.new.serves?("qwen3:4b")).to equal(serving::UNKNOWN)
+    end
+
+    it "answers unknown, asking nothing, on an arm whose /api/show is unverified" do
+      expect(described_class.cloud(api_key: "sk-test").serves?("gpt-oss:120b")).to equal(serving::UNKNOWN)
+      expect(a_request(:post, %r{/api/show})).not_to have_been_made
+    end
+  end
+
   # A transport double whose #stream wires the SAME on_data proc production
   # code builds -- `Provider::HTTP::Streaming::FaradayHandlers.build`'s v2
   # handler, with a real `Faraday::Env` -- rather than replaying chunks

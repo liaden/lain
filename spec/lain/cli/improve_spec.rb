@@ -58,7 +58,18 @@ RSpec.describe Lain::CLI::Improve do
 
   attr_reader :slots
 
-  def improve(provider) = described_class.new(provider:, context:, slots:, journal:, paths:)
+  def improve(provider, session: "s1")
+    described_class.new(path: File.join(@session_dir, "#{session}.ndjson"), journal:, paths:,
+                        profile: Lain::CLI::RunProfile.from_options({ provider: "anthropic" }),
+                        backend: -> { instance_double(Lain::CLI::Backend, provider:, context:, slots:) })
+  end
+
+  # A pass whose backend is never built: a dry report that reached for one fails.
+  def dry(session = "s1")
+    described_class.new(path: File.join(@session_dir, "#{session}.ndjson"), journal:, paths:,
+                        profile: Lain::CLI::RunProfile.from_options({ provider: "anthropic" }),
+                        backend: -> { raise "a dry run built the improver's backend" })
+  end
 
   # An [id, name, input] triple naming an improvement_write for the mock to emit.
   def improvement_write(id, note, kind: "knob", evidence: "")
@@ -89,7 +100,7 @@ RSpec.describe Lain::CLI::Improve do
                                             text_response("recorded two improvements")
                                           ])
 
-      report = improve(provider).report("s1")
+      report = improve(provider).report
 
       records = written_improvements
       expect(records.size).to eq(2)
@@ -106,7 +117,7 @@ RSpec.describe Lain::CLI::Improve do
                                             text_response("done")
                                           ])
 
-      improve(provider).report("s1")
+      improve(provider).report
 
       seen = prompts_seen(provider)
       expect(seen.any? { |text| text.include?("rephrase_loop") }).to be(true)
@@ -156,7 +167,7 @@ RSpec.describe Lain::CLI::Improve do
                                             text_response("done")
                                           ])
 
-      improve(provider).report("s1")
+      improve(provider).report
 
       # The PEM write was withheld before the sink; the clean note landed.
       expect(written_improvements.map { |record| record["note"] }).to eq(["a clean knob note"])
@@ -187,7 +198,7 @@ RSpec.describe Lain::CLI::Improve do
       provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_r", "read_file", { "path" => path }]),
                                                       text_response("done")])
 
-      improve(provider).report("s1")
+      improve(provider).report
 
       expect(result_of(provider, "tu_r")).to include("<redacted:1>")
       expect(result_of(provider, "tu_r")).not_to include(secret)
@@ -198,8 +209,8 @@ RSpec.describe Lain::CLI::Improve do
   # method means is the smell, and the dry surface renders a different sentence
   # from a different half of the pass.
   describe "#dry_report" do
-    it "renders the scaffold the improver would see, through a provider that cannot be reached" do
-      report = improve(Lain::Provider::Unreachable.new).dry_report("s1")
+    it "renders the scaffold the improver would see, building no backend" do
+      report = dry.dry_report
 
       expect(report).to include("would review session s1")
       expect(report).to include("rephrase_loop") # the friction render is present
@@ -226,7 +237,7 @@ RSpec.describe Lain::CLI::Improve do
       spawned.write(File.join(@session_dir, "s2.ndjson"))
       spawn = spawned.of_type("message").find { |record| record["kind"] == "spawn" }
 
-      report = improve(Lain::Provider::Unreachable.new).dry_report("s2")
+      report = dry("s2").dry_report
 
       expect(report).to include(*child_digests, "survey the flaky specs", "called echo", "one flaky spec")
       expect(report).to include("spawned from #{spawn.dig("payload", "spawned_from")}")
@@ -242,7 +253,7 @@ RSpec.describe Lain::CLI::Improve do
       ).run("again")
       resumed.write(File.join(@session_dir, "resumed.ndjson"))
 
-      expect(improve(Lain::Provider::Unreachable.new).dry_report("resumed"))
+      expect(dry("resumed").dry_report)
         .to include("would review session resumed", "resumed child done")
     end
 
@@ -255,7 +266,7 @@ RSpec.describe Lain::CLI::Improve do
       ).run
       File.write(File.join(@session_dir, "live.ndjson"), live.snapshots.first)
 
-      report = improve(Lain::Provider::Unreachable.new).dry_report("live")
+      report = dry("live").dry_report
 
       expect(report).to include("first done")
       expect(report).not_to include("second done")
@@ -267,16 +278,17 @@ RSpec.describe Lain::CLI::Improve do
       lines[torn] = "#{lines[torn][0, 40]}\n"
       File.write(File.join(@session_dir, "torn.ndjson"), lines.join)
 
-      expect { improve(Lain::Provider::Unreachable.new).dry_report("torn") }
+      expect { dry("torn").dry_report }
         .to raise_error(Lain::Error, /torn\.ndjson: /)
     end
   end
 
-  # The four-nils smell, removed: a dry run wires a REAL Null provider, so every
+  # The four-nils smell, removed: a dry run builds no backend at all, so every
   # collaborator can be required and a mis-wire is loud where it happened.
   describe "the collaborators are required at construction" do
     it "raises ArgumentError naming the keyword the wiring forgot" do
-      expect { described_class.new(context:, slots:) }.to raise_error(ArgumentError, /provider/)
+      expect { described_class.new(path: "s1.ndjson", profile: Lain::CLI::RunProfile::UNRECORDED) }
+        .to raise_error(ArgumentError, /backend/)
     end
 
     it "keeps no MissingCollaborator: there is no nil left to check at use" do
@@ -285,18 +297,79 @@ RSpec.describe Lain::CLI::Improve do
   end
 
   describe ".from_options" do
-    it "assembles Provider::Unreachable for --dry-run, so a dry pass needs no API key" do
-      pass = described_class.from_options({ dry_run: true, provider: "anthropic", max_tokens: 64 })
+    # The session under review, re-headed as a chat run on this profile.
+    def recorded_on(profile)
+      path = File.join(@session_dir, "s1.ndjson")
+      records = File.readlines(path).map { |line| JSON.parse(line) }
+                                    .map { |record| record["type"] == "session" ? record.merge(profile) : record }
+      File.write(path, records.map { |record| JSON.generate(record) }.join("\n"))
+    end
 
-      # The ivar directly: the point is WHICH provider the assembly chose, and
-      # the object refuses every message that would otherwise reveal it.
-      expect(pass.instance_variable_get(:@provider)).to be_a(Lain::Provider::Unreachable)
+    def from_options(options, profile: Lain::CLI::RunProfile.from_options(options))
+      described_class.from_options({ max_tokens: 64, **options }, selector: "s1", profile:, paths:)
+    end
+
+    def untyped = Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic")
+
+    before { allow(Lain::CLI::Backend).to receive(:new).and_call_original }
+
+    it "follows the provider the session recorded when none was typed" do
+      recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+
+      expect(from_options({}, profile: untyped).dry_report).to include("on ollama, model qwen3:4b (provider untouched)")
+    end
+
+    it "builds the live improver over that same profile" do
+      recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                   body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                          "message" => { "role" => "assistant", "content" => "nothing to note" })}\n")
+
+      expect(from_options({}, profile: untyped).report).to include("nothing to note")
+      expect(Lain::CLI::Backend).to have_received(:new)
+        .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"))
+    end
+
+    it "lets a typed provider win, and says so ahead of the report" do
+      recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+
+      report = from_options({ provider: "anthropic" }).dry_report
+
+      expect(report.lines.first).to include("recorded with provider ollama; continuing with anthropic")
+      expect(report).to include("on anthropic, model the provider's default")
+    end
+
+    # The dry run's promise is no key: a session recorded on the hosted arm
+    # must still print its scaffold on a box that holds no credential for it.
+    it "dry-runs a session recorded on ollama-cloud with no OLLAMA_API_KEY, building no backend" do
+      recorded_on("provider" => "ollama-cloud", "model" => "gpt-oss:120b")
+
+      report = with_env("OLLAMA_API_KEY" => nil, "ANTHROPIC_API_KEY" => nil) do
+        from_options({}, profile: untyped).dry_report
+      end
+
+      expect(report).to include("would review session s1 on ollama-cloud", "rephrase_loop")
+      expect(Lain::CLI::Backend).not_to have_received(:new)
+    end
+
+    it "refuses a mistyped --provider by name on a dry run, building no backend" do
+      expect { from_options({ provider: "olama" }).dry_report }
+        .to raise_error(Lain::CLI::UnknownProvider, /unknown provider "olama", expected one of.*ollama/)
+      expect(Lain::CLI::Backend).not_to have_received(:new)
+    end
+
+    it "reads the scaffold from the file it resolved, not from a second resolution" do
+      pass = from_options({ provider: "anthropic" })
+      File.write(File.join(@session_dir, "s1"), "a file the selector would now resolve to first\n")
+
+      expect(pass.dry_report).to include("would review session s1 ", "rephrase_loop")
     end
   end
 
   describe "resolution" do
     it "raises the shared SessionFile refusal, listing what it looked at" do
-      expect { improve(Lain::Provider::Mock.new).report("nope") }
+      expect { described_class.from_options({ max_tokens: 64 }, selector: "nope", paths:) }
         .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
     end
 

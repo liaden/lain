@@ -642,6 +642,26 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(gate_decisions.last).to include("policy" => "adjudicated")
     end
 
+    # The whole exe path with only the wire faked: the flag band `epic submit`
+    # declares, the profile the exe resolves under the environment, and the
+    # backend the pair is really built over.
+    it "carries the environment's throughput flags onto every adjudication request" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+             .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                        body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                               "message" => { "role" => "assistant", "content" => "APPROVE" })}\n")
+      options = Thor::Options.new(LainCLI::Epic.commands.fetch("submit").options).parse(%w[--provider ollama])
+      profile = with_env("LAIN_NUM_BATCH" => "2048") { LainCLI::ModelFlags.profile(options) }
+
+      described_class.from_options(options, profile:, input: tty, output: StringIO.new, root:, paths:,
+                                            config: config(adjudicating)).submit("research")
+
+      expect(chat).to have_been_requested.at_least_twice
+      expect(a_request(:post, "http://localhost:11434/api/chat")
+               .with { |request| JSON.parse(request.body)["options"] != { "num_batch" => 2048 } }).not_to have_been_made
+    end
+
     it "builds no backend when every stage is interactive" do
       interactive = Lain::Epic::STAGES.to_h { |stage| [stage, "interactive"] }
 
