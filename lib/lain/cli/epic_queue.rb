@@ -47,11 +47,11 @@ module Lain
       # same whether the fold or this surface found it.
       UnreadableRecord = Approval::SignoffQueue::UnreadableRecord
 
-      # An approved issue plan's issue status is folded from the epic's own
-      # document, and the queue -- global to the sessions directory -- can be
-      # drained from anywhere. Run outside the owning project, that document
-      # is another project's, so the approval refuses before anything lands.
-      class OutsideProject < Error; end
+      # An approved issue plan puts its issue in flight, and an issue's status
+      # is folded from the epic's own document -- so with no document where
+      # this process resolves it, the approval refuses before anything lands,
+      # naming the document and the path it looked at.
+      class MissingEpicDocument < Error; end
 
       # `answered_by` names WHO decided, `policy` names HOW the verdict was
       # reached -- independent axes ({Approval::GateDecision}'s contract), both
@@ -71,8 +71,8 @@ module Lain
       # @param clock [#call] returns "now" as a Time; injected so the wait a
       #   sign-off records is a function of the journal rather than of when the
       #   command ran
-      # @param epics [CLI::Epic, nil] folds an epic's progress, asked only when
-      #   an approved issue plan has an issue to put in flight; nil builds the
+      # @param epics [CLI::Epic, nil] answers where an epic stands, asked only
+      #   when an approval advances its epic ({Epic::Advance#moves?}); nil builds the
       #   default one at that moment, so a drain that moves nothing never
       #   resolves a project
       def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil)
@@ -132,8 +132,8 @@ module Lain
         raise UnknownDigest, unknown_message(digest, approved:) if rows.empty?
 
         decisions = rows.map { |row| row.terminal(approved:, reason:) }
-        starts = Starts.new(decisions) { |slug| epics.progress(slug) }
-        confirmation(digest, decisions, append(decisions, starts))
+        advances = Advances.new(decisions) { epics }
+        confirmation(digest, decisions, append(decisions, advances))
       end
 
       def epics = @epics ||= Epic.new(paths: @paths)
@@ -141,12 +141,12 @@ module Lain
       # {Journal.open} creates a fresh file under `sessions_dir`, deliberately:
       # the fold reads every file there, so a decision journaled from a one-shot
       # CLI lands in the same truth the next fold sees. The decisions go first,
-      # and any issue they start after them, as a verdict writes them.
-      def append(decisions, starts)
+      # and whatever they advance after them, as a verdict writes them.
+      def append(decisions, advances)
         journal = Journal.open(paths: @paths)
         begin
           decisions.each { |decision| journal.record(decision) }
-          starts.write(journal)
+          advances.write(journal)
         ensure
           journal.close
         end
@@ -154,10 +154,17 @@ module Lain
 
       def confirmation(digest, decisions, moved)
         signed = decisions.map do |decision|
-          "  #{decision.epic_slug}/#{decision.stage} — #{decision.approved ? "approved" : "denied"} by " \
+          "  #{partition_of(decision)} — #{decision.approved ? "approved" : "denied"} by " \
             "#{decision.answered_by} after #{Row.waited_label(decision.latency)}"
         end
         ["signed off #{digest}", *signed, *moved.map { |line| "  #{line}" }].join("\n")
+      end
+
+      # Spelled by {Approval::SignoffQueue::Partition}, so a sign-off names its
+      # issue exactly as the park it drained did.
+      def partition_of(decision)
+        Approval::SignoffQueue::Partition.new(epic_slug: decision.epic_slug, stage: decision.stage,
+                                              issue_id: decision.issue_id).to_s
       end
 
       # `review.rows(nil)` widens to every epic: the near-miss beside what was
@@ -216,8 +223,10 @@ module Lain
       def counted(count, noun) = "#{count} #{noun.pluralize(count)}"
 
       # One parked item joined to the two records that explain it: the deferral
-      # that parked it and the spike evidence behind it.
-      Row = Data.define(:item, :parked_at, :waited, :reason, :question) do
+      # that parked it and the spike evidence behind it. `spiked` is whether a
+      # spike ran at all, because an empty evidence cell means something else
+      # when no policy ever asked for one.
+      Row = Data.define(:item, :parked_at, :waited, :reason, :question, :spiked) do
         # Coarse on purpose: a morning review asks "has this been sitting since
         # yesterday", never "how many seconds".
         def self.waited_label(seconds)
@@ -240,7 +249,7 @@ module Lain
         # to ORDER it is no reason to hide every other item.
         def order_key = [reviewable? ? 0 : 1, stage_index, parked_at]
 
-        def address = "#{item.artifact_digest}  (#{item.epic_slug}/#{item.stage})"
+        def address = "#{item.artifact_digest}  (#{item.partition})"
 
         def terminal(approved:, reason:)
           Approval::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
@@ -250,56 +259,63 @@ module Lain
         end
 
         def to_s
-          ["#{item.stage}  epic #{item.epic_slug}  waiting #{self.class.waited_label(waited)}",
+          ["#{item.stage}  epic #{item.epic_slug}#{issue}  waiting #{self.class.waited_label(waited)}",
            "  question:  #{question || "<not recoverable from the journal>"}",
            "  artifact:  #{item.artifact_digest}",
-           "  evidence:  #{item.evidence_digest || "<none gathered -- the spike did not answer>"}",
+           "  evidence:  #{item.evidence_digest || no_evidence}",
            *(reason ? ["  hesitation: #{reason}"] : [])].join("\n")
         end
 
         private
+
+        def issue = item.issue_id ? "  issue #{item.issue_id}" : ""
+
+        def no_evidence = spiked ? "<none gathered -- the spike did not answer>" : "<none -- no spike ran>"
 
         # `Lain::Epic`, spelled out: {CLI::Epic} is a sibling of this class, so a
         # bare `Epic` resolves to THAT one and finds no STAGES.
         def stage_index = Lain::Epic::STAGES.index(item.stage) || Lain::Epic::STAGES.size
       end
 
-      # The issues a drain starts. An approved issue plan puts its issue in
-      # flight whichever surface approved it -- the epic driver launches only
-      # issues in flight, so a plan signed off here and left pending would
-      # never run. Progress is read BEFORE anything is journaled, so an epic
-      # whose document is not here refuses before the sign-off lands.
-      class Starts
-        # Yields each epic slug with an approved plan, for that epic's progress.
+      # What a drain advances, by {Epic::Advance}'s rule, so a sign-off here
+      # moves the epic exactly as a verdict would: the epic driver launches
+      # only issues in flight, and `lain epic status` reads the last stage
+      # started, so an approval that moved neither would never be acted on.
+      # Where each epic stands is read BEFORE anything is journaled, so a fold
+      # that refuses refuses before the sign-off lands.
+      class Advances
+        # Yields once, for the epics to read, and only when an approval moves
+        # something -- so a drain that moves nothing never resolves a project.
         #
-        # @raise [OutsideProject] when that epic's document is not where this
-        #   process looks -- the approver stands in another project
+        # @raise [MissingEpicDocument] when an approved plan's epic has no
+        #   document where this process resolves it
         def initialize(decisions)
-          @plans = decisions.select { |decision| plan_approval?(decision) }
-          @progress = @plans.map(&:epic_slug).uniq.to_h do |slug|
-            [slug, yield(slug)]
-          rescue Lain::Epic::Home::MissingArtifact => e
-            raise OutsideProject, outside_message(slug, e)
-          end
+          advances = decisions.select(&:approved).map { |decision| [decision, advance(decision)] }
+          moving = advances.select { |_decision, advance| advance.moves? }
+          @ready = moving.empty? ? [] : read(moving, yield)
         end
 
-        # @return [Array<String>] one line per approved plan, saying what moved
-        def write(journal)
-          @plans.map do |plan|
-            Lain::Epic::InFlight.new(scribe: Lain::Epic::Scribe.new(epic_slug: plan.epic_slug, journal:),
-                                     progress: -> { @progress.fetch(plan.epic_slug) }, issue_id: plan.issue_id).call
-          end
-        end
+        # @return [Array<String>] one line per advancing approval, saying what moved
+        def write(journal) = @ready.map { |ready| ready.call(journal) }
 
         private
 
-        def plan_approval?(decision)
-          Lain::Epic::InFlight.starts?(approved: decision.approved, stage: decision.stage, issue_id: decision.issue_id)
+        def advance(decision)
+          Lain::Epic::Advance.new(epic_slug: decision.epic_slug, stage: decision.stage, issue_id: decision.issue_id)
         end
 
-        def outside_message(slug, cause)
-          "approving an issue_plan of epic #{slug.inspect} puts its issue in flight, which reads the epic's own " \
-            "document, so it must run inside the project that owns it -- nothing was journaled (#{cause.message})"
+        def read(moving, epics)
+          moving.map do |decision, advance|
+            advance.read(epics)
+          rescue Lain::Epic::Home::MissingArtifact => e
+            raise MissingEpicDocument, missing_message(decision, e)
+          end
+        end
+
+        def missing_message(decision, cause)
+          "cannot approve the #{decision.stage} for issue #{decision.issue_id.inspect} of epic " \
+            "#{decision.epic_slug.inspect}: putting the issue in flight reads its status from the epic's document, " \
+            "and there is #{cause.message} -- nothing was journaled"
         end
       end
 
@@ -336,7 +352,7 @@ module Lain
           deferral = deferrals.fetch(address(item)) { raise UnreadableRecord, orphan_message(item) }
           parked_at = parked_at(deferral, item)
           Row.new(item:, parked_at:, waited: waited(parked_at, item), reason: deferral["reason"],
-                  question: evidence.dig(address(item), "question"))
+                  question: evidence.dig(address(item), "question"), spiked: evidence.key?(address(item)))
         end
 
         # A deferral stamped AFTER now is refused here rather than downstream:

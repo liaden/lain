@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "stringio"
 require "tmpdir"
 
@@ -167,6 +168,52 @@ RSpec.describe Lain::CLI::EpicSubmit do
       command(gates: { "research" => "hands_off" }).submit("research")
 
       expect(gate_decisions.first).to include("issue_id" => nil)
+    end
+  end
+
+  # The first gate of the real pipeline: research-epic writes research.md, and
+  # plan-epic writes epic.md only once research is approved. So research is
+  # decided, advanced and repaired with no epic.md on disk.
+  describe "research, before epic.md exists" do
+    before { write_research }
+
+    it "approves research and advances the epic" do
+      said = command(gates: { "research" => "hands_off" }).submit("research")
+
+      expect(said).to start_with("approved #{research_digest}")
+      expect(said).to include("research completed, epic_plan started")
+      expect(gate_decisions.map { |record| record.values_at("approved", "stage") }).to eq([[true, "research"]])
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
+      expect(home.epic.exist?).to be(false)
+    end
+
+    it "repairs a standing research approval that never advanced the epic" do
+      session("approved.ndjson", decision(digest: research_digest, stage: "research", approved: true,
+                                          policy: "hands_off"))
+
+      said = command(gates: { "research" => "hands_off" }).submit("research")
+
+      expect(said).to include("already approved", "research completed, epic_plan started")
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
+    end
+  end
+
+  # Where the epic stands is read BEFORE the verdict is journaled, so a stage
+  # record the fold cannot read refuses the submit with nothing recorded. Read
+  # after, it left an approval on the record and an epic that never moved.
+  describe "a stage record the fold cannot read" do
+    before do
+      write_research
+      write_epic
+      unreadable = { "ts" => "2026-01-01T00:00:00Z", "type" => "stage_transition", "epic_slug" => "alpha",
+                     "stage" => "reserach", "event" => "started" }
+      File.write(File.join(sessions_dir, "damaged.ndjson"), "#{JSON.generate(unreadable)}\n")
+    end
+
+    it "refuses the submit as a named error, and journals no gate_decision" do
+      expect { command(gates: { "research" => "hands_off" }).submit("research") }
+        .to raise_error(Lain::Error, /reserach/)
+      expect(gate_decisions).to be_empty
     end
   end
 
@@ -739,10 +786,31 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(gate_decisions.size).to eq(1)
     end
 
-    it "journals no further stage transition" do
-      command(gates: { "research" => "hands_off" }).submit("research")
+    # Scenario: a standing approval with no transition is repaired. An approval
+    # whose process died, or whose surface never advanced the epic, left the
+    # epic reading research; re-submitting is how the operator repairs it.
+    it "repairs an approval that never advanced the epic" do
+      said = command(gates: { "research" => "hands_off" }).submit("research")
 
-      expect(stage_transitions).to be_empty
+      expect(said).to include("already approved", "research completed, epic_plan started")
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
+      expect(progress.stage.name).to eq("epic_plan")
+    end
+
+    it "writes the repair once, however often the approval is re-submitted" do
+      2.times { command(gates: { "research" => "hands_off" }).submit("research") }
+
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
+    end
+
+    it "journals no further stage transition over an approval that already advanced the epic" do
+      session("advanced.ndjson", stage_event("research", event: "completed"), stage_event("epic_plan"),
+              at: "2026-01-01T00:00:01Z")
+
+      said = command(gates: { "research" => "hands_off" }).submit("research")
+
+      expect(said).to include("nothing moved")
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
     end
   end
 

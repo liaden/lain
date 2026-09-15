@@ -21,6 +21,12 @@ RSpec.describe Lain::CLI::EpicQueue do
 
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
 
+  # The home the examples that read an epic back resolve against.
+  let(:root) { File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+  let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {})) }
+  let(:epics) { Lain::CLI::Epic.new(root:, paths:, config:) }
+  let(:home) { Lain::Epic::Home.resolve(config:, paths:, root:, slug: "alpha") }
+
   # Frozen "now", so age and the journaled latency are functions of the fixture
   # rather than of when the suite ran.
   let(:now) { Time.utc(2026, 7, 28, 9, 0, 0) }
@@ -71,11 +77,6 @@ RSpec.describe Lain::CLI::EpicQueue do
   describe "approving a parked issue plan" do
     subject(:queue) { described_class.new(paths:, clock:, epics:) }
 
-    let(:root) { File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
-    let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {})) }
-    let(:epics) { Lain::CLI::Epic.new(root:, paths:, config:) }
-    let(:home) { Lain::Epic::Home.resolve(config:, paths:, root:, slug: "alpha") }
-
     def progress = Lain::Epic::Progress.fold(journal_records, graph: home.read_epic, epic_slug: "alpha")
 
     before do
@@ -99,16 +100,110 @@ RSpec.describe Lain::CLI::EpicQueue do
       expect(progress.status("a")).to eq("pending")
     end
 
-    # The queue is global to the sessions directory, but an issue's status is
-    # folded from the epic's own document. Approved from another project, the
-    # default epics resolve the WRONG home: refused, readably, before the
-    # sign-off lands -- never a raw missing-file error naming another path.
-    it "refuses an approval run outside the project that owns the epic, journaling nothing" do
-      outside = described_class.new(paths:, clock:)
+    # An issue's status is folded from the epic's own document, so a plan
+    # approved where that document is missing is refused before the sign-off
+    # lands, naming the document and where it was looked for -- the real cause,
+    # rather than advice to go and stand somewhere else.
+    it "refuses when the epic's document is missing, naming it and where it looked, journaling nothing" do
+      FileUtils.rm(home.epic.path)
 
-      expect { outside.approve(digest_a) }
-        .to raise_error(described_class::OutsideProject, /"alpha".*inside the project that owns it/m)
+      expect { queue.approve(digest_a) }.to raise_error(described_class::MissingEpicDocument) { |error|
+        expect(error.message).to include('"alpha"', "issue_plan", 'issue "a"', home.epic.path)
+        expect(error.message).not_to include("inside the project")
+      }
       expect(gate_decisions.map { |record| record["policy"] }).to eq(["deferred"])
+    end
+  end
+
+  # Scenario: a queue approval of research advances the epic
+  #
+  # Research is approved before plan-epic writes epic.md, so these examples
+  # hold research.md alone, as a real epic does at this gate.
+  describe "approving a parked epic-wide stage" do
+    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+
+    before do
+      home.research.write("the research, such as it is\n")
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred")])
+    end
+
+    def stage_events
+      journal_records.select { |record| record["type"] == "stage_transition" }
+                     .map { |record| record.values_at("stage", "event") }
+    end
+
+    it "clears research and advances the epic with no epic.md written" do
+      said = queue.approve(digest_a)
+
+      expect(said).to include("signed off #{digest_a}", "research completed, epic_plan started")
+      expect(refolded.drained?("alpha", "research")).to be(true)
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
+      expect(epics.stage("alpha").name).to eq("epic_plan")
+    end
+
+    it "reads stage epic_plan in lain epic status once plan-epic writes the document" do
+      queue.approve(digest_a)
+      home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "A")]))
+
+      expect(epics.status("alpha")).to include("stage epic_plan")
+    end
+
+    it "advances nothing when research is denied" do
+      queue.deny(digest_a)
+
+      expect(stage_events).to be_empty
+      expect(epics.stage("alpha").name).to eq("research")
+    end
+  end
+
+  # Scenario: implementation rows name their issue
+  describe "parked gates for two issues" do
+    before do
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "implementation", issue_id: "greet"),
+                     decision(digest: digest_b, at: "2026-07-28T06:10:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "implementation", issue_id: "shout")])
+    end
+
+    def row_holding(digest) = queue.listing.split("\n\n").find { |row| row.include?(digest) }
+
+    it "names each row's issue" do
+      expect(row_holding(digest_a).lines.first).to include("implementation", "issue greet")
+      expect(row_holding(digest_b).lines.first).to include("implementation", "issue shout")
+    end
+
+    it "names the issue in the sign-off it confirms" do
+      expect(queue.approve(digest_a)).to include("alpha/implementation/greet")
+    end
+
+    it "names the issue beside each digest when the one typed is parked nowhere" do
+      expect { queue.approve(digest_c) }.to raise_error(described_class::UnknownDigest, %r{alpha/implementation/greet})
+    end
+  end
+
+  # The evidence cell tells a gate that never spiked from a spike that came
+  # back empty: only the second is a failure worth reading into.
+  describe "the evidence a parked row shows" do
+    def parked(digest, at:) = decision(digest:, at:, policy: "deferred", answered_by: "deferred")
+
+    it "says no spike ran when the policy gathered none" do
+      write_journal("20260728T060000-100.ndjson", [parked(digest_a, at: "2026-07-28T06:00:00.000000Z")])
+
+      expect(queue.listing).to include("evidence:  <none -- no spike ran>")
+      expect(queue.listing).not_to include("the spike did not answer")
+    end
+
+    it "says the spike did not answer when one ran and gathered nothing" do
+      spike = Lain::Approval::Gate::Adjudicator::GateEvidence.missing(
+        "no findings", { artifact_digest: digest_a, epic_slug: "alpha", stage: "research", question: "q" },
+        latency: 1.0
+      ).to_journal.merge("ts" => "2026-07-28T05:59:00.000000Z")
+      write_journal("20260728T060000-100.ndjson", [spike, parked(digest_a, at: "2026-07-28T06:00:00.000000Z")])
+
+      expect(queue.listing).to include("evidence:  <none gathered -- the spike did not answer>")
     end
   end
 

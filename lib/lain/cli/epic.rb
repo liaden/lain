@@ -232,6 +232,15 @@ module Lain
         Lain::Epic::Progress.fold(journals_for(slug).to_a, graph: home_for(slug).read_epic, epic_slug: slug)
       end
 
+      # The stage {#progress} would read, from the same journals but without
+      # the document: research is approved before epic.md is written, and an
+      # approval still has to know where the epic stands.
+      #
+      # @param slug [String] a real epic slug, already resolved
+      # @return [Epic::Stage]
+      # @raise [Lain::Error] from the fold
+      def stage(slug) = Lain::Epic::Progress.stage(journals_for(slug).to_a, epic_slug: slug)
+
       # @param id [String] the new issue's id
       # @param title [String] the new issue's title
       # @param slug [String, nil] the epic; omitted resolves to the sole one

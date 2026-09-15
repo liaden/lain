@@ -28,8 +28,7 @@ module Lain
     #
     # Nothing here holds state between invocations. A verdict is a journaled
     # {Approval::GateDecision}; a deferral is that record plus a park the next
-    # fold rebuilds; an epic-wide stage advance is two {Epic::StageTransition}
-    # records, and an approved issue plan is one {Epic::IssueTransition}.
+    # fold rebuilds; what an approval advances is {Epic::Advance}'s to write.
     #
     # == Every constant from the epic tier is reached at CALL time
     #
@@ -283,14 +282,13 @@ module Lain
       # verdict is a different job from resolving a home, a policy, a queue and a
       # journal: by the time this is built every one of those is settled.
       class Verdict
-        def initialize(submission:, stage:, policy:, gate:, queue:, scribe:, in_flight:)
+        def initialize(submission:, stage:, policy:, gate:, queue:, advance:)
           @submission = submission
           @stage = stage
           @policy = policy
           @gate = gate
           @queue = queue
-          @scribe = scribe
-          @in_flight = in_flight
+          @advance = advance
         end
 
         # `Sync` because {Approval::Gate#call} parks on the asker's promise, and
@@ -315,34 +313,7 @@ module Lain
 
         def approved
           ["approved #{@submission.digest}", "  #{@stage} for epic #{slug} (#{@submission.fact})",
-           "  #{advance}"].join("\n")
-        end
-
-        # An epic-wide verdict completes its stage and starts the next. An
-        # issue-scoped one is ONE issue's, so it moves that issue alone and no
-        # epic-wide stage: a plan puts its issue in flight, and an
-        # implementation moves nothing until it lands.
-        def advance
-          return @in_flight.call if starts_issue?
-          return awaiting_landing if @stage.issue_scoped?
-
-          advance_epic
-        end
-
-        # {Epic::InFlight} owns the rule, so a verdict and a queue sign-off
-        # cannot disagree about which approvals start an issue.
-        def starts_issue?
-          Lain::Epic::InFlight.starts?(approved: true, stage: @stage.name, issue_id: @submission.issue_id)
-        end
-
-        def awaiting_landing
-          "issue #{@submission.issue_id}'s #{@stage} is approved -- nothing moves until it lands"
-        end
-
-        def advance_epic
-          @scribe.stage_completed(@stage)
-          @scribe.stage_started(@stage.next)
-          "#{@stage} completed, #{@stage.next} started"
+           "  #{@advance.call}"].join("\n")
         end
 
         # Parked or plainly denied is read off the QUEUE, not off the policy's
@@ -488,17 +459,20 @@ module Lain
         queue = Approval::SignoffQueue.from_journal(records)
         policy = policy_for(stage, queue, journal)
         gate = Approval::Gate.from_journal(records, journal:)
-        scribe = Lain::Epic::Scribe.new(epic_slug: submission.slug, journal:)
-        in_flight = in_flight_for(scribe, submission)
-        return standing(submission, in_flight) if gate.approved?(submission.digest)
+        advance = advance_for(stage, submission, journal)
+        return standing(submission, advance) if gate.approved?(submission.digest)
 
         required.each { |plan| ensure_approved!(gate, plan) }
-        Verdict.new(submission:, stage:, policy:, gate:, queue:, scribe:, in_flight:).call
+        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance:).call
       end
 
-      def in_flight_for(scribe, submission)
-        Lain::Epic::InFlight.new(scribe:, progress: -> { @epics.progress(submission.slug) },
-                                 issue_id: submission.issue_id)
+      # Read BEFORE anything is decided, as the queue reads before it signs
+      # off: a fold that refuses then refuses with nothing journaled, where
+      # read after the verdict it left an approval that never moved the epic.
+      def advance_for(stage, submission, journal)
+        ready = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
+                                   .read(@epics)
+        -> { ready.call(journal) }
       end
 
       # Refused by NAME, before anything is decided or journaled, naming the
@@ -555,16 +529,13 @@ module Lain
       # The registry is add-only, so a second verdict over a standing approval
       # can neither revoke nor strengthen it -- only add a record nobody asked
       # for, with a latency for a wait nobody waited. Reported, never decided.
-      # A standing PLAN still runs {Epic::InFlight}, for the repair its header
-      # names.
-      def standing(submission, in_flight)
+      # The approval still runs {Epic::Advance}, which is how a re-submit
+      # repairs an approval whose advance never landed; from the right state
+      # only, so a standing approval that did advance writes nothing more.
+      def standing(submission, advance)
         ["already approved #{submission.digest}",
-         "  #{submission.stage} for epic #{submission.slug} -- nothing was decided or journaled again",
-         *(starts_issue?(submission) ? ["  #{in_flight.call}"] : [])].join("\n")
-      end
-
-      def starts_issue?(submission)
-        Lain::Epic::InFlight.starts?(approved: true, stage: submission.stage, issue_id: submission.issue_id)
+         "  #{submission.stage} for epic #{submission.slug} -- nothing was decided again",
+         "  #{advance.call}"].join("\n")
       end
 
       # The adjudication pair: the role spawn an `adjudicated` gate sends its

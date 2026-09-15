@@ -46,6 +46,10 @@ module Lain
     # The fold itself: journal records in, a frozen {Progress} out. Held apart
     # from Progress for {Lineage}'s reason, and because its three passes
     # (statuses, stage, sign-offs) are one responsibility each, none the value's.
+    #
+    # The graph arrives at {#call}, not at construction, because the stage pass
+    # never reads it: research is approved before epic.md exists, and where the
+    # epic stands has to be answerable then.
     class Refold
       # The record types this epic's PRESENCE in a journal is judged by, and a
       # CLOSED set: scanning every record for an `epic_slug` key would let an
@@ -54,24 +58,35 @@ module Lain
       SLUG_TYPES = [IssueTransition::JOURNAL_TYPE, StageTransition::JOURNAL_TYPE,
                     Approval::SignoffQueue::JOURNAL_TYPE].freeze
 
-      def initialize(entries, graph:, epic_slug:)
+      def initialize(entries, epic_slug:)
         # Materialized once rather than left lazy: the fold enumerates three
         # times and a one-shot Enumerator would silently fold to empty on the
         # second pass -- the trap {Event::Projection} documents for its own log.
         # An epic is a handful of issues and a day's records, so three passes
         # over an Array is the cheap answer.
         records = Journal.records(entries).to_a
-        @graph = graph
         @epic_slug = -epic_slug.to_s
         refuse_foreign_journal!(records)
         @records = records.select { |record| mine?(record) }
-        @lineage = Lineage.new(graph)
       end
 
+      # @param graph [Graph] the parsed document's issue graph
       # @return [Progress]
-      def call
-        stage = current_stage
-        Progress.new(graph: overlaid, stage:, epic_slug: @epic_slug, parked: parked_at(stage))
+      def call(graph)
+        stage = self.stage
+        Progress.new(graph: overlaid(graph), stage:, epic_slug: @epic_slug, parked: parked_at(stage))
+      end
+
+      # The last stage STARTED, or the first when nothing has. A completion
+      # advances nothing: inventing the successor would claim work began that no
+      # record shows, and an epic can sit between stages for days. Every record
+      # is checked, completions included -- a malformed one is unreadable about
+      # which stage it names either way.
+      #
+      # @return [Stage]
+      def stage
+        started = of_type(StageTransition::JOURNAL_TYPE).filter_map { |record| checked_start(record) }
+        started.to_a.last || Stage.new(STAGES.first)
       end
 
       private
@@ -116,27 +131,28 @@ module Lain
       # Handed back to {Graph.new} so `#ready`, `#waves`, and the edge and cycle
       # validation are the graph's own answers over the effective statuses rather
       # than a second implementation of them here.
-      def overlaid
-        statuses = of_type(IssueTransition::JOURNAL_TYPE).inject(document_statuses) do |carried, record|
-          moved = moved_id(record)
+      def overlaid(graph)
+        lineage = Lineage.new(graph)
+        statuses = of_type(IssueTransition::JOURNAL_TYPE).inject(document_statuses(graph)) do |carried, record|
+          moved = moved_id(record, lineage)
           moved ? carried.merge(moved => record["to_status"].to_s) : carried
         end
-        Graph.new(issues: @graph.map { |issue| issue.with_status(statuses.fetch(issue.id)) })
+        Graph.new(issues: graph.map { |issue| issue.with_status(statuses.fetch(issue.id)) })
       end
 
-      def document_statuses = @graph.to_h { |issue| [issue.id, issue.status] }
+      def document_statuses(graph) = graph.to_h { |issue| [issue.id, issue.status] }
 
       # The live id this transition moves, or nil when it moves an id that is
       # inert history. Checked against the same {Contracts::IssueTransition} the
       # WRITE side uses: a record that cannot be read whole aborts the fold, because
       # skipping it would leave its issue reading at the document's stale status
       # -- which is the very answer the Journal exists to override.
-      def moved_id(record)
+      def moved_id(record, lineage)
         Contracts::IssueTransition.check!(epic_slug: record["epic_slug"], issue_id: record["issue_id"],
                                           from_status: record["from_status"], to_status: record["to_status"])
         id = record["issue_id"].to_s
-        return id if @lineage.current?(id)
-        return nil if @lineage.superseded?(id)
+        return id if lineage.current?(id)
+        return nil if lineage.superseded?(id)
 
         raise Error, unknown_message(id)
       end
@@ -149,16 +165,6 @@ module Lain
         "journaled issue_transition names unknown issue #{id.inspect} in epic #{@epic_slug.inspect} -- " \
           "no live issue carries that id or declares it as `discovered_from`. Re-journal the transition " \
           "under the id that carries the work now, or declare the missing provenance on the live issue."
-      end
-
-      # The last stage STARTED, or the first when nothing has. A completion
-      # advances nothing: inventing the successor would claim work began that no
-      # record shows, and an epic can sit between stages for days. Every record
-      # is checked, completions included -- a malformed one is unreadable about
-      # which stage it names either way.
-      def current_stage
-        started = of_type(StageTransition::JOURNAL_TYPE).filter_map { |record| checked_start(record) }
-        started.to_a.last || Stage.new(STAGES.first)
       end
 
       def checked_start(record)
@@ -212,8 +218,16 @@ module Lain
       #   epics is refused, naming the epics it does hold
       # @return [Progress]
       def self.fold(entries, graph:, epic_slug:)
-        Refold.new(entries, graph:, epic_slug:).call
+        Refold.new(entries, epic_slug:).call(graph)
       end
+
+      # Where the epic stands, folded from the records alone: the same stage
+      # {.fold} reads, answerable before the epic's document is written.
+      #
+      # @param entries [Enumerable<Hash, String>] journal lines or records
+      # @param epic_slug [String] the epic to fold, refused as {.fold} refuses it
+      # @return [Stage]
+      def self.stage(entries, epic_slug:) = Refold.new(entries, epic_slug:).stage
 
       def initialize(graph:, stage:, epic_slug:, parked:)
         slug = named_epic(epic_slug)

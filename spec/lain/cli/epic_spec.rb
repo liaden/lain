@@ -141,6 +141,23 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
+  # Research is approved before plan-epic writes epic.md, so an approval asks
+  # where the epic stands through a fold that needs no document.
+  describe "#stage" do
+    it "folds the epic's stage from the same journals, with no epic.md written" do
+      session("one.ndjson", stage_event("research", event: "completed"), stage_event("epic_plan"))
+
+      expect(command.stage("alpha").name).to eq("epic_plan")
+    end
+
+    it "agrees with the stage the whole fold reads once the document exists" do
+      session("one.ndjson", stage_event("epic_plan"))
+      write_epic("alpha", chain)
+
+      expect(command.stage("alpha")).to eq(command.progress("alpha").stage)
+    end
+  end
+
   describe "--mermaid" do
     it "renders the mermaid diagram instead of the text report" do
       write_epic("alpha", chain)

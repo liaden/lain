@@ -219,6 +219,28 @@ RSpec.describe Lain::Epic::Progress do
 
       expect(fold(entries, graph: chain).stage.name).to eq("research")
     end
+
+    # Research is approved before epic.md exists, so where an epic stands has
+    # to be answerable from the records alone.
+    describe ".stage" do
+      it "folds the last stage started with no document" do
+        entries = journaled(stage_event(stage: "research", event: "completed"), stage_event(stage: "epic_plan"))
+
+        expect(described_class.stage(entries, epic_slug: "alpha").name).to eq("epic_plan")
+      end
+
+      it "answers the same stage the whole fold does" do
+        entries = journaled(stage_event(stage: "research"), stage_event(stage: "epic_plan"))
+
+        expect(described_class.stage(entries, epic_slug: "alpha")).to eq(fold(entries, graph: chain).stage)
+      end
+
+      it "refuses a journal that names only other epics, as the whole fold does" do
+        entries = journaled(stage_event(stage: "epic_plan"))
+
+        expect { described_class.stage(entries, epic_slug: "beta") }.to raise_error(Lain::Error, /"beta"/)
+      end
+    end
   end
 
   describe "parked sign-offs" do

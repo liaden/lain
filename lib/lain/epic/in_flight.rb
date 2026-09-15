@@ -3,10 +3,9 @@
 module Lain
   module Epic
     # Puts an approved plan's issue in flight -- the one issue transition an
-    # approval writes, whichever surface approved it: a verdict from `lain epic
-    # submit` or a sign-off from `lain epic approve`. Both ask {.starts?}
-    # whether an approval starts an issue, so the trigger rule and the move
-    # live in one place and the two surfaces cannot disagree.
+    # approval writes, whichever surface approved it. Every surface reaches it
+    # through {Advance}, which asks {.starts?} whether an approval starts an
+    # issue, so the trigger rule and the move live in one place.
     #
     # Only a PENDING issue moves: re-approving a revised plan is not a second
     # start, and a plan does not restart a done or abandoned issue. That also
