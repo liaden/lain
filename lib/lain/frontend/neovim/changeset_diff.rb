@@ -25,10 +25,11 @@ module Lain
       # "nothing opened, here is why" and anything else as "it opened", so
       # nothing here may raise -- this runs on the fiber serving the editor's
       # commands, and an exception there ends an editor session over one
-      # keystroke. Four things can go wrong and the human can do something
-      # different about each. The last is worth spelling out: posting an empty
-      # old side instead of refusing would draw every line of the file as ADDED,
-      # which renders perfectly and is a review of a changeset nobody wrote.
+      # keystroke. Five things can go wrong and the human can do something
+      # different about each. The last two are worth spelling out: posting an
+      # empty side instead of refusing would draw every line of the file as ADDED
+      # or DELETED, which renders perfectly and is a review of a changeset nobody
+      # wrote.
       #
       # OPENING A ROW IS WHAT READS THE FILE. A survey is chunked lazily, and
       # `#chunked?` is what every later question about markability keys on;
@@ -45,12 +46,12 @@ module Lain
       # IT CANNOT POST AN ARGUMENT `47_diff.lua` REFUSES. That module refuses, by
       # name, an ABSOLUTE path (its old side's buffer name embeds the path
       # verbatim, so one would fall outside `lain://review/OLD/`), a missing
-      # revision, and an `old_lines` entry carrying a newline. None is reachable
+      # revision, and a line of either side carrying a newline. None is reachable
       # from here, and not by checking for them: the path posted is the one the
       # CHANGESET carries (anything else finds no file and never gets that far),
       # the revisions are the source's own resolved shas, and the lines come
-      # from {Review::Changeset#old_side}, which splits on newlines and so
-      # cannot produce one containing one.
+      # from {Review::Changeset#old_side} and {Review::Changeset#new_side}, which
+      # split on newlines and so cannot produce one containing one.
       class ChangesetDiff
         # Before any round. Unreachable in an editor that has drawn a sidebar,
         # since drawing one is what supplies the changeset -- but a null that
@@ -72,6 +73,11 @@ module Lain
         NO_OLD_SIDE = "the old side of %<path>s is not in this repository at %<base>s, so the diff would " \
                       "show every line of it as new"
 
+        # Its twin, reached only when the checkout does not hold the head and the
+        # head's copy is what would have been drawn instead.
+        NO_NEW_SIDE = "the new side of %<path>s is not in this repository at %<head>s, and the checkout " \
+                      "is not that revision, so there is nothing true to show opposite the old side"
+
         # @param rpc [#open_changeset] the editor's render inlet
         #   ({RenderInlet}), which answers a refusal sentence or nothing
         def initialize(rpc:)
@@ -83,8 +89,8 @@ module Lain
         # rows of the second changeset, and a gesture against the first one's
         # rendering is refused by name above.
         #
-        # @param changeset [#file, #old_side, #read, #base_ref, #head_ref] the
-        #   {Review::Changeset} the round was opened on -- never the session,
+        # @param changeset [#file, #old_side, #new_side, #checked_out?, #sides, #read, #base_ref, #head_ref]
+        #   the {Review::Changeset} the round was opened on -- never the session,
         #   which would put a mutable aggregate behind a keystroke
         # @return [void]
         def reviewing(changeset)
@@ -128,10 +134,27 @@ module Lain
           old_lines = changeset.old_side(file)
           return format(NO_OLD_SIDE, path: file.path, base: changeset.base_ref) if old_lines.nil?
 
-          refusal = @rpc.open_changeset(file.path, old_lines, line, revisions(changeset))
+          pair = [file.path, old_lines, line, revisions(changeset)]
+          return posted(changeset, file, pair) if on_disk?(changeset, file)
+
+          new_lines = changeset.new_side(file)
+          return format(NO_NEW_SIDE, path: file.path, head: changeset.head_ref) if new_lines.nil?
+
+          posted(changeset, file, [*pair, new_lines])
+        end
+
+        def posted(changeset, file, arguments)
+          refusal = @rpc.open_changeset(*arguments)
           registered(changeset, file) if refusal.nil?
           refusal
         end
+
+        # The file on disk IS the new side when the round presents no old side
+        # at all -- a survey is of the tree as it stands, and its source has no
+        # revision to compare a checkout against -- or when the checkout holds
+        # the head unmodified. Anywhere else the disk is bytes nobody is
+        # reviewing, and a note anchored there names a line the head may not hold.
+        def on_disk?(changeset, file) = changeset.sides != Lain::Review::SIDES || changeset.checked_out?(file)
 
         # Registering the read reaches the DISK:
         # {Review::Source::Corpus::Reading#content} is a deliberately un-memoized

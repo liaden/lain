@@ -10,6 +10,13 @@
 -- reviewing with the tools they read code with. A `nofile` copy would present
 -- identically in every other respect and silently lose all of it.
 --
+-- UNLESS THE FILE IS NOT THE HEAD. When the checkout is at another revision, or
+-- has changes to this file, the bytes on disk are not the ones under review, and
+-- Ruby says so by sending the head's lines. The new side is then a read-only
+-- copy named `lain://review/NEW/<path>`, under a winbar naming the revision
+-- (`head_side`, `label`): losing the language server there is the price of a note
+-- anchored to a line the reviewed revision actually holds.
+--
 -- THE OLD SIDE CANNOT BE A FILE -- that revision is not on disk -- so it is a
 -- `nofile` scratch buffer named `lain://review/OLD/<path>`, which is how a
 -- gesture recovers the side AND the path it came from. Its filetype and
@@ -21,7 +28,7 @@
 -- rail and the thread rail all anchor in them -- so the two rules that protect
 -- a mark are stated once, here, and enforced below:
 --
---   1. The old side is REFILLED IN PLACE, never wholesale (`refill`). A
+--   1. A scratch side is REFILLED IN PLACE, never wholesale (`refill`). A
 --      whole-buffer replace moves every mark in the buffer to its end.
 --   2. A buffer that leaves the review is UNSTAMPED (`unstamp`), so nothing
 --      downstream mistakes a file the human has moved on from for the one under
@@ -44,6 +51,7 @@
 -- as 41_layout takes one, because the chunk shares a scope.
 local review_diff = {
   OLD_PREFIX = "lain://review/OLD/",
+  NEW_PREFIX = "lain://review/NEW/",
 
   -- The project root, captured AT ATTACH and never re-read. Paths arrive
   -- repository-relative, and resolving them against the editor's CURRENT
@@ -96,26 +104,26 @@ function review_diff.revision_for(revisions, side)
   return revision
 end
 
--- Every line, checked BEFORE anything is created. `nvim_buf_set_lines` raises on
--- a string containing a newline, and it would raise having already made two
--- buffers and a tabpage -- the half-drawn review this function's argument check
--- exists to prevent.
+-- Every line of one side, checked BEFORE anything is created.
+-- `nvim_buf_set_lines` raises on a string containing a newline, and it would
+-- raise having already made two buffers and a tabpage -- the half-drawn review
+-- this function's argument check exists to prevent.
 --
 -- The `type(...) ~= "table"` test is doing real work: a Ruby `nil` crosses
 -- msgpack as `vim.NIL`, which is USERDATA and therefore truthy, so the
 -- `old_lines or {}` a reader would write here is dead code that passes userdata
 -- straight to the API.
-function review_diff.checked_lines(old_lines)
-  if type(old_lines) ~= "table" then
+function review_diff.checked_lines(lines, side)
+  if type(lines) ~= "table" then
     return {}
   end
-  for i, line in ipairs(old_lines) do
+  for i, line in ipairs(lines) do
     if type(line) ~= "string" or line:find("\n", 1, true) then
-      error("lain: open_changeset old_lines[" .. i .. "] is not a single line -- " ..
-        "the old side is one buffer line per line git showed", 0)
+      error("lain: open_changeset " .. side .. "_lines[" .. i .. "] is not a single line -- " ..
+        "each side is one buffer line per line git showed", 0)
     end
   end
-  return old_lines
+  return lines
 end
 
 -- The old side as the NEW side is displayed, which for a CRLF file means without
@@ -190,7 +198,8 @@ function review_diff.new_side(path)
   return buf
 end
 
--- The old side's buffer, VERIFIED to be the one this path names.
+-- A side's scratch buffer, VERIFIED to be the one this path names -- the old
+-- side always, and the new side when it is the head's copy.
 --
 -- `named_buf` finds an existing buffer with `vim.fn.bufnr(name)`, and that
 -- argument is a PATTERN, not a literal. Measured, because the behaviour is
@@ -207,8 +216,16 @@ end
 -- keeps at most one old-side buffer alive, so the case where a scan would find
 -- something `bufnr` missed cannot arise. Building the buffer here rather than
 -- through `named_buf` happens only on the path where `named_buf` is WRONG.
-function review_diff.old_buffer(path)
-  local name = review_diff.OLD_PREFIX .. path
+--
+-- `named_buf` builds `nofile`, so a side that rests `nowrite` is set here on
+-- every call rather than only on the path that builds the buffer.
+function review_diff.scratch_buffer(prefix, buftype, path)
+  local buf = review_diff.named_exactly(prefix .. path)
+  vim.bo[buf].buftype = buftype
+  return buf
+end
+
+function review_diff.named_exactly(name)
   local found = named_buf(name)
   if vim.api.nvim_buf_get_name(found) == name then
     return found
@@ -279,7 +296,7 @@ end
 -- refuses it with E21 while the buffer is nomodifiable -- the same flip
 -- `set_lines` makes around a write, and skipped entirely when it already agrees.
 function review_diff.old_side(path, lines, filetype, fileformat)
-  local buf = review_diff.old_buffer(path)
+  local buf = review_diff.scratch_buffer(review_diff.OLD_PREFIX, "nofile", path)
   review_diff.refill(buf, review_diff.as_shown(lines, fileformat))
   vim.bo[buf].filetype = filetype
   if vim.bo[buf].fileformat ~= fileformat then
@@ -288,6 +305,60 @@ function review_diff.old_side(path, lines, filetype, fileformat)
     vim.bo[buf].modifiable = false
   end
   return buf
+end
+
+-- The new side as the HEAD holds it, for a checkout that does not: the old
+-- side's shape, refilled in place for the same reason, with two differences.
+--
+-- `nowrite` rather than the old side's `nofile`: `:w` still answers E382, and
+-- this is the reviewed FILE at a revision rather than scratch, which is what the
+-- plugins that branch on `nofile` would take it for. Its filetype comes from the
+-- PATH, since there is no file beside it to borrow one from -- and the old side
+-- then borrows this one.
+--
+-- No CR is stripped. Both sides keep what git showed, so they still diff line
+-- for line, and a CRLF file shows its `^M`s on both.
+function review_diff.head_side(path, lines)
+  local buf = review_diff.scratch_buffer(review_diff.NEW_PREFIX, "nowrite", path)
+  review_diff.refill(buf, lines)
+  vim.bo[buf].filetype = vim.filetype.match({ buf = buf, filename = path }) or ""
+  return buf
+end
+
+-- What each pane of a head-copy pair is, as a WINBAR on both windows.
+--
+-- Not buffer lines, which would move every line a note anchors to. Not a virtual
+-- line above row 0 either, and that was measured rather than reasoned: it is
+-- drawn only as one window's topfill, which nvim's diff scroll sync does not
+-- count, so the pair went out of step on every open -- by two rows, with the
+-- deletion filler hidden, when the head drops the file's first lines. A winbar
+-- takes the same one row from BOTH windows, so the rows still pair.
+--
+-- LOCAL to the window, set through `nvim_set_option_value` with `scope =
+-- "local"`: 'winbar' is global-local, and `vim.wo[win]` would set the global
+-- half too, putting the label over every window the human opens afterwards.
+-- An empty local value means "no lain label", and a human's own global winbar
+-- shows through again.
+--
+-- SHORT WORDS FIRST, then `%<`. nvim truncates a winbar too long for its window
+-- from the LEFT unless told where, and measured at a 53-column pane the revision
+-- and "read-only" were exactly what went. `%<` moves the cut to after them, so
+-- the explanation is what a narrow pane loses.
+function review_diff.label(old_win, new_win, head, old_revision, new_revision)
+  review_diff.winbar(new_win, head and { new_revision:sub(1, 8) .. " read-only",
+    " -- the checkout is not at this revision or has changed this file" } or nil)
+  if old_win then
+    review_diff.winbar(old_win, head and { old_revision:sub(1, 8) .. " base",
+      " -- the old side of this review" } or nil)
+  end
+end
+
+-- `label` as { what, why }, or nil for no lain winbar. Each half is escaped for
+-- the option's statusline syntax, so only the `%<` between them is a directive.
+function review_diff.winbar(win, label)
+  local escaped = function(text) return (text:gsub("%%", "%%%%")) end
+  local text = label and "lain: " .. escaped(label[1]) .. "%<" .. escaped(label[2]) or ""
+  vim.api.nvim_set_option_value("winbar", text, { scope = "local", win = win })
 end
 
 -- Which side, which commit that side is, and which file -- the three facts the
@@ -521,7 +592,7 @@ vim.api.nvim_create_autocmd("BufFilePost", {
   end,
 })
 
--- The old side is per-FILE, so the previous file's buffer is wiped rather than
+-- Both scratch sides are per-FILE, so the previous file's are wiped rather than
 -- left hidden -- otherwise a review of a real changeset ends with one dead
 -- scratch buffer per file opened. Found by NAME rather than remembered in a
 -- table: a registry of buffers is the thing that goes stale (41_layout's
@@ -539,13 +610,18 @@ vim.api.nvim_create_autocmd("BufFilePost", {
 -- Runs AFTER both sides are placed. Wiping a buffer a window still displays
 -- makes the editor pick a replacement for that window, which is the flash this
 -- module exists to avoid, arriving by the back door.
-function review_diff.drop_stale(keep)
+function review_diff.drop_stale(old_buf, new_buf)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    local name = vim.api.nvim_buf_get_name(buf)
-    if buf ~= keep and name:sub(1, #review_diff.OLD_PREFIX) == review_diff.OLD_PREFIX then
+    local stale = buf ~= old_buf and buf ~= new_buf
+    if stale and review_diff.scratch_side(vim.api.nvim_buf_get_name(buf)) then
       vim.api.nvim_buf_delete(buf, { force = true })
     end
   end
+end
+
+function review_diff.scratch_side(name)
+  return name:sub(1, #review_diff.OLD_PREFIX) == review_diff.OLD_PREFIX or
+      name:sub(1, #review_diff.NEW_PREFIX) == review_diff.NEW_PREFIX
 end
 
 -- Both windows, always, and always after both buffers have landed: `diffthis` on
@@ -704,14 +780,17 @@ end
 -- @param old_lines `git show <base>:<path>`, already read by Ruby
 -- @param line the new-side line the gesture resolved to
 -- @param revisions the two commit-ish strings, keyed by side
-function _G.__lain.open_changeset(path, old_lines, line, revisions)
+-- @param new_lines `git show <head>:<path>`, sent only when the checkout does
+--   not hold the head; absent, the new side is the file on disk
+function _G.__lain.open_changeset(path, old_lines, line, revisions, new_lines)
   -- Everything that can refuse, before anything is created: a raise that had
   -- already built a tabpage and two buffers would leave the review half-drawn on
   -- a wiring mistake, which is worse than not opening at all.
   review_diff.relative_path(path)
   local old_revision = review_diff.revision_for(revisions, "old")
   local new_revision = review_diff.revision_for(revisions, "new")
-  local lines = review_diff.checked_lines(old_lines)
+  local lines = review_diff.checked_lines(old_lines, "old")
+  local head = type(new_lines) == "table" and review_diff.checked_lines(new_lines, "new") or nil
 
   -- THE ROUND, ASKED ONCE, and asked of the LAYOUT rather than inferred from
   -- `old_lines`. A changeset containing an added file sends `[]` here too, and
@@ -721,7 +800,7 @@ function _G.__lain.open_changeset(path, old_lines, line, revisions)
   -- ({Review::Source#sides}); nothing here reads the content to guess.
   local sided = review_panes.holds("old")
 
-  local new_buf = review_diff.new_side(path)
+  local new_buf = head and review_diff.head_side(path, head) or review_diff.new_side(path)
   local old_buf = sided and
       review_diff.old_side(path, lines, vim.bo[new_buf].filetype, vim.bo[new_buf].fileformat) or nil
   review_diff.unstamp(old_buf, new_buf)
@@ -740,7 +819,8 @@ function _G.__lain.open_changeset(path, old_lines, line, revisions)
   -- would be, and every note of one round names the same pair.
   review_diff.round(vim.api.nvim_win_get_tabpage(new_win), old_revision, new_revision)
 
-  review_diff.drop_stale(old_buf)
+  review_diff.drop_stale(old_buf, new_buf)
+  review_diff.label(old_win, new_win, head, old_revision, new_revision)
   review_diff.pair(sided and { old_win, new_win } or { new_win })
   review_diff.focus_line(new_win, new_buf, line)
   vim.api.nvim_set_current_win(review_diff.landing(old_win, new_win))

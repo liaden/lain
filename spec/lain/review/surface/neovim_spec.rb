@@ -31,8 +31,8 @@ class RecordingReviewInlet
     @refusal
   end
 
-  def open_changeset(path, old_lines, line, revisions)
-    @posted << [:open_changeset, path, old_lines, line, revisions]
+  def open_changeset(path, old_lines, line, revisions, new_lines = nil)
+    @posted << [:open_changeset, path, old_lines, line, revisions, *([new_lines] unless new_lines.nil?)]
     @refusal
   end
 

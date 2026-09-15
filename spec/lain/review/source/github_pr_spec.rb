@@ -372,6 +372,34 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     end
   end
 
+  # A pull request's head is usually NOT what the reviewer has checked out, and
+  # asking must never be what fetches it.
+  describe "#checked_out?" do
+    it "is true when the checkout is at the pull request's head and the path is clean" do
+      local_repo_with_head
+      source = build
+      calls.clear
+
+      expect(source.checked_out?("shared.rb")).to be(true)
+      expect(gh_calls).to be_empty
+    end
+
+    it "is false for a path modified in a checkout at the head" do
+      local_repo_with_head
+      File.write(File.join(@repo, "shared.rb"), "edited\n")
+
+      expect(build.checked_out?("shared.rb")).to be(false)
+    end
+
+    it "is false without fetching when the head was never fetched" do
+      local_repo_without_head
+      run_git(@repo, "checkout", "-q", "base")
+
+      expect(build.checked_out?("shared.rb")).to be(false)
+      expect(fetch_call).to be_nil
+    end
+  end
+
   describe "a head the local repository has never seen" do
     before { local_repo_without_head }
 

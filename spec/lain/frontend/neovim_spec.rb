@@ -776,7 +776,7 @@ RSpec.describe Lain::Frontend::Neovim do
       double = instance_double(Lain::Review::Source::LocalBranch,
                                diff: text.b, commits: [commit].freeze,
                                base_ref: "b" * 40, head_ref: "h" * 40)
-      allow(double).to receive(:file_at).and_return("old\n".b)
+      allow(double).to receive_messages(file_at: "old\n".b, checked_out?: true)
       Lain::Review::Changeset.new(source: DiffSource.over(double))
     end
 

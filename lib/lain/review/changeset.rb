@@ -116,6 +116,29 @@ module Lain
         lines(bytes) unless bytes.nil?
       end
 
+      # The file as the HEAD held it -- {#old_side}'s twin, for an editor that
+      # cannot draw the working copy opposite the base because the checkout is
+      # not the revision under review (see {#checked_out?}).
+      #
+      # @param file [Source::ChangedFile] one of {#files}
+      # @return [Array<String>, nil] the lines; `[]` for a file this changeset
+      #   DELETES; nil when the head does not carry the path at all
+      def new_side(file)
+        return [] if file.new_path.nil?
+
+        bytes = @source.file_at(head_ref, file.new_path)
+        lines(bytes) unless bytes.nil?
+      end
+
+      # Whether the working copy of this file IS the head's, so an editor may
+      # show the real file -- language server and all -- as the new side.
+      # Asked only of a round that presents both sides ({#sides}): a survey's
+      # new side is the disk by definition, and its source is never asked.
+      #
+      # @param file [Source::ChangedFile] one of {#files}
+      # @return [Boolean]
+      def checked_out?(file) = @source.checked_out?(file.path)
+
       # Register that this file has now been READ, on somebody's behalf, and
       # answer what reading it produced.
       #

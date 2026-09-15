@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "mixlib/shellout"
 require "tmpdir"
 
 # The inlet as this object uses it: ONE of {Lain::Frontend::Neovim::RenderInlet}'s
@@ -17,11 +18,12 @@ class RecordingChangesetInlet
     @posted = []
   end
 
-  # @return [Array<Array>] one entry per post: `[path, old_lines, line, revisions]`
+  # @return [Array<Array>] one entry per post: `[path, old_lines, line, revisions]`,
+  #   and the head's lines fifth when they were sent at all
   attr_reader :posted
 
-  def open_changeset(path, old_lines, line, revisions)
-    @posted << [path, old_lines, line, revisions]
+  def open_changeset(path, old_lines, line, revisions, *new_lines)
+    @posted << [path, old_lines, line, revisions, *new_lines]
     @refusal
   end
 end
@@ -112,6 +114,9 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
   let(:blobs) { { [base, "guide.rb"] => "alpha\nbeta\ngamma\n".b } }
   let(:base) { "b" * 40 }
   let(:head) { "h" * 40 }
+  # Which paths the doubled checkout holds at the head. Every path, unless an
+  # example says otherwise -- the file on disk is the new side it always was.
+  let(:checkout) { ->(_path) { true } }
 
   def modified_diff
     <<~DIFF
@@ -135,6 +140,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
     double = instance_double(Lain::Review::Source::LocalBranch,
                              diff: text.b, commits: walk(paths), base_ref: base, head_ref: head)
     allow(double).to receive(:file_at) { |revision, path| blobs[[revision, path]] }
+    allow(double).to receive(:checked_out?) { |path| checkout.call(path) }
     DiffSource.over(double)
   end
 
@@ -145,6 +151,10 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
   # The payload, named, because every example below is about one field of it and
   # `posted.first[1]` reads as nothing at all.
   def posted = inlet.posted.map { |(path, old_lines, line, revisions)| { path:, old_lines:, line:, revisions: } }
+
+  # The fifth argument, or `:disk` where none was sent -- which is what tells the
+  # editor to open the file itself.
+  def new_sides = inlet.posted.map { |entry| entry.fetch(4, :disk) }
 
   describe "opening a row of the changeset under review" do
     before { diff.reviewing(changeset_over) }
@@ -196,6 +206,39 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       refusing.reviewing(changeset_over)
 
       expect(refusing.open("guide.rb", 2)).to eq("no editor is attached")
+    end
+  end
+
+  describe "a checkout that holds the head under review" do
+    before { diff.reviewing(changeset_over) }
+
+    it "sends no new side, so the editor opens the file on disk" do
+      diff.open("guide.rb", 2)
+
+      expect(new_sides).to eq([:disk])
+    end
+  end
+
+  describe "a checkout that does not hold the head under review" do
+    let(:checkout) { ->(path) { path != "guide.rb" } }
+    let(:blobs) { { [base, "guide.rb"] => "alpha\nbeta\ngamma\n".b, [head, "guide.rb"] => "alpha\nBETA\ngamma\n".b } }
+
+    before { diff.reviewing(changeset_over) }
+
+    it "sends the head's lines for the new side, beside the base's for the old" do
+      expect(diff.open("guide.rb", 2)).to be_nil
+
+      expect(new_sides).to eq([%w[alpha BETA gamma]])
+      expect(posted.first).to include(old_lines: %w[alpha beta gamma], revisions: { "old" => base, "new" => head })
+    end
+
+    # {Lain::Frontend::Neovim::ChangesetDiff::NO_OLD_SIDE}'s twin: an empty new
+    # side would draw every line as deleted, a review of a change nobody made.
+    it "refuses, naming the head, when the head cannot produce the file" do
+      blobs.delete([head, "guide.rb"])
+
+      expect(diff.open("guide.rb", 2)).to include("guide.rb", head)
+      expect(inlet.posted).to be_empty
     end
   end
 
@@ -332,6 +375,14 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
 
       expect(refusing.open("notes.md", 1)).to eq("no editor is attached")
       expect(file("notes.md").chunked?).to be(false)
+    end
+
+    # A survey presents one side, so its new side is the file on disk by
+    # construction -- and its source, which cannot answer, is never asked.
+    it "sends no new side and asks nothing about a checkout" do
+      diff.open("notes.md", 1)
+
+      expect(new_sides).to eq([:disk])
     end
 
     # The other half, unchanged: a survey's old side is genuinely empty, so the
@@ -496,7 +547,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       real_inlet.drain(@editor)
 
       expect(new_side).to include("name" => File.join(ChangesetDiffFixture::PROJECT, "sub/nested.rb"),
-                                  "lines" => ["class Nested", "  def call = 1", "end"])
+                                  "lines" => ["class Nested", "  def call = 1", "end"], "buftype" => "")
     end
 
     # The latent hazard beside the resolution, and the one that WRITES: a new
@@ -616,6 +667,89 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       Lain::Review::Session::MarkedChangeset.of(changeset,
                                                 Lain::Review::Marks.new(base_ref: changeset.base_ref),
                                                 strategy: Lain::Review::Partition::STRATEGIES.fetch(:cumulative))
+    end
+  end
+
+  # The decision end to end: a real branch in a real repository, a real
+  # {Lain::Review::Source::LocalBranch} asking git about the checkout, a real
+  # inlet and a real editor. Nothing between the checkout and the buffer is a
+  # double, which is the only way "NEW is the reviewed head" is a claim about
+  # the checkout rather than about a stub.
+  describe "a local branch review against a real checkout", :nvim, :seam do
+    subject(:diff) { described_class.new(rpc: real_inlet) }
+
+    let(:real_inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}) }
+    let(:source) { Lain::Review::Source::LocalBranch.new(base: "base", head: "feature", repo_root: @repo) }
+
+    around do |example|
+      Dir.mktmpdir("lain-changeset-checkout") do |root|
+        @repo = File.join(File.realpath(root), "repo")
+        FileUtils.cp_r(SeedRepo.at("guide.rb" => "alpha\nbeta\ngamma\n"), @repo)
+        branch_twice
+        headless_editor("lain-changeset-checkout", chdir: @repo, runtime: true) { example.run }
+      end
+    end
+
+    def git(*)
+      Mixlib::ShellOut.new("git", "-C", @repo, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                      .run_command.error!
+    end
+
+    # Two commits on `feature`, so one commit behind the head is still a
+    # checkout of the branch with a DIFFERENT `guide.rb`.
+    def branch_twice
+      git("checkout", "-q", "-b", "base")
+      git("checkout", "-q", "-b", "feature")
+      { "feature one" => "alpha\nBETA\ngamma\n", "feature two" => "alpha\nBETA\nGAMMA\n" }.each do |message, body|
+        File.write(File.join(@repo, "guide.rb"), body)
+        git("commit", "-q", "-am", message)
+      end
+    end
+
+    def opened(path = "guide.rb")
+      diff.reviewing(Lain::Review::Changeset.new(source:))
+      expect(diff.open(path, 2)).to be_nil
+      real_inlet.drain(@editor)
+    end
+
+    def new_side
+      @editor.exec_lua(<<~LUA, [])
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.b[b].lain_review_side == "new" then
+            local win = vim.fn.win_findbuf(b)[1]
+            return { name = vim.api.nvim_buf_get_name(b), buftype = vim.bo[b].buftype,
+                     lines = vim.api.nvim_buf_get_lines(b, 0, -1, false),
+                     winbar = vim.api.nvim_get_option_value("winbar", { scope = "local", win = win }) }
+          end
+        end
+        return nil
+      LUA
+    end
+
+    it "shows the file on disk, writable, when the checkout is at the head and clean" do
+      opened
+
+      expect(new_side).to include("name" => File.join(@repo, "guide.rb"), "buftype" => "",
+                                  "lines" => %w[alpha BETA GAMMA], "winbar" => "")
+    end
+
+    it "shows the head's bytes read-only, under a winbar naming it, when the checkout is a commit behind" do
+      source
+      git("checkout", "-q", "--detach", "feature~1")
+
+      opened
+
+      expect(new_side).to include("buftype" => "nowrite", "lines" => %w[alpha BETA GAMMA],
+                                  "winbar" => include(source.head_ref[0, 8]))
+      expect(File.read(File.join(@repo, "guide.rb"))).to eq("alpha\nBETA\ngamma\n")
+    end
+
+    it "shows the head's bytes when the checkout is at the head but the file has been edited" do
+      File.write(File.join(@repo, "guide.rb"), "edited by hand\n")
+
+      opened
+
+      expect(new_side).to include("buftype" => "nowrite", "lines" => %w[alpha BETA GAMMA])
     end
   end
 

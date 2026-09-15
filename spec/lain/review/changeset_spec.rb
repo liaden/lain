@@ -665,6 +665,86 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
+  # The other half of the pair, for an editor that cannot show the file on disk
+  # because the checkout is not the revision under review.
+  describe "one file's new side" do
+    subject(:changeset) { described_class.new(source:) }
+
+    let(:blobs) { {} }
+    let(:paths) { ["one.rb"] }
+    let(:diff) { one_file_diff }
+    let(:source) do
+      instance_double(Lain::Review::Source::LocalBranch,
+                      files: parsed(diff), commits: [commit_record(sha: "c1", paths:)].freeze,
+                      base_ref: "b" * 40, head_ref: "h" * 40).tap do |double|
+        allow(double).to receive(:file_at) { |revision, path| blobs[[revision, path]] }
+      end
+    end
+
+    it "reads the new side at the HEAD, one entry per line" do
+      blobs[["h" * 40, "one.rb"]] = "alpha\ninserted\nbeta\nGAMMA\n".b
+      blobs[["b" * 40, "one.rb"]] = "alpha\nbeta\ngamma\n".b
+
+      expect(changeset.new_side(changeset.file("one.rb"))).to eq(%w[alpha inserted beta GAMMA])
+    end
+
+    it "answers nothing when the head does not carry a file the diff says it should" do
+      expect(changeset.new_side(changeset.file("one.rb"))).to be_nil
+    end
+
+    context "with a renamed file" do
+      let(:paths) { ["from.rb => to.rb"] }
+      let(:diff) do
+        <<~DIFF
+          diff --git a/from.rb b/to.rb
+          similarity index 80%
+          rename from from.rb
+          rename to to.rb
+          --- a/from.rb
+          +++ b/to.rb
+          @@ -1,2 +1,2 @@
+           keep
+          -old
+          +new
+        DIFF
+      end
+
+      it "reads it at the NEW path, which is the only name the head holds" do
+        blobs[["h" * 40, "to.rb"]] = "keep\nnew\n".b
+
+        expect(changeset.new_side(changeset.file("to.rb"))).to eq(%w[keep new])
+      end
+    end
+
+    context "with a file the changeset deletes" do
+      let(:paths) { ["gone.rb"] }
+      let(:diff) do
+        <<~DIFF
+          diff --git a/gone.rb b/gone.rb
+          deleted file mode 100644
+          --- a/gone.rb
+          +++ /dev/null
+          @@ -1,2 +0,0 @@
+          -alpha
+          -beta
+        DIFF
+      end
+
+      # old_side's empty-for-an-addition, mirrored: the head cannot hold a file
+      # the changeset removed, so an empty side is the fact and not a failure.
+      it "answers an empty new side without asking the source for one" do
+        expect(changeset.new_side(changeset.file("gone.rb"))).to eq([])
+        expect(source).not_to have_received(:file_at)
+      end
+    end
+
+    it "asks its source whether the checkout holds that file at the head" do
+      allow(source).to receive(:checked_out?).with("one.rb").and_return(false)
+
+      expect(changeset.checked_out?(changeset.file("one.rb"))).to be(false)
+    end
+  end
+
   describe "what a changeset owes a partition strategy" do
     subject(:changeset) { changeset_over(diff, commits:) }
 

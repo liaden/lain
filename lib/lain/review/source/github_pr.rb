@@ -294,6 +294,17 @@ module Lain
         #   carries no such path
         def file_at(revision, path) = local.file_at(revision, path)
 
+        # {LocalBranch#checked_out?}, through this object's own `git` rather than
+        # delegated to `#local`: building that is what fetches, and a reviewer
+        # whose checkout is not the pull request's head -- the ordinary case --
+        # would pay a fetch to be told so. HEAD is compared before anything else.
+        #
+        # @param path [String] repository-relative
+        # @return [Boolean]
+        def checked_out?(path)
+          LocalBranch::Checkout.new(head_ref: @head_ref) { |*argv, **env| git(*argv, **env) }.holds?(path)
+        end
+
         # @return [DiffOrigin] where {#diff} came from. Asking forces the diff,
         #   because until it has been answered there is nothing to report.
         def diff_origin
@@ -367,9 +378,9 @@ module Lain
         # METHOD body rather than the class body because `lain.rb` loads
         # isolation after review -- the same shape, and the same reason, as
         # {LocalBranch#git}.
-        def git(*)
+        def git(*, env: {})
           shell = @shell_out_factory.call("git", "-C", @repo_root, *LocalBranch::CONFIG_PINS, *,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
           shell.run_command
           shell
         end

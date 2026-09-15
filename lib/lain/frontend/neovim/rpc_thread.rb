@@ -212,13 +212,14 @@ module Lain
           # The new side is the real file on disk, the old side a scratch buffer
           # whose content rides in this argument list. Ruby runs git, never the
           # editor: an injected chunk shelling out would put half the review model
-          # in the editor.
+          # in the editor. `new_lines` rides only when the checkout does not hold
+          # the head, and then the new side is a copy of those lines instead.
           #
           # `revisions` is a map rather than two more positionals -- the pair is
           # two commit-ish Strings that look alike, are adjacent, and mean opposite
           # sides. `47_diff.lua` stamps each buffer with its own so a note records
           # which diff it was authored against.
-          changeset: Rail.new(lua: "open_changeset", params: "path, old_lines, line, revisions",
+          changeset: Rail.new(lua: "open_changeset", params: "path, old_lines, line, revisions, new_lines",
                               blocking: false),
 
           # Show one anchor's conversation in the thread pane, keyed by the
@@ -472,8 +473,13 @@ module Lain
           post(:review_sidebar, lines, generation, sides, refusal: SIDEBAR_DETACHED)
         end
 
-        def open_changeset(path, old_lines, line, revisions)
-          post(:changeset, path, old_lines, line, revisions, refusal: CHANGESET_DETACHED)
+        # No `new_lines` is sent as ARITY, never as a nil argument, for
+        # {RenderQueue#post_view}'s reason: a nil crosses msgpack as `vim.NIL`,
+        # which is truthy in lua.
+        def open_changeset(path, old_lines, line, revisions, new_lines = nil)
+          pair = [path, old_lines, line, revisions]
+          pair << new_lines unless new_lines.nil?
+          post(:changeset, *pair, refusal: CHANGESET_DETACHED)
         end
 
         def set_thread(anchor_id, lines) = post(:thread, anchor_id, lines, refusal: THREAD_DETACHED)

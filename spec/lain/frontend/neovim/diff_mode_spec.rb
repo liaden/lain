@@ -250,6 +250,226 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # Ruby sends the head's lines only when the checkout is NOT the revision under
+  # review, and then the file on disk is bytes nobody is reviewing: the new side
+  # is a copy of the head, named for the side, and a label over both panes says why.
+  describe "a new side the checkout does not hold" do
+    def head_lines = ["class Widget", "  def call = 3", "end"]
+
+    def open_head(path, old_lines, new_lines, line = 1)
+      lua("_G.__lain.open_changeset(...)", [path, old_lines, line, revisions, new_lines])
+    end
+
+    # The window-local winbar of each pane of the pair, "" where lain set none.
+    def winbars
+      slots.slice("old", "new").transform_values do |win|
+        lua('return vim.api.nvim_get_option_value("winbar", { scope = "local", win = ... })', [win])
+      end
+    end
+
+    it "holds the head's lines rather than the file on disk" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+
+      buf = buf_in(slots["new"])
+
+      expect(name_of(buf)).to eq("lain://review/NEW/lib/widget.rb")
+      expect(lines_of(buf)).to eq(head_lines)
+      expect(buffer_options(buf)).to include(buftype: "nowrite", modifiable: false, swapfile: false)
+    end
+
+    it "takes its filetype from the path, and hands it to the old side" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+
+      expect(buffer_options(buf_in(slots["new"]))).to include(filetype: "ruby")
+      expect(buffer_options(buf_in(slots["old"]))).to include(filetype: "ruby")
+    end
+
+    it "refuses a write, and leaves the file on disk as it was" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+
+      ok, message = lua(<<~LUA, [slots["new"]])
+        local win = ...
+        local ok, err = pcall(function()
+          vim.api.nvim_win_call(win, function() vim.cmd("write") end)
+        end)
+        return { ok, tostring(err) }
+      LUA
+
+      expect([ok, message]).to match([false, include("E382")])
+      expect(File.read(File.join(project, "lib/widget.rb"))).to eq("class Widget\n  def call = 1\nend\n")
+    end
+
+    # On the WINDOWS, and on both of them. Written as buffer lines the label would
+    # move every line a note anchors to; drawn as a virtual line above row 0 it
+    # counted toward one pane's topfill, which nvim's diff scroll sync does not
+    # see, so the pair went out of step (the alignment examples below). A winbar
+    # costs each pane the same one row.
+    it "names the head's revision over the new pane and the base's over the old, adding no buffer line" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+
+      expect(winbars).to match("new" => include("head1ff", "checkout"), "old" => include("base0ff"))
+      expect(lines_of(buf_in(slots["new"])).size).to eq(head_lines.size)
+    end
+
+    it "is stamped as the new side at the head's revision, with the path Ruby sent" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+
+      stamp = lua("local b = ... return { vim.b[b].lain_review_side, vim.b[b].lain_review_revision, " \
+                  "vim.b[b].lain_review_path }", [buf_in(slots["new"])])
+
+      expect(stamp).to eq(["new", "head1ff", "lib/widget.rb"])
+    end
+
+    it "refuses a head line carrying a newline before it has built anything" do
+      before = buffer_count
+
+      ok, message = refusal("lib/widget.rb", widget_old_lines, 1, revisions, ["class Widget\nend"])
+
+      expect([ok, message]).to match([false, include("new_lines[1]")])
+      expect(buffer_count).to eq(before)
+    end
+
+    it "is wiped when the next file opens" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+      stale = buf_in(slots["new"])
+
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      expect(lua("return vim.api.nvim_buf_is_valid(...)", [stale])).to be(false)
+      expect(buffer_named("lain://review/NEW/lib/widget.rb")).to eq(-1)
+    end
+
+    # The checkout caught up: the same file opened again with no head lines is the
+    # real file, and the copy that stood in for it is gone.
+    it "gives way to the real file when the same path opens with no head lines" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+      open_changeset("lib/widget.rb", widget_old_lines)
+
+      buf = buf_in(slots["new"])
+
+      expect(name_of(buf)).to eq(File.join(project, "lib/widget.rb"))
+      expect(buffer_options(buf)).to include(buftype: "")
+      expect(buffer_named("lain://review/NEW/lib/widget.rb")).to eq(-1)
+    end
+
+    # The DRAWN row, not the option: nvim truncates a winbar too long for its
+    # window from the left, so a label that is all there in the option can show
+    # the pane nothing but its tail.
+    it "keeps the short revision and read-only on screen in a pane of ordinary width" do
+      head = "3f2a9c1d7e5b4a6f8c0d2e4b6a8c0e2f4a6b8c0d"
+      base = "0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+      lua("_G.__lain.open_changeset(...)", ["lib/widget.rb", widget_old_lines, 1, { "old" => base, "new" => head },
+                                            head_lines])
+
+      drawn = lua(<<~LUA, [slots["old"], slots["new"]])
+        local old_win, new_win = ...
+        local drawn = {}
+        vim.o.columns = 200
+        vim.api.nvim_win_set_width(old_win, 53)
+        vim.wo[old_win].winfixwidth = true
+        vim.api.nvim_win_set_width(new_win, 53)
+        vim.cmd("redraw!")
+        for slot, win in pairs({ old = old_win, new = new_win }) do
+          local at = vim.fn.win_screenpos(win)
+          local cells = {}
+          for column = at[2], at[2] + vim.api.nvim_win_get_width(win) - 1 do
+            table.insert(cells, vim.fn.screenstring(at[1], column))
+          end
+          drawn[slot] = { width = vim.api.nvim_win_get_width(win), bar = table.concat(cells) }
+        end
+        return drawn
+      LUA
+
+      expect(drawn["new"]).to include("width" => 53, "bar" => include(head[0, 8], "read-only"))
+      expect(drawn["old"]["bar"]).to include(base[0, 8])
+    end
+
+    it "takes both winbars down when the pair shows a file the checkout holds" do
+      open_head("lib/widget.rb", widget_old_lines, head_lines)
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      expect(winbars).to eq("old" => "", "new" => "")
+    end
+  end
+
+  # The pair has to stay in step with the label on it: an unchanged line sits on
+  # the same screen row in both panes, at the open and after the human scrolls.
+  # Sixty lines, so there is somewhere to scroll and something to fold.
+  describe "the rows of a pair labelled for the head" do
+    def numbered(range = 1..60) = range.map { |i| "line #{i}" }
+
+    def open_head(old_lines, new_lines, line = 1)
+      lua("_G.__lain.open_changeset(...)", ["docs/counter.txt", old_lines, line, revisions, new_lines])
+    end
+
+    # The screen row the first buffer line reading `text` is drawn on, per pane.
+    def rows_of(text)
+      lua(<<~LUA, [text, slots["old"], slots["new"]])
+        local text, old_win, new_win = ...
+        vim.cmd("redraw!")
+        local rows = {}
+        for slot, win in pairs({ old = old_win, new = new_win }) do
+          local lines = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, -1, false)
+          for lnum, line in ipairs(lines) do
+            if line == text and rows[slot] == nil then
+              rows[slot] = vim.fn.screenpos(win, lnum, 1).row
+            end
+          end
+        end
+        return rows
+      LUA
+    end
+
+    def in_slot(slot, keys)
+      lua(<<~LUA, [slots[slot], keys])
+        local win, keys = ...
+        vim.api.nvim_set_current_win(win)
+        vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, false, true))
+        vim.cmd("doautocmd CursorMoved")
+      LUA
+    end
+
+    def aligned_on?(text)
+      rows = rows_of(text)
+      rows.fetch("old").positive? && rows.fetch("old") == rows.fetch("new")
+    end
+
+    it "keeps an identical top in step at the open and through scrolling either pane" do
+      open_head(numbered.map { |line| line == "line 30" ? "was 30" : line }, numbered)
+
+      steps = [["new", "<C-e>"], ["new", "<C-y>"], ["old", "<C-e>"], ["old", "gg"], ["new", "gg"],
+               ["old", "<C-y><C-y>"]]
+      aligned = [aligned_on?("line 5")] + steps.map do |slot, keys|
+        in_slot(slot, keys)
+        aligned_on?("line 5")
+      end
+
+      expect(aligned).to all(be(true))
+    end
+
+    it "keeps the deletion filler when the head drops the file's first two lines" do
+      open_head(["gone 1", "gone 2", *numbered], numbered)
+      at_open = aligned_on?("line 2")
+      in_slot("new", "gg")
+
+      expect([at_open, aligned_on?("line 2")]).to eq([true, true])
+    end
+
+    it "stays in step when the head adds two lines above the file's first" do
+      open_head(numbered, ["new 1", "new 2", *numbered])
+      at_open = aligned_on?("line 2")
+      in_slot("old", "gg")
+
+      expect([at_open, aligned_on?("line 2")]).to eq([true, true])
+    end
+
+    it "stays in step when the gesture lands deep in the file" do
+      open_head(numbered.map { |line| line == "line 45" ? "was 45" : line }, numbered, 45)
+
+      expect(aligned_on?("line 44")).to be(true)
+    end
+  end
+
   describe "the old side" do
     it "carries its side in its name and is not a real file" do
       open_changeset("docs/guide.txt", guide_old_lines)

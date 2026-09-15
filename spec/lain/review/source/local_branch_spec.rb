@@ -353,6 +353,87 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  # Whether the working tree can stand in for the head, one path at a time: an
+  # editor shows the file on disk only when it is the file under review.
+  describe "#checked_out?" do
+    it "is true for a path the checkout holds unmodified at the head" do
+      expect(source.checked_out?("shared.rb")).to be(true)
+    end
+
+    it "is false for a path modified in the working tree" do
+      File.write(File.join(@repo, "shared.rb"), "edited\n")
+
+      expect(source.checked_out?("shared.rb")).to be(false)
+    end
+
+    it "is false for a path whose change is only staged" do
+      File.write(File.join(@repo, "shared.rb"), "staged\n")
+      run_git("add", "shared.rb")
+
+      expect(source.checked_out?("shared.rb")).to be(false)
+    end
+
+    # The head commit changed nothing in `shared.rb`, so its bytes on disk ARE
+    # the head's -- and it is still false, because the rest of the checkout the
+    # language server reads is a different revision.
+    it "is false when HEAD is another commit, even for a file that commit did not change" do
+      source
+      run_git("checkout", "-q", "--detach", @first)
+
+      expect(source.checked_out?("shared.rb")).to be(false)
+    end
+
+    it "is false for an untracked file at a path the head does not carry" do
+      File.write(File.join(@repo, "stray.rb"), "never committed\n")
+
+      expect(source.checked_out?("stray.rb")).to be(false)
+    end
+
+    # Ignored is not absent: the file on disk would still be drawn as the new side
+    # of a path the head deletes.
+    it "is false for an ignored file at a path the head does not carry" do
+      File.write(File.join(@repo, ".git", "info", "exclude"), "stray.rb\n")
+      File.write(File.join(@repo, "stray.rb"), "ignored but here\n")
+
+      expect(source.checked_out?("stray.rb")).to be(false)
+    end
+
+    # git reads its pathspec mode from the environment, and GIT_LITERAL_PATHSPECS
+    # turns the `:(top,literal)` magic into a filename matching nothing -- so an
+    # edited file would read clean, the one answer this method exists to refuse.
+    it "ignores an ambient pathspec mode, which would read an edited file as clean" do
+      source
+      File.write(File.join(@repo, "shared.rb"), "edited\n")
+      previous = ENV.fetch("GIT_LITERAL_PATHSPECS", nil)
+      ENV["GIT_LITERAL_PATHSPECS"] = "1"
+
+      expect(source.checked_out?("shared.rb")).to be(false)
+    ensure
+      ENV["GIT_LITERAL_PATHSPECS"] = previous
+    end
+
+    # `a[1].rb` is a glob that matches `a1.rb`, so a pathspec read as a pattern
+    # reports one file dirty because its neighbour is.
+    it "reads the path literally, so a neighbour a glob would match does not dirty it" do
+      commit("bracketed", "a1.rb" => "one\n", "a[1].rb" => "bracket\n")
+      moved = described_class.new(base: "base", repo_root: @repo)
+      File.write(File.join(@repo, "a1.rb"), "edited\n")
+
+      expect(moved.checked_out?("a[1].rb")).to be(true)
+      expect(moved.checked_out?("a1.rb")).to be(false)
+    end
+
+    # Paths are repository-relative, and a source started from a subdirectory
+    # would otherwise ask about `sub/shared.rb`, which nothing touched.
+    it "resolves the path from the repository's top when started in a subdirectory" do
+      FileUtils.mkdir_p(File.join(@repo, "sub"))
+      nested = described_class.new(base: "base", repo_root: File.join(@repo, "sub"))
+      File.write(File.join(@repo, "shared.rb"), "edited\n")
+
+      expect(nested.checked_out?("shared.rb")).to be(false)
+    end
+  end
+
   describe "#commits" do
     it "returns them oldest-first" do
       expect(source.commits.map(&:sha)).to eq([@first, @second])

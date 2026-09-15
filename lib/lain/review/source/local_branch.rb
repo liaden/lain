@@ -128,6 +128,13 @@ module Lain
         # @return [DiffOrigin] always `fell_back? == false`
         def diff_origin = DiffOrigin.already_local
 
+        # Whether the working tree holds this path exactly as {#head_ref} does,
+        # which is when an editor may show the file on disk as the new side.
+        #
+        # @param path [String] repository-relative, as the diff spells it
+        # @return [Boolean]
+        def checked_out?(path) = Checkout.new(head_ref: @head_ref) { |*argv, **env| git(*argv, **env) }.holds?(path)
+
         private
 
         # `--diff-merges=first-parent` is what stops a merge from silently losing
@@ -228,11 +235,62 @@ module Lain
         # call below at the hook's repository instead of `repo_root`. Read from a
         # METHOD body because `lain.rb` loads isolation after review, so a
         # class-body reference would be a load-time NameError.
-        def git(*)
+        def git(*, env: {})
           shell = @shell_out_factory.call("git", "-C", @repo_root, *CONFIG_PINS, *,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
           shell.run_command
           shell
+        end
+
+        # One path of the working tree, measured against a head -- a class of its
+        # own because {GithubPr} owes the same answer through its own `git`, and
+        # must reach it without the fetch its object database would cost.
+        #
+        # BOTH halves, because either alone lies. A clean path under a HEAD
+        # elsewhere is the head's bytes in a checkout whose every OTHER file --
+        # the ones a language server resolves against -- is another revision;
+        # HEAD at the head with the path edited is bytes nobody reviewed.
+        class Checkout
+          # git takes its pathspec mode from these, and GIT_LITERAL_PATHSPECS makes
+          # `:(top,literal)` a filename matching nothing -- an edited file then
+          # reads clean. Unset for the status call alone, `nil` deleting each in
+          # the child as the shared scrub's own entries do.
+          PATHSPEC_MODES = %w[GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS
+                              GIT_ICASE_PATHSPECS].to_h { |name| [name, nil] }.freeze
+
+          # @param head_ref [String] the sha the working tree is measured against
+          # @yield [*argv, env:] runs one git command in the repository, with
+          #   `env` merged over its usual environment, answering the finished
+          #   shell out
+          def initialize(head_ref:, &git)
+            @head_ref = head_ref
+            @git = git
+          end
+
+          # @param path [String] repository-relative
+          # @return [Boolean]
+          def holds?(path) = at_head? && clean?(path)
+
+          private
+
+          # An unborn branch answers nonzero and empty, which compares unequal.
+          def at_head? = @git.call("rev-parse", "--verify", "--quiet", "HEAD").stdout.strip == @head_ref
+
+          # `status` rather than `diff HEAD`, because an untracked file at a path
+          # the head does not carry is dirty too and only status reports it --
+          # ignored ones included, since `--ignored=matching` is what makes it
+          # say so. An edit hidden by `--assume-unchanged` or `--skip-worktree`
+          # reads clean: the human told git to look away, and this asks git.
+          #
+          # The pathspec is `top` so a source started in a subdirectory still
+          # reads the path from the repository's root, and `literal` so `a[1].rb`
+          # is a name and not a glob matching `a1.rb`. `--no-optional-locks`
+          # keeps a QUERY from rewriting the human's index under their own git.
+          def clean?(path)
+            shell = @git.call("--no-optional-locks", "status", "--porcelain", "--untracked-files=all",
+                              "--ignored=matching", "--", ":(top,literal)#{path}", env: PATHSPEC_MODES)
+            shell.exitstatus.zero? && shell.stdout.empty?
+          end
         end
       end
     end
