@@ -2,6 +2,20 @@
 
 require "json"
 require "stringio"
+require "tmpdir"
+
+# This spec's fixture, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+module ReplaySpecSupport
+  # Turns a read of any path ending in "err.rb" into an error result AFTER the
+  # tool recorded it, as a result-side middleware may.
+  class ErrorOnErr < Lain::Middleware::Base
+    def call(env, &app)
+      carried = downstream(env, &app)
+      path = env.fetch(:effect).input.to_h.transform_keys(&:to_s)["path"].to_s
+      path.end_with?("err.rb") ? carried.merge(result: Lain::Tool::Result.error("withheld")) : carried
+    end
+  end
+end
 
 # What a resume does with a committed compaction cut. The summary a model wrote
 # for the cut's range lives in {Lain::Compaction::Strategy::Summarizing}'s
@@ -136,6 +150,285 @@ RSpec.describe Lain::SessionRecord::Replay do
       Lain::Session.new(journal:).record_read("/tmp/a.rb")
 
       expect(described_class.new(journal_io.string.each_line).session.compaction_cuts).to eq([])
+    end
+  end
+
+  # A read counts on a resumed chain exactly when it counted on the recorded
+  # one: the record carries each read's call, the recorded turns say which turn
+  # delivered it, and the resumed agent asks about the chain it resumed onto.
+  describe "reads, against the chain the session resumes onto", :seam do
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new]) }
+    let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context: base, toolset:) }
+
+    around do |example|
+      Dir.mktmpdir("lain-replay-reads") do |dir|
+        @path = File.join(dir, "notes.rb")
+        File.write(@path, "line 1\nline 2\n")
+        example.run
+      end
+    end
+
+    attr_reader :path
+
+    def agent(responses, **rest)
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), toolset:, context: base, **rest)
+    end
+
+    def edit
+      tool_response(["tu_edit", "edit_file", { "path" => path, "old_string" => "line 2", "new_string" => "two" }])
+    end
+
+    # The recorded chat: one whole read of notes.rb, every turn and read in
+    # the session file as the chat's own scribe writes them.
+    def recorded
+      read = tool_response(["tu_read", "read_file", { "path" => path }])
+      scribe # its header opens the file, ahead of every read, as a chat's does
+      agent([read, text_response("read")], session: Lain::Session.new(journal:)).tap do |run|
+        run.ask("read notes.rb")
+        scribe.catch_up(run.timeline)
+      end
+    end
+
+    def resume_and_edit
+      lines = journal_io.string.each_line.to_a
+      resumed = agent([edit, text_response("tried")], session: described_class.new(lines).session,
+                                                      timeline: Lain::Bench::Session.load(lines).timeline)
+      resumed.ask("edit it")
+      resumed.timeline.ancestors.flat_map(&:content).find { |block| block["tool_use_id"] == "tu_edit" }
+    end
+
+    it "refuses an edit when the session's only whole read was rewound away before it was saved" do
+      run = recorded
+      scribe.rewound(to: run.rewind(run.timeline.length).timeline.head_digest)
+
+      expect(resume_and_edit).to include("is_error" => true, "content" => a_string_including("was never read"))
+      expect(File.read(path)).to eq("line 1\nline 2\n")
+    end
+
+    it "allows the edit when that read's delivering turn is still on the resumed chain" do
+      recorded
+
+      expect(resume_and_edit).to include("is_error" => false)
+      expect(File.read(path)).to eq("line 1\ntwo\n")
+    end
+
+    it "withholds a read no recorded turn delivered, as a round torn before its results landed" do
+      Lain::Session.new(journal:).record_read(path, tool_use_id: "tu_torn")
+
+      expect(described_class.new(journal_io.string.each_line).session.read?(path)).to be(false)
+    end
+
+    it "refuses a read record whose span names no lines, as a corrupt session record" do
+      Lain::Session.new(journal:).record_read(path, lines: 3..9)
+      bogus = journal_io.string.each_line.map { |line| JSON.parse(line).merge("lines" => [0, nil]) }
+
+      expect { described_class.new(bogus).session }
+        .to raise_error(Lain::Bench::Session::Corrupt, /session_read record .* cannot be rebuilt.*lines must be/)
+    end
+
+    # Every session file written before reads carried spans holds this shape.
+    # It does not resume -- but it is refused as the damage it is, which both
+    # doors turn into "cannot resume <file>", never a raw KeyError.
+    it "refuses a read record written before reads carried spans, as a corrupt session record" do
+      old = [{ "type" => "session_read", "path" => "/tmp/a.rb", "complete" => true }]
+
+      expect { described_class.new(old).session }
+        .to raise_error(Lain::Bench::Session::Corrupt, /before reads carried line spans/)
+    end
+
+    it "refuses a withheld-round marker that names no round, as a corrupt session record" do
+      expect { described_class.new([{ "type" => "session_read_withheld", "rounds" => [["h", nil]] }]).session }
+        .to raise_error(Lain::Bench::Session::Corrupt, /session_read_withheld record cannot be rebuilt/)
+    end
+
+    it "refuses a read record whose file version cannot be rebuilt, as a corrupt session record" do
+      bad = [{ "type" => "session_read", "path" => "/tmp/a.rb", "lines" => [1, nil], "identity" => {},
+               "tool_use_id" => nil, "head" => nil }]
+
+      expect { described_class.new(bad).session }
+        .to raise_error(Lain::Bench::Session::Corrupt, /identity must carry exactly/)
+    end
+  end
+
+  # The live read-set against the one a replay rebuilds. Ollama numbers each
+  # response's calls from zero, so one id arrives round after round, and a
+  # session file holds rounds that never delivered: a torn round a resume
+  # repairs with a turn written after the next round's reads, a stranded
+  # answer, a parent file in a resume chain. A read binds to the turn that
+  # answers its call FROM THE HEAD ITS ROUND OPENED ON, live and on replay.
+  describe "a replay binding reads as the live session did", :seam do
+    let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "sys") }
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new]) }
+    let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context:, toolset:) }
+    let(:names) { %w[a b c err d e] }
+    let(:store) { Lain::Store.new }
+    let(:root) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
+
+    around do |example|
+      Dir.mktmpdir("lain-replay-binding") do |dir|
+        @dir = dir
+        names.each { |name| File.write(file(name), (1..10).map { |i| "#{name}#{i}\n" }.join) }
+        example.run
+      end
+    end
+
+    def file(name) = File.join(@dir, "#{name}.rb")
+
+    # One response of parallel reads, numbered from zero the way Ollama does.
+    def reads(*calls)
+      tool_response(*calls.each_with_index.map do |(name, window), index|
+        ["ollama-tool-#{index}", "read_file", { "path" => file(name) }.merge((window || {}).transform_keys(&:to_s))]
+      end)
+    end
+
+    def asking(timeline, marker)
+      timeline.commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "ollama-tool-0",
+                                                    "name" => "read_file", "input" => { "x" => marker } }])
+    end
+
+    def answering(asked, is_error: false)
+      asked.commit(role: :user, content: [{ "type" => "tool_result", "tool_use_id" => "ollama-tool-0",
+                                            "content" => "bytes", "is_error" => is_error }])
+    end
+
+    # One live round: opened on `asked`, one read, delivered by the next turn.
+    def live_round(session, asked, name)
+      session.on_chain(asked)
+      session.record_read(file(name), tool_use_id: "ollama-tool-0")
+      answering(asked).tap do |delivered|
+        session.record_delivery(digest: delivered.head_digest, parent: asked.head_digest,
+                                content: delivered.head.content)
+      end
+    end
+
+    def header(from) = { "type" => "session", "resumed_from" => { "file" => "earlier.ndjson", "head" => from } }
+
+    def live_agent(responses, session)
+      agent = nil
+      turns = Lain::Middleware::Stack.new([Lain::Middleware::JournalTurns.new(scribe:,
+                                                                              timeline: -> { agent.timeline })])
+      agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), toolset:, context:, session:,
+                              turn_middleware: turns,
+                              tool_middleware: Lain::Middleware::Stack.new([ReplaySpecSupport::ErrorOnErr.new]))
+    end
+
+    def disagreements(live, timeline, heads)
+      sessions = [live.withhold_undelivered, described_class.new(journal_io.string.each_line).session]
+      heads.flat_map { |head| head.ancestors.map(&:digest) }.uniq.filter_map do |digest|
+        differing = differing_at(sessions, timeline.checkout(digest))
+        [digest, differing] unless differing.empty?
+      end
+    end
+
+    def differing_at(sessions, at)
+      sessions.each { |session| session.on_chain(at) }
+      names.reject { |name| sessions.map { |session| answers(session, name) }.uniq.one? }
+    end
+
+    def answers(session, name) = [session.read?(file(name)), session.partially_read?(file(name))]
+
+    it "agrees with the live session at every head: parallel reads, reused ids, an errored read, rewind, re-read" do
+      session = Lain::Session.new(journal:)
+      run = live_agent([reads(["a"], ["b", { offset: 1, limit: 5 }]), text_response("r1"),
+                        reads(["b", { offset: 6 }], ["err"]), reads(["c"], ["d", { offset: 1, limit: 3 }]),
+                        text_response("r2"), reads(["c"], ["e"]), text_response("r3")], session)
+      heads = %w[one two].map { |prompt| run.ask(prompt).then { run.timeline } }
+      scribe.catch_up(run.timeline)
+      scribe.rewound(to: run.rewind(5).timeline.head_digest)
+      run.ask("three")
+
+      expect(disagreements(session, run.timeline, [*heads, run.timeline])).to eq([])
+    end
+
+    # A resume chain concatenates every file, oldest first. A parent file
+    # ending in a round that never delivered -- killed mid-round, or still
+    # running in another pane -- must not lend its read to the child's round.
+    it "does not let a parent file's undelivered read bind to a child file's turn with a reused id" do
+      parent_io = StringIO.new
+      parent = Lain::Session.new(journal: Lain::Journal.new(io: parent_io))
+      parent.on_chain(asking(root, 0))
+      parent.record_read(file("a"), tool_use_id: "ollama-tool-0")
+      child = Lain::Session.new(journal:)
+      asked = asking(root, 1)
+      delivered = live_round(child, asked, "b")
+      [asked, delivered].each { |turn| journal << Lain::SessionRecord.turn(turn.head) }
+      lines = parent_io.string.lines + ["#{JSON.generate(header(root.head_digest))}\n"] + journal_io.string.lines
+
+      replayed = described_class.new(lines).session.on_chain(delivered)
+
+      expect([replayed.read?(file("b")), replayed.read?(file("a"))]).to eq([true, false])
+    end
+
+    # A round whose results could not be committed leaves its read open; the
+    # next ask answers the stranded head without telling the session, and that
+    # answer is written after the next round's reads.
+    it "replays a read delivered after a stranded answer the way the live session counted it" do
+      session = Lain::Session.new(journal:)
+      stuck = asking(root, 1)
+      session.on_chain(stuck)
+      session.record_read(file("a"), tool_use_id: "ollama-tool-0")
+      journal << Lain::SessionRecord.turn(stuck.head)
+      stranded = stuck.commit(role: :user, content: Lain::Tool::Cancellation.new(stuck.head, kind: :unknown).blocks)
+      asked = asking(stranded.commit(role: :user, content: [{ "type" => "text", "text" => "again" }]), 2)
+      delivered = live_round(session, asked, "b")
+      delivered.ancestors.take(4).reverse_each { |turn| journal << Lain::SessionRecord.turn(turn) }
+      session.on_chain(delivered)
+
+      replayed = described_class.new(journal_io.string.each_line).session.on_chain(delivered)
+
+      expect([session.read?(file("b")), session.read?(file("a"))]).to eq([true, false])
+      expect([replayed.read?(file("b")), replayed.read?(file("a"))]).to eq([true, false])
+    end
+
+    # The common shape: a chat killed mid-round is resumed, and the load-time
+    # repair answering the torn call is written by the first catch_up -- after
+    # the resumed chat's first round has already written its reads.
+    it "keeps a resumed chat's first-round read counting on the next resume, past a torn round's repair" do
+      torn_io = StringIO.new
+      torn = asking(root, 1)
+      killed = Lain::Session.new(journal: Lain::Journal.new(io: torn_io))
+      [root, torn].each { |turn| torn_io << "#{JSON.generate(Lain::SessionRecord.turn(turn.head))}\n" }
+      killed.on_chain(torn)
+      killed.record_read(file("a"), tool_use_id: "ollama-tool-0")
+      resumed = described_class.new(torn_io.string.lines).session.journals_into(journal)
+      repair = torn.commit(role: :user, content: Lain::Tool::Cancellation.new(torn.head, kind: :unknown).blocks)
+      asked = asking(repair.commit(role: :user, content: [{ "type" => "text", "text" => "again" }]), 2)
+      delivered = live_round(resumed, asked, "b")
+      delivered.ancestors.take(4).reverse_each { |turn| journal << Lain::SessionRecord.turn(turn) }
+      lines = torn_io.string.lines + ["#{JSON.generate(header(torn.head_digest))}\n"] + journal_io.string.lines
+
+      again = described_class.new(lines).session.on_chain(delivered)
+
+      expect([resumed.on_chain(delivered).read?(file("b")), again.read?(file("b"))]).to eq([true, true])
+    end
+
+    # A round on head A that commits nothing, then the byte-identical A
+    # re-running its tools -- a resend with a deterministic model -- over a file
+    # that changed in between. The live session withholds the first round when
+    # the second opens; the record says so, and a replay folds it, so the stale
+    # window cannot add up with an older version's windows on either side.
+    it "does not count a no-commit round's read when the same head re-runs its tools, live or replayed" do
+      old = Lain::Session::FileIdentity.new(device: 1, inode: 1, size: 1, mtime: 1)
+      path = file("a")
+      session = Lain::Session.new(journal:)
+      bottom = asking(root, 0)
+      session.on_chain(bottom)
+      session.record_read(path, lines: 6.., identity: old, tool_use_id: "ollama-tool-0")
+      delivered = answering(bottom)
+      session.record_delivery(digest: delivered.head_digest, parent: bottom.head_digest,
+                              content: delivered.head.content)
+      asked = asking(delivered.commit(role: :user, content: [{ "type" => "text", "text" => "top" }]), 1)
+      session.on_chain(asked)
+      session.record_read(path, lines: 1..5, identity: old, tool_use_id: "ollama-tool-0")
+      session.on_chain(asked)
+      session.record_read(path, lines: 1..5, identity: old.with(size: 2, mtime: 2), tool_use_id: "ollama-tool-0")
+      rerun = answering(asked)
+      session.record_delivery(digest: rerun.head_digest, parent: asked.head_digest, content: rerun.head.content)
+      rerun.ancestors.take(5).reverse_each { |turn| journal << Lain::SessionRecord.turn(turn) }
+
+      replayed = described_class.new(journal_io.string.each_line).session
+
+      expect([session, replayed].map { |side| side.on_chain(rerun).read?(path) }).to eq([false, false])
     end
   end
 end

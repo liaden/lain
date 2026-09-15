@@ -90,74 +90,122 @@ module Lain
       WorkerEnv.new(cwd:, env: {}).resolve(path.to_s)
     end
 
+    # Every line of a file, as a read's span: `(first..last)` for a window that
+    # stopped short, `(first..)` for one that reached the end of the file.
+    WHOLE_FILE = (1..)
+
     # Normalized so a later `read?` cannot be defeated by a different spelling
     # of the same file.
     #
-    # `complete: false` says the model saw only PART of the file. It must be
-    # distinguishable from a whole read, because a model that saw
-    # `<redacted:1>` and then writes the file clobbers every secret in it; and
-    # from NO read, so a refusal can say why rather than claim it was unread.
+    # `lines:` says which lines the model saw, so windows over one version of
+    # the file can add up to a whole read -- and so a read of part of it is
+    # distinguishable from a whole read, because editing from a window clobbers
+    # lines the model never saw, and from NO read, so a refusal can say why.
+    # `identity:` is that version, and a reader names it from the file it has
+    # OPEN, confirmed unchanged once the bytes are read -- a read whose file
+    # changed under it is not recorded at all ({Tools::ReadFile} says so).
+    # `tool_use_id:` names the call whose result carries the read, and `head:`
+    # the chain head its round opened on; {#record_delivery} binds the pair to
+    # the turn that delivered it, and only a read whose turn is on the chain
+    # counts. A read with no call behind it is on every chain. A replay passes
+    # the recorded head; everyone else takes the live one.
     #
-    # Completeness is recorded HERE rather than un-recorded from the middleware
-    # that decides to mask: {Tools::ReadFile} records below the middleware, so
-    # the read has already happened by then and the read-set has no retraction.
-    # {ReadSet}'s three add-only sets are what keep it monotone.
+    # The mutation runs before the journal write, so two fibers reading the
+    # same path see one another's reads. The transition check can walk the
+    # Store, whose Monitor is a yield point when contended, so two gathered
+    # siblings may both journal a line; that costs a duplicate record and
+    # never a downgrade, since nothing is ever removed. The claim carries
+    # ToolRunner's gathered dispatch (docs/concurrency.md, "parallel tools")
+    # and is pinned by spec/lain/session_concurrency_spec.rb.
     #
-    # The transition check, the mutation and the journal write are one
-    # fiber-safe sequence: no yield point sits between the check and the Set
-    # mutation (both pure Ruby, no IO), and the journal write -- the only place
-    # a fiber COULD yield -- runs AFTER the mutation, so two fibers reading the
-    # same path cannot both see "first". The claim carries ToolRunner's
-    # gathered dispatch (docs/concurrency.md, "parallel tools") and is pinned
-    # by spec/lain/session_concurrency_spec.rb; if that spec can only pass by
-    # adding a lock here, the claim has failed -- escalate, do not patch.
-    # Moving the journal write above the mutation breaks it silently.
-    #
-    # A line is journaled on a read-set STATE TRANSITION, not on a call, and
-    # completeness gives two: nothing-to-recorded and partial-to-complete. So a
-    # partial read followed by a complete one journals TWICE -- the model
-    # genuinely saw two different things -- while a re-read at the same
-    # completeness journals nothing, and a complete read followed by a partial
-    # one journals nothing further, mirroring the read-set's own refusal to
-    # downgrade. No record stream can replay as a downgrade.
-    #
-    # ONE path escapes that dedupe, and it is {ReadSet#complete?}'s doing
-    # rather than this method's: a MASKED path answers false to it forever, so
-    # the complete-read transition never closes and every re-read journals
-    # another line -- a per-iteration flood on exactly the redacted file the
-    # dedupe most wants to protect. Inherited unchanged from the decorator this
-    # replaced, and pinned by a spec of its own so it cannot drift in silence.
-    # Pinned is not blessed: whether the masked set should suppress the record
-    # too is a real question, and a separate one.
+    # A line is journaled only when the read adds lines the counted reads of
+    # that version did not already cover, so a read/edit loop does not journal
+    # per iteration. A counted read is on the chain or waiting in this round,
+    # and any chain the new read's turn lands on holds it too. The one line a
+    # replay can miss is a sibling's in the same round whose result then turns
+    # out to be an error: the resumed session is refused an edit this one
+    # allowed, never the reverse.
     #
     # @return [self]
-    def record_read(path, complete: true)
+    def record_read(path, lines: WHOLE_FILE, identity: FileIdentity.of(normalize(path)), tool_use_id: nil,
+                    head: @reads.head)
       target = normalize(path)
-      transition = complete ? !@reads.complete?(target) : !@reads.recorded?(target)
-      @reads.record(target, complete:)
-      @journal << Telemetry::SessionRead.new(path: target, complete:) if transition
+      read = ReadSet::Read.checked(lines:, identity:, tool_use_id:, head:)
+      transition = !@reads.covered?(target, read)
+      @reads.record(target, read)
+      @journal << Telemetry::SessionRead.of(target, read) if transition
       self
     end
 
-    # @return [Boolean] whether `path` (in any spelling) was read IN FULL this
-    #   session -- the question the edit-before-write contracts ask, so a
+    # The chain the next tool round runs on, and so the chain a read has to be
+    # on to count. A read still waiting for its delivery belongs to a round
+    # that never delivered one, and is withheld -- and journaled as withheld,
+    # because a replay cannot see this moment: when the same assistant turn
+    # re-runs its tools, both rounds open on one head with the same call ids,
+    # and only this record keeps the first from binding to the second's
+    # delivery. A round that delivered leaves nothing open, so an ordinary run
+    # journals nothing here.
+    #
+    # @param timeline [Timeline]
+    # @return [self]
+    def on_chain(timeline)
+      withheld(@reads.withhold_undelivered)
+      @reads.move_to(timeline)
+      self
+    end
+
+    # A replay's fold of {Telemetry::SessionReadWithheld}: the rounds a live
+    # {#on_chain} withheld, named as `[head, call id]`.
+    #
+    # @param rounds [Array<Array(String, String)>]
+    # @return [self]
+    def withhold_rounds(rounds) = withheld(@reads.withhold(rounds))
+
+    # Binds each call a turn answers to that turn -- only the reads whose round
+    # opened on the turn's parent, the assistant turn that made the calls. A
+    # provider may reuse a call id round after round (Ollama numbers each
+    # response's calls from zero), and a repair answering a torn round may be
+    # written long after a later round's reads, so the id alone names no round.
+    # A result the model got as an error carried no file contents, so a read
+    # behind it never counts.
+    #
+    # @param digest [String] the delivering turn's digest
+    # @param parent [String] its parent: the head its round opened on
+    # @param content [Array<Hash>] its blocks
+    # @return [self]
+    def record_delivery(digest:, parent:, content:)
+      content.select { |block| block["type"] == "tool_result" }.each do |block|
+        delivery = block["is_error"] ? ReadSet::Withheld : ReadSet::Delivered.new(digest)
+        @reads.deliver(parent, block["tool_use_id"], delivery)
+      end
+      self
+    end
+
+    # Every read whose result no turn delivered is withheld: a replay's end of
+    # record, or the start of the next file in a resume chain, where a round
+    # with no delivery was torn before its results landed.
+    #
+    # @return [self]
+    def withhold_undelivered = withheld(@reads.withhold_undelivered)
+
+    # @return [Boolean] whether `path` (in any spelling) was read IN FULL on
+    #   this chain -- the question the edit-before-write contracts ask, so a
     #   partial read answers false
     def read?(path)
       @reads.complete?(normalize(path))
     end
 
     # Bytes were withheld from the model, so it must not be trusted to rewrite
-    # the file. Separate from `record_read(complete: false)` because the two
-    # facts arrive from different layers and only this one can arrive AFTER a
-    # whole read was recorded. See {ReadSet} for why that forces a third set
-    # rather than a retraction.
+    # the file. Separate from a windowed {#record_read} because the two facts
+    # arrive from different layers and only this one can arrive AFTER a whole
+    # read was recorded. See {ReadSet} for why that forces a set of its own
+    # rather than a retraction, and why it ignores the chain.
     #
-    # Journals NO {Telemetry::SessionRead}: that record says only `complete:`,
-    # and {SessionRecord::Replay} folds each one through {#record_read}, which
-    # by construction cannot reach the masked set. A `complete: false` line
-    # here would therefore replay to a wholly-read path -- a record that LOOKS
-    # like the mask was persisted while a resumed session permits the very
-    # write the mask exists to refuse. {Middleware::RedactSecretReads} writes a
+    # Journals NO {Telemetry::SessionRead}: {SessionRecord::Replay} folds each
+    # one through {#record_read}, which by construction cannot reach the masked
+    # set, so a line here would replay to a read -- a record that LOOKS like
+    # the mask was persisted while a resumed session permits the very write
+    # the mask exists to refuse. {Middleware::RedactSecretReads} writes a
     # {Telemetry::ReadRedacted} into this same journal at the same moment, and
     # {SessionRecord::Replay#redactions} folds it back.
     #
@@ -182,7 +230,8 @@ module Lain
     end
 
     # Sorted, so a consumer cannot vary with the order reads arrived.
-    # Deliberately WIDER than {#read?}: a partially read path was still read.
+    # Deliberately WIDER than {#read?}: a partially read path was still read,
+    # and so was one read on a chain since rewound away.
     #
     # @return [Array<String>]
     def reads
@@ -431,6 +480,36 @@ module Lain
       self
     end
 
+    FileIdentity = Data.define(:device, :inode, :size, :mtime)
+
+    # Which version of a file a read saw. A stat rather than a hash, because a
+    # window exists so that the file is NOT read whole: hashing it per window
+    # would cost exactly the read the window avoids. The price is named: a
+    # same-size rewrite in place, landing inside one tick of the filesystem's
+    # timestamp clock, keeps the same identity.
+    #
+    # A path that cannot be stat'd has the one {ABSENT} identity. Reopened,
+    # rather than documented on the Data.define above, so that constant lands
+    # on FileIdentity itself and YARD keeps this one docstring.
+    class FileIdentity
+      # @param stat [File::Stat]
+      # @return [FileIdentity]
+      def self.from_stat(stat)
+        new(device: stat.dev, inode: stat.ino, size: stat.size,
+            mtime: (stat.mtime.tv_sec * 1_000_000_000) + stat.mtime.tv_nsec)
+      end
+
+      # @param path [String] an absolute path
+      # @return [FileIdentity]
+      def self.of(path)
+        from_stat(File.stat(path))
+      rescue SystemCallError
+        ABSENT
+      end
+
+      ABSENT = new(device: nil, inode: nil, size: nil, mtime: nil)
+    end
+
     PreImage = Data.define(:bytes)
 
     # What a path held before a turn first wrote it: its bytes, or nil for a
@@ -522,6 +601,11 @@ module Lain
 
     private
 
+    def withheld(rounds)
+      @journal << Telemetry::SessionReadWithheld.new(rounds:) unless rounds.empty?
+      self
+    end
+
     def todo_reminders
       @todo_reminder ? [@todo_reminder] : []
     end
@@ -569,121 +653,224 @@ module Lain
       list.count { |todo| todo.status == "completed" }
     end
 
-    # Which files were read, and which of those were read WHOLE.
+    # Which files were read, on which chain, and which of those were read WHOLE.
     #
-    # THREE add-only sets, never a flag per path, and that is the whole design:
-    # membership, completeness and masking only ever move forward, so a sibling
-    # fiber cannot race a complete read backwards into a partial one. The
-    # structure carries the monotonicity rather than a rule a caller has to
-    # remember; a Hash of path => complete would express the same states and
-    # lose exactly that guarantee.
+    # Add-only, and that is the whole design: a read, a delivery and a mask are
+    # only ever recorded, never removed, so a sibling fiber cannot race a
+    # complete read backwards into a partial one. What moves is the CHAIN a
+    # read is counted against: a rewind leaves every read in place and stops
+    # counting the ones whose delivering turn it left behind.
     #
-    # Completeness and masking need SEPARATE sets because each fact is known at
-    # a different layer, and collapsing them is the refactor to refuse.
-    # {Tools::ReadFile} calls `record_read` inside `#perform`, BELOW the
-    # middleware, having read the whole file -- so the complete set gains the
-    # path before masking is even decided, and a later `record(complete: false)`
-    # cannot take it back. Only {Middleware::RedactSecretReads}, one layer
-    # above, knows bytes were withheld, so the masking arm adds to a THIRD set
-    # and {#complete?} is the conjunction: read whole AND nothing withheld.
-    #
-    # Masking is add-only too, so the composite answer moves only toward
-    # refusing an edit. A path masked on an earlier read therefore stays
-    # un-editable for the rest of the run even if a later read releases
-    # everything: over-strict on purpose, and NOT to be fixed with a delete.
+    # Masking is kept apart and ignores the chain. {Tools::ReadFile} records a
+    # whole read BELOW the middleware that decides to mask, so the read is
+    # already here before masking is decided, and only
+    # {Middleware::RedactSecretReads}, one layer above, knows bytes were
+    # withheld. A masked path stays un-editable for the rest of the run, on
+    # every chain and after any later read: over-strict on purpose, and NOT to
+    # be fixed with a delete.
     #
     # Members arrive ALREADY normalized -- path identity belongs to {Session},
     # which owns the worker cwd.
     class ReadSet
-      def initialize
-        @all = Set.new
-        @complete = Set.new
-        @masked = Set.new
-      end
+      Read = Data.define(:lines, :identity, :tool_use_id, :head)
 
-      # The strict-boolean check comes FIRST, ahead of both mutations. Read for
-      # truthiness instead and `complete: "false"` silently records a COMPLETE
-      # read -- the unsafe direction. The journal record's own guard is no
-      # substitute: it fires one layer out and only AFTER this has mutated, so a
-      # caller that rescues would hold live state more permissive than what
-      # replays. It is pure Ruby with no IO, so it runs inside the same
-      # yield-free window rather than widening it.
-      #
-      # DUPLICATES {Telemetry::Carriers::SessionRead} deliberately: this guards
-      # the in-memory read-set, which a bare Session mutates with no journal in
-      # sight, and that one guards the record on its way to disk. Deleting
-      # either reopens exactly one of those two boundaries.
-      #
-      # @param path [String] an already-normalized absolute path
-      # @param complete [Boolean] whether the whole file was seen
-      # @return [self]
-      def record(path, complete:)
-        unless [true, false].include?(complete)
-          raise ArgumentError, "complete must be true or false, got #{complete.inspect}"
+      # One read: the lines it covered, the version of the file it saw, and
+      # the call whose result carried it, named by id and by the chain head its
+      # round opened on. Built through {.checked}, whose
+      # strict checks come ahead of any mutation, so a caller that rescues is
+      # never left holding live state more permissive than what replays.
+      class Read
+        # @return [Read]
+        # @raise [ArgumentError] for a span that names no lines, or a call id
+        #   or head that is not a String
+        def self.checked(lines:, identity:, tool_use_id:, head:)
+          unless span?(lines)
+            raise ArgumentError, "lines must be a Range of line numbers from 1, first..last or first.., " \
+                                 "got #{lines.inspect}"
+          end
+          name, value = { tool_use_id:, head: }.find { |_, named| !(named.nil? || named.is_a?(String)) }
+          raise ArgumentError, "#{name} must be a String or nil, got #{value.inspect}" if name
+
+          new(lines:, identity:, tool_use_id:, head:)
         end
 
-        @all << path
-        @complete << path if complete
+        def self.span?(lines)
+          lines.is_a?(Range) && !lines.exclude_end? && lines.begin.is_a?(Integer) && lines.begin >= 1 &&
+            (lines.end.nil? || (lines.end.is_a?(Integer) && lines.end >= lines.begin))
+        end
+        private_class_method :span?
+      end
+
+      # A read whose round has not delivered yet, or that no call carried: it
+      # counts, since nothing has yet said the model did not see it.
+      module Pending
+        def self.counts_on?(_chain) = true
+      end
+
+      # A read whose result never reached the model.
+      module Withheld
+        def self.counts_on?(_chain) = false
+      end
+
+      # A read delivered by the turn at `digest`.
+      Delivered = Data.define(:digest) do
+        def counts_on?(chain) = chain.include?(digest)
+      end
+
+      # Which turns a head's chain holds, walked once per head rather than per
+      # question. A head that descends from the last one walked is walked only
+      # back to it; any other head -- a rewind, a checkout -- is walked whole.
+      class Chain
+        def initialize
+          @timeline = Timeline.empty
+          @walked_to = nil
+          @digests = Set.new
+        end
+
+        def move_to(timeline) = @timeline = timeline
+
+        def head = @timeline.head_digest
+
+        def include?(digest)
+          catch_up unless @timeline.head_digest == @walked_to
+          @digests.include?(digest)
+        end
+
+        private
+
+        def catch_up
+          fresh = @timeline.ancestors.take_while { |turn| turn.digest != @walked_to }
+          @digests = Set.new unless !fresh.empty? && fresh.last.parent == @walked_to
+          @digests.merge(fresh.map(&:digest))
+          @walked_to = @timeline.head_digest
+        end
+      end
+
+      # Rounds are numbered, and an open one is found by the head it opened on
+      # together with the call id: {Session#record_delivery} says why the id
+      # alone is not enough.
+      def initialize
+        @reads = {}
+        @masked = Set.new
+        @rounds = [Pending]
+        @open = {}
+        @chain = Chain.new
+      end
+
+      # @param path [String] an already-normalized absolute path
+      # @param read [Read]
+      # @return [self]
+      def record(path, read)
+        (@reads[path] ||= []) << [read, round_of(read)]
         self
       end
 
-      # Deliberately NOT a parameter on {#record}: a caller able to pass
-      # `masked: false` could spell "this read hid nothing" over a read that hid
-      # something.
-      #
-      # It records membership too, because a masked read IS a read: without it a
-      # path masked before it was ever recorded answers false to both
-      # {#complete?} and {#partial?}, which reads as "never read".
+      # A masked path answers as read in part on its own, with or without a
+      # read beside it: a masked read IS a read, and must never answer as one
+      # that did not happen.
       #
       # @param path [String] an already-normalized absolute path
       # @return [self]
       def mask(path)
-        @all << path
         @masked << path
         self
       end
 
-      # Both halves, because either alone answers a question the edit-before-
-      # write contract is not asking.
+      # @return [self]
+      def deliver(head, tool_use_id, delivery)
+        round = @open.delete([head, tool_use_id])
+        @rounds[round] = delivery unless round.nil?
+        self
+      end
+
+      # @return [self]
+      # @return [Array<Array(String, String)>] the `[head, call id]` of every
+      #   round this withheld
+      def withhold_undelivered = withhold(@open.keys)
+
+      # @param keys [Array<Array(String, String)>] `[head, call id]` pairs
+      # @return [Array<Array(String, String)>] those that were open, now withheld
+      def withhold(keys)
+        keys.select { |key| @open.key?(key) }.each { |key| @rounds[@open.delete(key)] = Withheld }
+      end
+
+      # @return [self]
+      def move_to(timeline)
+        @chain.move_to(timeline)
+        self
+      end
+
+      # @return [String, nil] the head of the chain reads are counted against
+      def head = @chain.head
+
+      # Whole when the counted reads of one version cover every line, and
+      # nothing was withheld.
       #
       # @return [Boolean]
-      def complete?(path) = @complete.include?(path) && !@masked.include?(path)
+      def complete?(path)
+        !masked?(path) && counted(path).group_by(&:identity).any? { |_, same| covering?(same, WHOLE_FILE) }
+      end
 
       # Read, but not wholly seen. A caller asking this wants "is there more of
       # this file the model has not seen", for which the two causes are the same
       # fact; {#masked?} tells them apart.
       #
       # @return [Boolean]
-      def partial?(path) = @all.include?(path) && !complete?(path)
+      def partial?(path) = masked?(path) || (counted(path).any? && !complete?(path))
 
-      # Which of {#partial?}'s two causes applies, so a refusal can tell the
-      # model whether to re-read or to ask for a release.
-      #
       # @return [Boolean]
       def masked?(path) = @masked.include?(path)
 
-      # "Recorded at all", which is the union {#paths} lists -- the predicate a
-      # PARTIAL read's journal transition tests against, since for it the
-      # transition is out of never-read, not out of not-yet-complete.
+      # Whether the counted reads of `read`'s version already cover its lines.
       #
       # @return [Boolean]
-      def recorded?(path) = @all.include?(path)
+      def covered?(path, read)
+        covering?(counted(path).select { |seen| seen.identity == read.identity }, read.lines)
+      end
 
-      # @return [Array<String>] every path recorded, complete or partial, sorted
-      def paths = @all.sort.freeze
+      # @return [Array<String>] every path recorded, on any chain, sorted
+      def paths = (@reads.keys | @masked.to_a).sort.freeze
+
+      private
+
+      def round_of(read)
+        return 0 if read.tool_use_id.nil?
+
+        @open[[read.head, read.tool_use_id]] ||= (@rounds << Pending).size - 1
+      end
+
+      def counted(path)
+        @reads.fetch(path, []).filter_map { |read, round| read if @rounds[round].counts_on?(@chain) }
+      end
+
+      # Sorted by first line, a span extends the covered run only when it
+      # starts inside or just past it; `nil`'s end-of-file reach is infinite.
+      def covering?(reads, lines)
+        reach = reads.map(&:lines).sort_by(&:begin).inject(lines.begin - 1) do |reached, span|
+          span.begin <= reached + 1 ? [reached, span.end || Float::INFINITY].max : reached
+        end
+        reach >= (lines.end || Float::INFINITY)
+      end
     end
 
     # The no-op Session, mirroring {Channel::Null} and {Sink::Null}, so no tool
     # ever writes an `if session` guard. A single shared frozen instance: it has
     # no state to keep, and nothing to journal either.
     class Null
-      # `complete:` is accepted and discarded, but it cannot be renamed to the
-      # unused-argument underscore: it is a KEYWORD, so the name is the duck.
-      #
       # @return [self]
-      def record_read(_path, complete: true) # rubocop:disable Lint/UnusedMethodArgument
-        self
-      end
+      def record_read(_path, **) = self
+
+      # @return [self]
+      def on_chain(_timeline) = self
+
+      # @return [self]
+      def record_delivery(**) = self
+
+      # @return [self]
+      def withhold_undelivered = self
+
+      # @return [self]
+      def withhold_rounds(_rounds) = self
 
       # @return [self]
       def record_masked_read(_path) = self

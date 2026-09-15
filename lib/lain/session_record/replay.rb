@@ -7,10 +7,10 @@ module Lain
     # builds carries NO journal, or folding the record would re-journal every
     # line it just read; {CLI::Chronicle#wrap_session} attaches the new run's
     # journal afterwards. A
-    # {Telemetry::SessionRead} folds straight into {Session#record_read} carrying
-    # its completeness, so a partial read cannot come back as a whole one (see
-    # `#completeness`); the read-set's own add-only monotonicity then folds a
-    # partial-then-complete pair to complete however the two are ordered. A
+    # {Telemetry::SessionRead} folds into {Session#record_read} carrying its
+    # span, file version and call, and each recorded turn's results bind the
+    # calls they answer, in recorded order -- so a read counts on a resumed
+    # chain exactly when the turn that delivered it is on that chain. A
     # {Telemetry::TodoSnapshot} folds into {Session#write_todos} in RECORDED
     # order, so its replace-not-merge semantics do the rest. A
     # {Telemetry::CompactionCut} folds into {Session#record_compaction_cut} in
@@ -30,13 +30,15 @@ module Lain
     # zero-record precedent {Bench::Session::MemoryReplay} itself sets.
     class Replay
       SESSION_READ_TYPE = "session_read"
+      SESSION_READ_WITHHELD_TYPE = "session_read_withheld"
       READ_REDACTED_TYPE = "read_redacted"
       SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       MEMORY_ROOT_TYPE = "memory_root"
       COMPACTION_CUT_TYPE = "compaction_cut"
       CUT_FIELDS = Telemetry::CompactionCut.members.freeze
-      private_constant :CUT_FIELDS
+      READ_FIELDS = Telemetry::SessionRead.members.map(&:to_s).freeze
+      private_constant :CUT_FIELDS, :READ_FIELDS
 
       # A private value satisfying {Session#write_todos}'s
       # `#content`/`#status` duck: {Tools::TodoWrite}'s own Item is
@@ -78,15 +80,49 @@ module Lain
 
       private
 
-      # The read-set is TWO record types, folded together here because they
-      # rebuild one thing: what the model has seen of each file.
+      # The read-set is THREE record types, folded together here because they
+      # rebuild one thing: what the model has seen of each file, and on which
+      # chain.
+      #
+      # A read binds to the first turn after it whose parent is the head its
+      # round opened on and whose results answer its call -- the pair a live
+      # session binds by, so a reused call id, a repair written late or a file
+      # boundary cannot move a read onto another round's turn. A read no
+      # recorded turn answers belongs to a round torn before its results
+      # landed, and is withheld: where the live session recorded withholding it,
+      # at the end of the record, and at each session header a resume chain
+      # carries, since no later process delivers an earlier one's round.
+      #
+      # A record this cannot rebuild -- one written before reads carried spans,
+      # or a damaged one -- refuses the resume as {Bench::Session::Corrupt},
+      # which both doors turn into "cannot resume <file>".
       def restore_reads(fresh)
-        reads.each { |record| fresh.record_read(record.fetch("path"), complete: completeness(record)) }
+        Journal.records(@records).each { |record| restore_read(fresh, record) }
+        fresh.withhold_undelivered
         # A known limit: a child's guard journals into this same record, and
         # nothing on a mask says whose read it was, so a child's masked read
         # resumes as the parent's. It fails closed -- the parent is refused a
         # write over a file the child saw masked.
         redactions.each { |record| fresh.record_masked_read(record.fetch("path")) }
+      end
+
+      def restore_read(fresh, record)
+        case record["type"]
+        when SESSION_READ_TYPE then fresh.record_read(record.fetch("path"), **read_fields(record))
+        when SESSION_READ_WITHHELD_TYPE then fresh.withhold_rounds(withheld_rounds(record))
+        when SessionRecord::TURN_TYPE then fresh.record_delivery(**delivery_fields(record))
+        when SessionRecord::HEADER_TYPE then fresh.withhold_undelivered
+        end
+      end
+
+      def withheld_rounds(record)
+        Telemetry::SessionReadWithheld.new(rounds: record.fetch("rounds")).rounds
+      rescue KeyError, ArgumentError => e
+        raise Bench::Session::Corrupt, "a session_read_withheld record cannot be rebuilt (#{e.message})"
+      end
+
+      def delivery_fields(record)
+        { digest: record.fetch("digest"), parent: record.fetch("parent"), content: record.fetch("content") }
       end
 
       def restore_pins(fresh) = pins.each { |record| apply_pin(fresh, record) }
@@ -111,52 +147,33 @@ module Lain
         CUT_FIELDS.to_h { |field| [field, record.fetch(field.to_s)] }
       end
 
-      def reads
-        Journal.records(@records, type: SESSION_READ_TYPE)
-      end
-
       # A masked read replays from {Telemetry::ReadRedacted}, NOT from a
       # `session_read` line, and that is the only shape available:
-      # `session_read` says `complete:` and nothing else, and `record_read` by
-      # construction cannot reach the masked set, so a `complete: false` line
-      # would replay to a wholly-read path and quietly permit the write that a
-      # mask exists to refuse. `read_redacted` already names the path, is
+      # `record_read` by construction cannot reach the masked set, so a
+      # `session_read` line would replay to a read and quietly permit the write
+      # that a mask exists to refuse. `read_redacted` already names the path, is
       # already written by {Middleware::RedactSecretReads} into this same
       # journal, and needs no new field.
       #
-      # Order against {#reads} does not matter: both sets are add-only and
+      # Order against the reads does not matter: both are add-only and
       # {Session#record_masked_read} is idempotent, so a redaction folded before
       # or after its own `session_read` lands on the same state.
       def redactions
         Journal.records(@records, type: READ_REDACTED_TYPE)
       end
 
-      # A MISSING `complete` key means the read was whole, and that is a
-      # historical fact rather than a permissive default: the only thing that
-      # can record a partial read is the secret-redacting read middleware,
-      # which postdates this field. So no writer ever existed that could emit a
-      # partial read without the key, and its absence is positive evidence of a
-      # whole read. Do not "fix" this into a raise -- it would break `--resume`
-      # for every journal written before the field, to guard a case that cannot
-      # occur.
-      #
-      # A key that IS present gets the same strictness {#apply_pin} applies to
-      # `pinned`: a real boolean, not a truthy value, because a salvaged or
-      # hand-edited journal is exactly what these records must survive and
-      # `"false"` rebuilding as COMPLETE is the unsafe direction. Loud beats
-      # plausible, for every journal written from here on.
-      def completeness(record)
-        complete = record.fetch("complete", true)
-        unless [true, false].include?(complete)
-          # A record of ours whose FIELDS are not what the writer's guard promised
-          # -- the shape a salvaged or hand-edited journal reaches us in. Distinct
-          # from a foreign record, which {Journal.records} skips by type, and from
-          # a missing key, which `fetch` already raises KeyError for.
-          raise Error, "session_read for #{record.fetch("path").inspect} must carry complete true or false, " \
-                       "got #{complete.inspect}"
-        end
-
-        complete
+      # Every field is fetched, and the span is rebuilt through the writer's
+      # own guard: a salvaged or hand-edited journal is exactly what these
+      # records must survive, and a span read loosely rebuilds as more of the
+      # file than the model saw. Loud beats plausible.
+      def read_fields(record)
+        settled = Telemetry::SessionRead.new(**READ_FIELDS.to_h { |field| [field.to_sym, record.fetch(field)] })
+        { lines: settled.lines.first..settled.lines.last, tool_use_id: settled.tool_use_id, head: settled.head,
+          identity: Session::FileIdentity.new(**settled.identity.to_h { |key, value| [key.to_sym, value] }) }
+      rescue KeyError, ArgumentError => e
+        raise Bench::Session::Corrupt, "a session_read record for #{record["path"].inspect} cannot be rebuilt " \
+                                       "(#{e.message}); a record written before reads carried line spans, " \
+                                       "or a damaged one, cannot say what the model saw of the file"
       end
 
       def pins

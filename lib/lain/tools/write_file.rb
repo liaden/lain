@@ -58,7 +58,8 @@ module Lain
       # that was impossible to perform. The exist?-then-write is a
       # check-then-act, NOT a lock -- sound for the one-call-at-a-time model
       # this harness runs today, not in general against a concurrent writer.
-      requires("%<subject>s exists and was never read this session", subject: SUBJECT) do |input, invocation|
+      requires("%<subject>s exists and was never read in full in this conversation's current history",
+               subject: SUBJECT) do |input, invocation|
         path = target(invocation, input.path)
         !File.exist?(path) || session_of(invocation).read?(path)
       end
@@ -68,9 +69,10 @@ module Lain
       def description
         "Writes content to the file at path, creating it if it does not " \
           "exist and overwriting it if it does. Creating a new file needs no " \
-          "prior read. Overwriting a file that already exists requires it " \
-          "was read with read_file earlier this session -- writing over a " \
-          "file that was never read is refused, never a silent clobber."
+          "prior read. Overwriting a file that already exists requires " \
+          "every line of it was read with read_file earlier in this " \
+          "conversation (windows that together cover it count) -- writing " \
+          "over a file that was never read is refused, never a silent clobber."
       end
 
       protected
@@ -85,7 +87,7 @@ module Lain
           # lets a following write_file or edit_file see it as read. The
           # write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
           # only, the documented bash gap).
-          session.record_read(path).record_write(path, wrote: input.content)
+          session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: input.content)
           Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
         end
       end

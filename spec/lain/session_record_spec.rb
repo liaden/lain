@@ -633,12 +633,12 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
 
     # Completeness has to survive the round trip, or a resumed run could
-    # clobber a file the model only ever saw redacted.
+    # clobber lines the model never saw.
     describe "read completeness round-trips" do
       def journaled = Lain::Session.new(journal:)
 
       it "replays a partial read as partial, not as a whole read" do
-        journaled.record_read("/tmp/secret.rb", complete: false)
+        journaled.record_read("/tmp/secret.rb", lines: 1..10)
 
         fresh = replayed_session
 
@@ -648,10 +648,10 @@ RSpec.describe Lain::SessionRecord::Replay do
 
       # Two lines folding to one final state -- the end state is what a resume
       # has to reconstruct, not the line count.
-      it "replays a partial-then-complete sequence as complete" do
+      it "replays two windows that add up as complete" do
         writer = journaled
-        writer.record_read("/tmp/a.rb", complete: false)
-        writer.record_read("/tmp/a.rb")
+        writer.record_read("/tmp/a.rb", lines: 1..10)
+        writer.record_read("/tmp/a.rb", lines: 11..)
 
         expect(replayed_session.read?("/tmp/a.rb")).to be(true)
       end
@@ -662,7 +662,7 @@ RSpec.describe Lain::SessionRecord::Replay do
         Dir.mktmpdir do |dir|
           path = File.join(dir, "hello.txt")
           File.write(path, "hello world")
-          journaled.record_read(path, complete: false)
+          journaled.record_read(path, lines: 1..1)
 
           invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: replayed_session)
 
@@ -674,8 +674,8 @@ RSpec.describe Lain::SessionRecord::Replay do
       end
 
       # A MASK replays from `read_redacted`, not from `session_read`, and it has
-      # to: `session_read` says only `complete:`, and `record_read` by
-      # construction cannot reach the masked set -- so the whole read
+      # to: `record_read` by construction cannot reach the masked set -- so the
+      # whole read
       # `Tools::ReadFile` records BELOW the middleware would win on replay and a
       # resumed session would permit the write a mask exists to refuse. This is
       # the record `Middleware::RedactSecretReads` already writes.
@@ -737,25 +737,13 @@ RSpec.describe Lain::SessionRecord::Replay do
         end
       end
 
-      # A journal written before partial reads existed has no `complete` key.
-      # Its absence is POSITIVE EVIDENCE that the read was whole --
-      # RedactSecretReads (the only thing that can record a partial read) does
-      # not exist yet, so no writer could have produced a partial read without
-      # the key. This is a historical fact, not a permissive default; do not
-      # "fix" it into a raise.
-      it "replays a pre-T22 record with no complete key as a whole read" do
-        legacy = [{ "type" => "session_read", "path" => "/tmp/old.rb" }]
+      # A record with no span says nothing about how much of the file was seen,
+      # and guessing a whole read is the unsafe direction: it is refused as the
+      # corrupt record it is, which a resume turns into "cannot resume".
+      it "refuses a read record that carries no span, as a corrupt session record" do
+        spanless = [{ "type" => "session_read", "path" => "/tmp/old.rb", "identity" => {}, "tool_use_id" => nil }]
 
-        expect(replayed_session(legacy).read?("/tmp/old.rb")).to be(true)
-      end
-
-      # Strictness still bites where it can: a key that IS present must be a
-      # real boolean, matching what the writer's guard promised.
-      it "raises on a present-but-non-boolean complete, in Replay's loud style" do
-        bogus = [{ "type" => "session_read", "path" => "/tmp/old.rb", "complete" => "false" }]
-
-        expect { replayed_session(bogus) }
-          .to raise_error(Lain::Error, /complete true or false/)
+        expect { replayed_session(spanless) }.to raise_error(Lain::Bench::Session::Corrupt, /"lines"/)
       end
     end
 

@@ -48,7 +48,8 @@ module Lain
       # The slot is primed before the tools run: a shadow scope's before-tree
       # has to predate the first write the turn's undo will put back. The
       # session's pre-images open at the same moment, for the write-set
-      # scope's undo, which has no tree to read that from.
+      # scope's undo, which has no tree to read that from, and so does the
+      # chain a read has to be on to license an edit.
       #
       # @param response [Lain::Response] the assistant turn carrying the calls
       # @param timeline [Lain::Timeline] the timeline as of the assistant commit
@@ -61,10 +62,10 @@ module Lain
       def perform(response, timeline:, session:, &commit)
         answers = ToolRunner::Answers.for(response)
         @snapshots.prime
-        session.open_pre_images
+        session.open_pre_images.on_chain(timeline)
         delivery = @runner.delivery(response, context: session, answers:)
       rescue Async::Stop => e
-        cancel(answers, timeline, &commit)
+        cancel(answers, timeline, session, &commit)
         raise e
       else
         settle(delivery, timeline, session, &commit)
@@ -76,8 +77,13 @@ module Lain
       # happens BEFORE the tools run, so this is the earliest point where both
       # halves of the snapshot exist -- the written bytes on disk and the turn
       # digest the event names as its cause.
+      #
+      # Every commit here -- settled, errored or cancelled -- tells the session
+      # which turn delivered each call, since that turn is what a read counts
+      # against.
       def settle(delivery, timeline, session, &commit)
-        committed = settled(delivery, timeline, &commit)
+        committed = settled(delivery, timeline, session, &commit)
+        delivered(session, committed)
         yield committed
         @snapshots.write(timeline: committed, paths: session.writes, pre_images: session.pre_images)
         session.settle_pre_images
@@ -90,10 +96,10 @@ module Lain
       # The repair rebuilds every block rather than committing `delivery`'s:
       # those are the blocks whose commit just raised, and they would raise
       # again.
-      def settled(delivery, timeline, &commit)
+      def settled(delivery, timeline, session, &commit)
         timeline.commit(role: :user, **delivery)
       rescue StandardError => e
-        errored(timeline, delivery.fetch(:causal_parents), &commit)
+        errored(timeline, delivery.fetch(:causal_parents), session, &commit)
         raise e
       end
 
@@ -102,12 +108,13 @@ module Lain
       # -- an unpairable call, a store refusing this commit too -- must never
       # replace the error its caller is unwinding from. The head it leaves is
       # answered at the next ask. Only the commit is covered; the yield is not.
-      def errored(timeline, causal_parents)
+      def errored(timeline, causal_parents, session)
         repaired = errored_commit(timeline, Tool::Cancellation.new(timeline.head, kind: :errored).blocks,
                                   causal_parents)
       rescue StandardError
         nil
       else
+        delivered(session, repaired)
         yield repaired
       end
 
@@ -155,11 +162,13 @@ module Lain
       # free of file IO, and the snapshot is the one thing here that costs
       # nothing to lose: disk is its source of truth, and the next mutating turn
       # re-derives it.
-      def cancel(answers, timeline)
+      def cancel(answers, timeline, session)
         torn = timeline.head_digest
         delivery = @runner.cancelled_delivery(answers)
         Async::Task.current.defer_stop do
-          yield timeline.commit(role: :user, **delivery)
+          committed = timeline.commit(role: :user, **delivery)
+          delivered(session, committed)
+          yield committed
           record_cancellation(answers, torn)
         end
       rescue Tool::Cancellation::Unpairable
@@ -173,6 +182,11 @@ module Lain
         # what {CLI::Resume::Cancellation} still refuses namedly at load,
         # through the same translation.
         nil
+      end
+
+      def delivered(session, committed)
+        session.record_delivery(digest: committed.head_digest, parent: committed.head.parent,
+                                content: committed.head.content)
       end
 
       # Silent for a turn torn AFTER every tool returned: that turn commits real

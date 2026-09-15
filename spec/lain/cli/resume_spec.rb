@@ -577,11 +577,17 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     let(:run_state_records) do
-      [{ "type" => "session_read", "path" => "/tmp/app.rb" },
+      [read_record("/tmp/app.rb"),
        { "type" => "todo_snapshot", "todos" => [{ "content" => "check dosing", "status" => "pending" }] }]
     end
 
     before { write_closed("20260101T000000-1.ndjson", memory_chain, extra: run_state_records) }
+
+    def read_record(path)
+      Lain::Telemetry::SessionRead.new(path:, lines: [1, nil], tool_use_id: nil, head: nil,
+                                       identity: Lain::Session::FileIdentity::ABSENT.to_h.transform_keys(&:to_s))
+                                  .to_journal
+    end
 
     it "folds reads and todos back into the Session" do
       result = resume.call
@@ -602,7 +608,7 @@ RSpec.describe Lain::CLI::Resume do
       chained = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson",
                                             "head" => memory_chain.head_digest })
       write_session("20260101T000100-1.ndjson",
-                    [chained, { "type" => "session_read", "path" => "/tmp/later.rb" },
+                    [chained, read_record("/tmp/later.rb"),
                      closed_record(memory_chain.head_digest)])
 
       result = resume.call
@@ -611,6 +617,21 @@ RSpec.describe Lain::CLI::Resume do
       expect(result.session.read?("/tmp/app.rb")).to be(true)
       expect(result.session.read?("/tmp/later.rb")).to be(true)
       expect(result.session.reminders.join).to include("aspirin")
+    end
+
+    # Every session file written before reads carried line spans holds this
+    # record. It cannot say what the model saw, so it does not resume -- and it
+    # is refused at the door in words, never as a raw backtrace out of the exe.
+    it "refuses a file holding a read record from before line spans, at both doors, in words" do
+      old = [{ "type" => "session_read", "path" => "/tmp/app.rb", "complete" => true }]
+      write_closed("20260101T000000-1.ndjson", memory_chain, extra: old)
+      prefix = memory_chain.head_digest.delete_prefix("blake3:")[0, 12]
+
+      refusal = ->(verb) { /\Acannot #{verb} 20260101T000000-1.ndjson: .*before reads carried line spans/ }
+
+      expect { resume.call }.to raise_error(described_class::Refusal, refusal.call("resume"))
+      expect { resume.fork(selector: "20260101@#{prefix}") }
+        .to raise_error(described_class::Refusal, refusal.call("fork"))
     end
   end
 

@@ -8,9 +8,9 @@ module Lain
     # `sed`/`patch`.
     #
     # The read-before-write contract is the point of this tool: `perform` never
-    # runs unless {Lain::Session#read?} already says `path` was read this
-    # session, enforced by {Tool::Contracts} rather than an `if` inside
-    # `#perform` -- the invariant is STRUCTURAL, not merely hoped for.
+    # runs unless {Lain::Session#read?} already says `path` was read on the
+    # chain this call runs on, enforced by {Tool::Contracts} rather than an `if`
+    # inside `#perform` -- the invariant is STRUCTURAL, not merely hoped for.
     #
     # Occurrences are counted with overlap ("aa" occurs twice in "aaa"), so
     # "exactly once" means what the model reads it to mean.
@@ -63,22 +63,23 @@ module Lain
 
       # The mirror image of the one above: here the missing bytes are missing
       # because the MODEL asked for a window, so the refusal does name a
-      # remedy and the remedy is real -- {Lain::Session::ReadSet} is add-only
-      # and monotone, so a later whole read upgrades this path.
+      # remedy and the remedy is real -- windows over one version of the file
+      # add up, so reading the lines it has not seen upgrades this path.
       #
-      # It is also what keeps a bound on the unwindowed read survivable: a
-      # window covering the whole file records a COMPLETE read, so a file too
-      # large to read in one go is still reachable and still editable.
-      # {Tools::WriteFile} is not the escape hatch -- its overwrite contract
-      # asks {Lain::Session#read?} too.
-      requires("only a window of %<subject>s was read this session -- an offset/limit read showed you " \
-               "part of the file, so editing it would clobber lines you never saw. Read it again with " \
-               "no offset and no limit, or with a window covering the whole file, then edit",
+      # It is also what keeps a bound on the unwindowed read survivable: a file
+      # too large to read in one go is still reachable and still editable
+      # through windows. {Tools::WriteFile} is not the escape hatch -- its
+      # overwrite contract asks {Lain::Session#read?} too.
+      requires("only part of %<subject>s was read in this conversation's current history -- the windows you " \
+               "read do not cover every line of one version of the file, so editing it would clobber lines you " \
+               "never saw. Windows add up: read the lines you have not seen with offset and limit, or " \
+               "the whole file again if it changed, then edit",
                subject: SUBJECT) do |input, invocation|
         !session_of(invocation).partially_read?(target(invocation, input.path))
       end
 
-      requires("%<subject>s was never read this session", subject: SUBJECT) do |input, invocation|
+      requires("%<subject>s was never read in this conversation's current history",
+               subject: SUBJECT) do |input, invocation|
         session_of(invocation).read?(target(invocation, input.path))
       end
 
@@ -88,10 +89,12 @@ module Lain
         "Replaces old_string with new_string in the file at path. " \
           "old_string must occur exactly once in the file's current contents " \
           "-- zero or multiple occurrences is refused as an error result, " \
-          "never a guess. The file must have been read IN FULL with read_file " \
-          "earlier this session; editing a file that was never read is " \
-          "refused, and so is editing one seen only through a window -- a " \
-          "windowed read counts only when the window covered the whole file."
+          "never a guess. Every line of the file must have been read with " \
+          "read_file earlier in this conversation; editing a file that was " \
+          "never read is refused, and so is editing one only partly seen. " \
+          "Windows add up: offset/limit reads that together cover the whole " \
+          "of one version of the file count as a full read. A read undone by a " \
+          "rewind no longer counts."
       end
 
       protected
@@ -120,7 +123,7 @@ module Lain
         # this path as read, and the write-set records it as this session's
         # snapshot scope ({Workspace::Snapshot}: write-set only, the documented
         # bash gap).
-        session.record_read(path).record_write(path, wrote: edited)
+        session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: edited)
         Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
       end
 

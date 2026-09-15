@@ -32,7 +32,8 @@ module SessionConcurrencySpecSupport
     def perform(_input, invocation)
       @entered.enqueue(@tool_name)
       @release.dequeue
-      session_of(invocation).record_read(@path, complete: @complete)
+      session_of(invocation).record_read(@path, lines: @complete ? Lain::Session::WHOLE_FILE : 1..10,
+                                                tool_use_id: invocation.tool_use_id)
       Lain::Tool::Result.ok(@tool_name)
     end
   end
@@ -207,7 +208,7 @@ RSpec.describe "Session read completeness under concurrent gather" do
   let(:release) { Async::Queue.new }
 
   def read_records = Lain::Journal.records(journal_io.string.lines, type: "session_read").to_a
-  def replayed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+  def replayed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session.on_chain(@delivered)
 
   def reader(name, complete)
     SessionConcurrencySpecSupport::GatedReadTool.new(name:, path:, complete:, entered:, release:)
@@ -224,11 +225,16 @@ RSpec.describe "Session read completeness under concurrent gather" do
   # Both readers are provably mid-dispatch before either records: the timeout
   # is a failure bound (a sequential dispatch would park reader_a and never
   # enter reader_b), not a synchronization.
+  # The delivering turn lands in the record too, as the chat's scribe writes
+  # it: a replayed read counts only once a recorded turn has delivered it.
   def both_land(task, runner, response)
     run = task.async { runner.run(response, context: session) }
     expect_both_mid_dispatch(task)
     2.times { release.enqueue(:go) }
-    expect(run.wait).to all(include("is_error" => false))
+    blocks = run.wait
+    expect(blocks).to all(include("is_error" => false))
+    @delivered = Lain::Timeline.empty.commit(role: :user, content: blocks)
+    journal << Lain::SessionRecord.turn(@delivered.head)
   ensure
     run&.stop
   end

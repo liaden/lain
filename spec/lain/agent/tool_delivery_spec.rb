@@ -343,6 +343,73 @@ RSpec.describe Lain::Agent::ToolDelivery do
     end
   end
 
+  # A read counts only while the turn that delivered it is on the chain. This
+  # object makes every turn that answers calls, so it is what tells the session
+  # which turn that is -- on every arm, not only the settled one.
+  describe "binding the round's reads to the turn that delivered them" do
+    def reading(fail_on: nil, stop_on: nil)
+      Lain::Effect::Handler::Mock.new do |effect, context|
+        context.record_read("/tmp/#{effect.tool_use_id}.rb", tool_use_id: effect.tool_use_id)
+        raise Async::Stop if effect.tool_use_id == stop_on
+
+        ran = "ran #{effect.tool_use_id}"
+        effect.tool_use_id == fail_on ? Lain::Tool::Result.error("refused") : Lain::Tool::Result.ok(ran)
+      end
+    end
+
+    def read_on?(committed, id)
+      session.on_chain(committed.commit(role: :assistant, content: [{ "type" => "text", "text" => "next" }]))
+      session.read?("/tmp/#{id}.rb")
+    end
+
+    it "opens the round on the chain it was handed, withholding a read an earlier round never delivered" do
+      session.record_read("/tmp/stranded.rb", tool_use_id: "tu_old")
+
+      perform(echoing)
+
+      expect(session.read?("/tmp/stranded.rb")).to be(false)
+    end
+
+    it "binds a settled round's reads to the turn it commits, and not to a chain without it" do
+      committed = perform(reading)
+
+      expect(read_on?(committed, "tu_1")).to be(true)
+      session.on_chain(timeline)
+      expect(session.read?("/tmp/tu_1.rb")).to be(false)
+    end
+
+    it "withholds a read whose result reached the model as an error" do
+      committed = perform(reading(fail_on: "tu_2"))
+
+      expect([read_on?(committed, "tu_1"), session.read?("/tmp/tu_2.rb")]).to eq([true, false])
+    end
+
+    it "binds a torn round's earned reads to the cancellation turn, and withholds the cancelled one" do
+      committed = nil
+      Sync do
+        delivery_over(reading(stop_on: "tu_2")).perform(response, timeline:, session:) { |turn| committed = turn }
+      rescue Async::Stop => e
+        raised << e
+      end
+
+      expect([read_on?(committed, "tu_1"), session.read?("/tmp/tu_2.rb")]).to eq([true, false])
+    end
+
+    it "withholds every read of a round whose results could not be committed" do
+      chain = Lain::Timeline.empty(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
+                            .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                            .commit(role: :assistant, content: response.content)
+      committed = nil
+      Sync do
+        delivery_over(reading).perform(response, timeline: chain, session:) { |turn| committed = turn }
+      rescue Lain::Error => e
+        raised << e
+      end
+
+      expect([read_on?(committed, "tu_1"), session.read?("/tmp/tu_2.rb")]).to eq([false, false])
+    end
+  end
+
   describe "the snapshot slot it is handed" do
     it "is primed before any tool runs, so a baseline predates the turn's first write" do
       trail = []

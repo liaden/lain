@@ -44,83 +44,130 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # The read-set distinguishes a WHOLE read from a partial one. A model
-  # that saw only `<redacted:1>` and then writes the file clobbers every secret
-  # in it, so `read?` answers true only for a complete read and
+  # The read-set distinguishes a WHOLE read from a partial one. A model that
+  # saw only part of a file and then writes it clobbers the lines it never
+  # saw, so `read?` answers true only once the lines read cover the file and
   # `partially_read?` names the other case -- letting a refusal say WHY rather
   # than claim the file was never read.
   describe "read completeness" do
-    it "treats a read with no completeness argument as complete" do
+    let(:version) { Lain::Session::FileIdentity.new(device: 1, inode: 2, size: 3, mtime: 4) }
+
+    def read(path, lines, identity: version) = session.record_read(path, lines:, identity:)
+
+    it "treats a read with no span as a read of the whole file" do
       session.record_read("/tmp/app.rb")
 
       expect(session.read?("/tmp/app.rb")).to be(true)
       expect(session.partially_read?("/tmp/app.rb")).to be(false)
     end
 
-    it "records a partial read as read-but-not-complete" do
-      session.record_read("/tmp/app.rb", complete: false)
+    it "records a window that stopped short as read-but-not-complete" do
+      read("/tmp/app.rb", 1..10)
 
       expect(session.read?("/tmp/app.rb")).to be(false)
       expect(session.partially_read?("/tmp/app.rb")).to be(true)
     end
 
     it "distinguishes a partial read from no read at all" do
-      session.record_read("/tmp/partial.rb", complete: false)
+      read("/tmp/partial.rb", 1..10)
 
       expect(session.partially_read?("/tmp/partial.rb")).to be(true)
-      expect(session.read?("/tmp/partial.rb")).to be(false)
-
       expect(session.partially_read?("/tmp/never.rb")).to be(false)
       expect(session.read?("/tmp/never.rb")).to be(false)
     end
 
-    it "upgrades a partial read when the same path is later read complete" do
-      session.record_read("/tmp/app.rb", complete: false)
-      session.record_read("/tmp/app.rb")
+    it "upgrades a partial read when the same version is later read whole" do
+      read("/tmp/app.rb", 1..10)
+      read("/tmp/app.rb", 1..)
 
       expect(session.read?("/tmp/app.rb")).to be(true)
       expect(session.partially_read?("/tmp/app.rb")).to be(false)
     end
 
-    # The monotonicity property the parallel-safe tools depend on: completeness
-    # is add-only, so two sibling fibers reading the same file cannot race a
-    # complete read back down to a partial one. An implementation that stores
-    # the bit as a plain overwrite fails exactly here.
+    # The monotonicity property the parallel-safe tools depend on: nothing is
+    # removed, so two sibling fibers reading the same file cannot race a whole
+    # read back down to a partial one. An implementation that stores the answer
+    # as a plain overwrite fails exactly here.
     it "never downgrades a complete read when the same path is later read partially" do
-      session.record_read("/tmp/app.rb")
-      session.record_read("/tmp/app.rb", complete: false)
+      read("/tmp/app.rb", 1..)
+      read("/tmp/app.rb", 1..10)
 
       expect(session.read?("/tmp/app.rb")).to be(true)
       expect(session.partially_read?("/tmp/app.rb")).to be(false)
+    end
+
+    describe "windows that add up" do
+      it "counts two windows that meet end to end as a whole read" do
+        read("/tmp/app.rb", 1..450)
+        read("/tmp/app.rb", 451..)
+
+        expect(session.read?("/tmp/app.rb")).to be(true)
+      end
+
+      it "counts them in either order, and overlapping" do
+        read("/tmp/app.rb", 400..)
+        read("/tmp/app.rb", 1..500)
+
+        expect(session.read?("/tmp/app.rb")).to be(true)
+      end
+
+      it "leaves a gap between windows partial" do
+        read("/tmp/app.rb", 1..10)
+        read("/tmp/app.rb", 12..)
+
+        expect(session.read?("/tmp/app.rb")).to be(false)
+        expect(session.partially_read?("/tmp/app.rb")).to be(true)
+      end
+
+      it "leaves windows that never reach the end of the file partial" do
+        read("/tmp/app.rb", 1..10)
+        read("/tmp/app.rb", 11..20)
+
+        expect(session.read?("/tmp/app.rb")).to be(false)
+      end
+
+      it "does not add up windows over two versions of the file" do
+        read("/tmp/app.rb", 1..450)
+        read("/tmp/app.rb", 451.., identity: version.with(size: 99))
+
+        expect(session.read?("/tmp/app.rb")).to be(false)
+        expect(session.partially_read?("/tmp/app.rb")).to be(true)
+      end
     end
 
     it "carries completeness across spellings, as the read-set carries membership" do
       Dir.chdir("/tmp") do
-        session.record_read("./app.rb", complete: false)
+        read("./app.rb", 1..10)
 
         expect(session.partially_read?("app.rb")).to be(true)
 
-        session.record_read("app.rb")
+        read("app.rb", 11..)
 
         expect(session.read?("./app.rb")).to be(true)
       end
     end
 
-    # PANEL FINDING (fix 1). The write boundary trusted TRUTHINESS while the
-    # Replay boundary demanded a strict boolean, so the two disagreed in the
-    # unsafe direction: `complete: "false"` recorded a COMPLETE read. The
-    # refusal has to land before either Set is touched, or a caller that
-    # rescues is left holding live state MORE permissive than what replays --
-    # inverting the one-way property the whole design rests on.
-    it "refuses a non-boolean completeness rather than reading it for truthiness" do
-      ["false", "true", 0, 1, nil, "", :yes, [], {}].each do |bogus|
-        expect { session.record_read("/tmp/app.rb", complete: bogus) }
-          .to raise_error(ArgumentError, /complete must be true or false/), "accepted #{bogus.inspect}"
+    # The write boundary must be as strict as the Replay boundary, or the two
+    # disagree in the unsafe direction: a span read loosely is more of the file
+    # than the model saw. The refusal has to land before anything is recorded,
+    # or a caller that rescues is left holding live state MORE permissive than
+    # what replays.
+    it "refuses a span that names no lines rather than reading it loosely" do
+      [1...10, 0..10, 10..5, "1..10", nil, [1, 10], (1.0..), ("a".."z")].each do |bogus|
+        expect { read("/tmp/app.rb", bogus) }
+          .to raise_error(ArgumentError, /lines must be a Range of line numbers/), "accepted #{bogus.inspect}"
       end
     end
 
-    it "records NOTHING when it refuses a non-boolean -- the check precedes both mutations" do
-      expect { session.record_read("/tmp/app.rb", complete: "false") }.to raise_error(ArgumentError)
+    it "refuses a call id or a head that is not a String" do
+      expect { session.record_read("/tmp/app.rb", identity: version, tool_use_id: 1) }
+        .to raise_error(ArgumentError, /tool_use_id must be a String or nil/)
+      expect { session.record_read("/tmp/app.rb", identity: version, tool_use_id: "tu_1", head: :h) }
+        .to raise_error(ArgumentError, /head must be a String or nil/)
+    end
+
+    it "records NOTHING when it refuses -- the check precedes the mutation" do
+      expect { read("/tmp/app.rb", 1...10) }.to raise_error(ArgumentError)
 
       expect(session.read?("/tmp/app.rb")).to be(false)
       expect(session.partially_read?("/tmp/app.rb")).to be(false)
@@ -128,10 +175,239 @@ RSpec.describe Lain::Session do
     end
 
     it "lists a partially read path in #reads -- it was read, just not wholly" do
-      session.record_read("/tmp/partial.rb", complete: false)
+      read("/tmp/partial.rb", 1..10)
 
       expect(session.reads).to eq(["/tmp/partial.rb"])
       expect(session.read?("/tmp/partial.rb")).to be(false)
+    end
+
+    it "names a version by what a stat says, and one version for a path with nothing there" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "a.rb")
+        File.write(path, "one\n")
+        stat = File.stat(path)
+
+        expect(Lain::Session::FileIdentity.of(path))
+          .to have_attributes(device: stat.dev, inode: stat.ino, size: 4,
+                              mtime: (stat.mtime.tv_sec * 1_000_000_000) + stat.mtime.tv_nsec)
+        expect(Lain::Session::FileIdentity.of(File.join(dir, "missing.rb"))).to eq(Lain::Session::FileIdentity::ABSENT)
+      end
+    end
+  end
+
+  # A read counts only while the turn that delivered it is on the chain the
+  # question is asked about. The chain moves -- a rewind, a fork -- and the
+  # read-set never forgets anything, so what changes is which reads count.
+  describe "a read counted against the chain" do
+    let(:store) { Lain::Store.new }
+    let(:root) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
+    let(:version) { Lain::Session::FileIdentity.new(device: 1, inode: 2, size: 3, mtime: 4) }
+
+    def calls(*ids) = ids.map { |id| { "type" => "tool_use", "id" => id, "name" => "read_file", "input" => {} } }
+
+    def results(*ids, is_error: false)
+      ids.map { |id| { "type" => "tool_result", "tool_use_id" => id, "content" => "bytes", "is_error" => is_error } }
+    end
+
+    # One tool round the way ToolDelivery runs it: the round opens on the
+    # assistant turn's chain, the reads land, and the result turn delivers them.
+    def round(timeline, id, lines: Lain::Session::WHOLE_FILE, path: "/tmp/app.rb", is_error: false)
+      asked = timeline.commit(role: :assistant, content: calls(id))
+      session.on_chain(asked)
+      session.record_read(path, lines:, identity: version, tool_use_id: id)
+      delivered = asked.commit(role: :user, content: results(id, is_error:))
+      session.record_delivery(digest: delivered.head_digest, parent: asked.head_digest, content: delivered.head.content)
+      delivered
+    end
+
+    it "counts a read whose delivering turn is on the chain" do
+      after = round(root, "tu_1")
+      session.on_chain(after.commit(role: :assistant, content: calls("tu_2")))
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "stops counting it once the chain is rewound past that turn, and never forgets it" do
+      after = round(root, "tu_1")
+      session.on_chain(after.rewind(2).commit(role: :assistant, content: calls("tu_2")))
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+      expect(session.partially_read?("/tmp/app.rb")).to be(false)
+      expect(session.reads).to eq(["/tmp/app.rb"])
+    end
+
+    # Asked at every stop, so the per-head cache is walked away from the turn
+    # and back to it: a cache that never reset would pass a question asked only
+    # at the end.
+    it "counts it again when the chain comes back to that turn" do
+      after = round(root, "tu_1")
+      session.on_chain(root)
+      expect(session.read?("/tmp/app.rb")).to be(false)
+
+      session.on_chain(after)
+      expect(session.read?("/tmp/app.rb")).to be(true)
+    end
+
+    # The round a delivery binds is named by the head it opened on as well as
+    # the call id: a turn answering the same id from another head -- a repair
+    # of a torn round, a sibling branch -- binds nothing of this round.
+    it "binds a delivery only to the reads of the round that opened on its parent" do
+      asked = root.commit(role: :assistant, content: calls("ollama-tool-0"))
+      session.on_chain(asked)
+      session.record_read("/tmp/app.rb", identity: version, tool_use_id: "ollama-tool-0")
+      elsewhere = root.commit(role: :assistant, content: [{ "type" => "text", "text" => "a sibling" }])
+      stranger = elsewhere.commit(role: :user, content: results("ollama-tool-0"))
+
+      session.record_delivery(digest: stranger.head_digest, parent: elsewhere.head_digest,
+                              content: stranger.head.content)
+      session.on_chain(stranger)
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+    end
+
+    it "leaves the window still on the chain partial when the other one is rewound away" do
+      top = round(root, "tu_1", lines: 1..450)
+      bottom = round(top.commit(role: :assistant, content: [{ "type" => "text", "text" => "more" }]), "tu_2",
+                     lines: 451..)
+      session.on_chain(bottom)
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+
+      session.on_chain(top)
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+      expect(session.partially_read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "counts a read in the round that made it, before any turn delivers it" do
+      session.on_chain(root.commit(role: :assistant, content: calls("tu_1")))
+      session.record_read("/tmp/app.rb", identity: version, tool_use_id: "tu_1")
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "never counts a read whose result reached the model as an error" do
+      after = round(root, "tu_1", is_error: true)
+      session.on_chain(after)
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+    end
+
+    it "withholds a read its round never delivered once the next round opens" do
+      session.on_chain(root.commit(role: :assistant, content: calls("tu_1")))
+      session.record_read("/tmp/app.rb", identity: version, tool_use_id: "tu_1")
+      session.on_chain(root.commit(role: :assistant, content: calls("tu_2")))
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+    end
+
+    # The one moment a replay cannot see: a round left open when the next one
+    # opens. It is journaled as a marker naming the rounds, so a replay
+    # withholds them at the same point; an ordinary run leaves nothing open.
+    describe "journaling a withheld round" do
+      subject(:session) { described_class.new(journal:) }
+
+      let(:journal) { [] }
+
+      def withheld = journal.grep(Lain::Telemetry::SessionReadWithheld)
+
+      it "journals the rounds on_chain withholds, as [head, call id], carrying no path or bytes" do
+        asked = root.commit(role: :assistant, content: calls("tu_1"))
+        session.on_chain(asked)
+        session.record_read("/tmp/app.rb", identity: version, tool_use_id: "tu_1")
+
+        session.on_chain(asked)
+
+        expect(withheld.map(&:to_journal)).to eq([{ "type" => "session_read_withheld",
+                                                    "rounds" => [[asked.head_digest, "tu_1"]] }])
+        expect(withheld).to all(satisfy { |record| Ractor.shareable?(record) })
+      end
+
+      it "journals nothing when every round delivered" do
+        session.on_chain(round(root, "tu_1").commit(role: :assistant, content: calls("tu_2")))
+
+        expect(withheld).to be_empty
+      end
+
+      it "withholds exactly the rounds a replay names, and no other" do
+        asked = root.commit(role: :assistant, content: calls("tu_1", "tu_2"))
+        session.on_chain(asked)
+        session.record_read("/tmp/a.rb", identity: version, tool_use_id: "tu_1")
+        session.record_read("/tmp/b.rb", identity: version, tool_use_id: "tu_2")
+
+        session.withhold_rounds([[asked.head_digest, "tu_1"], [asked.head_digest, "tu_9"]])
+
+        expect([session.read?("/tmp/a.rb"), session.read?("/tmp/b.rb")]).to eq([false, true])
+        expect(withheld.map(&:rounds)).to eq([[[asked.head_digest, "tu_1"]]])
+      end
+
+      it "pins the marker's guard: a non-empty list of [head-or-nil, call id] pairs" do
+        [nil, [], [["h"]], [[nil, nil]], [["h", 1]], "h", [[1, "tu_1"]]].each do |bogus|
+          expect { Lain::Telemetry::SessionReadWithheld.new(rounds: bogus) }
+            .to raise_error(ArgumentError, /rounds must be a non-empty list/), "accepted #{bogus.inspect}"
+        end
+      end
+    end
+
+    it "withholds every undelivered read when asked to, as a replay does at the end of its record" do
+      session.on_chain(root.commit(role: :assistant, content: calls("tu_1")))
+      session.record_read("/tmp/app.rb", identity: version, tool_use_id: "tu_1")
+
+      session.withhold_undelivered
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+    end
+
+    # Ollama numbers each response's calls from zero, so one id arrives in
+    # round after round. A later delivery must bind only its own round's read.
+    it "binds a call id a later round reuses to that round's read alone" do
+      first = round(root, "ollama-tool-0", path: "/tmp/a.rb")
+      second = round(first.commit(role: :assistant, content: [{ "type" => "text", "text" => "ok" }]),
+                     "ollama-tool-0", path: "/tmp/b.rb")
+      session.on_chain(second.rewind(3))
+
+      expect(session.read?("/tmp/a.rb")).to be(true)
+      expect(session.read?("/tmp/b.rb")).to be(false)
+    end
+
+    it "counts a read no call carried on every chain" do
+      session.record_read("/tmp/app.rb", identity: version)
+      session.on_chain(root)
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "keeps a masked path masked on every chain" do
+      after = round(root, "tu_1")
+      session.record_masked_read("/tmp/app.rb")
+      session.on_chain(after.rewind(3))
+
+      expect(session.masked_read?("/tmp/app.rb")).to be(true)
+      expect(session.partially_read?("/tmp/app.rb")).to be(true)
+    end
+
+    # The chain is walked once per head, not once per question: a read/edit
+    # loop asks on every call, and a long conversation is a long walk.
+    it "walks the store once per head, and a grown head only back to the last one walked" do
+      counting = Class.new(Lain::Store) do
+        attr_reader :fetches
+
+        def fetch(digest)
+          @fetches = (@fetches || 0) + 1
+          super
+        end
+      end.new
+      line = (1..20).inject(Lain::Timeline.empty(store: counting)) do |chain, index|
+        chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
+      end
+      after = round(line, "tu_1")
+      grown = after.commit(role: :assistant, content: calls("tu_2"))
+      session.on_chain(after)
+      session.read?("/tmp/app.rb")
+
+      expect { 5.times { session.read?("/tmp/app.rb") } }.not_to(change { counting.fetches })
+      session.on_chain(grown)
+      expect { session.read?("/tmp/app.rb") }.to change { counting.fetches }.by(2)
     end
   end
 
@@ -153,7 +429,7 @@ RSpec.describe Lain::Session do
     it "names WHICH cause the partial read had, so a refusal can say re-read or ask for a release" do
       session.record_read("/tmp/.env")
       session.record_masked_read("/tmp/.env")
-      session.record_read("/tmp/half.rb", complete: false)
+      session.record_read("/tmp/half.rb", lines: 1..10)
 
       expect(session.masked_read?("/tmp/.env")).to be(true)
       expect(session.masked_read?("/tmp/half.rb")).to be(false)
@@ -187,11 +463,11 @@ RSpec.describe Lain::Session do
       end
     end
 
-    # The completeness set must not learn about masking: a caller able to spell
-    # `complete: false` over a masked path would be able to spell "this read hid
-    # nothing" over a read that hid something.
-    it "is not reachable through record_read's completeness argument" do
-      session.record_read("/tmp/app.rb", complete: false)
+    # Reads must not learn about masking: a caller able to spell a span over a
+    # masked path would be able to spell "this read hid nothing" over a read
+    # that hid something.
+    it "is not reachable through record_read's span" do
+      session.record_read("/tmp/app.rb", lines: 1..10)
 
       expect(session.masked_read?("/tmp/app.rb")).to be(false)
     end
@@ -201,10 +477,9 @@ RSpec.describe Lain::Session do
       expect(Lain::Session::Null.instance.masked_read?("/tmp/.env")).to be(false)
     end
 
-    # A mask writes NO `session_read` line, deliberately: that record says only
-    # `complete:`, and a replay folds it through `record_read`, which cannot
-    # reach the masked set -- so a line here would replay to a wholly-read
-    # path. `Telemetry::ReadRedacted`, written by
+    # A mask writes NO `session_read` line, deliberately: a replay folds that
+    # record through `record_read`, which cannot reach the masked set -- so a
+    # line here would replay to a read. `Telemetry::ReadRedacted`, written by
     # `Middleware::RedactSecretReads` into this same journal, is the record, and
     # `SessionRecord::Replay#redactions` is what folds it back.
     describe "with a journal attached" do
@@ -219,7 +494,7 @@ RSpec.describe Lain::Session do
         expect(journaled.read?("/tmp/.env")).to be(false)
       end
 
-      it "writes no session_read line, which would replay as a whole read" do
+      it "writes no session_read line, which would replay as a read" do
         journaled.record_masked_read("/tmp/.env")
 
         expect(journal.grep(Lain::Telemetry::SessionRead)).to be_empty
@@ -237,12 +512,12 @@ RSpec.describe Lain::Session do
     # each example expects its own shape. The file's bytes come back either
     # way: a refusal that did not in fact protect the contents would otherwise
     # pass on the exception alone.
-    def edit_after(*completions)
+    def edit_after(*spans)
       Dir.mktmpdir do |dir|
         path = File.join(dir, "hello.txt")
         File.write(path, "hello world")
         session = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
-        completions.each { |complete| session.record_read(path, complete:) }
+        spans.each { |lines| session.record_read(path, lines:) }
         invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
         edit = { path: "hello.txt", old_string: "hello", new_string: "goodbye" }
 
@@ -251,26 +526,24 @@ RSpec.describe Lain::Session do
     end
 
     it "satisfies edit_file's precondition after a complete read" do
-      edit_after(true) do |attempt, contents|
+      edit_after(1..) do |attempt, contents|
         result = attempt.call
         expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
         expect(contents.call).to eq("goodbye world")
       end
     end
 
-    # Only the exception CLASS is pinned, not its wording: the current message
-    # still says "never read", which is the thing `partially_read?` exists to
-    # let a refusal stop claiming. Sharpening it belongs with the middleware
-    # that knows the read was redacted, not here.
+    # Only the exception CLASS is pinned here; the wording is edit_file's own
+    # spec's business.
     it "fails edit_file's precondition after a partial read, leaving the file untouched" do
-      edit_after(false) do |attempt, contents|
+      edit_after(2..) do |attempt, contents|
         expect { attempt.call }.to raise_error(Lain::Tool::ContractViolation)
         expect(contents.call).to eq("hello world")
       end
     end
 
     it "satisfies edit_file's precondition once a partial read is upgraded by a complete one" do
-      edit_after(false, true) do |attempt, contents|
+      edit_after(2.., 1..1) do |attempt, contents|
         result = attempt.call
         expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
         expect(contents.call).to eq("goodbye world")
@@ -278,7 +551,7 @@ RSpec.describe Lain::Session do
     end
 
     it "keeps edit_file's precondition satisfied when a complete read is followed by a partial one" do
-      edit_after(true, false) do |attempt, contents|
+      edit_after(1.., 2..) do |attempt, contents|
         result = attempt.call
         expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
         expect(contents.call).to eq("goodbye world")
@@ -307,7 +580,7 @@ RSpec.describe Lain::Session do
         path = File.join(dir, "existing.txt")
         File.write(path, "secret")
         session = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
-        session.record_read(path, complete: false)
+        session.record_read(path, lines: 2..)
         invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
 
         expect do
@@ -629,7 +902,7 @@ RSpec.describe Lain::Session do
     # guard before asking. Records nothing, so it reports NEITHER read nor
     # partially read -- the "no read at all" answer, for every path.
     it "keeps the completeness duck a no-op: a partial read records nothing either" do
-      expect { null.record_read("/tmp/app.rb", complete: false) }.not_to raise_error
+      expect { null.record_read("/tmp/app.rb", lines: 1..10, tool_use_id: "tu_1") }.not_to raise_error
       expect(null.read?("/tmp/app.rb")).to be(false)
       expect(null.partially_read?("/tmp/app.rb")).to be(false)
       expect(null.reads).to eq([])
@@ -798,94 +1071,133 @@ RSpec.describe Lain::Session do
       expect(of_type("session_read").map(&:path)).to contain_exactly("/tmp/app.rb", "/tmp/other.rb")
     end
 
-    # The record the decorator emits carries a construction contract of its
-    # own (the validate-then-freeze convention): a pathless read record could
-    # never replay, so it must fail loudly at construction, not at load.
-    it "pins SessionRead's guard: a nil path raises at construction" do
-      expect { Lain::Telemetry::SessionRead.new(path: nil, complete: true) }
-        .to raise_error(ArgumentError, "path must name the file read, got nil")
+    # The record the Session emits carries a construction contract of its own
+    # (the validate-then-freeze convention): a pathless read record could never
+    # replay, so it must fail loudly at construction, not at load.
+    def read_record(**overrides)
+      Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", lines: [1, nil], tool_use_id: nil, head: nil,
+                                       identity: Lain::Session::FileIdentity::ABSENT.to_h.transform_keys(&:to_s),
+                                       **overrides)
     end
 
-    # `complete` follows SessionPin's `pinned` precedent exactly: a STRICT
-    # boolean, never `presence:`, which would silently reject `false` -- and
-    # `false` is the redacted read this field exists to express.
-    # PANEL FINDING (fix 3): `[]` and `{}` are in this list deliberately.
-    # ActiveModel's InclusionValidator reads an ARRAY value as "every member
-    # must be in the set", and `[].all?` is vacuously true -- so an `inclusion:`
-    # validator accepted `complete: []` and journaled `"complete":[]` while its
-    # docstring claimed strict-boolean. The guard is an explicit check now.
-    it "pins SessionRead's completeness guard: a non-boolean raises at construction" do
-      ["false", "true", 0, 1, nil, "", :yes, [], {}, [true]].each do |bogus|
-        expect { Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", complete: bogus) }
-          .to raise_error(ArgumentError, /complete must be true or false/), "accepted #{bogus.inspect}"
+    it "pins SessionRead's guard: a nil path raises at construction" do
+      expect { read_record(path: nil) }.to raise_error(ArgumentError, /path must name the file read, got nil/)
+    end
+
+    # `[]` and `{}` are in this list deliberately: an inclusion-style validator
+    # reads an ARRAY as "every member must be allowed", which `[]` vacuously
+    # is. A span read loosely replays as more of the file than the model saw.
+    it "pins SessionRead's span guard: anything but [first, last-or-nil] from line 1 raises" do
+      [[0, nil], [5, 4], [1], [], {}, nil, "1..", [1.0, nil], [1, "9"], [nil, nil]].each do |bogus|
+        expect { read_record(lines: bogus) }
+          .to raise_error(ArgumentError, /lines must be \[first, last\]/), "accepted #{bogus.inspect}"
       end
     end
 
-    it "accepts complete: false without tripping the guard" do
-      expect(Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", complete: false).complete).to be(false)
+    it "pins SessionRead's call guard: a call id and its round's head are each a String or nil" do
+      expect { read_record(tool_use_id: 7) }.to raise_error(ArgumentError, /tool_use_id must be a String or nil/)
+      expect { read_record(head: 7) }.to raise_error(ArgumentError, /head must be a String or nil/)
     end
 
-    # A read-set STATE TRANSITION is journaled, not a call. The
-    # dedupe that keeps a read/edit loop from emitting one line per iteration
-    # has to survive the completeness bit, and each surviving line has to say
-    # WHICH thing the model saw.
-    describe "journaling read completeness" do
-      it "journals one line, flagged complete, for a whole read" do
+    # A replay rebuilds the file version from these members, so a version it
+    # could not rebuild is refused where it is written, not on a resume.
+    it "pins SessionRead's version guard: exactly the FileIdentity members, each an Integer or nil" do
+      whole = Lain::Session::FileIdentity::ABSENT.to_h.transform_keys(&:to_s)
+      [{}, nil, whole.except("inode"), whole.merge("extra" => 1), whole.merge("size" => "3"),
+       whole.transform_keys(&:to_sym)].each do |bogus|
+        expect { read_record(identity: bogus) }
+          .to raise_error(ArgumentError, /identity must carry exactly device, inode, mtime, size/),
+              "accepted #{bogus.inspect}"
+      end
+    end
+
+    it "journals the span, the file version and the call that carried the read" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "a.rb")
+        File.write(path, "one\n")
+
+        journaled.record_read(path, lines: 3..9, tool_use_id: "tu_1")
+
+        expect(of_type("session_read").first.to_journal)
+          .to include("path" => path, "lines" => [3, 9], "tool_use_id" => "tu_1", "head" => nil,
+                      "identity" => Lain::Session::FileIdentity.of(path).to_h.transform_keys(&:to_s))
+      end
+    end
+
+    # A line is journaled when a read adds lines to what was seen of that
+    # version, not on every call. The dedupe that keeps a read/edit loop from
+    # emitting one line per iteration has to survive windows, and each
+    # surviving line has to say WHICH thing the model saw.
+    describe "journaling what a read added" do
+      it "journals one line, spanning the whole file, for a whole read" do
         journaled.record_read("/tmp/app.rb")
 
-        expect(of_type("session_read").map { |r| [r.path, r.complete] }).to eq([["/tmp/app.rb", true]])
+        expect(of_type("session_read").map { |r| [r.path, r.lines] }).to eq([["/tmp/app.rb", [1, nil]]])
       end
 
-      it "journals one line, flagged incomplete, for a partial read" do
-        journaled.record_read("/tmp/app.rb", complete: false)
+      it "journals one line, spanning the window, for a partial read" do
+        journaled.record_read("/tmp/app.rb", lines: 1..10)
 
-        expect(of_type("session_read").map { |r| [r.path, r.complete] }).to eq([["/tmp/app.rb", false]])
+        expect(of_type("session_read").map { |r| [r.path, r.lines] }).to eq([["/tmp/app.rb", [1, 10]]])
       end
 
-      # The flood this dedupe exists to prevent, in its new form: a loop
-      # re-reading the same REDACTED file must not journal per iteration.
-      it "journals nothing on a re-read at the same completeness" do
-        3.times { journaled.record_read("/tmp/app.rb", complete: false) }
+      it "journals nothing on a re-read of lines already seen" do
+        3.times { journaled.record_read("/tmp/app.rb", lines: 1..10) }
+        journaled.record_read("/tmp/app.rb", lines: 4..6)
 
         expect(of_type("session_read").size).to eq(1)
       end
 
-      # The dedupe's one escape, pinned so it cannot drift unnoticed rather
-      # than because it is right: `ReadSet#complete?` is mask-suppressed, so
-      # the complete-read transition never closes and a loop re-reading a
-      # MASKED file journals every iteration -- the very flood the rule above
-      # exists to prevent, on the file it most wants to protect.
-      it "journals EVERY re-read of a masked path, which the dedupe does not cover" do
+      # A masked path's re-reads used to escape the dedupe, because completeness
+      # was the transition and a mask suppressed it forever. Coverage ignores the
+      # mask, so the redacted file a loop re-reads journals once like any other.
+      it "journals a masked path's re-reads once, like any other path" do
         journaled.record_masked_read("/tmp/.env")
         4.times { journaled.record_read("/tmp/.env") }
 
-        expect(of_type("session_read").size).to eq(4)
+        expect(of_type("session_read").size).to eq(1)
       end
 
-      # Two lines is correct here, and is the one case that legitimately emits
-      # a second: the model genuinely saw two different things.
-      it "journals a second line when a partial read is upgraded to a complete one" do
-        journaled.record_read("/tmp/app.rb", complete: false)
-        journaled.record_read("/tmp/app.rb")
+      it "journals each window that adds lines, and the one that completes the file" do
+        journaled.record_read("/tmp/app.rb", lines: 1..10)
+        journaled.record_read("/tmp/app.rb", lines: 11..)
 
-        expect(of_type("session_read").map(&:complete)).to eq([false, true])
+        expect(of_type("session_read").map(&:lines)).to eq([[1, 10], [11, nil]])
       end
 
       # The mirror of the monotonicity AC, in the record stream: a complete
       # read is never followed by a line that could replay as a downgrade.
       it "journals nothing when a complete read is followed by a partial one" do
         journaled.record_read("/tmp/app.rb")
-        journaled.record_read("/tmp/app.rb", complete: false)
+        journaled.record_read("/tmp/app.rb", lines: 1..10)
 
-        expect(of_type("session_read").map(&:complete)).to eq([true])
+        expect(of_type("session_read").map(&:lines)).to eq([[1, nil]])
+      end
+
+      it "journals a read of lines already seen once they are off the chain" do
+        root = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+        asked = root.commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file",
+                                                          "input" => {} }])
+        journaled.on_chain(asked)
+        journaled.record_read("/tmp/app.rb", tool_use_id: "tu_1")
+        delivered = asked.commit(role: :user, content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
+                                                          "content" => "x", "is_error" => false }])
+        journaled.record_delivery(digest: delivered.head_digest, parent: asked.head_digest,
+                                  content: delivered.head.content)
+        journaled.on_chain(root)
+
+        journaled.record_read("/tmp/app.rb", tool_use_id: "tu_2")
+
+        expect(of_type("session_read").map { |record| [record.tool_use_id, record.head] })
+          .to eq([["tu_1", asked.head_digest], ["tu_2", root.head_digest]])
       end
     end
 
-    # The read-set's strict-boolean guard runs AHEAD of both the mutation and
-    # the journal write, so a rescued caller cannot be left holding live state
-    # more permissive than what replays.
-    it "leaves neither the read-set nor the Journal touched when completeness is a non-boolean" do
-      expect { journaled.record_read("/tmp/app.rb", complete: "false") }.to raise_error(ArgumentError)
+    # The read-set's strict guard runs AHEAD of both the mutation and the
+    # journal write, so a rescued caller cannot be left holding live state more
+    # permissive than what replays.
+    it "leaves neither the read-set nor the Journal touched when a span names no lines" do
+      expect { journaled.record_read("/tmp/app.rb", lines: 0..) }.to raise_error(ArgumentError)
 
       expect(journaled.read?("/tmp/app.rb")).to be(false)
       expect(journaled.partially_read?("/tmp/app.rb")).to be(false)
@@ -893,7 +1205,7 @@ RSpec.describe Lain::Session do
     end
 
     it "answers partially_read? and reads for a partial read" do
-      journaled.record_read("/tmp/partial.rb", complete: false)
+      journaled.record_read("/tmp/partial.rb", lines: 1..10)
 
       expect(journaled.partially_read?("/tmp/partial.rb")).to be(true)
       expect(journaled.read?("/tmp/partial.rb")).to be(false)

@@ -152,7 +152,8 @@ RSpec.describe Lain::Tools::WriteFile do
       expect do
         tool.call({ path:, content: "y" }, invocation_with(session))
       end.to raise_error(Lain::Tool::ContractViolation,
-                         "precondition failed for write_file: #{path} exists and was never read this session")
+                         "precondition failed for write_file: #{path} exists and was never read in full in " \
+                         "this conversation's current history")
 
       expect(File.read(path)).to eq("original")
     end
@@ -194,6 +195,18 @@ RSpec.describe Lain::Tools::WriteFile do
 
       expect(result).to have_attributes(is_error: false)
       expect(File.read(path)).to eq("y")
+    end
+
+    it "records the post-write read against the call that made the write" do
+      path = write("existing.rb", "original")
+      journal = []
+      session = Lain::Session.new(journal:)
+      session.record_read(path)
+
+      invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_9", context: session)
+      tool.call({ path:, content: "longer contents" }, invocation)
+
+      expect(journal.last).to have_attributes(tool_use_id: "tu_9", lines: [1, nil])
     end
 
     it "re-records the path in the read-set and write-set on a successful overwrite" do

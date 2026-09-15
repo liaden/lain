@@ -65,6 +65,10 @@ RSpec.describe Lain::Tools::EditFile do
     end
   end
 
+  it "tells the model that windows add up" do
+    expect(tool.description).to include("Windows add up")
+  end
+
   describe "AC: a unique replacement lands" do
     it "replaces old_string with new_string when the path was read this session" do
       path = write("hello.txt", "hello world")
@@ -75,6 +79,20 @@ RSpec.describe Lain::Tools::EditFile do
 
       expect(result).to have_attributes(is_error: false)
       expect(File.read(path)).to eq("goodbye world")
+    end
+
+    # The edit's own read of what it wrote belongs to the edit's call, so it
+    # counts only while the turn delivering that call stays on the chain.
+    it "records the post-edit read against the call that made the edit, as the new version" do
+      path = write("hello.txt", "hello world")
+      journal = []
+      session = Lain::Session.new(journal:)
+      session.record_read(path)
+
+      tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session, tool_use_id: "tu_9"))
+
+      identity = Lain::Session::FileIdentity.of(path).to_h.transform_keys(&:to_s)
+      expect(journal.last).to have_attributes(tool_use_id: "tu_9", lines: [1, nil], identity:)
     end
 
     it "re-records the path in the read-set on a successful edit" do
@@ -216,12 +234,12 @@ RSpec.describe Lain::Tools::EditFile do
   # A WINDOWED read is a third answer the session can give, and it had been
   # collapsed into "never read" -- a message that sends the model back to
   # re-read and be refused identically. Unlike the masked case, this one has a
-  # remedy that actually works, because Lain::Session::ReadSet is monotone.
+  # remedy that actually works, because windows over one version add up.
   describe "AC: a windowed read is refused by its own name" do
     it "refuses, naming the partial read rather than claiming the file was never read" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      session.record_read(path, complete: false)
+      session.record_read(path, lines: 1..1)
 
       expect do
         tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
@@ -233,7 +251,7 @@ RSpec.describe Lain::Tools::EditFile do
     it "does not reuse the never-read message" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      session.record_read(path, complete: false)
+      session.record_read(path, lines: 1..1)
 
       message = begin
         tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
@@ -261,7 +279,7 @@ RSpec.describe Lain::Tools::EditFile do
     it "names a remedy that the read-set can actually honour" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      session.record_read(path, complete: false)
+      session.record_read(path, lines: 1..1)
       session.record_read(path)
 
       result = tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
@@ -286,21 +304,21 @@ RSpec.describe Lain::Tools::EditFile do
     it "names the file's path in the windowed-read refusal, and keeps the remedy" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      session.record_read(path, complete: false)
+      session.record_read(path, lines: 1..1)
 
       message = refusal_for(session, path)
 
       expect(message).to include(path)
-      expect(message).not_to include("only a window of path was read")
-      expect(message).to include("Read it again with no offset and no limit, or with a window " \
-                                 "covering the whole file, then edit")
+      expect(message).not_to include("only part of path was read")
+      expect(message).to include("Windows add up: read the lines you have not seen with offset and limit, " \
+                                 "or the whole file again if it changed, then edit")
     end
 
     it "names the file's path in the never-read refusal" do
       path = write("hello.txt", "hello world")
 
       expect(refusal_for(Lain::Session.new, path)).to eq(
-        "precondition failed for edit_file: #{path} was never read this session"
+        "precondition failed for edit_file: #{path} was never read in this conversation's current history"
       )
     end
 
@@ -362,6 +380,27 @@ RSpec.describe Lain::Tools::EditFile do
 
       expect { edit_with(session, path) }.to raise_error(Lain::Tool::ContractViolation, /window/)
       expect(File.read(path)).to eq(hundred)
+    end
+
+    it "permits the edit when two windows add up to the whole file" do
+      path = write("hundred.txt", hundred)
+      session = Lain::Session.new
+      read_with(session, path:, offset: 1, limit: 60)
+      read_with(session, path:, offset: 41)
+
+      result = edit_with(session, path)
+
+      expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
+    end
+
+    it "refuses the edit when the file changed between the two windows" do
+      path = write("hundred.txt", hundred)
+      session = Lain::Session.new
+      read_with(session, path:, offset: 1, limit: 60)
+      File.write(path, hundred.sub("line 99\n", "line ninety-nine\n"))
+      read_with(session, path:, offset: 61)
+
+      expect { edit_with(session, path) }.to raise_error(Lain::Tool::ContractViolation, /only part of/)
     end
 
     it "lets a later whole read upgrade a window into an edit" do

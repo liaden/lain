@@ -141,8 +141,8 @@ RSpec.describe Lain::Tools::ReadFile do
     # names the window and the fact of partialness, never a total the tool
     # would have to read the whole file to know.
     def notice(described)
-      "... window only: #{described}; the rest of the file " \
-        "was not read, so edit_file will refuse it"
+      "... window only: #{described}; edit_file accepts this file only once " \
+        "the windows you have read cover every line of it"
     end
 
     it "returns only the requested window, and one line saying it is a window" do
@@ -219,6 +219,44 @@ RSpec.describe Lain::Tools::ReadFile do
 
     # The deadlock this card exists to prevent: without it, a file too
     # big to read unwindowed would be permanently uneditable.
+    # The span, the version and the call are what let windows add up and a
+    # rewind take a read away, so the tool has to hand over all three.
+    it "records the lines a window covered, the file's version and the call that read it" do
+      path = write("big.txt", numbered(50))
+      journal = []
+      session = Lain::Session.new(journal:)
+
+      tool.call({ path:, offset: 11, limit: 10 }, invocation_with(session))
+      tool.call({ path:, offset: 41 }, invocation_with(session))
+
+      expect(journal.map { |record| [record.lines, record.tool_use_id] })
+        .to eq([[[11, 20], "tu_1"], [[41, nil], "tu_1"]])
+      expect(journal.map(&:identity)).to all(eq(Lain::Session::FileIdentity.of(path).to_h.transform_keys(&:to_s)))
+    end
+
+    it "records a whole read as every line of the file" do
+      path = write("small.txt", numbered(3))
+      journal = []
+
+      tool.call({ path: }, invocation_with(Lain::Session.new(journal:)))
+
+      expect(journal.map(&:lines)).to eq([[1, nil]])
+    end
+
+    it "counts windows over the same file as a COMPLETE read once they cover it" do
+      path = write("big.txt", numbered(50))
+      session = Lain::Session.new
+
+      tool.call({ path:, offset: 1, limit: 30 }, invocation_with(session))
+      tool.call({ path:, offset: 31, limit: 20 }, invocation_with(session))
+
+      expect(session.read?(path)).to be(true)
+    end
+
+    it "tells the model that windows add up" do
+      expect(tool.description).to include("windows add up")
+    end
+
     it "records a COMPLETE read when the window covers the whole file" do
       path = write("small.txt", numbered(100))
       session = Lain::Session.new
@@ -418,6 +456,74 @@ RSpec.describe Lain::Tools::ReadFile do
   # READER, because the empty-file defect lived exactly in the gap between
   # them: there was an empty-file example, it passed offset/limit, and the
   # default path had no coverage at all.
+  # The version a read is recorded under has to be the version its bytes came
+  # from. It is named from the OPEN descriptor and asked again once the bytes
+  # are read: a file renamed over the path after the open cannot lend its name
+  # to bytes it never held, and a file rewritten in place under the read is of
+  # no one version, so that read is not recorded and the result says so.
+  describe "a file that changes while it is read", :seam do
+    let(:session) { Lain::Session.new }
+
+    def lines_of(word) = (1..10).map { |n| "#{word} #{n}\n" }.join
+
+    def invocation(id) = Lain::Tool::Invocation.new(tool_use_id: id, context: session)
+
+    # Runs `change` the first time the tool opens `path`, between the open and
+    # the first byte read -- through the tool's own File.open, not a double.
+    def changing_after_open(path, reader, &change)
+      armed = true
+      allow(File).to receive(:open).and_wrap_original do |original, *args, **options, &opened|
+        next original.call(*args, **options, &opened) unless armed && args.first == path && opened
+
+        original.call(*args, **options) do |file|
+          armed = false
+          allow(file).to receive(reader).and_wrap_original do |read, *sizes, &each|
+            change&.call
+            change = nil
+            read.call(*sizes, &each)
+          end
+          opened.call(file)
+        end
+      end
+    end
+
+    it "reads the file it opened when another is renamed over the path, and counts it as that version" do
+      path = write("notes.rb", lines_of("old"))
+      tool.call({ path:, offset: 1, limit: 5 }, invocation("tu_top"))
+      changing_after_open(path, :each_line) do
+        File.write("#{path}.tmp", lines_of("NEW LINE"))
+        File.rename("#{path}.tmp", path)
+      end
+
+      bottom = tool.call({ path:, offset: 6 }, invocation("tu_bottom"))
+
+      expect(bottom.content).to include("old 6")
+      expect(bottom.content).not_to include("NEW LINE")
+      expect(session.read?(path)).to be(true)
+    end
+
+    it "records no window read from a file rewritten in place under it, and tells the model so" do
+      path = write("notes.rb", lines_of("old"))
+      tool.call({ path:, offset: 1, limit: 5 }, invocation("tu_top"))
+      changing_after_open(path, :each_line) { File.write(path, lines_of("rewritten, longer")) }
+
+      bottom = tool.call({ path:, offset: 6 }, invocation("tu_bottom"))
+
+      expect(bottom.content).to end_with(Lain::Tools::ReadFile::UNSETTLED)
+      expect([session.read?(path), session.partially_read?(path)]).to eq([false, true])
+    end
+
+    it "records no whole read of a file rewritten in place under it" do
+      path = write("notes.rb", lines_of("old"))
+      changing_after_open(path, :read) { File.write(path, lines_of("rewritten, longer")) }
+
+      result = tool.call({ path: }, invocation("tu_whole"))
+
+      expect(result).to have_attributes(is_error: false, content: end_with(Lain::Tools::ReadFile::UNSETTLED))
+      expect([session.read?(path), session.partially_read?(path)]).to eq([false, false])
+    end
+  end
+
   describe "the tier-1 read contract, over pathological file shapes" do
     def file_of(bytes) = File.join(tmpdir, "shape.bin").tap { |path| File.binwrite(path, bytes) }
 
@@ -633,9 +739,11 @@ RSpec.describe Lain::Tools::ReadFile do
     # the same-bytes question, not the same-tag one: ASCII-only content under an
     # ASCII-compatible tag passes, which is what an empty window needs.
     it "refuses contents Canonical could convert but this tool would not have converted" do
-      read = Lain::Tools::ReadFile::Read.new(contents: "hello".encode(Encoding::UTF_16LE), complete: true)
+      read = Lain::Tools::ReadFile::Read.new(contents: "hello".encode(Encoding::UTF_16LE),
+                                             lines: Lain::Session::WHOLE_FILE,
+                                             identity: Lain::Session::FileIdentity::ABSENT)
 
-      result = read.deliver(session, File.join(tmpdir, "utf16.txt"))
+      result = read.deliver(session, File.join(tmpdir, "utf16.txt"), "tu_1")
 
       expect(result).to have_attributes(is_error: true)
     end

@@ -14,15 +14,15 @@ module Lain
     # == The window, and why completeness is the interesting half
     #
     # The bytes are the easy part; what matters is what the read-set is told. A
-    # window that leaves lines unseen records `complete: false`, so
-    # {Tools::EditFile} refuses the edit -- editing from a window would clobber
-    # lines the model never saw -- and the result itself carries one line saying
-    # so, ahead of the refusal.
+    # read records the lines it covered and the file version it saw, so windows
+    # over one version add up: {Tools::EditFile} refuses an edit until they
+    # cover every line -- editing from a window would clobber lines the model
+    # never saw -- and a partial window's result carries one line saying so,
+    # ahead of the refusal.
     #
-    # A window that covers the whole file records a COMPLETE read, and that is
-    # load-bearing: it is the only path by which a file too large to read
-    # unwindowed becomes editable at all. {Tools::WriteFile} is not an
-    # alternative -- its overwrite contract asks {Lain::Session#read?} too.
+    # Windows adding up is load-bearing: it is the only path by which a file too
+    # large to read unwindowed becomes editable at all. {Tools::WriteFile} is not
+    # an alternative -- its overwrite contract asks {Lain::Session#read?} too.
     #
     # == The two ceilings, and why there are two
     #
@@ -74,8 +74,8 @@ module Lain
       # Offered only when it exists: a full-cover window records a complete
       # read, but only if the file is small enough for that window to be
       # admitted. Advice that would itself be refused is a loop, not a move.
-      FULL_COVER = "read it with read_file's offset and limit (a window covering the whole file " \
-                   "counts as a complete read, so edit_file still accepts it)"
+      FULL_COVER = "read it with read_file's offset and limit (windows that together cover the whole file " \
+                   "count as a complete read, so edit_file still accepts it)"
 
       # For a file past even a full-cover window that still HAS lines a window
       # can land between. One enormous line gets {LONG_LINE_NARROWER} instead,
@@ -147,10 +147,10 @@ module Lain
 
       input_model Input
 
-      # The two travel together because {Lain::Session#record_read} needs both,
-      # and neither {Whole} nor {Window} may answer one without deciding the
-      # other.
-      Read = Data.define(:contents, :complete) do
+      # They travel together because {Lain::Session#record_read} needs the
+      # span and the version the bytes came from, and neither {Whole} nor
+      # {Window} may answer one without deciding the others.
+      Read = Data.define(:contents, :lines, :identity) do
         # Only a SUCCESSFUL read joins the read-set -- a missing, unreadable or
         # REFUSED path taught the model nothing about the file's contents.
         #
@@ -159,14 +159,20 @@ module Lain
         # produced them. Left alone they reach `Canonical.normalize` on
         # {Timeline#commit}, which raises `UnsupportedType` naming no file and
         # takes the whole ask down with it.
-        def deliver(session, path)
+        def deliver(session, path, tool_use_id)
           return ReadFile.not_text(path) unless committable?
 
-          session.record_read(path, complete:)
+          session.record_read(path, lines:, identity:, tool_use_id:)
           Tool::Result.ok(contents)
         end
 
-        private
+        # The version was named from the open file before its bytes were read;
+        # asked of the same descriptor again now, a different answer means the
+        # bytes are of no one version, so they are delivered {Unsettled}.
+        #
+        # @param file [File] the descriptor the bytes were read from
+        # @return [Read, Unsettled]
+        def settled(file) = Session::FileIdentity.from_stat(file.stat) == identity ? self : Unsettled.new(read: self)
 
         # Canonical's UTF-8 rule, restated rather than asked: `normalize`
         # interns what it returns, so asking directly would pay a full-string
@@ -185,7 +191,8 @@ module Lain
         # an EMPTY array, so a complete window over an empty file arrives tagged
         # US-ASCII whatever the read was told to decode. Demanding the UTF-8 tag
         # alone refuses `.keep`, an empty `__init__.py`, and every other
-        # zero-length file reached through a window.
+        # zero-length file reached through a window. Public because {Unsettled}
+        # hands the same bytes over and has to ask the same question.
         def committable?
           contents.valid_encoding? && (contents.encoding == Encoding::UTF_8 || contents.ascii_only?)
         end
@@ -196,7 +203,27 @@ module Lain
       # property of what this object can contain, and the branch that refuses
       # cannot reach {Lain::Session#record_read} at all.
       Refused = Data.define(:result) do
-        def deliver(_session, _path) = result
+        def deliver(_session, _path, _tool_use_id) = result
+
+        def settled(_file) = self
+      end
+
+      # What an {Unsettled} read says in place of being recorded.
+      UNSETTLED = "... the file changed while it was being read, so this read does not count toward " \
+                  "edit_file; read it again"
+
+      # Bytes read from a file that changed while they were read: whatever the
+      # model is shown, no version of the file ever held exactly that, so the
+      # read is not recorded, and the result says so rather than letting a
+      # later edit refusal claim the file was never read. Not recording it is
+      # the one choice that cannot add up with anything.
+      Unsettled = Data.define(:read) do
+        def deliver(_session, path, _tool_use_id)
+          return ReadFile.not_text(path) unless read.committable?
+
+          contents = read.contents
+          Tool::Result.ok("#{contents.empty? || contents.end_with?("\n") ? contents : "#{contents}\n"}#{UNSETTLED}")
+        end
       end
 
       # The unwindowed read, complete by construction. Its own object rather
@@ -213,14 +240,21 @@ module Lain
         # 1,309,696 bytes through a 262,144-byte ceiling (measured). So the read
         # itself takes a length: one byte past the ceiling is enough to know it
         # was exceeded, and costs one byte. Cheap first, then correct.
+        #
+        # The version comes from the OPEN descriptor, not the path, so a file
+        # renamed over this one after the open cannot lend its name to bytes it
+        # never held; {Read#settled} asks the descriptor again afterwards.
         def read(path)
           size = File.size(path)
           return ReadFile.too_large(path, size) unless WHOLE_BOUND.admits?(size)
 
-          contents = capped(path)
-          return ReadFile.grew_past(path, contents.bytesize) unless WHOLE_BOUND.admits?(contents.bytesize)
+          File.open(path, "rb") do |file|
+            identity = Session::FileIdentity.from_stat(file.stat)
+            contents = capped(file)
+            return ReadFile.grew_past(path, contents.bytesize) unless WHOLE_BOUND.admits?(contents.bytesize)
 
-          Read.new(contents:, complete: true)
+            Read.new(contents:, lines: Session::WHOLE_FILE, identity:).settled(file)
+          end
         end
 
         # No state, so every unwindowed read reuses this rather than
@@ -232,11 +266,11 @@ module Lain
 
         private
 
-        # `File.read` with a length reads in BINARY and answers nil at EOF, so
-        # both are undone here: without the `force_encoding` an ordinary UTF-8
-        # file would come back ASCII-8BIT and stop comparing equal to the bytes
-        # this tool returned yesterday. Nothing is validated, exactly as
-        # `File.read` validates nothing -- {Read#deliver} is the one judge.
+        # A binary read with a length answers nil at EOF, so both are undone
+        # here: without the `force_encoding` an ordinary UTF-8 file would come
+        # back ASCII-8BIT and stop comparing equal to the bytes this tool
+        # returned yesterday. Nothing is validated, exactly as `File.read`
+        # validates nothing -- {Read#deliver} is the one judge.
         #
         # UTF-8 by NAME, and not `Encoding.default_external`: under a C locale
         # (containers, systemd units) that is US-ASCII, so {Read#committable?}
@@ -248,8 +282,8 @@ module Lain
         # nil-at-EOF is every zero-length file there is. Those raised
         # `FrozenError` past this class's `rescue SystemCallError, IOError` and
         # reached the model as a refusal naming a frozen String.
-        def capped(path)
-          (File.read(path, WHOLE_BOUND.limit + 1) || +"").force_encoding(Encoding::UTF_8)
+        def capped(file)
+          (file.read(WHOLE_BOUND.limit + 1) || +"").force_encoding(Encoding::UTF_8)
         end
       end
 
@@ -418,51 +452,56 @@ module Lain
         # StandardError -- so it escapes {Effect::Handler::Live}'s rescue and
         # propagates past the loop.
         #
-        # `File.foreach`'s third argument is a per-line BYTE limit, keeping
-        # {Budget} from being handed something too big to weigh: a file with no
-        # separator is ONE line, so `foreach` alone materialises the whole thing
-        # first -- measured at 512 MB peak RSS on a 512 MiB file, the same
-        # NoMemoryError escape by another route.
+        # `each_line`'s argument is a per-line BYTE limit, keeping {Budget} from
+        # being handed something too big to weigh: a file with no separator is
+        # ONE line, so an unlimited walk materialises the whole thing first --
+        # measured at 512 MB peak RSS on a 512 MiB file, the same NoMemoryError
+        # escape by another route.
         #
-        # `+ 1` is what makes a split ALWAYS a refusal. `foreach` never returns
+        # `+ 1` is what makes a split ALWAYS a refusal. The walk never returns
         # a chunk shorter than the limit except at EOF (it runs on to finish a
         # multibyte character rather than cutting one -- measured: 1002 bytes
         # for a limit of 1001 on UTF-8), so a split chunk is already over the
         # ceiling. {LongLine} turns that into the refusal, and must sit BEFORE
         # the `drop`, which is what would otherwise miscount.
         #
-        # `encoding:` for {Whole#capped}'s reason: `File.foreach` tags every
-        # line with `Encoding.default_external`, so under `LC_ALL=C` a window
-        # over a good UTF-8 file would be refused by {Read#committable?} the
-        # moment the model passed an offset. Naming UTF-8 also makes the
-        # multi-byte behaviour the `+ 1` relies on unconditional.
+        # `encoding:` for {Whole#capped}'s reason: an untagged read takes
+        # `Encoding.default_external`, so under `LC_ALL=C` a window over a good
+        # UTF-8 file would be refused by {Read#committable?} the moment the
+        # model passed an offset. Naming UTF-8 also makes the multi-byte
+        # behaviour the `+ 1` relies on unconditional.
+        #
+        # The version comes from the open descriptor, for {Whole#read}'s
+        # reason, and everything lazy is forced before the block closes it.
         def read(path)
-          watch = LongLine.new(WINDOW_BOUND.limit, offset: @offset)
-          stream = File.foreach(path, WINDOW_BOUND.limit + 1, encoding: Encoding::UTF_8).lazy
-          lines = watch.through(stream).drop(@offset - 1)
-          read = @limit ? bounded(lines, path) : to_eof(lines, path)
-          # Consulted AFTER the force, because the walk is lazy: nothing has
-          # been read at the point the watcher is built. A long line inside the
-          # window would also make Budget refuse, and this branch wins on
-          # purpose -- its advice is the one that goes anywhere.
-          watch.found? ? watch.refusal(path) : read
+          File.open(path, "r", encoding: Encoding::UTF_8) do |file|
+            identity = Session::FileIdentity.from_stat(file.stat)
+            watch = LongLine.new(WINDOW_BOUND.limit, offset: @offset)
+            lines = watch.through(file.each_line(WINDOW_BOUND.limit + 1).lazy).drop(@offset - 1)
+            read = @limit ? bounded(lines, path, identity) : to_eof(lines, path, identity)
+            # Consulted AFTER the force, because the walk is lazy: nothing has
+            # been read at the point the watcher is built. A long line inside the
+            # window would also make Budget refuse, and this branch wins on
+            # purpose -- its advice is the one that goes anywhere.
+            (watch.found? ? watch.refusal(path) : read).settled(file)
+          end
         end
 
         private
 
-        def bounded(lines, path)
+        def bounded(lines, path, identity)
           budget = Budget.new(WINDOW_BOUND.limit, keep: @limit).fill(lines.take(@limit + 1))
           return refused(budget, path) if budget.over?
 
           taken = budget.lines
-          disclosed(taken.take(@limit), complete: from_the_top? && taken.size <= @limit)
+          disclosed(taken.take(@limit), identity, eof: taken.size <= @limit)
         end
 
-        def to_eof(lines, path)
+        def to_eof(lines, path, identity)
           budget = Budget.new(WINDOW_BOUND.limit).fill(lines)
           return refused(budget, path) if budget.over?
 
-          disclosed(budget.lines, complete: from_the_top?)
+          disclosed(budget.lines, identity, eof: true)
         end
 
         # Names the span it MEASURED and that span's true size, so the sentence
@@ -490,18 +529,19 @@ module Lain
         # it would need the count the notice states, which is not known until
         # the count is final, so the overshoot is bounded and named rather than
         # chased.
-        def disclosed(seen, complete:)
-          return Read.new(contents: seen.join, complete: true) if complete
+        def disclosed(seen, identity, eof:)
+          lines = eof ? (@offset..) : (@offset..(@offset + seen.size - 1))
+          return Read.new(contents: seen.join, lines:, identity:) if eof && from_the_top?
 
-          Read.new(contents: "#{terminated(seen.join)}#{notice(seen.size)}", complete: false)
+          Read.new(contents: "#{terminated(seen.join)}#{notice(seen.size)}", lines:, identity:)
         end
 
         # Names the window and the fact of partialness, never a total: knowing
         # how many lines the file has would mean reading the whole file, the
         # cost a window exists to avoid.
         def notice(count)
-          "... window only: #{covered(count)}; the rest of the file was not read, " \
-            "so edit_file will refuse it"
+          "... window only: #{covered(count)}; edit_file accepts this file only once " \
+            "the windows you have read cover every line of it"
         end
 
         def covered(count)
@@ -641,9 +681,9 @@ module Lain
       def description
         "Reads a text file at the given path. Reads the whole file by default; pass offset " \
           "(1-based line number) and/or limit (number of lines) to read one window of it instead. " \
-          "A window that does not cover the whole file is labelled as partial and does not satisfy " \
-          "edit_file's read-before-write requirement -- read the file whole, or window it end to " \
-          "end, before editing it. A read is refused rather than truncated when it would hand back " \
+          "A window that does not cover the whole file is labelled as partial; windows add up, so " \
+          "edit_file's read-before-write requirement is met once the windows you have read cover " \
+          "every line of one version of the file. A read is refused rather than truncated when it would hand back " \
           "more than #{WHOLE_BOUND.limit} bytes whole or #{WINDOW_BOUND.limit} bytes through a " \
           "window, and the refusal names what to do instead. Returns an error result if the path " \
           "does not exist, is a directory, cannot be read, or holds bytes that are not valid UTF-8 " \
@@ -666,7 +706,9 @@ module Lain
         problem = problem_with(path, expecting: :regular_file)
         return Tool::Result.error(problem) if problem
 
-        failing("read", path) { window_for(input).read(path).deliver(session_of(invocation), path) }
+        failing("read", path) do
+          window_for(input).read(path).deliver(session_of(invocation), path, invocation&.tool_use_id)
+        end
       end
 
       private

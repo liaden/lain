@@ -6,32 +6,69 @@ module Lain
     # neither the Agent nor any tool ever constructs one directly.
 
     module Carriers
-      # A read record must name the file read, and say whether the model saw
-      # the WHOLE file. `presence:` is wrong for `complete` -- it would reject
-      # `false`, which is exactly the partial read this field exists to express
-      # (the reason {SessionPin}'s `pinned` avoids it too).
+      # A read record must name the file read, the lines it covered and the
+      # call that carried it. Checked strictly, because a salvaged or
+      # hand-edited journal is exactly what these records must survive, and a
+      # span read loosely rebuilds as more of the file than the model saw.
       class SessionRead < Declarative::Carrier
+        IDENTITY_MEMBERS = %w[device inode mtime size].freeze
+
         attribute :path
-        attribute :complete
+        attribute :lines
+        attribute :identity
+        attribute :tool_use_id
+        attribute :head
         validates :path, presence: { message: "must name the file read, got nil" }
-        validate :complete_is_strictly_boolean
+        validate :lines_name_a_span
+        validate :identity_names_a_version
+        validate :call_is_named_by_strings
 
         private
 
-        # An explicit identity test rather than `inclusion: { in: [true, false] }`,
-        # which does NOT deliver the strictness it advertises: ActiveModel's
-        # InclusionValidator reads an ARRAY value as "every member must be
-        # included", and `[].all?` is vacuously true, so `complete: []` passed a
-        # guard whose entire job is to admit true or false.
-        #
-        # {Session::ReadSet#record} carries the same check, and the duplication
-        # is deliberate defence in depth: that one owns the in-memory read-set,
-        # this one owns the record on its way to disk, and a bare Session
-        # reaches the first without ever passing the second.
-        def complete_is_strictly_boolean
-          return if [true, false].include?(complete)
+        # `[first, last]`, with `last` nil for a read that reached the end of
+        # the file -- the journal's spelling of {Session::WHOLE_FILE}'s Range.
+        def lines_name_a_span
+          first, last = lines if lines.is_a?(Array) && lines.size == 2
+          return if first.is_a?(Integer) && first >= 1 && (last.nil? || (last.is_a?(Integer) && last >= first))
 
-          errors.add(:complete, "must be true or false, got #{complete.inspect}")
+          errors.add(:lines, "must be [first, last] line numbers from 1, last nil at end of file, got #{lines.inspect}")
+        end
+
+        # Exactly {Session::FileIdentity}'s members, each an Integer or nil: a
+        # replay rebuilds the version from these, and a version it cannot
+        # rebuild is refused here, where it is written, not on resume.
+        def identity_names_a_version
+          return if identity.is_a?(Hash) && identity.keys.sort == IDENTITY_MEMBERS &&
+                    identity.values.all? { |value| value.nil? || value.is_a?(Integer) }
+
+          errors.add(:identity, "must carry exactly #{IDENTITY_MEMBERS.join(", ")}, each an Integer or nil, " \
+                                "got #{identity.inspect}")
+        end
+
+        def call_is_named_by_strings
+          { tool_use_id:, head: }.each do |name, value|
+            errors.add(name, "must be a String or nil, got #{value.inspect}") unless value.nil? || value.is_a?(String)
+          end
+        end
+      end
+
+      # Each withheld round is a `[head, call id]` pair: the head a nil or a
+      # String, the call id a String -- the key a read's round is found by.
+      class SessionReadWithheld < Declarative::Carrier
+        attribute :rounds
+        validate :rounds_name_head_and_call
+
+        private
+
+        def rounds_name_head_and_call
+          return if rounds.is_a?(Array) && !rounds.empty? && rounds.all? { |round| round?(round) }
+
+          errors.add(:rounds, "must be a non-empty list of [head, call id] pairs, got #{rounds.inspect}")
+        end
+
+        def round?(round)
+          round.is_a?(Array) && round.size == 2 && (round.first.nil? || round.first.is_a?(String)) &&
+            round.last.is_a?(String)
         end
       end
 
@@ -47,24 +84,43 @@ module Lain
       end
     end
 
-    # One path, each time the read-set's state for it TRANSITIONS this session.
-    # `path` is the `File.expand_path`-normalized form {Session} keys its
-    # read-set on, so {SessionRecord::Replay} feeds it straight back into a
-    # fresh Session with no re-normalization. A RE-read at the same completeness
-    # lands no second record, which is what keeps a big read/edit loop from
-    # journaling one line per iteration.
+    # One read that added lines to what the model had seen of a file's version.
+    # `path` is the normalized form {Session} keys its read-set on, so
+    # {SessionRecord::Replay} feeds it straight back into a fresh Session with
+    # no re-normalization. A RE-read of lines already seen lands no second
+    # record, which is what keeps a big read/edit loop from journaling one line
+    # per iteration.
     #
-    # `complete` is what makes the stream replayable at all: without it a
-    # partial read rebuilds as a whole one, and a resumed run would permit the
-    # very clobber the read boundary refuses. A partial read later upgraded to a
-    # complete one is therefore TWO records, folding to complete.
-    SessionRead = Data.define(:path, :complete) do
+    # `tool_use_id` and `head` are what let a replay count the read only on the
+    # chain that delivered it: the replay binds the read to the next recorded
+    # turn whose parent is `head` and whose `tool_result` answers that call.
+    # `identity` is the file version, as {Session::FileIdentity}'s members, so
+    # windows add up only over one.
+    SessionRead = Data.define(:path, :lines, :identity, :tool_use_id, :head) do
       include Journalable
 
-      # `settle!` is safe on `path` because {Session#record_read} normalizes it
-      # through `File.expand_path` before it ever gets here, so what arrives is
-      # a String; a Pathname would be refused rather than silently stringified.
-      def initialize(path:, complete:) = super(**Carriers::SessionRead.settle!(path:, complete:))
+      # @param path [String] an already-normalized path
+      # @param read [Session::ReadSet::Read]
+      # @return [SessionRead]
+      def self.of(path, read)
+        new(path:, lines: [read.lines.begin, read.lines.end], identity: read.identity.to_h.transform_keys(&:to_s),
+            tool_use_id: read.tool_use_id, head: read.head)
+      end
+
+      def initialize(path:, lines:, identity:, tool_use_id:, head:)
+        super(**Carriers::SessionRead.settle!(path:, lines:, identity:, tool_use_id:, head:))
+      end
+    end
+
+    # The rounds {Session#on_chain} withheld because no turn delivered them:
+    # a marker, carrying no bytes and no path, that lets {SessionRecord::Replay}
+    # withhold the same rounds at the same point in the record rather than bind
+    # them to a later delivery from the same head. Written only when a round
+    # really was left open, which an ordinary run never does.
+    SessionReadWithheld = Data.define(:rounds) do
+      include Journalable
+
+      def initialize(rounds:) = super(**Carriers::SessionReadWithheld.settle!(rounds:))
     end
 
     # One pin transition, recorded so a `--resume` rebuilds the pin-set. A LOG
