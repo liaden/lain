@@ -405,6 +405,42 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
 - **Open decisions for the human (T7 review).** S4: held replacements never re-collapse, so ten cuts
   under summarize-conversation render ten summaries, with no remedy once the window fills past the
   cut. S5: a `/pin` on a turn inside a held range is silently ignored.
+- **T21 review B1: a running `/critique` ignored Ctrl-C and SIGTERM.** Its children run in the
+  unsupervised middleware phase.
+  - Ruling: seam B. `Repl#middleware_turn` wraps `@middleware.call` in `@conductor.supervise`, which
+    covers every middleware that answers without a model turn (`/meta generate` included).
+  - `repl.rb` is T6's, so after T6 lands T21's diff is ported onto a fresh worktree from `HEAD`, seam
+    B is added with a production-delivery spec, and the whole card gets its one re-review.
+- Follow-up (T19 review): a chat's `/implement-epic` cannot be interrupted, because the signal traps
+  point at `Signals::NULL` during a slash command. T21's seam B (supervising middleware turns) may
+  cover it, so check once both land.
+- T14's review took the `seed` filter in scope, since it is the card's own sentence about the chat's
+  `Context#extra`. Ollama-only keys no longer reach another provider's wire.
+- **A deliberate file share: T24 and T21 both hold `cli/wiring.rb` and `wiring_spec.rb`.** They edit
+  different regions (`#backing` against `#assemble_surface`), and the orchestrator merges them at
+  landing. This keeps the critical path moving instead of waiting for T21's re-review.
+- **Human decision owed (T23 review SF2, security, predates the chunk).** With automatic approval on,
+  only a literal protected path is refused before the model judge. `cat ~/.ssh/id_rsa`,
+  `cat $HOME/.ssh/id_rsa`, `cd ~/.ssh && cat id_rsa` and `sh -c 'cat …'` all reach the judge, and ran
+  once it said APPROVE. `--auto-approve` already had this gap; T23 makes it one `/mode +auto_approve`
+  away. The fix belongs to the triage rung (`approval/escalation.rb`).
+- **Follow-ups from T23's review:**
+  - Refuse `--auto-approve --non-interactive` at launch, as `--windows --no-journal` already is.
+  - The `--auto-approve` help text in `exe/lain` and `docs/commands.md:38` still describes the old
+    opt-in surface.
+  - T29 rewords `method.md`'s reason for banning `+auto_approve`, but keeps the ban.
+- Follow-ups (T20 review N1): store pre-images in the content store by digest, since the log keeps
+  every turn's bytes for the whole session.
+- **T17 review rulings.**
+  - Reading the answer leaves `Approval::Gate`: the human's words ride with the resolved answer.
+    Before this, an nvim `:w` approval was journaled as a denial.
+  - A reply that is not an approve or deny word is recorded as `unrecognised`, not as the human's
+    denial.
+- **Passed to T13 from T6's review:**
+  - Closing the cockpit `command>` reader when the Ctrl-C grace countdown starts needs
+    `Conductor#counting_down?` (hold the ask's shutdown during `supervise`), plus one check in the
+    reader.
+  - Until then, the countdown's c/w/r keys are blocked only while a call or question is pending.
 - T6: the question-arrival line still reads "(/inbox here, or the inbox buffer in nvim)", not
   "lain://inbox", because `tty.rb` is T13's. T13 aligns the wording.
 
@@ -412,6 +448,8 @@ file and its fork reports (`~/tmp/lain-qa-round17/records/fork-{epic,shell,surve
 
 - T11 `5154d819` · T16 `13b5e71c` · T9 `a0683dd8` · T10 `4b0778f8` · T15 `0cf8d2f1` · T5 `60998de4` · T1 `cf3505a3`
   · T2 `7b9d9589` · T4 `69df4d08` · T3 `04a9d40a` (with the tool-name call site T1 left owed) · T8 `c6f64656`
+  · T7 `acfed808` · T6 `caa2c5f7` · T18 `dac580d4` · T12 `afb5e73f` · T14 `bfe984e9` · T19 `51b0be4d`
+  · T23 `1cfdf970` · T21 `3ec1dc79` (with the middleware-phase supervision) · T17 `7016ab7d` · T20 `3af82b61`
 
 ---
 
