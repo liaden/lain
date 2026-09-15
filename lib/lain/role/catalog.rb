@@ -4,7 +4,8 @@ module Lain
   class Role
     # The shipped built-in roles. Each names the tools it attenuates to; its
     # framing ships as a default slot at `prompt/templates/role/<name>.md` and
-    # is user-overridable at `.lain/slots/role/<name>.md`. The reviewers hold
+    # is user-overridable at `.lain/slots/role/<name>.md`, `<name>` spelled as
+    # the catalog key is. The reviewers hold
     # read-and-inspect capabilities but never {Tools::EditFile} -- a review does
     # not touch the tree.
     #
@@ -31,12 +32,17 @@ module Lain
         Role.new(name: :reviewer_code, only: %i[read_file list_files glob grep]),
         Role.new(name: :researcher, only: %i[read_file list_files web_fetch web_search]),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
-        Role.new(name: :auto_approver, only: %i[read_file list_files glob grep]),
+        # {Approval::AutoSurface}'s judge. Unattended because the sweep that
+        # asked it waits on its answer with the judged call still parked: a
+        # question of its own would hold that call until the queue's clock
+        # denied it.
+        Role.new(name: :auto_approver, only: %i[read_file list_files glob grep], unattended: true),
         # {Approval::Gate::Adjudicator}'s sibling of `auto_approver`, judging an
         # ARTIFACT rather than one waiting tool call. Two roles because reusing
-        # auto-approver.md would tell the model a tool call is pending on every
-        # artifact gate.
-        Role.new(name: :gate_adjudicator, only: %i[read_file list_files glob grep]),
+        # auto_approver.md would tell the model a tool call is pending on every
+        # artifact gate. Unattended for `auto_approver`'s reason: the gate is
+        # already waiting on its answer.
+        Role.new(name: :gate_adjudicator, only: %i[read_file list_files glob grep], unattended: true),
         Role.new(name: :harness_improver, only: %i[read_file list_files glob grep improvement_write]),
         Role.new(name: :meta_harness, only: %i[read_file list_files glob grep]),
         Role.new(name: :meta_summarizer, only: %i[read_file list_files glob grep]),
@@ -58,7 +64,7 @@ module Lain
         # ({Tools::Subagent::ChildBuilder#granted}) happens outside this list.
         #
         # DELETABLE with the docent, and not alone: this entry,
-        # `prompt/templates/role/diff-docent.md` and `role_spec.rb`'s roll call
+        # `prompt/templates/role/diff_docent.md` and `role_spec.rb`'s roll call
         # are pinned to each other in both directions (see `review.rb`).
         Role.new(name: :diff_docent, only: %i[read_file list_files glob grep], unattended: true),
         # {Review::Critique}'s reviewer, one per chunk of a held review. Read-only

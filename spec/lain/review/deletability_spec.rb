@@ -136,7 +136,7 @@ module DeletionMap
     ),
     Capability.new(
       key: "docent", constants: %w[Docent],
-      files: ["lib/lain/review/docent.rb", "lib/lain/prompt/templates/role/diff-docent.md",
+      files: ["lib/lain/review/docent.rb", "lib/lain/prompt/templates/role/diff_docent.md",
               "spec/lain/review/docent_spec.rb"],
       # The two review COMMANDS joined the row when the capability stopped being
       # unreachable: each builds the docent off the editor's own surface, its

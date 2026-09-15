@@ -216,13 +216,13 @@ RSpec.describe Lain::Prompt::Slots do
     let(:shipped_system_digest) { "blake3:b8f7c81556a743daf8049a1a5290bc50c485f2f04edac5a8e810a3b0b5c9d41f" }
     let(:shipped_role_digests) do
       {
-        "court-clerk" => "blake3:499fc742e000f14b49882c3c860b89717be9ed2e2f96d08bdab25dc953316de5",
+        "court_clerk" => "blake3:499fc742e000f14b49882c3c860b89717be9ed2e2f96d08bdab25dc953316de5",
         "dev" => "blake3:d07a3b13c813c36c6ce8ecd5034893c8b39ca6b2df6c2004a1125f8039a6b9ed",
         "researcher" => "blake3:8bd27883cf2819e0a9612e776034556b6cd9064d5a1f9be9fa53f22c0ee36a0c",
-        "reviewer-dba" => "blake3:fc9c90ceceeab6c7d82c2bea4fd828155dedd03eccbd5c23acf591ec2026f56e",
-        "reviewer-security" => "blake3:ecb3aa0b4bc3c5edbc7441139277e9d56ea12eede714c2950c76e265a1edecd3",
-        "reviewer-sre" => "blake3:a2368d9430c97547536f3ae515c23ca9c6a9a2b66e17d47aa598097f3d6b6539",
-        "test-engineer" => "blake3:30f5366f06280c98f857304e1983ac6c6956af5b1dccce647a32e2084250b9c0"
+        "reviewer_dba" => "blake3:fc9c90ceceeab6c7d82c2bea4fd828155dedd03eccbd5c23acf591ec2026f56e",
+        "reviewer_security" => "blake3:ecb3aa0b4bc3c5edbc7441139277e9d56ea12eede714c2950c76e265a1edecd3",
+        "reviewer_sre" => "blake3:a2368d9430c97547536f3ae515c23ca9c6a9a2b66e17d47aa598097f3d6b6539",
+        "test_engineer" => "blake3:30f5366f06280c98f857304e1983ac6c6956af5b1dccce647a32e2084250b9c0"
       }
     end
 
@@ -274,13 +274,106 @@ RSpec.describe Lain::Prompt::Slots do
         FileUtils.mkdir_p(File.dirname(path))
         File.write(path, "cook something")
 
-        known_roles = Lain::Role::Catalog.names.map { |name| Lain::Role::Catalog.fetch(name).slot_name }
-
         expect { described_class.load(root:) }
           .to raise_error(Lain::Prompt::UnknownSlot) { |e|
             expect(e.message).to include("chef")
-            known_roles.each { |slot_name| expect(e.message).to include(slot_name) }
+            Lain::Role::Catalog.names.each { |name| expect(e.message).to include(name.to_s) }
           }
+      end
+    end
+  end
+
+  # A role is spelled one way everywhere a person meets it: the catalog, a
+  # spawn line, and the file that overrides its framing.
+  describe "a role slot file is named exactly as the role is" do
+    def role_slot(root, basename, body)
+      path = File.join(root, ".lain", "slots", "role", basename)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, body)
+    end
+
+    it "fills test_engineer from test_engineer.md" do
+      Dir.mktmpdir do |root|
+        role_slot(root, "test_engineer.md", "OVERRIDE 42")
+
+        expect(described_class.load(root:).render_role(:test_engineer)).to eq("OVERRIDE 42")
+      end
+    end
+
+    it "refuses a hyphenated spelling, naming the rename that fixes it" do
+      Dir.mktmpdir do |root|
+        role_slot(root, "test-engineer.md", "OVERRIDE 42")
+        path = File.join(root, ".lain", "slots", "role", "test-engineer.md")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot,
+                          "role slot files are spelled as the role is: rename #{path.inspect} to test_engineer.md")
+      end
+    end
+
+    it "ships one default per catalog role, under the role's own name" do
+      expect(described_class.shipped_role_templates.keys).to match_array(Lain::Role::Catalog.names.map(&:to_s))
+    end
+  end
+
+  # A slot file is only ever read as `<name>.md`, so any other extension is a
+  # file the author meant to be read and never would be.
+  describe "a slot file with the wrong extension is named" do
+    def slot_file(root, relative)
+      path = File.join(root, ".lain", "slots", relative)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "a fill")
+    end
+
+    it "names a role slot's file and the .md name to rename it to" do
+      Dir.mktmpdir do |root|
+        slot_file(root, "role/dev.txt")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e| expect(e.message).to include("dev.txt", "rename it to dev.md") }
+      end
+    end
+
+    it "names a top-level slot's file and the .md name to rename it to" do
+      Dir.mktmpdir do |root|
+        slot_file(root, "system.markdown")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e| expect(e.message).to include("system.markdown", "system.md") }
+      end
+    end
+
+    it "never suggests a rename onto a slot that already exists, and says to remove the copy" do
+      Dir.mktmpdir do |root|
+        slot_file(root, "system.md")
+        slot_file(root, "system.md.orig")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e|
+            expect(e.message).to include("system.md.orig", "system.md is already beside it, so remove it")
+            expect(e.message).not_to include("rename")
+          }
+      end
+    end
+
+    # An editor holding a slot open leaves these beside it; lain must still start.
+    %w[system.md~ .#system.md .system.md.swp role/dev.md~ role/.dev.md.swp .DS_Store].each do |leftover|
+      it "skips #{leftover}, which an editor or the desktop left behind" do
+        Dir.mktmpdir do |root|
+          slot_file(root, "system.md")
+          slot_file(root, leftover)
+
+          expect(described_class.load(root:).render).to include("a fill")
+        end
+      end
+    end
+
+    it "still reads the role and skill directories beside the top-level files" do
+      Dir.mktmpdir do |root|
+        slot_file(root, "role/dev.md")
+        slot_file(root, "skill/review/guidance.md")
+
+        expect(described_class.load(root:).render_role(:dev)).to eq("a fill")
       end
     end
   end

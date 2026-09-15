@@ -33,18 +33,26 @@ module AutoSurfaceSpecSupport
   # (rather than assembling a real RoleSpawn's provider/context/toolset set)
   # keeps the surface's contract -- observe, ask a role, route the verdict --
   # the thing under test.
+  #
+  # Its never-parking copy shares the one call log and marks each spawn made
+  # through it, so an example can tell which seam the surface asked.
   class ScriptedRoleSpawn
     attr_reader :calls
 
     def initialize(&answer)
       @answer = answer
       @calls = []
+      @unparked = false
     end
 
+    def never_parking = dup.tap(&:unparked!)
+
     def call(role, context_mode, prompt)
-      @calls << { role:, context_mode:, prompt: }
+      @calls << { role:, context_mode:, prompt:, unparked: @unparked }
       @answer.call(prompt)
     end
+
+    def unparked! = @unparked = true
   end
 end
 
@@ -128,7 +136,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     end
 
     prompt = spawn.calls.first[:prompt]
-    expect(spawn.calls.first).to include(role: :auto_approver, context_mode: :fresh)
+    expect(spawn.calls.first).to include(role: :auto_approver, context_mode: :fresh, unparked: true)
     expect(prompt).to include("edit_file").and include("/etc/passwd")
   end
 
@@ -595,6 +603,124 @@ RSpec.describe Lain::Approval::AutoSurface do
       end
 
       expect([surface, turning_off.calls.size]).to eq(["timeout", 1])
+    end
+  end
+
+  # The production spawn: a chat's own wiring, its own surface, its own queue
+  # and the real role spawn, with only the provider scripted. The sweep blocks
+  # on the child it spawns, so a child that parked would park on the queue this
+  # very sweep is judging.
+  describe "the child it spawns", :seam do
+    let(:script) { [] }
+    let(:provider) { Lain::Provider::Mock.new(responses: script) }
+    let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
+    let(:offline_backend_class) do
+      Class.new(Lain::CLI::Backend) do
+        def initialize(options, mock:)
+          super(options)
+          @mock = mock
+        end
+
+        def provider(**) = @mock
+      end
+    end
+    let(:backend) { offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider) }
+
+    around do |example|
+      Dir.mktmpdir("lain-auto-surface-child") do |dir|
+        @root = File.realpath(dir)
+        File.write(File.join(@root, ".env"), "REGION=eu\n")
+        example.run
+      end
+    end
+
+    def env_file = File.join(@root, ".env")
+
+    def reads_env = tool_response(["tu_child", "read_file", { "path" => env_file }])
+
+    def wired
+      project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
+      wiring = Lain::CLI::Wiring.new(options: { grace: 5, auto_approve: true }, chronicle: Lain::CLI::Chronicle::Null.new,
+                                     status_feed:, project:)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel: RecordingChannel.new, recorder:, session:, backend:, notice: ->(_line) {})
+      wiring
+    end
+
+    def bash_call = Lain::Effect::ToolCall.new(tool_use_id: "tu_judged", name: "bash", input: { "command" => "ls" })
+
+    # What the tool_result answering the child's read carried.
+    def child_read
+      sent = provider.requests.flat_map { |request| request.messages.flat_map { |m| Array(m["content"]) } }
+      block = sent.grep(Hash).find { |part| part["type"] == "tool_result" && part["tool_use_id"] == "tu_child" }
+      raise "the child's read was never answered" unless block
+
+      Array(block["content"]).map { |part| part.is_a?(Hash) ? part["text"] : part }.join("\n")
+    end
+
+    # One gated call parked, one sweep, and whatever else parked while the
+    # judge ran: the sweep either settles or is overtaken by a second park.
+    def judged(wiring)
+      queue = wiring.approvals
+      Sync do |task|
+        gated = task.async { queue.call(bash_call, nil) }
+        task.with_timeout(5) { queue.dequeue }
+        judged = task.async { wiring.auto_surface.sweep(queue) }
+        task.with_timeout(20) { task.sleep(0.01) until judged.finished? || queue.count > 1 }
+        queue.map(&:tool)
+      ensure
+        judged&.stop
+        queue.each { |pending| pending.deny(surface: "spec") }
+        gated&.wait
+      end
+    end
+
+    it "holds no ask_human" do
+      script.push(text_response("DEFER"))
+
+      judged(wired)
+
+      expect(provider.requests.first.tools.map { |tool| tool["name"] }).not_to include("ask_human")
+    end
+
+    it "refuses a gated read with words, and nothing parks in the approval queue" do
+      script.push(reads_env, text_response("DEFER"))
+
+      parked = judged(wired)
+
+      expect(parked).to eq(["bash"])
+      expect(child_read).to include(%(tool "read_file" was refused: this child cannot ask a human))
+      expect(child_read).not_to include("REGION=eu")
+    end
+
+    # The refusal is the only thing standing between a judge and a verdict on a
+    # file it never read, so it must steer toward reporting the gap -- which is
+    # what makes the judge's own template answer DEFER -- and never toward
+    # working around it.
+    it "tells the child the read is missing evidence to report, never something to work around" do
+      script.push(reads_env, text_response("DEFER"))
+
+      judged(wired)
+
+      expect(child_read).to include("cannot ask a human", "missing evidence: report it as missing")
+      expect(child_read).not_to include("Work from what you can read", "spawned to judge")
+    end
+
+    # The contrast, over the same wiring: the docent is unattended too, but
+    # nothing sweeping the queue waits on it, so its read parks for a human.
+    it "is unlike a docent's child, whose gated read still parks for a human" do
+      script.push(reads_env, text_response("the hunk renames a method"))
+      wiring = wired
+
+      pending = Sync do |task|
+        answered = task.async { wiring.role_spawn.call(:diff_docent, :fresh, "explain the hunk") }
+        parked = task.with_timeout(20) { wiring.approvals.dequeue }
+        parked.deny(surface: "spec")
+        answered.wait
+        parked
+      end
+
+      expect(pending.tool).to eq("read_file")
     end
   end
 

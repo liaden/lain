@@ -23,7 +23,7 @@ RSpec.describe Lain::Role do
   end
 
   # A throwaway project with an optional .lain/slots/ tree. Keys are slot paths
-  # under .lain/slots ("system", "role/test-engineer"); values are the file body.
+  # under .lain/slots ("system", "role/test_engineer"); values are the file body.
   def with_project(slots = {})
     Dir.mktmpdir do |root|
       slots.each do |rel, body|
@@ -32,14 +32,6 @@ RSpec.describe Lain::Role do
         File.write(path, body)
       end
       yield Lain::Prompt::Slots.load(root:)
-    end
-  end
-
-  describe "the filename mapping (underscores become hyphens)" do
-    it "maps a role name to its .lain/slots/role/<name>.md basename" do
-      expect(Lain::Role::Catalog.fetch(:test_engineer).slot_name).to eq("test-engineer")
-      expect(Lain::Role::Catalog.fetch(:court_clerk).slot_name).to eq("court-clerk")
-      expect(Lain::Role::Catalog.fetch(:dev).slot_name).to eq("dev")
     end
   end
 
@@ -72,10 +64,10 @@ RSpec.describe Lain::Role do
   # because it answers while a human stands mid-review waiting for the line to
   # change. The catalog argued that invariant in prose and nothing enforced it.
   describe "a role can declare that it answers unattended" do
-    it "defaults to attended, and two shipped roles declare otherwise" do
+    it "defaults to attended, and the two approval judges, the resolver, the docent and the critic declare otherwise" do
       expect(Lain::Role::Catalog.fetch(:test_engineer).unattended).to be(false)
-      expect(Lain::Role::Catalog.fetch(:diff_docent).unattended).to be(true)
-      expect(Lain::Role::Catalog.fetch(:merge_resolver).unattended).to be(true)
+      expect(Lain::Role::Catalog.all.select(&:unattended).map(&:name))
+        .to eq(%i[auto_approver gate_adjudicator merge_resolver diff_docent diff_critic])
     end
 
     # Coerced like every member beside it, and for the shareability reason
@@ -112,7 +104,7 @@ RSpec.describe Lain::Role do
       siblings = Lain::Role::Catalog.all.reject { |r| r.name == :test_engineer }
 
       with_project do |before|
-        with_project("role/test-engineer" => "OVERRIDE 42: bias toward property tests.") do |after|
+        with_project("role/test_engineer" => "OVERRIDE 42: bias toward property tests.") do |after|
           expect(te.prelude(slots: after)).not_to eq(te.prelude(slots: before))
           expect(after.render_role(:test_engineer)).to include("OVERRIDE 42")
 
@@ -196,7 +188,7 @@ RSpec.describe Lain::Role do
 
   describe "the catalog and the shipped role templates cannot drift" do
     it "ships exactly one default template per catalog role, both directions" do
-      catalog = Lain::Role::Catalog.names.map { |name| Lain::Prompt::Slots.role_slot_name(name) }.sort
+      catalog = Lain::Role::Catalog.names.map(&:to_s).sort
       shipped = Lain::Prompt::Slots.shipped_role_templates.keys.sort
 
       expect(shipped).to eq(catalog),
@@ -262,7 +254,7 @@ RSpec.describe Lain::Role do
   describe "a role override rejects impurity the same way a top-level one does" do
     it "raises ImpureSlot, naming what the fill actually did" do
       expect do
-        with_project("role/test-engineer" => "Now: <%= Time.now %>") do |slots|
+        with_project("role/test_engineer" => "Now: <%= Time.now %>") do |slots|
           slots.render_role(:test_engineer)
         end
       end.to raise_error(Lain::Prompt::ImpureSlot, /Time/)

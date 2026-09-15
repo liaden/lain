@@ -61,6 +61,16 @@ module Lain
                        max_depth: @max_depth)
       end
 
+      # This spawn, its children built through the seam guard's never-parking
+      # copy ({CLI::ToolGuard::NeverParking}): what an approval judge spawns
+      # through, because it waits on the child with the judged call parked.
+      #
+      # @return [RoleSpawn]
+      def never_parking
+        self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking), toolset: @toolset,
+                       slots: @slots, max_depth: @max_depth)
+      end
+
       private
 
       # The caller's own lane travels with the lease it lends, so a lent

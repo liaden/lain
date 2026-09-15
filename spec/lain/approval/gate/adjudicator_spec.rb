@@ -32,21 +32,29 @@ module AdjudicatorSpecSupport
   #
   # A String answer becomes an ok {Tool::Result}; anything answering #call is
   # invoked, so a spec can hand it a raiser or an error result.
+  #
+  # Its never-parking copy shares the one call log and marks each spawn made
+  # through it, so an example can tell which seam a spawn went through.
   class ScriptedRoleSpawn
     attr_reader :calls
 
     def initialize(answers)
       @answers = answers
       @calls = []
+      @unparked = false
     end
 
+    def never_parking = dup.tap(&:unparked!)
+
     def call(role, context_mode, prompt)
-      @calls << { role:, context_mode:, prompt: }
+      @calls << { role:, context_mode:, prompt:, unparked: @unparked }
       answer = @answers.fetch(role) { raise ArgumentError, "no scripted answer for role #{role.inspect}" }
       answer.respond_to?(:call) ? answer.call(prompt) : Lain::Tool::Result.ok(answer)
     end
 
     def roles = @calls.map { |spawn| spawn[:role] }
+
+    def unparked! = @unparked = true
   end
 end
 
@@ -168,6 +176,15 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
       expect(spawn.roles).to eq(%i[researcher gate_adjudicator])
       expect(spawn.calls.map { |c| c[:context_mode] }).to eq(%i[fresh fresh])
+    end
+
+    # Nothing is watching an adjudicated gate while it answers itself, so
+    # neither child may park on a question nobody would see.
+    it "spawns both children through a seam whose children never park" do
+      spawn = spawn_stub
+      adjudicate(adjudicator(spawn))
+
+      expect(spawn.calls.map { |c| c[:unparked] }).to eq([true, true])
     end
 
     it "hands the gathered evidence to the adjudicator spawn, not just the question" do
@@ -749,7 +766,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
 
     it "ships its own persona -- reusing the tool-call one would misdescribe every spawn" do
-      template = Lain::Prompt::Slots.shipped_role_templates.fetch("gate-adjudicator")
+      template = Lain::Prompt::Slots.shipped_role_templates.fetch("gate_adjudicator")
 
       expect(template).to include("APPROVE").and include("DENY").and include("DEFER")
       expect(template).not_to include("A tool call is waiting on your verdict")

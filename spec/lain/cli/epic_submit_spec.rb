@@ -8,10 +8,13 @@ require "tmpdir"
 module EpicSubmitSpecSupport
   # A {Lain::Skill::RoleSpawn} stand-in scripted per role: an adjudicated gate
   # spawns the evidence spike and the verdict as two roles in one decision.
+  # It builds no children, so the copy an adjudicator spawns through is itself.
   class ScriptedRoleSpawn
     def initialize(answers)
       @answers = answers
     end
+
+    def never_parking = self
 
     def call(role, _context_mode, _prompt) = Lain::Tool::Result.ok(@answers.fetch(role))
   end

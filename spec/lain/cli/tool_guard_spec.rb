@@ -394,6 +394,110 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
+  # An approval judge sweeps the queue and waits on its child's answer, so a
+  # child that parked would wait on the very sweep that spawned it. Its
+  # children are built through a copy of the seam's builder whose every
+  # approval refuses: the gate asks one refusing rung, and a masked region
+  # stays masked.
+  describe "the builder an approval judge spawns through" do
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
+    let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
+    let(:parking) { ToolGuardSpecBoard.new(approvals: queue, policy: queue) }
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def spawned(board) = described_class::Spawned.new(chronicle:, board: -> { board }, requester: "subagent")
+
+    def env_file = File.join("/home/tester/project", ".env")
+
+    def creds
+      File.join(@dir, "creds.txt").tap { |path| File.write(path, "harmless line\naws_access_key_id = #{secret}\n") }
+    end
+
+    def read_through(builder, path)
+      layers = builder.call(Lain::WorkerEnv.default).to_a
+      dispatch_call("read_file", { "path" => path }, toolset:, layers:, context: Lain::Session.new)
+    end
+
+    it "refuses a gated read in words, and parks nothing on the board's queue" do
+      told = Sync { |task| task.with_timeout(5) { read_through(spawned(parking).never_parking, env_file) } }
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told.content).to eq(format(described_class::UNPARKED, name: '"read_file"'))
+      expect(queue.count).to eq(0)
+    end
+
+    it "refuses even where the board's own policy would allow" do
+      allowing = ToolGuardSpecBoard.new(approvals: queue, policy: ToolGuardSpecPolicy.new(verdict: true))
+
+      told = Sync { read_through(spawned(allowing).never_parking, env_file) }
+
+      expect(told).to have_attributes(is_error: true)
+      expect(allowing.policy.contexts).to be_empty
+    end
+
+    it "journals the refusal as the unattended rung's ruling" do
+      Sync { read_through(spawned(parking).never_parking, env_file) }
+
+      rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+
+      expect(rulings.map { |ruling| ruling.values_at("rung", "verdict", "reason") })
+        .to eq([["unattended", "deny", described_class::Unasked::BECAUSE]])
+      expect(rulings.first["reason"]).not_to include("attached to this session")
+    end
+
+    it "releases no masked region, and asks nobody about it" do
+      told = Sync { |task| task.with_timeout(5) { read_through(spawned(parking).never_parking, creds) } }
+
+      expect(told.content).to include("<redacted:1>", "harmless line")
+      expect(told.content).not_to include(secret)
+      expect(queue.count).to eq(0)
+    end
+
+    # The contrast: the same seam's own builder, which is what every other
+    # child -- a docent's included -- is built through.
+    it "leaves the seam's own builder parking a gated read for a human" do
+      pending = Sync do |task|
+        read = task.async { read_through(spawned(parking), env_file) }
+        parked = task.with_timeout(5) { queue.dequeue }
+        parked.deny(surface: "spec")
+        read.wait
+        parked
+      end
+
+      expect(pending.tool).to eq("read_file")
+    end
+
+    it "reads the board only when a child is built, as the seam's own builder does" do
+      unbuilt = described_class::Spawned.new(chronicle:, board: -> {}, requester: "subagent").never_parking
+
+      expect { unbuilt.call(Lain::WorkerEnv.default) }.to raise_error(NoMethodError, /guard_inputs/)
+    end
+
+    it "is its own copy, so asking twice still never parks" do
+      builder = spawned(parking).never_parking
+
+      expect(builder.never_parking).to eq(builder)
+    end
+
+    it "refuses a gated call a run with no chat would approve" do
+      stack = described_class.detached(journal:).never_parking.call(Lain::WorkerEnv.default)
+      bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+
+      env = stack.call({ effect: bash, tool: Lain::Tools::Bash.new, context: nil }) do |passed|
+        passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
+      end
+
+      expect(env.fetch(:result)).to have_attributes(is_error: true)
+      expect(env.fetch(:result).content).to include(%(tool "bash" was refused: this child cannot ask a human))
+    end
+  end
+
   describe Lain::CLI::ToolGuard::Journaled do
     it "builds the instrumentation a journal-only run hands to Agent.new" do
       journal = RecordingChannel.new

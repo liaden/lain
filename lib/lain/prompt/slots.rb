@@ -23,10 +23,11 @@ module Lain
       TEMPLATE_DIR = Paths::Shipped::PROMPT_TEMPLATES_DIR
       private_constant :TEMPLATE_DIR
 
-      # Each shipped built-in role ships a default framing template here, so the
-      # set of shipped basenames IS the set of KNOWN role slots -- the
-      # role-namespace analogue of {KNOWN}. A `.lain/slots/role/<name>.md` naming
-      # no shipped role is a typo surfaced loudly, like a stray top-level file.
+      # Each shipped built-in role ships a default framing template here, named
+      # exactly as the catalog names the role, so the set of shipped basenames IS
+      # the set of KNOWN role slots -- the role-namespace analogue of {KNOWN}. A
+      # `.lain/slots/role/<name>.md` naming no shipped role is a typo surfaced
+      # loudly, like a stray top-level file.
       ROLE_TEMPLATE_DIR = File.join(TEMPLATE_DIR, "role")
       private_constant :ROLE_TEMPLATE_DIR
 
@@ -36,12 +37,17 @@ module Lain
       SKILL_TEMPLATE_DIR = File.join(TEMPLATE_DIR, "skill")
       private_constant :SKILL_TEMPLATE_DIR
 
+      # A slot file is only ever read under this extension, so a file carrying
+      # any other is one its author meant to be read and never would be.
+      EXTENSION = ".md"
+
       class << self
         # Every filename is validated against {KNOWN} (top-level) and the shipped
-        # role set. Session-fixed: this is the one disk read, and #render works
-        # from the returned frozen snapshot. The shipped skill dir is injectable
-        # so a spec can point the hole defaults at a fixture tree, exactly as
-        # {Skill::Catalog.load} injects its shipped scaffolds.
+        # role set, and its extension against {EXTENSION}. Session-fixed: this
+        # is the one disk read, and #render works from the returned frozen
+        # snapshot. The shipped skill dir is injectable so a spec can point the
+        # hole defaults at a fixture tree, exactly as {Skill::Catalog.load}
+        # injects its shipped scaffolds.
         def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR)
           dir = ProjectDir.new(root:).slots
           new(
@@ -57,19 +63,15 @@ module Lain
           @shipped_templates ||= KNOWN.to_h { |name| [name, File.read(template_path(name))] }.freeze
         end
 
-        # Keyed by the on-disk (hyphenated) slot basename -- the registry of
-        # KNOWN role slots. Unlike a top-level slot (whose default is empty and
-        # whose fill AUGMENTS a base frame), a role's shipped `.md` IS the
-        # default framing, and an override REPLACES it.
+        # Keyed by role name -- the registry of KNOWN role slots. Unlike a
+        # top-level slot (whose default is empty and whose fill AUGMENTS a base
+        # frame), a role's shipped `.md` IS the default framing, and an override
+        # REPLACES it.
         def shipped_role_templates
           @shipped_role_templates ||=
             Dir.glob(File.join(ROLE_TEMPLATE_DIR, "*.md"))
                .to_h { |path| [File.basename(path, ".md"), File.read(path)] }.freeze
         end
-
-        # The pinned role-slot filename mapping, owned here: `:test_engineer`
-        # resolves the file `.lain/slots/role/test-engineer.md`.
-        def role_slot_name(name) = name.to_s.tr("_", "-")
 
         # No project overrides, shipped hole defaults only -- what a bare
         # {Slots.new} (outside {.load}) renders against.
@@ -80,7 +82,7 @@ module Lain
         private
 
         def read_fills(dir)
-          Dir.glob(File.join(dir, "*.md")).each_with_object({}) do |path, fills|
+          slot_files(dir).each_with_object({}) do |path, fills|
             name = File.basename(path, ".md")
             raise UnknownSlot, "unknown slot file #{path.inspect}; known slots: #{KNOWN.join(", ")}" \
               unless KNOWN.include?(name)
@@ -91,13 +93,53 @@ module Lain
 
         def read_role_fills(dir)
           known = shipped_role_templates
-          Dir.glob(File.join(dir, "*.md")).each_with_object({}) do |path, fills|
+          slot_files(dir).each_with_object({}) do |path, fills|
             name = File.basename(path, ".md")
+            misspelt!(path, name, known)
             raise UnknownSlot, "unknown role slot file #{path.inspect}; known roles: #{known.keys.join(", ")}" \
               unless known.key?(name)
 
             fills[name] = File.read(path)
           end
+        end
+
+        # A role's one spelling is its catalog name, so a file spelling a known
+        # role with hyphens is named with the rename that fixes it.
+        def misspelt!(path, name, known)
+          spelled = name.tr("-", "_")
+          return if spelled == name || !known.key?(spelled)
+
+          raise UnknownSlot, "role slot files are spelled as the role is: rename #{path.inspect} to " \
+                             "#{spelled}#{EXTENSION}"
+        end
+
+        # The files directly in `dir` that an author could mean as slots, each
+        # refused unless it carries {EXTENSION}. Directories are the role and
+        # skill regions, read on their own.
+        def slot_files(dir)
+          Dir.glob(File.join(dir, "*"))
+             .select { |path| File.file?(path) && !editor_leftover?(File.basename(path)) }
+             .each { |path| refuse_extension(path) }
+        end
+
+        # What an editor leaves beside a file it has open: a backup, a lock or
+        # a swap file. Refusing one would stop lain starting while a slot is
+        # being edited.
+        def editor_leftover?(basename) = basename.start_with?(".") || basename.end_with?("~", ".swp")
+
+        def refuse_extension(path)
+          return if File.extname(path) == EXTENSION
+
+          raise UnknownSlot, "slot file #{path.inspect} is never read: slot files end in #{EXTENSION}, #{remedy(path)}"
+        end
+
+        # Never a rename onto a file that already exists: that one is the slot,
+        # and this is a copy of it.
+        def remedy(path)
+          meant = "#{File.basename(path).sub(/\..*\z/, "")}#{EXTENSION}"
+          return "and #{meant} is already beside it, so remove it" if File.exist?(File.join(File.dirname(path), meant))
+
+          "so rename it to #{meant}"
         end
 
         def template_path(name) = File.join(TEMPLATE_DIR, "#{name}.md.erb")
@@ -137,7 +179,7 @@ module Lain
       # catalog rests on. An impure override fails loudly here, never as a silent
       # nondeterministic value.
       def render_role(name)
-        slot = self.class.role_slot_name(name)
+        slot = name.to_s
         source = @role_fills.fetch(slot) do
           @role_templates.fetch(slot) do
             raise UnknownSlot, "unknown role #{name.inspect}; known roles: #{@role_templates.keys.join(", ")}"

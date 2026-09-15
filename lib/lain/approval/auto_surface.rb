@@ -31,9 +31,10 @@ module Lain
       VERDICT = /\A(approve|deny|defer)\.?\z/i
       private_constant :VERDICT
 
-      # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
-      #   seam ({Skill::RoleSpawn}); injected, so the surface depends on the
-      #   message, not on how the child is assembled. Every other keyword
+      # @param role_spawn [#call, #never_parking] the
+      #   `(role, context_mode, prompt) -> Tool::Result` seam ({Skill::RoleSpawn});
+      #   injected, so the surface depends on the message, not on how the child
+      #   is assembled. Every other keyword
       #   forwards to {QueueSurface} -- `poll_interval:`, `pruning:`, `journal:`.
       # @param enabled [#call] answers whether the `auto_approve` layer is on
       #   RIGHT NOW, read on every sweep and again before a verdict settles, so
@@ -83,8 +84,11 @@ module Lain
         pending.deny(surface: SURFACE) if verdict == :deny
       end
 
+      # Through the never-parking spawn: this sweep waits on the child, so a
+      # child parked on this queue could only be answered once the sweep it
+      # blocks had finished.
       def answer_for(pending)
-        parse(@role_spawn.call(ROLE, CONTEXT_MODE, prompt_for(pending)))
+        parse(@role_spawn.never_parking.call(ROLE, CONTEXT_MODE, prompt_for(pending)))
       end
 
       # Fail toward defer: an error result is never signed by this surface at

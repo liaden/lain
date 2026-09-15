@@ -17,7 +17,7 @@ RSpec.describe Lain::Role::Catalog do
     end
 
     it "ships the role slot its framing renders from" do
-      expect(Lain::Prompt::Slots.shipped_role_templates).to have_key(role.slot_name)
+      expect(Lain::Prompt::Slots.shipped_role_templates).to have_key(role.name.to_s)
     end
   end
 

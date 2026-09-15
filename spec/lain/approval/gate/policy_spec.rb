@@ -31,11 +31,15 @@ module PolicySpecSupport
   # spawns the evidence spike and the verdict as two different roles inside one
   # decision, and half of what this policy has to prove is that a refused gate
   # spawns neither.
+  #
+  # It builds no children, so the copy an adjudicator spawns through is itself.
   class ScriptedRoleSpawn
     def initialize(answers)
       @answers = answers
       @calls = []
     end
+
+    def never_parking = self
 
     def call(role, context_mode, prompt)
       @calls << { role:, context_mode:, prompt: }

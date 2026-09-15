@@ -86,6 +86,46 @@ module Lain
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child
         def call(worker_env) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:)
+
+        # Read off the board as a child is built, never before.
+        def guard_inputs = board.call.guard_inputs
+
+        # @return [NeverParking]
+        def never_parking = NeverParking.new(guard: self)
+      end
+
+      # What {.detached} answers: a builder over the inputs a run with no chat
+      # built for itself, once.
+      Detached = Data.define(:chronicle, :guard_inputs) do
+        # @param worker_env [WorkerEnv] the environment the child runs in
+        # @return [Middleware::Stack] a fresh one per child, over the one board
+        def call(worker_env) = ToolGuard.working(chronicle, guard_inputs, worker_env)
+
+        # @return [NeverParking]
+        def never_parking = NeverParking.new(guard: self)
+      end
+
+      # A seam's builder as an approval judge spawns through it. The judge waits
+      # on its child's answer with the judged call still parked, so a child that
+      # parked in turn would wait on the very judgement it was spawned to serve.
+      # Every approval such a child needs refuses instead, in words: its gate
+      # asks the one {Unasked} rung whatever the board would have allowed, and
+      # a masked region stays masked. The ledger, the path policy, the layout
+      # and the bar are the guard's own.
+      #
+      # This is a property of the spawn site, not of the role: a docent is
+      # unattended too, and its read still parks, because nothing that could
+      # answer that park is waiting on the docent.
+      NeverParking = Data.define(:guard) do
+        # @param worker_env [WorkerEnv] the environment the child runs in
+        # @return [Middleware::Stack] a fresh one per child
+        def call(worker_env) = ToolGuard.working(chronicle, refused, worker_env)
+
+        def refused = ToolGuard.refusing(chronicle, guard.guard_inputs)
+
+        def chronicle = guard.chronicle
+
+        def never_parking = self
       end
 
       # What {.stack} reads off a chronicle, for a run that holds only a journal.
@@ -109,6 +149,30 @@ module Lain
         # the unused-argument underscore.
         def self.adjudicate(_effect, _context, outstanding: nil) = Verdict # rubocop:disable Lint/UnusedMethodArgument
       end
+
+      # The whole ladder a judge's child's gate asks: one rung, refusing.
+      # {Switchboard::Unattended}'s shape and name, so a reader tallying
+      # refusals by rung counts both as "nobody could be asked", but its own
+      # reason: the chat has a human, and the record must not say otherwise.
+      class Unasked
+        NAME = Switchboard::Unattended::NAME
+        BECAUSE = "this child cannot ask a human: it was spawned by an approval judge that is waiting on its answer"
+
+        def initialize = freeze
+
+        def name = NAME
+
+        def call(_effect, _context) = Approval::Escalation::Ruling.deny(rung: NAME, because: BECAUSE)
+      end
+
+      # What a judge's child is told when its gate refuses, on {Switchboard#denial}'s
+      # rule: say that nobody said no and that retrying cannot help. What to do
+      # instead is to report the gap, never to work around it: a judge settling
+      # on evidence it never saw is the approval deny-when-unsure exists to stop.
+      UNPARKED = "tool %<name>s was refused: this child cannot ask a human, so nothing it needs approved can " \
+                 "be approved. This is not somebody answering no -- retrying will fail the same way every time. " \
+                 "Whatever this call would have shown you is missing evidence: report it as missing, and do not " \
+                 "reach any conclusion as though you had seen it."
 
       module_function
 
@@ -164,7 +228,7 @@ module Lain
         )
       end
 
-      # The guard for a run with no chat, as the thunk a spawn seam carries.
+      # The guard for a run with no chat, as the builder a spawn seam carries.
       # The board is built ONCE, here, so every child the run spawns releases
       # into one ledger.
       #
@@ -182,8 +246,8 @@ module Lain
       # holds.
       #
       # @param journal [#<<] where a refusal or a mask is recorded
-      # @return [#call] `worker_env -> stack`, a fresh one per call, every one
-      #   over the same board
+      # @return [Detached] `worker_env -> stack`, a fresh one per call, every
+      #   one over the same board
       def detached(journal:)
         approve_all = Middleware::Gate::ApproveAll.new
         inputs = Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: Unreleased,
@@ -191,8 +255,20 @@ module Lain
                             test_layout: Middleware::GuardTestLayout::Run.undeclared,
                             policy: approve_all, policy_for: ->(_worker_env) { approve_all },
                             denial: Middleware::Gate::DENIAL, bar: Middleware::WithholdAutomaticOutput::Bar.new)
-        chronicle = Journaled.new(journal:)
-        ->(worker_env) { working(chronicle, inputs, worker_env) }
+        Detached.new(chronicle: Journaled.new(journal:), guard_inputs: inputs)
+      end
+
+      # `inputs` with every approval refused: the gate policy is a ladder of the
+      # one refusing rung, journaled where the chronicle records every other
+      # ruling, and nothing releases a masked region.
+      #
+      # @param chronicle [CLI::Chronicle] as on {.stack}
+      # @param inputs [Inputs] the guard's own
+      # @return [Inputs]
+      def refusing(chronicle, inputs)
+        ladder = Approval::Escalation.new([Unasked.new], journal: chronicle.instrumentation.journal,
+                                                         label: Unasked::NAME)
+        inputs.with(approvals: Unreleased, policy: ladder, policy_for: ->(_worker_env) { ladder }, denial: UNPARKED)
       end
 
       # The third guard covers the LISTING tools, which the other two do not

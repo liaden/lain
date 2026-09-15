@@ -94,7 +94,7 @@ RSpec.describe Lain::CLI::Command::Meta do
       end
     end
 
-    # Unfencing repairs the harness path too: meta-harness.md asks for a fenced
+    # Unfencing repairs the harness path too: meta_harness.md asks for a fenced
     # block, and a written-through fence made the script unparseable.
     describe "a fenced body" do
       let(:body) { "```ruby\nPlannerExecutor = Object.new\n```\n" }
@@ -434,7 +434,7 @@ RSpec.describe Lain::CLI::Command::Meta do
   # to follow (we cannot run a real provider here): the example the model sees
   # must itself be a valid, loadable lain script, or /meta ships a lie.
   describe "the shipped meta-harness template skeleton" do
-    let(:template) { Lain::Prompt::Slots.shipped_role_templates.fetch("meta-harness") }
+    let(:template) { Lain::Prompt::Slots.shipped_role_templates.fetch("meta_harness") }
     let(:skeleton) { template[/```ruby\n(.*?)\n```/m, 1] }
 
     it "embeds a ruby skeleton script" do
@@ -467,7 +467,7 @@ RSpec.describe Lain::CLI::Command::Meta do
   # shown must itself be a declaration the Builder loads, or /meta summarizer
   # ships a lie.
   describe "the shipped meta-summarizer template skeleton" do
-    let(:template) { Lain::Prompt::Slots.shipped_role_templates.fetch("meta-summarizer") }
+    let(:template) { Lain::Prompt::Slots.shipped_role_templates.fetch("meta_summarizer") }
     let(:skeleton) { template[/```ruby\n(.*?)\n```/m, 1] }
 
     it "embeds a ruby skeleton declaration" do
@@ -475,7 +475,7 @@ RSpec.describe Lain::CLI::Command::Meta do
     end
 
     it "builds into exactly one summarizer through the real Builder" do
-      built = Lain::Summarizer::Builder.build(skeleton, "meta-summarizer.md")
+      built = Lain::Summarizer::Builder.build(skeleton, "meta_summarizer.md")
 
       expect(built.size).to eq(1)
       expect(built.first).to be_a(Lain::Summarizer::Base)
@@ -485,7 +485,7 @@ RSpec.describe Lain::CLI::Command::Meta do
     # output it claims to handle, and its compact must shorten it. A skeleton
     # that never fires is an example that teaches nothing.
     it "shows a skeleton whose summarizer answers the output it claims" do
-      summarizer = Lain::Summarizer::Builder.build(skeleton, "meta-summarizer.md").first
+      summarizer = Lain::Summarizer::Builder.build(skeleton, "meta_summarizer.md").first
       text = <<~REPORT
         Coverage report generated for RSpec to /cov. 84.21% covered at 12.3 hits/line
         lib/lain/agent.rb    91.4%

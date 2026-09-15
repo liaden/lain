@@ -355,9 +355,10 @@ module Lain
           def park(queue, **attributes) = queue.park(**attributes)
         end
 
-        # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
-        #   seam ({Skill::RoleSpawn}); injected, so this class depends on the
-        #   message and not on how a child is assembled
+        # @param role_spawn [#call, #never_parking] the
+        #   `(role, context_mode, prompt) -> Tool::Result` seam ({Skill::RoleSpawn});
+        #   injected, so this class depends on the message and not on how a
+        #   child is assembled
         # @param gate [Approval::Gate] the one object that journals and registers
         # @param queue [SignoffQueue] where a deferral parks -- and the same
         #   queue the stage-boundary check reads
@@ -448,7 +449,7 @@ module Lain
 
         def spike(artifact, gated)
           started = @clock.call
-          result = @role_spawn.call(EVIDENCE_ROLE, CONTEXT_MODE, @brief.call(artifact))
+          result = spawn(EVIDENCE_ROLE, @brief.call(artifact))
           findings(result, gated, latency: @clock.call - started)
         rescue StandardError => e
           GateEvidence.missing(note(NO_EVIDENCE, "#{e.class}: #{e.message}"), gated,
@@ -480,7 +481,7 @@ module Lain
         end
 
         def verdict(artifact, evidence)
-          parse(@role_spawn.call(ROLE, CONTEXT_MODE, question(artifact, evidence)))
+          parse(spawn(ROLE, question(artifact, evidence)))
         rescue StandardError => e
           [:defer, note(NO_VERDICT, "#{e.class}: #{e.message}")]
         end
@@ -503,6 +504,11 @@ module Lain
           else Deferral.new(answer: Answer.deny(SURFACE), policy: SignoffQueue::DEFERRED_POLICY, reason:)
           end
         end
+
+        # Both children through the never-parking spawn: the gate is waiting on
+        # this answer, so a child's park would stand behind the very decision
+        # it was spawned to inform.
+        def spawn(role, prompt) = @role_spawn.never_parking.call(role, CONTEXT_MODE, prompt)
 
         def note(headline, detail) = "#{headline}: #{detail.to_s[0, MAX_REASON]}"
 

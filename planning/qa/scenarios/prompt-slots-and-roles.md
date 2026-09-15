@@ -1,7 +1,7 @@
 # Scenario: the project extension API — slots, roles, and the cache floor
 
 **What it exercises:** `Prompt::Slots`' three-level override surface — `.lain/slots/system.md`
-(top-level, one hole), `.lain/slots/role/<name>.md` (one per built-in role, hyphen-mapped), and
+(top-level, one hole), `.lain/slots/role/<name>.md` (one per built-in role, named exactly as the role is), and
 `.lain/slots/skill/<skill>/<hole>.md` (per-skill, many holes) — its `UnknownSlot` refusals
 (`slots.rb:103` top-level filename, `slots.rb:114` role-namespace filename, `slots.rb:164`
 role-render-time), and the 4096-token minimum-cacheable-prefix floor
@@ -86,7 +86,7 @@ any turn is dispatched. Restore the filename before moving on.
 
 ```bash
 mkdir -p .lain/slots/role
-echo 'OVERRIDE 42: bias toward property tests.' > .lain/slots/role/test-engineer.md
+echo 'OVERRIDE 42: bias toward property tests.' > .lain/slots/role/test_engineer.md
 ```
 
 Then, in a live session (`/ruby` journals nothing, so a short quiet window is enough):
@@ -113,12 +113,13 @@ lain chat --root "$(pwd)" --provider ollama --model qwen3-coder:30b < /dev/null
 Must refuse:
 
 ```
-unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto-approver, court-clerk, dev, diff-critic, diff-docent, gate-adjudicator, harness-improver, issue-orchestrator, merge-resolver, meta-harness, meta-summarizer, researcher, reviewer-code, reviewer-dba, reviewer-security, reviewer-sre, test-engineer
+unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto_approver, court_clerk, dev, diff_critic, diff_docent, gate_adjudicator, harness_improver, issue_orchestrator, merge_resolver, meta_harness, meta_summarizer, researcher, reviewer_code, reviewer_dba, reviewer_security, reviewer_sre, test_engineer
 ```
 
 naming **all 17** shipped roles, alphabetically, not a truncated sample. *Driven 2026-09-14*, exit 1,
-verbatim above. **The count moves; re-derive it** from `Lain::Role::Catalog.names.size` through
-`/ruby` rather than from this line — it read 14 until round 17 counted 16, and `diff-critic` (the
+with the names then spelled with hyphens; the role files took the catalog's underscore spelling on 2026-09-15, and a
+hyphenated `.lain/slots/role/test-engineer.md` now refuses naming the rename to `test_engineer.md`. **The count moves; re-derive it** from `Lain::Role::Catalog.names.size` through
+`/ruby` rather than from this line — it read 14 until round 17 counted 16, and `diff_critic` (the
 read-only role `/critique` spawns per chunk over a held review) joined on 2026-09-14. Delete the fixture and confirm the session
 launches clean again before moving on — a refusal that leaves the tree in a state the NEXT launch
 also refuses from is its own small finding.
