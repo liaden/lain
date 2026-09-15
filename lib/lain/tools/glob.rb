@@ -104,7 +104,11 @@ module Lain
         # `Dir.pwd` under the default, so the rows stay base-relative. An
         # absent path IS that cwd -- {Lain::WorkerEnv#resolve}'s nil arm, which
         # this tool used to respell as `input.path || "."`.
-        base = target(invocation, input.path)
+        #
+        # Read as UTF-8 for {ListFiles#perform}'s reason: a BINARY base under a
+        # C locale would make the no-match sentence compare unequal to the one
+        # {Middleware::WithholdSecretPaths} rebuilds.
+        base = String.new(target(invocation, input.path), encoding: Encoding::UTF_8)
         found = matches(base, input.pattern)
         Tool::Result.ok(found.empty? ? self.class.no_matches_message(input.pattern, base) : found.join("\n"))
       end

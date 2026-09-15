@@ -267,8 +267,28 @@ module Lain
       end
 
       def sift(shape, content, base)
-        @filter.sift(content.split(ROW)) { |row| shape.paths_in(row).map { reading(_1, base) } }
+        @filter.sift(rows(content)) { |row| readings(shape, row).map { reading(_1, base) } }
       end
+
+      # Split as BYTES and read back as UTF-8, because a text split raises on
+      # the first name that is not UTF-8 -- and {#guarded}'s rescue then
+      # withholds every ordinary row beside it. UTF-8 rather than the content's
+      # own tag: a BINARY listing (a C locale's `Dir.pwd`) is valid in every
+      # byte, so only the question the model's reader asks can find the name
+      # it cannot read.
+      #
+      # `split` without a limit, exactly as the text split was, so trailing
+      # empty rows are dropped rather than offered as readings: an empty row
+      # joined onto a gated base is the base, and would be withheld as if it
+      # named something.
+      def rows(content)
+        content.b.split(ROW).map { |row| row.force_encoding(Encoding::UTF_8) }
+      end
+
+      # A row that is not UTF-8 is its own one reading, which the classifier
+      # calls {Sensitivity::MALFORMED}: a shape's reader splits it as text and
+      # would raise, and no part of it can be vouched for anyway.
+      def readings(shape, row) = row.valid_encoding? ? shape.paths_in(row) : [row]
 
       # An absolute row names itself. A relative one is joined to the target
       # LEXICALLY -- never through `File.expand_path`, whose tilde handling is
@@ -285,9 +305,8 @@ module Lain
       # line IS a second reading of that row.
       #
       # {Sensitivity.readable?} also covers an encoding `start_with?` could not
-      # compare, which is why it is asked first -- though no example pins that
-      # order and none can, since a reading is a slice of content this class
-      # already split on a UTF-8 newline.
+      # compare, which is why it is asked first. A row that is not UTF-8 reaches
+      # here whole, from {#readings}, and is handed over unjoined the same way.
       def reading(path, base)
         return path unless ::Lain::Sensitivity.readable?(path)
         return path if path.start_with?(File::SEPARATOR)
@@ -309,9 +328,14 @@ module Lain
       # all three -- so a reading of it is exactly as strict as a reading of the
       # true path, never less. A `stat` to tell the two targets apart would put
       # IO in the middle of a middleware to buy nothing.
+      #
+      # UTF-8, like {#rows}, so a row and its base join without an encoding
+      # clash -- and as {Tools::ListFiles#perform} reads its own root, so a
+      # rebuilt no-rows sentence compares equal to the one the tool wrote.
       def base(effect, session)
         cwd = session.worker_env.cwd
-        File.expand_path(at(effect.input, ::Lain::Sensitivity::Policy::PATH_FIELDS[effect.name]) || CWD, cwd)
+        field = ::Lain::Sensitivity::Policy::PATH_FIELDS[effect.name]
+        String.new(File.expand_path(at(effect.input, field) || CWD, cwd), encoding: Encoding::UTF_8)
       end
 
       # Both spellings, {Sensitivity::Policy#at}'s rule: a parsed provider

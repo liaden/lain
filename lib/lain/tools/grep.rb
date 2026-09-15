@@ -30,7 +30,7 @@ module Lain
     #     has enough, so the two paths return DIFFERENT SUBSETS of the same
     #     tree, not the same 200 reordered. Decided and left standing. The fix,
     #     if ever wanted, is `.sort_by { |entry| entry.split("/") }` in
-    #     {RubySearch#files_under}, because a depth-first walk with sorted
+    #     {Files.walk}, because a depth-first walk with sorted
     #     entries yields paths in exactly the order you get by sorting their
     #     COMPONENT ARRAYS. It is left out because it would change which
     #     matches today's in-process callers get. Pinned as a witness in
@@ -46,7 +46,7 @@ module Lain
       # result content.
       MAX_MATCHES = 200
 
-      # Both paths hand back the same {Tool::Bounds::Found}, so
+      # Both paths hand back the same {Tool::Bounds::Found} inside a {Searched}, so
       # {#format_matches} never learns which one ran, and the collect-one-
       # past-the-cap discipline stays inside the path that needs it (see
       # {RubySearch#call}) rather than being re-derived from the rows
@@ -67,15 +67,116 @@ module Lain
         field :case_insensitive, :boolean, description: "Match case-insensitively. Defaults to false."
       end
 
+      # What one search arm hands back: the capped rows, and whatever trailer
+      # only that arm's walk could write.
+      Searched = Data.define(:found, :notices)
+
+      Files = Data.define(:root, :readable, :unreadable)
+
+      # The files under a search target whose NAMES can be read as text, and how
+      # many could not. Shared with {AstSearch}, the other tool that walks a
+      # tree and prints each hit under its file's name.
+      #
+      # Every name is read as UTF-8, whatever tag the target arrived with:
+      # `Dir.pwd` answers BINARY under a C locale, and a label in that tag cannot
+      # be interpolated beside a UTF-8 line. A name whose bytes are not UTF-8 can
+      # be neither printed as text nor classified by
+      # {Middleware::WithholdSecretPaths}, so the file is skipped -- and
+      # counted, because a search that quietly read fewer files reads as a
+      # complete answer.
+      #
+      # Reopened rather than written in the `Data.define` block, whose constants
+      # would land on {Grep}.
+      class Files
+        IGNORED = %w[. .. .git].freeze
+        EVERY = ->(_name) { true }
+        SKIPPED = "%<count>d %<noun>s skipped: unreadable name"
+
+        # @param path [String] the resolved target, a file or a directory
+        # @param keep [#call] whether the walk would search a name at all, asked
+        #   before its readability, so only a name it wanted can count as skipped
+        # @return [Files]
+        def self.under(path, keep: EVERY)
+          return new(root: nil, readable: [path].freeze, unreadable: 0) if File.file?(path)
+
+          root = utf8(path)
+          names = walk(path).select { |name| keep.call(name) }
+          readable, unreadable = names.partition { |name| relative(name, root).valid_encoding? }
+          new(root:, readable: readable.sort.freeze, unreadable: unreadable.size)
+        end
+
+        # Judged on the part a label prints, never the whole path: a project
+        # whose own directory is not UTF-8 still labels `ok.rb` as text.
+        def self.relative(name, root) = name.delete_prefix("#{root}/")
+
+        # `**` with FNM_DOTMATCH visits every dotfile, matching {ListFiles}'
+        # convention, but also "." and ".." and anything under ".git". The
+        # trailing `.sort` in {.under} is a FLAT sort of full paths, which is not
+        # the order the daemon walks in -- see the walk-order note on {Grep}. It
+        # stays flat deliberately: changing it would change which matches
+        # today's callers get back from a capped search.
+        def self.walk(path)
+          Dir.glob(File.join(path, "**", "*"), File::FNM_DOTMATCH)
+             .map { |entry| utf8(entry) }
+             .reject { |entry| ignored?(entry) }
+             .select { |entry| File.file?(entry) }
+        end
+
+        # Split as bytes, since a name that is not UTF-8 raises out of a text
+        # split -- and one under `.git` is not searched, so it is not skipped.
+        def self.ignored?(entry) = entry.b.split("/").intersect?(IGNORED)
+
+        def self.utf8(name) = String.new(name, encoding: Encoding::UTF_8)
+        private_class_method :walk, :ignored?, :utf8
+
+        # A DIRECTORY target labels hits relative to the walked root; a
+        # SINGLE-FILE target labels them with `display`, the model's own
+        # spelling, so a relative `README.md` stays `README.md:1:` rather than
+        # leaking the WorkerEnv-resolved absolute path.
+        def label(file, display) = root ? Files.relative(file, root) : display
+
+        def notices
+          return [] if unreadable.zero?
+
+          [format(SKIPPED, count: unreadable, noun: unreadable == 1 ? "file" : "files")]
+        end
+      end
+
+      # A matched line, read as bytes and tagged UTF-8 whatever the locale: a
+      # bare read tags it with `Encoding.default_external`, US-ASCII under
+      # `LC_ALL=C`, where every non-ASCII line failed to decode and ended its
+      # file without a word.
+      #
+      # A line that is not UTF-8 is still searched, and returned with each
+      # invalid byte written as `\xNN`. The escape is display only: the pattern
+      # matches the line with its invalid bytes replaced by U+FFFD, so searching
+      # for `xE9` never finds the escape it printed, and the valid characters
+      # beside a stray byte still match as characters -- `.` is one `é`, never
+      # one of its bytes. The one quirk left is that a pattern naming U+FFFD
+      # matches a character the file does not contain.
+      module Line
+        ESCAPE = "\\x%02X"
+
+        def self.match?(regex, line) = regex.match?(line.valid_encoding? ? line : line.scrub)
+
+        def self.text(line)
+          return line if line.valid_encoding?
+
+          line.scrub { |bad| bad.bytes.map { format(ESCAPE, _1) }.join }
+        end
+      end
+
       # The default, and the tool's tier-1 claim in full: Dir.glob and
       # File.foreach, no subprocess and no boundary.
       #
-      # An {Enumerator} so the MAX_MATCHES+1 pull stops walking the filesystem
-      # the moment it has enough, rather than scanning every file under `path`
-      # before throwing most of the result away.
+      # An {Enumerator} so the MAX_MATCHES+1 pull stops reading files the moment
+      # it has enough, rather than scanning every file under `path` before
+      # throwing most of the result away.
       class RubySearch
         def call(path, input)
-          WALK_CAP.apply(matching(path, input.path, build_regex(input)).lazy)
+          files = Files.under(path)
+          Searched.new(found: WALK_CAP.apply(matching(files, input.path, build_regex(input)).lazy),
+                       notices: files.notices)
         end
 
         private
@@ -84,47 +185,26 @@ module Lain
           Regexp.new(input.pattern, input.case_insensitive ? Regexp::IGNORECASE : 0)
         end
 
-        # `path` is the resolved filesystem locator; `display` is the model's
-        # original spelling. A DIRECTORY target labels hits relative to the
-        # walked root; a SINGLE-FILE target labels them with `display` verbatim,
-        # so a relative `README.md` stays `README.md:1:` rather than leaking the
-        # WorkerEnv-resolved absolute path. {CoreSearch} reproduces both rules.
-        def matching(path, display, regex)
-          root = path if File.directory?(path)
+        # `display` is the model's original spelling, for {Files#label}.
+        # {CoreSearch} reproduces both labelling rules.
+        def matching(files, display, regex)
           Enumerator.new do |yielder|
-            files_under(path).each do |file|
-              label = root ? file.delete_prefix("#{root}/") : display
+            files.readable.each do |file|
+              label = files.label(file, display)
               each_matching_line(file, regex) { |line_no, line| yielder << [label, line_no, line] }
             end
           end
         end
 
-        # The trailing `.sort` is a FLAT sort of full paths, which is not the
-        # order the daemon walks in -- see the walk-order note on {Grep}. It
-        # stays flat deliberately: changing it would change which matches
-        # today's callers get back from a capped search.
-        def files_under(path)
-          return [path] if File.file?(path)
-
-          Dir.glob(File.join(path, "**", "*"), File::FNM_DOTMATCH)
-             .reject { |entry| skip?(entry) }
-             .select { |entry| File.file?(entry) }
-             .sort
-        end
-
-        # `**` with FNM_DOTMATCH visits every dotfile, matching {ListFiles}'
-        # convention, but also "." and ".." and anything under ".git".
-        def skip?(entry)
-          entry.split("/").intersect?(%w[. .. .git])
-        end
-
         def each_matching_line(file, regex)
-          File.foreach(file).with_index(1) { |line, line_no| yield(line_no, line.chomp) if regex.match?(line) }
-        rescue ArgumentError, SystemCallError, IOError
-          # Invalid encoding, or a file that vanished or denies read between
-          # the walk and here -- skipped silently, the way a real grep skips
-          # what it cannot read rather than aborting over one bad file. Matches
-          # already yielded are downstream: this ends the FILE, not the search.
+          File.foreach(file, encoding: Encoding::UTF_8).with_index(1) do |line, line_no|
+            yield(line_no, Line.text(line.chomp)) if Line.match?(regex, line)
+          end
+        rescue SystemCallError, IOError
+          # A file that vanished or denies read between the walk and here --
+          # skipped silently, the way a real grep skips what it cannot read
+          # rather than aborting over one bad file. Matches already yielded are
+          # downstream: this ends the FILE, not the search.
           nil
         end
       end
@@ -151,7 +231,8 @@ module Lain
           rows = reply.fetch("matches").map do |match|
             [under_root ? match.fetch("path") : input.path, match.fetch("line_number"), match.fetch("line")]
           end
-          Tool::Bounds::Found.new(rows:, capped: reply.fetch("capped"))
+          # The daemon's walk reports no skipped names, so this arm writes none.
+          Searched.new(found: Tool::Bounds::Found.new(rows:, capped: reply.fetch("capped")), notices: [])
         end
 
         private
@@ -202,9 +283,11 @@ module Lain
           "Backreferences and lookaround are not supported -- write a plain " \
           "regular expression, with no (?=...), (?<=...) or \\1. Returns " \
           "matching lines as file:line plus the line text. Given a directory, " \
-          "searches recursively, skipping .git and any file that cannot be " \
-          "read as text. Output is capped at #{MAX_MATCHES} matches; a capped " \
-          "result says so explicitly rather than truncating silently. No " \
+          "searches recursively, skipping .git. A line that is not valid UTF-8 " \
+          "comes back with each invalid byte written as \\xNN; a file whose name " \
+          "is not valid UTF-8 is skipped and counted. Output is capped at " \
+          "#{MAX_MATCHES} matches; a capped result says so explicitly rather " \
+          "than truncating silently. No " \
           "matches is an ok result naming the pattern, not an error -- and " \
           "not an empty string."
       end
@@ -251,12 +334,18 @@ module Lain
         Tool::Result.error(error.message)
       end
 
-      def format_matches(found, input)
-        return self.class.no_matches_message(input.pattern, input.path) if found.rows.empty?
+      # A skipped name is reported beside the no-match sentence too: "no
+      # matches" alone claims files nobody searched.
+      def format_matches(searched, input)
+        [*matches(searched.found, input), *searched.notices].join("\n")
+      end
+
+      def matches(found, input)
+        return [self.class.no_matches_message(input.pattern, input.path)] if found.rows.empty?
 
         lines = found.rows.map { |file, line_no, line| "#{file}:#{line_no}:#{line}" }
         lines << WALK_CAP.notice("matches") if found.capped
-        lines.join("\n")
+        lines
       end
     end
   end

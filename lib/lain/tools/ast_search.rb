@@ -99,8 +99,9 @@ module Lain
 
         language = input.language.downcase.to_sym
         patterns = resolve_patterns(input, language)
-        found = capped_matches(path, input.path, language, patterns)
-        Tool::Result.ok(RESULT_FORMATTER.call(found, patterns:, path: input.path))
+        files = files_under(path, language)
+        found = capped_matches(files, input.path, language, patterns)
+        Tool::Result.ok(RESULT_FORMATTER.call(found, patterns:, path: input.path, notices: files.notices))
       # `EncodingError` rides with the rest despite NOT being a Lain::Error:
       # the ext refuses a source it would have to transcode, and Ruby's own
       # class is what comes back. {#each_structural_match} has already named the
@@ -115,8 +116,8 @@ module Lain
       # {WALK_CAP} owns the one-more-than-the-limit pull, so this stays a
       # single delegation -- the discipline of parsing no file past what the
       # cap needs lives on {Tool::Bounds::WalkCap#apply}, not here.
-      def capped_matches(path, display, language, patterns)
-        WALK_CAP.apply(deduplicate(search(path, display, language, patterns)))
+      def capped_matches(files, display, language, patterns)
+        WALK_CAP.apply(deduplicate(search(files, display, language, patterns)))
       end
 
       # The two rules {Tool::FileTarget} cannot own, because they are about
@@ -153,20 +154,15 @@ module Lain
         matches.lazy.select { |label, line, _text, _captures| seen.add?([label, line]) }
       end
 
-      # An Enumerator, for {Grep#search}'s reason: the MAX_MATCHES+1 cap stops
-      # walking the moment it has enough, rather than matching every file under
-      # `path` before discarding most of the result.
-      #
-      # A DIRECTORY target labels each hit relative to the walked root; a
-      # SINGLE-FILE target labels its hits with the model's own spelling, so a
-      # relative `foo.rb` stays `foo.rb:1:` rather than leaking the resolved
-      # absolute path.
-      def search(path, display, language, patterns)
-        root = path if File.directory?(path)
+      # An Enumerator, for {Grep::RubySearch}'s reason: the MAX_MATCHES+1 cap
+      # stops parsing the moment it has enough, rather than matching every file
+      # under `path` before discarding most of the result. Labels follow
+      # {Grep::Files#label}.
+      def search(files, display, language, patterns)
         matcher = Structural::Matcher.new
         Enumerator.new do |yielder|
-          files_under(path, language).each do |file|
-            label = root ? file.delete_prefix("#{root}/") : display
+          files.readable.each do |file|
+            label = files.label(file, display)
             each_structural_match(matcher, file, language, patterns) do |line_no, text, captures|
               yielder << [label, line_no, text, captures]
             end
@@ -174,15 +170,12 @@ module Lain
         end
       end
 
+      # {Grep}'s walk, so a name that is not UTF-8 is skipped and counted the
+      # same way -- but only among this language's files, since a name the walk
+      # would never have parsed is not one it skipped.
       def files_under(path, language)
-        return [path] if File.file?(path)
-
         extensions = EXTENSIONS[language]
-        Dir.glob(File.join(path, "**", "*"), File::FNM_DOTMATCH)
-           .reject { |entry| skip?(entry) }
-           .select { |entry| File.file?(entry) }
-           .select { |entry| language_file?(entry, extensions) }
-           .sort
+        Grep::Files.under(path, keep: ->(entry) { language_file?(entry, extensions) })
       end
 
       # A language with no {EXTENSIONS} entry falls back to searching EVERY
@@ -191,12 +184,6 @@ module Lain
         return true unless extensions
 
         extensions.include?(File.extname(entry).delete_prefix("."))
-      end
-
-      # Matches {Grep#skip?}: "." and ".." and anything under ".git" are never
-      # content worth searching.
-      def skip?(entry)
-        entry.split("/").intersect?(%w[. .. .git])
       end
 
       def each_structural_match(matcher, file, language, patterns)
@@ -208,7 +195,7 @@ module Lain
         end
       rescue ArgumentError, SystemCallError, IOError
         # A file that vanished or denies read between the walk and here --
-        # skipped silently, same as {Grep#each_matching_line}. A
+        # skipped silently, same as {Grep::RubySearch}. A
         # {Structural::Matcher::BadPattern} is a DIFFERENT class and is
         # deliberately NOT rescued here: it must escape to {#perform}'s rescue,
         # naming the bad pattern, not be swallowed as if this file were merely
@@ -241,15 +228,22 @@ module Lain
 
         # `found` is {#capped_matches}'s already-capped {Tool::Bounds::Found}
         # -- the cap itself is `@walk_cap`'s job, not this method's.
-        def call(found, patterns:, path:)
-          return "no matches for #{patterns.join(" / ").inspect} under #{path}" if found.rows.empty?
-
-          lines = found.rows.map { |match| format_line(*match) }
-          lines << @walk_cap.notice("matches") if found.capped
-          lines.join("\n")
+        # `notices` are the walk's own trailers, reported beside a no-match
+        # sentence as much as beside rows: "no matches" alone claims files
+        # nobody parsed.
+        def call(found, patterns:, path:, notices:)
+          [*body(found, patterns, path), *notices].join("\n")
         end
 
         private
+
+        def body(found, patterns, path)
+          return ["no matches for #{patterns.join(" / ").inspect} under #{path}"] if found.rows.empty?
+
+          lines = found.rows.map { |match| format_line(*match) }
+          lines << @walk_cap.notice("matches") if found.capped
+          lines
+        end
 
         def format_line(file, line_no, text, captures)
           return "#{file}:#{line_no}:#{text}" if captures.empty?

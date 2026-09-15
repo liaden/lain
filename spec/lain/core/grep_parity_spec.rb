@@ -26,7 +26,7 @@ require "tmpdir"
 # and that is not a paradox: a parity example asserts the two arms AGREE, which
 # a core arm secretly running the in-process walk satisfies perfectly. Measured
 # -- ignoring the injected client entirely (`@search = RubySearch.new`) reddens
-# 5 of these 15 examples, and all 5 are witnesses. So the divergences are the
+# 5 of these 16 examples, and all 5 are witnesses. So the divergences are the
 # only proof this block reached the daemon at all: delete them for being "not
 # parity" and the file passes green having proved nothing.
 #
@@ -251,6 +251,21 @@ RSpec.describe Lain::Tools::Grep, :core do
                                  ".hidden/deep.txt:1:needle under a dot directory")
     end
 
+    # This stood below as a divergence witness until the in-process walk
+    # stopped abandoning a file at its first line that is not UTF-8: it reads
+    # bytes now, so it searches past that line exactly as the wire's reader
+    # does. The invalid line itself matches nothing here, which keeps this a
+    # claim about reading PAST it -- how each arm spells a MATCHED invalid line
+    # is a separate question this example does not ask.
+    it "agrees on reading past a line that is not UTF-8" do
+      write("bad.txt", "needle one\nneedle two\n\xFF\xFE invalid\nneedle four\n")
+
+      ruby, core = differential("needle")
+
+      expect_identical(ruby, core)
+      expect(core.content).to eq("bad.txt:1:needle one\nbad.txt:2:needle two\nbad.txt:4:needle four")
+    end
+
     # POSTURE parity, not byte parity, and structurally so: the two engines
     # write their own parse errors. What must not differ is what the model
     # gets -- an error Result naming the pattern it sent, never a raise.
@@ -306,8 +321,8 @@ RSpec.describe Lain::Tools::Grep, :core do
     # NOT in the inherited divergence list, and found by measurement here:
     # "binary" means two different things. The daemon quits a file at its
     # first NUL byte (BinaryDetection::quit(0)) and discards the buffer it was
-    # in, so a match BEFORE the NUL is lost too; the in-process walk only ever
-    # skips a line it cannot decode, and a NUL decodes fine.
+    # in, so a match BEFORE the NUL is lost too; the in-process walk reads
+    # every line as bytes and skips none, and a NUL is a byte like any other.
     it "DIVERGES on NUL bytes: the wire drops the whole file, the in-process walk keeps its matches" do
       write("nul.txt", "needle before nul\nplain \x00 byte\nneedle after nul\n")
 
@@ -315,20 +330,6 @@ RSpec.describe Lain::Tools::Grep, :core do
 
       expect(ruby.content).to eq("nul.txt:1:needle before nul\nnul.txt:3:needle after nul")
       expect(core.content).to eq(%(grep: no matches for "needle" in #{tmpdir}))
-    end
-
-    # The mirror image of the case above, and the correction to the struck
-    # divergence #4: that measurement had no match AFTER the invalid line, so
-    # it read as agreement. With one, the paths part -- File.foreach raises on
-    # the undecodable line and the rescue ends the FILE, while the wire's
-    # reader transcodes lossily and searches straight through it.
-    it "DIVERGES on invalid UTF-8: the in-process walk abandons the file, the wire reads past it" do
-      write("bad.txt", "needle one\nneedle two\n\xFF\xFE invalid\nneedle four\n")
-
-      ruby, core = differential("needle")
-
-      expect(ruby.content).to eq("bad.txt:1:needle one\nbad.txt:2:needle two")
-      expect(core.content).to eq("bad.txt:1:needle one\nbad.txt:2:needle two\nbad.txt:4:needle four")
     end
 
     # Also not in that list. Dir.glob's File.file? follows the link, so the
@@ -342,6 +343,17 @@ RSpec.describe Lain::Tools::Grep, :core do
 
       expect(ruby.content).to eq("link.txt:1:needle target\nsym_target.txt:1:needle target")
       expect(core.content).to eq("sym_target.txt:1:needle target")
+    end
+
+    # The wire's UTF8 sink refuses a MATCHED line that is not UTF-8 and the
+    # daemon abandons the file there; the in-process walk escapes the bytes and reads on.
+    it "DIVERGES on a matched line that is not UTF-8: the in-process walk escapes it, the wire abandons the file" do
+      write("latin1.txt", "needle one\ncaf\xE9 needle\nneedle three\n")
+
+      ruby, core = differential("needle")
+
+      expect(ruby.content).to eq("latin1.txt:1:needle one\nlatin1.txt:2:caf\\xE9 needle\nlatin1.txt:3:needle three")
+      expect(core.content).to eq("latin1.txt:1:needle one")
     end
   end
 end

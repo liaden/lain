@@ -43,6 +43,27 @@ RSpec.describe Lain::Tools::Glob do
     expect(result.content).to match(/no match/i)
   end
 
+  # {Lain::Middleware::WithholdSecretPaths} withholds the unreadable row; the
+  # tool classifies nothing and must not raise over one.
+  it "returns every match without raising when one name is not UTF-8" do
+    touch("ok.rb")
+    File.binwrite(File.join(tmpdir, "bad\xFF.rb".b), "")
+
+    result = tool.call(pattern: "*.rb", path: tmpdir)
+
+    expect(result).not_to be_error
+    expect(result.content.b.split("\n")).to eq(["bad\xFF.rb".b, "ok.rb".b])
+  end
+
+  it "matches as UTF-8 text under a base spelled as BINARY bytes, the way Dir.pwd spells one under a C locale" do
+    touch("café.rb")
+
+    result = tool.call(pattern: "*.rb", path: tmpdir.b)
+
+    expect(result.content).to eq("café.rb")
+    expect(result.content.encoding).to eq(Encoding::UTF_8)
+  end
+
   it "describes no-matches as a named, non-error outcome" do
     expect(tool.description).to match(/no match/i)
   end

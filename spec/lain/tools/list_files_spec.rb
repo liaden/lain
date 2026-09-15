@@ -47,6 +47,33 @@ RSpec.describe Lain::Tools::ListFiles do
     expect(result.content.split("\n")).to include("sub/nested.txt", "top.txt")
   end
 
+  # The tool classifies nothing, so it hands a name that is not UTF-8 on as
+  # the bytes it is -- {Lain::Middleware::WithholdSecretPaths} withholds that
+  # one row. What the tool owns is the TAG: the listing is UTF-8 text however
+  # the directory was spelled, so the guard asks the right question of it.
+  describe "a name that is not UTF-8" do
+    before do
+      touch("ok.rb")
+      File.binwrite(File.join(tmpdir, "bad\xFF.rb".b), "")
+    end
+
+    it "lists every entry without raising, the unreadable name among them" do
+      result = tool.call(path: tmpdir)
+
+      expect(result).not_to be_error
+      expect(result.content.b.split("\n")).to eq(["bad\xFF.rb".b, "ok.rb".b])
+    end
+  end
+
+  it "lists as UTF-8 text a directory spelled as BINARY bytes, the way Dir.pwd spells one under a C locale" do
+    touch("café.rb")
+
+    result = tool.call(path: tmpdir.b)
+
+    expect(result.content).to eq("café.rb")
+    expect(result.content.encoding).to eq(Encoding::UTF_8)
+  end
+
   it "reports a missing directory as an error Result rather than raising" do
     missing = File.join(tmpdir, "nope")
     result = tool.call(path: missing)

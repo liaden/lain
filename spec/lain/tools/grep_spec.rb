@@ -123,7 +123,7 @@ RSpec.describe Lain::Tools::Grep do
     expect(result.content).to include("real.rb:1:")
   end
 
-  it "skips unreadable (binary) content rather than raising" do
+  it "reads binary content as bytes rather than raising" do
     write("binary.dat", (0..255).map(&:chr).join)
     write("text.rb", "needle\n")
 
@@ -131,6 +131,130 @@ RSpec.describe Lain::Tools::Grep do
 
     expect(result.ok?).to be(true)
     expect(result.content).to include("text.rb:1:")
+  end
+
+  describe "a name that is not UTF-8" do
+    before do
+      File.binwrite(File.join(tmpdir, "bad\xFF.rb".b), "needle\n")
+      write("good.rb", "needle\n")
+    end
+
+    it "searches the readable files and counts the one it skipped" do
+      result = tool.call(pattern: "needle", path: tmpdir)
+
+      expect(result).not_to be_error
+      expect(result.content.split("\n")).to eq(["good.rb:1:needle", "1 file skipped: unreadable name"])
+    end
+
+    # "No matches" alone would read as "nothing under here says that", which
+    # a file nobody searched cannot support.
+    it "says so beside the no-match sentence too" do
+      result = tool.call(pattern: "zzz", path: tmpdir)
+
+      expect(result.content.split("\n"))
+        .to eq([described_class.no_matches_message("zzz", tmpdir), "1 file skipped: unreadable name"])
+    end
+
+    it "counts in the plural" do
+      File.binwrite(File.join(tmpdir, "worse\xFE.rb".b), "needle\n")
+
+      expect(tool.call(pattern: "needle", path: tmpdir).content).to end_with("\n2 files skipped: unreadable name")
+    end
+
+    it "does not count an unreadable name under .git, which is never searched" do
+      FileUtils.mkdir_p(File.join(tmpdir, ".git"))
+      File.binwrite(File.join(tmpdir, ".git", "obj\xFF".b), "needle\n")
+
+      expect(tool.call(pattern: "needle", path: tmpdir).content).to end_with("\n1 file skipped: unreadable name")
+    end
+  end
+
+  # What is unreadable is a NAME the model would be shown, and a label is
+  # relative to the root: a project whose own directory is not UTF-8 prints
+  # every label as ordinary text, so no file in it is skipped.
+  describe "a project under a directory whose name is not UTF-8" do
+    it "returns the match and skips nothing" do
+      project = File.join(tmpdir, "proj\xE9".b)
+      FileUtils.mkdir_p(project)
+      File.write(File.join(project, "ok.rb"), "one\ntwo\nzzz\n")
+      call = Lain::Tool::Invocation.new(
+        context: Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: project, env: {}))
+      )
+
+      result = tool.call({ pattern: "zzz", path: "." }, call)
+
+      expect(result.content).to eq("ok.rb:3:zzz")
+    end
+  end
+
+  describe "a matched line that is not UTF-8" do
+    it "returns it with each invalid byte escaped as text" do
+      File.binwrite(File.join(tmpdir, "latin1.txt"), "caf\xE9 zzzmarker\nnothing\n".b)
+      write("utf8.txt", "zzzmarker\n")
+
+      result = tool.call(pattern: "zzzmarker", path: tmpdir)
+
+      expect(result).not_to be_error
+      expect(result.content).to eq("latin1.txt:1:caf\\xE9 zzzmarker\nutf8.txt:1:zzzmarker")
+      expect(result.content).to be_valid_encoding
+    end
+
+    it "escapes a truncated sequence byte by byte" do
+      File.binwrite(File.join(tmpdir, "cut.txt"), "a\xE3\x81 needle\n".b)
+
+      expect(tool.call(pattern: "needle", path: tmpdir).content).to eq("cut.txt:1:a\\xE3\\x81 needle")
+    end
+
+    it "reads the rest of the file past a line that is not UTF-8" do
+      File.binwrite(File.join(tmpdir, "bad.txt"), "needle one\n\xFF\xFE invalid\nneedle three\n".b)
+
+      expect(tool.call(pattern: "needle", path: tmpdir).content).to eq("bad.txt:1:needle one\nbad.txt:3:needle three")
+    end
+
+    # The pattern is matched against the BYTES, so the escape is display only:
+    # searching for the escape's own spelling finds nothing.
+    it "does not match a pattern against the escape it printed" do
+      File.binwrite(File.join(tmpdir, "latin1.txt"), "caf\xE9\n".b)
+
+      expect(tool.call(pattern: "xE9", path: tmpdir).content).to eq(described_class.no_matches_message("xE9", tmpdir))
+    end
+
+    # One stray byte must not change how the line's VALID characters match:
+    # `.` is still one character of `é`, never one of its two bytes.
+    it "matches the valid characters of such a line as characters" do
+      File.binwrite(File.join(tmpdir, "stray.txt"), "café \xFF zzz\n".b)
+
+      expect(tool.call(pattern: "caf. ", path: tmpdir).content).to eq("stray.txt:1:café \\xFF zzz")
+    end
+
+    # A pattern with a non-ASCII character is a UTF-8 regexp, which Ruby
+    # refuses to run against BINARY bytes at all.
+    it "still searches such a line with a non-ASCII pattern, rather than raising" do
+      File.binwrite(File.join(tmpdir, "mixed.txt"), "caf\xE9 naïve\n".b)
+
+      result = tool.call(pattern: "naïve", path: tmpdir)
+
+      expect(result).not_to be_error
+      expect(result.content).to eq("mixed.txt:1:caf\\xE9 naïve")
+    end
+  end
+
+  # Under LC_ALL=C a bare read tags every line US-ASCII, so a UTF-8 file's
+  # first non-ASCII line fails to decode and the file's remaining matches were
+  # dropped without a word. The mechanism, not the locale, is what is pinned.
+  it "returns a UTF-8 line when the default external encoding is US-ASCII" do
+    write("accented.txt", "café needle\n")
+    previous = Encoding.default_external
+    Encoding.default_external = Encoding::US_ASCII
+
+    begin
+      result = tool.call(pattern: "needle", path: tmpdir)
+    ensure
+      Encoding.default_external = previous
+    end
+
+    expect(result.content).to eq("accented.txt:1:café needle")
+    expect(result.content.encoding).to eq(Encoding::UTF_8)
   end
 
   it "reports a missing path as an error Result rather than raising" do

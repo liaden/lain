@@ -66,7 +66,14 @@ module Lain
       def perform(input, invocation)
         # Entries stay relative to the RESOLVED root, so the model-visible
         # listing reads the same however the model spelled the path.
-        path = target(invocation, input.path)
+        #
+        # Read as UTF-8 whatever tag it resolved with -- `Dir.pwd` answers
+        # BINARY under a C locale -- because the listing is text the model
+        # reads, and {Middleware::WithholdSecretPaths} has to be able to call a
+        # name that is not UTF-8 malformed, which it cannot ask of a BINARY
+        # string, whose every byte is valid. It also rebuilds {.empty_message}
+        # from a UTF-8 base, and `inspect` spells the two tags differently.
+        path = String.new(target(invocation, input.path), encoding: Encoding::UTF_8)
         problem = problem_with(path, expecting: :directory)
         return Tool::Result.error(problem) if problem
 

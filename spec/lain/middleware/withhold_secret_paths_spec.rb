@@ -352,6 +352,70 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # A name whose bytes are not UTF-8 cannot be classified, so it fails closed --
+  # but as ONE row. Splitting the listing as text raised on the first such name,
+  # and the rescue then withheld every ordinary row beside it, naming only
+  # `(ArgumentError)`.
+  describe "a name that is not UTF-8" do
+    let(:bad_name) { "bad\xFF.rb".b }
+
+    before do
+      write("mixed/ok.rb", "zzzmarker\n")
+      File.binwrite(File.join(dir, "mixed".b, bad_name), "zzzmarker\n")
+    end
+
+    it "withholds exactly that row of a list_files listing" do
+      env = list("mixed")
+
+      expect(env.fetch(:result)).not_to be_error
+      expect(content(env).split("\n")).to eq(["ok.rb", "1 path withheld (malformed)"])
+    end
+
+    it "withholds exactly that row of a glob" do
+      env = glob("*", path: File.join(dir, "mixed"))
+
+      expect(env.fetch(:result)).not_to be_error
+      expect(content(env).split("\n")).to eq(["ok.rb", "1 path withheld (malformed)"])
+    end
+
+    # `Dir.pwd` answers a BINARY string under a C locale, and every byte is
+    # valid BINARY -- so a check that asked the string's own encoding would
+    # call this name readable and hand it on. The question is whether it is
+    # UTF-8, which is what the model reads.
+    it "withholds it when the base arrives spelled as BINARY bytes" do
+      env = list(File.join(dir, "mixed").b)
+
+      expect(env.fetch(:result)).not_to be_error
+      expect(content(env).split("\n")).to eq(["ok.rb", "1 path withheld (malformed)"])
+    end
+
+    # A row written here rather than by a real grep, since neither arm emits
+    # one: the parser has to survive it anyway, because this class is the
+    # boundary and cannot vouch for what every future producer of a row does.
+    it "withholds a grep row whose bytes are not UTF-8, and keeps the rest" do
+      env = grepping("keep.rb:1:zzzmarker\n#{bad_name}:1:zzzmarker".b.force_encoding(Encoding::UTF_8))
+
+      expect(env.fetch(:result)).not_to be_error
+      expect(content(env).split("\n")).to eq(["keep.rb:1:zzzmarker", "1 match withheld (malformed)"])
+    end
+  end
+
+  describe "a grep match whose line is not UTF-8" do
+    before do
+      write("latin/utf8.txt", "zzzmarker in UTF-8\n")
+      File.binwrite(File.join(dir, "latin", "latin1.txt"), "caf\xE9 zzzmarker\n".b)
+    end
+
+    it "returns the line with its byte escaped, and the result commits" do
+      env = grep("zzzmarker", path: "latin")
+      block = { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => content(env), "is_error" => false }
+
+      expect(env.fetch(:result)).not_to be_error
+      expect(content(env).split("\n")).to eq(['latin1.txt:1:caf\xE9 zzzmarker', "utf8.txt:1:zzzmarker in UTF-8"])
+      expect { Lain::Timeline.empty.commit(role: :user, content: [block]) }.not_to raise_error
+    end
+  end
+
   describe "what it does not touch" do
     # The `12:34` boundary the split rule documents: a match row always carries
     # a TEXT field after its line number, so two fields are not one. Without

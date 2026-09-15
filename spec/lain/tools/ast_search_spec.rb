@@ -206,6 +206,41 @@ RSpec.describe Lain::Tools::AstSearch do
     end
   end
 
+  describe "a file name that is not UTF-8" do
+    before do
+      File.binwrite(File.join(tmpdir, "bad\xFF.rb".b), "def total(items)\nend\n")
+      write("good.rb", "def total(items)\nend\n")
+    end
+
+    let(:pattern) { "def $NAME($$$A)" }
+
+    it "searches the readable files and counts the one it skipped" do
+      result = tool.call(pattern:, language: "ruby", path: tmpdir)
+
+      expect(result).not_to be_error
+      expect(result.content.lines.map(&:chomp).first).to start_with("good.rb:1:def total(items)")
+      expect(result.content).to end_with("\n1 file skipped: unreadable name")
+      expect(result.content).to be_valid_encoding
+    end
+
+    it "says so beside the no-matches sentence too" do
+      result = tool.call(pattern: "class $NAME", language: "ruby", path: tmpdir)
+
+      expect(result).not_to be_error
+      expect(result.content).to match(/\Ano matches .*\n1 file skipped: unreadable name\z/)
+    end
+
+    # The walk only ever reads this language's files, so a name it would not
+    # have searched is not one it skipped.
+    it "does not count an unreadable name in another language" do
+      File.binwrite(File.join(tmpdir, "other\xFF.py".b), "def total(items):\n  pass\n")
+
+      result = tool.call(pattern:, language: "ruby", path: tmpdir)
+
+      expect(result.content).to end_with("\n1 file skipped: unreadable name")
+    end
+  end
+
   describe "resolving paths against the session WorkerEnv" do
     let(:pattern) { "def $NAME($$$A)" }
 
