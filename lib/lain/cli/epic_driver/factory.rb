@@ -152,7 +152,9 @@ module Lain
           # @param journal [#<<] where each landing's records go
           # @param epics [CLI::Epic] answers the epic's progress, read fresh
           # @param submit [EpicSubmit] re-checks the plan approval at land time
-          def initialize(slug:, root:, paths:, base:, config:, journal:, epics:, submit:)
+          # @param layout [TestLayout] the PROJECT's, never read from `root`: lain's
+          #   own checkout is cut by git, so a gitignored config never reaches it
+          def initialize(slug:, root:, paths:, base:, config:, journal:, epics:, submit:, layout:)
             @slug = slug
             @root = root
             @paths = paths
@@ -161,6 +163,7 @@ module Lain
             @journal = journal
             @epics = epics
             @submit = submit
+            @layout = layout
           end
 
           # @param issue_id [String] the issue whose work this is
@@ -179,7 +182,7 @@ module Lain
               plan: ->(issue) { @submit.ensure_plan_approved!(issue, @slug) },
               progress: -> { @epics.progress(@slug) },
               scribe: Lain::Epic::Scribe.new(epic_slug: @slug, journal: @journal),
-              queue:, layout: Lain::Config.test_layout(root: @root), landings: -> { landed_records }
+              queue:, layout: @layout, landings: -> { landed_records }
             )
           end
 
@@ -200,6 +203,165 @@ module Lain
 
           # FRESH per read, for {SessionJournals}' own reason: it caches its walk.
           def records(type) = SessionJournals.new(dir: @paths.sessions_dir, types: [type])
+        end
+
+        # Lain's own checkout of the epic's branch, which the landing queue
+        # merges in.
+        #
+        # LOCKED WHILE A RUN HOLDS IT, as a lease is ({Isolation::Worktree}):
+        # the add takes a lock naming this process in the same command. Every
+        # merge moves the checkout's HEAD, and judged unlocked such a checkout
+        # reads to `lain worktrees gc` as work folded into the branch, reaped
+        # while the queue stands in it. The run's end drops the lock, leaving
+        # a checkout gc may age out like any other; the next run cuts or
+        # re-locks it.
+        class LandingCheckout
+          # A chat that already stands on the epic's branch lands where it is,
+          # in the human's checkout, which is not lain's to lock.
+          InPlace = Data.define(:root) do
+            def release = nil
+          end
+
+          # @param repo_root [String] the project's repository
+          # @param path [String] where lain's own checkout stands
+          # @param branch [Isolation::WorkingBranch] `epic/<slug>`
+          # @param process_table [Isolation::LeaseLock::ProcessTable] names this
+          #   process in the lock, and judges a lock found standing
+          # @param shell_out_factory [#call] builds the git subprocess runner
+          def initialize(repo_root:, path:, branch:, process_table: Lain::Isolation::LeaseLock::ProcessTable.new,
+                         shell_out_factory: Lain::Shell::Out.public_method(:new))
+            @git = Lain::Isolation::Checkout.new(repo_root, shell_out_factory:)
+            @registry = Lain::Isolation::Worktree::Registry.new(repo_root:, shell_out_factory:)
+            @path = path
+            @branch = branch
+            @process_table = process_table
+            @shell_out_factory = shell_out_factory
+          end
+
+          # @return [String] the checkout the queue merges in
+          def root = @path
+
+          # @return [self] with the checkout standing on the branch, locked
+          # @raise [Error] when git will not add or lock it, or when something
+          #   else still holds it
+          def cut
+            standing? ? relock : add
+            self
+          end
+
+          # Only a lock this process wrote is dropped: one taken since by
+          # anybody else is theirs.
+          def release
+            @registry.unlock(@path) if registered.any? { |entry| entry.seal == reason }
+          end
+
+          private
+
+          # An earlier run's checkout is reused where it stands, so a chat
+          # driving its epic twice does not accumulate worktrees.
+          def standing?
+            Dir.exist?(@path) &&
+              Lain::Isolation::Checkout.new(@path, shell_out_factory: @shell_out_factory).symbolic_head == @branch.ref
+          end
+
+          def add
+            FileUtils.mkdir_p(File.dirname(@path))
+            refused!(@git.run("worktree", "add", "--lock", "--reason", reason, @path, @branch.name),
+                     "could not check out #{@branch.name} at #{@path} to land on")
+          end
+
+          # git refuses to lock a locked tree, so a lock that holds nothing --
+          # a crashed run's, a retention's, or this process's own -- is taken
+          # down first, and one that still holds is refused rather than broken.
+          def relock
+            registered.each { |entry| taken!(entry) }
+            refused!(@registry.lock(@path, reason), "could not lock its landing checkout at #{@path}")
+          end
+
+          # Taken over by {Isolation::Worktree::Registry#claim}, a compare-and-
+          # swap against the lock as it was judged: two runs starting together
+          # after a crash both judge the dead lock, and without the swap the
+          # second would unlock the first one's live lock and both would merge
+          # in one checkout. Between the claim and `worktree lock` the checkout
+          # stands unlocked, and a gc there costs this run a loud refusal.
+          def taken!(entry)
+            unheld!(entry)
+            return if @registry.claim(entry)
+
+            raise Lain::Error, "lain's landing checkout at #{@path} was taken by another run while this one judged " \
+                               "its lock, so this run will not merge in it"
+          end
+
+          def unheld!(entry)
+            return if entry.seal == reason || !entry.lock.held?(@process_table)
+
+            raise Lain::Error, "lain's landing checkout at #{@path} is #{entry.lock.why(@process_table)}, so this " \
+                               "run will not merge in it -- stop whatever holds it, or `git worktree unlock` it " \
+                               "once nothing does"
+          end
+
+          def registered
+            spelled = Lain::Project::Resolver.spellings(@path, File)
+            @registry.entries.select { |entry| Lain::Project::Resolver.spellings(entry.path, File).intersect?(spelled) }
+          end
+
+          def reason = @reason ||= @process_table.current.reason
+
+          def refused!(shell, what)
+            return if shell.exitstatus.zero?
+
+            raise Lain::Error, "lain #{what}, so nothing was merged: #{shell.stderr.to_s.strip}"
+          end
+        end
+
+        # Whether a retired tip carries nothing past the red step's commit.
+        #
+        # BY THE NET DIFF, NOT BY NAME OR BY COMMIT. Retirement rebases an
+        # actor's branch onto the epic's tip, so a sibling that landed
+        # meanwhile hands the red commit back under a new SHA; and a branch's
+        # history can hide work in a merge or show an empty commit as a
+        # change. What the tip would change on the epic is what counts: no
+        # work is every path it changes being one the red commit wrote, with
+        # the red commit's bytes.
+        class RedOnly
+          # @param git [Isolation::Checkout] the project's repository
+          # @param base [Isolation::WorkingBranch] `epic/<slug>`
+          def initialize(git:, base:)
+            @git = git
+            @base = base
+          end
+
+          # @param red [String] the red step's commit
+          # @param tip [String] the commit retirement anchored
+          # @return [Boolean]
+          # @raise [Error] when git cannot compare the two
+          def call(red, tip)
+            return true if red == tip
+
+            changed = paths("diff", "--name-only", "-z", "--no-renames", git!("merge-base", @base.ref, tip).strip, tip)
+            (changed - paths("diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", red)).empty? &&
+              unchanged?(red, tip, changed)
+          end
+
+          private
+
+          def paths(*) = git!(*).split("\0")
+
+          # Pathspecs from the top and taken literally: a project nested in a
+          # larger repository runs git from its own directory, and a file name
+          # is never a glob.
+          def unchanged?(red, tip, changed)
+            changed.empty? || @git.run("diff", "--quiet", red, tip, "--",
+                                       *changed.map { |path| ":(top,literal)#{path}" }).exitstatus.zero?
+          end
+
+          def git!(*args)
+            shell = @git.run(*args)
+            return shell.stdout if shell.exitstatus.zero?
+
+            raise Lain::Error, "git #{args.first} could not say whether the retired work goes past its red commit: " \
+                               "#{shell.stderr.strip}"
+          end
         end
 
         # @param mount [EpicMount, EpicMount::NoEpic] the seat's ONE mount
@@ -293,35 +455,54 @@ module Lain
         # which makes a retry after a failed run actually launch.
         def attempts = @attempts ||= method(:next_attempt)
 
+        # The landing checkout is held for exactly the run, and released by an
+        # `ensure` around the whole of it: a raise out of the fold, an Async
+        # stop of the task running it, and an untrapped signal all drop the
+        # lock on the way out, which no issue's rescue would. A chat's own
+        # traps swallow SIGINT and SIGTERM while a slash command runs, so from
+        # a chat nothing interrupts a run mid-way at all.
+        #
+        # The layout is resolved ONCE per run, so every issue's plan, red step
+        # and landing are judged under the same one.
+        #
         # @param width [Integer] how many issues are carried at once
         # @param budget [Integer, nil] how many issues the whole run may land
         # @return [Run::Result]
         def run(width: Run::WIDTH, budget: nil)
-          Sync do |task|
-            fleet = supervisor.run(task)
-            begin
-              loop_over(fleet, width:, budget:).call
-            ensure
-              fleet.stop
+          holding(landing_checkout) do |checkout|
+            Sync do |task|
+              fleet = supervisor.run(task)
+              begin
+                loop_over(fleet, checkout, layout, width:, budget:).call
+              ensure
+                fleet.stop
+              end
             end
           end
         end
 
         private
 
-        def loop_over(fleet, width:, budget:)
-          Run.new(progress: -> { epics.progress(slug) }, plans: method(:plan_for), actors: actors(fleet),
-                  supervisor: fleet, gate:, landing:, width:, budget:, attempts:,
+        def holding(checkout)
+          yield checkout
+        ensure
+          checkout.release
+        end
+
+        def loop_over(fleet, checkout, layout, width:, budget:)
+          Run.new(progress: -> { epics.progress(slug) }, plans: ->(issue_id) { plan_for(issue_id, layout) },
+                  actors: actors(fleet, layout), supervisor: fleet, gate:, landing: landing(checkout, layout), width:,
+                  budget:, attempts:, red_only: RedOnly.new(git: parent, base: working_branch),
                   interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded)
         end
 
         def gate = Gate.new(submit:, slug:, journals: method(:signoffs))
 
         # The landing runs in LAIN'S OWN checkout, never the human's -- see
-        # {#landing_root}.
-        def landing
-          Landing.new(slug:, root: landing_root, paths: @paths, base: working_branch, config: settings,
-                      journal: record, epics:, submit:)
+        # {#landing_checkout}.
+        def landing(checkout, layout)
+          Landing.new(slug:, root: checkout.root, paths: @paths, base: working_branch, config: settings,
+                      journal: record, epics:, submit:, layout:)
         end
 
         # WHERE THE QUEUE MERGES. It refuses unless the checkout it works in
@@ -330,51 +511,38 @@ module Lain
         # ours to do, so lain cuts a worktree of its own, checked out on the
         # branch, beside the ones the actors lease. A chat that already stands
         # on the branch needs none, and lands where it is.
-        def landing_root
-          @landing_root ||= working_branch.current_in?(parent) ? @root : cut_landing
+        def landing_checkout
+          return LandingCheckout::InPlace.new(root: @root) if working_branch.current_in?(parent)
+
+          LandingCheckout.new(repo_root: @root, path: File.join(worktree_root, LANDING), branch: working_branch).cut
         end
 
-        def cut_landing
-          path = File.join(worktree_root, LANDING)
-          return path if standing_on?(path)
-
-          FileUtils.mkdir_p(File.dirname(path))
-          added = parent.run("worktree", "add", path, working_branch.name)
-          raise Lain::Error, refused_landing(path, added) unless added.exitstatus.zero?
-
-          path
-        end
-
-        # An earlier run's landing checkout is reused where it stands, so a
-        # chat driving its epic twice does not accumulate worktrees.
-        def standing_on?(path)
-          Dir.exist?(path) && checkout(path).symbolic_head == working_branch.ref
-        end
-
-        def refused_landing(path, shell)
-          "lain could not check out #{working_branch.name} at #{path} to land on, so nothing was merged: " \
-            "#{shell.stderr.to_s.strip}"
-        end
+        # THE PROJECT'S LAYOUT, from the project root. Every checkout this run
+        # works in -- an issue's lease, lain's landing checkout -- is cut by
+        # git, and a `.lain/config.toml` the project keeps out of history is in
+        # none of them: read there, the red step refused every issue and the
+        # landing guard checked nothing.
+        def layout = Lain::Config.test_layout(root: @root)
 
         # The issue's plan, as it stands now: approved, and declaring the one
         # source file its failing tests are written for.
-        def plan_for(issue_id)
+        def plan_for(issue_id, layout)
           submit.ensure_plan_approved!(issue_id, slug)
-          PlanSubject.read(@mount.home.plan(issue_id), layout: Lain::Config.test_layout(root: @root))
+          PlanSubject.read(@mount.home.plan(issue_id), layout:)
         end
 
-        def actors(fleet)
+        def actors(fleet, layout)
           lent = @optional.fetch(:actors)
           return lent.call(fleet) unless lent.nil?
 
           IssueActor.new(slug:, supervisor: fleet, subagent: @toolset_build.method(:epic_subagent),
-                         tests: issue_tests, renderer: @library.renderer, home: @mount.home,
+                         tests: issue_tests(layout), renderer: @library.renderer, home: @mount.home,
                          plan: ->(issue_id) { submit.ensure_plan_approved!(issue_id, slug) },
                          repo_root: @root, lanes: child_lanes)
         end
 
-        def issue_tests
-          IssueTests.new(renderer: @library.renderer, role_spawn: @toolset_build.role_spawn)
+        def issue_tests(layout)
+          IssueTests.new(renderer: @library.renderer, role_spawn: @toolset_build.role_spawn, layout:)
         end
 
         # The orchestrator's own children lease here, cut from the ISSUE's
@@ -401,9 +569,7 @@ module Lain
           @working_branch ||= Lain::Isolation::WorkingBranch.epic(slug, repo_root: @root)
         end
 
-        def parent = @parent ||= checkout(@root)
-
-        def checkout(dir) = Lain::Isolation::Checkout.new(dir)
+        def parent = @parent ||= Lain::Isolation::Checkout.new(@root)
 
         def worktree_root = IsolationBackend.worktree_root(@root, paths: @paths)
 
@@ -480,6 +646,11 @@ module Lain
 
         NOTHING_COMMITTED = "its actor settled having committed nothing, so there was no implementation to submit"
 
+        # The red step commits before the actor's first turn, so an actor that
+        # made no commit of its own retires with the red commit as its tip.
+        NO_WORK = "its actor settled having committed no work beyond its failing tests at %<sha>s, so there was " \
+                  "no implementation to submit"
+
         ANCHOR_REFUSED = "its work could not be anchored, so nothing was submitted"
 
         GATE_PARKED = "its implementation gate has not approved %<sha>s, so nothing landed"
@@ -500,6 +671,13 @@ module Lain
         # its own remedy already.
         REFUSED = "its landing was refused before anything merged, so its work is still anchored and the issue " \
                   "is untouched: %<why>s"
+
+        # The red-step judge by identity alone, for callers whose retired tips
+        # are never rebased. Blind to a rebase, so never a default: the Factory
+        # lends {Factory::RedOnly}.
+        module Identical
+          def self.call(red, tip) = red == tip
+        end
 
         # Asking one issue's gate, in a way a human can interrupt.
         #
@@ -632,8 +810,10 @@ module Lain
         # @param grading [#call] `call(issue_id, registration)`, judged between
         #   an actor settling and its retirement -- see {#settle_one}. The Null
         #   grades nothing, so an ordinary run is unchanged.
-        def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:,
-                       width: WIDTH, budget: nil, interrupt: -> { false }, attempts: nil, grading: Ungraded)
+        # @param red_only [#call] `call(red_sha, tip_sha)`, answering whether the
+        #   tip retirement anchored carries nothing past the red step's commit
+        def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width: WIDTH, budget: nil,
+                       interrupt: -> { false }, attempts: nil, grading: Ungraded)
           @progress = progress
           @plans = plans
           @actors = actors
@@ -642,6 +822,7 @@ module Lain
           @bounds = Bounds.new(width:, budget:, interrupt:)
           @attempts = attempts || ->(_issue_id) { 1 }
           @grading = grading
+          @red_only = red_only
           @asking = Asking.new(gate:, interrupt:)
         end
 
@@ -759,9 +940,12 @@ module Lain
         # retires as `nothing_to_do` and a refused anchor as `failed`, and both
         # carry a nil SHA -- so the one question worth asking is whether there is
         # a commit to gate at all. Submitting an empty implementation would put
-        # an address nobody can land in front of a human.
+        # an address nobody can land in front of a human, and so would
+        # submitting the red step's own commit: failing tests are not an
+        # implementation.
         def judge(entry, report)
           return reported(entry, unkept(report)) if report.sha.nil?
+          return reported(entry, format(NO_WORK, sha: report.sha)) if @red_only.call(entry.launch.tests.sha, report.sha)
 
           opened = @asking.call(entry.issue_id, sha: report.sha)
           return reported(entry, UNSETTLED) if opened == Asking::STOPPED
@@ -801,7 +985,9 @@ module Lain
           [Lain::Forge::LocalLanding::NotInFlight, Lain::Forge::LocalLanding::MisplacedTests,
            Lain::Forge::LocalLanding::AlreadyOnBranch, Lain::Forge::LocalLanding::Ambiguous,
            Lain::Isolation::LandingQueue::Refused, Lain::Approval::Gate::NotApproved,
-           EpicSubmit::PlanNotApproved].any? { |refusal| error.is_a?(refusal) }
+           Lain::Approval::SignoffQueue::UnreadableRecord, EpicSubmit::PlanNotApproved].any? do |refusal|
+            error.is_a?(refusal)
+          end
         end
 
         def stood(moved)
@@ -835,12 +1021,15 @@ module Lain
         # @param renderer [Skill::Renderer] renders the test-writing scaffold
         # @param role_spawn [Skill::RoleSpawn] the run's role spawn; its
         #   test_engineer child is lent the held checkout rather than leasing one
+        # @param layout [TestLayout] the project's, resolved from its root: the
+        #   held checkout is cut by git and carries no gitignored config
         # @param harness [#call] `root -> #run`, the suite runner over a checkout
         # @param shell_out_factory [#call] builds the git subprocess runner
-        def initialize(renderer:, role_spawn:, harness: Lain::Grader::TestHarness.public_method(:new),
+        def initialize(renderer:, role_spawn:, layout:, harness: Lain::Grader::TestHarness.public_method(:new),
                        shell_out_factory: Lain::Shell::Out.public_method(:new))
           @renderer = renderer
           @role_spawn = role_spawn
+          @layout = layout
           @harness = harness
           @shell_out_factory = shell_out_factory
         end
@@ -852,24 +1041,23 @@ module Lain
         # @param level [String, nil] a level the layout declares; its default
         #   level when nil
         # @return [Red]
-        # @raise [Error] when the checkout declares no test layout, or declares
+        # @raise [Error] when the project declares no test layout, or declares
         #   no level whose tests mirror their sources; when the test_engineer
         #   child leaves no tests the layout accepts; when the subject's tests
         #   already pass before any work is done; or when git refuses the
         #   failing tests' commit
         def call(criteria, worker_env, subject:, level: nil)
-          guard = Lain::TestLayout::Guard.new(layout: declared(worker_env.cwd), root: worker_env.cwd)
+          guard = Lain::TestLayout::Guard.new(layout: declared, root: worker_env.cwd)
           record = generated(criteria, worker_env, guard, subject:, level: level || default_level(guard.layout))
           Red.new(record:, run: failing(record, worker_env), sha: commit(worker_env.cwd, record))
         end
 
         private
 
-        def declared(root)
-          layout = Lain::Config.test_layout(root:)
-          return layout if layout.in_force?
+        def declared
+          return @layout if @layout.in_force?
 
-          raise Error, "#{root} declares no test layout, so the issue's failing tests have nowhere the " \
+          raise Error, "this project declares no test layout, so the issue's failing tests have nowhere the " \
                        "layout guard would accept them: add a [tests] table to .lain/config.toml naming " \
                        "its preset and source roots"
         end

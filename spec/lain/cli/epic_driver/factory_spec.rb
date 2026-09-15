@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "mixlib/shellout"
+require "socket"
 require "tmpdir"
 
 # An actor, as the Supervisor and the anchor-only retirement see one.
@@ -18,37 +19,46 @@ class FactorySpecActor
   def address = "factory-spec"
 end
 
-# Scripted actors: each leases a real checkout from the epic's own supervisor
-# and commits in it, which is what gives the loop something real to anchor,
-# gate and land.
+# Scripted actors: each leases a real checkout from the epic's own supervisor,
+# makes a red commit there the way the red step does, and commits its work on
+# top -- which is what gives the loop something real to anchor, gate and land.
+# An issue named in `idle` commits nothing past its red commit.
 class FactorySpecActors
   Launch = Data.define(:actor, :worker_id, :branch, :tests)
 
-  def initialize(fleet, log, repo, scrub)
+  def initialize(fleet, log, repo, scrub, files: {}, idle: [])
     @fleet = fleet
     @log = log
     @repo = repo
     @scrub = scrub
+    @files = files
+    @idle = idle
   end
 
   def call(issue_id, subject:, level: nil, attempt: 1) # rubocop:disable Lint/UnusedMethodArgument
     @log << [:launched, issue_id, attempt, git(@repo, "rev-parse", "refs/heads/epic/demo")]
+    red = nil
     actor = @fleet.adopt(role: "factory-spec", worker_id: "issue.demo.#{issue_id}.#{attempt}") do |worker_env|
-      commit(worker_env, issue_id)
+      @log << [:leased, issue_id, git(worker_env.cwd, "rev-parse", "HEAD")]
+      red = commit(worker_env.cwd, "red for #{issue_id}", "red_#{issue_id}.txt" => "red for #{issue_id}\n")
+      commit(worker_env.cwd, "work for #{issue_id}", "#{issue_id}.txt" => "work for #{issue_id}\n", **@files) unless
+        @idle.include?(issue_id)
       FactorySpecActor.new(worker_env)
     end
     Launch.new(actor:, worker_id: "issue.demo.#{issue_id}.#{attempt}", branch: "lain/issue/demo/#{issue_id}",
-               tests: nil)
+               tests: Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: red))
   end
 
   private
 
-  def commit(worker_env, issue_id)
-    dir = worker_env.cwd
-    @log << [:leased, issue_id, git(dir, "rev-parse", "HEAD")]
-    File.write(File.join(dir, "#{issue_id}.txt"), "work for #{issue_id}\n")
+  def commit(dir, message, files)
+    files.each do |path, body|
+      FileUtils.mkdir_p(File.dirname(File.join(dir, path)))
+      File.write(File.join(dir, path), body)
+    end
     git(dir, "add", "-A")
-    git(dir, "commit", "-q", "-m", "work for #{issue_id}")
+    git(dir, "commit", "-q", "-m", message)
+    git(dir, "rev-parse", "HEAD")
   end
 
   def git(dir, *)
@@ -86,6 +96,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   let(:home) { Lain::Epic::Home.resolve(config:, paths:, root: repo, slug: "demo") }
   let(:log) { [] }
   let(:scrub) { Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }
+  let(:provider) { Lain::Provider::Mock.new(responses: []) }
 
   def repo = File.join(@root, "repo")
 
@@ -140,7 +151,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def unbuilt
     Lain::CLI::Wiring::ToolsetBuild.new(
-      backend:, provider: Lain::Provider::Mock.new(responses: []), chronicle: Lain::CLI::Chronicle::Null.new,
+      backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new,
       options: {}, supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
       journal: Lain::Channel::Null.instance, library: backend.library, epic: Lain::CLI::EpicMount::NoEpic,
       root: repo, switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
@@ -166,9 +177,34 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
-  def driven(width: 2, grading: nil)
-    factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub) },
+  def driven(width: 2, grading: nil, files: {}, idle: [])
+    factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub, files:, idle:) },
                         record: chronicle, grading:).run(width:)
+  end
+
+  def worktree_root = Lain::CLI::IsolationBackend.worktree_root(repo, paths:)
+
+  def landing_checkout = File.join(worktree_root, described_class::LANDING)
+
+  # The lock line git reports for a registered checkout, "" when it holds none.
+  def lock_of(dir)
+    git(repo, "worktree", "list", "--porcelain").split("\n\n")
+                                                .find { |entry| entry.start_with?("worktree #{dir}\n") }
+                                                .to_s[/^locked.*$/].to_s
+  end
+
+  # The project's config, untracked and ignored the way a project keeping its
+  # lain settings out of history would: no checkout git cuts carries it.
+  def ignore_config
+    File.write(File.join(repo, ".gitignore"), ".lain/config.toml\n")
+    git(repo, "rm", "-q", "--cached", ".lain/config.toml")
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-q", "-m", "keep the lain config out of history")
+  end
+
+  def journaled_decisions
+    Lain::Journal.records(File.readlines(File.join(paths.sessions_dir, "chat.ndjson")),
+                          type: Lain::Approval::SignoffQueue::JOURNAL_TYPE).to_a
   end
 
   # What a chat lends the epic it is seated in. The grading hook has to ride
@@ -357,6 +393,124 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(graded.map { |row| row[:work] }).to all(be(true))
     end
 
+    # THE LAYOUT IS THE PROJECT'S. Lain's landing checkout is cut by git, so a
+    # gitignored .lain/config.toml never reaches it -- and read there, the
+    # layout guard checked nothing and a misplaced test landed.
+    it "refuses at landing a misplaced test, under a layout only the gitignored project config declares" do
+      ignore_config
+      write_epic([issue("a")])
+      approve_plan("a")
+
+      result = driven(width: 1, files: { "spec/order_extra_spec.rb" => "RSpec.describe Order do\nend\n" })
+
+      expect(result.landed).to be_empty
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to include("spec/order_extra_spec.rb", "spec/unit/models/order_spec.rb")
+      expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo")).not_to include("order_extra_spec")
+    end
+
+    # A live landing checkout is lain's to merge in, and the lock is how gc
+    # outside this process knows it: judged unlocked, a checkout whose HEAD the
+    # queue moved reads as work folded into the epic, and is reaped mid-run.
+    it "holds its landing checkout locked while it runs, so gc keeps it, and releases it when the run ends" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      judged = []
+      seam = lambda do |_issue_id, _row|
+        judged.concat(Lain::Isolation::Gc.new(repo_root: repo, root: worktree_root, retain_days: 7).call.to_a)
+      end
+
+      result = driven(width: 1, grading: seam)
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      landing = judged.find { |record| record.name == landing_checkout }
+      expect(landing).to have_attributes(action: :kept,
+                                         reason: "leased by live process #{Process.pid} on #{Socket.gethostname}")
+      expect(lock_of(landing_checkout)).to eq("")
+    end
+
+    # Ctrl-C arrives as an Interrupt wherever the run happens to be, which no
+    # issue's rescue catches: the lock is dropped on the way out all the same.
+    it "releases its landing checkout's lock when the run is interrupted" do
+      write_epic([issue("a")])
+      approve_plan("a")
+
+      expect { driven(width: 1, grading: ->(*) { raise Interrupt }) }.to raise_error(Interrupt)
+      expect(Dir.exist?(landing_checkout)).to be(true)
+      expect(lock_of(landing_checkout)).to eq("")
+    end
+
+    it "reuses an earlier run's landing checkout, locking it again for the run that takes it" do
+      write_epic([issue("a"), issue("b")])
+      approve_plan("a")
+      locks = []
+      seam = ->(*) { locks << lock_of(landing_checkout) }
+
+      driven(width: 1, grading: seam)
+      approve_plan("b")
+      driven(width: 1, grading: seam)
+
+      expect(locks.size).to eq(2)
+      expect(locks).to all(include("lain-lease pid=#{Process.pid}"))
+      expect(lock_of(landing_checkout)).to eq("")
+    end
+
+    # Retirement rebases an actor's branch onto the epic's tip, and at width 2
+    # a sibling can land first: the red commit comes back under a new SHA, so
+    # only its content can say the actor added nothing to it.
+    it "reports an issue that committed nothing past its red commit, even rebased past a sibling's landing" do
+      write_epic([issue("a"), issue("b")])
+      %w[a b].each { |id| approve_plan(id) }
+
+      result = driven(width: 2, idle: ["b"])
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.map(&:issue_id)).to eq(["b"])
+      expect(result.reported.first.reason).to include("committed no work")
+      expect(journaled_decisions.select { |decision| decision["stage"] == "implementation" }
+                                .map { |decision| decision["issue_id"] }).to eq(["a"])
+      expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo").split("\n")).not_to include("red_b.txt")
+    end
+
+    # The same rebase, over an issue that did commit work: its rebased red
+    # commit matches, its work does not, and the work is what lands.
+    it "still gates and lands a rebased issue whose work goes past its red commit" do
+      write_epic([issue("a"), issue("b")])
+      %w[a b].each { |id| approve_plan(id) }
+
+      result = driven(width: 2)
+
+      expect(result.reported).to be_empty
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+      expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo").split("\n"))
+        .to include("a.txt", "b.txt", "red_b.txt")
+    end
+
+    # A config edited between two issues must not judge the second issue's plan
+    # under a layout its red step never wrote under.
+    it "resolves the project's layout once per run, however many issues it carries" do
+      write_epic([issue("a"), issue("b")])
+      %w[a b].each { |id| approve_plan(id) }
+      allow(Lain::Config).to receive(:test_layout).and_call_original
+
+      result = driven(width: 1)
+
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+      expect(Lain::Config).to have_received(:test_layout).once
+    end
+
+    # A lock that still holds is somebody else's run, or a human's: breaking
+    # it would put two landings in one checkout.
+    it "refuses to merge in a landing checkout something else still holds, and leaves that lock alone" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      driven(width: 1)
+      git(repo, "worktree", "lock", "--reason", "a human's", landing_checkout)
+
+      expect { driven(width: 1) }.to raise_error(Lain::Error, /landing checkout .*a human's/)
+      expect(lock_of(landing_checkout)).to eq("locked a human's")
+    end
+
     # NOTHING IS LEASED FOR AN ISSUE THAT CANNOT HAVE FAILING TESTS. The red
     # step writes tests for the ONE source file the plan names, so a plan that
     # names none is refused where the plan is read -- before an actor, a
@@ -406,6 +560,198 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(result.landed).to be_empty
       expect(result.reported.map(&:issue_id)).to eq(["a"])
       expect(log).to be_empty
+    end
+  end
+
+  # The production launch: the real IssueActor, whose red step's test_engineer
+  # and whose actor share one scripted provider. The actor answers once and
+  # commits nothing, so the red step's commit is all its retirement anchors.
+  describe "the red step, over a gitignored project config" do
+    let(:target) { "spec/unit/models/order_spec.rb" }
+    let(:red) do
+      "# frozen_string_literal: true\n\nrequire_relative \"../../../app/models/order\"\n\n" \
+        "RSpec.describe Order do\n  it(\"totals its lines\") { expect(Order.new.total).to eq(3) }\nend\n"
+    end
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["m1", "bash", { "command" => guarded("mkdir -p spec/unit/models") }]),
+                                 tool_response(["w1", "write_file", { "path" => target, "content" => red }]),
+                                 text_response("wrote the spec"), text_response("plan done")
+                               ])
+    end
+
+    def guarded(command)
+      "case \"$(pwd -P)\" in #{@root}/*) ;; *) echo \"refusing outside the fixture: $(pwd -P)\" >&2; exit 1;; " \
+        "esac; #{command}"
+    end
+
+    # A Gemfile, so the suite runner the red step detects is rspec's.
+    it "writes the generated tests, and reports an actor that committed nothing past them without a gate" do
+      File.write(File.join(repo, "Gemfile"), "source \"https://rubygems.org\"\n")
+      git(repo, "add", "Gemfile")
+      ignore_config
+      write_epic([issue("a")])
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+
+      result = factory_over(mount, record: chronicle).run(width: 1)
+
+      anchor = Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.a.1").ref
+      expect(git(repo, "show", "--name-only", "--format=", anchor).split("\n")).to eq([target])
+      expect(result.landed).to be_empty
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to include("committed no work")
+      expect(journaled_decisions.map { |decision| decision["stage"] }).not_to include("implementation")
+    end
+  end
+
+  # WHETHER AN ACTOR COMMITTED WORK IS A QUESTION ABOUT THE NET DIFF. b makes
+  # its red commit at launch and then, while graded after a has landed, does
+  # one thing to its branch; the answer has to follow what the branch would
+  # change on the epic, not how its history happens to be shaped.
+  describe "judging whether an actor committed work past its red commit" do
+    def sh(dir, *) = git(dir, *)
+
+    def red_b = "red for b\n"
+
+    def retired_b(width: 2, files_a: {}, &behaviour)
+      write_epic([issue("a"), issue("b")])
+      %w[a b].each { |id| approve_plan(id) }
+      seam = ->(issue_id, row) { yield(row.lease.worker_env.cwd) if issue_id == "b" }
+      result = driven(width:, grading: seam, idle: ["b"], files: files_a)
+      [result, journaled_decisions.select { |decision| decision["stage"] == "implementation" }
+                                  .map { |decision| decision["issue_id"] }]
+    end
+
+    def epic_files = git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo").split("\n")
+
+    def expect_no_work(result, gated)
+      expect(result.reported.map(&:issue_id)).to eq(["b"])
+      expect(result.reported.first.reason).to include("committed no work")
+      expect(gated).to eq(["a"])
+      expect(epic_files).not_to include("red_b.txt")
+    end
+
+    def expect_gated(gated) = expect(gated).to eq(%w[a b])
+
+    it "calls a revert of the red commit followed by the same patch again no work" do
+      result, gated = retired_b do |dir|
+        sh(dir, "revert", "--no-edit", "HEAD")
+        File.write(File.join(dir, "red_b.txt"), red_b)
+        sh(dir, "add", "-A")
+        sh(dir, "commit", "-q", "-m", "re-add red")
+      end
+
+      expect_no_work(result, gated)
+    end
+
+    it "calls an empty commit on top of the red commit no work" do
+      result, gated = retired_b { |dir| sh(dir, "commit", "-q", "--allow-empty", "-m", "nothing") }
+
+      expect_no_work(result, gated)
+    end
+
+    it "calls a red commit amended in its message alone no work" do
+      result, gated = retired_b { |dir| sh(dir, "commit", "-q", "--amend", "-m", "renamed red") }
+
+      expect_no_work(result, gated)
+    end
+
+    # a's landing writes red_b.txt differently, so b's rebase conflicts and its
+    # unrebased red commit is what retirement anchors.
+    it "calls an idle actor whose rebase conflicted on its red file no work" do
+      result, gated = retired_b(files_a: { "red_b.txt" => "a's conflicting content\n" }) { |_dir| nil }
+
+      expect(result.reported.map(&:issue_id)).to eq(["b"])
+      expect(result.reported.first.reason).to include("committed no work")
+      expect(gated).to eq(["a"])
+    end
+
+    it "gates and lands real work committed inside a merge of the epic's tip" do
+      result, gated = retired_b do |dir|
+        sh(dir, "merge", "-q", "--no-ff", "--no-commit", "refs/heads/epic/demo")
+        File.write(File.join(dir, "merged.txt"), "work done in the merge\n")
+        sh(dir, "add", "-A")
+        sh(dir, "commit", "-q", "-m", "merge with work")
+      end
+
+      expect_gated(gated)
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+      expect(epic_files).to include("merged.txt")
+    end
+
+    it "gates work squashed into the red commit" do
+      result, gated = retired_b do |dir|
+        File.write(File.join(dir, "b.txt"), "b's work\n")
+        sh(dir, "add", "-A")
+        sh(dir, "commit", "-q", "--amend", "-m", "red for b")
+      end
+
+      expect_gated(gated)
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+    end
+
+    # Rewriting the failing tests is not an implementation, but it is a change
+    # a human has to see: the gate is where they see it.
+    it "gates a red commit amended to rewrite its tests" do
+      _result, gated = retired_b do |dir|
+        File.write(File.join(dir, "red_b.txt"), "weakened\n")
+        sh(dir, "commit", "-q", "-a", "--amend", "-m", "red for b")
+      end
+
+      expect_gated(gated)
+    end
+
+    it "gates work committed past a red file whose rebase conflicted" do
+      _result, gated = retired_b(files_a: { "red_b.txt" => "a's conflicting content\n" }) do |dir|
+        File.write(File.join(dir, "b.txt"), "b's work\n")
+        sh(dir, "add", "-A")
+        sh(dir, "commit", "-q", "-m", "b work")
+      end
+
+      expect_gated(gated)
+    end
+  end
+
+  # Two runs starting together after a crash both find the dead run's lock.
+  # Taking it over has to be a compare-and-swap, or the one that judged it
+  # second unlocks the first one's live lock and both merge in one checkout.
+  describe "LandingCheckout taking over a dead lock" do
+    let(:branch) { Lain::Isolation::WorkingBranch.epic("demo", repo_root: repo) }
+    let(:sleepers) { Array.new(2) { Process.spawn("sleep", "60") } }
+
+    after { sleepers.each { |pid| Process.kill("KILL", pid).then { Process.wait(pid) } } }
+
+    def held_by(pid, shell_out_factory: Lain::Shell::Out.public_method(:new))
+      described_class::LandingCheckout.new(repo_root: repo, path: landing_checkout, branch:, shell_out_factory:,
+                                           process_table: Lain::Isolation::LeaseLock::ProcessTable.new(pid:))
+    end
+
+    # Runs `act` once, just after the first `git worktree list` the subject
+    # reads, so the other run acts between this one's look and its take-over.
+    def after_first_listing(&act)
+      pending = [act]
+      lambda do |*argv, **options|
+        shell = Lain::Shell::Out.new(*argv, **options)
+        interleaved = argv.include?("list") && pending.shift
+        interleaved ? then_acting(shell, interleaved) : shell
+      end
+    end
+
+    def then_acting(shell, act)
+      shell.tap { |out| out.define_singleton_method(:run_command) { super().tap { act.call } } }
+    end
+
+    it "lets exactly one of two runs take it, and leaves the winner's lock standing" do
+      described_class::LandingCheckout.new(repo_root: repo, path: landing_checkout, branch:).cut.release
+      dead = Process.spawn("true").tap { |pid| Process.wait(pid) }
+      git(repo, "worktree", "lock", "--reason", "lain-lease pid=#{dead} start=1 host=#{Socket.gethostname}",
+          landing_checkout)
+      second = held_by(sleepers.last)
+      first = held_by(sleepers.first, shell_out_factory: after_first_listing { second.cut })
+
+      expect { first.cut }.to raise_error(Lain::Error, /landing checkout/)
+      expect(lock_of(landing_checkout)).to include("lain-lease pid=#{sleepers.last} ")
     end
   end
 end

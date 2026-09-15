@@ -145,6 +145,20 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       expect(contains?(sha)).to be(false)
     end
 
+    # Read as "not approved", a damaged decision sent the human to approve a
+    # commit their journal may already hold a decision on. It is a record the
+    # fold cannot read, so it is refused as one, in one line.
+    it "refuses a gate_decision whose approved is neither true nor false, naming the record" do
+      approve("a", "a" * 40)
+      line = decisions.first.to_journal.merge("approved" => "maybe")
+
+      expect { described_class::Approvals.from([line]) }.to raise_error(Lain::Error) { |error|
+        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error.message).to include("gate_decision", "demo/implementation/a", "approved", "nothing landed")
+        expect(error.message).not_to include("\n")
+      }
+    end
+
     it "needs the ref the worker's commit is anchored under" do
       sha, = worker("a", "README" => "a's work\n")
       approve("a", sha)

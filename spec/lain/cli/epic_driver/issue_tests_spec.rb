@@ -110,8 +110,12 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
                                tool_middleware: ToolRegistry::UNGUARDED)
   end
 
+  # The layout is the PROJECT's, resolved from the repository root the held
+  # checkout was cut from -- never from the checkout, which a gitignored
+  # config never reaches.
   def step(provider, harness: rspec)
-    described_class.new(renderer:, role_spawn: role_spawn(provider), harness:)
+    described_class.new(renderer:, role_spawn: role_spawn(provider), layout: Lain::Config.test_layout(root: repo),
+                        harness:)
                    .call(criteria, worker_env, subject: "app/models/order.rb")
   end
 
@@ -133,6 +137,16 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     expect(first_prompt(provider)).to include(target, "an order totals its lines", "an order can be refunded")
   end
 
+  # A gitignored .lain/config.toml stays in the project root: `worktree add`
+  # carries only what git tracks, so the held checkout has no config at all.
+  it "writes the tests with the project's layout when the held checkout carries no config" do
+    FileUtils.rm(File.join(held, ".lain", "config.toml"))
+
+    result = step(writing(target, red))
+
+    expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n")).to eq([target])
+  end
+
   it "refuses tests that pass before any work is done, and commits nothing" do
     head = git(held, "rev-parse", "HEAD")
 
@@ -144,7 +158,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # Enforcement is opt-in: a framework the files betray is never read as a
   # declared layout, which would impose level roots the project never chose.
   it "refuses, naming [tests], a project that declares no test layout, and spawns nothing" do
-    FileUtils.rm(File.join(held, ".lain", "config.toml"))
+    FileUtils.rm(File.join(repo, ".lain", "config.toml"))
     File.write(File.join(held, ".rspec"), "--format progress\n")
     provider = mock(text_response("unused"))
 

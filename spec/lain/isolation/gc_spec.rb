@@ -4,6 +4,7 @@ require "tmpdir"
 require "fileutils"
 require "mixlib/shellout"
 require "open3"
+require "socket"
 
 # Operates on a THROWAWAY repo copied per example ({SeedRepo}) and a throwaway
 # worktree root, never the lain repo it runs in or the real state dir.
@@ -292,6 +293,30 @@ RSpec.describe Lain::Isolation::Gc, :seam do
 
       expect(summary(record_for(gc, legacy))).to eq([:reaped, :worktree, "landed on main"])
       expect(File.exist?(legacy)).to be(false)
+    end
+  end
+
+  # The epic driver lands in a checkout of lain's own, on the epic's branch,
+  # and every merge the queue makes moves its HEAD: judged unlocked, that is a
+  # checkout whose work folded into the branch, reaped under a running epic.
+  describe "the epic driver's landing checkout" do
+    def landing_checkout
+      Lain::CLI::EpicDriver::Factory::LandingCheckout.new(
+        repo_root: @repo_root, path: File.join(@root, "landing"),
+        branch: Lain::Isolation::WorkingBranch.epic("demo", repo_root: @repo_root)
+      ).cut
+    end
+
+    it "is kept as held while a run holds it, and judged like any other checkout once released" do
+      held = landing_checkout
+      commit_in(held.root, "landed.txt", "an issue's work, merged by the queue\n")
+
+      expect(summary(record_for(gc, held.root)))
+        .to eq([:kept, :worktree, "leased by live process #{Process.pid} on #{Socket.gethostname}"])
+
+      held.release
+
+      expect(summary(record_for(gc, held.root))).to eq([:reaped, :worktree, "folded into epic/demo"])
     end
   end
 

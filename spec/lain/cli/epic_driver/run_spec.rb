@@ -68,7 +68,7 @@ class RunSpecActors
     actor = RunSpecActor.new(issue_id)
     @supervisor.adopt(RunSpecSupervisor::Row.new(actor:))
     Launch.new(actor:, worker_id: "issue.demo.#{issue_id}.#{attempt}", branch: "lain/issue/demo/#{issue_id}",
-               tests: nil)
+               tests: Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: "red-#{issue_id}"))
   end
 end
 
@@ -79,9 +79,13 @@ class RunSpecGate
     @parked = parked
     @raising = raising
     @delay = delay
+    @asked = []
   end
 
-  def call(issue_id, sha:) # rubocop:disable Lint/UnusedMethodArgument
+  attr_reader :asked
+
+  def call(issue_id, sha:)
+    @asked << [issue_id, sha]
     sleep(@delay) unless @delay.nil?
     raise Lain::Error, "#{issue_id}'s gate could not be asked" if @raising.include?(issue_id)
 
@@ -163,13 +167,14 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
   # The loop, assembled over the fakes an example set up.
   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
-               width: 2, budget: nil, attempts: nil, grading: nil, log: [])
+               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil)
     live = { now: 0 }
     supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
     settled = landing || RunSpecLanding.new(statuses)
     run = described_class.new(progress: progress_over(issues, statuses), plans:, actors:, supervisor:, gate:,
                               landing: settled, width:, budget:,
+                              red_only: red_only || described_class::Identical,
                               **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}))
     [run, actors, settled, supervisor]
   end
@@ -265,6 +270,13 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     end
   end
 
+  # A caller building the loop directly must choose how "committed no work"
+  # is judged: SHA equality is blind to a rebase, so it is never implied.
+  it "requires a red-step judge, rather than defaulting to comparing SHAs" do
+    expect { described_class.new(progress: -> {}, plans:, actors: nil, supervisor: nil, gate: nil, landing: nil) }
+      .to raise_error(ArgumentError, /red_only/)
+  end
+
   describe "a settled actor that committed nothing" do
     it "is reported and its issue stops, with nothing submitted and nothing landed" do
       statuses = { "a" => "in_flight" }
@@ -276,6 +288,44 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(landing.landed).to be_empty
       expect(result.reported.first.issue_id).to eq("a")
       expect(result.reported.first.reason).to include("committed nothing")
+    end
+
+    # Retirement anchors whatever the branch holds, and an actor that made no
+    # commit of its own leaves the red step's commit there. Gating that would
+    # ask a human to approve an implementation made of failing tests.
+    it "reports an issue whose only commit is its red step's as having committed no work, and opens no gate" do
+      statuses = { "a" => "in_flight" }
+      gate = RunSpecGate.new
+      run, _actors, landing = run_over(issues: [issue("a")], statuses:, reports: { "a" => anchored("red-a") }, gate:)
+
+      result = run.call
+
+      expect(gate.asked).to be_empty
+      expect(landing.landed).to be_empty
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to include("committed no work", "red-a")
+      expect(statuses.fetch("a")).to eq("in_flight")
+    end
+
+    # Whether a retired tip carries anything past the red commit is a question
+    # about content, which the loop asks and does not answer itself.
+    it "asks its red-step judge about the tip it retired, and opens no gate when the judge finds only red" do
+      statuses = { "a" => "in_flight" }
+      gate = RunSpecGate.new
+      asked = []
+      red_only = lambda do |red, tip|
+        asked << [red, tip]
+        tip == "rebased-red-a"
+      end
+      run, _actors, landing = run_over(issues: [issue("a")], statuses:, reports: { "a" => anchored("rebased-red-a") },
+                                       gate:, red_only:)
+
+      result = run.call
+
+      expect(asked).to eq([%w[red-a rebased-red-a]])
+      expect(gate.asked).to be_empty
+      expect(landing.landed).to be_empty
+      expect(result.reported.first.reason).to include("committed no work")
     end
 
     it "reports a retirement the standing anchor refused, and stops that issue" do
@@ -402,7 +452,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       interrupted = false
       run = described_class.new(progress: progress_over([issue("a"), issue("b")], statuses), plans:, actors:,
                                 supervisor:, gate: RunSpecGate.new, landing:, width: 1,
-                                interrupt: -> { interrupted })
+                                red_only: described_class::Identical, interrupt: -> { interrupted })
 
       allow(landing).to receive(:call).and_wrap_original do |original, *args, **options|
         interrupted = true
@@ -427,6 +477,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       elapsed = Sync do |task|
         run = described_class.new(progress: progress_over([issue("a")], statuses), plans:, actors:, supervisor:,
                                   gate: RunSpecGate.new(delay: 30), landing:, width: 1,
+                                  red_only: described_class::Identical,
                                   interrupt: -> { interrupted })
         task.async do
           sleep 0.2
@@ -460,6 +511,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
         run = described_class.new(progress: progress_over([issue("a")], statuses), plans:,
                                   actors: RunSpecActors.new(supervisor, live), supervisor:,
                                   gate: gate_over(asker), landing: RunSpecLanding.new(statuses), width: 1,
+                                  red_only: described_class::Identical,
                                   interrupt: -> { interrupted })
         task.async do
           sleep 0.2

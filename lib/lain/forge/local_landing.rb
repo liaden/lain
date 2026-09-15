@@ -263,10 +263,17 @@ module Lain
       # but not the issue, so the registry alone reads issue c's approval of a
       # commit as issue b's too. The decision record names its issue, and a
       # decision naming none approves no issue's landing.
+      #
+      # A decision whose `approved` is neither true nor false is refused, not
+      # read as a denial: "not approved" sends a human to approve a commit
+      # their journal may already hold a decision on.
       class Approvals
         # @param entries [Enumerable<Hash, String>] journal records or lines
+        # @raise [Approval::SignoffQueue::UnreadableRecord] naming a decision
+        #   whose `approved` is not a boolean
         def self.from(entries)
           new(Journal.records(entries, type: Approval::SignoffQueue::JOURNAL_TYPE)
+                     .map { |decision| readable!(decision) }
                      .select { |decision| implementation?(decision) }
                      .to_set { |decision| [decision["issue_id"], decision["artifact_digest"]] })
         end
@@ -275,6 +282,17 @@ module Lain
           decision["approved"] == true && decision["stage"] == "implementation" && !decision["issue_id"].to_s.empty?
         end
         private_class_method :implementation?
+
+        def self.readable!(decision)
+          return decision if [true, false].include?(decision["approved"])
+
+          address = decision.values_at("epic_slug", "stage", "issue_id").compact.join("/")
+          raise Approval::SignoffQueue::UnreadableRecord,
+                "the #{Approval::SignoffQueue::JOURNAL_TYPE} record for #{decision["artifact_digest"].inspect} in " \
+                "#{address.inspect} cannot be read (approved = #{decision["approved"].inspect} is neither true nor " \
+                "false) -- repair the line or move its session file aside; nothing landed"
+        end
+        private_class_method :readable!
 
         def initialize(pairs)
           @pairs = pairs.freeze
