@@ -17,6 +17,21 @@ module RedactSpecSupport
     end
   end
 
+  # A journal that refuses one kind of entry and keeps everything else, so the
+  # failure record a refused write degrades into can be read back.
+  class RefusingJournal
+    def initialize(entries, refuses:)
+      @entries = entries
+      @refuses = refuses
+    end
+
+    def <<(entry)
+      raise IOError, "journal closed" if entry.is_a?(@refuses)
+
+      @entries << entry
+    end
+  end
+
   # A queue that RETURNS -- so a guard gated on `adjudicate` having returned
   # would call the read decided -- but whose settled pending cannot answer.
   # This is the case that separates "the call came back" from "a verdict was
@@ -107,7 +122,11 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
   def redactions = journal.grep(Lain::Telemetry::ReadRedacted)
 
+  def releases = journal.grep(Lain::Telemetry::ReadReleased)
+
   def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+
+  def parks = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").to_a
 
   describe "masking what nobody has released" do
     it "removes the region's bytes and stands a placeholder in their place" do
@@ -406,12 +425,89 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(redactions).to be_empty
     end
 
-    # An approved read withheld nothing, so there is no redaction to record --
-    # the approval's own decision record is what says a secret was sent.
-    it "records nothing when the human approved the whole file" do
+    # An approved read withheld nothing, so there is no redaction to record. What
+    # says a secret was sent is its own record: the approval's decision names no
+    # file and no count, and a `read_redacted` would resume the file as masked.
+    it "records a release rather than a redaction when the human approved the whole file" do
       read(write("notes.txt", one_secret)) { |q| approve(q) }
 
       expect(redactions).to be_empty
+      expect(releases.length).to eq(1)
+    end
+
+    it "records a human's release with its count, its file and the call it answered" do
+      path = write(".env", "API_KEY=#{api_key}\nDATABASE_PASSWORD=hunter2SecretValue\n")
+
+      read(path, tool_use_id: "tu_env") { |q| approve(q) }
+
+      expect(releases).to contain_exactly(
+        an_object_having_attributes(path:, regions: 2, tool_use_id: "tu_env", requester: "agent", surface: "spec")
+      )
+    end
+
+    # The count is what THIS read released, from the snapshot it parked on: a
+    # region released before the read was not this read's to send.
+    it "counts only the regions this read released, not those released before it" do
+      path = write(".env", three)
+      ledger.release(path, [Lain::Sensitivity::Regions.detect(three).first])
+
+      read(path) { |q| approve(q) }
+
+      expect(releases).to contain_exactly(an_object_having_attributes(regions: 2))
+    end
+
+    it "records no release when the human refused" do
+      read(write("notes.txt", one_secret)) { |q| q.dequeue.deny(surface: "spec") }
+
+      expect(releases).to be_empty
+    end
+
+    it "keeps the released bytes out of the release record" do
+      read(write("notes.txt", one_secret)) { |q| approve(q) }
+
+      expect(releases.map(&:to_journal).to_s).not_to include(api_key)
+    end
+
+    # Evidence must not cost the read it describes: the release has happened,
+    # so a journal that refuses the write still hands the model its file. Nor
+    # may the loss be silent, since the secret went out: it degrades into the
+    # journal's own failure record, naming what it stood in for.
+    it "returns the released file and records the failure when the journal refuses the release" do
+      path = write("notes.txt", one_secret)
+      refusing = RedactSpecSupport::RefusingJournal.new(journal, refuses: Lain::Telemetry::ReadReleased)
+      subject_stack = Lain::Middleware::Stack.new([described_class.new(ledger:, queue:, journal: refusing)])
+
+      carried = Sync do |task|
+        run = task.async { dispatch(effect(path), subject_stack:) }
+        approve(queue)
+        run.wait
+      end
+
+      expect(carried.fetch(:result).content).to eq(one_secret)
+      expect(journal).to contain_exactly(
+        a_hash_including("type" => "journal_error", "entry_class" => "Lain::Telemetry::ReadReleased",
+                         "error" => "IOError: journal closed")
+      )
+    end
+
+    # `Effect::ToolCall` coerces a missing id to "", which the record refuses.
+    it "returns the released file and records the failure when the release record cannot be built" do
+      path = write("notes.txt", one_secret)
+
+      content = read(path, tool_use_id: "") { |q| approve(q) }.fetch(:result).content
+
+      expect(content).to eq(one_secret)
+      expect(releases).to be_empty
+      expect(journal).to contain_exactly(
+        a_hash_including("type" => "journal_error", "entry_class" => "Lain::Telemetry::ReadReleased",
+                         "error" => /\AArgumentError: tool_use_id must name the released call/)
+      )
+    end
+
+    it "keeps the released bytes out of the failure record" do
+      read(write("notes.txt", one_secret), tool_use_id: "") { |q| approve(q) }
+
+      expect(journal.to_s).not_to include(api_key)
     end
 
     # The record describes ONE read. `unreleased` is snapshotted before the
@@ -443,6 +539,58 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       expect(redactions.map(&:to_journal).to_s).not_to include(api_key)
       expect(journal_io.string).not_to include(api_key)
+    end
+  end
+
+  # One queue serves the whole fleet, so the CALL names who is asking, through
+  # the context, exactly as a child's gate does. A read guard that never named
+  # the child left every child's release reading as the parent's own.
+  describe "a release asked for a child" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, requester: "researcher") }
+
+    it "names the child on the park, the decision and the release" do
+      read(write("notes.txt", one_secret)) { |q| approve(q) }
+
+      expect(parks).to contain_exactly(a_hash_including("requester" => "researcher"))
+      expect(decisions).to contain_exactly(a_hash_including("requester" => "researcher", "tool_use_id" => "tu_1"))
+      expect(releases).to contain_exactly(an_object_having_attributes(requester: "researcher"))
+    end
+
+    # A gated file is asked about twice for one call: at the path gate, then at
+    # the release. So a call's id is not unique to one park, and a reader pairs
+    # its records in order within the id.
+    it "parks twice under one call's id behind a path gate, and each decision follows its own park" do
+      sensitivity = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/nobody", cwd: dir))
+      gate = Lain::Middleware::Gate.new(policy: queue, sensitivity:, denial: "denied %<name>s")
+      gated = Lain::Middleware::Stack.new([middleware, gate])
+      env = { effect: effect(write(".env", one_secret), tool_use_id: "tu_env"), tool: Lain::Tools::ReadFile.new,
+              context: session }
+
+      Sync do |task|
+        run = task.async do
+          gated.call(env) do |inner|
+            invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_env", context: inner.fetch(:context))
+            inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
+          end
+        end
+        2.times { approve(queue) }
+        run.wait
+      end
+
+      approvals = Lain::Journal.records(journal_io.string.lines).select { _1["tool_use_id"] == "tu_env" }.to_a
+      expect(approvals.map { |record| record["type"] })
+        .to eq(%w[approval_pending approval_decision approval_pending approval_decision])
+      expect(releases).to contain_exactly(an_object_having_attributes(tool_use_id: "tu_env", surface: "spec"))
+    end
+
+    # The context is wrapped, never replaced: the read-set the mask lands on is
+    # still the reading worker's own session.
+    it "still records a refused child's mask on the reading session" do
+      path = write("notes.txt", one_secret)
+
+      read(path) { |q| q.dequeue.deny(surface: "spec") }
+
+      expect(session.masked_read?(path)).to be(true)
     end
   end
 
@@ -735,6 +883,20 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       expect(content).to eq(one_secret)
       expect(session.read?(path)).to be(true)
+    end
+
+    # The fail-open leaves the same evidence a human's release does, signed by
+    # the stand-in, so a run that sent a secret with nobody asked says so.
+    it "records the unqueued stand-in's release under its own name" do
+      path = write("notes.txt", one_secret)
+      unqueued = described_class.new(ledger:, queue: described_class::Unqueued.instance, journal:)
+
+      Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([unqueued])) }
+
+      expect(releases).to contain_exactly(
+        an_object_having_attributes(path:, regions: 1, requester: "agent",
+                                    surface: described_class::Unqueued::SURFACE)
+      )
     end
   end
 

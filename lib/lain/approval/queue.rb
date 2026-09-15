@@ -33,6 +33,10 @@ module Lain
       # hurry -- an abandoned session must eventually refuse.
       DEFAULT_TIMEOUT = 300
 
+      # Who a gated call is asked on behalf of when neither the call nor the
+      # session names anyone: the parent's own turn.
+      REQUESTER = "agent"
+
       Outstanding = Data.define(:path, :regions)
 
       # The sensitive regions of one file that approving a {Pending} would
@@ -189,9 +193,16 @@ module Lain
         # credentials into the Journal with no test to notice, since every test
         # here asserts the fields that ARE listed.
         # {Telemetry::ApprovalPending.from} carries the identical note.
+        #
+        # `tool_use_id` is what pairs this decision with its `approval_pending`:
+        # parallel calls park together and are decided in any order, so a count
+        # pairs the wrong ones. It is not unique: one `read_file` can park twice
+        # under one id, at the path gate and again at the release, one after the
+        # other, so within an id the records pair IN ORDER. Who released a
+        # secret is `read_released`'s `surface`, not a join onto a decision.
         def to_journal
-          { "type" => "approval_decision", "requester" => requester, "tool" => tool,
-            "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
+          { "type" => "approval_decision", "tool_use_id" => tool_use_id, "requester" => requester,
+            "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
             "latency" => latency }
         end
       end
@@ -201,11 +212,11 @@ module Lain
       #   in the experiment record
       # @param requester [String] who a gated call is asked on behalf of when
       #   the call itself names nobody -- the SESSION's default, not the fleet's
-      #   answer; see {#requester_for}
+      #   answer; see {.requester_for}
       # @param timeout [Numeric] seconds an unanswered pending waits before the
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
-      def initialize(journal:, requester: "agent", timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
+      def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
         @journal = journal
         @requester = requester
         @timeout = timeout
@@ -246,6 +257,23 @@ module Lain
         pending
       end
 
+      # ONE queue serves the whole fleet, so a queue-level constant journals and
+      # renders every pending identically -- which is how a researcher
+      # subagent's `bash` prompt came to be indistinguishable from the human's
+      # own agent's. The CALL says so instead, through the context the policy
+      # seam already threads.
+      #
+      # `fallback` is the SESSION's answer for contexts that name nobody, so
+      # nothing asking here journals a blank. Public, because a read guard with
+      # no queue to park on still has to say whom its release was for.
+      #
+      # @param context [Object, nil] the context a call is judged in
+      # @param fallback [String] who is asking when the context names nobody
+      # @return [String]
+      def self.requester_for(context, fallback = REQUESTER)
+        context.respond_to?(:requester) ? context.requester : fallback
+      end
+
       # Async::Queue is buffered, so a pending enqueued before any surface
       # watched is delivered, never missed. Already-decided arrivals -- an
       # abandoned pending cannot be removed from the arrival queue itself -- are
@@ -273,24 +301,12 @@ module Lain
       # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
       # yield point between them.
       def admit(effect, context, outstanding)
-        pending = Pending.new(effect:, requester: requester_for(context), clock: @clock, outstanding:,
-                              humans_only: Escalation.barred?(context))
+        pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester), clock: @clock,
+                              outstanding:, humans_only: Escalation.barred?(context))
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)
         pending
-      end
-
-      # ONE queue serves the whole fleet, so a queue-level constant journals and
-      # renders every pending identically -- which is how a researcher
-      # subagent's `bash` prompt came to be indistinguishable from the human's
-      # own agent's. The CALL says so instead, through the context the policy
-      # seam already threads.
-      #
-      # `requester:` stays the SESSION's answer for contexts that name nobody,
-      # so this queue never journals a blank.
-      def requester_for(context)
-        context.respond_to?(:requester) ? context.requester : @requester
       end
 
       # `ensure`, because the requester can be STOPPED while parked: Ctrl-C

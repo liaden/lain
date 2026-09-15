@@ -271,6 +271,38 @@ RSpec.describe Lain::Approval::Queue do
       expect(pending_records).to contain_exactly(a_hash_including("tool_use_id" => "tu_1", "tool" => "dangerous"))
     end
 
+    # Parallel calls park together and are answered in whatever order a person
+    # gets to them, so a reader counting parks against decisions pairs the
+    # wrong ones. The id pairs them.
+    it "pairs each decision with its own announcement by the call's id, whatever order they are decided in" do
+      first = Lain::Effect::ToolCall.new(tool_use_id: "tu_first", name: "dangerous", input: {})
+      second = Lain::Effect::ToolCall.new(tool_use_id: "tu_second", name: "dangerous", input: {})
+
+      Sync do |task|
+        runs = [first, second].map { |call| task.async { queue.call(call, nil) } }
+        parked = [queue.dequeue, queue.dequeue]
+        parked.last.deny(surface: "tty")
+        parked.first.approve(surface: "tty")
+        runs.each(&:wait)
+      end
+
+      expect(pending_records.map { |record| record.fetch("tool_use_id") }).to eq(%w[tu_first tu_second])
+      expect(decision_records.to_h { |record| [record.fetch("tool_use_id"), record.fetch("verdict")] })
+        .to eq("tu_second" => "deny", "tu_first" => "approve")
+      expect(decision_records.map { |record| record.fetch("tool_use_id") }).to eq(%w[tu_second tu_first])
+    end
+
+    it "says on the announcement whether only a person may decide the call" do
+      Sync do |task|
+        barred = Lain::Middleware::WithholdAutomaticOutput::Carried.new(nil, barred: true)
+        runs = [barred, nil].map { |context| task.async { queue.call(tool_call, context) } }
+        2.times { queue.dequeue.deny(surface: "tty") }
+        runs.each(&:wait)
+      end
+
+      expect(pending_records.map { |record| record.fetch("humans_only") }).to eq([true, false])
+    end
+
     it "keeps the announcement when the requester is abandoned before deciding" do
       Sync do |task|
         task.async { queue.call(tool_call, nil) }.stop

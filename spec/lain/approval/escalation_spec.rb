@@ -243,6 +243,22 @@ RSpec.describe Lain::Approval::Escalation do
       end
     end
 
+    # The surfaces rung's ruling and the queue's decision are two records of one
+    # call, and the call's id is what joins them: a person's allow honoured over
+    # a fault is read off the pair.
+    it "joins the queue's decision to the ladder's ruling by the call's id" do
+      Sync do |task|
+        parked = task.async { over(EscalationSpecSupport::Silent.new).call(effect, nil) }
+        task.with_timeout(1) { queue.dequeue }.approve(surface: "tty")
+        parked.wait
+      end
+
+      decision = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").first
+      surfaced = rulings.find { |record| record["rung"] == described_class::Surfaces::NAME }
+      expect(decision.fetch("tool_use_id")).to eq("tu_1")
+      expect(surfaced.fetch("tool_use_id")).to eq(decision.fetch("tool_use_id"))
+    end
+
     # Scenario: the auto-approve layer only sees what the deterministic rung
     # abstained on.
     it "creates nothing for an auto-approve surface to adjudicate when the rung allowed" do

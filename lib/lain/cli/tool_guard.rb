@@ -192,8 +192,8 @@ module Lain
       # layout guard holds that checkout's root beside the project's, and its
       # gate asks the policy the board answers for its environment -- whose
       # rungs read a command's words in that checkout -- on behalf of the child
-      # `requester` names. The path policy, ledger and listing filter stay the
-      # board's one.
+      # `requester` names, as its read guard asks a release. The path policy,
+      # ledger and listing filter stay the board's one.
       #
       # @param chronicle [CLI::Chronicle] as on {.stack}
       # @param board [CLI::Switchboard] as on {.stack}
@@ -202,23 +202,25 @@ module Lain
       # @return [Middleware::Stack]
       def child_stack(chronicle, board, worker_env, requester:)
         inputs = board.guard_inputs
-        working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:))
+        working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:),
+                requester:)
       end
 
       # A worker's stack, over the inputs it is guarded by, the checkout its
-      # environment names if its lease cut one, and the policy its gate asks.
-      def working(chronicle, inputs, worker_env, policy = inputs.policy)
-        layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy)
+      # environment names if its lease cut one, the policy its gate asks, and
+      # the child a release is asked for -- nil for a worker nobody named.
+      def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil)
+        layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy, requester:)
       end
 
       # The five guards over one set of inputs, the layout held at `roots`, and
       # the gate's two layers asking `policy` -- checked closed as it is built,
       # the one check a child's stack from any builder is also held to.
-      def layered(chronicle, inputs, roots, policy)
+      def layered(chronicle, inputs, roots, policy, requester: nil)
         journal = chronicle.instrumentation.journal
         Middleware::Gate.closes!(
           Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
-                                 Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs)),
+                                 Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
                                  Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),

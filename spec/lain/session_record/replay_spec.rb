@@ -212,6 +212,18 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(File.read(path)).to eq("line 1\ntwo\n")
     end
 
+    # A release is evidence that bytes were sent, not a mask: folded as one, a
+    # resumed session would refuse the edit its read earned. Nor does it restore
+    # the release, so the resumed run asks again before sending the secret.
+    it "does not resume a recorded release as a mask, so the edit its read earned is allowed" do
+      recorded
+      journal << Lain::Telemetry::ReadReleased.new(tool_use_id: "tu_read", path:, regions: 2, requester: "agent",
+                                                   surface: "tty")
+
+      expect(resume_and_edit).to include("is_error" => false)
+      expect(File.read(path)).to eq("line 1\ntwo\n")
+    end
+
     it "withholds a read no recorded turn delivered, as a round torn before its results landed" do
       Lain::Session.new(journal:).record_read(path, tool_use_id: "tu_torn")
 

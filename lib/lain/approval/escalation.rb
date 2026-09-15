@@ -46,7 +46,7 @@ module Lain
     # same `"approval denied for tool ..."`, and the operator's only escape is a
     # MORE permissive posture. It also corrupts the record: an
     # `approval_decision` reading `approve` beside an `escalation` reading
-    # `deny`, for one call, with nothing joining them.
+    # `deny` under the same `tool_use_id`, contradicting each other.
     #
     # So a HUMAN surface's allow is honoured and journaled `verdict: allow,
     # faulted: true`, naming the rung that broke -- enough for the bench to

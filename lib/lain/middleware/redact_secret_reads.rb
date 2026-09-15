@@ -94,20 +94,23 @@ module Lain
       # rule forbids is silent approval arriving by omission, not a named object
       # that approves on purpose.
       class Unqueued
-        # The one message this middleware reads off a settled
+        # What a release the stand-in approved is signed with, so the record of
+        # what the fail-open sent names it rather than a surface nobody watched.
+        SURFACE = "unqueued"
+
+        Verdict = Data.define(:requester)
+
+        # The messages this middleware reads off a settled
         # {Approval::Queue::Pending}.
         class Verdict
           def approved? = true
-
-          INSTANCE = new.freeze
-
-          def self.instance = INSTANCE
+          def surface = SURFACE
         end
 
         # `outstanding:` is accepted and discarded, but cannot be renamed to the
         # unused-argument underscore: it is a KEYWORD, so the name is the duck.
-        def adjudicate(_effect, _context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
-          Verdict.instance
+        def adjudicate(_effect, context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
+          Verdict.new(requester: Approval::Queue.requester_for(context))
         end
 
         INSTANCE = new.freeze
@@ -141,9 +144,12 @@ module Lain
       #   everything, wearing this codebase's Null idiom as camouflage.
       # @param queue [#adjudicate] where a read parks for release, or
       #   {Unqueued} when a run wires none. Required for the same reason.
-      # @param journal [#<<] where {Telemetry::ReadRedacted} lands
+      # @param journal [#<<] where {Telemetry::ReadRedacted} and
+      #   {Telemetry::ReadReleased} land
+      # @param requester [String, nil] the child a read is asked for, as its
+      #   gate names it; nil for the parent, whose context names nobody
       # @raise [ArgumentError] on a nil ledger or queue
-      def initialize(ledger:, queue:, journal: Channel::Null.instance)
+      def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
         # exactly what `Switchboard#approvals` carries in an unattended run -- so
         # without this the argument that "no default means no silent approval"
@@ -154,6 +160,7 @@ module Lain
         @ledger = ledger
         @queue = queue
         @journal = journal
+        @requester = requester
         # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
         # not the Set they point at, and this is the run's accumulating
         # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
@@ -296,22 +303,30 @@ module Lain
       def settle(carried, effect, withheld)
         outstanding = Approval::Queue::Outstanding.new(path: withheld.path, regions: withheld.unreleased)
         decided = false
-        settled = @queue.adjudicate(effect, carried.fetch(:context), outstanding:)
+        settled = @queue.adjudicate(effect, asked(carried.fetch(:context)), outstanding:)
         approved = settled.approved?
         decided = true
-        return release(carried, withheld) if approved
+        return release(carried, effect, withheld, settled) if approved
 
         mask(carried, effect, withheld)
       ensure
         withheld.session.record_masked_read(withheld.path) unless decided
       end
 
-      # Nothing was withheld, so nothing is recorded and nothing is journaled: the
-      # approval's own decision record is what says a secret was sent, and a
-      # {Telemetry::ReadRedacted} over a read that redacted nothing would be a
-      # false finding in the experiment record.
-      def release(carried, withheld)
+      # One queue serves the whole fleet, so a child's read names the child
+      # through the context, as the child's gate does.
+      def asked(context) = @requester ? Approval::PolicySwitch::Requested.new(context, @requester) : context
+
+      # Nothing was withheld, so no mask is recorded. What is journaled is that
+      # a secret was sent: the decision record names no file and no count, and a
+      # {Telemetry::ReadRedacted} would resume the file as masked.
+      def release(carried, effect, withheld, settled)
         @ledger.release(withheld.path, withheld.unreleased)
+        record(Telemetry::ReadReleased) do
+          Telemetry::ReadReleased.new(tool_use_id: effect.tool_use_id, path: withheld.path,
+                                      regions: withheld.unreleased.length, requester: settled.requester,
+                                      surface: settled.surface)
+        end
         carried
       end
 
@@ -324,7 +339,7 @@ module Lain
       # check goes BEFORE it is added to.
       def mask(carried, effect, withheld)
         withheld.session.record_masked_read(withheld.path)
-        record(redaction(effect, withheld)) unless declined?(withheld)
+        record(Telemetry::ReadRedacted) { redaction(effect, withheld) } unless declined?(withheld)
         withheld.unreleased.each { @declined << [withheld.path, _1.digest] }
         carried.merge(result: Tool::Result.ok(withheld.scan.mask(withheld.unreleased)))
       end
@@ -338,13 +353,26 @@ module Lain
       # already happened, so a closed Journal or a full disk must not convert a
       # correctly-masked read into the error result {#guarded}'s rescue produces.
       #
-      # It SWALLOWS rather than degrading into a `journal_error` record the way
-      # {Approval::Queue} does, because this journal is a `#<<` Channel with no
-      # such shape. The cost, stated rather than hidden: this record is also what
-      # {SessionRecord::Replay#redactions} reads, so a lost write means a resumed
-      # session does not know the path was masked. The LIVE session still does.
-      def record(entry)
-        @journal << entry
+      # It is not silent either: a lost release is a secret sent with no record
+      # of it, so the failure degrades into the Journal's own `journal_error`
+      # shape, naming the record it stood in for, as {Approval::Queue} does. A
+      # lost mask costs a resumed session the knowledge that the path was masked,
+      # since {SessionRecord::Replay#redactions} reads this record; the LIVE
+      # session still knows.
+      #
+      # The entry is built in the block, so a record whose own construction
+      # raises degrades here too rather than escaping past this rescue. `kind`
+      # names it, because a raise mid-construction leaves no instance to name.
+      def record(kind)
+        @journal << yield
+      rescue StandardError => e
+        degrade(kind, e)
+      end
+
+      # When even the degraded write fails there is nowhere left to say so.
+      def degrade(kind, error)
+        @journal << { "type" => "journal_error", "error" => "#{error.class}: #{error.message}",
+                      "entry_class" => kind.name }
       rescue StandardError
         nil
       end

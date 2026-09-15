@@ -25,15 +25,19 @@ module Lain
     # which holds an injected clock and a decision it exists to have mutated --
     # coordination state that can never be `Ractor.shareable?`.
     #
-    # `tool_use_id` is the CORRELATION KEY onto the gated call, so a reader is
-    # never left counting anonymous parks. It does NOT join to
-    # `approval_decision`, which carries no id -- pending and decision still
-    # pair by counting.
+    # `tool_use_id` is the CORRELATION KEY onto the gated call, and the
+    # `approval_decision` that settles it carries the same id, so a reader pairs
+    # the two rather than counting them. The id is not unique to one park: a
+    # `read_file` of a gated file parks at the path gate and again at the
+    # release, one after the other, so within an id the records pair IN ORDER.
+    #
+    # `humans_only` says whether only a person may decide the call, which is why
+    # an automatic surface was never offered it.
     #
     # The Pending's `input` is deliberately left off: tool arguments are
     # unbounded and may carry exactly the credential bytes {WriteRefused} exists
     # to keep out of the journal. Id in, payload out.
-    ApprovalPending = Data.define(:requester, :tool, :tool_use_id) do
+    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only) do
       include Journalable
 
       # Built from the parked {Approval::Queue::Pending} at admit time, so the
@@ -48,16 +52,18 @@ module Lain
       # asserts the fields that ARE listed. {Queue::Pending#to_journal} carries
       # the identical hazard and the identical note.
       def self.from(pending)
-        new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id)
+        new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,
+            humans_only: pending.humans_only?)
       end
 
       # Interned rather than `dup.freeze`d: these three values repeat on every
       # park of a session, so two equal records share one String rather than
       # holding two copies of the same bytes.
-      def initialize(requester:, tool:, tool_use_id:)
+      def initialize(requester:, tool:, tool_use_id:, humans_only: false)
         Carriers::ApprovalPending.check!(requester:, tool:, tool_use_id:)
 
-        super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s)
+        super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s,
+              humans_only: humans_only == true)
       end
     end
   end

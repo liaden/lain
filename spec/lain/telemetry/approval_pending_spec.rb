@@ -3,10 +3,11 @@
 RSpec.describe Lain::Telemetry::ApprovalPending do
   subject(:event) { described_class.new(requester: "agent", tool: "bash", tool_use_id: "tu_1") }
 
-  it "journals as approval_pending naming the requester, the tool, and the call" do
+  it "journals as approval_pending naming the requester, the tool, the call and who may decide it" do
     expect(event.journal_type).to eq("approval_pending")
     expect(event.to_journal).to eq(
-      "type" => "approval_pending", "requester" => "agent", "tool" => "bash", "tool_use_id" => "tu_1"
+      "type" => "approval_pending", "requester" => "agent", "tool" => "bash", "tool_use_id" => "tu_1",
+      "humans_only" => false
     )
   end
 
@@ -34,8 +35,17 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
     )
 
     record = described_class.from(pending)
-    expect(record).to have_attributes(requester: "the-agent", tool: "bash", tool_use_id: "tu_1")
+    expect(record).to have_attributes(requester: "the-agent", tool: "bash", tool_use_id: "tu_1", humans_only: false)
     expect(record).to be_deeply_frozen
+  end
+
+  it "says so when the Pending it is built from may be decided by a person only" do
+    pending = Lain::Approval::Queue::Pending.new(
+      effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
+      requester: "agent", clock: -> { 0.0 }, humans_only: true
+    )
+
+    expect(described_class.from(pending).humans_only).to be(true)
   end
 
   # Loud failure, the same validate-then-freeze contract every sibling record

@@ -308,6 +308,34 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(board.policy.contexts.first.__getobj__.__getobj__).to be(:the_session)
     end
 
+    # The read guard parks on the board's one queue too, so its release has to
+    # name the child the same way the gate's park does, or every child's
+    # release reads as the parent's own.
+    it "asks a child's release on the board's one queue in the child's name", :seam do
+      board = ToolGuardSpecBoard.new(approvals: queue, sensitivity: Lain::Sensitivity::Policy::Null.instance)
+      stack = described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")
+
+      read = lambda do |path|
+        stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: Lain::Session.new }) do |inner|
+          inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input,
+                                                             Lain::Tool::Invocation.new(tool_use_id: "tu_1")))
+        end
+      end
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "creds.txt").tap { |made| File.write(made, "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n") }
+        Sync do |task|
+          run = task.async { read.call(path) }
+          queue.dequeue.approve(surface: "tty")
+          run.wait
+        end
+      end
+
+      records = Lain::Journal.records(journal_io.string.lines).select { |record| record["requester"] }.to_a
+      expect(records.map { |record| [record["type"], record["requester"]] })
+        .to eq([%w[approval_pending researcher], %w[approval_decision researcher], %w[read_released researcher]])
+    end
+
     # Production never reaches the gate's adapter for a bare callable, whose
     # rulings carry no reason: the parent's gate holds the board's policy, a
     # child's holds the ruling-answering wrapper naming it, and a run with no
