@@ -53,11 +53,10 @@ module Lain
       # naming the document and the path it looked at.
       class MissingEpicDocument < Error; end
 
-      # `answered_by` names WHO decided, `policy` names HOW the verdict was
-      # reached -- independent axes ({Approval::GateDecision}'s contract), both
-      # known here without asking anything.
+      # `answered_by` names WHO decided; `policy` names HOW the verdict was
+      # reached ({Approval::SignoffQueue::SIGNOFF_POLICY}) -- independent axes
+      # ({Approval::GateDecision}'s contract), both known here without asking.
       HUMAN = "human"
-      SIGNOFF_POLICY = "signoff"
 
       # {Approval::Gate::Adjudicator::GateEvidence}'s discriminator. A literal
       # because that class ships no constant for it; a spec pins this string
@@ -87,7 +86,7 @@ module Lain
         read = walk(SessionJournals::Tolerate)
         rows = Review.new(read.to_a, now: @clock.call).rows(slug)
         body = rows.empty? ? empty_listing(slug, read.tally) : [headline(rows), *rows.map(&:to_s)].join("\n\n")
-        [body, unparsed_warning(read.tally)].compact.join("\n\n")
+        [body, unparsed_warning(read.tally), misfiled_warning(read.tally)].compact.join("\n\n")
       end
 
       # @param digest [String] the artifact address to sign off
@@ -157,7 +156,8 @@ module Lain
           "  #{partition_of(decision)} — #{decision.approved ? "approved" : "denied"} by " \
             "#{decision.answered_by} after #{Row.waited_label(decision.latency)}"
         end
-        ["signed off #{digest}", *signed, *moved.map { |line| "  #{line}" }].join("\n")
+        ["#{decisions.first.approved ? "signed off" : "denied"} #{digest}", *signed,
+         *moved.map { |line| "  #{line}" }].join("\n")
       end
 
       # Spelled by {Approval::SignoffQueue::Partition}, so a sign-off names its
@@ -220,6 +220,17 @@ module Lain
           "could be among them, so this listing is not proven complete."
       end
 
+      # A misfiled record DID parse, so it gets its own sentence naming the type
+      # it wore, rather than sending the reader after torn bytes.
+      def misfiled_warning(counts)
+        misfiled = counts.misfiled
+        return nil if misfiled.empty?
+
+        "WARNING: #{counted(misfiled.size, "record")} carrying a sign-off's fields #{misfiled.one? ? "has" : "have"} " \
+          "an unknown type (#{misfiled.uniq.join(", ")}). A parked sign-off could be among them, so this listing " \
+          "is not proven complete."
+      end
+
       def counted(count, noun) = "#{count} #{noun.pluralize(count)}"
 
       # One parked item joined to the two records that explain it: the deferral
@@ -253,7 +264,8 @@ module Lain
 
         def terminal(approved:, reason:)
           Approval::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
-                                     stage: item.stage, approved:, answered_by: HUMAN, policy: SIGNOFF_POLICY,
+                                     stage: item.stage, approved:, answered_by: HUMAN,
+                                     policy: Approval::SignoffQueue::SIGNOFF_POLICY,
                                      latency: waited, evidence_digest: item.evidence_digest, reason:,
                                      issue_id: item.issue_id, criteria_digest: item.criteria_digest)
         end

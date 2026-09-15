@@ -29,7 +29,9 @@ module Lain
     #    foreign line -- a Rust `tracing` span sharing the fd -- is skipped
     #    rather than raised on. A line that parses to nothing is not foreign:
     #    spans are whole JSON lines, so it is DAMAGE, and {Refuse} (the
-    #    default) refuses it when a sign-off could rest on it. See {Torn}.
+    #    default) refuses it when a sign-off could rest on it. See {Torn}. So
+    #    is a whole record shaped like a sign-off under another type. See
+    #    {Misfiled}.
     # 4. Ordered by the `ts` field ASCENDING, compared as a String, with a
     #    STABLE tiebreak. See {#ordered} for what that compare depends on.
     # 5. A file that cannot be READ is named ({Unreadable}), never skipped. A
@@ -49,13 +51,16 @@ module Lain
       # `exe/lain`'s `rescue Lain::Error` and prints a backtrace at someone who
       # asked for a status report.
       #
-      # A torn line is refused under the same name: either way this reader
+      # A damaged line is refused under the same name: either way this reader
       # cannot say what the directory holds, and the remedy is the human's.
       class Unreadable < Error
         def self.io(path, cause) = new("cannot read the session journal #{path}: #{cause.message}")
 
-        def self.torn(torn) = new("the session journal #{torn.path} #{torn.where} (#{torn.what}) -- #{torn.remedy}")
+        def self.damaged(line) = new("the session journal #{line.path} #{line.where} (#{line.what}) -- #{line.remedy}")
       end
+
+      REMEDY = "move the damaged file aside or repair the line; nothing was decided"
+      private_constant :REMEDY
 
       Torn = Data.define(:path, :line, :type, :within, :tail)
 
@@ -76,8 +81,7 @@ module Lain
         # so neither value can carry a quote.
         RECORD = /\{"ts":"[^"\\]*","type":"([^"\\]*)"/
         LEADING = /\A#{RECORD}/
-        REMEDY = "move the damaged file aside or repair the line; nothing was decided"
-        private_constant :RECORD, :LEADING, :REMEDY
+        private_constant :RECORD, :LEADING
 
         # @param path [String] the journal the line was read from
         # @param line [Integer] its line number
@@ -115,13 +119,43 @@ module Lain
         def remedy = tail ? "run again if a session is still writing; otherwise #{REMEDY}" : REMEDY
       end
 
+      Misfiled = Data.define(:path, :line, :type)
+
+      # A whole record carrying the three fields only a sign-off carries
+      # together, under a type that is not a sign-off's. {Journal.records}
+      # skips an unknown type as foreign, so a deferral whose type was damaged
+      # would fold as never made -- and a partition missing its deferral reads
+      # as drained.
+      class Misfiled
+        SHAPE = %w[artifact_digest epic_slug policy].freeze
+
+        # @param record [Hash{String=>Object}] one parsed journal record
+        def self.shaped?(record)
+          SHAPE.all? { |field| record.key?(field) } && record["type"] != Approval::SignoffQueue::JOURNAL_TYPE
+        end
+
+        def decisive? = true
+
+        def where = "is damaged at line #{line}"
+
+        def what
+          "a record #{type ? "typed #{named}" : "with no type"} carries #{SHAPE.join(", ")}, which only a " \
+            "#{Approval::SignoffQueue::JOURNAL_TYPE} carries"
+        end
+
+        # @return [String] the type it wears, quoted, or "no type" when it wears none
+        def named = type ? -type.inspect : "no type"
+
+        def remedy = REMEDY
+      end
+
       # The default: a torn line a sign-off could rest on refuses the read. A
       # fold that skipped one read a lost deferral as drained, and drained
       # opened the next stage. Strict by default so a fold nobody thought to
       # name is safe without being named.
       module Refuse
-        def self.call(torn)
-          raise Unreadable.torn(torn) if torn.decisive?
+        def self.call(damaged)
+          raise Unreadable.damaged(damaged) if damaged.decisive?
         end
       end
 
@@ -139,7 +173,10 @@ module Lain
       # `unreadable` counts lines {Journal.parse} could make nothing of -- not
       # foreign records. A Rust tracing span is valid JSON and simply is not
       # ours; counting it would cry wolf on every session that shared its fd.
-      Tally = Data.define(:files, :lines, :records, :unreadable)
+      # `misfiled` names, one per record, the type each {Misfiled} record
+      # wore: those parsed, so they are not unreadable, and a reader told
+      # "could not be parsed" would hunt for torn bytes that are not there.
+      Tally = Data.define(:files, :lines, :records, :unreadable, :misfiled)
 
       # @param dir [String] the project's session directory, already resolved --
       #   this object does no `Paths` arithmetic, which lets one caller scope by
@@ -148,8 +185,8 @@ module Lain
       #   REQUIRED, and deliberately so: every caller knows which records it is
       #   about, and a "keep everything" default would quietly make the
       #   materialization above unbounded.
-      # @param damage [#call] handed each {Torn} line; {Refuse} unless this
-      #   reader only reports
+      # @param damage [#call] handed each {Torn} line and {Misfiled} record;
+      #   {Refuse} unless this reader only reports
       def initialize(dir:, types:, damage: Refuse)
         @dir = dir
         @types = types
@@ -171,9 +208,10 @@ module Lain
 
       # @return [Tally]
       def tally
-        @tally ||= readings.inject(Tally.new(files: files.size, lines: 0, records: 0, unreadable: 0)) do |sum, read|
+        @tally ||= readings.inject(Tally.new(files: files.size, lines: 0, records: 0, unreadable: 0,
+                                             misfiled: [].freeze)) do |sum, read|
           sum.with(lines: sum.lines + read.lines, records: sum.records + read.records.size,
-                   unreadable: sum.unreadable + read.unreadable)
+                   unreadable: sum.unreadable + read.unreadable, misfiled: (sum.misfiled + read.misfiled).freeze)
         end
       end
 
@@ -188,7 +226,7 @@ module Lain
       private
 
       # The records we keep, and the counts that say what it cost to find them.
-      Reading = Data.define(:records, :lines, :unreadable)
+      Reading = Data.define(:records, :lines, :unreadable, :misfiled)
       private_constant :Reading
 
       def readings = @readings ||= files.map { |path| reading_of(path) }
@@ -245,12 +283,18 @@ module Lain
       end
 
       def counted_in(path)
-        lines_of(path).each_with_object({ records: [], lines: 0, unreadable: 0, tails: [] }) do |line, acc|
+        counts = { records: [], lines: 0, unreadable: 0, misfiled: [], tails: [] }
+        lines_of(path).each_with_object(counts) do |line, acc|
           acc[:lines] += 1
-          record = Journal.parse(line)
-          torn(path, acc, line) if record.nil?
-          acc[:records] << record if record && @types.include?(record["type"].to_s)
+          read(path, acc, line, Journal.parse(line))
         end
+      end
+
+      def read(path, acc, line, record)
+        return torn(path, acc, line) if record.nil?
+        return misfiled(path, acc, record) if Misfiled.shaped?(record)
+
+        acc[:records] << record if @types.include?(record["type"].to_s)
       end
 
       def written_since?(path, began, tails) = tails.any?(&:decisive?) && File.size(path) != began
@@ -265,6 +309,13 @@ module Lain
         acc[:unreadable] += 1
         torn = Torn.of(path:, line: acc[:lines], text:)
         torn.tail ? acc[:tails] << torn : @damage.call(torn)
+      end
+
+      def misfiled(path, acc, record)
+        type = record["type"]
+        misfiled = Misfiled.new(path: -path, line: acc[:lines], type: type.nil? ? nil : -type.to_s)
+        acc[:misfiled] << misfiled.named
+        @damage.call(misfiled)
       end
     end
   end

@@ -331,6 +331,46 @@ RSpec.describe Lain::Approval::SignoffQueue do
         }
     end
 
+    # A misspelt policy is not `deferred`, so it used to fall to the terminal
+    # side and drain a sign-off nobody answered. The set is closed: every
+    # configurable policy, and the human sign-off the queue surface journals.
+    it "refuses a gate_decision whose policy is outside the known set, naming the record" do
+      line = deferral.to_journal.merge("policy" => "deferrd")
+
+      expect { described_class.from_journal(journaled(deferral) + [line]) }
+        .to raise_error(described_class::UnreadableRecord) { |error|
+          expect(error.message).to include("blake3:plan", "alpha/research", "policy", '"deferrd"',
+                                           "nothing was decided")
+          expect(error.message).not_to include("\n")
+        }
+    end
+
+    it "folds every policy a decision can be reached by" do
+      policies = %w[interactive hands_off deferred adjudicated signoff]
+      records = policies.map { |policy| decision(policy:, digest: "blake3:#{policy}").to_journal }
+
+      expect { records.each_with_object(described_class.new) { |record, queue| queue.apply(record) } }
+        .not_to raise_error
+    end
+
+    # A stage outside the pipeline keys a partition no boundary ever asks
+    # about, so a deferral parked there reads as drained everywhere real.
+    it "refuses a gate_decision whose stage is outside the pipeline, naming the record" do
+      line = deferral.to_journal.merge("stage" => "reserach")
+
+      expect { described_class.from_journal([line]) }
+        .to raise_error(described_class::UnreadableRecord, /blake3:plan.*stage.*"reserach"/)
+    end
+
+    it "refuses a misspelt policy on the live path too, leaving the parked item where it was" do
+      queue = described_class.new
+      park(queue)
+
+      expect { queue.apply(approval.to_journal.merge("policy" => "sign_off")) }
+        .to raise_error(ArgumentError, /policy/)
+      expect(queue.drained?("alpha", "research")).to be(false)
+    end
+
     it "folds a live decision in one record at a time, so a session can stay in step" do
       queue = described_class.new
       queue.apply(deferral.to_journal)
@@ -340,6 +380,63 @@ RSpec.describe Lain::Approval::SignoffQueue do
       queue.apply(approval.to_journal)
 
       expect(queue.drained?("alpha", "research")).to be(true)
+    end
+  end
+
+  # Drained cannot tell "answered" from "never asked", so a stage boundary also
+  # asks for positive evidence: an approved terminal decision in the partition.
+  describe "#approved? -- positive evidence in a partition" do
+    it "is false where nothing was ever decided" do
+      expect(described_class.new.approved?("alpha", "research")).to be(false)
+    end
+
+    it "is true once an approving decision is folded" do
+      expect(described_class.from_journal(journaled(approval)).approved?("alpha", "research")).to be(true)
+    end
+
+    it "is false for a denial, and for a deferral that parks" do
+      denied = described_class.from_journal(journaled(decision(policy: "signoff", approved: false)))
+
+      expect(denied.approved?("alpha", "research")).to be(false)
+      expect(described_class.from_journal(journaled(deferral)).approved?("alpha", "research")).to be(false)
+    end
+
+    # The newest terminal verdict in the partition governs, so a denial of a
+    # resubmitted draft withdraws the approval its first draft had.
+    it "is false once a later denial in the partition follows an approval" do
+      queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"),
+                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2")))
+
+      expect(queue.approved?("alpha", "research")).to be(false)
+    end
+
+    it "is true again once a re-approval follows that denial" do
+      queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"),
+                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2"),
+                                                     approval(digest: "blake3:v3")))
+
+      expect(queue.approved?("alpha", "research")).to be(true)
+    end
+
+    it "is unmoved by a deferral after an approval -- a deferral is no verdict" do
+      queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"), deferral(digest: "blake3:v2")))
+
+      expect(queue.approved?("alpha", "research")).to be(true)
+      expect(queue.drained?("alpha", "research")).to be(false)
+    end
+
+    it "keys on the whole partition: another epic, stage or issue vouches for nothing" do
+      queue = described_class.from_journal(journaled(approval(epic_slug: "beta"),
+                                                     approval(stage: "issue_plan", issue_id: "a")))
+
+      expect(queue.approved?("alpha", "research")).to be(false)
+      expect(queue.approved?("beta", "epic_plan")).to be(false)
+      expect(queue.approved?("alpha", "issue_plan", issue_id: "b")).to be(false)
+      expect(queue.approved?("alpha", "issue_plan", issue_id: "a")).to be(true)
+    end
+
+    it "reads a Symbol pair the same as its Strings" do
+      expect(described_class.from_journal(journaled(approval)).approved?(:alpha, :research)).to be(true)
     end
   end
 

@@ -55,9 +55,20 @@ module Lain
       # terminal here.
       DEFERRED_POLICY = "deferred"
 
+      # How a human answering from `lain epic queue` reaches a verdict: no
+      # configurable policy, so no {Gate::Policies} row names it, and it is
+      # terminal here like every policy but {DEFERRED_POLICY}.
+      SIGNOFF_POLICY = "signoff"
+
       # The record type the fold reads (Journalable's discriminator for
       # {Approval::GateDecision}).
       JOURNAL_TYPE = "gate_decision"
+
+      # The closed set a journaled `policy` is read against. A method, not a
+      # constant: {Gate::Policies} loads after this file.
+      #
+      # @return [Array<String>] every configurable policy, and the human sign-off
+      def self.policies = [*Gate::Policies.names, SIGNOFF_POLICY]
 
       # A journaled record the fold could not read as a decision. Named, and a
       # {Lain::Error}, because the carriers below refuse with ArgumentError --
@@ -102,32 +113,38 @@ module Lain
 
         # What {SignoffQueue#apply} demands before it will act on a record.
         #
-        # `policy` is the field the fold BRANCHES on, and it was the one field
-        # nothing checked: a record missing it fell to the TERMINAL side and
-        # drained a sign-off nobody answered, after which the partition reads
-        # drained and {Epic::Stage#ensure_open!} opens the next stage over
-        # unreviewed work. `type` is checked for the same reason one step out --
-        # {.from_journal} filters on it, but the live one-record-at-a-time path
-        # is public and gets no such filter.
+        # `policy` is what the fold BRANCHES on: a missing or misspelt one is
+        # not `deferred`, so it fell to the terminal side and drained a sign-off
+        # nobody answered. `stage` outside the pipeline parks where no boundary
+        # asks. Both read as drained, so both are CLOSED sets -- checked here at
+        # the fold, never on the write-side carrier, which builds test stages
+        # freely. `type` is checked because the public live path gets none of
+        # {.from_journal}'s filtering.
         #
-        # Refusing is the only answer safe in BOTH directions: skipping an
-        # unreadable record loses a DEFERRAL just as quietly as misreading one
-        # drains a parked item, and a lost deferral also reads as drained.
-        #
-        # `approved` is a TRUNCATION CANARY. No producible record is ever
-        # rejected by that clause -- the only thing it catches is a line damaged
-        # or hand-made -- and a truncation that took `approved` could equally
-        # have taken `policy`, so a record missing either cannot be trusted
-        # about the other.
+        # Refusing is the only answer safe in BOTH directions: skipping a record
+        # loses a deferral as quietly as misreading one drains a parked item.
+        # `approved` is a TRUNCATION CANARY -- no producible record trips it,
+        # and a truncation that took it could as well have taken `policy`.
         class Decision < Declarative::Carrier
+          # Read when a record is refused, never at load: both sets belong to
+          # units that load after this one.
+          STAGES = ->(*) { Lain::Epic::STAGES }
+          POLICIES = ->(*) { SignoffQueue.policies }
+          private_constant :STAGES, :POLICIES
+
+          def self.one_of(set, reason = "") = ->(*) { "must be one of #{set.call.join(", ")}#{reason}, got %<value>p" }
+          private_class_method :one_of
+
           attribute :type
+          attribute :stage
           attribute :policy
           attribute :approved
           validates :type, inclusion: { in: [JOURNAL_TYPE],
                                         message: "must be #{JOURNAL_TYPE.inspect} for the sign-off fold, " \
                                                  "got %<value>s" }
-          validates :policy, presence: { message: "must name how the verdict was reached -- the fold branches " \
-                                                  "on it and will not guess, got nil" }
+          validates :stage, inclusion: { in: STAGES, message: one_of(STAGES) }
+          validates :policy, inclusion: { in: POLICIES,
+                                          message: one_of(POLICIES, " -- the fold branches on it and will not guess") }
           validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         end
       end
@@ -226,6 +243,8 @@ module Lain
         # twice is one sign-off and enumeration reads oldest-first -- the order
         # a morning review wants.
         @parked = {}
+        # {Partition} => the digest its newest terminal verdict approved.
+        @approved = {}
       end
 
       # Idempotent on `(artifact_digest, epic_slug, stage, issue_id)`: an
@@ -275,6 +294,33 @@ module Lain
       # @param stage [#to_s] the stage asked about
       # @param issue_id [String, nil] one issue's partition; nil asks for every issue's
       def drained?(epic_slug, stage, issue_id: nil) = parked(epic_slug, stage, issue_id:).empty?
+
+      # Whether the NEWEST terminal decision folded for exactly this partition
+      # approved -- the positive evidence {Epic::Stage}'s boundary rule asks
+      # for beside {#drained?}, which a partition nothing ever wrote to also
+      # answers true. The newest, so a denied resubmission withdraws what its
+      # first draft's approval vouched for; a deferral is no verdict and moves
+      # nothing here. Exact, never overlapping: an approval of one issue's plan
+      # is no evidence about a sibling's, and a question naming no issue is
+      # answered only by an approval that named none. Only {#apply} records a
+      # verdict, because one exists only as a journaled decision.
+      #
+      # @param epic_slug [#to_s] the epic asked about
+      # @param stage [#to_s] the stage asked about
+      # @param issue_id [String, nil] the issue, for an issue-scoped stage
+      def approved?(epic_slug, stage, issue_id: nil) = @approved.key?(Partition.new(epic_slug:, stage:, issue_id:))
+
+      # Whether that newest approving verdict was of exactly these bytes -- what
+      # "already approved" means to a submit and to an issue's plan check, so
+      # neither calls a digest approved while the boundary calls its stage not.
+      #
+      # @param artifact_digest [#to_s] the artifact as it stands now
+      # @param epic_slug [#to_s] the epic asked about
+      # @param stage [#to_s] the stage asked about
+      # @param issue_id [String, nil] the issue, for an issue-scoped stage
+      def standing?(artifact_digest, epic_slug, stage, issue_id: nil)
+        @approved[Partition.new(epic_slug:, stage:, issue_id:)] == artifact_digest.to_s
+      end
 
       # The items this question reaches, for a review surface that shows one
       # stage of one epic at a time.
@@ -328,13 +374,20 @@ module Lain
       # @return [self]
       # @raise [ArgumentError] naming the field that made the record unreadable
       def apply(decision)
-        Contracts::Decision.check!(type: decision["type"], policy: decision["policy"],
+        Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"],
                                    approved: decision["approved"])
-        deferred?(decision) ? park(**parked_attributes(decision)) : drain(**address_attributes(decision))
+        deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision)
         self
       end
 
       private
+
+      def settle(decision)
+        address = address_attributes(decision)
+        drain(**address)
+        partition = Partition.new(**address.except(:artifact_digest))
+        decision["approved"] ? @approved[partition] = -address[:artifact_digest].to_s : @approved.delete(partition)
+      end
 
       def deferred?(decision) = decision["policy"].to_s == DEFERRED_POLICY
 

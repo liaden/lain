@@ -424,8 +424,9 @@ module Lain
       end
 
       # The question an issue's launch asks before any work starts: is this
-      # issue's plan, as it stands now, approved? Read-only -- it decides and
-      # journals nothing.
+      # issue's plan, as it stands now, the one its partition's newest verdict
+      # approved? The stage boundary reads that same verdict, so the two never
+      # disagree. Read-only -- it decides and journals nothing.
       #
       # @param issue [String] the issue id
       # @param slug [String, nil] the epic; omitted resolves to the sole one
@@ -433,7 +434,7 @@ module Lain
       # @raise [PlanNotApproved] naming the plan digest that carries no approval
       def ensure_plan_approved!(issue, slug = nil)
         plan = Artifacts.new(home: home(slug), issue:).submission(Lain::Epic::Stage.new("issue_plan"))
-        ensure_approved!(Approval::Gate.from_journal(journals.to_a, journal: Channel::Null.instance), plan)
+        ensure_approved!(Approval::SignoffQueue.from_journal(journals.to_a), plan)
       end
 
       private
@@ -460,9 +461,9 @@ module Lain
         policy = policy_for(stage, queue, journal)
         gate = Approval::Gate.from_journal(records, journal:)
         advance = advance_for(stage, submission, journal)
-        return standing(submission, advance) if gate.approved?(submission.digest)
+        return standing(submission, advance) if standing?(queue, submission)
 
-        required.each { |plan| ensure_approved!(gate, plan) }
+        required.each { |plan| ensure_approved!(queue, plan) }
         Verdict.new(submission:, stage:, policy:, gate:, queue:, advance:).call
       end
 
@@ -475,16 +476,24 @@ module Lain
         -> { ready.call(journal) }
       end
 
+      # Standing only while the partition's newest verdict approved THESE
+      # bytes. An approval a later denial superseded is decided again when its
+      # bytes come back, or the stage would read "already approved" here and
+      # "not approved" at the boundary, with no verb left to move it.
+      def standing?(queue, submission)
+        queue.standing?(submission.digest, submission.slug, submission.stage, issue_id: submission.issue_id)
+      end
+
       # Refused by NAME, before anything is decided or journaled, naming the
-      # plan address that carries no approval: never approved, still parked, or
-      # edited since -- all three are the same address the registry never saw.
-      def ensure_approved!(gate, plan)
-        return plan.digest if gate.approved?(plan.digest)
+      # plan address that carries no standing approval: never approved, still
+      # parked, denied since, or edited since.
+      def ensure_approved!(queue, plan)
+        return plan.digest if standing?(queue, plan)
 
         raise PlanNotApproved, "issue #{plan.issue_id.inspect} cannot open its implementation gate -- its " \
-                               "issue_plan #{plan.digest} is not approved (never approved, still parked, or " \
-                               "its plan or criteria changed since): lain epic submit issue_plan --issue " \
-                               "#{plan.issue_id}"
+                               "issue_plan #{plan.digest} is not approved (never approved, still parked, " \
+                               "denied since, or its plan or criteria changed since): lain epic submit " \
+                               "issue_plan --issue #{plan.issue_id}"
       end
 
       # `for_all`, never `for`: resolving one stage at a time refuses LATE, and
@@ -526,9 +535,9 @@ module Lain
         SessionJournals.new(dir: @paths.sessions_dir, types: [Approval::SignoffQueue::JOURNAL_TYPE])
       end
 
-      # The registry is add-only, so a second verdict over a standing approval
-      # can neither revoke nor strengthen it -- only add a record nobody asked
-      # for, with a latency for a wait nobody waited. Reported, never decided.
+      # A second verdict over the partition's standing approval of these bytes
+      # could only add a record nobody asked for, with a latency for a wait
+      # nobody waited. Reported, never decided.
       # The approval still runs {Epic::Advance}, which is how a re-submit
       # repairs an approval whose advance never landed; from the right state
       # only, so a standing approval that did advance writes nothing more.

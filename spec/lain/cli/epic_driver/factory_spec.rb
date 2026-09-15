@@ -125,7 +125,21 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def write_epic(issues, slug: "demo")
     home(slug).write_epic(Lain::Epic::Graph.new(issues:))
+    approve_epic(slug)
     issues.each { |each| home(slug).plan(each.id).write("Subject: app/models/order.rb\n\nthe plan for #{each.id}\n") }
+  end
+
+  # The stage boundary opens only over approved earlier stages. A file of its
+  # own, because the torn-sign-off example halves `fixture.ndjson`.
+  def approve_epic(slug = "demo")
+    File.open(File.join(paths.sessions_dir, "epic-approved.ndjson"), "a") do |io|
+      journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
+      %w[research epic_plan].each do |stage|
+        journal.record(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug: slug,
+                                                        stage:, approved: true, answered_by: "human",
+                                                        policy: "hands_off", latency: 0.0))
+      end
+    end
   end
 
   def approve_plan(id, slug: "demo")
@@ -134,7 +148,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
                                                policy: "hands_off", latency: 0.0, issue_id: id))
   end
 
-  def approved_plan(id, slug)
+  def approved_plan(id, slug = "demo")
     Lain::Epic::Submission.issue_plan(text: home(slug).plan(id).read, slug:, issue_id: id,
                                       criteria_digest: home(slug).read_epic.fetch(id).criteria_digest)
   end
@@ -609,6 +623,31 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # One writer for pending -> in_flight, and it is the plan approval. An
     # issue the fold still calls pending is reported, never launched -- the
     # landing would refuse it anyway.
+    # The driver's plan check and the stage boundary read one verdict, the
+    # partition's newest: a plan approved, revised, denied and reverted is not
+    # approved until it is decided again -- and then the run carries it.
+    it "refuses a reverted plan whose revision was denied until it is submitted again, then lands it" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      original = home.plan("a").read
+      home.plan("a").write("#{original}revised\n")
+      journaled(Lain::Approval::GateDecision.new(artifact_digest: approved_plan("a").digest, epic_slug: "demo",
+                                                 stage: "issue_plan", approved: false, answered_by: "human",
+                                                 policy: "signoff", latency: 0.0, issue_id: "a"))
+      home.plan("a").write(original)
+      git(repo, "switch", "-q", "main")
+
+      refused = driven(width: 1)
+
+      expect(refused.reported.map { |report| [report.issue_id, report.reason] })
+        .to contain_exactly(["a", a_string_including("issue_plan", "not approved")])
+      expect(log).to be_empty
+
+      Lain::CLI::EpicSubmit.new(root: repo, paths:, config:).submit("issue_plan", "demo", issue: "a")
+
+      expect(driven(width: 1).landed.map(&:issue_id)).to eq(["a"])
+    end
+
     it "reports a pending issue and launches nothing for it" do
       write_epic([issue("a", status: "pending")])
       approve_plan("a")

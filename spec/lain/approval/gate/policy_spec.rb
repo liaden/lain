@@ -81,7 +81,9 @@ RSpec.describe Lain::Approval::Gate::Policy do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
-  let(:queue) { Lain::Approval::SignoffQueue.new }
+  # Alpha's research and plan approved, so a gate at a later stage meets the
+  # positive evidence the boundary asks for and an example is about its policy.
+  let(:queue) { approved(Lain::Approval::SignoffQueue.new, "alpha") }
   # The Null Object a policy names when there is no sign-off queue in the
   # session at all. Named explicitly at every call site on purpose -- see the
   # "no policy opens a boundary it never checked" group.
@@ -89,6 +91,14 @@ RSpec.describe Lain::Approval::Gate::Policy do
 
   def decisions
     Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
+  end
+
+  def approved(signoffs, epic_slug, stages: %w[research epic_plan])
+    stages.each_with_object(signoffs) do |stage, folded|
+      folded.apply(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
+                                                    approved: true, answered_by: "human", policy: "signoff",
+                                                    latency: 1.0).to_journal)
+    end
   end
 
   def decide(policy, artifact: plan, stage: "epic_plan", epic_slug: "alpha")
@@ -301,6 +311,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
 
     it "lets a sibling epic through -- the partition is keyed by both members" do
+      approved(queue, "beta")
       park_research(epic_slug: "alpha")
 
       expect(decide(described_class::HandsOff.new(queue:), stage: "epic_plan", epic_slug: "beta")).to be(true)
@@ -319,6 +330,12 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect(decide(described_class::HandsOff.new(queue:), stage: "epic_plan", epic_slug: "alpha")).to be(true)
     end
 
+    it "refuses a HANDS-OFF gate over an earlier stage nobody ever approved, journaling nothing" do
+      expect { decide(described_class::HandsOff.new(queue:), stage: "epic_plan", epic_slug: "beta") }
+        .to raise_error(Lain::Epic::StageBlocked, /"beta".*research not approved/)
+      expect(decisions).to be_empty
+    end
+
     it "refuses a stage name outside the closed set rather than gating on a partition nothing writes" do
       expect { decide(described_class::HandsOff.new(queue:), stage: "qa") }
         .to raise_error(Lain::Epic::UnknownStage, /qa/)
@@ -328,11 +345,12 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect { described_class::HandsOff.new }.to raise_error(ArgumentError, /queue/)
     end
 
-    it "opts out only by naming Drained, which answers every partition drained" do
+    it "opts out only by naming Drained, which answers every partition drained and approved" do
       park_research
 
       expect(drained.drained?("alpha", "research")).to be(true)
-      expect(decide(described_class::HandsOff.new(queue: drained), stage: "epic_plan")).to be(true)
+      expect(drained.approved?("beta", "research")).to be(true)
+      expect(decide(described_class::HandsOff.new(queue: drained), stage: "epic_plan", epic_slug: "beta")).to be(true)
     end
   end
 
@@ -347,7 +365,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
                  question: "Approve the research?")
     end
 
-    it "opens a stage whose earlier partitions are drained, answering the stage itself" do
+    it "opens a stage whose earlier partitions are drained and approved, answering the stage itself" do
       expect(described_class.new(queue).ensure_open!("epic_plan", epic_slug: "alpha"))
         .to eq(Lain::Epic::Stage.new("epic_plan"))
     end
@@ -359,7 +377,13 @@ RSpec.describe Lain::Approval::Gate::Policy do
         .to raise_error(Lain::Epic::StageBlocked, /alpha.*research/m)
     end
 
+    it "refuses a stage whose earlier partition nothing ever approved, though nothing is parked there" do
+      expect { described_class.new(Lain::Approval::SignoffQueue.new).ensure_open!("epic_plan", epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /alpha.*research not approved/m)
+    end
+
     it "scopes the refusal to one epic, so concurrent epics stay independent" do
+      approved(queue, "beta")
       park_research(epic_slug: "alpha")
 
       expect(described_class.new(queue).ensure_open!("epic_plan", epic_slug: "beta"))

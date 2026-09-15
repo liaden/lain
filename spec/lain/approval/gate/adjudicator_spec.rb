@@ -61,7 +61,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
-  let(:queue) { Lain::Approval::SignoffQueue.new }
+  let(:queue) { approved_queue }
   let(:evidence_text) { "The plan cites Epic::Stage's closed set, which the issue graph already honours." }
   let(:plan) { artifact }
   # The caller's answer to "how does an artifact render for a spike". There is
@@ -77,6 +77,16 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   # The whole artifact duck Gate ships: a content address and its own question.
   def artifact(digest: "blake3:plan", question: "Approve the epic plan? Reply approve or deny.")
     Data.define(:digest, :gate_question).new(digest:, gate_question: question)
+  end
+
+  # The stage boundary opens only over approved earlier stages, so the queue
+  # starts with alpha's research and epic plan approved.
+  def approved_queue(epic_slug = "alpha")
+    %w[research epic_plan].each_with_object(Lain::Approval::SignoffQueue.new) do |stage, folded|
+      folded.apply(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
+                                                    approved: true, answered_by: "human", policy: "signoff",
+                                                    latency: 1.0).to_journal)
+    end
   end
 
   def spawn_stub(researcher: evidence_text, verdict: "APPROVE")

@@ -109,6 +109,20 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                      answered_by: policy, policy:, latency: 1.0)
   end
 
+  # Approvals of the named stages, as the stages before an epic's later gates
+  # carry them: a boundary opens only over an approved earlier stage. Their
+  # digests are not any artifact's here, so no submit reads one as standing.
+  def approvals(*stages, slug: "alpha")
+    stages.map do |stage|
+      decision(digest: "blake3:#{stage}-approved", stage:, approved: true, policy: "hands_off", slug:)
+    end
+  end
+
+  def epic_approved(slug: "alpha") = approvals("research", "epic_plan", slug:)
+
+  # What the examples decided, past the approvals a fixture stamped before them.
+  def submitted_decisions = gate_decisions.drop(epic_approved.size)
+
   def stage_event(stage, event: "started", slug: "alpha")
     Lain::Epic::StageTransition.new(epic_slug: slug, stage:, event:)
   end
@@ -151,14 +165,14 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # An issue's implementation is ONE issue's; approving it says nothing about
     # the epic's other issues, so it moves no epic-wide stage.
     it "moves no epic-wide stage when one issue's implementation is approved" do
-      session("started.ndjson", stage_event("issue_plan"))
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.plan("a").write("the plan for a\n")
       command.submit("issue_plan", issue: "a")
 
       command.submit("implementation", issue: "a", digest: "blake3:#{"f" * 64}")
 
       expect(stage_events).to eq([%w[issue_plan started]])
-      expect(gate_decisions.map { |record| record.values_at("stage", "issue_id", "approved") })
+      expect(submitted_decisions.map { |record| record.values_at("stage", "issue_id", "approved") })
         .to eq([["issue_plan", "a", true], ["implementation", "a", true]])
     end
 
@@ -222,7 +236,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   describe "issue-scoped gates" do
     before do
       write_epic
-      session("started.ndjson", stage_event("issue_plan"))
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.plan("a").write("the plan for a\n")
       home.plan("b").write("the plan for b\n")
     end
@@ -310,7 +324,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "journals the issue on the decision and on the park" do
       deferring.submit("issue_plan", issue: "a")
 
-      expect(gate_decisions.map { |record| record["issue_id"] }).to eq(["a"])
+      expect(submitted_decisions.map { |record| record["issue_id"] }).to eq(["a"])
       expect(parked_plans.map(&:issue_id)).to eq(["a"])
     end
   end
@@ -320,7 +334,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     before do
       write_research
       write_epic
-      session("started.ndjson", stage_event("epic_plan"))
+      session("started.ndjson", *approvals("research"), stage_event("epic_plan"))
     end
 
     # Asserted on the DEFERRAL's own rendering, not on tokens it shares with a
@@ -367,6 +381,73 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect { command.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked)
 
       expect(journal_records).to eq(before_records)
+    end
+  end
+
+  # Drained is only the absence of a parked sign-off, which a stage nobody ever
+  # submitted has too: an issue once went in flight over an epic with no
+  # research or plan approval at all. A boundary opens on positive evidence.
+  # The partition's newest verdict is what a stage stands on, so "already
+  # approved" has to mean the same thing: a digest approved once and then
+  # superseded by a denied revision is decided again when it comes back, or
+  # the epic is stranded between "already approved" and "not approved".
+  describe "a reverted research after a denied revision" do
+    before do
+      write_research("v1\n")
+      write_epic
+    end
+
+    def deny_revision
+      revised = Lain::Epic::Submission.research(text: "v2\n", slug: "alpha").digest
+      session("zz-denied.ndjson", decision(digest: revised, stage: "research", approved: false, policy: "signoff"),
+              at: Time.now.utc.iso8601(6))
+    end
+
+    it "decides the reverted research again, and then opens epic_plan" do
+      command(gates: hands_off).submit("research")
+      deny_revision
+      expect { command.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked, /research not approved/)
+
+      expect(command.submit("research")).to start_with("approved #{research_digest("v1\n")}")
+      expect(command.submit("epic_plan")).to start_with("approved")
+    end
+  end
+
+  describe "a stage never approved" do
+    before do
+      write_research(slug: "plans")
+      write_epic(slug: "plans")
+      home("plans").plan("a").write("the plan for a\n")
+    end
+
+    # Scenario: a stage never approved blocks the next
+    it "refuses an issue plan naming research as not approved, and journals nothing" do
+      expect { command.submit("issue_plan", "plans", issue: "a") }
+        .to raise_error(Lain::Epic::StageBlocked,
+                        /"plans" cannot open its issue_plan stage for issue "a" -- research, epic_plan not approved/)
+      expect(gate_decisions).to be_empty
+    end
+
+    it "refuses over a denied research too, since a denial is no approval" do
+      session("denied.ndjson", decision(digest: research_digest(slug: "plans"), stage: "research", approved: false,
+                                        policy: "hands_off", slug: "plans"))
+
+      expect { command.submit("epic_plan", "plans") }.to raise_error(Lain::Epic::StageBlocked, /research not approved/)
+    end
+
+    # Scenario: one epic does not block another
+    it "lets plans' epic_plan proceed once its research is approved, while another epic has submitted nothing" do
+      write_research(slug: "other")
+      write_epic(slug: "other")
+      session("approved.ndjson", *approvals("research", slug: "plans"))
+
+      expect(command.submit("epic_plan", "plans")).to start_with("approved")
+    end
+
+    it "does not read another epic's approvals as this one's" do
+      session("approved.ndjson", *epic_approved(slug: "other"))
+
+      expect { command.submit("epic_plan", "plans") }.to raise_error(Lain::Epic::StageBlocked, /"plans".*research/)
     end
   end
 
@@ -949,7 +1030,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     before do
       home.write_epic(graph_with("it works"))
-      session("started.ndjson", stage_event("issue_plan"))
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.plan("a").write("the plan for a\n")
     end
 
@@ -996,7 +1077,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       home.plan("ghost").write("a plan for nothing\n")
 
       expect { command.submit("issue_plan", issue: "ghost") }.to raise_error(Lain::Error, /issue "ghost"/)
-      expect(gate_decisions).to be_empty
+      expect(submitted_decisions).to be_empty
     end
   end
 
@@ -1006,7 +1087,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   describe "the issue-scoped stages" do
     before do
       write_epic
-      session("started.ndjson", stage_event("issue_plan"))
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
     end
 
     it "submits the plan written for one issue" do

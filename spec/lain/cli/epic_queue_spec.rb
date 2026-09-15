@@ -252,6 +252,10 @@ RSpec.describe Lain::CLI::EpicQueue do
       expect(queue.approve(digest_a)).to include(digest_a, "alpha", "research")
     end
 
+    it "confirms that it signed the artifact off" do
+      expect(queue.approve(digest_a)).to start_with("signed off #{digest_a}\n  alpha/research — approved by human")
+    end
+
     # Scenario: an unknown digest is loud and helpful
     it "refuses an unknown digest, naming it and listing the parked ones" do
       expect { queue.approve(digest_c) }
@@ -305,6 +309,14 @@ RSpec.describe Lain::CLI::EpicQueue do
 
       terminal = gate_decisions.find { |record| record["policy"] == "signoff" }
       expect(terminal).to include("approved" => false, "answered_by" => "human", "policy" => "signoff")
+    end
+
+    # A denial signs nothing off, so the confirmation says what was done.
+    it "confirms that it denied the artifact, not that it signed it off" do
+      said = queue.deny(digest_a)
+
+      expect(said).to start_with("denied #{digest_a}\n  alpha/research — denied by human")
+      expect(said).not_to include("signed off")
     end
 
     it "records the human's rationale when one is given" do
@@ -602,6 +614,40 @@ RSpec.describe Lain::CLI::EpicQueue do
 
     it "refuses deny the same way" do
       expect { queue.deny(digest_a) }.to raise_error(Lain::CLI::SessionJournals::Unreadable, /nothing was decided/)
+    end
+  end
+
+  # A whole record wearing a sign-off's fields under a type nothing folds could
+  # be a deferral whose type was damaged. The listing says so, by that type;
+  # the deciding verbs refuse, as they do over a torn line.
+  describe "a gate-shaped record under an unknown type" do
+    let(:misfiled) do
+      decision(digest: digest_b, at: "2026-07-28T06:30:00.000000Z", policy: "deferred", answered_by: "deferred")
+        .merge("type" => "gate_decisoin")
+    end
+
+    before do
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred"), misfiled])
+    end
+
+    it "still lists, warning that a record has an unknown type, naming it, and not that it could not be parsed" do
+      listing = queue.listing
+
+      expect(listing).to include(digest_a, "unknown type", '"gate_decisoin"', "not proven")
+      expect(listing).not_to include("could not be parsed")
+    end
+
+    it "refuses approve, naming the file, the line and the type, and journals nothing" do
+      expect { queue.approve(digest_a) }
+        .to raise_error(Lain::CLI::SessionJournals::Unreadable, /20260728T060000-100\.ndjson.*line 2.*"gate_decisoin"/)
+      expect(gate_decisions.none? { |record| record["policy"] == "signoff" }).to be(true)
+    end
+
+    it "refuses deny the same way" do
+      expect { queue.deny(digest_a) }.to raise_error(Lain::CLI::SessionJournals::Unreadable, /"gate_decisoin"/)
+      expect(gate_decisions.none? { |record| record["policy"] == "signoff" }).to be(true)
     end
   end
 

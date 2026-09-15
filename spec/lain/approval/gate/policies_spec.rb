@@ -31,7 +31,7 @@ RSpec.describe Lain::Approval::Gate::Policies do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
-  let(:queue) { Lain::Approval::SignoffQueue.new }
+  let(:queue) { approved_queue }
   let(:asked) { [] }
   let(:asker) do
     questions = asked
@@ -44,6 +44,16 @@ RSpec.describe Lain::Approval::Gate::Policies do
 
   def decide(policy, stage:, epic_slug: "alpha")
     Sync { policy.decide(plan, gate:, stage:, epic_slug:) }
+  end
+
+  # The stage boundary opens only over approved earlier stages, so the queue
+  # starts with alpha's research and epic plan approved.
+  def approved_queue(epic_slug = "alpha")
+    %w[research epic_plan].each_with_object(Lain::Approval::SignoffQueue.new) do |stage, folded|
+      folded.apply(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
+                                                    approved: true, answered_by: "human", policy: "signoff",
+                                                    latency: 1.0).to_journal)
+    end
   end
 
   describe "per-stage policies resolve from config" do

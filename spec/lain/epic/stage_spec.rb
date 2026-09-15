@@ -4,7 +4,7 @@
 # issue_plan -> implementation. It is a value object, so an unknown name fails at
 # construction rather than as a missing branch three cards later, and it owns the
 # STAGE-BOUNDARY rule: a stage may only open once every earlier stage's sign-off
-# partition is drained, per epic.
+# partition is drained AND carries an approval, per epic.
 RSpec.describe Lain::Epic::Stage do
   let(:queue) { Lain::Approval::SignoffQueue.new }
 
@@ -12,6 +12,24 @@ RSpec.describe Lain::Epic::Stage do
 
   def park(epic_slug:, stage:, digest: "blake3:plan", **scope)
     queue.park(artifact_digest: digest, epic_slug:, stage:, question: "Approve?", **scope)
+  end
+
+  # Folded the way a journaled sign-off is, since a verdict reaches the queue
+  # only as a decision record.
+  def decide(approved:, epic_slug:, stage:, digest:, **scope)
+    queue.apply(Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+                                                 answered_by: "human", policy: "signoff", latency: 1.0, **scope)
+                                            .to_journal)
+  end
+
+  def approve(digest: "blake3:approved", **address) = decide(approved: true, digest:, **address)
+  def deny(digest: "blake3:denied", **address) = decide(approved: false, digest:, **address)
+
+  # Every stage up to and including `last`; an issue-scoped one for that issue.
+  def approve_through(last, epic_slug: "alpha", issue_id: nil)
+    stage(last).preceding.push(stage(last)).each do |earlier|
+      approve(epic_slug:, stage: earlier.name, issue_id: (issue_id if earlier.issue_scoped?))
+    end
   end
 
   describe "the closed set" do
@@ -110,10 +128,11 @@ RSpec.describe Lain::Epic::Stage do
 
   describe "deferral never crosses a stage boundary within an epic" do
     it "raises naming the epic and the undrained earlier stage" do
+      approve(epic_slug: "alpha", stage: "research")
       park(epic_slug: "alpha", stage: "research")
 
       expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
-        .to raise_error(Lain::Epic::StageBlocked, /alpha.*research/m)
+        .to raise_error(Lain::Epic::StageBlocked, /alpha.*research still holds sign-offs parked/m)
     end
 
     it "names every undrained earlier stage, not only the first" do
@@ -125,6 +144,7 @@ RSpec.describe Lain::Epic::Stage do
     end
 
     it "ignores the stage's OWN partition -- a gate opening here is what will park there" do
+      approve(epic_slug: "alpha", stage: "research")
       park(epic_slug: "alpha", stage: "epic_plan")
 
       expect(stage("epic_plan").ensure_open!(queue, epic_slug: "alpha")).to eq(stage("epic_plan"))
@@ -136,17 +156,94 @@ RSpec.describe Lain::Epic::Stage do
       expect { stage("research").ensure_open!(queue, epic_slug: "alpha") }.not_to raise_error
     end
 
-    it "opens once the earlier partition is drained" do
+    it "opens once the earlier partition's deferral is answered by an approval" do
       park(epic_slug: "alpha", stage: "research")
-      queue.drain(artifact_digest: "blake3:plan", epic_slug: "alpha", stage: "research")
+      approve(epic_slug: "alpha", stage: "research", digest: "blake3:plan")
 
       expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }.not_to raise_error
+    end
+
+    # An earlier approval of other bytes is not an answer to what is parked now.
+    it "still blocks while a later deferral is parked beside an earlier approval" do
+      approve(epic_slug: "alpha", stage: "research", digest: "blake3:first")
+      park(epic_slug: "alpha", stage: "research", digest: "blake3:revised")
+
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /research still holds sign-offs parked/)
     end
 
     it "opens the first stage unconditionally -- it has no earlier partition to drain" do
       park(epic_slug: "alpha", stage: "research")
 
       expect { stage("research").ensure_open!(queue, epic_slug: "alpha") }.not_to raise_error
+    end
+  end
+
+  # Drained is the absence of a parked record, which a stage nobody ever
+  # submitted satisfies too. So each earlier stage must also carry an approval.
+  describe "an earlier stage needs positive approval evidence" do
+    it "refuses a stage whose earlier stage was never decided, naming it as not approved" do
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /"alpha" cannot open its epic_plan stage -- research not approved/)
+    end
+
+    it "names every earlier stage never approved" do
+      approve(epic_slug: "alpha", stage: "research")
+
+      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "a") }
+        .to raise_error(Lain::Epic::StageBlocked, /epic_plan, issue_plan not approved/)
+    end
+
+    it "does not count a denial as approval" do
+      deny(epic_slug: "alpha", stage: "research", digest: "blake3:no")
+
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /research not approved/)
+    end
+
+    # The partition's newest verdict is what the stage stands on: an approval
+    # of the first draft says nothing once the resubmitted one is denied.
+    it "blocks once a resubmitted research is denied after its first draft was approved" do
+      approve(epic_slug: "alpha", stage: "research", digest: "blake3:v1")
+      deny(epic_slug: "alpha", stage: "research", digest: "blake3:v2")
+
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /research not approved/)
+    end
+
+    it "opens again once research is re-approved after that denial" do
+      approve(epic_slug: "alpha", stage: "research", digest: "blake3:v1")
+      deny(epic_slug: "alpha", stage: "research", digest: "blake3:v2")
+      approve(epic_slug: "alpha", stage: "research", digest: "blake3:v3")
+
+      expect(stage("epic_plan").ensure_open!(queue, epic_slug: "alpha")).to eq(stage("epic_plan"))
+    end
+
+    it "names a parked stage as parked and a never-approved one as not approved, in one refusal" do
+      park(epic_slug: "alpha", stage: "research")
+
+      expect { stage("issue_plan").ensure_open!(queue, epic_slug: "alpha", issue_id: "a") }
+        .to raise_error(Lain::Epic::StageBlocked, /research still holds sign-offs parked.*epic_plan not approved/m)
+    end
+
+    it "opens once every earlier stage is approved" do
+      approve_through("issue_plan", issue_id: "a")
+
+      expect(stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "a"))
+        .to eq(stage("implementation"))
+    end
+
+    it "reads an epic-wide approval as every issue's" do
+      approve_through("epic_plan")
+
+      expect(stage("issue_plan").ensure_open!(queue, epic_slug: "alpha", issue_id: "b")).to eq(stage("issue_plan"))
+    end
+
+    it "wants the issue's OWN plan approved before its implementation opens" do
+      approve_through("issue_plan", issue_id: "a")
+
+      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "b") }
+        .to raise_error(Lain::Epic::StageBlocked, /issue "b".*issue_plan not approved/)
     end
   end
 
@@ -160,6 +257,7 @@ RSpec.describe Lain::Epic::Stage do
 
     # Scenario: a parked issue does not block a sibling
     it "opens b's implementation while a's issue_plan is parked" do
+      approve_through("issue_plan", issue_id: "b")
       park(epic_slug: "alpha", stage: "issue_plan", issue_id: "a")
 
       expect(stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "b"))
@@ -199,12 +297,28 @@ RSpec.describe Lain::Epic::Stage do
 
   describe "epics do not block each other's boundaries" do
     it "opens beta's epic_plan gate while alpha's research partition is still parked" do
+      approve(epic_slug: "beta", stage: "research")
       park(epic_slug: "alpha", stage: "research")
 
       expect { stage("epic_plan").ensure_open!(queue, epic_slug: "beta") }.not_to raise_error
     end
 
+    it "opens alpha's epic_plan gate while beta has submitted nothing at all" do
+      approve(epic_slug: "alpha", stage: "research")
+
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }.not_to raise_error
+    end
+
+    it "lets no epic's approval vouch for another's stage" do
+      approve(epic_slug: "beta", stage: "research")
+
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /"alpha".*research not approved/)
+    end
+
     it "still blocks alpha, so the partition is keyed by BOTH members" do
+      approve(epic_slug: "alpha", stage: "research")
+      approve(epic_slug: "beta", stage: "research")
       park(epic_slug: "alpha", stage: "research")
       stage("epic_plan").ensure_open!(queue, epic_slug: "beta")
 

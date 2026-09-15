@@ -23,8 +23,9 @@ module Lain
       # verdict through {Gate::Adjudicator}, which already owns the boundary
       # check, the gate call and the park, so it overrides {#decide} outright.
       class Policy
-        # No sign-off queue in the session at all: nothing can be parked, so no
-        # boundary can be blocked, and answering `true` is a fact.
+        # No sign-off queue in the session at all, so the boundary has nothing
+        # to read: naming this opts out of it, every partition drained and
+        # approved.
         #
         # NAMED, never defaulted: a policy quietly built without a queue would
         # open every boundary it was supposed to guard, which is the check's own
@@ -32,6 +33,8 @@ module Lain
         # ArgumentError.
         module Drained
           def self.drained?(_epic_slug, _stage, **) = true
+
+          def self.approved?(_epic_slug, _stage, **) = true
 
           def self.parked(_epic_slug, _stage, **) = []
         end
@@ -46,8 +49,9 @@ module Lain
         # path. Naming the rule makes "checked exactly once, by whoever holds a
         # queue" a property of the object rather than of a convention.
         class Boundary
-          # @param queue [#drained?, #parked] the sign-off queue, or {Drained} when the
-          #   session has none -- named, never defaulted, for {Policy}'s reason
+          # @param queue [#drained?, #approved?, #parked] the sign-off queue, or
+          #   {Drained} when the session has none -- named, never defaulted, for
+          #   {Policy}'s reason
           def initialize(queue)
             @queue = queue
           end
@@ -58,15 +62,15 @@ module Lain
           #   issue-scoped stages; nil checks every issue
           # @return [Epic::Stage] the stage, so the check reads as a precondition
           # @raise [Epic::StageBlocked] when an earlier stage of this epic still
-          #   holds sign-offs parked
+          #   holds sign-offs parked, or was never approved
           # @raise [Epic::UnknownStage] for a stage outside the closed pipeline
           def ensure_open!(stage, epic_slug:, issue_id: nil)
             Epic::Stage.new(stage).ensure_open!(@queue, epic_slug:, issue_id:)
           end
         end
 
-        # @param queue [#drained?, #parked] the sign-off queue the stage boundary is
-        #   checked against, or {Drained} when the session has none
+        # @param queue [#drained?, #approved?, #parked] the sign-off queue the stage
+        #   boundary is checked against, or {Drained} when the session has none
         def initialize(queue:)
           @queue = queue
           @boundary = Boundary.new(queue)
@@ -83,7 +87,7 @@ module Lain
         #   artifact carries, journaled as the join key a grader reads
         # @return [Boolean] whether the artifact was approved
         # @raise [Epic::StageBlocked] when an earlier stage of this epic still
-        #   holds sign-offs parked
+        #   holds sign-offs parked, or was never approved
         def decide(artifact, gate:, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
           # Checked HERE because this is the seam every gate actually comes
           # through -- a rule only {Epic::Stage} could invoke would be a safety
@@ -137,7 +141,7 @@ module Lain
           NAME = Gate::DEFAULT_POLICY
 
           # @param asker [#ask] the `ask_human`-shaped duck a human answers through
-          # @param queue [#drained?, #parked] forwarded to {Policy#initialize} -- the
+          # @param queue [#drained?, #approved?, #parked] forwarded to {Policy#initialize} -- the
           #   sign-off queue this gate's stage boundary is checked against
           def initialize(asker:, queue:)
             super(queue:)

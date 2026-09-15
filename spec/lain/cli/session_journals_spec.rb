@@ -105,6 +105,74 @@ RSpec.describe Lain::CLI::SessionJournals do
     end
   end
 
+  # Only a gate_decision carries an artifact address, an epic and a policy
+  # together, so a record shaped that way under any other type is a decision
+  # whose type was damaged. Skipped as foreign, a misspelt deferral read as
+  # drained.
+  describe "a gate-shaped record under an unknown type" do
+    def misfiled(type = "gate_decisoin")
+      JSON.generate("ts" => "2026-07-28T09:00:00Z", "type" => type, "artifact_digest" => "blake3:plan",
+                    "epic_slug" => "alpha", "stage" => "research", "policy" => "deferred", "approved" => false)
+    end
+
+    it "refuses the read, naming the file, the line and the type" do
+      write("20260728T090000-1.ndjson", [record(type: "turn", at: "2026-07-28T08:59:00Z"), misfiled])
+
+      expect { journals.to_a }.to raise_error(described_class::Unreadable) { |error|
+        expect(error.message).to include("20260728T090000-1.ndjson", "line 2", '"gate_decisoin"', "gate_decision",
+                                         "nothing was decided")
+        expect(error.message).not_to include("\n")
+      }
+    end
+
+    it "refuses whichever types this reader keeps" do
+      write("20260728T090000-1.ndjson", [misfiled])
+
+      expect { described_class.new(dir: @dir, types: ["landed"]).to_a }.to raise_error(described_class::Unreadable)
+    end
+
+    # It parsed, so it is not an unreadable line: it is counted apart, by the
+    # type it wears, for a listing that has to say what it could not place.
+    it "tallies it by its type without refusing, for a reader that tolerates damage" do
+      write("20260728T090000-1.ndjson", [misfiled, record(type: "gate_decision", at: "2026-07-28T09:00:01Z", id: "a")])
+
+      expect(tolerant.map { |r| r["id"] }).to eq(["a"])
+      expect(tolerant.tally).to have_attributes(lines: 2, records: 1, unreadable: 0, misfiled: ['"gate_decisoin"'])
+    end
+
+    it "names a record carrying that shape with no type at all as having no type" do
+      shaped = JSON.generate("ts" => "2026-07-28T09:00:00Z", "artifact_digest" => "blake3:plan",
+                             "epic_slug" => "alpha", "policy" => "deferred")
+      write("20260728T090000-1.ndjson", [shaped])
+
+      expect { journals.to_a }.to raise_error(described_class::Unreadable) { |error|
+        expect(error.message).to include("line 1", "no type")
+        expect(error.message).not_to include('typed ""')
+      }
+      expect(tolerant.tally.misfiled).to eq(["no type"])
+    end
+
+    it "keeps a tally naming misfiled types Ractor-shareable" do
+      write("20260728T090000-1.ndjson", [misfiled, misfiled("gate_decisoin_v2")])
+
+      expect(Ractor.shareable?(tolerant.tally)).to be(true)
+    end
+
+    it "reads a gate_decision carrying the same fields as the record it is" do
+      write("20260728T090000-1.ndjson", [misfiled("gate_decision")])
+
+      expect(journals.map { |r| r["type"] }).to eq(["gate_decision"])
+    end
+
+    it "leaves a record carrying only part of that shape alone" do
+      partial = JSON.generate("ts" => "2026-07-28T09:00:00Z", "type" => "gate_evidence",
+                              "artifact_digest" => "blake3:plan", "epic_slug" => "alpha", "stage" => "research")
+      write("20260728T090000-1.ndjson", [partial])
+
+      expect(journals.map { |r| r["type"] }).to eq(["gate_evidence"])
+    end
+  end
+
   # A torn line is damage, never somebody else's bytes: the only other writer
   # the skip contract names is a Rust tracing span, and a span is a whole JSON
   # line. So a fold that skipped a torn `gate_decision` folded a decision
@@ -360,7 +428,7 @@ RSpec.describe Lain::CLI::SessionJournals do
              record(type: "turn", at: "2026-07-28T09:00:01Z", id: "t"),
              "}{ truncated"])
 
-      expect(tolerant.tally).to have_attributes(files: 1, lines: 3, records: 1, unreadable: 1)
+      expect(tolerant.tally).to have_attributes(files: 1, lines: 3, records: 1, unreadable: 1, misfiled: [])
     end
 
     it "reports a journal of pure garbage as read-but-not-understood" do
