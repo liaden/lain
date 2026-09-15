@@ -17,7 +17,10 @@ RSpec.describe Lain::CLI::Command::Fork do
   # exactly as the child's Resume#fork would.
   let(:head_turn) { instance_double(Lain::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
   let(:timeline) { instance_double(Lain::Timeline, head_digest: head, head: head_turn) }
-  let(:agent) { instance_double(Lain::Agent, timeline:) }
+  # Dispatching defaults to false -- the ONLY state in which the gate is ever
+  # reached at rest, since a live dispatch is what the mid-tool contexts below
+  # flip on.
+  let(:agent) { instance_double(Lain::Agent, timeline:, dispatching?: false) }
   let(:chronicle) do
     chronicle = instance_double(Lain::CLI::Chronicle, journal_path: "/sessions/#{session}")
     allow(chronicle).to receive(:catch_up) { calls << :catch_up }
@@ -38,12 +41,7 @@ RSpec.describe Lain::CLI::Command::Fork do
     surface
   end
   let(:supervisor) { Lain::Supervisor::Null }
-  # "is a run outstanding?" -- the reader `anchor!`'s gate turns on. Defaults to
-  # nobody waiting, which is the `you> ` prompt: the ONLY state in which a line
-  # is read at all unless a question is parked.
-  let(:reply_outstanding) { false }
-  let(:replies) { instance_double(Lain::CLI::HumanReplies, pending?: reply_outstanding) }
-  let(:env) { build_command_env(agent:, chronicle:, fork_point:, tmux_surface:, supervisor:, replies:) }
+  let(:env) { build_command_env(agent:, chronicle:, fork_point:, tmux_surface:, supervisor:) }
 
   it "registers as /fork with a one-line usage" do
     expect(fork_command.name).to eq("fork")
@@ -96,18 +94,15 @@ RSpec.describe Lain::CLI::Command::Fork do
   #
   # On disk, an assistant tool_use with no result means the call was stranded --
   # nothing will ever answer it, so answering it as cancelled states a fact.
-  # LIVE, the same shape can mean the call is RUNNING. Both prompts dispatch
-  # through one bound registry over one Env (`wiring.rb:474`), so `/fork` is
-  # typeable at the `human> ` prompt a parked ask_human opens
-  # (`human_replies.rb:1113`) -- and there the head's tool_use IS that
-  # ask_human, in flight.
+  # LIVE, the same shape can mean the call is RUNNING. `/fork` is typeable at
+  # the `human> ` prompt a parked ask_human opens (`human_replies.rb:1113`) --
+  # and there the head's tool_use IS that ask_human, in flight.
   #
-  # What separates the two is `env.replies.pending?`, which is exactly true for
-  # the life of that prompt (`AnswerLoop#exchange` enqueues BEFORE it parks).
-  # So the door refuses only what it can actually see going, and repairs the
-  # rest. It fails safe in one direction: a question a subagent queued while the
-  # human sat idle at `you> ` also reads pending, which over-refuses a fork that
-  # would have been fine.
+  # What separates the two is {Lain::CLI::Command::InFlight.mid_tool?}, the
+  # same dispatch-lock door `/rewind` and `/undo` already stand behind: the
+  # agent's own lock, held for the whole life of a run and released the moment
+  # nothing is running, rather than a proxy for it. So the door refuses only
+  # what it can actually see going, and repairs the rest.
   describe "a mid-tool head" do
     let(:head_turn) do
       instance_double(Lain::Event, role: "assistant",
@@ -115,8 +110,8 @@ RSpec.describe Lain::CLI::Command::Fork do
                                                "input" => { "text" => "hi" } }])
     end
 
-    context "with a reply outstanding -- the call may still be in flight" do
-      let(:reply_outstanding) { true }
+    context "with the agent dispatching -- the call may still be in flight" do
+      let(:agent) { instance_double(Lain::Agent, timeline:, dispatching?: true) }
 
       it "gates BEFORE any window opens, naming the shape in the words the child uses for it" do
         expect { fork_command.call("", env) }
@@ -127,9 +122,9 @@ RSpec.describe Lain::CLI::Command::Fork do
         expect(calls).to eq([:catch_up])
       end
 
-      # The refusal may claim only what the door can see. It sees a parked
-      # question, not a running tool, so it says "may" -- the earlier draft
-      # asserted the call WAS still being made, which is false at `you> `.
+      # The refusal may claim only what the door can see. It sees a live
+      # dispatch, not the running tool itself, so it says "may" -- the earlier
+      # draft asserted the call WAS still being made, which is false at `you> `.
       it "says why a live head differs, without asserting more than it knows" do
         expect { fork_command.call("", env) }
           .to raise_error(Lain::CLI::Resume::Refusal) do |error|
@@ -149,24 +144,12 @@ RSpec.describe Lain::CLI::Command::Fork do
       end
     end
 
-    context "with nobody waiting on a reply -- the tear is stranded, as on disk" do
+    context "with the agent not dispatching -- the tear is stranded, as on disk" do
       it "opens the window: the child answers the stranded call exactly as `--fork` does" do
         expect { fork_command.call("", env) }.not_to raise_error
 
         expect(calls).to eq(%i[catch_up resolve window])
       end
-    end
-  end
-
-  # The gate needs BOTH facts. A parked question over a perfectly settled head
-  # is an ordinary fork and must not be refused for the reply's sake.
-  describe "a settled head while a reply is outstanding" do
-    let(:reply_outstanding) { true }
-
-    it "forks normally" do
-      expect { fork_command.call("", env) }.not_to raise_error
-
-      expect(calls).to eq(%i[catch_up resolve window])
     end
   end
 
@@ -320,7 +303,8 @@ RSpec.describe Lain::CLI::Command::Fork, "the child's backend" do
       placement
     end
     chronicle = instance_double(Lain::CLI::Chronicle, journal_path: session_path, catch_up: nil)
-    env = build_command_env(agent: instance_double(Lain::Agent, timeline:), chronicle:, tmux_surface: surface,
+    agent = instance_double(Lain::Agent, timeline:, dispatching?: false)
+    env = build_command_env(agent:, chronicle:, tmux_surface: surface,
                             fork_point: Lain::CLI::ForkPoint.new(dir: File.dirname(session_path)))
     described_class.new(environment: { "TMUX" => "/tmp/tmux-1000/default,1,0" }).call("", env)
     composed

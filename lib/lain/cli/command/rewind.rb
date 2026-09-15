@@ -65,14 +65,16 @@ module Lain
 
         # A run in flight settles onto the Timeline it captured and hands that
         # back, so a head moved now is committed over the moment the parked
-        # call is answered. {Undo.in_flight?} is the predicate, shared so the
-        # two commands cannot disagree about what "in flight" means; it refuses
-        # even a caller already holding the lock. The lock is then HELD from
-        # resolution through the record and the move, because a check that is
-        # only read lets a run start between the record landing and the move.
+        # call is answered. {InFlight.dispatching?} is the predicate, shared
+        # with `/undo` (and, off its wider {InFlight.mid_tool?}, with `/fork`
+        # and `/btw`) so the four commands cannot disagree about what "in
+        # flight" means; it refuses even a caller already holding the lock.
+        # The lock is then HELD from resolution through the record and the
+        # move, because a check that is only read lets a run start between the
+        # record landing and the move.
         def exclusively(env, typed)
           lock = env.agent.dispatch_lock
-          raise Refusal, in_flight(typed, env.timeline) if Undo.in_flight?(env) || !lock.try_enter
+          raise Refusal, in_flight(typed, env.timeline) if InFlight.dispatching?(env) || !lock.try_enter
 
           begin
             yield
@@ -143,8 +145,8 @@ module Lain
         # command is unaffected because it moves a LIVE head and projects
         # nothing: the torn turn would simply BE the head, with no load to answer
         # it -- and a live head is where the shape stops being one fact, since a
-        # call may still be in flight ({CLI::Command::Fork#anchor!} reads that
-        # off `env.replies.pending?`), which is why the live doors are the
+        # call may still be in flight ({CLI::Command::InFlight.mid_tool?} is how
+        # `/fork` reads that), which is why the live doors are the
         # conservative ones. Both forms funnel through the count, so both meet
         # the guard.
         def settled_target!(count, timeline, typed)

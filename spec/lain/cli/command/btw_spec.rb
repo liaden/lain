@@ -12,8 +12,11 @@ require "tmpdir"
 # possibly mid-round-trip, is refused conservatively.
 RSpec.describe Lain::CLI::Command::Btw do
   let(:head) { "blake3:abc123def456" }
-  let(:timeline) { instance_double(Lain::Timeline, head_digest: head) }
-  let(:agent) { instance_double(Lain::Agent, timeline:) }
+  let(:head_turn) { instance_double(Lain::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
+  let(:timeline) { instance_double(Lain::Timeline, head_digest: head, head: head_turn) }
+  # Dispatching defaults to false -- the mid-tool describe block below flips
+  # it on to exercise the shared dispatch-lock door.
+  let(:agent) { instance_double(Lain::Agent, timeline:, dispatching?: false) }
   let(:journal_path) { "/state/lain/sessions/p/20260723T120000Z-1234.ndjson" }
   let(:chronicle) do
     instance_double(Lain::CLI::Chronicle, journal_path:, catch_up: nil)
@@ -111,6 +114,42 @@ RSpec.describe Lain::CLI::Command::Btw do
 
       expect { command.call("why?", env_with(chronicle: ephemeral, agent:)) }
         .to raise_error(Lain::Error, %r{/keep this side-question first})
+    end
+  end
+
+  # The same dispatch-lock door `/fork` gates on: `/btw` composes a fork of
+  # THIS head, so a call still being made under it is the same shape, refused
+  # in the same words.
+  describe "a mid-tool head" do
+    let(:head_turn) do
+      instance_double(Lain::Event, role: "assistant",
+                                   content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
+                                               "input" => { "text" => "hi" } }])
+    end
+
+    context "with the agent dispatching -- the call may still be in flight" do
+      let(:agent) { instance_double(Lain::Agent, timeline:, dispatching?: true) }
+
+      it "refuses with the MID_TOOL hedge, before the popup opens" do
+        expect(tmux_surface).not_to receive(:popup)
+
+        expect { command.call("a side question", env) }
+          .to raise_error(Lain::Error, /awaiting tool results/)
+      end
+
+      it "still journals the head durably -- the refusal reads the now-durable record" do
+        expect(chronicle).to receive(:catch_up).with(timeline)
+
+        expect { command.call("a side question", env) }.to raise_error(Lain::Error)
+      end
+    end
+
+    context "with the agent not dispatching -- the tear is stranded, as on disk" do
+      it "opens the popup normally" do
+        allow(tmux_surface).to receive(:popup).and_return(placement)
+
+        expect { command.call("a side question", env) }.not_to raise_error
+      end
     end
   end
 
@@ -270,7 +309,8 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
       Lain::CLI::TmuxSurface::Placement.new(kind: :popup, target: "btw", degraded: false, reason: nil)
     end
     chronicle = instance_double(Lain::CLI::Chronicle, journal_path: session_path, catch_up: nil)
-    env = build_command_env(agent: instance_double(Lain::Agent, timeline:), chronicle:, tmux_surface: surface)
+    agent = instance_double(Lain::Agent, timeline:, dispatching?: false)
+    env = build_command_env(agent:, chronicle:, tmux_surface: surface)
     described_class.new.call(question, env)
     composed
   end

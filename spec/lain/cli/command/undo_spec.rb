@@ -688,7 +688,8 @@ RSpec.describe Lain::CLI::Command::Undo do
     # /rewind refuses on the same predicate, so the two commands cannot come to
     # disagree about whether a run is in flight.
     it "answers the in-flight question /rewind shares off the agent's dispatch lock" do
-      expect([described_class.in_flight?(env(dispatching: true)), described_class.in_flight?(env)])
+      expect([Lain::CLI::Command::InFlight.dispatching?(env(dispatching: true)),
+              Lain::CLI::Command::InFlight.dispatching?(env)])
         .to eq([true, false])
     end
 

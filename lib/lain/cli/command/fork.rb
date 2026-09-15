@@ -79,23 +79,19 @@ module Lain
         # still in flight. `/fork` is typeable at the `human> ` prompt a parked
         # `ask_human` opens, and there the head's `tool_use` IS that ask_human.
         #
-        # `env.replies.pending?` separates them exactly rather than
-        # approximately: {HumanReplies::Reply::AnswerLoop#exchange} enqueues the
-        # item BEFORE it parks, so it is true for the whole life of that prompt
-        # and false at rest. Those two prompts are the only command-dispatch
-        # surfaces in `lib/` -- the approval prompt reads y/N straight through
-        # `conductor.read_reply` and never consults the registry -- so nothing
-        # else can be running a tool while this line is read.
-        #
-        # It fails safe in one direction only: a question a subagent queued while
-        # the human sat idle at `you> ` also reads pending, over-refusing a fork
-        # that would have been fine. Over-refusing costs a message;
-        # under-refusing opens a child told its call was cancelled while the
-        # parent was still making it.
+        # {InFlight.mid_tool?} is the door `/rewind` and `/undo` already share,
+        # off the agent's own dispatch lock rather than a proxy for it: the
+        # lock is held for the whole life of a run, a parked approval or a
+        # parked `ask_human` prompt included, and released the moment nothing
+        # is running. It fails safe in one direction only: a subagent's own
+        # question, asked while the human sits idle at `you> `, still runs
+        # under the orchestrator's own dispatch (the spawn tool's call is what
+        # is running), so it over-refuses a fork that would have been fine.
+        # Over-refusing costs a message; under-refusing opens a child told its
+        # call was cancelled while the parent was still making it.
         def anchor!(env)
           env.checkpoint
-          return unless Event.pending_tool_use?(env.timeline.head)
-          return unless env.replies.pending?
+          return unless InFlight.mid_tool?(env)
 
           raise Resume::Door.new(verb: "fork", path: env.journal_path)
                             .refuse("#{MID_TOOL}. #{remedy(File.basename(env.journal_path))}")

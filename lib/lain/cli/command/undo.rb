@@ -60,11 +60,6 @@ module Lain
           include ::Lain::Telemetry::Journalable
         end
 
-        # The in-flight half of the quiet check, shared with `/rewind`: a run
-        # holding the dispatch lock has a tool call that may still settle --
-        # onto the files an undo puts back, or onto the Timeline a rewind moves.
-        def self.in_flight?(env) = env.agent.dispatching?
-
         def initialize = freeze
 
         def name = "undo"
@@ -119,7 +114,7 @@ module Lain
         def journal(env, record) = env.chronicle.record_journal << record
 
         def quiet!(env)
-          raise Refusal, IN_FLIGHT if self.class.in_flight?(env)
+          raise Refusal, IN_FLIGHT if InFlight.dispatching?(env)
 
           live = env.supervisor.each.select { |worker| worker.state == :running }
           return if live.empty?

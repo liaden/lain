@@ -30,6 +30,8 @@ module Lain
         NESTED = "already inside an ephemeral /btw session -- /keep this side-question first to make it " \
                  "durable, then /btw from the kept session"
 
+        MID_TOOL_REMEDY = "answer the question and /btw once this turn has settled"
+
         def initialize = freeze
 
         def name = "btw"
@@ -63,14 +65,23 @@ module Lain
         # forking an ephemeral builds a lineage whose parent is doomed to reap,
         # and tmux won't nest a popup inside a popup anyway (probed --
         # display-popup from inside a popup modifies the existing one). Then
-        # journal the head durably and compose the selector the child forks.
+        # journal the head durably, THEN the same dispatch-lock door `/fork`
+        # gates on ({InFlight.mid_tool?}) -- a durable head first, so the door
+        # refusing reads the same record a later, settled `/btw` would fork.
         def anchored_selector(env)
           path = session_path(env)
           raise Error, NESTED if Paths.ephemeral?(path)
 
           digest = head(env)
           env.checkpoint
+          refuse_mid_tool!(env)
           "#{File.basename(path)}@#{digest}"
+        end
+
+        # `/btw` composes a fork exactly as `/fork` does, so it shares the same
+        # hedge, worded from the fork it is about to open.
+        def refuse_mid_tool!(env)
+          raise Error, "#{Fork::MID_TOOL}. #{MID_TOOL_REMEDY}" if InFlight.mid_tool?(env)
         end
 
         def head(env)
