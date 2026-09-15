@@ -186,6 +186,51 @@ RSpec.describe Lain::Middleware::Gate do
     end
   end
 
+  # The layer that withholds automatically approved output reads back what the
+  # gate settled on, so the gate hands its ruling to a context that takes one,
+  # whichever policy made it -- including the fixed one that asks no ladder.
+  describe "the ruling it hands the context" do
+    let(:context) { Lain::Middleware::WithholdAutomaticOutput::Carried.new(:the_session, barred: false) }
+
+    it "tells the context an approve-all policy's approval was an automatic allow" do
+      through(described_class.new(policy: described_class::ApproveAll.new), tool_call("dangerous"), context:)
+
+      expect(context).to be_automatically_allowed
+    end
+
+    it "tells the context a refusal settled it" do
+      through(described_class.new(policy: described_class::DenyAll.new), tool_call("dangerous"), context:)
+
+      expect(context).not_to be_automatically_allowed
+    end
+
+    it "tells the context a human's approval settled it" do
+      human = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "yes", authority: :human)
+
+      through(described_class.new(policy: MiddlewareGateSpecSupport::RulingPolicy.new(human)), tool_call("dangerous"),
+              context:)
+
+      expect(context).not_to be_automatically_allowed
+    end
+
+    it "tells a bare callable's approval to the context as an automatic allow" do
+      through(described_class.new(policy: ->(_e, _c) { true }), tool_call("dangerous"), context:)
+
+      expect(context).to be_automatically_allowed
+    end
+
+    it "rules nothing onto a context for a call it does not gate" do
+      through(described_class.new(policy: described_class::ApproveAll.new), tool_call("safe"), context:)
+
+      expect(context).not_to be_automatically_allowed
+    end
+
+    it "judges a context that takes no ruling exactly as before" do
+      expect(through(described_class.new(policy: described_class::ApproveAll.new), tool_call("dangerous"),
+                     context: :the_session).last).to eq([tool_call("dangerous")])
+    end
+  end
+
   # Middleware is the Rack-idiom public API, so a bare callable stays a
   # legitimate policy. It is adapted once, at construction, and says nothing
   # beyond its Boolean.

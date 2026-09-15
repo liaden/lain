@@ -280,7 +280,7 @@ class WiringAgentSpecBoard
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(
       ledger:, approvals:, sensitivity:, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-      policy: policy_switch, denial: Lain::Middleware::Gate::DENIAL,
+      policy: policy_switch, policy_for: ->(_worker_env) { policy_switch }, denial: Lain::Middleware::Gate::DENIAL,
       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new
     )
   end

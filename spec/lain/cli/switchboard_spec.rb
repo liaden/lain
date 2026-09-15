@@ -256,6 +256,76 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # A worker leased into a checkout of its own runs its commands there, so the
+  # rungs that read a command's words are rebuilt over the factory its
+  # environment answers, and everything else about the gate stays the board's.
+  describe "the gate policy a worker is judged by" do
+    let(:classifiers) { Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: "/home/tester", cwd: "/srv/project") }
+    let(:leased) { Lain::WorkerEnv.new(cwd: "/srv/lease", env: {}, checkout: "/srv/lease") }
+    let(:remembered) do
+      Class.new(Lain::Approval::Rule) do
+        def name = "remembered"
+        def decide(_call) = nil
+      end.new
+    end
+
+    def board
+      @board ||= switchboard(classifiers:, rules: [remembered],
+                             approving: Lain::CLI::Wiring::BoardBuild.method(:approving))
+    end
+
+    def policy_for(worker_env) = board.guard_inputs.policy_for.call(worker_env)
+
+    def factories_of(ladder)
+      triage, rules = ladder.to_a
+      [triage, rules.instance_variable_get(:@rules).last].map { |held| held.instance_variable_get(:@sensitivity) }
+    end
+
+    it "is the board's own policy switch for a worker no lease cut a checkout for" do
+      expect(policy_for(Lain::WorkerEnv.new(cwd: "/srv/project/lib", env: {}))).to be(board.policy_switch)
+    end
+
+    it "judges a leased worker's triage and rules rungs over ONE factory, anchored on its checkout" do
+      triage_factory, rules_factory = factories_of(policy_for(leased).current)
+
+      expect(triage_factory).to be(rules_factory)
+      expect(triage_factory).not_to be(classifiers)
+      expect(triage_factory.instance_variable_get(:@roots)).to eq(["/srv/lease"])
+    end
+
+    it "keeps the remembered answers ahead of the approving rule, and leaves the parent's ladder as it was" do
+      rules = policy_for(leased).current.to_a[1].instance_variable_get(:@rules)
+
+      expect(rules.map(&:name)).to eq(%w[remembered composed_term])
+      expect(factories_of(board.ladder)).to all(be(classifiers))
+    end
+
+    it "parks a leased worker's call on the board's one queue" do
+      expect(policy_for(leased).current.to_a.last.queue).to be(board.approvals)
+    end
+
+    it "follows the session's approval level as a flip moves it" do
+      policy = policy_for(leased)
+      board.mode_switch.switch(mode(:auto), surface: "tty")
+      moved = policy.current.label
+      board.mode_switch.switch(mode(:ask), surface: "tty")
+
+      expect([moved, policy.current.label]).to eq(%w[auto ask])
+    end
+
+    it "journals a leased worker's rulings where the parent's land" do
+      Sync do |task|
+        parked = task.async { policy_for(leased).call(gated_call, nil) }
+        task.with_timeout(1) { board.approvals.dequeue }
+
+        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
+                            .map { |record| record["rung"] }.to_a).to eq(%w[triage rules])
+      ensure
+        parked&.stop
+      end
+    end
+  end
+
   # The card that built the ledger owns this: the masking arm reads it and the
   # prompt arm writes it, through different files in different waves, so two
   # half-wirings would give the run two ledgers and a release control that

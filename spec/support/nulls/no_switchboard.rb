@@ -31,7 +31,8 @@ module SpecNulls
         ledger: Lain::Sensitivity::Ledger.new, approvals: nil,
         sensitivity: Lain::Sensitivity::Policy::Null.instance,
         test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-        policy: Lain::Middleware::Gate::ApproveAll.new, denial: Lain::Middleware::Gate::DENIAL,
+        policy: Lain::Middleware::Gate::ApproveAll.new, policy_for: ->(_worker_env) { guard_inputs.policy },
+        denial: Lain::Middleware::Gate::DENIAL,
         bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new
       )
     end

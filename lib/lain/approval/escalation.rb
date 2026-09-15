@@ -61,13 +61,13 @@ module Lain
     # this is the only place {Shell::Verdict}'s answer has ever been written
     # down, and a verdict nobody records is a layer nobody can measure.
     #
-    # == The context may bar automatic approval, and learns who approved
+    # == The context may bar automatic approval
     #
     # {Middleware::WithholdAutomaticOutput} runs a command under a context
-    # answering `automatic_approval_barred?` and `ruled`. A barred command's
-    # automatic allow is read as an abstention, so it reaches a human or
-    # nobody, and the settled ruling is handed back so the layer knows whether
-    # a human approved what it is about to scan. Duck-typed, on
+    # answering `automatic_approval_barred?`. A barred command's automatic
+    # allow is read as an abstention, so it reaches a human or nobody. The
+    # settled ruling reaches that layer through {Middleware::Gate}, which
+    # hands back whatever any policy settled on. Duck-typed, on
     # {PolicySwitch::Requested}'s terms: every other context is judged as
     # before.
     class Escalation
@@ -233,7 +233,7 @@ module Lain
         decided = @consulted.lazy
                             .filter_map { |rung, name| decisive(consult(rung, name, effect, context), &remember) }
                             .first
-        witnessed(answer(decided, faulted, effect), context)
+        answer(decided, faulted, effect)
       end
 
       # @return [Boolean] whether the call may be performed
@@ -261,11 +261,6 @@ module Lain
         return ruling unless ruling.allow? && !ruling.human? && Escalation.barred?(context)
 
         Ruling.abstain(rung: ruling.rung, because: "#{BARRED}: #{ruling.reason}")
-      end
-
-      def witnessed(ruling, context)
-        context.ruled(ruling) if context.respond_to?(:ruled)
-        ruling
       end
 
       def decisive(ruling)
@@ -526,6 +521,10 @@ module Lain
 
           def call(_cwd) = self
           def classify(_path) = ORDINARY
+
+          # A session protecting nothing protects nothing for a worker it
+          # leases either.
+          def for(_worker_env) = self
         end
 
         # `verdict:` defaults at CALL time, not in a constant: `lain.rb` loads

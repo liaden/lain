@@ -51,7 +51,8 @@ module ToolRegistry
   def self.gated(policy:, sensitivity: Lain::Sensitivity::Policy::Null.instance)
     inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil, sensitivity:,
                                               test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                                              policy:, denial: Lain::Middleware::Gate::DENIAL,
+                                              policy:, policy_for: ->(_worker_env) { policy },
+                                              denial: Lain::Middleware::Gate::DENIAL,
                                               bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
     chronicle = Lain::CLI::ToolGuard::Journaled.new(journal: Lain::Channel::Null.instance)
     ->(worker_env) { Lain::CLI::ToolGuard.working(chronicle, inputs, worker_env) }

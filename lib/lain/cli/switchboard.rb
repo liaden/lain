@@ -85,6 +85,7 @@ module Lain
       #   {CLI::Wiring} over the resolved {Project} and that project's
       #   `[sensitivity]` table. Defaulted to the same Null `new` defaults to,
       #   so the direct-construction seams a spec drives are unchanged
+      # @param approving [#call] composes the rules rung's chain, on `new`'s terms
       # @param classifiers [#call] the triage rung's `cwd -> #classify` factory,
       #   on `new`'s terms
       # @param verdict [#call] the triage rung's shell verdict, on `new`'s terms
@@ -97,19 +98,25 @@ module Lain
       #   `auto_approve` layer on. These two are the only flags this entry
       #   reads off `options`
       # @return [Switchboard]
-      def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [],
+      def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [], approving: REMEMBERED,
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new)
-        new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:, classifiers:, verdict:,
-            test_layout:, attended: !options[:non_interactive], layers: options[:auto_approve] ? [:auto_approve] : [])
+        new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
+            verdict:, test_layout:, attended: !options[:non_interactive],
+            layers: options[:auto_approve] ? [:auto_approve] : [])
       end
+
+      # The rules rung's chain when nothing composes one: the remembered
+      # answers alone, whatever factory a worker is judged by.
+      REMEMBERED = ->(rules, _classifiers) { rules }
 
       # What the tool stack is built over, as ONE value: the ledger and the
       # path policy described above, the approval queue, the session's one
-      # test layout run, the gate's one policy switch, and what a refused call
-      # is reported as ({#denial}). The parent's stack and every child's read
-      # it, so they hold one of each and say an absence once.
+      # test layout run, the gate's one policy switch and the policy each
+      # worker is asked through ({#policy_for}), and what a refused call is
+      # reported as ({#denial}). The parent's stack and every child's read it,
+      # so they hold one of each and say an absence once.
       attr_reader :guard_inputs
 
       delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
@@ -126,6 +133,12 @@ module Lain
       #   EMPTY by default, which abstains on everything: filling it is
       #   {Project::Consent}'s decision, because only a CONSENTED root's answers
       #   may grant authority.
+      # @param approving [#call] `(rules, classifiers) -> rules`, the chain the
+      #   rules rung consults over a factory: {REMEMBERED} by default, and
+      #   {CLI::Wiring::BoardBuild.approving} in a real chat, which appends the
+      #   rule that can approve a command. Handed over as a composition rather
+      #   than a composed chain, because a leased worker's chain is composed
+      #   again over the factory its own checkout answers.
       # @param sensitivity [#gates?] which PATHS this session gates, whatever
       #   the tool's own tier. {Sensitivity::Policy::Null} by default, so a
       #   session that resolved no project root behaves byte-for-byte as it did
@@ -172,28 +185,27 @@ module Lain
       #   direct-construction seams a spec drives enforce nothing
       # @param layers [Array<Symbol>] the mode layers the session starts with,
       #   in the starting scope and approval
-      def initialize(journal:, model:, toolset:, rules: [],
+      def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, layers: [])
         @attended = attended
-        # The rung itself, not the two things it is built from: a board that
-        # held them apart would be holding a constructor's argument list, and
-        # both are read at exactly one place. It is frozen and holds no state,
-        # so building it before the ladder that may not want it costs nothing.
-        @triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict:)
+        @journal = journal
         @rules = rules.to_a.freeze
+        @approving = approving
+        @classifiers = classifiers
+        @verdict = verdict
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
-        seed(Mode.new(layers:), journal:)
+        seed(Mode.new(layers:))
         # After the seed, which is what makes the policy switch it carries.
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
-                                              test_layout:, policy: @policy_switch, denial:,
-                                              bar: Middleware::WithholdAutomaticOutput::Bar.new)
+                                              test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
+                                              denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY
@@ -248,6 +260,37 @@ module Lain
           approval_prompt: prompt(conductor:, tty:) }
       end
 
+      # The gate policy a worker's calls are asked through. A worker no lease
+      # cut a checkout for is judged where the parent is, by the policy switch
+      # itself. A leased one is judged by ladders built over the factory its
+      # checkout answers -- the triage rung and the rules chain over the SAME
+      # one, so the two cannot place a word in different trees -- and at
+      # whatever approval level the session is at when it asks. The queue, the
+      # journal and the remembered answers are the board's.
+      #
+      # @param worker_env [WorkerEnv] the environment the worker runs in
+      # @return [#rule]
+      def policy_for(worker_env)
+        classifiers = @classifiers.for(worker_env)
+        return @policy_switch if classifiers.equal?(@classifiers)
+
+        Leased.new(ladders: ladders(classifiers), mode_switch: @mode_switch)
+      end
+
+      # The gate policy a leased worker is asked through: the ladder for the
+      # approval level the session is at NOW, out of the ladders built over
+      # that worker's factory. It resolves the mode per call rather than
+      # holding a ladder, so a flip reaches a child that was built before it.
+      Leased = Data.define(:ladders, :mode_switch) do
+        def call(effect, context) = rule(effect, context).allow?
+
+        def rule(effect, context) = current.rule(effect, context)
+
+        # @return [Approval::Escalation] the ladder in force, on
+        #   {Approval::PolicySwitch#current}'s terms
+        def current = Mode::Resolution.for(mode: mode_switch.current, ladders:).gate_policy
+      end
+
       private
 
       # What a refused call is REPORTED as, which is a different question from
@@ -287,12 +330,20 @@ module Lain
       # first {#resolve} -- they are what the approval levels resolve TO, and a
       # flip that selects the ladder already in force is then the identical
       # object, which is how the policy switch sees that nothing moved.
-      def seed(initial, journal:)
+      def seed(initial)
         @snapshots = ::Lain::Agent::SnapshotSlot::Unbound
-        @ladder = build_ladder(journal:)
-        @ladders = { ask: @ladder, auto: automatic_ladder(journal:) }.freeze
-        @policy_switch = Approval::PolicySwitch.new(resolve(initial).gate_policy, journal:)
-        @mode_switch = BoundSwitch.new(launched(initial, journal:), resolve: method(:resolve), apply: method(:apply))
+        @ladders = ladders(@classifiers)
+        @ladder = @ladders.fetch(:ask)
+        @policy_switch = Approval::PolicySwitch.new(resolve(initial).gate_policy, journal: @journal)
+        @mode_switch = BoundSwitch.new(launched(initial), resolve: method(:resolve), apply: method(:apply))
+      end
+
+      # Both approval levels' ladders over one classifier factory, the triage
+      # rung and the rules chain each built over it.
+      def ladders(classifiers)
+        triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict)
+        rules = @approving.call(@rules, classifiers)
+        { ask: build_ladder(triage:, rules:), auto: automatic_ladder(triage:, rules:) }.freeze
       end
 
       # A layer the launch flags turned on IS journaled, as the flip `/mode`
@@ -301,8 +352,8 @@ module Lain
       # alone, so an unrecorded layer would show nowhere but the live prompt
       # until the first `/mode`. A launch with no layer writes nothing, so a
       # plain chat's record is unchanged.
-      def launched(initial, journal:)
-        Mode::Switch.new(initial.with(layers: Mode::LayerSet.empty), journal:).tap do |switch|
+      def launched(initial)
+        Mode::Switch.new(initial.with(layers: Mode::LayerSet.empty), journal: @journal).tap do |switch|
           switch.switch(initial, surface: LAUNCH_SURFACE)
         end
       end
@@ -335,17 +386,17 @@ module Lain
       # The unattended arm builds no triage rung at all, which is why the
       # session's verdict and its exclusion table reach nothing here: refusing
       # everything is already stricter than any table could be.
-      def build_ladder(journal:)
-        return Approval::Escalation.new([Unattended.new], journal:, label: "ask") unless @approvals
+      def build_ladder(triage:, rules:)
+        return Approval::Escalation.new([Unattended.new], journal: @journal, label: "ask") unless @approvals
 
-        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules, triage: @triage)
+        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal: @journal, rules:, triage:)
       end
 
       # `auto` approval's ladder, built for attended and unattended sessions
       # alike: nobody is asked under it, so whether anybody could be changes
       # nothing, and the triage and rules rungs still decide first.
-      def automatic_ladder(journal:)
-        Approval::Escalation.automatic(tools: @toolset, journal:, rules: @rules, triage: @triage)
+      def automatic_ladder(triage:, rules:)
+        Approval::Escalation.automatic(tools: @toolset, journal: @journal, rules:, triage:)
       end
 
       # A mode as this session's live collaborators. Pure, and it raises before

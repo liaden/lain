@@ -12,8 +12,11 @@ module Lain
     # The path boundary judges what a command NAMES, which is not what it
     # prints: `cat notes.txt` over a pasted key is an ordinary path, and a rule
     # or `auto` approval runs it with no human in the loop. So the output is
-    # scanned on the way OUT, and only when the approval was automatic -- a
-    # human who approved the command saw what it would do and gets its bytes.
+    # scanned on the way OUT, and only when the call ran under an automatic
+    # allow -- a human who approved the command saw what it would do and gets
+    # its bytes, and a refusal, a denied path or a closed window ran nothing,
+    # so what answers it is the gate's own sentence rather than output. Such a
+    # sentence names the path it refused, and a long one can scan as a token.
     #
     # It withholds rather than masks. A mask needs a release key a human can
     # answer, and a command's output has no path to key one on; the move it
@@ -36,10 +39,12 @@ module Lain
     # == How it learns who approved the call
     #
     # The gate sits after this layer and answers only a result, so the
-    # authority rides the context: the call goes downstream over a {Carried}
+    # ruling rides the context: the call goes downstream over a {Carried}
     # context, the ladder hands its settled ruling to it, and this layer reads
-    # it back once the call returns. A context no ladder ruled on stays
-    # automatic, which is the reading safe to be wrong about.
+    # it back once the call returns. Only a ruling that allowed the call with
+    # no human is scanned for. A context no ladder ruled on ran under nothing
+    # this layer can vouch was automatic -- the path policy refused it first,
+    # or a gate policy with no ladder answered -- and is passed through.
     class WithholdAutomaticOutput < Base
       # Exact membership, {RedactSecretReads::GUARDED_TOOLS}' rule.
       GUARDED_TOOLS = Set["bash"].freeze
@@ -85,20 +90,26 @@ module Lain
       # Mutable for exactly one write, and built per call, so parallel calls
       # never share one.
       class Carried < SimpleDelegator
+        # The ruling of a call no ladder ruled on, which allowed nothing.
+        module Unruled
+          def self.allow? = false
+        end
+
         def initialize(context, barred:)
           super(context)
           @barred = barred
-          @authority = :automatic
+          @ruling = Unruled
         end
 
         def automatic_approval_barred? = @barred
 
         def ruled(ruling)
-          @authority = ruling.authority
+          @ruling = ruling
           self
         end
 
-        def human? = @authority == :human
+        # Whether the call ran because a machine allowed it.
+        def automatically_allowed? = @ruling.allow? && !@ruling.human?
       end
 
       attr_reader :bar
@@ -118,7 +129,7 @@ module Lain
 
         carried = Carried.new(env[:context] || Session::Null.instance, barred: @bar.include?(command(effect)))
         ran = downstream(env.merge(context: carried), &app).merge(context: env[:context])
-        carried.human? ? ran : scanned(ran, effect)
+        carried.automatically_allowed? ? scanned(ran, effect) : ran
       end
 
       private

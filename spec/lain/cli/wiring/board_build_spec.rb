@@ -186,7 +186,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root, home|
         board = board_for(root, home)
 
-        expect(board.instance_variable_get(:@rules).map(&:name)).to eq(%w[composed_term])
+        expect(board.ladder.to_a[1].instance_variable_get(:@rules).map(&:name)).to eq(%w[composed_term])
         expect(board.sensitivity.denial(read_of(File.join(root, "a.secret")))&.reason).to eq(:configured)
       end
     end
@@ -1149,6 +1149,119 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
             expect(confined_factory(home, root).content(nil).admits?("notes.txt")).to be(false)
           end
+        end
+      end
+    end
+
+    # A leased worker runs its commands in its own checkout, which sits outside
+    # the project root, so the factory it is judged by is anchored there.
+    describe "#for" do
+      def leased_at(checkout) = Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:)
+
+      def project_factory(root, home, table: Lain::Sensitivity::Rules.empty)
+        described_class.new(home:, cwd: root, rules: table, root:, confinement: Lain::Approval::Risk::Root.new(root))
+      end
+
+      def in_checkout(config: nil)
+        in_tree(config:) do |root, home|
+          checkout = File.join(File.dirname(root), "lease")
+          FileUtils.mkdir_p([checkout, home, File.join(root, "lib")])
+          yield(root, home, checkout)
+        end
+      end
+
+      it "answers itself for a worker no lease cut a checkout for" do
+        in_checkout do |root, home, checkout|
+          factory = project_factory(root, home)
+
+          expect(factory.for(Lain::WorkerEnv.new(cwd: File.join(root, "lib"), env: {}))).to be(factory)
+          expect(factory.for(Lain::WorkerEnv.new(cwd: checkout, env: {}))).to be(factory)
+        end
+      end
+
+      it "confines a leased worker's words to its checkout, where the project's factory confines them to the root" do
+        in_checkout do |root, home, checkout|
+          File.write(File.join(checkout, "README.md"), "a readme\n")
+          leased = project_factory(root, home).for(leased_at(checkout))
+
+          expect(leased.confinement(nil).contains?("README.md")).to be(true)
+          expect(leased.confinement(checkout).contains?("README.md")).to be(true)
+          expect(leased.confinement(root).contains?("README.md")).to be(false)
+          expect(leased.content(nil).admits?("README.md")).to be(true)
+        end
+      end
+
+      it "asks what a word holds in the checkout, following a link there" do
+        in_checkout do |root, home, checkout|
+          File.write(File.join(checkout, "key.txt"), "opaque\n")
+          File.chmod(0o600, File.join(checkout, "key.txt"))
+          File.symlink("key.txt", File.join(checkout, "keylink"))
+
+          expect(project_factory(root, home).for(leased_at(checkout)).content(nil).admits?("keylink")).to be(false)
+          expect(project_factory(root, home).content(nil).admits?("keylink")).to be(true)
+        end
+      end
+
+      def table_at(root) = Lain::CLI::Wiring::BoardBuild.rules(project: project_at(root))
+
+      # The checkout carries a copy of the tracked tree, and the project's own is
+      # one absolute word away, so an anchored pattern denies under either root.
+      it "denies an anchored pattern under the checkout AND under the project root, and its home rules as before" do
+        in_checkout(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home, checkout|
+          leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
+
+          expect(leased.call(nil).denied?("vault/token")).to be(true)
+          expect(leased.call(nil).denied?(File.join(root, "vault", "token"))).to be(true)
+          expect(leased.call("bad\0dir").denied?(File.join(root, "vault", "token"))).to be(true)
+          expect(leased.call(nil).denied?(File.join(home, ".ssh", "id_rsa"))).to be(true)
+          expect(leased.call(nil).denied?("README.md")).to be(false)
+        end
+      end
+
+      it "gates an anchored pattern under either root, and answers the stricter of the two verdicts" do
+        config = %([sensitivity]\ngated = ["/notes/"]\nexempt = ["/fixtures/.env"]\n)
+        in_checkout(config:) do |root, home, checkout|
+          leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
+
+          expect(leased.call(nil).classify(File.join(root, "notes", "a.txt"))).to be_gated
+          expect(leased.call(nil).classify("notes/a.txt")).to be_gated
+          expect(leased.call(nil).classify("fixtures/.env")).to be_gated
+        end
+      end
+
+      it "confines a leased worker to its checkout alone, whichever root denies" do
+        in_checkout(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home, checkout|
+          leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
+
+          expect(leased.confinement(nil).contains?(File.join(root, "README.md"))).to be(false)
+        end
+      end
+
+      it "answers the checkout-anchored factory itself when the checkout is the project root" do
+        in_checkout do |root, home|
+          leased = project_factory(root, home).for(leased_at(root))
+
+          expect(leased.call(nil)).to be_a(Lain::Sensitivity)
+        end
+      end
+
+      it "confines nothing in a checkout holding the home directory" do
+        in_checkout do |root, home|
+          above = File.dirname(home)
+
+          expect(project_factory(root, home).for(leased_at(above)).confinement(nil).contains?("README.md"))
+            .to be(false)
+        end
+      end
+
+      # A root the parent confines nothing under -- a home, or a directory
+      # nothing detected -- gives its workers nothing to be confined to either.
+      it "confines nothing for a worker of a factory that confines nothing" do
+        in_checkout do |root, home, checkout|
+          File.write(File.join(checkout, "README.md"), "a readme\n")
+          unconfined = described_class.new(home:, cwd: root, root:)
+
+          expect(unconfined.for(leased_at(checkout)).confinement(nil).contains?("README.md")).to be(false)
         end
       end
     end

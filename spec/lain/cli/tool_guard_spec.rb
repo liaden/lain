@@ -11,7 +11,7 @@ require "tmpdir"
 # ledger from a freshly constructed second one, which is exactly the mistake
 # this file exists to catch.
 class ToolGuardSpecBoard
-  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy
+  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for
 
   # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
   # for this file's own reason, one slot over: the claim is that the listing
@@ -20,13 +20,15 @@ class ToolGuardSpecBoard
   # apart. The default is the live one because that is what {CLI::Wiring} now
   # builds; a queueless board with no classifier passes the Null.
   # `policy` is the gate's, answering a fixed verdict and recording the context
-  # it was asked in, so an example can see WHO a call was asked for.
+  # it was asked in, so an example can see WHO a call was asked for. A worker is
+  # judged by that same policy unless `policy_for` answers another.
   def initialize(approvals: nil, sensitivity: nil, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                 policy: ToolGuardSpecPolicy.new)
+                 policy: ToolGuardSpecPolicy.new, policy_for: nil)
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
     @test_layout = test_layout
     @policy = policy
+    @policy_for = policy_for || ->(_worker_env) { policy }
     @sensitivity = sensitivity || Lain::Sensitivity::Policy.new(
       sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
     )
@@ -35,7 +37,7 @@ class ToolGuardSpecBoard
   # The one value a real {Lain::CLI::Switchboard} holds, over these same slots.
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:, policy:,
-                                                       denial: "the spec board refuses %<name>s",
+                                                       policy_for:, denial: "the spec board refuses %<name>s",
                                                        bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
   end
 end
@@ -125,7 +127,8 @@ RSpec.describe Lain::CLI::ToolGuard do
       inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: queue,
                                                 sensitivity: Lain::Sensitivity::Policy::Null.instance,
                                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                                                policy: ToolGuardSpecPolicy.new, denial: "no %<name>s",
+                                                policy: ToolGuardSpecPolicy.new, policy_for: ->(_) {},
+                                                denial: "no %<name>s",
                                                 bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
       bare = Data.define(:guard_inputs).new(guard_inputs: inputs)
 
@@ -133,6 +136,18 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       expect(read.ledger).to be(inputs.ledger)
       expect(read.queue).to be(queue)
+    end
+
+    # A board that forgot to say how a worker is judged would hand every leased
+    # child its parent's policy in silence, so the member has no default.
+    it "refuses inputs that name no policy for a worker" do
+      expect do
+        Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil,
+                                         sensitivity: Lain::Sensitivity::Policy::Null.instance,
+                                         test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+                                         policy: ToolGuardSpecPolicy.new, denial: "no %<name>s",
+                                         bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
+      end.to raise_error(ArgumentError, /policy_for/)
     end
 
     # The board's ONE run, for the ledger's reason: a second would keep a
@@ -503,6 +518,46 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "judges an unleased child standing in the project at the project root alone" do
       expect(layout_of(child_stack(env_at(File.join(@project, "lib")))).roots).to eq([@project])
     end
+
+    # The rungs that read a command's words are anchored where the child runs
+    # it, so the gate asks the policy the board answers for THIS environment.
+    it "asks the gate policy the board answers for the child's own environment" do
+      leased_policy = ToolGuardSpecPolicy.new(verdict: true)
+      asked_for = []
+      board = ToolGuardSpecBoard.new(test_layout: run, policy_for: lambda { |worker_env|
+        asked_for << worker_env
+        leased_policy
+      })
+      leased = env_at(@checkout, checkout: @checkout)
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+
+      described_class.child_stack(chronicle, board, leased, requester: "subagent")
+                     .call({ effect:, tool: Lain::Tools::Bash.new, context: :the_session }) do |passed|
+                       passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
+                     end
+
+      expect(asked_for).to eq([leased])
+      expect(leased_policy.contexts.map(&:requester)).to eq(%w[subagent])
+      expect(board.policy.contexts).to be_empty
+    end
+  end
+
+  # Scenario: there is still one listing filter
+  #
+  # A child judged over a factory of its own must not bring a listing filter of
+  # its own: the gate and the listing agree only while every reader takes the
+  # filter {Lain::Sensitivity::Policy} built.
+  describe "the listing filter a child's stack shares" do
+    def constructions
+      Dir.glob(File.expand_path("../../../lib/**/*.rb", __dir__)).flat_map do |path|
+        File.readlines(path).reject { |line| line.lstrip.start_with?("#") }
+                            .grep(/\bFilter\.new\b/).map { File.basename(path) }
+      end
+    end
+
+    it "is built in exactly one place in lib/" do
+      expect(constructions).to eq(["policy.rb"])
+    end
   end
 
   # Out of chat there is no board to borrow: the run builds its own, once, and
@@ -623,6 +678,22 @@ RSpec.describe Lain::CLI::ToolGuard do
                described_class.detached(journal:).call(Lain::WorkerEnv.default)]
 
       expect(built.map { |stack| stack.to_a.grep(Lain::Middleware::WithholdAutomaticOutput).size }).to all(eq(1))
+    end
+
+    # A run with no chat approves through a fixed policy that asks no ladder,
+    # and its roles hold bash, so what that bash prints is still scanned.
+    it "withholds a key a detached run's bash prints under its approving gate" do
+      stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
+
+      told = Sync do
+        dispatch_call("bash", { "command" => "cat notes.txt" }, toolset:, layers: stack.to_a,
+                                                                context: Lain::Session.new,
+                                                                handler: Lain::Effect::Handler::Mock.new(default: key))
+      end
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told.content).to include("output withheld")
+      expect(told.content).not_to include("PRIVATE KEY")
     end
 
     it "bars a command for the parent and its children alike, through the board's one bar" do

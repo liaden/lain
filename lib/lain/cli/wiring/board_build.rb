@@ -78,7 +78,7 @@ module Lain
           # in one command's argv lands.
           factory = classifiers(project:, paths:, table:)
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
-                          rules: approving(Project::Consent.for(project:, notice:).rules, factory),
+                          rules: Project::Consent.for(project:, notice:).rules, approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:),
                           classifiers: factory, test_layout: test_layout(project:, notice:))
         end
@@ -94,7 +94,9 @@ module Lain
         #
         # The chain is {Project::Consent}'s; this adds to it and does not own
         # it, which is why the consented rules are threaded through rather than
-        # rebuilt here.
+        # rebuilt here. The board is handed this method rather than its answer,
+        # because a leased worker's chain is composed again over that worker's
+        # own factory.
         #
         # @param remembered [Array<Lain::Approval::Rule>] {Project::Consent#rules}
         # @param factory [#call, #confinement, #content] the `cwd -> #classify` factory,
@@ -451,6 +453,32 @@ module Lain
             end
           end
 
+          # One classifier per root a `/`-anchored pattern is read from, asked
+          # together: a path any of them denies is denied, and one any of them
+          # gates is gated. An exempted word ranks above a plain one, because
+          # the approving rule refuses what an exemption names.
+          class Strictest
+            # @param classifiers [Array<#classify>] at least one
+            # @return [#classify] the only classifier when there is one
+            def self.of(classifiers) = classifiers.one? ? classifiers.first : new(classifiers)
+
+            def initialize(classifiers)
+              @classifiers = classifiers.freeze
+              freeze
+            end
+
+            # @param path [String, Pathname] as on {Lain::Sensitivity#classify}
+            # @return [Lain::Sensitivity::Verdict]
+            def classify(path) = @classifiers.map { |classifier| classifier.classify(path) }.max_by { rank(_1) }
+
+            def denied?(path) = classify(path).denied?
+            def gated?(path) = classify(path).gated?
+
+            private
+
+            def rank(verdict) = [Lain::Sensitivity::Verdict::LEVELS.index(verdict.level), verdict.exempt? ? 1 : 0]
+          end
+
           # @param home [String] the HOME the home-anchored rules resolve against
           # @param cwd [String] the session's working directory, which a
           #   call's own relative `cwd` resolves against
@@ -459,19 +487,21 @@ module Lain
           #   are read from, on {Lain::Sensitivity}'s terms. Apart from
           #   `confinement` because a root that confines nothing still anchors a
           #   denial.
+          # @param also_rooted [Array<String>] further roots the same patterns
+          #   are read from, each denying and gating as `root` does
           # @param confinement [#contains?] the root an approved word must stay
           #   under; confining nothing by default, so a factory built without
           #   one can never be what approves
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
-          #   or `root` is not something a classifier can be anchored on
-          def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil,
+          #   or a root is not something a classifier can be anchored on
+          def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil, also_rooted: [],
                          confinement: Lain::Approval::Risk::Root::NOWHERE)
             @home = home
             @rules = rules
-            @root = root
+            @roots = [root, *also_rooted].uniq.freeze
             @confinement = confinement
             @worker_env = Lain::WorkerEnv.new(cwd:, env: {})
-            @session = Lain::Sensitivity.new(home:, cwd:, rules:, root:)
+            @session = classifier(cwd)
             @nowhere = Confinement.new(Lain::Approval::Risk::Root::NOWHERE, @worker_env.cwd)
             freeze
           end
@@ -480,7 +510,7 @@ module Lain
           #   nil when it named none, and anything else JSON permits
           # @return [#classify] never nil, and never raising
           def call(cwd)
-            Lain::Sensitivity.new(home: @home, cwd: @worker_env.resolve(cwd), rules: @rules, root: @root)
+            classifier(@worker_env.resolve(cwd))
           rescue StandardError
             @session
           end
@@ -515,6 +545,47 @@ module Lain
           # @param cwd [String, nil] as on {#call}
           # @return [Content] never nil, and never raising
           def content(cwd) = Content.new(confinement(cwd))
+
+          # The factory a worker's commands are judged by. A worker a lease cut a
+          # checkout for runs them in that checkout, which sits outside the
+          # project root, so judged over this factory every word it names would
+          # land in a project the command never touches: a link to a key there
+          # reads as a file that does not exist. Its factory resolves a call's
+          # cwd from the worker's own and confines an approved word to the
+          # checkout.
+          #
+          # What it protects is widened, never moved: the checkout carries a
+          # copy of the tracked tree and the project's own is one absolute word
+          # away, so an anchored pattern denies and gates under every root this
+          # factory already read it from as well as under the checkout.
+          #
+          # @param worker_env [Lain::WorkerEnv] the environment the worker runs in
+          # @return [Classifiers] this one when no lease cut a checkout
+          # @raise [ArgumentError] when the checkout cannot anchor a classifier
+          def for(worker_env)
+            checkout = worker_env.checkout
+            return self if checkout.nil?
+
+            Classifiers.new(home: @home, cwd: worker_env.cwd, rules: @rules, root: checkout,
+                            also_rooted: @roots.compact, confinement: leased_confinement(checkout))
+          end
+
+          private
+
+          def classifier(cwd)
+            Strictest.of(@roots.map { |root| Lain::Sensitivity.new(home: @home, cwd:, rules: @rules, root:) })
+          end
+
+          # A factory confining nothing -- a home root, a root nothing detected --
+          # gives its workers nothing to be confined to, and a checkout holding
+          # the home directory is no boundary, for {BoardBuild.confinement}'s
+          # reason.
+          def leased_confinement(checkout)
+            root = Lain::Approval::Risk::Root.new(checkout)
+            return Lain::Approval::Risk::Root::NOWHERE if @confinement.equal?(Lain::Approval::Risk::Root::NOWHERE)
+
+            root.contains?(@home) ? Lain::Approval::Risk::Root::NOWHERE : root
+          end
         end
       end
     end

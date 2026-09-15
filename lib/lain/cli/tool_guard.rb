@@ -36,11 +36,15 @@ module Lain
     module ToolGuard
       # Everything the stack is built over, as ONE value: the run's one region
       # ledger, its approval queue (nil when nobody attends), its path policy,
-      # its test layout run, the gate's policy, the sentence a refused call
-      # is reported in (`%<name>s` standing for the tool), and the commands
-      # barred from automatic approval. A {Switchboard} holds one
+      # its test layout run, the gate's policy, the policy a worker's gate asks
+      # (`policy_for`, `worker_env -> #rule`), the sentence a refused call is
+      # reported in (`%<name>s` standing for the tool), and the commands barred
+      # from automatic approval. A {Switchboard} holds one
       # ({Switchboard#guard_inputs}); a run with no chat builds its own.
-      Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :denial, :bar)
+      #
+      # `policy_for` has no default: a board that forgot it would judge every
+      # leased child by its parent's policy, in silence.
+      Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar)
 
       # The gate policy a child is asked through: the board's own, handed a
       # context that names the child, so a park says which of a fleet is asking
@@ -120,9 +124,12 @@ module Lain
       end
 
       # A child's stack: the parent's, layer for layer, except that a child
-      # leased into a checkout of its own writes THERE, so its layout guard
-      # holds that checkout's root beside the project's, and its gate asks the
-      # board's policy on behalf of the child `requester` names.
+      # leased into a checkout of its own writes and runs commands THERE. Its
+      # layout guard holds that checkout's root beside the project's, and its
+      # gate asks the policy the board answers for its environment -- whose
+      # rungs read a command's words in that checkout -- on behalf of the child
+      # `requester` names. The path policy, ledger and listing filter stay the
+      # board's one.
       #
       # @param chronicle [CLI::Chronicle] as on {.stack}
       # @param board [CLI::Switchboard] as on {.stack}
@@ -131,7 +138,7 @@ module Lain
       # @return [Middleware::Stack]
       def child_stack(chronicle, board, worker_env, requester:)
         inputs = board.guard_inputs
-        working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy, requester:))
+        working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:))
       end
 
       # A worker's stack, over the inputs it is guarded by, the checkout its
@@ -178,11 +185,12 @@ module Lain
       # @return [#call] `worker_env -> stack`, a fresh one per call, every one
       #   over the same board
       def detached(journal:)
+        approve_all = Middleware::Gate::ApproveAll.new
         inputs = Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: Unreleased,
                             sensitivity: Lain::Sensitivity::Policy::Null.instance,
                             test_layout: Middleware::GuardTestLayout::Run.undeclared,
-                            policy: Middleware::Gate::ApproveAll.new, denial: Middleware::Gate::DENIAL,
-                            bar: Middleware::WithholdAutomaticOutput::Bar.new)
+                            policy: approve_all, policy_for: ->(_worker_env) { approve_all },
+                            denial: Middleware::Gate::DENIAL, bar: Middleware::WithholdAutomaticOutput::Bar.new)
         chronicle = Journaled.new(journal:)
         ->(worker_env) { working(chronicle, inputs, worker_env) }
       end

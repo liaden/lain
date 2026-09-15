@@ -130,11 +130,15 @@ module Lain
       # Approved, the call goes downstream UNWRAPPED, so the interpreter sees
       # the tool call itself. A denial is reported, never raised, so the loop
       # continues instead of wedging on a refused call.
+      #
+      # The ruling is handed to a context that takes one, whichever policy
+      # made it: {WithholdAutomaticOutput} scans only what ran under an
+      # automatic allow, and a fixed policy that asks no ladder is one.
       def call(env, &app)
         return downstream(env, &app) unless gated?(env)
 
         asked = unwrapped(env.fetch(:effect))
-        ruling = @policy.rule(asked, env[:context])
+        ruling = witnessed(@policy.rule(asked, env[:context]), env[:context])
         return downstream(env.merge(effect: asked), &app) if ruling.allow?
 
         env.merge(result: Tool::Result.error(refusal(ruling, asked.name.inspect)))
@@ -149,6 +153,11 @@ module Lain
       end
 
       def unwrapped(effect) = effect.approval? ? effect.effect : effect
+
+      def witnessed(ruling, context)
+        context.ruled(ruling) if context.respond_to?(:ruled)
+        ruling
+      end
 
       def gated?(env)
         effect = env.fetch(:effect)

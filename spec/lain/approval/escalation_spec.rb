@@ -938,6 +938,15 @@ RSpec.describe Lain::Approval::Escalation do
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
     end
+
+    # A leased worker is judged over the factory its own environment answers,
+    # and a session that protects nothing protects nothing for its workers too.
+    it "answers the same inert factory for every worker a session leases" do
+      factory = described_class::Triage::AnyPath.new
+      leased = Lain::WorkerEnv.new(cwd: "/srv/lease", env: {}, checkout: "/srv/lease")
+
+      expect(factory.for(leased)).to be(factory)
+    end
   end
 
   # The settled Ruling, handed to the Gate whole, so a refusal the session
@@ -1099,26 +1108,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(ruling).to have_attributes(verdict: :deny, rung: "rules")
     end
 
-    it "hands the settled ruling to a context that takes one, so a human's approval is known downstream" do
-      Sync do |task|
-        context = carried(barred: false)
-        parked = task.async { ladder(described_class::Surfaces.new(queue)).rule(effect, context) }
-        task.with_timeout(1) { queue.dequeue }.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
-        task.with_timeout(1) { parked.wait }
-
-        expect(context).to be_human
-      end
-    end
-
-    it "leaves an automatically settled context automatic" do
-      context = carried(barred: false)
-
-      ladder(EscalationSpecSupport::Fixed.new("rules", :allow)).rule(effect, context)
-
-      expect(context).not_to be_human
-    end
-
-    it "judges a context that carries neither message exactly as before" do
+    it "judges a context that carries no bar exactly as before" do
       expect(ladder(EscalationSpecSupport::Fixed.new("rules", :allow)).rule(effect, :the_session)).to be_allow
     end
   end

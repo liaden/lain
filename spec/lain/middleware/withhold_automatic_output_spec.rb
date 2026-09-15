@@ -24,11 +24,11 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
 
   # The block stands where the gate and the interpreter stand: it may rule on
   # the context it was handed, and it answers the result.
-  def run(effect, result: printed, authority: nil, context: :the_session)
+  def run(effect, result: printed, authority: nil, context: :the_session, ruled: authority && ruling(authority))
     seen = []
     env = guard.call({ effect:, context:, tool: Lain::Tools::Bash.new }) do |inner|
       seen << inner.fetch(:context)
-      inner.fetch(:context).ruled(ruling(authority)) if authority
+      inner.fetch(:context).ruled(ruled) if ruled
       inner.merge(result:)
     end
     [env, seen.first]
@@ -80,20 +80,54 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(env.fetch(:result).content).to include("2 credential-shaped regions")
     end
 
-    it "treats a call no ladder ruled on as automatic" do
-      env, = run(call_of("cat notes.txt"))
-
-      expect(env.fetch(:result).content).to include("withheld")
-    end
-
     it "still answers the call when the journal refuses the record" do
       closed = Class.new { def <<(_entry) = raise(IOError, "closed") }.new
 
       unjournaled = described_class.new(bar:, journal: closed)
 
-      env = unjournaled.call({ effect: call_of("cat notes.txt"), context: nil }) { _1.merge(result: printed) }
+      env = unjournaled.call({ effect: call_of("cat notes.txt"), context: nil }) do |inner|
+        inner.fetch(:context).ruled(ruling(:automatic))
+        inner.merge(result: printed)
+      end
 
       expect(env.fetch(:result).content).to include("withheld")
+    end
+  end
+
+  # Only a call that RAN under an automatic allow printed anything. A result
+  # the gate or the path policy produced in its place is their own sentence,
+  # and a long absolute path in it can scan as a high-entropy token.
+  describe "a result nothing ran to produce" do
+    let(:refusal) do
+      path = "/tmp/lain-child-worktree20260915-1-abc/repo/vault/token"
+      Lain::Tool::Result.error(%(refused tool "bash": the command names a path this session protects: "#{path}" ) \
+                               "is a protected path; no approval will lift this, so do not re-send the same " \
+                               "command in another form")
+    end
+
+    def denial(rung, **) = Lain::Approval::Escalation::Ruling.deny(rung:, because: "spec", **)
+
+    it "is shaped like a credential, so scanning it would withhold it" do
+      expect(Lain::Middleware::RedactSecretReads::Scan.new(refusal.content).regions).not_to be_empty
+    end
+
+    { "a final triage refusal" => ["triage", { final: true }],
+      "a park the window closed on" => ["surfaces", { authority: :automatic }],
+      "a human's refusal" => ["surfaces", { authority: :human }] }.each do |what, (rung, shape)|
+      it "passes #{what} through untouched, and bars nothing" do
+        env, = run(call_of("cat vault/token"), result: refusal, ruled: denial(rung, **shape))
+
+        expect(env.fetch(:result)).to be(refusal)
+        expect(bar.include?("cat vault/token")).to be(false)
+        expect(withheld).to be_empty
+      end
+    end
+
+    it "passes a path refusal no ladder ruled on through untouched, and bars nothing" do
+      env, = run(call_of("cat vault/token"), result: refusal)
+
+      expect(env.fetch(:result)).to be(refusal)
+      expect(bar.include?("cat vault/token")).to be(false)
     end
   end
 
