@@ -61,7 +61,8 @@ module Lain
         end
 
         # @param backend [#summarizer_provider, #summarizer_model,
-        #   #summarizer_max_tokens, #journal] the run's flag resolution
+        #   #summarizer_max_tokens, #summarizer_options, #journal] the run's
+        #   flag resolution
         # @param name [String, nil] `--compact-strategy`; nil means the flag
         #   was never given, which is not the same as naming its default
         # @param sink [Lain::Sink] where {Compaction::Strategy::Summarizing}
@@ -119,8 +120,8 @@ module Lain
         # run.
         def tier(definition)
           provider = Provider::Journaled.new(provider: @backend.summarizer_provider, journal: @backend.journal)
-          Oracle::Model.new(definition:, provider:,
-                            model: @backend.summarizer_model, max_tokens: @backend.summarizer_max_tokens)
+          Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
+                            max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
         end
       end
     end

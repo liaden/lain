@@ -293,13 +293,26 @@ RSpec.describe Lain::Bench::CLI do
     # ones included -- which is what pins that `Context#with_model` copies
     # everything except the model. `--model` itself is the example below, since
     # it is the one flag an arm here is entitled to depart from.
-    it "carries every sampler flag in the tail through to the provider" do
+    #
+    # The ARM is named in each example because it decides which sampler flags
+    # exist on the wire: `seed` is an ollama option, and the Anthropic encoder
+    # would forward it to an API that defines no such field.
+    it "carries every sampler flag in the tail through to an ollama provider" do
       cli.arms_report(fixture_path:, provider:, tools: toolless,
-                      backend: backend(model: "claude-sonnet-4", max_tokens: 321,
+                      backend: backend(provider: "ollama", model: "claude-sonnet-4", max_tokens: 321,
                                        temperature: 0.25, seed: 99))
 
       expect(provider.requests.map(&:max_tokens).uniq).to eq([321])
       expect(provider.requests.map(&:extra)).to all(include("temperature" => 0.25, "seed" => 99))
+    end
+
+    it "carries temperature but not the ollama-only seed through to an Anthropic provider" do
+      cli.arms_report(fixture_path:, provider:, tools: toolless,
+                      backend: backend(provider: "anthropic", model: "claude-sonnet-4", max_tokens: 321,
+                                       temperature: 0.25, seed: 99))
+
+      expect(provider.requests.map(&:max_tokens).uniq).to eq([321])
+      expect(provider.requests.map(&:extra)).to all(eq("temperature" => 0.25))
     end
 
     # THE OPERATOR'S MODEL IS THE ROSTER'S MODEL, on all four arms. The routing

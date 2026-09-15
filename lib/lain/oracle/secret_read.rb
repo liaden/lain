@@ -116,15 +116,27 @@ module Lain
       # a decorator cannot move an endpoint it is handed, so the loopback
       # guarantee above is untouched.
       #
+      # `options:` is the one addition that list has had, and it is not a seam
+      # of that kind: a Hash of sampler values rides the request BODY, and
+      # nothing in it can name a host, a provider or a model. It exists because
+      # a chat running this judge's own model on the same loopback server
+      # shares one runner with it, and a judgement sent without the chat's
+      # runner knobs reloads that runner twice. The caller resolves it -- empty
+      # in the default configuration, where the chat's model is a different one.
+      #
       # @param model [String] which local model answers
       # @param journal [#<<] where the {Telemetry::OracleAnswer} and the round
       #   trip's own {Telemetry::RequestSent} land
+      # @param options [Hash{String=>Integer}] sampler options for the judge's
+      #   request, String-keyed and already scoped to this model on this endpoint
+      # @option options [Integer] num_batch the chat runner's prompt batch size
+      # @option options [Integer] num_ctx the chat runner's context length
       # @return [Oracle::Recorded::Journaling]
-      def self.tier(model: Provider::Ollama::DEFAULT_MODEL, journal: Channel::Null::INSTANCE)
+      def self.tier(model: Provider::Ollama::DEFAULT_MODEL, journal: Channel::Null::INSTANCE, options: {})
         oracle = definition(tier: :model)
         provider = Provider::Journaled.new(provider: Provider::Ollama.new, journal:)
         Recorded::Journaling.new(definition: oracle, journal:,
-                                 inner: Model.new(definition: oracle, provider:, model:))
+                                 inner: Model.new(definition: oracle, provider:, model:, extra: options))
       end
     end
   end

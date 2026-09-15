@@ -1782,5 +1782,158 @@ RSpec.describe Lain::CLI::Backend do
       expect(tuned.cache_payload).to eq(plain.cache_payload)
       expect(tuned).to have_same_digest_as(plain)
     end
+
+    # `seed` and the two runner knobs are ollama's, and the Anthropic encoder
+    # forwards every `extra` key it does not recognise straight onto the wire --
+    # so an `.envrc` exporting LAIN_SEED or LAIN_NUM_BATCH put a field on every
+    # hosted request that the API does not define.
+    it "keeps seed and both runner knobs off an Anthropic chat's wire body, and temperature on it" do
+      request = backend_for(max_tokens: 1024, provider: "anthropic", model: nil, temperature: 0.2, seed: 7,
+                            num_batch: 2048, num_ctx: 8192)
+                .context.render(timeline:, toolset: Lain::Toolset.new)
+      body = Lain::Provider::Anthropic.new(api_key: "test").encode(request)
+
+      expect(request.extra).to eq("temperature" => 0.2)
+      expect(body.keys.map(&:to_s)).not_to include("seed", "num_batch", "num_ctx")
+    end
+  end
+
+  # A secondary model request -- a summary, a span collapse, a secret-read
+  # judgement -- is not a turn, but on ONE ollama runner it is still a request
+  # that runner answers. Sent without the chat's `num_batch`, it no longer
+  # matches the loaded runner, so the server reloads the model for the summary
+  # and again for the next turn: 29.4s of oracle wall against 1.6s, measured.
+  #
+  # So the chat's runner knobs follow a tier onto the wire in exactly the case
+  # where the tier IS the chat's runner -- same arm, same endpoint, same model
+  # -- and never the chat's temperature or seed, which would move the answer
+  # rather than keep the runner.
+  describe "sampler options on a secondary tier" do
+    let(:journal) { RecordingChannel.new }
+
+    def summary_reply
+      Lain::Response.new(content: [{ "type" => "text", "text" => %({"summary":"three files"}) }],
+                         stop_reason: :end_turn, usage: Lain::Usage.new(input_tokens: 12, output_tokens: 7))
+    end
+
+    # Ollama's own capability set, so the request carries the structured-output
+    # marker a real local tier would -- the options have to ride beside it.
+    def answering_provider
+      Lain::Provider::Mock.new(responses: [summary_reply], capabilities: Lain::Provider::Ollama::CAPABILITIES)
+    end
+
+    # The eager summarizer the run actually builds, asked once over a provider
+    # the example can read the request back off.
+    def summarize_through(backend, provider)
+      allow(backend).to receive(:summarizer_provider).and_return(provider)
+      backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
+      Sync { backend.send(:summary_oracle).ask(source: "a tool result").await }
+    end
+
+    def ollama_options(request) = Lain::Provider::Ollama.new.encode(request)[:options]
+
+    it "asks the summarizer with the chat's batch size, and journals the request saying so" do
+      provider = answering_provider
+      summarize_through(backend_for(provider: "ollama", max_tokens: 64, num_batch: 2048), provider)
+
+      expect(ollama_options(provider.last_request)).to eq(num_batch: 2048)
+      expect(journal.events.grep(Lain::Telemetry::RequestSent).last.extra).to include("num_batch" => 2048)
+    end
+
+    # The summarizer is pinned to the chat's own model, so only the ARM differs
+    # and the provider half of the rule is what keeps the options off.
+    it "never hands an Anthropic summarizer the chat's ollama options" do
+      transport = AnthropicSSE.queue_transport([summary_reply])
+      hosted = Lain::Provider::Anthropic.new(transport:, api_key: "test")
+      backend = backend_for(provider: "ollama", model: "qwen3:4b", max_tokens: 64, seed: 7, num_batch: 2048,
+                            summarizer_provider: "anthropic", summarizer_model: "qwen3:4b")
+
+      summarize_through(backend, hosted)
+
+      expect(JSON.generate(transport.calls.last)).not_to include("num_batch")
+    end
+
+    it "sends no options key at all on a flagless run" do
+      provider = answering_provider
+      summarize_through(backend_for(provider: "ollama", max_tokens: 64), provider)
+
+      expect(Lain::Provider::Ollama.new.encode(provider.last_request)).not_to have_key(:options)
+    end
+
+    it "carries the batch size and never the temperature or seed to a summarizer on the chat's own model" do
+      provider = answering_provider
+      summarize_through(backend_for(provider: "ollama", model: "qwen3-coder:30b", max_tokens: 64,
+                                    temperature: 0.2, seed: 7, num_batch: 2048), provider)
+
+      expect(ollama_options(provider.last_request)).to eq(num_batch: 2048)
+    end
+
+    it "carries none of them to a summarizer pinned to a different model" do
+      provider = answering_provider
+      summarize_through(backend_for(provider: "ollama", model: "qwen3-coder:30b", max_tokens: 64, temperature: 0.2,
+                                    num_batch: 2048, num_ctx: 32_768, summarizer_model: "qwen3:4b"), provider)
+
+      expect(Lain::Provider::Ollama.new.encode(provider.last_request)).not_to have_key(:options)
+    end
+
+    # The value {Lain::Oracle::SecretRead.tier} is handed: a local ollama arm on
+    # loopback, at its own model. Asked of the Backend because the rule is the
+    # Backend's, not the wiring's.
+    describe "#tier_options" do
+      let(:local_judge) { { provider: "ollama", model: "qwen3:4b" } }
+
+      it "answers nothing for a tier on a different model than a qwen3-coder chat" do
+        backend = backend_for(provider: "ollama", model: "qwen3-coder:30b", temperature: 0.2, num_batch: 2048)
+
+        expect(backend.tier_options(**local_judge)).to eq({})
+      end
+
+      it "answers the runner knobs alone for a tier on the chat's model and endpoint" do
+        backend = backend_for(provider: "ollama", model: "qwen3:4b", temperature: 0.2, seed: 7,
+                              num_batch: 2048, num_ctx: 32_768)
+
+        expect(backend.tier_options(**local_judge)).to eq("num_batch" => 2048, "num_ctx" => 32_768)
+      end
+
+      # A missing base IS the arm's default, and a trailing slash names the
+      # same base -- so the judge's own loopback server spelled out still
+      # shares the chat's runner.
+      it "answers the runner knobs for a chat whose base spells out the arm's default" do
+        backend = backend_for(provider: "ollama", model: "qwen3:4b", api_base: "http://localhost:11434/",
+                              num_batch: 2048)
+
+        expect(backend.tier_options(**local_judge)).to eq("num_batch" => 2048)
+      end
+
+      # `localhost` may resolve to ::1, where a different listener can sit, so
+      # the spelling cannot prove it is the same server.
+      it "does not equate localhost with 127.0.0.1" do
+        backend = backend_for(provider: "ollama", model: "qwen3:4b", api_base: "http://127.0.0.1:11434",
+                              num_batch: 2048)
+
+        expect(backend.tier_options(**local_judge)).to eq({})
+      end
+
+      it "answers nothing when the chat's runner lives at another endpoint" do
+        backend = backend_for(provider: "ollama", model: "qwen3:4b", api_base: "http://gpu-box:11434",
+                              num_batch: 2048)
+
+        expect(backend.tier_options(**local_judge)).to eq({})
+      end
+
+      it "answers nothing when the chat is on another arm with a same-named model" do
+        backend = with_env("OLLAMA_API_KEY" => "sk-test") do
+          backend_for(provider: "ollama-cloud", model: "qwen3:4b", num_batch: 2048)
+        end
+
+        expect(backend.tier_options(**local_judge)).to eq({})
+      end
+
+      it "answers nothing for an Anthropic chat" do
+        backend = backend_for(provider: "anthropic", model: "qwen3:4b", num_batch: 2048)
+
+        expect(backend.tier_options(provider: "anthropic", model: "qwen3:4b")).to eq({})
+      end
+    end
   end
 end

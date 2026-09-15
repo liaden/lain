@@ -12,20 +12,22 @@
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module SummarizerSpecSupport
-  # Exactly the four messages {Lain::CLI::Backend::Summarizer} declares it
+  # Exactly the five messages {Lain::CLI::Backend::Summarizer} declares it
   # depends on, and nothing else -- so an example fails if the subject reaches
-  # for a fifth. `journal` is writable because the run's real journal is
+  # for a sixth. `journal` is writable because the run's real journal is
   # late-bound: {Lain::CLI::Backend} does not know its destination until
   # `#pipeline_source` runs, which nothing orders against `#tool_observer`.
   class BackendDouble
-    attr_reader :queue_answers, :summarizer_model, :summarizer_max_tokens
+    attr_reader :queue_answers, :summarizer_model, :summarizer_max_tokens, :summarizer_options
     attr_accessor :journal
 
-    def initialize(provider:, journal:, summarizer_model: "qwen3:4b", summarizer_max_tokens: 256)
+    def initialize(provider:, journal:, summarizer_model: "qwen3:4b", summarizer_max_tokens: 256,
+                   summarizer_options: {})
       @provider = provider
       @journal = journal
       @summarizer_model = summarizer_model
       @summarizer_max_tokens = summarizer_max_tokens
+      @summarizer_options = summarizer_options
       @queue_answers = []
     end
 
@@ -94,6 +96,26 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
       summarize(built)
 
       expect(bound.events.grep(Lain::Telemetry::RequestSent).size).to eq(1)
+    end
+  end
+
+  # The options are the Backend's to resolve and this tier's to carry: a
+  # summary sent without the chat's runner knobs reloads the runner it shares.
+  describe "the options the backend resolved for this tier" do
+    let(:backend) do
+      SummarizerSpecSupport::BackendDouble.new(provider:, journal:, summarizer_options: { "num_batch" => 2048 })
+    end
+
+    it "sends them on the request the tier makes" do
+      summarize
+
+      expect(provider.last_request.extra).to include("num_batch" => 2048)
+    end
+
+    it "journals them on the request_sent, so the record shows what went on the wire" do
+      summarize
+
+      expect(requests.last.extra).to include("num_batch" => 2048)
     end
   end
 

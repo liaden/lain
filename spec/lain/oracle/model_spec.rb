@@ -59,6 +59,37 @@ RSpec.describe Lain::Oracle::Model do
     expect { Sync { model.ask(subject: "x").await } }.to raise_error(Lain::Oracle::UndecodableAnswer)
   end
 
+  # ---- Scenario: a tier carries the options its caller resolved -------------
+  #
+  # WHICH options a tier may carry is the caller's rule (see
+  # {Lain::CLI::Backend#tier_options}); this object only has to put them on the
+  # wire beside the schema, and never let them displace it.
+  describe "caller-resolved options" do
+    def tier_over(provider, extra:)
+      Lain::Oracle::Model.new(definition:, provider:, model: "qwen3:4b", extra:)
+    end
+
+    def ollama_provider
+      Lain::Provider::Mock.new(responses: [response_with(%({"label":"yes"}))],
+                               capabilities: Lain::Provider::Ollama::CAPABILITIES)
+    end
+
+    it "sends them on the request, beside the answer schema" do
+      provider = ollama_provider
+      Sync { tier_over(provider, extra: { "num_batch" => 2048 }).ask(subject: "x").await }
+
+      expect(provider.last_request.extra)
+        .to eq("num_batch" => 2048, "structured_output" => { "schema" => schema.to_json_schema })
+    end
+
+    it "lets the schema win a collision, so no option can unset the answer's format" do
+      provider = ollama_provider
+      Sync { tier_over(provider, extra: { "structured_output" => { "schema" => {} } }).ask(subject: "x").await }
+
+      expect(provider.last_request.extra["structured_output"]).to eq("schema" => schema.to_json_schema)
+    end
+  end
+
   # ---- Scenario: an oracle asks a structured-output-capable provider for JSON -
   #
   # Driven through the REAL construction site rather than an injected
@@ -80,9 +111,10 @@ RSpec.describe Lain::Oracle::Model do
       # QUEUE for provider capacity (open decision 4), and a bare Struct member
       # reader takes no arguments -- so the double has to speak the real message
       # or it has stopped standing in for the thing it doubles.
-      backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :journal) do
+      backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :summarizer_options,
+                           :journal) do
         def summarizer_provider(queue: true) = self[:summarizer_provider] # rubocop:disable Lint/UnusedMethodArgument
-      end.new(provider, model, max_tokens, Lain::Channel::Null::INSTANCE)
+      end.new(provider, model, max_tokens, {}, Lain::Channel::Null::INSTANCE)
       Lain::CLI::Backend::Summarizer.new(backend:).oracle
     end
 

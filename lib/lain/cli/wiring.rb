@@ -217,14 +217,18 @@ module Lain
       # must not reach it -- that module's header has what
       # `--summarizer-provider anthropic` would do to a candidate secret's path.
       # The journal is resolved ONCE and shared by the oracle and the surface.
+      # What the backend IS asked is the judge's sampler options, which name
+      # no endpoint -- see {Backend#tier_options} for why they are not empty
+      # whenever the chat runs the judge's own model.
       #
+      # @param backend [Backend] the run's flag resolution
       # @return [Approval::SecretSurface, nil]
-      def secret_surface
+      def secret_surface(backend)
         return nil unless options[:secret_oracle]
 
         @secret_surface ||= begin
           journal = goal_journal
-          Approval::SecretSurface.new(oracle: Oracle::SecretRead.tier(journal:), journal:)
+          Approval::SecretSurface.new(oracle: secret_read(backend, journal), journal:)
         end
       end
 
@@ -801,7 +805,8 @@ module Lain
         # conversation reached, and the exe reads that after #run has returned.
         @repl = Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
                          supervisor:, middleware: @command_surface.middleware, attended: attended?,
-                         commands: @command_surface.commands, auto_surface:, secret_surface:, goal_driver:)
+                         commands: @command_surface.commands, auto_surface:,
+                         secret_surface: secret_surface(backend), goal_driver:)
       end
 
       # Its own method because it is a DIFFERENT unnamed object, which the
@@ -823,6 +828,14 @@ module Lain
 
       # Memoized, so the surface and the Repl poll ONE instance.
       def goal_driver = @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? })
+
+      # The judge's model is named once here, so the options asked for and the
+      # model they ride to cannot come to disagree.
+      def secret_read(backend, journal)
+        model = Provider::Ollama::DEFAULT_MODEL
+        options = backend.tier_options(provider: Backend::OllamaTier::LOCAL, model:)
+        Oracle::SecretRead.tier(model:, journal:, options:)
+      end
 
       # A record a live view may fold, so the tee-following reader. Under
       # --no-journal it answers the null device {Chronicle::Null} opens once.

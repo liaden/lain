@@ -236,6 +236,21 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
 
       expect(answers.size).to eq(1)
     end
+
+    # The span tier shares the eager tier's runner rule, resolved by the same
+    # Backend: on the chat's own model a collapse is one more request that
+    # runner answers, and without the chat's batch size it would reload it.
+    it "journals a request carrying the chat's batch size, and not its temperature" do
+      backend = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3:4b", max_tokens: 64, num_batch: 2048,
+                                       temperature: 0.2, compact_strategy: "summarizing")
+      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+
+      in_project_declaring(:nothing) { collapsed(wired_strategy(backend)) }
+
+      extra = journal.events.grep(Lain::Telemetry::RequestSent).last.extra
+      expect(extra).to include("num_batch" => 2048)
+      expect(extra).not_to have_key("temperature")
+    end
   end
 
   # == THE GAP, recorded rather than fixed

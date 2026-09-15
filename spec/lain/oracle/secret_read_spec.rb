@@ -95,12 +95,21 @@ RSpec.describe Lain::Oracle::SecretRead do
     end
 
     # The upgrade-detection guard. A `provider:`, `backend:` or `router:` keyword
-    # appearing here is the whole failure this card exists to prevent, arriving
+    # appearing here is the whole failure this arm exists to prevent, arriving
     # as an innocuous-looking seam -- so the parameter list itself is pinned.
+    #
+    # `options:` is admitted deliberately and is not that seam: it is a Hash of
+    # sampler values that rides the request body, and nothing in it can name a
+    # host, a provider or a model.
     it "takes no provider, backend or router seam: there is nothing to move it with" do
       keys = described_class.method(:tier).parameters.map(&:last)
 
-      expect(keys).to contain_exactly(:model, :journal)
+      expect(keys).to contain_exactly(:model, :journal, :options)
+    end
+
+    it "stays on loopback when it is handed sampler options" do
+      expect(provider_built(options: { "num_batch" => 2048 }).send(:resolved_endpoint))
+        .to eq("http://localhost:11434")
     end
 
     # AC: "the router cannot move it either." {Oracle::Router} answers "which
@@ -335,6 +344,25 @@ RSpec.describe Lain::Oracle::SecretRead do
       typed = described_class.tier(journal:).ask(**inputs).await
 
       expect([typed.verdict, typed.confidence]).to eq(["approve", 0.91])
+    end
+
+    # The value is resolved by the chat's Backend, which is the rule under
+    # test here: this judge runs its own small model, so the chat's runner
+    # knobs would force a reload of it, and the chat's temperature would move
+    # its verdicts.
+    it "judges a qwen3-coder chat's release with none of that chat's sampler options" do
+      chat = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3-coder:30b", temperature: 0.2, num_batch: 2048)
+      options = chat.tier_options(provider: "ollama", model: Lain::Provider::Ollama::DEFAULT_MODEL)
+
+      described_class.tier(journal:, options:).ask(**inputs).await
+
+      expect(provider.last_request.extra.keys).not_to include("num_batch", "temperature")
+    end
+
+    it "carries the options it is handed onto the request it journals" do
+      described_class.tier(journal:, options: { "num_batch" => 2048 }).ask(**inputs).await
+
+      expect(journal.grep(Lain::Telemetry::RequestSent).last.extra).to include("num_batch" => 2048)
     end
   end
 end

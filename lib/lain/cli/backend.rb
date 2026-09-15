@@ -46,6 +46,17 @@ module Lain
       # This class's fourth error, {InvalidEndpoint}, lives beside the
       # {Endpoint} that raises it.
 
+      # The sampler keys only an ollama arm reads. A chat on any other arm
+      # sends none of them, because {Provider::AnthropicEncoding} forwards any
+      # `extra` key it does not know onto a wire that defines none of these.
+      OLLAMA_ONLY_KEYS = %w[seed num_batch num_ctx].freeze
+
+      # Of those, the two that KEY a runner rather than shape an answer: a
+      # request whose value differs from the loaded runner's reloads the model.
+      # This set, and not the one above, is what a secondary tier may carry --
+      # `seed` would move its answers.
+      RUNNER_KEYS = %w[num_batch num_ctx].freeze
+
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama ollama-cloud].freeze
@@ -218,6 +229,42 @@ module Lain
       def summarizer_max_tokens
         Ceiling.new(flag: "--summarizer-max-tokens",
                     value: knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS)).tokens
+      end
+
+      # {#tier_options} for the summarizer tier, at the endpoint its own arm
+      # dials. Both {Summarizer} and {SpanSummarizer} read it.
+      def summarizer_options
+        tier_options(provider: summarizer_name, model: summarizer_model,
+                     api_base: ollama_base(summarizer_name))
+      end
+
+      # The sampler options a SECONDARY model request may carry -- a summary, a
+      # span collapse, a secret-read judgement.
+      #
+      # Only {RUNNER_KEYS}, and only when the tier is the chat's own ollama
+      # runner: same arm, same endpoint, same model. There a request with a
+      # different `num_batch` does not merely run differently, it RELOADS the
+      # runner, and the chat's next turn reloads it back: 29.4s of oracle wall
+      # against 1.6s, measured under LAIN_NUM_BATCH. On a different model the
+      # chat's `num_ctx` would force that tier's own reload instead, so nothing
+      # is carried. The chat's temperature and seed never are: they would move
+      # the judge's verdicts and the summaries, which no runner needs.
+      #
+      # Endpoints compare as the arm's default when no base is given, with a
+      # trailing slash stripped, and otherwise by spelling: `localhost` is not
+      # `127.0.0.1`, since it may resolve to ::1 where another listener sits.
+      # A miss costs one reload; the opposite mistake asks a tier under knobs
+      # nobody chose.
+      #
+      # @param provider [String] which arm the tier dials, as `--provider`
+      #   spells it; only the chat's own ollama arm can share its runner
+      # @param model [String] the model the tier asks
+      # @param api_base [String, nil] the base the tier's arm dials; nil is its
+      #   arm's own default
+      # @return [Hash{String=>Object}] frozen; empty unless the runner is shared
+      def tier_options(provider:, model:, api_base: nil)
+        shared = shares_chat_runner?(provider, model, api_base)
+        (shared ? sampler_extra.slice(*RUNNER_KEYS) : {}).freeze
       end
 
       # Where this run's records land. Bound by the first {#pipeline_source}
@@ -550,8 +597,31 @@ module Lain
       # The two throughput knobs are resolved HERE and not defaulted inside
       # {Provider::Ollama::Encoding}, because an encoder-side default would put
       # an `options` object on every ollama request in the process, where a flag
-      # the operator did not set leaves the payload byte-identical.
-      def sampler_extra = %i[temperature seed num_batch num_ctx].to_h { |key| [key.to_s, @options[key]] }.compact
+      # the operator did not set leaves the payload byte-identical. Only an
+      # ollama chat gets {OLLAMA_ONLY_KEYS}.
+      def sampler_extra
+        keys = Provider::Ollama::Encoding::SAMPLER_KEYS
+        keys -= OLLAMA_ONLY_KEYS unless ollama_chat?
+        keys.to_h { |key| [key, @options[key.to_sym]] }.compact
+      end
+
+      def ollama_chat? = OllamaTier::NAMES.include?(@options[:provider])
+
+      # The chat's own endpoint is `--provider` at `--api-base`, since
+      # {OllamaTier.claims_base?} always gives the chat's arm the base. Ordered
+      # so {#model} is read last: it refuses an option hash naming no provider.
+      def shares_chat_runner?(provider, model, base)
+        ollama_chat? && provider == @options[:provider] &&
+          endpoint(provider, base) == endpoint(provider, api_base) && model == self.model
+      end
+
+      def endpoint(provider, base) = (base || default_base(provider)).chomp("/")
+
+      def default_base(provider)
+        return Provider::Ollama::Deployment::CLOUD_API_BASE if provider == OllamaTier::CLOUD
+
+        Provider::Ollama::Transport::DEFAULT_API_BASE
+      end
     end
   end
 end

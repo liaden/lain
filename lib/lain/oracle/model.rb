@@ -42,12 +42,18 @@ module Lain
       # @param decoder [#call] `Response -> answer attributes Hash`; the default
       #   parses the reply as JSON, and a structured-output decoder swaps in
       #   behind the same message
-      def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new)
+      # @param extra [Hash{String=>Object}] sampler options for every Request
+      #   built here, already scoped by the caller to what this tier's provider
+      #   and model may carry -- this object cannot tell a runner knob that keeps
+      #   a shared runner loaded from one that reloads it
+      def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new,
+                     extra: {})
         @definition = definition
         @provider = provider
         @model = model
         @max_tokens = max_tokens
         @decoder = decoder
+        @extra = extra
         @usage = Usage.zero
       end
 
@@ -66,15 +72,16 @@ module Lain
       private
 
       def request_for(inputs)
-        Request.new(model: @model, max_tokens: @max_tokens, extra: structured_answer_format,
+        Request.new(model: @model, max_tokens: @max_tokens, extra: @extra.merge(structured_answer_format),
                     messages: [{ "role" => "user", "content" => @definition.render(inputs) }])
       end
 
       # A provider that can constrain its own decoding is handed the answer's
-      # schema; one that cannot is asked plainly, and its request stays
-      # byte-identical to what this tier sent before the marker existed -- the
-      # point of the capability gate, since #extra reaching an encoder that reads
-      # the same neutral key would move a prompt-cache prefix.
+      # schema, merged OVER the caller's options so none of them can unset the
+      # format the decoder depends on; one that cannot is asked plainly, and its
+      # request stays byte-identical to what this tier sent before the marker
+      # existed -- the point of the capability gate, since #extra reaching an
+      # encoder that reads the same neutral key would move a prompt-cache prefix.
       #
       # Only the schema half of the marker is carried: the other half names a tool
       # for a tool-forcing backend to force, and an oracle sends no tools. The key

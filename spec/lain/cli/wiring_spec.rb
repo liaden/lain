@@ -638,7 +638,7 @@ RSpec.describe Lain::CLI::Wiring do
     # from opposite ends, and this chunk produced both.
     it "wires no secret surface without --secret-oracle" do
       wire_agent
-      expect(wiring.secret_surface).to be_nil
+      expect(wiring.secret_surface(backend)).to be_nil
     end
 
     describe "--secret-oracle" do
@@ -650,11 +650,11 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       it "constructs the triage surface" do
-        expect(wiring.secret_surface).to be_a(Lain::Approval::SecretSurface)
+        expect(wiring.secret_surface(backend)).to be_a(Lain::Approval::SecretSurface)
       end
 
       it "memoizes it, so the Repl and any later reader share one surface and one journal fd" do
-        expect(wiring.secret_surface).to be(wiring.secret_surface)
+        expect(wiring.secret_surface(backend)).to be(wiring.secret_surface(backend))
       end
 
       # The whole point of the rung: even a run whose every provider knob names
@@ -666,7 +666,7 @@ RSpec.describe Lain::CLI::Wiring do
         recorder, session = built.run_state(nil)
         built.wire_agent(channel:, recorder:, session:, backend:)
 
-        tier = built.secret_surface.instance_variable_get(:@oracle)
+        tier = built.secret_surface(backend).instance_variable_get(:@oracle)
         # `.inner` peels {Lain::Provider::Journaled}, which wraps this provider
         # so the judge's own round trip reaches the Journal too. A
         # decorator cannot move the endpoint -- what it wraps is still the bare
@@ -674,6 +674,17 @@ RSpec.describe Lain::CLI::Wiring do
         # the endpoint.
         provider = tier.instance_variable_get(:@inner).instance_variable_get(:@provider).inner
         expect(provider).to be_a(Lain::Provider::Ollama)
+      end
+
+      # The judge's options come from the chat's Backend: a chat on the judge's
+      # own local model shares its runner, so the batch size has to follow the
+      # judge onto the wire or every judgement reloads the chat's model.
+      it "hands the judge the chat's runner knobs when the chat runs the judge's own model" do
+        tuned = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64, num_batch: 2048 },
+                                          mock: mock_provider)
+
+        tier = wiring.secret_surface(tuned).instance_variable_get(:@oracle).instance_variable_get(:@inner)
+        expect(tier.instance_variable_get(:@extra)).to eq("num_batch" => 2048)
       end
     end
   end

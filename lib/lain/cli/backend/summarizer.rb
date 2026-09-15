@@ -12,7 +12,8 @@ module Lain
       # flags cannot come to mean different things.
       class Summarizer
         # @param backend [#summarizer_provider, #summarizer_model,
-        #   #summarizer_max_tokens, #journal] the run's flag resolution
+        #   #summarizer_max_tokens, #summarizer_options, #journal] the run's
+        #   flag resolution
         def initialize(backend:)
           @backend = backend
         end
@@ -48,8 +49,8 @@ module Lain
         def tier(definition)
           provider = Provider::Journaled.new(provider: @backend.summarizer_provider(queue: false),
                                              journal: RunJournal.new(@backend))
-          Oracle::Model.new(definition:, provider:,
-                            model: @backend.summarizer_model, max_tokens: @backend.summarizer_max_tokens)
+          Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
+                            max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
         end
 
         # The run's journal, resolved per EVENT instead of captured at
