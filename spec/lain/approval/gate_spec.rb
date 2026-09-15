@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "open3"
 require "stringio"
 
 # Approval::Gate is the artifact gate: any artifact answering #digest and
@@ -103,6 +104,234 @@ RSpec.describe Lain::Approval::Gate do
       call(gate(timeout: 0.02), asker: silent_asker)
 
       expect(decisions.first).to include("evidence_digest" => nil, "reason" => nil)
+    end
+  end
+
+  # CTRL-C IS A DECIDED WAIT, NOT A DROPPED ONE. Async turns a real interrupt
+  # into an Async::Cancel while a fiber is parked in the await -- the same
+  # exception a caller's own `Async::Task#stop` raises -- so a scripted
+  # cancellation here exercises the identical path a terminal's Ctrl-C takes.
+  #
+  # The rescue that journals it is scoped to the WAIT ALONE, never the whole
+  # of `#call`: a cancel that lands earlier, in `asker.ask`, has no verdict to
+  # journal, and one that lands later, after `record` has already written a
+  # real answer, must not write a second, contradictory decision for the same
+  # question.
+  describe "a cancelled wait settles fail-closed as interrupted" do
+    it "journals approved false and answered_by interrupted before the cancellation propagates" do
+      subject_gate = gate(timeout: 30)
+
+      Sync do |task|
+        asking = task.async { subject_gate.call(plan, asker: silent_asker, stage: "implementation", epic_slug: "demo") }
+        sleep 0.1
+        asking.stop
+      end
+
+      record = decisions.first
+      expect(record["artifact_digest"]).to eq(plan.digest)
+      expect(record["approved"]).to be(false)
+      expect(record["answered_by"]).to eq(described_class::INTERRUPTED_SURFACE)
+      expect(subject_gate.approved?(plan.digest)).to be(false)
+    end
+
+    it "still withdraws the question and leaves a real asker free" do
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+
+      Sync do |task|
+        asking = task.async { gate(timeout: 30).call(plan, asker:, stage: "implementation", epic_slug: "demo") }
+        task.yield until asker.pending?
+        asking.stop
+      end
+
+      expect(asker.pending?).to be(false)
+      expect { Sync { asker.ask("the next gate?") } }.not_to raise_error
+    end
+
+    # An asker duck's own `#ask` can yield too -- a journaled announcement, a
+    # write that parks on the reactor -- before it ever hands back a promise
+    # `started` could be measured against. A cancel landing there used to
+    # reach `@clock.call - nil`, a TypeError that replaced the cancellation
+    # and journaled nothing.
+    it "propagates untouched a cancel that lands before the question was asked, journaling nothing" do
+      yielding_asker = Object.new
+      yielding_asker.define_singleton_method(:ask) do |_question|
+        sleep 0.2
+        Lain::Promise.new
+      end
+      outcome = nil
+
+      Sync do |task|
+        asking = task.async do
+          gate(timeout: 30).call(plan, asker: yielding_asker, stage: "research", epic_slug: "demo")
+        rescue Async::Cancel => e
+          outcome = e
+          raise
+        end
+        sleep 0.05
+        asking.stop
+      end
+
+      expect(outcome).to be_a(Async::Cancel)
+      expect(decisions).to be_empty
+    end
+
+    # `SignoffQueue#settle` takes the newest decision for a partition, so a
+    # second record appended after an approval would withdraw it in the fold
+    # -- a human's "y" quietly overwritten by an "interrupted" that followed
+    # it, for the one question that was already answered.
+    #
+    # `Async::Task#defer_stop` genuinely protects a deferred block ACROSS a
+    # yield -- a cancellation arriving while the block runs is held off until
+    # the block completes, then raised, never swallowed. Verified directly: a
+    # deferred block that yields (`sleep`) still runs to completion despite an
+    # external `.stop()`, and only unwinds once it returns. `#call` wraps its
+    # own `record` + registry add in exactly this, so both the journal write
+    # this asserts on AND the in-memory registry add that follows it commit
+    # together, or neither does.
+    it "writes no second record for a cancel landing after a decision is already journaled, and still registers it" do
+      # Captured OUTSIDE the singleton method: `define_singleton_method`'s
+      # block runs with `self` rebound to the object it is defined on, so
+      # `described_class` (an RSpec method on the example, not a closed-over
+      # local) is unreachable from inside it.
+      approved_answer = described_class::Answer.approve("human")
+      approving = Object.new
+      approving.define_singleton_method(:ask) do |_question|
+        Lain::Promise.new.tap { |promise| promise.resolve(approved_answer) }
+      end
+      real_journal = journal
+      written = false
+      slow_journal = Object.new
+      # A FLAG, never a fixed sleep on the outer side: the approving asker
+      # resolves synchronously, so nothing guarantees the child task has even
+      # started by a clock-timed `sleep` in the caller -- only that it has
+      # written once `written` flips true, which is the one moment this test
+      # means to catch a cancellation landing.
+      slow_journal.define_singleton_method(:record) do |event|
+        real_journal.record(event)
+        written = true
+        sleep 0.2
+      end
+      subject_gate = described_class.new(journal: slow_journal, timeout: 30)
+
+      Sync do |task|
+        asking = task.async { subject_gate.call(plan, asker: approving, stage: "research", epic_slug: "demo") }
+        task.yield until written
+        asking.stop
+      end
+
+      expect(decisions.size).to eq(1)
+      expect(decisions.first["approved"]).to be(true)
+      expect(subject_gate.approved?(plan.digest)).to be(true)
+    end
+
+    # The OTHER half of the same gap: a cancellation landing BEFORE the
+    # journal's bytes are down at all -- ahead of the write, not mid-write --
+    # used to leave an answered question with NO decision whatsoever, worse
+    # than the duplicate the sibling example above guards against. `#call`'s
+    # `task.defer_stop` closes this too: it wraps the whole `record` call, not
+    # just the part of it that happens to yield.
+    it "still writes the decision when a cancel lands before the journal's bytes are down at all" do
+      approved_answer = described_class::Answer.approve("human")
+      approving = Object.new
+      approving.define_singleton_method(:ask) do |_question|
+        Lain::Promise.new.tap { |promise| promise.resolve(approved_answer) }
+      end
+      real_journal = journal
+      entered_record = false
+      slow_journal = Object.new
+      # `entered_record` flips BEFORE the yield-ahead-of-the-write this
+      # simulates (an io_uring submit, a Monitor wait) -- the whole point is
+      # to land the cancellation before any byte is written, which a flag set
+      # only after the write (as the sibling example uses) could never catch.
+      slow_journal.define_singleton_method(:record) do |event|
+        entered_record = true
+        sleep 0.2
+        real_journal.record(event)
+      end
+      subject_gate = described_class.new(journal: slow_journal, timeout: 30)
+
+      Sync do |task|
+        asking = task.async { subject_gate.call(plan, asker: approving, stage: "research", epic_slug: "demo") }
+        task.yield until entered_record
+        asking.stop
+      end
+
+      expect(decisions.size).to eq(1)
+      expect(decisions.first["approved"]).to be(true)
+      expect(subject_gate.approved?(plan.digest)).to be(true)
+    end
+  end
+
+  # A window that never closes is still a window that ENDS: only a
+  # cancellation ends it, never the reactor's own clock. {Window::Unbounded},
+  # never `Float::INFINITY` passed as a plain number: io-event's own timer
+  # conversion computes a C `time_t` from the duration, which is undefined
+  # behaviour for an infinite double -- sound by luck on this box's io_uring
+  # selector, and a hard `Errno::EINVAL` crash on epoll (pinned under a real
+  # epoll process below). {Window::Unbounded} arms no reactor timer at all,
+  # so there is nothing for that conversion to run on.
+  describe "an unbounded window" do
+    it "never closes on its own; only a cancellation settles the wait" do
+      still_waiting = nil
+
+      Sync do |task|
+        asking = task.async do
+          gate(timeout: described_class::Window::Unbounded).call(plan, asker: silent_asker, stage: "research",
+                                                                       epic_slug: "demo")
+        end
+        sleep 0.1
+        still_waiting = asking.running?
+        asking.stop
+      end
+
+      expect(still_waiting).to be(true)
+      expect(decisions.first["answered_by"]).to eq(described_class::INTERRUPTED_SURFACE)
+    end
+  end
+
+  # `Window::Unbounded` schedules NO reactor timer at all -- the one property
+  # a spec keeping any OTHER timer alive (a `sleep`, a second gate) cannot
+  # tell apart from a Bounded window whose duration merely never fires. Only a
+  # subprocess booted with no other timer on the heap, under the selector
+  # that turns an infinite `with_timeout` into `Errno::EINVAL`, can.
+  describe "an unbounded window under a real epoll reactor", :seam do
+    # `IO_EVENT_SELECTOR` is read once, at the selector's own construction
+    # inside `Sync`/`Async` -- a later `ENV[]=` in this process changes
+    # nothing already running, so proving the fix needs a fresh process
+    # booted with it set, the way `bundle exec ruby -e` boots one.
+    it "arms no timer: a promise resolved a second later by a plain thread, nothing else pending, still lands" do
+      script = <<~RUBY
+        require "lain"
+        require "stringio"
+
+        io = StringIO.new
+        gate = Lain::Approval::Gate.new(journal: Lain::Journal.new(io:),
+                                        timeout: Lain::Approval::Gate::Window::Unbounded)
+        artifact = Data.define(:digest, :gate_question).new(digest: "blake3:epoll", gate_question: "Approve?")
+        reader, writer = IO.pipe
+        Thread.new { sleep 1; writer.write("go\\n") }
+
+        asker = Object.new
+        asker.define_singleton_method(:ask) do |_question|
+          Lain::Promise.new.tap do |promise|
+            Async::Task.current.async do
+              promise.resolve(Lain::Approval::Gate::Answer.approve("human")) if reader.gets
+            end
+          end
+        end
+
+        approved = Sync { gate.call(artifact, asker:, stage: "research", epic_slug: "demo") }
+        raise "not approved" unless approved
+
+        puts "OK"
+      RUBY
+
+      env = { "IO_EVENT_SELECTOR" => "EPoll", "BUNDLE_GEMFILE" => File.expand_path("../../../Gemfile", __dir__) }
+      out, status = Open3.capture2e(env, "bundle", "exec", "ruby", "-W0", "-e", script)
+
+      expect(out).not_to include("EINVAL")
+      expect(status).to be_success
+      expect(out).to include("OK")
     end
   end
 

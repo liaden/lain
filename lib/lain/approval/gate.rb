@@ -177,9 +177,60 @@ module Lain
       # A name rather than a nil, so a journal reader never guards.
       TIMEOUT_SURFACE = "timeout"
 
+      # The other name a journal reader never guards against: a wait that
+      # ended because something outside this fiber cancelled it, Ctrl-C
+      # included, rather than because the window closed or a human spoke.
+      INTERRUPTED_SURFACE = "interrupted"
+
       # Generous because the answerer is a human reading a plan: a bound, not
       # a hurry.
       DEFAULT_TIMEOUT = 300
+
+      # HOW a wait ends when nothing answers it. {#await} needs a strategy
+      # rather than a bare number, because the one shape that must never
+      # happen is handing the reactor's own `with_timeout` something it turns
+      # into a window that is wrong in either direction: `nil` computes
+      # `now + nil.to_f`, which is `now` -- a window that closes the instant
+      # it opens, denying before anyone could ever answer. `Float::INFINITY`
+      # computes a C `time_t` from an infinite double, undefined behaviour in
+      # io-event's own timer conversion -- silently fine on this box's
+      # io_uring selector, and a hard crash (`Errno::EINVAL`) the moment
+      # io_uring is unavailable and io-event falls back to epoll, which is
+      # exactly what a container's default seccomp profile forces.
+      #
+      # {Bounded} and {Unbounded} both answer `#around`, so {#await} never
+      # branches on which it holds.
+      module Window
+        # @param seconds [Numeric]
+        # @return [Bounded]
+        def self.bounded(seconds) = Bounded.new(seconds)
+
+        # Arms exactly one reactor timer, for the duration of the block.
+        class Bounded
+          # @return [Numeric] the window this arms, for {#await}'s
+          #   fired-through-the-window report
+          attr_reader :seconds
+
+          def initialize(seconds)
+            @seconds = seconds
+          end
+
+          def around(task, &block)
+            task.with_timeout(@seconds, &block)
+          end
+        end
+
+        # Arms NO reactor timer at all, so nothing is ever handed to
+        # `with_timeout` for an unbounded wait to go wrong over. Only an
+        # {Async::Cancel} -- Ctrl-C included -- ever ends the wait this wraps.
+        module Unbounded
+          def self.seconds = nil
+
+          def self.around(_task)
+            yield
+          end
+        end
+      end
 
       # Journaled, never branched on here: {#call} IS the asker-delegating
       # path, and other policies WRAP this call rather than switching inside it.
@@ -223,9 +274,11 @@ module Lain
       # @param journal [#record] where verdicts land as evidence; required, not
       #   defaulted, because a silently unjournaled approval would be a hole in
       #   the experiment record
-      # @param timeout [Numeric] seconds an unanswered gate waits before the
-      #   fail-closed denial. The window is enforced by the REACTOR's clock,
-      #   never by `clock:` below.
+      # @param timeout [Numeric, Window::Unbounded] seconds an unanswered gate
+      #   waits before the fail-closed denial -- wrapped in {Window::Bounded}
+      #   -- or {Window::Unbounded} itself for a wait that only a cancellation
+      #   ends. The window is enforced by the REACTOR's clock, never by
+      #   `clock:` below.
       # @param clock [#call] monotonic seconds, measuring LATENCY ONLY. A
       #   scripted clock makes a journaled latency deterministic; it does NOT
       #   make the timeout fire sooner, so a spec exercising the timeout still
@@ -233,7 +286,7 @@ module Lain
       #   is settled in {#await}.
       def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
         @journal = journal
-        @timeout = timeout
+        @window = timeout.is_a?(Numeric) ? Window.bounded(timeout) : timeout
         @clock = clock
         @approved = Set.new
       end
@@ -266,17 +319,30 @@ module Lain
       def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil,
                issue_id: nil, criteria_digest: nil)
         digest = artifact.digest
+        started = @clock.call
         asked = asker.ask(artifact.gate_question)
-        answer, latency = await(asked)
+        answer, latency = awaited(asked, started, digest, epic_slug:, stage:, policy:, evidence_digest:, reason:,
+                                                          issue_id:, criteria_digest:)
 
         # Journal FIRST, register second, never the other way round: a journal
         # that raises -- a full disk, or a contract refusing a nil digest --
         # must leave NO standing approval behind, or `ensure_approved!` would
         # open for a digest with no record of anyone approving it. Fail-closed
         # is about this ordering as much as about the timeout.
-        record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:,
-                       issue_id:, criteria_digest:)
-        @approved << digest if answer.approved?
+        #
+        # `task.defer_stop` around BOTH: a real `Journal#record` yields before
+        # its bytes are down (an io_uring submit, a Monitor wait), and a
+        # cancellation landing in that gap -- an answer already in hand, no
+        # record of it yet -- must not leave an answered question with NO
+        # decision at all, which is worse than the duplicate {#awaited}'s own
+        # rescue already guards against. Deferral holds the cancellation off
+        # until this block runs to completion, THEN raises it; it does not
+        # swallow it.
+        task.defer_stop do
+          record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:,
+                         issue_id:, criteria_digest:)
+          @approved << digest if answer.approved?
+        end
         answer.approved?
       ensure
         withdrawn(asker, asked)
@@ -377,6 +443,34 @@ module Lain
                                          reason: answer.reason || reason, **decided))
       end
 
+      # SCOPED TO THE WAIT ALONE, never the whole of {#call}. A cancellation
+      # arriving before this runs -- inside `asker.ask`, which {#call} calls
+      # before `awaited` -- has no verdict to journal and must propagate
+      # untouched, not compute `@clock.call - started` against a `started`
+      # this method was never handed. And one arriving AFTER `await` has
+      # already returned a real answer is already journaled by {#call}'s own
+      # `record`; catching it here too would write a second, contradictory
+      # decision -- a human's "y" quietly withdrawn by an "interrupted" that
+      # followed it -- for one question.
+      def awaited(asked, started, digest, **decided)
+        await(asked, started)
+      rescue Async::Cancel
+        interrupted(digest, started, **decided)
+        raise
+      end
+
+      # A CANCELLED WAIT IS A DECIDED ONE. Async turns a real Ctrl-C into
+      # exactly this exception while a fiber is parked in `await`, ahead of
+      # the plain Interrupt the human actually sent -- that one only
+      # re-emerges once every task has unwound, at the CALLER's reactor
+      # boundary, which is where a name for it belongs. {#awaited}'s rescue
+      # re-raises right after this returns: swallowing the cancellation
+      # instead would leave the reactor's shutdown sweep waiting on a task
+      # that never finishes.
+      def interrupted(digest, started, **decided)
+        record(Answer.deny(INTERRUPTED_SURFACE), artifact_digest: digest, latency: @clock.call - started, **decided)
+      end
+
       # A WAIT THAT ENDED STOPS BEING OUTSTANDING, HOWEVER IT ENDED. The window
       # closing is lain's decision rather than the human's, so the asker is
       # still holding the set -- and an asker admits ONE outstanding set, so the
@@ -434,11 +528,15 @@ module Lain
       # that fired, because the reactor's clock is what decided and reporting
       # the injected clock's delta would let a record claim 1000 seconds for a
       # 0.3-second window.
-      def await(promise)
-        started = @clock.call
-        [task.with_timeout(@timeout) { promise.await }, @clock.call - started]
+      #
+      # `started` comes from the CALLER rather than being read here again: a
+      # cancelled wait unwinds through {#awaited}'s own rescue, which needs
+      # the same reference to report the same elapsed time this method would
+      # have.
+      def await(promise, started)
+        [@window.around(task) { promise.await }, @clock.call - started]
       rescue Async::TimeoutError
-        [Answer.deny(TIMEOUT_SURFACE), @timeout]
+        [Answer.deny(TIMEOUT_SURFACE), @window.seconds]
       end
 
       # `current?` rather than `current`, so the precondition is a CHECK rather

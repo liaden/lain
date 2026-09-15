@@ -47,13 +47,15 @@ module Lain
       # INJECTED and neither defaults to the process's own, because only the
       # frontend may touch `$stdout`/`$stderr`.
       #
-      # `#ask` resolves the promise before it returns, so {Approval::Gate}'s
-      # timeout window never opens here. Deliberate: the answerer is the person
-      # who just typed the command, this process has no second fiber to hand the
-      # reactor to while a `gets` blocks, and a bare CLI's refusal is Ctrl-C. The
-      # fail-closed default still holds for every reply that is not affirmative,
-      # EOF included -- and EOF is journaled as {Lain::Epic::GateReply::EOF},
-      # because nobody typed the denial it stands for.
+      # `#ask` writes the question and returns an UNRESOLVED promise: the read
+      # runs on a fiber of its own, so {Approval::Gate#await}'s clock -- which
+      # starts once `#ask` returns -- spans the actual wait rather than a wait
+      # already over. Resolving synchronously, as this used to, made every
+      # journaled latency read as instant no matter how long a human took to
+      # answer. The fail-closed default still holds for every reply that is
+      # not affirmative, EOF included -- and EOF is journaled as
+      # {Lain::Epic::GateReply::EOF}, because nobody typed the denial it
+      # stands for.
       class Prompt
         # Spelled the way {CLI::EpicQueue} already spells a human sign-off: one
         # string, no second constant to drift.
@@ -95,11 +97,17 @@ module Lain
         end
 
         # @param question [String] the artifact's own rendering
-        # @return [Lain::Promise] already resolved with an {Approval::Gate::Answer}
+        # @return [Lain::Promise] resolves with an {Approval::Gate::Answer} once
+        #   the read returns
         def ask(question)
           @output.write("#{question} [y/N] ")
-          Promise.new.tap { |promise| promise.resolve(answer(@input.gets)) }
+          Promise.new.tap { |promise| Async::Task.current.async { promise.resolve(answer(@input.gets)) } }
         end
+
+        # @return [Approval::Gate::Window] no reactor timer is armed for this
+        #   wait: the person reading the question has nobody else to hand the
+        #   reactor to, and an unattended wait here ends only by Ctrl-C.
+        def window = Approval::Gate::Window::Unbounded
 
         private
 
@@ -297,6 +305,13 @@ module Lain
         # EVERY policy inherits that precondition -- {Policy::HandsOff} included,
         # whose answer needs no human. No policy-shaped exception to remember.
         #
+        # Ctrl-C is NOT caught here. {Approval::Gate} has already journaled the
+        # fail-closed decision by the time its own `Async::Cancel` handling
+        # re-raises, and once every task under this `Sync` has unwound, what
+        # climbs out of it is the plain `Interrupt` the human sent -- the same
+        # one every other command's `render` meets, not a translation only this
+        # one command's caller would need to know to rescue.
+        #
         # @return [String]
         # @raise [Epic::StageBlocked] before anything is journaled, when an
         #   earlier stage of this epic (or of this issue) still holds sign-offs
@@ -465,12 +480,24 @@ module Lain
       def settled(stage, submission, required, records, journal)
         queue = Approval::SignoffQueue.from_journal(records)
         policy = policy_for(stage, queue, journal)
-        gate = Approval::Gate.from_journal(records, journal:)
+        gate = Approval::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
         advance = advance_for(stage, submission, journal)
         return standing(submission, advance) if standing?(queue, submission)
 
         required.each { |plan| ensure_approved!(queue, plan) }
         Verdict.new(submission:, stage:, policy:, gate:, queue:, advance:).call
+      end
+
+      # The ASKER says its own window ({Prompt#window}), never a type check
+      # here: a chat's own asker also answers through the `interactive`
+      # policy, and its window closing is how an abandoned inbox question
+      # stops counting on the live feed, so only {Prompt} -- the bare CLI's
+      # own terminal, which has nobody else to hand the reactor to while a
+      # human reads and answers -- answers `#window` at all.
+      def gate_timeout(policy)
+        return Approval::Gate::DEFAULT_TIMEOUT unless policy.name == Approval::Gate::DEFAULT_POLICY
+
+        @asker.respond_to?(:window) ? @asker.window : Approval::Gate::DEFAULT_TIMEOUT
       end
 
       # Read BEFORE anything is decided, as the queue reads before it signs

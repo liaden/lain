@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "json"
+require "pty"
 require "stringio"
 require "tmpdir"
 
@@ -985,6 +986,146 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to include("denied")
       expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "eof"]])
+    end
+
+    # Scenario: latency is measured from the question's write, not from
+    # before it. {Prompt#ask} used to resolve synchronously, so
+    # {Approval::Gate#await}'s clock only ever started after a human had
+    # already answered -- every journaled latency read as instant no matter
+    # how long the read actually took.
+    it "measures at least as long as the terminal read actually takes" do
+      slow = instance_double(IO, tty?: true)
+      allow(slow).to receive(:gets) do
+        sleep 2
+        "y\n"
+      end
+
+      command(gates: hands_off.merge("research" => "interactive"), input: slow).submit("research")
+
+      expect(gate_decisions.first["latency"]).to be >= 2
+    end
+
+    # Mentally revert to always answering `Approval::Gate::DEFAULT_TIMEOUT`
+    # and this fails: with the window shrunk small enough for the read to
+    # outlast it, a bounded gate would deny with `answered_by: "timeout"`
+    # before the human ever got to type.
+    it "keeps no timeout: a read that outlasts DEFAULT_TIMEOUT still answers" do
+      stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 0.05)
+      slow = instance_double(IO, tty?: true)
+      allow(slow).to receive(:gets) do
+        sleep 0.2
+        "y\n"
+      end
+
+      said = command(gates: hands_off.merge("research" => "interactive"), input: slow).submit("research")
+
+      expect(said).to include("approved")
+      expect(gate_decisions.map { |record| record["answered_by"] }).to eq(["human"])
+    end
+  end
+
+  # Ctrl-C at an unanswered prompt unwinds the whole reactor before the plain
+  # `Interrupt` the human sent re-emerges outside {Approval::Gate}'s own Sync
+  # boundary -- see that class's own `Async::Cancel` handling, which journals
+  # the fail-closed refusal before letting the cancellation through.
+  # {Verdict#call} is where the boundary this command owns sits, so this
+  # drives it directly with a policy that raises the same way, rather than
+  # fighting a real terminal and a real signal inside an example -- RSpec
+  # traps SIGINT for its own graceful shutdown, so a self-sent one here would
+  # be caught by the RUNNER, not by this class.
+  describe Lain::CLI::EpicSubmit::Verdict do
+    # NOT translated. {Approval::Gate} has already journaled the fail-closed
+    # decision by the time this `Interrupt` reaches here -- see that class's
+    # own `Async::Cancel` handling -- so `Verdict#call` lets it climb bare,
+    # the same `Interrupt` every other command's `render` meets and turns
+    # into "interrupted", exit 130. A `StandardError` in its place would be
+    # swallowed by the epic driver's own `rescue StandardError` around one
+    # issue's settle, reporting a live run's Ctrl-C as an ordinary refusal
+    # while the run kept going.
+    it "lets a real Interrupt climb untouched, never turning it into a StandardError" do
+      policy = Object.new
+      policy.define_singleton_method(:decide) { |*| raise Interrupt }
+      submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
+      verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
+                                    queue: nil, advance: nil)
+
+      expect { verdict.call }.to raise_error(Interrupt)
+    end
+  end
+
+  # A REAL Ctrl-C through a REAL `lain epic submit`, in its own PROCESS: a PTY
+  # so the child has a real controlling terminal (`Prompt.on` refuses without
+  # one) and a real line discipline (^C on the master is what actually sends
+  # SIGINT to the child's foreground process group -- the same delivery path
+  # an operator's terminal uses, and the one no in-process trick reproduces).
+  # `Approval::Gate` journals the fail-closed decision from its own
+  # `Async::Cancel` handling, and the plain `Interrupt` that re-emerges once
+  # the child's reactor unwinds is what `render`'s own Ctrl-C rescue turns
+  # into "interrupted", exit 130 -- pinning that neither half of that
+  # contract silently drops the other.
+  describe "Ctrl-C through the real CLI", :seam do
+    # Polled with a DEADLINE, never a bare `loop`: a prompt that never
+    # arrives (a regression that makes the child exit, or hang, before it
+    # ever asks) must fail this example, not wedge the suite. `screen` grows
+    # from a background reader so the deadline poll never itself blocks on
+    # the child's own output.
+    def await_prompt(screen, mutex, deadline_at)
+      sleep 0.02 until mutex.synchronize { screen.include?("[y/N]") } ||
+                       Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline_at
+    end
+
+    it "exits 130, with the fail-closed decision already journaled" do
+      write_research
+      write_epic
+      FileUtils.mkdir_p(File.join(root, ".lain"))
+      File.write(File.join(root, ".lain", "config.toml"), <<~TOML)
+        [epics]
+        home = "xdg"
+        [epics.gates]
+        research = "interactive"
+      TOML
+
+      exe = File.expand_path("../../../exe/lain", __dir__)
+      gemfile = File.expand_path("../../../Gemfile", __dir__)
+      env = { "XDG_STATE_HOME" => state_home, "BUNDLE_GEMFILE" => gemfile }
+      cmd = ["bundle", "exec", "ruby", "-W0", exe, "epic", "submit", "research", "alpha"]
+
+      screen = +""
+      mutex = Mutex.new
+      status = nil
+      PTY.spawn(env, *cmd, chdir: root) do |out, inp, pid|
+        # The lock guards only the BUFFER APPEND, never the blocking read
+        # itself -- holding it across `readpartial` would starve every poller
+        # until the child next wrote a byte, which is the one moment nothing
+        # is available to read at all while the prompt is still being waited
+        # for.
+        reader = Thread.new do
+          loop do
+            chunk = out.readpartial(4096)
+            mutex.synchronize { screen << chunk }
+          end
+        rescue EOFError, Errno::EIO
+          nil
+        end
+
+        await_prompt(screen, mutex, Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10)
+        raise "timed out waiting for the [y/N] prompt; got: #{mutex.synchronize { screen }.inspect}" \
+          unless mutex.synchronize { screen.include?("[y/N]") }
+
+        inp.write("\x03")
+        _, status = Process.wait2(pid)
+        reader.join(2)
+      end
+
+      paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
+      written_to = paths.sessions_dir(project: paths.project_hash(root))
+      written = Dir.children(written_to).select { |name| name.end_with?(".ndjson") }
+                                        .flat_map { |name| Lain::Journal.records(File.foreach(File.join(written_to, name))).to_a }
+      decisions = written.select { |record| record["type"] == "gate_decision" }
+
+      expect(status.exitstatus).to eq(130)
+      expect(screen).to include("interrupted")
+      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "interrupted"]])
     end
   end
 
