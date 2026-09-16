@@ -183,18 +183,18 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # had a green spec and which no code path ever constructed.
   #
   # So this one drives the REAL {Lain::CLI::Repl} -- it builds the frontend, it
-  # binds the view to both halves, and its own #respond spawns the watch fiber
+  # binds the view to both halves, and its conversation spawns the watch fiber
   # -- against a REAL editor, and gates a REAL call inside the ask. Nothing
   # here reaches into the repl to wire anything.
   describe "the repl's own wiring puts a parked approval in front of the human" do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
-    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false, counting_down?: false, take_held: nil) }
+    let(:conductor) do
+      instance_double(Lain::CLI::Conductor, closed?: false, counting_down?: false, prompting?: false, take_held: nil)
+    end
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
-    # turn. `serves_replies?` is the second half of the command surface's duck:
-    # the Repl asks whether the LINE is itself a reply surface before it
-    # brackets it in the human's answer and approval surfaces.
+    # turn. `serves_replies?` is the second half of the command surface's duck.
     let(:commands) do
       Struct.new(:none) do
         def dispatch(_text) = yield
@@ -257,7 +257,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
       allow(conductor).to receive(:supervise) { |_task, _head, &turn| Struct.new(:response).new(turn.call) }
       allow(conductor).to receive(:read_prompt).and_return("go", "quit")
-      allow(conductor).to receive(:read_reply) do |_tty, prompt|
+      allow(conductor).to receive(:read_reply) do |prompt|
         prompts << prompt
         Async::Task.current.sleep(60)
       end

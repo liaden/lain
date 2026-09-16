@@ -375,6 +375,7 @@ RSpec.describe Lain::Supervisor do
 
         def render_countdown(options:, **) = tap { @coordinators.enqueue(options[:coordinator]) }
         def stop_countdown = self
+        def prompt_drawn? = false
       end.new
     end
 

@@ -91,8 +91,7 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
       role_spawn: instance_spy(Lain::Skill::RoleSpawn), chronicle: Lain::CLI::Chronicle::Null.new,
       status_feed: instance_double(Lain::StatusFeed), library: Lain::Skill::Library.load(root: @root),
       root: @root, cwd: @root, window: Lain::CLI::Backend::WindowBook::Served.new(model: "m", window_tokens: 32_768),
-      **board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor),
-                             tty: instance_double(Lain::Frontend::TTY))
+      **board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor))
     )
   end
 

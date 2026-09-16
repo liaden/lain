@@ -275,9 +275,9 @@ module Lain
       # SNAPSHOTTED here, on the terms {ToolGuard.path_filter} states for its
       # own snapshot, including what has to change should the slot ever become
       # re-bindable.
-      def surface_kwargs(conductor:, tty:)
+      def surface_kwargs(conductor:)
         { model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:,
-          approval_prompt: prompt(conductor:, tty:) }
+          approval_prompt: prompt(conductor:) }
       end
 
       # The gate policy a worker's calls are asked through. A worker no lease
@@ -462,8 +462,8 @@ module Lain
         @policy_switch.switch(resolution.gate_policy, surface:)
       end
 
-      def prompt(conductor:, tty:)
-        Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(tty, question) })
+      def prompt(conductor:)
+        Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(question) })
       end
 
       # The {Mode::Switch} the command surface writes, decorated so a flip does

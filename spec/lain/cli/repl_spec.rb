@@ -155,12 +155,9 @@ class ReplGoalTerminal
       end
     end.new(dir, shape, Lain::CLI::Command::Goal.new(driver:), Struct.new(:agent).new(agent), queue)
 
-    Sync do |task|
-      Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
-      Lain::CLI::Repl.new(agent:, tty:, replies:, commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:,
-                          approvals: queue, goal_driver: driver)
-                     .converse(first_prompt: "/goal make the specs green")
-    end
+    Lain::CLI::Repl.new(agent:, tty:, replies:, commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:,
+                        approvals: queue, goal_driver: driver, input: Lain::Frontend::StdinPump.new(rail:, screen: tty))
+                   .run(nvim: nil, store: nil, session: nil, first_prompt: "/goal make the specs green")
   RUBY
 
   LIB = File.expand_path("../../../lib", __dir__)
@@ -350,7 +347,7 @@ RSpec.describe Lain::CLI::Repl do
         commands: falls_through, chronicle: Lain::CLI::Chronicle::Null.new,
         tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
                                      history_path: File.join(dir, "history")),
-        replies: instance_double(Lain::CLI::HumanReplies, surfaces: []), conductor: passing_conductor
+        replies: instance_double(Lain::CLI::HumanReplies), conductor: passing_conductor
       )
     end
 
@@ -607,11 +604,8 @@ RSpec.describe Lain::CLI::Repl do
         def dispatch(_text) = outcome
         def serves_replies?(_text) = false
       end.new(outcome)
-      # `surfaces: []` because the reply surfaces are bracketed around the whole
-      # DISPATCHED LINE now, not around the ask -- so a command that never
-      # reaches #respond still asks this collaborator for them.
       Lain::CLI::Repl.new(agent: instance_double(Lain::Agent, timeline: nil), tty:,
-                          replies: instance_double(Lain::CLI::HumanReplies, surfaces: [], take_held: nil), commands:,
+                          replies: instance_double(Lain::CLI::HumanReplies, take_held: nil), commands:,
                           chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
                      .converse(first_prompt: "/anything")
     end
@@ -1293,21 +1287,14 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # The reply surfaces' lifetime is one DISPATCHED LINE, not one ask.
-  # A human question can now be raised from a frame {Repl#respond} never enters
-  # -- a registered command runs lib-side with zero model turns, and a
-  # `@role[/skill]` line folds a whole subagent run into the repl phase's short
-  # circuit -- and the fiber that parks on such a question is the DISPATCHING
-  # one. With the surfaces started inside `#respond`, nothing was draining the
-  # queue while that fiber waited, so the question could only be answered by a
-  # `/inbox` the wedged conversation could no longer read.
-  #
-  # The far edge is what the widening must not cross: {HumanReplies#surfaces}
-  # documents its fiber as one that "must live exactly as long as the ask and no
-  # longer -- the reply read parks inside it, and the terminal it reads from is
-  # the one the next `you>` prompt needs back". `#dispatch` ends before that
-  # read; a conversation-scoped answer_loop would not, and would race every
-  # prompt for stdin.
+  # The reply surfaces' lifetime is the CONVERSATION, not one ask or one line.
+  # A human question can be raised from a frame {Repl#respond} never enters --
+  # a registered command runs lib-side with zero model turns, a `@role[/skill]`
+  # line folds a whole subagent run into the repl phase's short circuit, and a
+  # fleet actor asks while the human sits at `you>` -- and the fiber that parks
+  # on such a question is never the one answering it. The prompts cannot race
+  # for stdin over that longer life: the input rail publishes them one at a
+  # time (input_rail_spec, and the plain chat seam over a real terminal).
   #
   # Every example drives the REAL {Repl#run} over the REAL {HumanReplies} and
   # its real fibers -- the queue is a live Async::Queue and the reply comes off
@@ -1374,8 +1361,8 @@ RSpec.describe Lain::CLI::Repl do
     # `fetch`, so a typo names itself rather than silently reading the terminal.
     def reply_reader(reading)
       {
-        typed: ->(_terminal, prompt) { typed_at(prompt) },
-        never: ->(_terminal, _prompt) { Async::Task.current.sleep(60) },
+        typed: ->(prompt) { typed_at(prompt) },
+        never: ->(_prompt) { Async::Task.current.sleep(60) },
         counted: method(:counted_read)
       }.fetch(reading)
     end
@@ -1384,7 +1371,7 @@ RSpec.describe Lain::CLI::Repl do
     # the most there have ever been. Counted rather than inferred from the
     # rendered prompts: two reads that ran back to back print the same two
     # prompts as two that overlapped, and only the second is a wedge.
-    def counted_read(_terminal, prompt)
+    def counted_read(prompt)
       @in_flight = @in_flight.to_i + 1
       @peak = [@peak.to_i, @in_flight].max
       Async::Task.current.sleep(0.05) # the human is typing
@@ -1416,35 +1403,27 @@ RSpec.describe Lain::CLI::Repl do
       expect(output.string).to include("which file", "human> ")
     end
 
-    # The other edge, asserted as the NEGATIVE it is: at `you>` no reply fiber
-    # may be parked on the terminal, so an arrival there waits for `/inbox` (or
-    # for the next line to be dispatched) rather than stealing the prompt's read.
-    it "leaves nothing parked on the terminal at the you> prompt" do
+    # A fleet actor's question while the human sits at `you>`: nothing is
+    # dispatched, and the question is still served.
+    it "serves a question raised while the human sits at you>" do
       commands = commands_that { |_text| "never dispatched" }
 
       converse_over(commands) do
         questions.enqueue(item)
-        sleep(0.2)
+        wait_until(reason: "the question raised at you> was answered") { answers.answered.any? }
         "quit"
       end
 
-      expect(answers.answered).to be_empty
-      expect(output.string).not_to include("human> ")
+      expect(answers.answered).to contain_exactly(["an answer", "digest-of-which-file"])
     end
 
-    # Review BLOCKER 2 (probe 1). The fleet outlives any one ask, so a
-    # background subagent can enqueue while the human runs a SHORT command line
-    # -- `/help`, `/status`, `/models`. The reply loop is live for that line: it
-    # dequeues, renders the note, and parks on a read nobody is looking at. The
-    # line ends and the surface is stopped mid-read.
-    #
-    # The item must survive that. Destroyed, it is off `@questions` (dequeued)
-    # AND off `@inbox` (retired), so `pending?` is false, `/inbox` can never list
-    # it, and the asker is parked forever -- with no error and no journal line.
-    # The widening is what exposes every command line to it; the mechanism is
-    # {HumanReplies#serve_question}'s own ensure, pinned one level down in
-    # human_replies_spec.
-    it "keeps a question the human never answered reachable when the line that surfaced it ends" do
+    # The loop dequeues, renders the note, and parks on a read nobody is
+    # looking at, and the conversation ends with the surface stopped mid-read.
+    # The item must survive that: destroyed, it is off `@questions` (dequeued)
+    # AND off `@inbox` (retired), so `pending?` is false and the asker is parked
+    # forever -- with no error and no journal line. The mechanism is
+    # {HumanReplies::AnswerLoop}'s own ensure, pinned one level down.
+    it "keeps a question the human never answered reachable when the conversation ends under its read" do
       lines = ["/short-command", "quit"]
       commands = commands_that do |_text|
         questions.enqueue(item)
@@ -1458,13 +1437,8 @@ RSpec.describe Lain::CLI::Repl do
       expect(replies.pending?).to be(true)
     end
 
-    # Review round 2. The re-queue keeps it reachable, which is right -- but
-    # every later line re-opens a loop that dequeues it at once. An ARRIVAL note
-    # says "this just arrived", and on the third `/fast` line that is simply
-    # false; worse, the read it opens is torn down before a human could type into
-    # it, so the repetition is noise the human cannot act on. The note is owed
-    # ONCE per item; the read still opens, so a line they linger on is still
-    # answerable.
+    # An ARRIVAL note says "this just arrived", which is owed ONCE per item
+    # however many lines go by while it waits.
     it "announces an outstanding question once, however many lines it outlives" do
       questions.enqueue(item)
       lines = ["/fast", "/fast", "/fast", "quit"]
@@ -1472,82 +1446,7 @@ RSpec.describe Lain::CLI::Repl do
 
       converse_over(commands, reading: :never) { lines.shift }
 
-      expect(output.string.scan("which file").size).to eq(1)
-    end
-
-    # Review BLOCKER 1 (probe 2c). `/inbox` is a REGISTERED command, so the
-    # widening puts it inside the bracket -- and `Async::Queue#dequeue` on a
-    # non-empty queue returns WITHOUT suspending, so the reply loop takes the
-    # head item and opens a `human> ` read while `drain_at_prompt` opens a SECOND
-    # one on the same stdin. Whichever fiber wins takes the human's typed line,
-    # and `Reply#at_prompt` answers `@inbox.oldest` -- which the loop has already
-    # pushed its own item onto, so the answer lands on the wrong digest.
-    #
-    # `/inbox` exists BECAUSE no loop runs between asks; a fix that makes it race
-    # the loop it substitutes for has moved the wedge, not removed it. So the
-    # line DECLARES that it serves replies, and no second surface opens over it.
-    # The REAL registry over the REAL `/inbox`, bound over the run's own
-    # {HumanReplies} -- the whole chain the declaration travels, from the
-    # command that makes it to the scope that reads it. A fake command answering
-    # `serves_replies?` would pin the wiring and not the shipped behaviour, and
-    # this defect lived in exactly that gap.
-    describe "a line that is itself a reply surface" do
-      let(:inbox_registry) do
-        Lain::CLI::Command::Registry.new([Lain::CLI::Command::Inbox.new]).bind(build_command_env(replies:))
-      end
-
-      it "opens exactly one reply read over a backlog" do
-        questions.enqueue(item)
-        questions.enqueue(item("which branch", digest: "digest-of-which-branch"))
-        lines = ["/inbox", "quit"]
-
-        converse_over(inbox_registry, reading: :counted) { lines.shift }
-
-        expect(peak_reply_reads).to eq(1)
-      end
-
-      it "gives that line's own drain the answer the human typed" do
-        questions.enqueue(item)
-        lines = ["/inbox", "quit"]
-
-        converse_over(inbox_registry, reading: :counted) { lines.shift }
-
-        expect(answers.answered).to contain_exactly(["an answer", "digest-of-which-file"])
-        expect(output.string).to include("which file")
-      end
-
-      # Review round 2, BLOCKER A. The APPROVAL watcher is a different QUEUE
-      # and NOT a different terminal: {Repl::ApprovalSurfaces#approval_surface}
-      # reads through `conductor.read_reply(tty, prompt)`, byte-for-byte the
-      # stdin the drain is parked on. An adopted actor can park a tier-3 call at
-      # any instant, so a `y` typed at an inbox question could land as the
-      # verdict on a gated `bash` -- an approval the human never gave. Before
-      # this card a command line started no watchers at all, so it is the
-      # widening that makes it reachable.
-      #
-      # A real {Approval::Queue} and a real parked call, because the claim is
-      # about which fiber holds the terminal and only real fibers can be counted.
-      it "opens no approval read either, so a keystroke cannot land as a y/N verdict" do
-        questions.enqueue(item)
-        lines = ["/inbox", "quit"]
-
-        Sync do |task|
-          task.async do
-            task.sleep(0.05) # the drain has started and is parked on the read
-            approvals.call(gated_call, nil)
-          rescue StandardError
-            nil
-          end
-          converse_over(inbox_registry, reading: :counted, approvals:) { lines.shift }
-        end
-
-        expect(peak_reply_reads).to eq(1)
-        expect(output.string).not_to include("approve bash")
-      end
-    end
-
-    def gated_call
-      Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "echo hi" })
+      expect(output.string.lines.grep(/which file.*answer below/).size).to eq(1)
     end
   end
 

@@ -35,7 +35,7 @@ module ApprovalSurfacesSpecSupport
   end
 end
 
-# The fan-out {Repl#respond} depends on and no spec exercised: `watch(task)`
+# The fan-out a conversation opens ({Lain::CLI::Repl::ConversationScope}): `watch(task)`
 # spawns one fiber per LIVE surface over one queue, splats the opt-in auto
 # surface in without leaving a nil hole, and spawns nothing at all when no
 # queue was wired (an unattended run).
@@ -126,7 +126,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   it "routes that surface's read through the conductor, over THIS session's tty" do
     fan_out
 
-    expect(conductor).to have_received(:read_reply).with(tty, /approve bash/)
+    expect(conductor).to have_received(:read_reply).with(/approve bash/)
   end
 
   it "signs the decision with the TTY surface's own name, so a transcript names who approved" do
@@ -154,48 +154,6 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
   it "spawns one fiber per live surface: two, under --auto-approve" do
     expect(fan_out(auto: auto_surface)[:watched].size).to eq(2)
-  end
-
-  # Review BLOCKER A. Exactly ONE surface here reads stdin, and it
-  # reads the SAME stdin the ask_human drain does -- so a line that reads the
-  # terminal itself (`/inbox`, see {Lain::CLI::Repl::LineScope#serve}) must not
-  # have it spawned over the top, or a keystroke meant for an inbox question can
-  # land as the y/N on a gated `bash`. Everything else here answers the queue by
-  # other means and is untouched, which is what keeps the withheld case bounded
-  # by the queue's own fail-closed timer rather than by a silent grant.
-  describe "a line that reads the terminal itself" do
-    def watched_without_terminal(auto: nil, attached: nil, secret: nil)
-      Sync do |task|
-        watched = surfaces(auto:, attached:, secret:).watch(task, terminal: false)
-        watched
-      ensure
-        watched&.each { |surface| surface&.stop }
-      end
-    end
-
-    it "spawns no stdin-reading surface for it" do
-      watched_without_terminal
-
-      expect(conductor).not_to have_received(:read_reply)
-    end
-
-    it "keeps every other watcher on the queue -- one short, never none" do
-      expect(watched_without_terminal(auto: auto_surface, attached: editor, secret: secret_surface).size)
-        .to eq(3)
-    end
-
-    it "still hands those watchers the SAME queue" do
-      watched_without_terminal(auto: auto_surface)
-
-      expect(auto_surface.queues).to contain_exactly(be(queue))
-    end
-
-    # `[*false]` is `[false]` where `[*nil]` is empty, so a Boolean spliced the
-    # way the nil-or-object ivars beside it are would put `false` in the set and
-    # `false.stop` would raise in the scope's ensure.
-    it "leaves no false in the set the caller has to stop" do
-      expect(watched_without_terminal).to all(be_a(Async::Task))
-    end
   end
 
   # The fourth peer, opt-in behind --secret-oracle: a local model triaging
@@ -271,9 +229,10 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("! agent asks to run bash(", "ls", "/approve"))
     end
 
-    # A call outlives lines: the one a subagent parked is still parked when the
-    # human dispatches the next. "This just arrived" is false by then.
-    it "announces a call once however many lines it stays parked through" do
+    # A watch stopped and started again over the same parked call -- a chat
+    # whose conversation restarts its surfaces -- does not announce it twice:
+    # "this just arrived" is false by then.
+    it "announces a call once however many watches it stays parked through" do
       Sync do |task|
         built = surfaces(attached: editor)
         gated = task.async { queue.call(effect, nil) }
@@ -288,8 +247,8 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes.size).to eq(1)
     end
 
-    it "tells the line's attention a call is outstanding while it is parked, and not after" do
-      attention = Lain::CLI::Repl::LineScope::Attention.new
+    it "tells the conversation's attention a call is outstanding while it is parked, and not after" do
+      attention = Lain::CLI::Repl::ConversationScope::Attention.new
 
       readings = Sync do |task|
         watched = surfaces(attached: editor).watch(task, attention:)
@@ -370,7 +329,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
     fan_out
 
-    expect(conductor).to have_received(:read_reply).with(tty, /approve bash/)
+    expect(conductor).to have_received(:read_reply).with(/approve bash/)
     expect(output.string).not_to include("\a")
     expect(displayed).to be_empty
   end
@@ -446,13 +405,13 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       fan_out_disclosing
 
       expect(conductor).to have_received(:read_reply)
-        .with(tty, a_string_starting_with('"/repo/.env": 1 sensitive region outstanding -- '))
+        .with(a_string_starting_with('"/repo/.env": 1 sensitive region outstanding -- '))
     end
 
     it "puts none of the regions' bytes on the terminal" do
       fan_out_disclosing
 
-      expect(conductor).not_to have_received(:read_reply).with(tty, a_string_including(secret))
+      expect(conductor).not_to have_received(:read_reply).with(a_string_including(secret))
     end
   end
 end

@@ -48,9 +48,9 @@ module Lain
 
         # Whether the command +text+ names is ITSELF a reply surface: one that
         # opens its own `human> ` read over the pending questions
-        # ({Command::Inbox}). {Repl::LineScope} asks BEFORE the line runs, because
-        # a reply loop started around such a line reads the same stdin the
-        # command is reading.
+        # ({Command::Inbox}). A reply prompt asks it ({HumanReplies::Reply}), so
+        # `/inbox` typed there detours into the drain for the parked set rather
+        # than opening a second drain for whichever set is oldest.
         #
         # Sent as a message a command MAY not understand, rather than required of
         # all twenty-odd: one command in the set has any use for it, and this asks

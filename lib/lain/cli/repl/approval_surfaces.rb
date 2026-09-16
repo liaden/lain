@@ -17,7 +17,8 @@ module Lain
       #
       # Every one of them can be absent, the queue included: under
       # --non-interactive nobody is there to drain a parked call, so `watch`
-      # honestly spawns nothing at all.
+      # honestly spawns nothing at all. All of them watch for the whole
+      # conversation ({ConversationScope}).
       class ApprovalSurfaces
         # The two oracle keywords are REQUIRED though they are nil-by-default
         # capabilities: a defaulted keyword turns "the caller forgot to wire it"
@@ -44,39 +45,29 @@ module Lain
         end
 
         # WHY the reader routes through the conductor: a bare `@input.gets` in
-        # the surface fiber races the answer_loop's Reline read for the one
-        # stdin, escapes the conductor's countdown-ticker suppression, and --
-        # being a thread-blocking read -- freezes the whole reactor, so the
-        # queue's fail-closed timer could never fire while the prompt sat
-        # unanswered. read_reply parks the fiber instead.
+        # the surface fiber bypasses the input rail every other prompt waits its
+        # turn on, and -- being a thread-blocking read -- freezes the whole
+        # reactor, so the queue's fail-closed timer could never fire while the
+        # prompt sat unanswered. read_reply parks the fiber instead.
         def approval_surface
           @approval_surface ||= Lain::Frontend::ApprovalPolicy.new(
-            reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }
+            reader: ->(prompt) { @conductor.read_reply(prompt) }
           )
         end
 
-        # The terminal keyword is false for a line that reads the terminal
-        # ITSELF, and then the terminal's own surface is not spawned.
-        # {Repl::LineScope#serve} holds the rule and what withholding it costs.
-        #
         # WHICH terminal surface depends on the editor. A plain chat gets
-        # {#approval_surface}, the ONE surface here that reads stdin, through the
-        # same `conductor.read_reply(tty, ...)` a `/inbox` drain would be parked
-        # on. A cockpit gets {Arrivals}, which reads nothing: lain://approval is
-        # where the human answers there, and a `[y/N]` in the chat pane beside it
-        # is a second reader for a line typed ahead to land in.
+        # {#approval_surface}, the ONE surface here that reads a line, off the
+        # same input rail every other prompt waits its turn on. A cockpit gets
+        # {Arrivals}, which reads nothing: lain://approval is where the human
+        # answers there, and a `[y/N]` in the chat pane beside it is a second
+        # reader for a line typed ahead to land in.
         #
         # {#approval_surface} is also the only surface that CONSUMES the queue's
-        # arrivals, so a line without it leaves that buffer undrained --
-        # harmless, because every other surface reads the parked set and never
-        # needed an arrival to find a pending, and {Approval::Queue#dequeue}
-        # skips the decided ones a later reader would otherwise meet.
+        # arrivals, so a cockpit leaves that buffer undrained -- harmless,
+        # because every other surface reads the parked set and never needed an
+        # arrival to find a pending.
         #
-        # `if terminal` rather than `terminal &&`: `[*false]` is `[false]` where
-        # `[*nil]` is empty, and this one splat reads a Boolean where the others
-        # read a nil-or-object ivar.
-        #
-        # Those splats rest on a NEGATIVE fact about a third-party class:
+        # The splats rest on a NEGATIVE fact about a third-party class:
         # `Async::Task` does not respond to `to_a`, so `*task` yields the task
         # itself rather than flattening it. An async release that added `to_a`
         # would silently change what this returns, which is why
@@ -84,13 +75,12 @@ module Lain
         # every member -- so that upgrade fails in a test rather than in a
         # session's shutdown path.
         #
-        # @param task [Async::Task] the line's task, which every watcher is spawned on
-        # @param terminal [Boolean] false for a line that reads the terminal itself
-        # @param attention [LineScope::Attention] told, in a cockpit, that an
-        #   undecided parked call is outstanding, so the chat's command reader
-        #   is open while one is
-        def watch(task, terminal: true, attention: LineScope::Attention.new)
-          @approvals && [*(terminal_surface(task, attention) if terminal),
+        # @param task [Async::Task] the conversation's task, which every watcher is spawned on
+        # @param attention [ConversationScope::Attention] told, in a cockpit,
+        #   that an undecided parked call is outstanding, so the chat's command
+        #   reader is open while one is
+        def watch(task, attention: ConversationScope::Attention.new)
+          @approvals && [terminal_surface(task, attention),
                          *(@auto_surface && task.async { @auto_surface.watch(@approvals) }),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
                          *(@editor && task.async { @editor.watch(@approvals) })]
@@ -98,8 +88,7 @@ module Lain
 
         private
 
-        # In a cockpit the parked set is outstanding whichever line parked it:
-        # a line blocked on a call announced earlier still needs `/approve`.
+        # In a cockpit the parked set is outstanding whoever parked it.
         def terminal_surface(task, attention)
           return task.async { approval_surface.watch(@approvals) } unless @editor
 
@@ -107,8 +96,7 @@ module Lain
           task.async { arrivals.watch(@approvals) }
         end
 
-        # Memoized for {Arrivals}' reason: it remembers what it has announced,
-        # and that memory spans every line a call stays parked through.
+        # Memoized for {Arrivals}' reason: it remembers what it has announced.
         def arrivals = @arrivals ||= Arrivals.new(notice: @tty.method(:render_summons))
       end
 
@@ -123,9 +111,8 @@ module Lain
         # reactor, woken by its own tick, needs nothing from the queue to find a
         # pending.
         #
-        # A call is announced ONCE however many lines it outlives, and forgotten
-        # the moment it leaves the parked set, so the memory is bounded by what
-        # is parked right now.
+        # A call is announced ONCE, and forgotten the moment it leaves the parked
+        # set, so the memory is bounded by what is parked right now.
         #
         # `notice:` is the frontend's summons line ({Frontend::TTY#render_summons},
         # reached as {CLI::Wiring} reaches it for the run's line to the human),

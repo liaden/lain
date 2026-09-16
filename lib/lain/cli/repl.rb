@@ -3,7 +3,6 @@
 require_relative "repl/approval_surfaces"
 require_relative "repl/ask"
 require_relative "repl/conversation_scope"
-require_relative "repl/line_scope"
 require_relative "repl/outcome"
 
 module Lain
@@ -73,13 +72,12 @@ module Lain
       # chat-level Sync here gives every inner ask the shared reactor and the
       # fleet a home across asks.
       #
-      # The editor's gesture rail is consumed HERE, for the conversation, and
-      # not by {#respond} for one ask: a human marking hunks in a review does it
-      # between turns, so an ask-scoped consumer answers nothing while they work
-      # -- and the rail is their only signal a gesture landed. {ConversationScope}
-      # owns that lifetime, closed by the ensure on every path out. The input
-      # producer lives for the conversation beside it, since every line of it
-      # is read through that one producer.
+      # Every surface a human answers through is started HERE, for the
+      # conversation, and not for one ask or one line: a human marks hunks in a
+      # review between turns, and a docent child parks a call while the chat is
+      # at rest. {ConversationScope} owns that lifetime, closed by the ensure on
+      # every path out. The input producer lives for the conversation beside
+      # it, since every line of it is read through that one producer.
       #
       # `epic:` is what the editor's lain://status draws, resolved by {Wiring};
       # like `store:` and `session:` it reaches only the frontend built here.
@@ -105,17 +103,12 @@ module Lain
 
       private
 
-      # The three lifetimes a conversation runs, each named by the object that
-      # owns it -- so which fiber belongs to which, and who stops it, is read
-      # off a name rather than off three ensures. {ConversationScope} is the
-      # longest (the fleet's reactor and the editor's gesture consumer);
-      # {LineScope} is the middle one, live for ONE dispatched line, because a
-      # question can be raised from any frame a line reaches and not only from
-      # the ask.
+      # The conversation's lifetime, named by the object that owns it -- so
+      # which fiber belongs to it, and who stops it, is read off a name rather
+      # than off an ensure.
       def name_lifetimes(replies:, supervisor:, **approval_seams)
         @surfaces = ApprovalSurfaces.new(**approval_seams)
-        @conversation = ConversationScope.new(supervisor:, replies:)
-        @line = LineScope.new(replies:, surfaces: @surfaces)
+        @conversation = ConversationScope.new(supervisor:, replies:, surfaces: @surfaces)
       end
 
       # The bridge over the agent's own override slot, sharing the nvim views'
@@ -160,7 +153,7 @@ module Lain
       # :quit ends the conversation through the SAME exit a bare "quit" takes: a
       # nil text fails continue? exactly as a farewell does, so run's ensures
       # fire identically on both paths. The standing-goal driver is consulted
-      # BETWEEN asks, after a turn has fully settled and its surfaces stopped; a
+      # BETWEEN asks, after a turn has fully settled; a
       # driving goal answers the next prompt as a typed line would, and Null (no
       # goal) answers nil cheaply so the human prompt is read as before.
       #
@@ -201,16 +194,8 @@ module Lain
       # so a malformed invocation renders and `converse` loops to the next
       # prompt instead of dying.
       #
-      # It is also the frame the human's answer surfaces are bracketed over,
-      # because a question or a parked approval can be raised from either path
-      # and the fiber that parks on one is this one. {LineScope} holds the
-      # reason the line is the right lifetime, and the invariant `serves_replies?`
-      # answers here: a line which reads the terminal ITSELF gets no surface
-      # spawned over it, and the question costs no side effect.
       def dispatch(text)
-        @line.serve(owns_terminal: @commands.serves_replies?(text)) do
-          settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
-        end
+        settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
       rescue Lain::Error => e
         @tty.render_error(outcome.note(e).message)
         # Explicit: dispatch's return is #converse's ACTION position, and
@@ -329,11 +314,10 @@ module Lain
       # The model turn, returned for {#dispatch} to deliver -- never rendered
       # here, so a short-circuiting middleware's response and this one share the
       # single boundary renderer. It runs inside the line's supervision
-      # ({#middleware_turn}), whose task the concurrent surfaces an ask needs are
-      # already live beside: {LineScope} starts them for the whole dispatched
-      # line. They must be concurrent at all because `ask` parks inside
-      # ask_human#perform awaiting a reply from this same terminal, and a
-      # single-fiber ask-then-prompt deadlocks.
+      # ({#middleware_turn}), while the surfaces an ask needs are live for the
+      # conversation beside it. They must be concurrent at all because `ask`
+      # parks inside ask_human#perform awaiting a reply from this same terminal,
+      # and a single-fiber ask-then-prompt deadlocks.
       #
       # A TORN ASK IS {Ask}'S, not this method's. It runs the ask too, so a
       # refusal comes back as a VALUE rather than killing the `Async::Task`

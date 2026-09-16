@@ -61,7 +61,7 @@ module Lain
         @again = true
         while @again
           @again = false
-          text = @compose.settle(@conductor.read_prompt(@tty, @text), &method(:keep))
+          text = @compose.settle(@conductor.read_prompt(@text), &method(:keep))
         end
         text
       end

@@ -47,6 +47,12 @@ RSpec.describe Lain::CLI::Conductor do
       end
 
       def stop_countdown = tap { @stops += 1 }
+
+      # Whether a line editor still holds the terminal, which the countdown
+      # waits out; a spec that draws nothing leaves it false.
+      attr_accessor :drawn
+
+      def prompt_drawn? = drawn || false
     end.new
   end
 
@@ -294,7 +300,7 @@ RSpec.describe Lain::CLI::Conductor do
         sleep(0.002) until rail.published.generation.positive?
         Process.kill("TERM", Process.pid)
       end
-      line = conductor.read_prompt(tty, "you> ")
+      line = conductor.read_prompt("you> ")
       killer.join
 
       expect(line).to be_nil
@@ -311,7 +317,7 @@ RSpec.describe Lain::CLI::Conductor do
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
       human_typing("hello")
 
-      expect(conductor.read_prompt(tty, "you> ")).to eq("hello")
+      expect(conductor.read_prompt("you> ")).to eq("hello")
       expect(conductor).not_to be_closed
       expect(chronicle.events).to be_empty
     end
@@ -328,7 +334,7 @@ RSpec.describe Lain::CLI::Conductor do
       human_typing("hi")
       line = :unset
 
-      expect { line = conductor.read_prompt(tty, "you> ") }.not_to raise_error
+      expect { line = conductor.read_prompt("you> ") }.not_to raise_error
 
       expect(line).to be_nil
       expect(conductor).to be_closed
@@ -349,7 +355,7 @@ RSpec.describe Lain::CLI::Conductor do
       conductor = build_with_run_clock(run_clock:)
       human_typing("hello")
 
-      conductor.read_prompt(tty, "you> ")
+      conductor.read_prompt("you> ")
 
       expect(run_clock).to have_received(:record_input)
     end
@@ -359,7 +365,7 @@ RSpec.describe Lain::CLI::Conductor do
       conductor = build_with_run_clock(run_clock:)
       human_typing(nil)
 
-      conductor.read_prompt(tty, "you> ")
+      conductor.read_prompt("you> ")
 
       expect(run_clock).not_to have_received(:record_input)
     end
@@ -373,7 +379,7 @@ RSpec.describe Lain::CLI::Conductor do
         Process.kill("TERM", Process.pid)
       end
 
-      conductor.read_prompt(tty, "you> ")
+      conductor.read_prompt("you> ")
       killer.join
 
       expect(run_clock).not_to have_received(:record_input)
@@ -387,7 +393,7 @@ RSpec.describe Lain::CLI::Conductor do
       conductor = build_with_run_clock(run_clock:)
       human_typing("hello")
 
-      conductor.read_prompt(tty, "you> ")
+      conductor.read_prompt("you> ")
       now = 1030.0
 
       expect(run_clock.idle).to eq(30.0)
@@ -577,11 +583,10 @@ RSpec.describe Lain::CLI::Conductor do
   # owns stdin -- so the countdown ticker must NEITHER render its status line NOR
   # make its non-blocking key read (which would otherwise STEAL a keystroke out of
   # the operator's typed answer, e.g. an 'r' silently firing :wait_responses). The
-  # grace clock still runs and a terminating signal still arms/expires/promotes;
-  # only the ticker's render+read are suppressed, resuming from the next tick once
-  # the reply returns. #read_reply is the seam that flips the conductor-owned
-  # suppression flag (single writer, checked by the ticker each tick).
-  describe "countdown suppression while a reply is outstanding" do
+  # The countdown owns the terminal while it runs -- its status line and its
+  # key read -- so it draws only once no line editor holds the terminal. What
+  # makes that moment come is the reads themselves stepping aside (below).
+  describe "the countdown ticker and a drawn prompt" do
     def grace_shutdown(deadline: 1060.0)
       Struct.new(:state, :deadline).new(:grace, deadline)
     end
@@ -640,30 +645,32 @@ RSpec.describe Lain::CLI::Conductor do
                               history_path: File.join(Dir.mktmpdir, "history"), clock: -> { 1000.0 })
     end
 
-    it "renders nothing while suppressed, then resumes from the next tick after release" do
-      suppressed = true
-      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty:, tick: 0.001, suppressed: -> { suppressed })
+    it "renders nothing while a prompt is drawn, then from the next tick once it has gone" do
+      tty.drawn = true
+      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty:, tick: 0.001)
 
       Sync do |task|
         runner = task.async { ticker.run(grace_shutdown, task) }
-        task.sleep(0.02) # many ticks elapse, all suppressed
+        task.sleep(0.02) # many ticks elapse with the editor still holding the terminal
         expect(tty.renders).to be_empty
-        suppressed = false
-        expect(tty.rendered.dequeue).to eq(1060.0) # the very next tick renders
+        tty.drawn = false
+        expect(tty.rendered.dequeue).to eq(1060.0)
         runner.stop
       end
     end
 
-    it "does not read (steal) a reply keystroke while suppressed" do
+    it "does not read (steal) a keystroke while a prompt is drawn" do
       key_input = key_reader("ready")
       coordinator = grace_coordinator
-      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty: real_tty(input: key_input),
-                                                         tick: 0.001, suppressed: -> { true })
+      terminal = real_tty(input: key_input)
+      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty: terminal, tick: 0.001)
 
       Sync do |task|
+        drawn = task.async { terminal.drawing(-> { true }) { task.sleep(0.05) } }
         runner = task.async { ticker.run(coordinator, task) }
         task.sleep(0.02)
         runner.stop
+        drawn.stop
       end
 
       expect(key_input.reads).to eq(0)
@@ -671,14 +678,12 @@ RSpec.describe Lain::CLI::Conductor do
       expect(key_input.remaining).to eq("ready")
     end
 
-    # The theft the suppression prevents, pinned as a characterization: an
-    # UNsuppressed tick reads the answer's first byte ('r') and fires
-    # :wait_responses -- exactly the seam #read_reply exists to close.
-    it "characterizes the theft: an unsuppressed tick steals the leading 'r'" do
+    # The theft waiting prevents, pinned as a characterization: a tick with no
+    # prompt drawn reads the answer's first byte ('r') and fires :wait_responses.
+    it "characterizes the theft: a tick beside nothing drawn takes the leading 'r'" do
       key_input = key_reader("ready")
       coordinator = grace_coordinator
-      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty: real_tty(input: key_input),
-                                                         tick: 0.001, suppressed: -> { false })
+      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty: real_tty(input: key_input), tick: 0.001)
 
       Sync do |task|
         runner = task.async { ticker.run(coordinator, task) }
@@ -691,65 +696,66 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
-  # Replies are not one at a time: a question's `human>` and a gated call's
-  # `[y/N]` can both be outstanding, each through {#read_reply}. The first to
-  # finish must not hand the terminal back to the countdown while the second is
-  # still reading, or the ticker's key read steals out of the surviving answer.
-  describe "two replies outstanding at once" do
-    it "keeps the countdown suppressed until the second read finishes" do
+  # A Ctrl-C at `human>` opens the countdown, and the countdown needs the
+  # terminal the prompt holds. So an open answer or command read STEPS ASIDE:
+  # its prompt is withdrawn while the countdown runs -- whatever was half typed
+  # there is gone -- and it is published again, empty, once the countdown is
+  # cancelled.
+  describe "a read open when the countdown starts" do
+    def signalled_grace(task, conductor)
+      Process.kill("TERM", Process.pid) # arm grace; the constant clock never expires it
+      pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+    end
+
+    it "withdraws its prompt so the countdown draws, and asks again once the countdown is cancelled" do
       entered = Async::Queue.new
       release = Async::Queue.new
       agent = build_agent(entered:, release:, responses: [text_response])
       signals = Lain::CLI::Signals.new.install
       conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
-      renders_between = nil
+      answer = withdrawn = nil
 
       Sync do |task|
-        question = task.async { conductor.read_reply(tty, "human> ") }
-        approval = task.async { conductor.read_reply(tty, Class.new(String) { def kind = :approval }.new("[y/N] ")) }
+        question = task.async { conductor.read_reply("human> ") }
         driver = task.async do
           entered.dequeue
-          Process.kill("TERM", Process.pid) # arm grace; the constant clock never expires it
-          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
-          typed_at(task, :human, "postgres")
-          question.wait
-          settle_for(task, 0.05) # ten ticks with one read still open
-          renders_between = tty.renders.size
-          typed_at(task, :approval, "n")
-          approval.wait
+          pumped_until(task, reason: "human> published") { rail.published.kind == :human }
+          signalled_grace(task, conductor)
           task.with_timeout(2) { tty.rendered.dequeue }
+          pumped_until(task, reason: "the read stepped aside") { rail.published.kind.nil? }
+          withdrawn = rail.published.kind
+          rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+          typed_at(task, :human, "postgres")
+          answer = question.wait
           release.enqueue(true)
         end
         conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
         driver.wait
       end
 
-      expect(renders_between).to eq(0)
-      expect(tty.renders).not_to be_empty
+      expect([withdrawn, answer]).to eq([nil, "postgres"])
     ensure
       signals.uninstall
     end
-  end
 
-  # The chat's command read answers nothing, so it reads what was typed ahead of
-  # it as its own line; it still owns stdin, so the countdown stays out of it.
-  describe "#read_command" do
-    it "reads through the plain prompt and holds the countdown off while it does" do
+    it "does the same for the chat's command read" do
       entered = Async::Queue.new
       release = Async::Queue.new
       agent = build_agent(entered:, release:, responses: [text_response])
       signals = Lain::CLI::Signals.new.install
       conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
-      renders_while_reading = line = nil
+      line = withdrawn = nil
 
       Sync do |task|
-        command = task.async { conductor.read_command(tty, "command> ") }
+        command = task.async { conductor.read_command("command> ") }
         driver = task.async do
           entered.dequeue
-          Process.kill("TERM", Process.pid)
-          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
-          settle_for(task, 0.05)
-          renders_while_reading = tty.renders.size
+          pumped_until(task, reason: "command> published") { rail.published.kind == :command }
+          signalled_grace(task, conductor)
+          task.with_timeout(2) { tty.rendered.dequeue }
+          pumped_until(task, reason: "the read stepped aside") { rail.published.kind.nil? }
+          withdrawn = rail.published.kind
+          rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
           typed_at(task, :command, "/approve")
           line = command.wait
           release.enqueue(true)
@@ -758,9 +764,128 @@ RSpec.describe Lain::CLI::Conductor do
         driver.wait
       end
 
-      expect([renders_while_reading, line]).to eq([0, "/approve"])
+      expect([withdrawn, line]).to eq([nil, "/approve"])
     ensure
       signals.uninstall
+    end
+  end
+
+  # An answer can take the terminal from an idle `you>` (a parked call's
+  # `[y/N]`), and a Ctrl-C there is a Ctrl-C at a question: the countdown opens
+  # and the question steps aside, as at `human>`, rather than the prompt being
+  # broken and the chat closed. At `you>` itself it still breaks the prompt.
+  describe "a signal while an answer stands in front of an idle you>" do
+    it "opens the countdown, and a cancel gives the answer's prompt back" do
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      rail.attach(Struct.new(:none) do
+        def sweep = nil
+        def untouched?(_prompt) = true
+      end.new(nil))
+      answer = line = nil
+
+      Sync do |task|
+        you = task.async { line = conductor.read_prompt("you> ") }
+        pumped_until(task, reason: "you> published") { rail.published.kind == :you }
+        asked = Class.new(String) { def kind = :approval }.new("[y/N] ")
+        approval = task.async { answer = conductor.read_reply(asked) }
+        pumped_until(task, reason: "the [y/N] preempted you>") { rail.published.kind == :approval }
+        Process.kill("INT", Process.pid)
+        pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+        task.with_timeout(2) { tty.rendered.dequeue }
+        pumped_until(task, reason: "the [y/N] stepped aside") { rail.published.kind.nil? }
+        rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+        typed_at(task, :approval, "n")
+        approval.wait
+        typed_at(task, :you, "hello")
+        you.wait
+      end
+
+      expect([answer, line, conductor.closed?]).to eq(["n", "hello", false])
+    ensure
+      signals.uninstall
+    end
+  end
+
+  # A Ctrl-C is never lost. The trap records the signal and the prompt
+  # generation it arrived at; a fiber routes it against what is drawn when it is
+  # handled. A Break raised into a `you>` read that is at that instant being
+  # stopped for a prompt taking the terminal is absorbed by that stop, so the
+  # delivery is confirmed and an absorbed one goes to the countdown instead.
+  describe "a signal whose Break is absorbed" do
+    it "reaches the countdown rather than being lost" do
+      # A breaker that absorbs the Break, as a stop of the read it is raised into does.
+      absorbed = []
+      inert = Class.new do
+        def initialize(absorbed) = @absorbed = absorbed
+        def signal(name) = @absorbed << name
+        def dispose = nil
+      end.new(absorbed)
+      allow(Lain::CLI::PromptBreaker).to receive(:new).and_return(inert)
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals: Lain::CLI::Signals.new)
+
+      Sync do |task|
+        you = task.async { conductor.read_prompt("you> ") }
+        pumped_until(task, reason: "you> published") { rail.published.kind == :you }
+        rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+        pumped_until(task, reason: "the countdown armed", timeout: 10) { conductor.counting_down? }
+
+        expect(absorbed).to eq([:sigint])
+        you.stop
+      end
+    end
+  end
+
+  # A countdown that expires closes the session, and the reads it moved aside
+  # must not come back: a `[y/N]` drawn after the close is a question on a
+  # screen the chat has finished with, and nobody is left to answer it.
+  describe "a read once the session has closed" do
+    it "draws no prompt, and waits to be stopped with the surface it belongs to" do
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      conductor.close(reason: :exit)
+
+      Sync do |task|
+        reply = task.async { conductor.read_reply("[y/N] ") }
+        settle_for(task, 0.15)
+
+        expect(rail.published.kind).to be_nil
+        reply.stop
+      end
+    end
+  end
+
+  # The ticker asks the terminal whether a prompt is drawn on every tick. A
+  # terminal that cannot answer used to kill the ticker inside Async with one
+  # warning, and the countdown then never drew for that ask.
+  describe "a terminal the countdown cannot ask" do
+    it "is refused when the conductor is built, by the message it lacks" do
+      mute = Class.new do
+        def render_countdown(**) = nil
+        def stop_countdown = nil
+      end.new
+
+      expect { described_class.new(tty: mute, chronicle:, signals: Lain::CLI::Signals.new) }
+        .to raise_error(ArgumentError, /prompt_drawn\?/)
+    end
+  end
+
+  # Whether the chat is waiting at `you>` for its next line -- what a cockpit's
+  # `command>` asks, since a command can be typed at `you>` itself.
+  describe "#prompting?" do
+    it "is true only while you> is being read" do
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      during = nil
+      watcher = Thread.new do
+        sleep(0.002) until rail.published.kind == :you
+        during = conductor.prompting?
+        rail << typed("hi", rail.published)
+      end
+
+      before = conductor.prompting?
+      conductor.read_prompt("you> ")
+      watcher.join
+
+      expect([before, during, conductor.prompting?]).to eq([false, true, false])
     end
   end
 
@@ -800,14 +925,13 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
-  # The expiry-during-reply path (the PTY probe in the handback is the evidence
-  # for the terminal-restore half; this pins the reason + suppression under the
-  # supervised reactor). A run parks inside the model call while a reply is
+  # The expiry-during-reply path (the PTY probe is the evidence for the
+  # terminal-restore half). A run parks inside the model call while a reply is
   # outstanding at human>; a SIGTERM arms grace, the jumped clock expires it, and
-  # the coordinator interrupts the run and closes grace_expired -- with the ticker
-  # suppressed the whole window, so no status line ever smears over Reline.
+  # the coordinator interrupts the run and closes grace_expired, with the reply's
+  # prompt withdrawn out of the countdown's way.
   describe "grace expiry while a reply is outstanding at human>" do
-    it "still interrupts the run and closes grace_expired, rendering no countdown" do
+    it "still interrupts the run and closes grace_expired, the reply stepped aside" do
       entered = Async::Queue.new
       release = Async::Queue.new
       agent = build_agent(entered:, release:, responses: [text_response])
@@ -816,7 +940,7 @@ RSpec.describe Lain::CLI::Conductor do
       outcome = nil
 
       Sync do |task|
-        replier = task.async { conductor.read_reply(tty, "human> ") }
+        replier = task.async { conductor.read_reply("human> ") }
         driver = task.async do
           entered.dequeue # the run is provably inside the model call
           pumped_until(task, reason: "the reply parked") { rail.published.kind == :human }
@@ -829,7 +953,7 @@ RSpec.describe Lain::CLI::Conductor do
 
       expect(outcome.closed?).to be(true)
       expect(chronicle.events.last).to eq(%i[close grace_expired])
-      expect(tty.renders).to be_empty
+      expect(rail.published.kind).to be_nil
     ensure
       signals.uninstall
     end

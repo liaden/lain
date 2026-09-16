@@ -158,6 +158,17 @@ RSpec.describe Lain::Frontend::StdinPump do
       expect(Reline.core.config.editing_mode_is?(:vi_insert)).to be(true)
     end
 
+    # With a `[y/N]` able to take the terminal from an idle `you>`, a `y` or an
+    # `n` would otherwise be the first thing Up recalls there.
+    it "keeps an answer to a [y/N] out of the history" do
+      allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("")
+      allow(Reline).to receive(:readmultiline).and_return("n")
+
+      pumped(terminal) { rail.read(:approval, "[y/N] ") }
+
+      expect(File.exist?(history_path)).to be(false)
+    end
+
     it "writes an accepted line to the history before the next prompt" do
       allow(Reline).to receive(:readmultiline).and_return("remember me")
 
@@ -224,6 +235,28 @@ RSpec.describe Lain::Frontend::StdinPump do
 
       expect([rail.take_held, rail.take_held, rail.take_held]).to eq(["/goal off", "keep going", nil])
       expect(output.string).to include("held as your next prompt: /goal off")
+    end
+
+    # The sweep switches the terminal raw, which beside an open read would take
+    # the bytes that read is waiting on -- and with every answer surface live for
+    # the conversation, a `[y/N]` can be open while a goal's sweep runs.
+    it "waits for a read that is already open" do
+      order = []
+      allow(Lain::Frontend::LineEditor).to receive(:typed_ahead) { (order << :swept) && "" }
+      allow(Reline).to receive(:readmultiline) do
+        order << :read_opened
+        Async::Task.current.sleep(0.05)
+        (order << :read_closed) && "hi"
+      end
+
+      pumped(terminal) do
+        reading = Async::Task.current.async { rail.read(:you, "you> ") }
+        pumped_until(Async::Task.current, reason: "the read opened") { order.include?(:read_opened) }
+        rail.gather
+        reading.wait
+      end
+
+      expect(order).to eq(%i[read_opened read_closed swept])
     end
 
     it "reads nothing from a stream that is not a terminal, so its next line is read at the prompt" do
@@ -408,6 +441,53 @@ RSpec.describe Lain::Frontend::StdinPump do
       end
 
       expect([idle_asks, answer]).to eq([1, "hello"])
+    end
+  end
+
+  # The rail asks before an answer takes the terminal from `you>`: a prompt the
+  # human has begun typing at is theirs, and only the editor holding it knows.
+  describe "#untouched?" do
+    # A line editor that has opened its read -- Reline calls the pre-input hook
+    # once its buffer is fresh -- and then waits for keys, holding `buffer`.
+    def editing(buffer)
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?) { buffer.empty? }
+      allow(Reline).to receive(:readmultiline) do
+        Reline.pre_input_hook&.call
+        Async::Task.current.sleep(30)
+      end
+    end
+
+    def untouched_at_you(input)
+      pumped(input) do |pump|
+        task = Async::Task.current
+        reading = task.async { rail.read(:you, "you> ") }
+        pumped_until(task, reason: "you> published") { rail.published.kind == :you }
+        settle_for(task, 0.05)
+        [pump.untouched?(rail.published), pump.untouched?(rail.published.with(generation: 99))]
+          .tap { reading.stop }
+      end
+    end
+
+    it "is true of the you> it draws while nothing is typed there, and false of any other prompt" do
+      editing(+"")
+
+      expect(untouched_at_you(terminal)).to eq([true, false])
+    end
+
+    it "is false once something is typed at it" do
+      editing(+"half a sent")
+
+      expect(untouched_at_you(terminal).first).to be(false)
+    end
+
+    # A stream's next line is the next line, whatever prompt it lands at, so a
+    # file of prompts is never reordered by an answer arriving.
+    it "is false over a stream that is not a terminal" do
+      reader, writer = IO.pipe
+
+      expect(untouched_at_you(reader).first).to be(false)
+    ensure
+      [reader, writer].each { |io| io&.close }
     end
   end
 

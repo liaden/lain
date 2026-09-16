@@ -12,6 +12,10 @@ RSpec.describe Lain::Frontend::InputRail do
       def render_held(text) = @said << [:held, text]
 
       def close_prompt(text) = text.respond_to?(:closed) && text.closed { |note| @said << [:closed, note] }
+
+      def queue_prompt(text) = @said << [:queued, text.to_s]
+
+      def drop_prompt(text) = @said << [:dropped, text.to_s]
     end.new
   end
 
@@ -239,6 +243,252 @@ RSpec.describe Lain::Frontend::InputRail do
       end
 
       expect(rail.published.generation).to eq(0)
+    end
+
+    # A prompt that cannot draw at once is said to be waiting, once, so the
+    # human learns of it while another prompt holds the terminal.
+    it "tells the screen a reader is waiting its turn, and nothing of the reader at the head" do
+      Sync do |task|
+        question = task.async { rail.read(:human, "human> ") }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        pumped_until(task) { rail.published.generation == 1 }
+        rail << line("mysql", 1)
+        pumped_until(task) { rail.published.generation == 2 }
+        rail << line("n", 2)
+        [question, approval].each(&:wait)
+      end
+
+      expect(screen.said).to eq([[:queued, "[y/N] "]])
+    end
+
+    # Its line cannot be ended -- it never had one -- so the screen is told it
+    # left, and a prompt with something to say says it whole.
+    it "tells the screen a waiting reader left without its prompt ever being published" do
+      Sync do |task|
+        question = task.async { rail.read(:human, "human> ") }
+        waiting = task.async { rail.read(:approval, "[y/N] ") }
+        pumped_until(task) { rail.published.generation == 1 }
+        waiting.stop
+        rail << line("mysql", 1)
+        question.wait
+      end
+
+      expect(screen.said).to eq([[:queued, "[y/N] "], [:dropped, "[y/N] "]])
+    end
+
+    # Two readers asking the same question -- `/approve` and the watcher, about
+    # one call -- are one arrival for the human.
+    it "announces a prompt identical to one already in line only once" do
+      Sync do |task|
+        question = task.async { rail.read(:human, "human> ") }
+        pumped_until(task) { rail.published.kind == :human }
+        waiting = Array.new(2) { task.async { rail.read(:approval, "[y/N] ") } }
+        settle_for(task, 0.02)
+        waiting.each(&:stop)
+        question.stop
+      end
+
+      expect(screen.said.count([:queued, "[y/N] "])).to eq(1)
+    end
+
+    it "tells the screen nothing was dropped for a reader whose prompt was published" do
+      Sync do |task|
+        answered_when_published(task) { "n" }
+        rail.read(:approval, "[y/N] ")
+      end
+
+      expect(screen.said).to be_empty
+    end
+  end
+
+  # A plain chat at rest sits at `you>`, and an answer a run waits on would
+  # otherwise wait behind it until the human pressed Enter. So an answer's
+  # prompt takes the terminal from a `you>` nothing has been typed at, and
+  # `you>` comes back once the answers ahead of it close. A `you>` the human
+  # has started typing at keeps the terminal, and the answer waits its turn.
+  describe "an answer arriving at an idle you>" do
+    # The producer's word on whether anything has been typed at a prompt.
+    def producer(untouched:)
+      Struct.new(:untouched) do
+        def sweep = nil
+        def untouched?(_prompt) = untouched
+      end.new(untouched)
+    end
+
+    it "preempts a you> nothing was typed at, draws at once, and republishes you> when it closes" do
+      rail.attach(producer(untouched: true))
+      kinds = answers = nil
+
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        pumped_until(task) { rail.published.kind == :approval }
+        kinds = [rail.published.kind]
+        rail << line("n", rail.published.generation)
+        pumped_until(task) { rail.published.kind == :you }
+        kinds << rail.published.kind
+        rail << line("hello", rail.published.generation)
+        answers = [approval.wait, you.wait]
+      end
+
+      expect(kinds).to eq(%i[approval you])
+      expect(answers).to eq(%w[n hello])
+      expect(screen.said).to be_empty
+    end
+
+    # A producer says a `you>` is untouched only once its line editor has opened
+    # the read. An answer that arrived before that -- the moment `you>` came
+    # back -- waits, and is let in when the producer says the read opened.
+    it "preempts when the you> it waits behind opens with nothing typed" do
+      editor = producer(untouched: false)
+      rail.attach(editor)
+      kinds = []
+
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        settle_for(task, 0.05)
+        kinds << rail.published.kind
+        editor.untouched = true
+        rail.opened(rail.published)
+        pumped_until(task) { rail.published.kind == :approval }
+        kinds << rail.published.kind
+        rail << line("n", rail.published.generation)
+        approval.wait
+        you.stop
+      end
+
+      expect(kinds).to eq(%i[you approval])
+    end
+
+    it "does not preempt on an opened you> with no answer waiting behind it" do
+      rail.attach(producer(untouched: true))
+
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        drawn = rail.published
+        rail.opened(drawn)
+        settle_for(task, 0.05)
+        expect(rail.open?(drawn)).to be(true)
+        you.stop
+      end
+    end
+
+    # What was held while `you>` stood aside is the line it answers with when
+    # its turn comes back, ahead of anything typed at it afterwards.
+    it "answers the returning you> with a line held while it stood aside" do
+      rail.attach(producer(untouched: true))
+
+      answer = Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        commandless = Class.new(String) { def takes?(line) = !line.start_with?("/") }.new("[y/N] ")
+        approval = task.async { rail.read(:approval, commandless) }
+        pumped_until(task) { rail.published.kind == :approval }
+        asked = rail.published.generation
+        rail << line("/goal off", asked)
+        pumped_until(task) { rail.published.generation > asked }
+        rail << line("n", rail.published.generation)
+        approval.wait
+        you.wait
+      end
+
+      expect(answer).to eq("/goal off")
+    end
+
+    # A preempting reader stopped before it drew -- its call decided elsewhere
+    # -- still says how, having no line of its own to end.
+    it "tells the screen a preempting reader left without drawing" do
+      rail.attach(producer(untouched: true))
+
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        approval.stop
+        settle_for(task, 0.05)
+        you.stop
+      end
+
+      expect(screen.said).to include([:dropped, "[y/N] "])
+    end
+
+    it "waits behind a you> the human has typed at, and says so" do
+      rail.attach(producer(untouched: false))
+      kinds = []
+
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        settle_for(task, 0.05)
+        kinds << rail.published.kind
+        rail << line("half a sentence", rail.published.generation)
+        you.wait
+        pumped_until(task) { rail.published.kind == :approval }
+        kinds << rail.published.kind
+        rail << line("n", rail.published.generation)
+        approval.wait
+      end
+
+      expect(kinds).to eq(%i[you approval])
+      expect(screen.said).to eq([[:queued, "[y/N] "]])
+    end
+
+    it "waits when no producer can say nothing was typed" do
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        settle_for(task, 0.05)
+        expect(rail.published.kind).to eq(:you)
+        rail << line("hi", rail.published.generation)
+        you.wait
+        pumped_until(task) { rail.published.kind == :approval }
+        rail << line("n", rail.published.generation)
+        approval.wait
+      end
+    end
+
+    it "goes ahead of a you> already waiting behind another answer" do
+      rail.attach(producer(untouched: true))
+      kinds = []
+
+      Sync do |task|
+        question = task.async { rail.read(:human, "human> ") }
+        pumped_until(task) { rail.published.kind == :human }
+        you = task.async { rail.read(:you, "you> ") }
+        approval = task.async { rail.read(:approval, "[y/N] ") }
+        3.times do |answered|
+          pumped_until(task) { rail.published.generation > answered }
+          kinds << rail.published.kind
+          rail << line("x", rail.published.generation)
+        end
+        [question, approval, you].each(&:wait)
+      end
+
+      expect(kinds).to eq(%i[human approval you])
+    end
+
+    it "keeps the line typed at the republished you> as that you>'s own" do
+      rail.attach(producer(untouched: true))
+
+      answer = Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        first_you = rail.published.generation
+        task.async { rail.read(:approval, "[y/N] ") }
+        pumped_until(task) { rail.published.kind == :approval }
+        rail << line("n", rail.published.generation)
+        pumped_until(task) { rail.published.kind == :you && rail.published.generation > first_you }
+        rail << line("typed after", rail.published.generation)
+        you.wait
+      end
+
+      expect(answer).to eq("typed after")
     end
   end
 

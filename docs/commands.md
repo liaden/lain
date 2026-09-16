@@ -45,7 +45,7 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
 | `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in plain chat** — see [Isolation](#isolation-flag). |
 | `--epic SLUG` | the sole epic in the home | Mount an epic: its documents become reviewable, [`/implement-epic`](#implement-epic) has something to work, and `lain://status` draws its graph. A home holding several epics with no slug here starts anyway, with a notice. |
-| `--grace` | `60` | Seconds a first Ctrl-C or SIGTERM grants a run before it is stopped. |
+| `--grace` | `60` | Seconds a first Ctrl-C or SIGTERM grants a run before it is stopped. A `human>`, `[y/N]` or `command>` prompt open at that moment steps aside for the countdown, and anything half typed there is discarded; it comes back empty if the countdown is cancelled. That includes a `[y/N]` that took the terminal from an idle `you>`; a Ctrl-C at `you>` itself still ends the chat. |
 | `--root PATH` | detected | Treat `PATH` as this run's project root instead of walking up from the working directory. An explicit root is intent, so it skips the walk's refusal set. |
 | `--cwd PATH` | **the root** | Run as if the working directory were `PATH`. Must lie under the root — and defaults to it, so `--root PATH` alone means "open that project" rather than "that root, from wherever the shell happens to be". |
 

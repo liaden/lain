@@ -27,8 +27,8 @@ require "pathname"
 #
 # WHY A LINT AND NOT A RUNTIME GUARD. Refusing a second consumer inside
 # `Queue#dequeue` was considered and rejected: it has legitimate non-concurrent
-# callers, a fresh watcher fiber per dispatched line makes object identity
-# useless as a key, and `#dequeue`'s own recursive already-decided skip makes
+# callers, a watcher fiber restarted with the chat's surfaces makes object
+# identity useless as a key, and `#dequeue`'s own recursive already-decided skip makes
 # "who is consuming" hard to even define. That is a design question for its own
 # card; this is the ten-line answer that stops the regrowth meanwhile.
 #

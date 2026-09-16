@@ -218,7 +218,8 @@ RSpec.describe Lain::CLI::HumanReplies do
   # No interrupt countdown runs, and a cockpit's command> reads nothing, unless
   # an example says otherwise. A line it holds goes to the rail, as the real one's does.
   let(:conductor) do
-    instance_double(Lain::CLI::Conductor, counting_down?: false, read_command: nil).tap do |conductor|
+    instance_double(Lain::CLI::Conductor, counting_down?: false, prompting?: false,
+                                          read_command: nil).tap do |conductor|
       allow(conductor).to receive(:hold) { |line| rail.hold(line) }
       allow(conductor).to receive(:take_held) { rail.take_held }
     end
@@ -304,7 +305,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # An example meaning "an ask is in flight" wants both, which is what this is;
   # one meaning "the human is idle at `you>`" wants the session ones ALONE, and
   # says so at its own call site rather than through here.
-  def all_surfaces(task) = replies.session_surfaces(task) + replies.surfaces(task)
+  def all_surfaces(task) = replies.session_surfaces(task) + replies.chat_surfaces(task)
 
   # Runs the reply surfaces for real (they are Async tasks), pumps until the
   # expectation the caller is waiting on holds, and always stops them. The ensure
@@ -344,7 +345,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     it "lists every queued question and resolves the live promise with one read answer" do
       Sync do
         announced(ask_human, "what now?")
-        allow(conductor).to receive(:read_reply).with(tty, "human> ").and_return("go left")
+        allow(conductor).to receive(:read_reply).with("human> ").and_return("go left")
 
         answer = replies.drain_at_prompt
 
@@ -508,7 +509,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("which db?") }
         surfaces.each(&:stop)
@@ -540,11 +541,11 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       with_surfaces { output.string.include?("type `send`") }
 
-      expect(output.string.scan("which db?").size).to eq(1)
+      expect(arrivals_of("which db?").size).to eq(1)
     end
 
     # And the half the key must not lose: a re-queued item -- the same arrival,
-    # dequeued again by the next dispatched line -- is still announced once.
+    # dequeued again -- is still announced once.
     it "does not re-announce the same arrival when it is re-queued" do
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
       item = announced(ask_human, "which db?")
@@ -553,7 +554,27 @@ RSpec.describe Lain::CLI::HumanReplies do
       questions.enqueue(item)
       surfaces_settle
 
-      expect(output.string.scan("which db?").size).to eq(1)
+      expect(arrivals_of("which db?").size).to eq(1)
+    end
+
+    # The arrival line alone, not the document printed below it.
+    def arrivals_of(text) = output.string.lines.grep(/#{Regexp.escape(text)}.*#{Lain::Frontend::TTY::Inbox::BELOW}/o)
+
+    # A plain chat's next prompt answers the question, so the note says so and
+    # the questions follow it whole, above that prompt.
+    it "points at the prompt below and prints the questions above it" do
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+
+      Sync do |task|
+        surfaces = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?\n\n| a | b |" }, invocation) }
+        pumped_until(task) { output.string.include?("| a | b |") }
+        surfaces.each(&:stop)
+        run.stop
+      end
+
+      expect(output.string.lines.first).to include("-- answer below, or /inbox")
+      expect(output.string).not_to include("lain://inbox")
     end
   end
 
@@ -991,12 +1012,10 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # A reply surface no longer lives for one ASK -- it lives
-  # for one dispatched LINE ({Lain::CLI::Repl::LineScope}), so it is started and
-  # stopped around `/help`, `/status`, and every other command a human types in
-  # a second. The fleet outlives all of them, so a subagent can enqueue
-  # while one is running: the loop dequeues, renders the note, and parks on a
-  # read the human is not looking at, and the line then ends UNDER it.
+  # A reply surface is stopped with the conversation it lives for, and the
+  # fleet can enqueue right up to that moment: the loop dequeues, renders the
+  # note, and parks on a read the human is not looking at, and the surface is
+  # then stopped UNDER it.
   #
   # An unanswered item must survive that. Retired, it is off `@questions`
   # (dequeued) AND off `@inbox`, so `pending?` is false, `/inbox` can never list
@@ -1010,7 +1029,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("which db?") }
         surfaces.each(&:stop) # the LINE ended; the asker is still parked on the answer
@@ -1027,13 +1046,13 @@ RSpec.describe Lain::CLI::HumanReplies do
       run = nil
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("which db?") }
         surfaces.each(&:stop)
 
         allow(conductor).to receive(:read_reply).and_return("postgres")
-        later = replies.surfaces(task)
+        later = replies.chat_surfaces(task)
         pumped_until(task) { !ask_human.pending? }
         later.each(&:stop)
       end
@@ -1064,7 +1083,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         # The tool's own dispatch asks, which announces: the arrival reaches
         # the queue by the same path a real run's does.
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
@@ -1124,7 +1143,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
 
     def withdraw_under_reader(task)
-      surfaces = replies.surfaces(task)
+      surfaces = replies.chat_surfaces(task)
       run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
       pumped_until(task) { output.string.include?("which db?") }
       run.stop              # the set is withdrawn
@@ -1135,14 +1154,14 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("which db?") }
         run.stop
         surfaces.each(&:stop)
 
         allow(conductor).to receive(:read_reply).and_return("too late")
-        later = replies.surfaces(task)
+        later = replies.chat_surfaces(task)
         pumped_until(task) { output.string.include?("inbox line offering it is stale") }
         later.each(&:stop)
       end
@@ -1166,7 +1185,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { reading }
         run.stop # the sync gate unwinds UNDER the reader: the set is withdrawn
@@ -1185,7 +1204,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(directory).to receive(:reply).and_raise(RuntimeError, "store is on fire")
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("store is on fire") }
         surfaces.each(&:stop)
@@ -1217,7 +1236,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       other = other_asker
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         first = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { reads == 1 }
         second = task.async { other.call({ "question" => "which port?" }, invocation) }
@@ -1242,7 +1261,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       other = other_asker
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         first = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("store is on fire") }
         second = task.async { other.call({ "question" => "which port?" }, invocation) }
@@ -1266,7 +1285,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(conductor).to receive(:read_reply).and_return("")
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { !ask_human.pending? }
         surfaces.each(&:stop)
@@ -1298,7 +1317,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     # the defect, so the wait is the assertion and the watchdog is its failure.
     def dispatched
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         begin
           pumped_until(task) { !ask_human.pending? }
@@ -1411,7 +1430,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(conductor).to receive(:read_reply).and_raise(IOError, "terminal hiccuped")
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         begin
           pumped_until(task) { output.string.include?("terminal hiccuped") }
@@ -1656,7 +1675,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       replies.bind_editor(editor)
 
       Sync do |task|
-        ask = replies.surfaces(task)
+        ask = replies.chat_surfaces(task)
         session = replies.session_surfaces(task)
 
         expect([ask.size, session.size]).to eq([1, 1])
@@ -1696,20 +1715,46 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
     end
 
+    # `/inbox` at `you>` opens a `human>` of its own for the oldest set, and the
+    # set can be answered on the rail while that read is open -- a drain left
+    # drawn then took the human's next line as an answer to nothing.
+    it "stops an /inbox drain's read too, and says it was answered elsewhere" do
+      reading_at_the_terminal
+      answer = nil
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "the question queued") { replies.pending? }
+        drain = task.async { replies.drain_at_prompt }
+        pumped_until(task, reason: "the drain's human> opened") { @open_reads.positive? }
+        rail.push(["reply", ["postgres"]])
+        answer = task.with_timeout(5) { drain.wait }
+        run.stop
+        session.each(&:stop)
+      end
+
+      expect(answer).to eq("")
+      expect(@open_reads).to eq(0)
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
+    end
+
     it "stops the read, retires the item, and draws no human> for it on the next three lines" do
       reading_at_the_terminal
 
       Sync do |task|
         session = replies.session_surfaces(task)
         rail.detach
-        line = replies.surfaces(task)
+        line = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task, reason: "human> opened") { @open_reads.positive? }
         rail.push(["reply", ["postgres"]])
         pumped_until(task, reason: "human> closed") { @open_reads.zero? }
         line.each(&:stop)
         3.times do
-          later = replies.surfaces(task)
+          later = replies.chat_surfaces(task)
           settle_for(task, 0.05)
           later.each(&:stop)
         end
@@ -1736,7 +1781,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         session = replies.session_surfaces(task)
         rail.detach
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
-        line = replies.surfaces(task)
+        line = replies.chat_surfaces(task)
         pumped_until(task, reason: "human> opened") { @open_reads.positive? }
         line.each(&:stop)
         digest = ask_human.last_question.digest
@@ -1744,7 +1789,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         pumped_until(task, reason: "the rail's answer landed") { ask_human.last_answer }
         before = @reads
         5.times do
-          later = replies.surfaces(task)
+          later = replies.chat_surfaces(task)
           settle_for(task, 0.05)
           later.each(&:stop)
         end
@@ -1785,7 +1830,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       Sync do |task|
         session = handing_back.session_surfaces(task)
         rail.detach
-        line = handing_back.surfaces(task)
+        line = handing_back.chat_surfaces(task)
         rail.push(["question_answered", [digest, answers]])
         pumped_until(task, reason: "the re-opened set's human> opened") { @open_reads.positive? }
         settle_for(task, 0.1)
@@ -1810,18 +1855,18 @@ RSpec.describe Lain::CLI::HumanReplies do
       Lain::CLI::Command::Registry.new([ruby, Lain::CLI::Command::Inbox.new])
                                   .bind(build_command_env(replies:))
     end
-    let(:attention) { Lain::CLI::Repl::LineScope::Attention.new }
+    let(:attention) { Lain::CLI::Repl::ConversationScope::Attention.new }
 
     before do
       replies.bind_editor(editor)
       replies.bind_commands(registry)
     end
 
-    # The line's surfaces alone, over the attention the line hands them, for a
-    # fixed window: running out the clock is the success in most of these.
+    # The chat's surface alone, over the attention the conversation hands it, for
+    # a fixed window: running out the clock is the success in most of these.
     def line_for(duration: 0.3, &during)
       Sync do |task|
-        surfaces = replies.surfaces(task, attention:)
+        surfaces = replies.chat_surfaces(task, attention:)
         begin
           during&.call(task)
           settle_for(task, duration)
@@ -1855,7 +1900,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       line_for { Sync { announced(ask_human, "which db?") } }
 
       expect(output.string.lines.grep(/which db\?/).size).to eq(1)
-      expect(conductor).not_to have_received(:read_reply).with(tty, "human> ")
+      expect(conductor).not_to have_received(:read_reply).with("human> ")
       expect(ask_human.pending?).to be(true)
     end
 
@@ -1882,7 +1927,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       line_for { outstanding }
 
-      expect(conductor).to have_received(:read_command).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+      expect(conductor).to have_received(:read_command).with(Lain::CLI::HumanReplies::CommandLine::PROMPT)
     end
 
     it "holds a line of prose for you>, says so, and answers nothing with it" do
@@ -1920,7 +1965,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       line_for(duration: 0.5) { Sync { announced(ask_human, "which db?") } }
 
       expect(ask_human.last_answer.body["answer"]).to include("postgres")
-      expect(conductor).to have_received(:read_command).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+      expect(conductor).to have_received(:read_command).with(Lain::CLI::HumanReplies::CommandLine::PROMPT)
                                                        .at_least(:once)
       expect(replies.take_held).to be_nil
     end
@@ -1949,9 +1994,9 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       line_for { outstanding }
 
-      expect(conductor).to have_received(:read_command).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+      expect(conductor).to have_received(:read_command).with(Lain::CLI::HumanReplies::CommandLine::PROMPT)
                                                        .at_least(:once)
-      expect(conductor).not_to have_received(:read_reply).with(tty, Lain::CLI::HumanReplies::CommandLine::PROMPT)
+      expect(conductor).not_to have_received(:read_reply).with(Lain::CLI::HumanReplies::CommandLine::PROMPT)
     end
 
     # Enter is the natural reaction to a prompt appearing mid-stream, and a
@@ -2013,9 +2058,29 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(output.string.lines.grep(/which db\?/).first).to include("-- answer in lain://inbox, or /inbox")
     end
 
-    # A read left open under a Ctrl-C's grace window keeps the countdown's
-    # ticker suppressed, so its status line never draws and the c/w/r a human
-    # presses land in `command>` as a line instead of reaching the countdown.
+    # A command can be typed at `you>` itself, and the chat surfaces live for
+    # the conversation: a `command>` opened while `you>` waits would only queue
+    # behind it, and closing it would end a row it never drew.
+    it "opens no read while the chat waits at you>, and one once a line dispatches" do
+      typed_at_command_line
+      prompting = true
+      allow(conductor).to receive(:prompting?) { prompting }
+      reads_at_you = nil
+
+      line_for(duration: 0.1) do |task|
+        outstanding
+        settle_for(task, 0.2)
+        reads_at_you = @reads
+        prompting = false
+        pumped_until(task, reason: "the read opened once you> closed") { @open_reads.positive? }
+      end
+
+      expect(reads_at_you).to eq(0)
+    end
+
+    # The countdown needs the terminal a drawn `command>` holds, so the read
+    # closes -- in words -- when it starts, rather than taking the c/w/r a human
+    # presses as a line.
     it "closes its read when the interrupt countdown starts, and opens none while it runs" do
       typed_at_command_line
       counting = false
@@ -2106,7 +2171,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     it "marks a hunk with no ask in flight, on the session's consumer alone" do
       Sync do |task|
         session = replies.session_surfaces(task)
-        replies.surfaces(task).each(&:stop)
+        replies.chat_surfaces(task).each(&:stop)
         begin
           editor.push(["review_mark", [4, "reviewed", 3]])
           pumped_until(task, reason: "the idle gesture reached the review") { review.gestures.any? }

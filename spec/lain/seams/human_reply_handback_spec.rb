@@ -59,7 +59,7 @@ RSpec.describe "a human's reply handed back", :seam do
   # The whole exchange, with the human's lines scripted at `human> `.
   def exchange(*typed)
     lines = typed.dup
-    allow(conductor).to receive(:read_reply) { |_tty, _prompt| lines.shift }
+    allow(conductor).to receive(:read_reply) { |_prompt| lines.shift }
     Sync { |task| answered_under(task) }
   end
 
@@ -67,7 +67,7 @@ RSpec.describe "a human's reply handed back", :seam do
   # as CLI::Wiring does it: one left running outlives the example and reads the
   # next one's scripted lines.
   def answered_under(task)
-    surfaces = replies.session_surfaces(task) + replies.surfaces(task)
+    surfaces = replies.session_surfaces(task) + replies.chat_surfaces(task)
     run = task.async { ask_human.call({ "question" => "which file?" }, invocation) }
     pumped_until(task) { run.finished? }
     run.wait

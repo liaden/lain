@@ -17,7 +17,13 @@ module Lain
     # reached for.
     #
     # Readers are served one at a time, in the order they asked, so two prompts
-    # are never drawn over each other. A producer is TOLD when a prompt is
+    # are never drawn over each other -- with one exception, for an answer a run
+    # waits on: it goes ahead of any `you>` still waiting, and it takes the
+    # terminal from a drawn `you>` its producers say nothing was typed at, which
+    # is published again once the answers ahead of it close. Otherwise a chat at
+    # rest would show a parked call only when the human next pressed Enter. A
+    # reader that must wait is told to the screen, and so is one that leaves
+    # without its prompt ever being published. A producer is TOLD when a prompt is
     # published or withdrawn, and waits rather than asks. Shared across threads
     # and fibers alike: the state sits under a mutex that is never held across a
     # wait.
@@ -45,6 +51,8 @@ module Lain
       module Unseen
         def self.render_held(_text) = nil
         def self.close_prompt(_text) = nil
+        def self.queue_prompt(_text) = nil
+        def self.drop_prompt(_text) = nil
       end
 
       # An answer, including the answer nobody gave -- a `nil` text -- which is
@@ -53,10 +61,23 @@ module Lain
       Heard = Data.define(:text)
       REDRAWN = Object.new.freeze
       STILL_DRAWN = Object.new.freeze
-      private_constant :Heard, :REDRAWN, :STILL_DRAWN
+      STEPPED_ASIDE = Object.new.freeze
 
-      # @param screen [#render_held, #close_prompt] where the human is told a
-      #   line was held, and where a withdrawn prompt's line is ended
+      # What an answer's reader sends the `you>` it takes the terminal from,
+      # naming the drawing it meant: one that reaches a later prompt is stale.
+      Preempt = Data.define(:generation)
+
+      # One reader's place in line: the prompt it asks, whether it had to wait,
+      # and whether its prompt was ever published.
+      Turn = Struct.new(:gate, :kind, :text, :waited, :published) do
+        def answer? = ANSWERS.include?(kind)
+      end
+      private_constant :Heard, :REDRAWN, :STILL_DRAWN, :STEPPED_ASIDE, :Preempt, :Turn
+
+      # @param screen [#render_held, #close_prompt, #queue_prompt, #drop_prompt]
+      #   where the human is told a line was held, where a withdrawn prompt's
+      #   line is ended, and where a prompt waiting its turn is announced and,
+      #   leaving unpublished, said to have gone
       def initialize(screen: Unseen)
         @screen = screen
         @inbound = Thread::Queue.new
@@ -86,10 +107,16 @@ module Lain
       # The prompt a producer should be drawing now, or {Unpublished}.
       def published = @lock.synchronize { @published }
 
+      # {#published}, read without the lock, for a signal trap: a Mutex raises
+      # in trap context, and one reference read cannot be torn.
+      def glimpse = @published
+
       def open?(prompt) = published.generation == prompt.generation
 
       # A producer, which is asked what was typed while nothing was drawn and
-      # told whenever what is published changes.
+      # whether anything has been typed at a prompt it draws (`untouched?`), and
+      # told whenever what is published changes. It says when it has opened a
+      # read at a prompt ({#opened}).
       #
       # @return [Thread::SizedQueue] popped to wait for the next change; one
       #   waiting change stands for any number, so a slow producer never falls
@@ -116,6 +143,17 @@ module Lain
       # The oldest held line, or nil.
       def take_held = @lock.synchronize { @held.shift }
 
+      # A producer's word that its read at `prompt` has opened. Until then it
+      # cannot say nothing was typed there, so an answer that arrived as `you>`
+      # came back -- the second of two calls parked together is asked the
+      # instant the first is answered -- waited behind it; it takes the
+      # terminal now.
+      def opened(prompt)
+        waiting = @lock.synchronize { @turns.first&.kind == :you && @turns.drop(1).any?(&:answer?) }
+        preempt(prompt) if waiting && prompt.kind == :you && open?(prompt) && untouched?(prompt)
+        nil
+      end
+
       # Wait for this reader's turn, publish its prompt, and answer with the line
       # typed at it, or nil when the stream ended under it.
       #
@@ -126,11 +164,12 @@ module Lain
       # @param header [String] what a producer draws above the prompt's line
       # @return [String, nil]
       def read(kind, text, header: "")
-        gate = Thread::Queue.new
-        enter(gate)
-        (take_held if kind == :you) || answered(Prompt.new(kind:, text:, header:, generation: 0), text)
+        turn = Turn.new(Thread::Queue.new, kind, text, false, false)
+        enter(turn)
+        (take_held if kind == :you) || answered(turn, Prompt.new(kind:, text:, header:, generation: 0), text)
       ensure
-        leave(gate)
+        leave(turn)
+        @screen.drop_prompt(text) if turn.waited && !turn.published
       end
 
       private
@@ -139,10 +178,12 @@ module Lain
       # producer once it notices: a reader is stopped from inside another
       # fiber's unwind, and anything that yields there lets the chat write past
       # the prompt before its closing words.
-      def answered(asked, text)
+      def answered(turn, asked, text)
+        turn.published = true
         prompt = publish(asked)
         heard = Enumerator.produce do
           judged = judge(prompt, text, @inbound.pop)
+          judged = back_from_aside(turn, prompt) if judged.equal?(STEPPED_ASIDE)
           prompt = publish(asked) if judged.equal?(REDRAWN)
           judged
         end
@@ -159,6 +200,7 @@ module Lain
       # is drawn now, and the drawing carries on.
       def judge(prompt, text, value)
         return Heard.new(text: nil) if value.is_a?(Eof)
+        return value.generation == prompt.generation ? STEPPED_ASIDE : STILL_DRAWN if value.is_a?(Preempt)
         return Heard.new(text: value.text) if answers?(prompt, text, value)
 
         hold(value.text)
@@ -194,17 +236,74 @@ module Lain
         nil
       end
 
-      # FIFO: the head reads, the rest wait on their own gate until it is theirs.
-      def enter(gate)
-        head = @lock.synchronize { @turns.push(gate).first.equal?(gate) }
-        gate.pop unless head
+      # The head reads, the rest wait on their own gate until it is theirs. A
+      # prompt repeating one already in line -- `/approve` asking about the call
+      # the watcher asks about -- is one arrival for the human, not two.
+      def enter(turn)
+        ahead = @lock.synchronize { line_up(turn) }
+        return if ahead.empty?
+
+        turn.waited = true
+        announced = ahead.any? { |waiting| about(waiting.text) == about(turn.text) }
+        @screen.queue_prompt(turn.text) unless (turn.answer? && preempted?(ahead)) || announced
+        turn.gate.pop
       end
 
-      def leave(gate)
+      # What a prompt is ABOUT -- the parked call, for a `[y/N]` -- so two
+      # readers asking about one call announce it once, and two calls that read
+      # identically still announce twice. A prompt that says nothing is its own
+      # subject.
+      def about(text) = text.respond_to?(:about) ? text.about : text
+
+      # An answer goes ahead of every `you>` still waiting; anything else joins the end.
+      def line_up(turn)
+        at = (turn.answer? && @turns.each_index.find { |i| i.positive? && @turns[i].kind == :you }) || @turns.size
+        @turns.insert(at, turn).take(at)
+      end
+
+      # Only the head is ahead, it is a drawn `you>`, and every producer drawing
+      # it says nothing has been typed there. The head is told through the queue
+      # it is reading, which is the one thing it is waiting on.
+      def preempted?(ahead)
+        prompt = published
+        return false unless ahead.size == 1 && ahead.first.kind == :you && prompt.kind == :you && untouched?(prompt)
+
+        preempt(prompt)
+        true
+      end
+
+      # A key the human types between the producer saying nothing was typed and
+      # the `you>` read being stopped may be dropped with that read, a window
+      # well under a millisecond. It is never an answer: the prompt taking the
+      # terminal sweeps what was typed before it drew.
+      def preempt(prompt) = @inbound.push(Preempt.new(generation: prompt.generation))
+
+      def untouched?(prompt)
+        producers = @lock.synchronize { @producers.keys }
+        !producers.empty? && producers.all? { |producer| producer.untouched?(prompt) }
+      end
+
+      # The preempted `you>` withdraws, gives the head to the answers now ahead
+      # of it, and waits for them to close. A line held meanwhile -- a `/`-line
+      # typed at the `[y/N]` -- was typed before anything typed at `you>` once it
+      # is back, so it is the answer; otherwise `you>` is published again.
+      def back_from_aside(turn, prompt)
+        withdraw(prompt)
         @lock.synchronize do
-          head = @turns.first.equal?(gate)
-          @turns.delete_if { |turn| turn.equal?(gate) }
-          @turns.first&.push(true) if head
+          @turns.delete_if { |waiting| waiting.equal?(turn) }
+          @turns.insert(@turns.index { |waiting| !waiting.answer? } || @turns.size, turn)
+          @turns.first.gate.push(true)
+        end
+        turn.gate.pop
+        held = take_held
+        held ? Heard.new(text: held) : REDRAWN
+      end
+
+      def leave(turn)
+        @lock.synchronize do
+          head = @turns.first.equal?(turn)
+          @turns.delete_if { |waiting| waiting.equal?(turn) }
+          @turns.first&.gate&.push(true) if head
         end
       end
     end

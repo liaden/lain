@@ -16,50 +16,109 @@ module ConversationScopeSpecSupport
   end
 end
 
-# The answer to "which object owns the editor consumer's lifetime". Both the
-# fleet's reactor and the editor's gesture rail outlive any one ask, and both
-# have to be stopped on EVERY exit from the conversation -- a parked fiber holds
-# the repl's Sync open forever, which is why every `.stop` in {Repl#respond}'s
-# ensure is deliberate and why this scope owes the same.
+# The answer to "which object owns a human surface's lifetime": the whole
+# CONVERSATION. The fleet's reactor, the editor's gesture rail, the reply
+# surfaces and every watcher over the parked-approval queue outlive any one
+# line -- a docent child parks a call while the chat sits at rest -- and all of
+# them have to be stopped on EVERY exit, because a parked fiber holds the
+# repl's Sync open forever. Two prompts cannot race for the terminal any more:
+# the input rail publishes them one at a time.
 RSpec.describe Lain::CLI::Repl::ConversationScope do
   let(:supervisor) { instance_double(Lain::Supervisor, run: nil, stop: nil) }
 
-  # The surfaces the scope is handed, kept so an example can ask each whether it
-  # is still running after #close.
-  def scope_over(surfaces:)
-    replies = Class.new do
+  # The seams the scope asks, recording the task and attention each was handed.
+  let(:replies) do
+    Class.new do
+      attr_reader :task, :attention
+
       def initialize(surfaces) = @surfaces = surfaces
-      def session_surfaces(task) = @surfaces.call(task)
-    end.new(surfaces)
-    described_class.new(supervisor:, replies:)
+
+      def session_surfaces(_task) = []
+
+      def chat_surfaces(task, attention:)
+        @task = task
+        @attention = attention
+        @surfaces.call(task)
+      end
+    end
   end
+
+  let(:approvals) do
+    Class.new do
+      attr_reader :task, :attention
+
+      def initialize(surfaces) = @surfaces = surfaces
+
+      def watch(task, attention:)
+        @task = task
+        @attention = attention
+        @surfaces.call(task)
+      end
+    end
+  end
+
+  def nothing = ->(_task) { [] }
+
+  def scope_over(surfaces: nothing, watchers: nothing)
+    @replies = replies.new(surfaces)
+    @approvals = approvals.new(watchers)
+    described_class.new(supervisor:, replies: @replies, surfaces: @approvals)
+  end
+
+  def parking(into) = ->(task) { [ConversationScopeSpecSupport::ParkingSurface.spawn(task).tap { |t| into << t }] }
 
   it "runs the supervisor's reactor on the conversation's own task" do
     Sync do |task|
-      scope_over(surfaces: ->(_task) { [] }).open(task).close
+      scope_over.open(task).close
 
       expect(supervisor).to have_received(:run).with(task)
     end
   end
 
+  it "opens the reply surfaces and the approval watchers on that task, sharing one attention" do
+    Sync do |task|
+      scope_over.open(task).close
+
+      expect([@replies.task, @approvals.task]).to all(be(task))
+      expect(@replies.attention).to be_a(described_class::Attention).and be(@approvals.attention)
+    end
+  end
+
   it "stops every surface it opened, so the conversation's Sync can return" do
-    parked = nil
+    parked = []
 
     Sync do |task|
-      scope = scope_over(surfaces: lambda { |inner|
-        parked = ConversationScopeSpecSupport::ParkingSurface.spawn(inner)
-        [parked]
-      })
-      scope.open(task)
-      scope.close
+      scope_over(surfaces: parking(parked), watchers: parking(parked)).open(task).close
     end
 
-    expect(parked).not_to be_running
+    expect(parked.size).to eq(2)
+    expect(parked.none?(&:running?)).to be(true)
+  end
+
+  # The unattended shape: no queue was wired, so the approval seam answers nil
+  # rather than an empty set, and there is nothing of it to stop.
+  it "survives an approval seam that answers nil" do
+    Sync { |task| expect { scope_over(watchers: ->(_task) {}).open(task).close }.not_to raise_error }
+  end
+
+  it "stops the reply surfaces when opening the approval watchers raises" do
+    parked = []
+    scope = scope_over(surfaces: parking(parked), watchers: ->(_task) { raise Lain::Error, "the watchers blew up" })
+
+    Timeout.timeout(5) do
+      Sync do |task|
+        expect { scope.open(task) }.to raise_error(Lain::Error, "the watchers blew up")
+        scope.close
+      end
+    end
+
+    expect(parked.size).to eq(1)
+    expect(parked.none?(&:running?)).to be(true)
   end
 
   it "farewells the fleet after the surfaces, not before" do
     Sync do |task|
-      scope_over(surfaces: ->(_task) { [] }).open(task).close
+      scope_over.open(task).close
 
       expect(supervisor).to have_received(:stop).once
     end
@@ -68,7 +127,7 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
   # The path a bad reactor takes: nothing was opened, so there is nothing to
   # stop -- and the fleet's farewell is still owed.
   it "closes cleanly when it was never opened" do
-    expect { scope_over(surfaces: ->(_task) { [] }).close }.not_to raise_error
+    expect { scope_over.close }.not_to raise_error
     expect(supervisor).to have_received(:stop)
   end
 
@@ -84,5 +143,29 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
     end
 
     expect(supervisor).to have_received(:stop)
+  end
+
+  # What a cockpit's command reader waits on: a parked call or a listed
+  # question, whichever surface saw it. A LEVEL, asked afresh every time.
+  describe described_class::Attention do
+    it "reports nothing outstanding when no surface has said what to watch" do
+      expect(described_class.new.outstanding?).to be(false)
+    end
+
+    it "reports outstanding while ANY watched surface has something waiting" do
+      attention = described_class.new
+      attention.track { false }
+      attention.track { true }
+
+      expect(attention.outstanding?).to be(true)
+    end
+
+    it "asks again each time, so a settled surface stops counting" do
+      waiting = [:call]
+      attention = described_class.new
+      attention.track { waiting.any? }
+
+      expect { waiting.clear }.to change(attention, :outstanding?).from(true).to(false)
+    end
   end
 end

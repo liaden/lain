@@ -52,13 +52,9 @@ module Lain
 
         def usage = "/inbox -- list and answer pending human questions (same drain as human>)"
 
-        # THIS command reads the human's answer itself, so no second reply
-        # surface may be opened around the line that invokes it
-        # ({Repl::LineScope#serve} asks through {Registry#serves_replies?}). A
-        # loop started around it would race the drain for one stdin, and the
-        # answer would land on whichever fiber won the dequeue -- against
-        # `Pending#oldest`, which by then is the loop's own item rather than the
-        # one the human just read.
+        # THIS command reads the human's answer itself, which is how a reply
+        # prompt recognises it as the drain it detours into
+        # ({Registry#serves_replies?}).
         def serves_replies? = true
 
         # Nil, always: `#drain_at_prompt` already delivers everything a human
@@ -171,11 +167,10 @@ module Lain
 
         def usage = "/approve -- answer each pending tool approval y/N"
 
-        # THIS command reads the terminal itself, for {Inbox#serves_replies?}'s
-        # reason: the `[y/N]` it asks goes through the same stdin a watcher
-        # started around the line would read, and a `y` then lands on whichever
-        # of the two won it. Typed at a reply prompt it still RUNS -- that
-        # prompt's `/inbox` detour asks which command it is, not this.
+        # THIS command reads the human's answer itself too: the `[y/N]` it asks
+        # takes its line off the input rail like every other prompt. Typed at a
+        # reply prompt it still RUNS -- that prompt's `/inbox` detour asks which
+        # command it is, not this.
         def serves_replies? = true
 
         def call(_args, env)

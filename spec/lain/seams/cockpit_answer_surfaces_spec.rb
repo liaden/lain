@@ -22,11 +22,25 @@ module CockpitAnswerSurfacesSupport
   # stamp the last one went out with, which is what a keypress in that buffer
   # carries back.
   class ApprovalRpc
-    attr_reader :generation
+    attr_reader :generation, :lines
 
-    def set_approval(_lines, generation, _rows, _calls, _call_index)
+    def set_approval(lines, generation, _rows, _calls, _call_index)
+      @lines = lines
       @generation = generation
       nil
+    end
+  end
+
+  # The conversation a chat runs in: every surface open around the block, and
+  # stopped on the way out, as {Lain::CLI::Repl#run} opens and closes them.
+  Conversation = Struct.new(:scope) do
+    def serve
+      Sync do |task|
+        scope.open(task)
+        yield
+      ensure
+        scope.close
+      end
     end
   end
 
@@ -54,7 +68,7 @@ module CockpitAnswerSurfacesSupport
 
     def take_held = @rail.take_held
 
-    def read_reply(_tty, prompt)
+    def read_reply(prompt)
       @prompts << prompt
       @in_flight += 1
       @peak = [@peak, @in_flight].max
@@ -66,11 +80,12 @@ module CockpitAnswerSurfacesSupport
 
     def approval_prompts = @prompts.grep(%r{\[y/N\]})
 
-    # No interrupt countdown runs in these examples.
+    # No interrupt countdown runs in these examples, and no `you>` waits.
     def counting_down? = false
+    def prompting? = false
 
     # The chat's `command>` read, on the same one terminal.
-    def read_command(tty, prompt) = read_reply(tty, prompt)
+    def read_command(prompt) = read_reply(prompt)
 
     # What the human types from here on at a command prompt.
     def type(*lines) = @answers.fetch(:command).concat(lines)
@@ -92,7 +107,7 @@ end
 # prose typed there waits for `you>` instead of landing as a verdict.
 #
 # Real {Lain::CLI::HumanReplies}, {Lain::CLI::Repl::ApprovalSurfaces} and
-# {Lain::CLI::Repl::LineScope} over a real {Lain::Approval::Queue}, the real
+# {Lain::CLI::Repl::ConversationScope} over a real {Lain::Approval::Queue}, the real
 # command registry with the real `/approve` and `/inbox`, and the real
 # {Lain::Frontend::Neovim::ApprovalView} deciding the call. The editor's far end
 # and the keyboard are the only stand-ins.
@@ -126,7 +141,8 @@ RSpec.describe "cockpit answer surfaces", :seam do
   def lines_of(text) = output.string.lines.grep(text)
 
   # The whole chat a line is dispatched in: the reply surfaces, the approval
-  # watchers, and the command registry both of them answer through.
+  # watchers, and the command registry both of them answer through, all open
+  # for the conversation.
   def cockpit(terminal, editor: true)
     terminal.rail = Lain::Frontend::InputRail.new(screen: tty)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor: terminal, ask_human: askers.directory,
@@ -136,7 +152,8 @@ RSpec.describe "cockpit answer surfaces", :seam do
     attach(replies, surfaces) if editor
     registry = commands_over(replies, terminal)
     replies.bind_commands(registry)
-    [Lain::CLI::Repl::LineScope.new(replies:, surfaces:), replies, registry]
+    scope = Lain::CLI::Repl::ConversationScope.new(supervisor: Lain::Supervisor::Null, replies:, surfaces:)
+    [CockpitAnswerSurfacesSupport::Conversation.new(scope), replies, registry]
   end
 
   def attach(replies, surfaces)
@@ -145,7 +162,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
   end
 
   def commands_over(replies, terminal)
-    prompt = Lain::Frontend::ApprovalPolicy.new(reader: ->(question) { terminal.read_reply(tty, question) })
+    prompt = Lain::Frontend::ApprovalPolicy.new(reader: ->(question) { terminal.read_reply(question) })
     Lain::CLI::Command::Registry.new([Lain::CLI::Command::Approve.new(prompt:), Lain::CLI::Command::Inbox.new])
                                 .bind(build_command_env(replies:, approvals: queue))
   end
@@ -162,6 +179,28 @@ RSpec.describe "cockpit answer surfaces", :seam do
   end
 
   def held_note?(text) = output.string.include?("held as your next prompt: #{text}")
+
+  # A docent child's gated read parks while the human sits at rest in the chat:
+  # no line is dispatched, and the call must still be drawn where they answer.
+  describe "an idle chat's child park" do
+    it "is listed in lain://approval without any line being typed" do
+      terminal = CockpitAnswerSurfacesSupport::Terminal.new
+      conversation, = cockpit(terminal)
+
+      listed = conversation.serve do
+        task = Async::Task.current
+        child = task.async { queue.call(effect("cat .env"), nil) }
+        pumped_until(task, reason: "the parked call was drawn in lain://approval") do
+          rpc.lines.to_a.join.include?("cat .env")
+        end
+        child.stop
+        true
+      end
+
+      expect(listed).to be(true)
+      expect(terminal.prompts).to be_empty
+    end
+  end
 
   describe "a cockpit chat does not read an approval inline" do
     it "prints one line naming the call and lain://approval, opens no y/N read, and nvim decides it" do
@@ -201,8 +240,11 @@ RSpec.describe "cockpit answer surfaces", :seam do
     end
   end
 
-  describe "/approve in a cockpit owns the terminal for its line" do
-    it "approves an actor's parked call at the tty surface with no other terminal reader open" do
+  # The `command>` the parked call opens is read beside `/approve`'s own
+  # `[y/N]`: in the chat they take turns on the input rail, which this fake
+  # terminal does not model, so what is asserted is the verdict and who gave it.
+  describe "/approve in a cockpit" do
+    it "approves an actor's parked call at the tty surface" do
       terminal = CockpitAnswerSurfacesSupport::Terminal.new(approval: ["y"])
       scope, _replies, registry = cockpit(terminal)
 
@@ -210,15 +252,14 @@ RSpec.describe "cockpit answer surfaces", :seam do
         gated = task.async { queue.call(effect, nil) }
         pumped_until(task, reason: "the actor's call parked") { queue.any? }
         Timeout.timeout(10) do
-          scope.serve(owns_terminal: registry.serves_replies?("/approve")) { registry.dispatch("/approve") { nil } }
+          scope.serve { registry.dispatch("/approve") { nil } }
         end
         gated.wait
       end
 
       expect(verdict).to be(true)
       expect(decisions.last.fetch("surface")).to eq(Lain::Frontend::ApprovalPolicy::SURFACE)
-      expect(terminal.peak).to eq(1)
-      expect(terminal.prompts.size).to eq(1)
+      expect(terminal.approval_prompts.size).to eq(1)
     end
   end
 
@@ -257,8 +298,8 @@ RSpec.describe "cockpit answer surfaces", :seam do
     end
 
     # The held line waits for the dispatching line to settle, so the one way it
-    # could be lost is that line being torn down under it -- a Ctrl-C stops the
-    # line's fibers. The slot outlives every line.
+    # could be lost is the chat being torn down under it -- a Ctrl-C stops its
+    # fibers. The slot outlives them.
     it "keeps the held line when the dispatching line is stopped" do
       terminal = CockpitAnswerSurfacesSupport::Terminal.new(command: ["yes please"])
       scope, replies = cockpit(terminal)
@@ -273,12 +314,12 @@ RSpec.describe "cockpit answer surfaces", :seam do
     end
   end
 
-  # The reader is opened by what is OUTSTANDING, not by what arrived this line:
-  # a line blocked on a call announced during an earlier one would otherwise
-  # have no chat surface at all, which is exactly the state an editor that has
-  # died leaves a cockpit in.
-  describe "a line blocked on a call announced in an earlier line" do
-    it "opens command> in the later line, and /approve decides the call before the window closes" do
+  # The reader is opened by what is OUTSTANDING, not by what arrived just now:
+  # a chat whose surfaces were restarted over a call announced before would
+  # otherwise have no chat surface for it at all, which is exactly the state an
+  # editor that has died leaves a cockpit in.
+  describe "a call announced before the chat's surfaces were restarted" do
+    it "opens command> again, and /approve decides the call before the window closes" do
       terminal = CockpitAnswerSurfacesSupport::Terminal.new(approval: ["y"])
       scope, = cockpit(terminal)
 
@@ -296,10 +337,9 @@ RSpec.describe "cockpit answer surfaces", :seam do
     end
   end
 
-  # An open `command>` holds the terminal -- the conductor suppresses the
-  # interrupt countdown for as long as a read is open -- so it is open only
-  # while something is waiting on the human, and a closed one says so rather
-  # than leaving a bare prompt on the row the next `you>` lands on.
+  # An open `command>` holds the terminal, so it is open only while something is
+  # waiting on the human, and a closed one says so rather than leaving a bare
+  # prompt on the row the next `you>` lands on.
   describe "command> outliving its reason" do
     it "closes the read once nvim decides the call it was opened for, while the line still dispatches" do
       terminal = CockpitAnswerSurfacesSupport::Terminal.new
@@ -324,7 +364,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
       expect(output.string).to include(Lain::CLI::HumanReplies::CommandLine::CLOSED)
     end
 
-    it "closes the read when the line ends, and says so" do
+    it "closes the read when the chat's surfaces stop, and says so" do
       terminal = CockpitAnswerSurfacesSupport::Terminal.new
       scope, = cockpit(terminal)
 

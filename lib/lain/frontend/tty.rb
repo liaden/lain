@@ -222,6 +222,23 @@ module Lain
         nil
       end
 
+      # A prompt waiting its turn behind another ({InputRail#read}) is announced
+      # as a summons, when it has words for it ({ApprovalPolicy::Asked}).
+      def queue_prompt(text)
+        text.queued { |note| render_summons(note) } if text.respond_to?(:queued)
+      end
+
+      # A waiting prompt that left without drawing says so in a line of its own,
+      # having no row to end. Guarded for {#close_prompt}'s reason.
+      def drop_prompt(text)
+        text.dropped { |note| render_warning(note) } if text.respond_to?(:dropped)
+      rescue StandardError
+        nil
+      end
+
+      # Whether a line editor holds the terminal for a prompt right now.
+      def prompt_drawn? = @notes.drawn?
+
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
       def render_response(response)
@@ -267,6 +284,19 @@ module Lain
       def render_arrival(question, from: nil)
         note = @inbox.arrival(question, from:)
         noted { @inbox.announce(note) }
+        @bell.ring(note)
+      end
+
+      # A plain chat's question, whose answer is the next line typed: the
+      # arrival says so, and the questions follow it whole, since the prompt
+      # after them is where they are answered and a set cut to its first line
+      # is one a human cannot answer.
+      def render_asked(question, from: nil)
+        note = @inbox.arrival(question, from:, pointer: Inbox::BELOW)
+        noted do
+          @inbox.announce(note)
+          @inbox.document(question)
+        end
         @bell.ring(note)
       end
 
@@ -553,6 +583,9 @@ module Lain
         # went. The buffer is named as the editor names it, so it can be typed.
         POINTER = "answer in lain://inbox, or /inbox"
 
+        # A chat with no editor answers a question at its next prompt.
+        BELOW = "answer below, or /inbox"
+
         # What a human can do HERE, said once above the prompt. The document
         # below renders the same checkboxes the editor ticks and a terminal
         # has no gesture for them, so prose is the only answer this surface
@@ -584,12 +617,22 @@ module Lain
         # the bound's one-sentence measurement rather than the reply itself.
         #
         # @return [String] the note, unpainted, for whatever else announces it
-        def arrival(question, from: nil)
-          Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{POINTER}")
+        def arrival(question, from: nil, pointer: POINTER)
+          Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{pointer}")
         end
 
         def announce(note)
           @output.puts(@pastel.yellow(note))
+          @output.flush
+        end
+
+        # A question set's document, on its own. Only a set's: a reply handed
+        # back for being too long answers `document` with that whole reply,
+        # which the drain shows on request and an arrival must not print.
+        def document(question)
+          return unless question.is_a?(Tools::AskHuman::Announcement)
+
+          @output.puts(document_for(question))
           @output.flush
         end
 
@@ -877,6 +920,8 @@ module Lain
           @guard.synchronize { @drawn = UNDRAWN }
           flush
         end
+
+        def drawn? = @guard.synchronize { !@drawn.equal?(UNDRAWN) }
 
         # @return [void]
         def note(&print)

@@ -51,6 +51,14 @@ module Lain
       # How a prompt another surface decided ends its line.
       CLOSED = "-- decided by %<surface>s: %<verdict>s"
 
+      # A prompt waiting behind another has no line yet, so both what it says on
+      # arriving and what it says when decided before it drew name the call.
+      # The input is `inspect`ed for {CLI::Repl::ApprovalSurfaces::Arrivals}' reason:
+      # a newline in a model-written command cannot break the line.
+      QUEUED = "! %<call>s  -- its y/N is asked next"
+      DROPPED = "! %<call>s  #{CLOSED}".freeze
+      CALL = "%<preamble>s%<requester>s asks to run %<tool>s(%<input>s)"
+
       # What a line typed for the chat rather than for the prompt begins with.
       COMMAND = "/"
 
@@ -74,11 +82,22 @@ module Lain
           freeze
         end
 
-        # Yields the sentence ending this prompt's line when another surface
-        # decided its call -- a timeout, an oracle, the editor -- and nothing
-        # while it is undecided or was answered here.
+        # Yields the sentence ending this prompt's line when its call was
+        # decided anywhere else -- a timeout, an oracle, the editor, or another
+        # prompt at this terminal -- and nothing while it is undecided. The rail
+        # asks while the read is ending, which is before an answer typed at
+        # THIS prompt is recorded, so a decided call is always someone else's.
         def closed
           yield format(CLOSED, surface: @pending.surface, verdict:) if decided_elsewhere?
+        end
+
+        # Yields the one line announcing this prompt while it waits its turn.
+        def queued = yield format(QUEUED, call:)
+
+        # Yields the line saying how its call was decided when this prompt left
+        # the queue without ever drawing, and nothing while it is undecided.
+        def dropped
+          yield format(DROPPED, call:, surface: @pending.surface, verdict:) if decided_elsewhere?
         end
 
         # Whether `line` is an answer to this prompt at all. A `/command` is not:
@@ -91,9 +110,18 @@ module Lain
         # What the {InputRail} publishes this prompt as: an answer a run waits on.
         def kind = :approval
 
+        # The parked call this prompt asks about, so the rail announces one call
+        # once however many prompts are waiting to ask about it.
+        def about = @pending
+
         private
 
-        def decided_elsewhere? = @pending.decided? && @pending.surface != SURFACE
+        def decided_elsewhere? = @pending.decided?
+
+        def call
+          format(CALL, preamble: @pending.outstanding.preamble, requester: @pending.requester, tool: @pending.tool,
+                       input: @pending.input.inspect)
+        end
 
         def verdict = @pending.approved? ? "approved" : "denied"
       end
@@ -101,8 +129,8 @@ module Lain
       # `reader:` is the conductor seam: `(prompt) -> String, nil` owns BOTH the
       # terminal write and the read for one question. The exe injects one that
       # routes through {CLI::Conductor}, so approval prompts take their answer
-      # off the chat's one input rail, the countdown ticker is suppressed for
-      # the read's span, and the read PARKS the fiber (scheduler-routed, so the
+      # off the chat's one input rail, the read steps aside while an interrupt
+      # countdown runs, and it PARKS the fiber (scheduler-routed, so the
       # queue's fail-closed timer can still fire). The standalone reader asks
       # `input:`, which is no terminal unless one is handed in -- stdin is the
       # pump's to read -- so a policy nobody wired denies.
@@ -117,7 +145,7 @@ module Lain
       # why the gated fiber's park inside tool dispatch cannot deadlock the
       # reactor -- the answerer is a sibling, not the same fiber.
       def watch(queue)
-        loop { answered(queue.dequeue) }
+        loop { asked(queue.dequeue) }
       end
 
       # Answers whether THIS surface's decision won ({Pending#decide}'s
@@ -126,46 +154,51 @@ module Lain
       # @param pending [Lain::Approval::Queue::Pending]
       # @return [Boolean]
       def decide(pending)
-        answer = @reader.call(Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending))
+        return false if pending.decided?
+
+        answer = read_until_decided(pending)
         pending.decide(affirmative?(answer), surface: SURFACE)
       end
 
       private
 
-      # One arrival, asked about in a CHILD fiber, let go of the moment the
-      # pending is decided by anyone.
+      # The read is let go the moment the call is decided by anyone.
       #
       # THE READ is what needed releasing. A y/N read with no human behind it
       # never returns, so a surface that answered inline stayed inside that read
       # after the editor had already decided the call -- and every gated call
       # after it queued behind a prompt that was moot, unrendered and
-      # unanswerable. Not an arrival STOLEN, an arrival HELD.
+      # unanswerable. Not an arrival STOLEN, an arrival HELD. The same holds for
+      # `/approve`, which asks through {#decide}: its prompt waiting behind the
+      # watcher's for the same call is withdrawn, with its closing line, rather
+      # than drawn to ask a question whose answer cannot count.
       #
-      # The race is between two things that both end at {Pending#decide}, which
-      # is why it needs no new primitive: `Async::Variable#resolve` signals EVERY
-      # parked waiter and a waiter arriving after resolution returns at once, so
-      # the ask's own answer and a sibling surface's wake this fiber identically.
-      # Releasing the READ never releases the PENDING.
-      #
-      # It belongs HERE and not in {#decide}, whose two other callers run with no
-      # reactor under them, where `Async::Task.current` raises. This is the one
-      # caller with both a task and a scheduler-routed reader.
+      # The race is between two things that both end at {Pending#decide}:
+      # `Async::Variable#resolve` signals EVERY parked waiter and a waiter
+      # arriving after resolution returns at once. Releasing the READ never
+      # releases the PENDING.
       #
       # `stop` rather than a raise IS the abandonment: `Async::Stop` is not a
-      # `StandardError`, so it climbs past {#asked}'s guard instead of journaling
-      # a `tty_fault` denial against a call another surface just APPROVED. It
-      # also unwinds the reader through its own ensures -- the countdown ticker
-      # flag cleared, Reline restoring the terminal.
-      #
-      # `&.` for exactly one case: this method is only ever reached from {#watch}
-      # inside a spawned task, but were that to stop being true
-      # `Async::Task.current` raises before the assignment and the ensure would
-      # dereference a nil naming a task never spawned.
-      def answered(pending)
-        asking = Async::Task.current.async { asked(pending) }
+      # `StandardError`, so it never reaches {#asked}'s guard to journal a
+      # `tty_fault` denial against a call another surface just APPROVED. It also
+      # unwinds the reader through its own ensures -- the prompt withdrawn from
+      # the rail, Reline restoring the terminal. `Sync` because {#decide} may be
+      # called with no reactor under it.
+      def read_until_decided(pending)
+        Sync do |task|
+          asked = Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending)
+          reading = task.async(finished: false) { @reader.call(asked) }
+          letting_go = task.async { let_go(pending, reading) }
+          reading.wait
+        ensure
+          letting_go&.stop
+          reading&.stop
+        end
+      end
+
+      def let_go(pending, reading)
         pending.await
-      ensure
-        asking&.stop
+        reading.stop
       end
 
       # Guarded, because a raise inside a single prompt used to retire this
@@ -173,18 +206,10 @@ module Lain
       # for: a `--no-nvim` chat has no second one, so every later gated call
       # would reach nobody at all.
       #
-      # THE GUARD COVERS THE ASK, AND ONLY THE ASK -- the race in {#answered}
-      # sits outside it, which is what keeps an abandonment from being mistaken
-      # for a terminal failure. Nothing `StandardError`-shaped is reachable on
-      # the three lines left uncovered: `Async::Task#async` raises nothing of
-      # its own, and `Promise#await` either returns or is unwound by the
-      # `Async::Stop` that ends this whole surface.
-      #
       # Fail closed and keep watching: an unanswerable gate refuses rather than
       # wedges, so the pending is denied here rather than left to the clock,
-      # signed {FAULT_SURFACE} because nobody answered it. That denial is also
-      # what wakes {#answered}, whose park this guard has to end on every path.
-      # `StandardError`, so an `Async::Stop` ending the line keeps climbing.
+      # signed {FAULT_SURFACE} because nobody answered it. `StandardError`, so an
+      # `Async::Stop` ending the line keeps climbing.
       #
       # THE DENIAL LANDS BEFORE THE REPORT, and the order is the whole guard:
       # writing the reason to the terminal is the likeliest thing to raise NEXT

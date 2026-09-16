@@ -403,7 +403,41 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(closing_of(asked.dequeue(timeout: 0))).to eq(["-- decided by timeout: denied"])
     end
 
-    it "has nothing to close with while the call is undecided, or once this terminal answered it" do
+    # A `[y/N]` that waits its turn behind another prompt has no row of its own
+    # yet, so what it says -- that it arrived, and later how it was decided --
+    # is a whole line naming the call.
+    def arrival_of(prompt) = [].tap { |notes| prompt.queued { |note| notes << note } }
+    def dropping_of(prompt) = [].tap { |notes| prompt.dropped { |note| notes << note } }
+
+    it "announces a prompt queued behind another as one line naming who asks to run what" do
+      first, = prompts_either_side_of(approved_elsewhere)
+
+      expect(arrival_of(first)).to contain_exactly(a_string_including("! agent asks to run bash(", "echo call_1"))
+      expect(arrival_of(first).first).not_to match(/[\r\n]/)
+    end
+
+    it "ends a prompt that never drew with a whole line naming the call and who decided it" do
+      unanswerable = Lain::Approval::Queue.new(journal:, timeout: 0.2)
+      Sync do |task|
+        watcher = task.async { absent_human.watch(unanswerable) }
+        task.with_timeout(5) { task.async { unanswerable.call(gated("call_1"), nil) }.wait }
+      ensure
+        watcher&.stop
+      end
+
+      expect(dropping_of(asked.dequeue(timeout: 0)))
+        .to contain_exactly(a_string_including("bash(", "echo call_1", "decided by timeout: denied"))
+    end
+
+    it "has nothing to say on dropping a prompt whose call is still undecided" do
+      droppings = []
+      reader = ->(prompt) { droppings.concat(dropping_of(prompt)) && "n\n" }
+      described_class.new(output:, reader:).decide(pending)
+
+      expect(droppings).to eq([])
+    end
+
+    it "has nothing to close with while the call is undecided, which is while its own answer is read" do
       approval = pending
       prompts = []
       policy = described_class.new(output:, reader: lambda { |prompt|
@@ -414,7 +448,45 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       policy.decide(approval)
 
       expect(approval.decision).to eq(:approve)
-      expect(closing_of(prompts.first)).to eq([])
+    end
+
+    # Another prompt at this same terminal -- `/approve` beside the watcher --
+    # is elsewhere too: the prompt that was not answered ends in words.
+    it "closes in words when another prompt at this terminal decided the call" do
+      approval = pending
+      prompts = []
+      described_class.new(output:, reader: ->(prompt) { (prompts << prompt) && "y\n" }).decide(approval)
+      other = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", approval)
+
+      expect(closing_of(other)).to eq(["-- decided by tty: approved"])
+      expect(dropping_of(other)).to contain_exactly(a_string_including("decided by tty: approved"))
+    end
+
+    # `/approve` asks through {#decide}, not {#watch}: its read too is let go
+    # the moment the call is decided anywhere, so a prompt queued behind the
+    # watcher's for the same call is withdrawn rather than drawn to ask a
+    # question whose answer cannot count.
+    it "lets go of its read once another prompt decides the call, and wins nothing" do
+      approval = pending
+      won = Sync do |task|
+        asking = task.async { absent_human.decide(approval) }
+        eventually_asked(task, 2)
+        approval.approve(surface: "tty")
+        task.with_timeout(2) { asking.wait }
+      end
+
+      expect(won).to be(false)
+      expect(approval.decision).to eq(:approve)
+    end
+
+    it "asks nothing about a call already decided" do
+      approval = pending
+      approval.deny(surface: "timeout")
+      reads = 0
+
+      won = described_class.new(output:, reader: ->(_prompt) { (reads += 1) && "y\n" }).decide(approval)
+
+      expect([won, reads, approval.decision]).to eq([false, 0, :deny])
     end
 
     # Abandoning a read is not a fault and must not travel as one. {#answered}
@@ -640,7 +712,6 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       end
 
       it "asks the identical question from every constructor shape lib/ builds" do
-        approval = disclosing
         asked = []
         reader = lambda { |prompt|
           asked << prompt
@@ -652,7 +723,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
         texts = shapes.map do |kwargs|
           sink = StringIO.new
-          described_class.new(output: sink, pastel: Pastel.new(enabled: false), **kwargs).decide(approval)
+          described_class.new(output: sink, pastel: Pastel.new(enabled: false), **kwargs).decide(disclosing)
           asked.pop || sink.string
         end
 

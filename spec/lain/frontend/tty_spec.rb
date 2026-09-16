@@ -529,6 +529,90 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # A plain chat's question is answered at the very next prompt, so the note
+  # says so, and the questions themselves are printed above it -- a set cut to
+  # its first line is one a human cannot answer.
+  describe "#render_asked" do
+    let(:plain) { described_class.new(channel:, output:, pastel: Pastel.new(enabled: false)) }
+
+    it "points below rather than at a buffer this chat has no editor for, and prints the document" do
+      plain.render_asked(announced("db", "region", body: "which one?\n\n| a | b |"), from: "researcher")
+
+      arrival, *document = output.string.lines
+      expect(arrival).to include("researcher", "-- answer below, or /inbox")
+      expect(arrival).not_to include("lain://inbox")
+      expect(document.join).to include("| a | b |").and include(described_class::Inbox::GESTURE)
+    end
+
+    # A handback's document is the whole oversized reply, which the drain shows
+    # when asked and an arrival must not put in the scrollback.
+    it "prints no document for a reply handed back" do
+      plain.render_asked(handed_back(ceiling + 1), from: "chat")
+
+      expect(output.string.lines.size).to eq(1)
+    end
+
+    it "keeps the arrival itself one terminal line" do
+      plain.render_asked(announced("db", body: "harmless question\rATTACKER OWNS THIS LINE"), from: "researcher")
+
+      expect(output.string.lines.first.chomp).not_to match(line_break)
+    end
+  end
+
+  # What the input rail says about a prompt that cannot draw at once, or leaves
+  # without having drawn: the prompt supplies the words, when it has any.
+  describe "the rail's queued and dropped prompts" do
+    let(:raised) { [] }
+    let(:plain) do
+      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                          layers: -> { Lain::Mode::LayerSet.new(raised) }, tmux: ->(_note) {})
+    end
+    let(:speaking) do
+      Class.new(String) do
+        def queued = yield("! agent asks to run bash(\"ls\")")
+        def dropped = yield("! agent asks to run bash(\"ls\")  -- decided by timeout: denied")
+      end.new("[y/N] ")
+    end
+
+    it "announces a queued prompt as a summons, ringing while the notify layer is up" do
+      raised << :notify
+
+      plain.queue_prompt(speaking)
+
+      expect(output.string).to include("! agent asks to run bash(\"ls\")").and include("\a")
+    end
+
+    it "prints a dropped prompt's line whole" do
+      plain.drop_prompt(speaking)
+
+      expect(output.string).to eq("! agent asks to run bash(\"ls\")  -- decided by timeout: denied\n")
+    end
+
+    it "says nothing for a prompt with nothing to say" do
+      plain.queue_prompt("you> ")
+      plain.drop_prompt("you> ")
+
+      expect(output.string).to be_empty
+    end
+  end
+
+  # The countdown waits for the line editor to leave the terminal before it
+  # draws and reads keys, so it asks whether a prompt is drawn right now.
+  describe "#prompt_drawn?" do
+    it "is true only while a prompt's drawing is open" do
+      readings = Sync do |task|
+        released = Async::Notification.new
+        drawn = task.async { tty.drawing(-> { true }) { released.wait } }
+        during = tty.prompt_drawn?
+        released.signal
+        drawn.wait
+        [during, tty.prompt_drawn?]
+      end
+
+      expect(readings).to eq([true, false])
+    end
+  end
+
   # The TTY-only drain surface. Lists what is pending (sender and age) and
   # reads ONE answer; the resolution itself stays with the caller's block --
   # AskHuman#reply is the Repl's seam, never the TTY's.

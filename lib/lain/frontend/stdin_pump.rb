@@ -41,7 +41,13 @@ module Lain
         # The generation a line typed at this drawing carries.
         def generation = carried.unfinished? ? prompt.generation - 1 : prompt.generation
       end
-      private_constant :Draw
+      # How long the line editor is left to install its own interrupt handler
+      # before the chat takes it back ({#claim_interrupt}).
+      INTERRUPT_CLAIM = 0.05
+
+      # No read open at a prompt that answers nothing, so nothing is untouched.
+      NOT_EDITING = Draw.new(InputRail::Unpublished, nil).freeze
+      private_constant :Draw, :NOT_EDITING
 
       def self.keys(input) = Keys.new(input)
 
@@ -61,6 +67,11 @@ module Lain
         @editor = LineEditor.new(vi_mode: -> { screen.vi? }, notify: ->(message) { screen.render_warning(message) })
         @typeahead = Typeahead.new(input:)
         @unfinished = Typeahead::NOTHING
+        # Held across a read and across a sweep between reads: the sweep
+        # switches the terminal raw, which beside an open read would take the
+        # bytes that read is waiting on.
+        @terminal = Mutex.new
+        @editing = NOT_EDITING
         @served = 0
         @ended = false
       end
@@ -81,13 +92,19 @@ module Lain
       # {InputRail#gather}: each whole line is held, and a line still being typed
       # is kept for the next read, which starts from it.
       def sweep
-        LineEditor.exclusively do
+        @terminal.synchronize do
           typed = @typeahead.drain(@unfinished)
           typed.lines.each { |line| @rail.hold(line) }
           @unfinished = typed
         end
         nil
       end
+
+      # Whether nothing has been typed at `prompt` in the line editor drawing it
+      # now. Only a prompt that answers nothing is asked about, and only on a
+      # terminal: a stream's next line is its next line whatever prompt it
+      # lands at.
+      def untouched?(prompt) = @editing.prompt == prompt && LineEditor.untouched?
 
       private
 
@@ -116,13 +133,32 @@ module Lain
         delivered(draw, raced(draw))
       end
 
-      # The read, stopped the moment its prompt is withdrawn.
+      # The read, stopped the moment its prompt is withdrawn, with the
+      # terminal's interrupt claimed for the chat while it runs.
       def raced(draw)
         reading = Async::Task.current.async { read(draw) }
         watching = Async::Task.current.async { withdrawn_under(draw.prompt, reading) }
+        claiming = Async::Task.current.async { claim_interrupt }
         reading.wait
       ensure
         watching&.stop
+        claiming&.stop
+      end
+
+      # Reline traps INT for the length of its read and reaches lain's handler
+      # only from its own key loop, so a Ctrl-C arriving at a read that is being
+      # STOPPED -- a prompt taking the terminal from `you>` -- set Reline's flag
+      # and died with the read, doing nothing at all. The pump takes the trap
+      # back once the read is under way (Reline installs its own after the
+      # pre-input hook, so there is no earlier hook to do it from) and puts the
+      # interrupt on the rail, where the chat routes it as it routes an OS
+      # signal. Reline's own `finalize` puts the chat's handler back as the read
+      # ends, however it ends.
+      def claim_interrupt
+        return unless StdinPump.terminal?(@input)
+
+        Async::Task.current.sleep(INTERRUPT_CLAIM)
+        Signal.trap("INT") { @rail << InputRail::Signal.new(name: :sigint) }
       end
 
       def withdrawn_under(prompt, reading)
@@ -162,30 +198,43 @@ module Lain
       # it. A prompt that answers nothing reads typeahead as the line it is, and
       # starts from a line {#sweep} kept.
       def edited(draw)
-        line = LineEditor.exclusively do
-          next_line = -> { editor_read(draw) }
-          if draw.prompt.answer?
-            draw.carried = put_aside(@typeahead.drain(take_unfinished))
-            LineEditor.before_first_draw(swept_again(draw), &next_line)
-          else
-            next_line.call
-          end
+        line = @terminal.synchronize do
+          typed_back = draw.prompt.answer? ? swept_ahead(draw) : take_unfinished.partial
+          LineEditor.before_first_draw(-> { opened(draw, typed_back) }) { editor_read(draw, typed_back) }
         end
         line.nil? ? InputRail::Eof.new : typed(draw, line)
+      ensure
+        @editing = NOT_EDITING
       end
 
-      def swept_again(draw) = -> { draw.carried = put_aside(@typeahead.drain(draw.carried), noted: draw.carried) }
+      def swept_ahead(draw)
+        draw.carried = put_aside(@typeahead.drain(take_unfinished))
+        ""
+      end
 
-      def editor_read(draw)
+      # Reline has emptied its buffer for this read and not yet drawn it. An
+      # answer's prompt sweeps again here; any other read is from now on one
+      # whose buffer says whether the human has typed at it, unless a kept line
+      # was typed back into it.
+      def opened(draw, typed_back)
+        return draw.carried = put_aside(@typeahead.drain(draw.carried), noted: draw.carried) if draw.prompt.answer?
+        return unless typed_back.empty?
+
+        @editing = draw
+        @rail.opened(draw.prompt)
+      end
+
+      def editor_read(draw, typed_back)
         @screen.drawing(-> { @rail.open?(draw.prompt) }) do
           composed = @screen.compose(draw.prompt.text)
-          @typeahead.type_back(take_unfinished.partial)
+          @typeahead.type_back(typed_back)
           @editor.read(composed)
         end
       end
 
+      # An answer to a `[y/N]` or a question is not a line to recall at `you>`.
       def typed(draw, line)
-        @screen.remember(line)
+        @screen.remember(line) unless draw.prompt.answer?
         InputRail::Line.new(text: "#{draw.carried.partial}#{line}", generation: draw.generation)
       end
 

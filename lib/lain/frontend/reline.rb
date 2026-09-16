@@ -76,21 +76,16 @@ module Lain
       # only when a key they have muscle memory for stops doing what it did.
       class KeyTaken < Lain::Error; end
 
-      # Every read in the process holds this, and so does whatever must happen
-      # BETWEEN reads: {StdinPump} switches the terminal raw to drain typeahead,
-      # which run beside an open read would take the bytes that read is waiting
-      # on. lain's own rather than Reline's, whose `@mutex` is an ivar
-      # of a stdlib object this seam does not reach into; every reader goes
-      # through {#read}, so holding this is holding the one line editor.
-      READS = Mutex.new
-
       class << self
         def registry = @registry ||= Registry.new
 
-        # Runs the block holding {READS}, or just runs it when this fiber already
-        # holds it -- so a drain and the read it precedes are one critical
-        # section, with {#read} taking the lock again inside.
-        def exclusively(&block) = READS.owned? ? yield : READS.synchronize(&block)
+        # Whether the read open now holds nothing typed. Meaningful only inside
+        # a read, once Reline has emptied its buffer for it (the pre-input hook
+        # {.before_first_draw} installs): between reads the buffer still holds
+        # the last line accepted. Never on a dumb gate, which reads the terminal
+        # cooked: what the human is typing sits in the kernel's line, where the
+        # buffer cannot see it.
+        def untouched? = !::Reline::IOGate.dumb? && ::Reline.core.line_editor.whole_buffer.empty?
 
         # Every byte the next read would take, taken now and read as nothing:
         # what the human typed before a prompt drew. Through Reline's own gate,
@@ -162,16 +157,14 @@ module Lain
       # @return [String, nil] the message with continuation markers removed, or
       #   nil at EOF (Ctrl-D / closed input)
       def read(prompt)
-        self.class.exclusively do
-          configure
-          # Installed for the duration of THIS read and taken down after, because
-          # a read is the only window a key action can fire in. Installed
-          # globally, a second LineEditor's construction silently disarmed the
-          # first one's notifier.
-          self.class.registry.reporting_to(@notify) do
-            buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
-            buffer && accept(buffer)
-          end
+        configure
+        # Installed for the duration of THIS read and taken down after, because
+        # a read is the only window a key action can fire in. Installed
+        # globally, a second LineEditor's construction silently disarmed the
+        # first one's notifier.
+        self.class.registry.reporting_to(@notify) do
+          buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
+          buffer && accept(buffer)
         end
       end
 

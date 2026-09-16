@@ -874,41 +874,25 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
-  # Draining what a human typed ahead switches the terminal raw for an instant,
-  # and that must never happen while a read is open: the drain would take the
-  # bytes the read is waiting on. So every read, and every drain between reads,
-  # takes one process-wide lock -- the line editor is one per process already.
-  describe ".exclusively" do
-    it "waits for a read that is already open" do
-      order = []
-      allow(Reline).to receive(:readmultiline) do
-        order << :read_opened
-        Async::Task.current.sleep(0.05)
-        order << :read_closed
-        "a line\n"
-      end
+  # Whether the human has typed anything at the read open now, which is what
+  # lets an answer a run waits on take the terminal from an idle `you>`.
+  describe ".untouched?" do
+    it "reads the open read's buffer, empty or not" do
+      editor = instance_double(Reline::LineEditor, whole_buffer: "")
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
 
-      Sync do |task|
-        reading = task.async { described_class.new.read("> ") }
-        task.sleep(0.01)
-        task.async { described_class.exclusively { order << :drained } }.wait
-        reading.wait
-      end
-
-      expect(order).to eq(%i[read_opened read_closed drained])
+      expect(described_class.untouched?).to be(true)
+      allow(editor).to receive(:whole_buffer).and_return("half a sent")
+      expect(described_class.untouched?).to be(false)
     end
 
-    it "lets the holder read under it, so a drain and the read it precedes are one step" do
-      allow(Reline).to receive(:readmultiline).and_return("a line\n")
+    # A dumb gate reads the terminal cooked: a line being typed is in the
+    # kernel's buffer, never in Reline's, so an empty buffer says nothing.
+    it "is never true on a dumb gate" do
+      allow(Reline.core).to receive(:line_editor).and_return(instance_double(Reline::LineEditor, whole_buffer: ""))
+      allow(Reline::IOGate).to receive(:dumb?).and_return(true)
 
-      expect(described_class.exclusively { described_class.new.read("> ") }).to eq("a line\n")
-    end
-
-    it "is given back when the read inside it raises" do
-      allow(Reline).to receive(:readmultiline).and_raise(Errno::EIO)
-
-      expect { described_class.exclusively { described_class.new.read("> ") } }.to raise_error(Errno::EIO)
-      expect(described_class.exclusively { :free }).to eq(:free)
+      expect(described_class.untouched?).to be(false)
     end
   end
 end

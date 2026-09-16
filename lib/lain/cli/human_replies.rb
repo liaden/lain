@@ -212,16 +212,13 @@ module Lain
       def pending? = !@inbox.empty? || !@questions.empty?
 
       # `/inbox` at `you>`: the same TTY drain the `human>` path uses, over
-      # whatever piled up since a fiber was last watching. {#surfaces}' fiber
-      # lives for one DISPATCHED LINE, while the supervisor's fleet outlives
-      # every one of them, so a subagent can enqueue a question while the human
-      # sits idle at `you>` with nothing draining it. This is that second
-      # watcher, run on demand rather than as another background fiber.
+      # everything listed -- including what a cockpit's chat announced and left
+      # for the human to drain when they choose.
       #
-      # It is therefore the one command that must NOT be bracketed in a reply
-      # loop of its own -- {Command::Inbox} declares that and
-      # {Repl::LineScope#serve} reads the declaration. Two readers on one stdin
-      # is what this method exists to avoid, not a state it may run in.
+      # Its read is RACED against the set being settled elsewhere, as
+      # {AnswerLoop}'s is: a `human>` open for the same set may be answered
+      # first, or lain://inbox may answer it, and a drain left drawn after that
+      # would take the human's next line as an answer to nothing.
       #
       # The listing offers no selection, so one typed answer answers the OLDEST
       # item listed: nothing is parked on this read, so the first line the human
@@ -247,34 +244,12 @@ module Lain
       #   stream ended under a read nothing was waiting on)
       def drain_at_prompt
         @inbox.gather(@questions)
-        answer, answered = @reply.at_prompt
+        heard = Sync { @reads.race(@inbox.oldest.digest) { @reply.at_prompt } }
+        return drained_elsewhere if heard.equal?(OpenReads::SETTLED)
+
+        answer, answered = heard
         resolve_reply(answer, answered.digest) unless answer.strip.empty?
         answer
-      end
-
-      # The TTY drain loop, whose fiber must live exactly as long as one
-      # DISPATCHED LINE and no longer: the reply read parks inside it, and the
-      # terminal it reads from is the one the next `you>` prompt needs back.
-      # {Repl::LineScope#serve} stops it in its ensure.
-      #
-      # The LINE and not the ask, because a question can be raised from a
-      # command running lib-side or from a spawned subagent, and neither reaches
-      # {Repl#respond} -- the fiber that parks on one is the dispatching fiber,
-      # so the surface answering it has to be its sibling. The editor's consumer
-      # is deliberately not here; see {#session_surfaces}.
-      #
-      # WITH AN EDITOR ATTACHED nothing here reads an answer: lain://inbox and
-      # lain://approval are where a cockpit's human answers, and a `human>` in
-      # the chat pane beside them is a reader that typeahead lands in. The line
-      # gets {CommandLine} instead, which announces and reads only commands --
-      # kept because a line parked on its own call never settles, so without it
-      # `/approve` could not be typed at all until nvim was used.
-      #
-      # @param task [Async::Task] the line's task, which the surface is spawned on
-      # @param attention [Repl::LineScope::Attention] raised by an arrival on
-      #   either surface, and what opens the cockpit's command read
-      def surfaces(task, attention: Repl::LineScope::Attention.new)
-        [@editor.attached? ? command_line.spawn(task, attention) : answers.spawn(task)]
       end
 
       # A line the human typed in the chat that was neither a command nor an
@@ -289,9 +264,28 @@ module Lain
       # the order it was typed.
       def take_held = @conductor.take_held
 
-      # The reply surfaces that live for the whole CONVERSATION, started on the
-      # repl's own Sync rather than on an ask's -- today just the editor's
-      # command rail.
+      # The chat pane's own reply surface, which lives for the whole
+      # CONVERSATION ({Repl::ConversationScope}): a question can be raised from
+      # any frame -- a command running lib-side, a spawned subagent, a fleet
+      # actor while the chat is at rest -- and the fiber that parks on it is
+      # never the one answering.
+      #
+      # WITH AN EDITOR ATTACHED nothing here reads an answer: lain://inbox and
+      # lain://approval are where a cockpit's human answers, and a `human>` in
+      # the chat pane beside them is a reader that typeahead lands in. The chat
+      # gets {CommandLine} instead, which announces and reads only commands --
+      # kept because a line parked on its own call never settles, so without it
+      # `/approve` could not be typed until nvim was used.
+      #
+      # @param task [Async::Task] the conversation's task, which the surface is spawned on
+      # @param attention [Repl::ConversationScope::Attention] raised by an
+      #   arrival on either surface, and what opens the cockpit's command read
+      def chat_surfaces(task, attention: Repl::ConversationScope::Attention.new)
+        [@editor.attached? ? command_line.spawn(task, attention) : answers.spawn(task)]
+      end
+
+      # The editor's command rail, which lives for the whole CONVERSATION too,
+      # started on the repl's own Sync rather than on an ask's.
       #
       # An ask's lifetime is the WRONG one for that rail. A human uses the
       # editor precisely when no ask is in flight: a code review is a long
@@ -314,8 +308,7 @@ module Lain
 
       # Built at the one call site that needs it, so a session that never spawns
       # a reply surface never builds one. Memoized because it REMEMBERS which
-      # arrivals it has announced, and that memory must span the lines it is
-      # spawned for rather than one of them.
+      # arrivals it has announced.
       #
       # `resolve:` is a MESSAGE rather than this object: the loop owes an answer
       # one call, and handing over `self` would let it reach everything.
@@ -339,6 +332,11 @@ module Lain
       # beside a binder is a second way to ask the same question; `delegate`
       # still reaches it, calling with an implicit receiver.
       def review_editor = @review_editor || ReviewSeams::Unattached
+
+      def drained_elsewhere
+        @tty.render_warning(AnswerLoop::ANSWERED_ELSEWHERE)
+        ""
+      end
 
       # The refusal is rendered where the human typed, and passed through rather
       # than reworded: a digest no asker holds is a stale line, and the
@@ -586,13 +584,10 @@ module Lain
         #
         # An UNWIND is not on that list. `Async::Stop` climbing out of a
         # cancelled read is the SURFACE being stopped, not the question being
-        # answered -- and the surface is stopped at the end of every dispatched
-        # LINE. So a subagent's question arriving while the human ran `/help`
-        # was dequeued, announced to a human who was not looking, then retired
-        # when the line ended: off the queue and off the list at once, so
-        # `HumanReplies#pending?` read false, no `/inbox` could list it, and the
-        # asker stayed parked forever with no error and no journal line. It goes
-        # back on the queue instead.
+        # answered. Retired then, an item was off the queue and off the list at
+        # once, so `HumanReplies#pending?` read false, no `/inbox` could list it,
+        # and the asker stayed parked forever with no error and no journal line.
+        # It goes back on the queue instead.
         #
         # A set WITHDRAWN under a parked reader is re-queued too, which is the
         # priced cost of the rule. The REPLY SEAM does not expose the
@@ -663,12 +658,11 @@ module Lain
         # it: the frontend's one-line note.
         def closed_elsewhere = @tty.method(:render_warning).call(ANSWERED_ELSEWHERE)
 
-        # An ARRIVAL is announced ONCE, however many lines the question
-        # outlives. A re-queued item is dequeued again by the next line's loop,
-        # and "this just arrived" is false by the third line -- noise the human
-        # cannot act on either, since the read it precedes is torn down before
-        # they could type into it. The read still opens on every serve, so a
-        # line they linger on is answerable; only the arrival claim is spent.
+        # An ARRIVAL is announced ONCE, however often the item is served: a
+        # re-queued item is dequeued again, and "this just arrived" is false by
+        # then. The read still opens on every serve; only the arrival claim is
+        # spent. The questions are printed whole with it, because the next
+        # prompt is where they are answered ({Frontend::TTY#render_asked}).
         #
         # Keyed on the ARRIVAL rather than on the set, and that distinction is
         # load-bearing now that ONE set can arrive twice: a reply handed back
@@ -684,7 +678,7 @@ module Lain
         # question bytes, which the item itself would -- and a handback's bytes
         # are the whole oversized reply, held for the life of the session.
         def announce(item)
-          @tty.render_arrival(item.question, from: item.from) if @announced.add?([item.digest, item.asked_at])
+          @tty.render_asked(item.question, from: item.from) if @announced.add?([item.digest, item.asked_at])
         end
 
         # Back where a later surface can reach it. Off the list FIRST, because
@@ -698,8 +692,8 @@ module Lain
         end
       end
 
-      # A cockpit's chat for one DISPATCHED LINE: every question arrival
-      # announced as one line and listed, and a read that runs only commands.
+      # A cockpit's chat: every question arrival announced as one line and
+      # listed, and a read that runs only commands.
       #
       # AN ARRIVAL IS LISTED, NEVER SERVED. It goes onto the pending list and
       # stays there until some surface settles it, so `/inbox`, lain://inbox and
@@ -707,13 +701,13 @@ module Lain
       # took it off a list a human reads. That is what keeps a question answered
       # in nvim from being re-announced under every later line.
       #
-      # THE READ IS OPEN WHILE SOMETHING IS OUTSTANDING, and only then: a
-      # prompt drawn under every dispatched line is the ghost a cockpit is rid
-      # of, and an open read holds the terminal -- {Conductor#read_reply}
-      # suppresses the interrupt countdown for its span. So it opens when the
-      # line's {Repl::LineScope::Attention} reports a parked call or a listed
-      # question, from this line or an earlier one, and it is closed when
-      # nothing is, when the line ends, or when the stream does. A registered
+      # THE READ IS OPEN WHILE SOMETHING IS OUTSTANDING AND NO `you>` WAITS,
+      # and only then: a prompt drawn whenever a line dispatches is the ghost a
+      # cockpit is rid of, and a command can be typed at `you>` itself, where a
+      # `command>` would only queue behind it. So it opens when the
+      # conversation's {Repl::ConversationScope::Attention} reports a parked
+      # call or a listed question while a line dispatches, and it is closed when
+      # nothing is, when the chat goes back to `you>`, or when the stream ends. A registered
       # command runs where it was typed, owning the terminal for as long as it
       # reads; `/inbox` drains; anything else -- prose, or a `/word` no command
       # claims, which may be a skill -- is HELD for `you>` and said to be, since
@@ -733,7 +727,7 @@ module Lain
         TICK = 0.05
 
         # `conductor:` answers whether a Ctrl-C's grace countdown is running,
-        # which this read must never sit under.
+        # which this read must never sit under, and whether `you>` is waiting.
         def initialize(questions:, inbox:, tty:, reply:, notice:, conductor:, hold:, drain:)
           @questions = questions
           @inbox = inbox
@@ -789,12 +783,10 @@ module Lain
           close(reading)
         end
 
-        # Something is waiting on the human, and no interrupt countdown is. A
-        # read open under the countdown suppresses it ({Conductor#read_reply}):
-        # its status line never draws and the c/w/r a human presses to answer it
-        # arrive here as a line. So the read closes when the countdown starts,
-        # and opens again if it is cancelled.
-        def wanted?(attention) = attention.outstanding? && !@conductor.counting_down?
+        # Something is waiting on the human, no interrupt countdown is, and the
+        # chat is not back at `you>`. The read closes when the countdown starts,
+        # rather than stepping aside unseen, so its row is ended in words.
+        def wanted?(attention) = attention.outstanding? && !@conductor.counting_down? && !@conductor.prompting?
 
         def park_until
           Async::Task.current.sleep(TICK) until yield
@@ -810,8 +802,8 @@ module Lain
           ENDED
         end
 
-        # Guarded because it runs inside the ensure of an unwinding line, where
-        # a raise would replace the stop that is climbing.
+        # Guarded because it runs inside an unwinding ensure, where a raise would
+        # replace the stop that is climbing.
         def close(reading)
           return if reading.nil? || reading.completed?
 
@@ -1151,7 +1143,7 @@ module Lain
       end
 
       # One human answer, read, paired with the set it answers. Holds the
-      # terminal it happens on, the conductor that owns stdin while it does, and
+      # terminal it happens on, the conductor it reads through, and
       # the list the `/inbox` detour lists.
       #
       # Its own object because the detour, the refusal-and-retry and the pairing
@@ -1257,9 +1249,8 @@ module Lain
           end
         end
 
-        # Routed through the conductor rather than the tty directly, so the
-        # conductor KNOWS Reline owns stdin for the span and suppresses its
-        # countdown ticker's render and key-read.
+        # Routed through the conductor, whose reads take their lines off the
+        # input rail and step aside for the interrupt countdown.
         #
         # nil is EOF, and it is NOT `""`. `.to_s`ed into one it is the same
         # value a human pressing Enter types, which this prompt delivers as
@@ -1295,7 +1286,7 @@ module Lain
         # would turn every transient terminal fault into a question nobody can
         # ever answer.
         def heard(prompt, through: :read_reply)
-          @conductor.public_send(through, @tty, prompt)
+          @conductor.public_send(through, prompt)
         rescue EOFError, Errno::EIO
           nil
         end

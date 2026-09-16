@@ -19,16 +19,23 @@ module PlainChatPromptGuards
   LIB = File.expand_path("../../../lib", __dir__)
   APPROVAL = %r{\[y/N\] }
 
-  # The chat under test: a real Conductor, TTY, InputRail and the StdinPump
-  # feeding it, HumanReplies, approval surfaces and Approval::Queue. The one fake is the command registry's fallthrough,
-  # which claims every line so no model is involved: the first line parks one
-  # gated call once the spec says the human has finished typing ahead.
+  # The chat under test: a real Repl, Conductor, TTY, InputRail and the StdinPump
+  # feeding it, HumanReplies, approval surfaces and Approval::Queue, all open for
+  # the conversation. The one fake is the command registry's fallthrough, which
+  # claims every line so no model is involved: the first line parks one gated
+  # call once the spec says the human has finished typing ahead.
   #
-  # `plain` runs a real Repl with no editor, its first line already given;
-  # `idle` is the same chat opening at `you>`, and `human`'s first line asks a
-  # subagent's question at `human>` instead. `cockpit` binds an attached editor
-  # that answers nothing and runs one dispatched line, so the chat's only read
-  # is `command>`, with the real `/approve` registered behind it.
+  # `plain` runs with its first line already given; `idle` is the same chat
+  # opening at `you>`, and `human`'s first line asks a subagent's question at
+  # `human>` instead. `queued` asks that question and parks a call once
+  # `human>` is drawn, and `supervised` asks it inside the conductor's
+  # supervision, where a Ctrl-C opens the countdown. `actor` opens at `you>`
+  # and a fleet actor -- adopted by a real {Lain::Supervisor}, as a subagent is,
+  # so the chat's close reaps it -- parks a call once the spec says so, and
+  # `actor2` parks two at once. A `/`-line in the plain shapes goes to the real `/approve` and
+  # `/inbox`, and to nothing else. `cockpit` binds an
+  # attached editor that answers nothing and dispatches one line, so the chat's
+  # only read is `command>`, with the real `/approve` registered behind it.
   CHILD = <<~'RUBY'
     require "lain"
 
@@ -38,37 +45,72 @@ module PlainChatPromptGuards
     journal_io = File.open(File.join(dir, "journal.ndjson"), "a").tap { |io| io.sync = true }
     queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: window)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
+                                  input: Lain::Frontend::StdinPump.keys($stdin),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::InputRail.new(screen: tty)
-    conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
-                                         signals: Lain::CLI::Signals.new, rail:, grace: 5)
+    supervisor = Lain::Supervisor.new
+    conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new, supervisor:,
+                                         signals: Lain::CLI::Signals.new, rail:,
+                                         grace: Float(ENV.fetch("LAIN_SPEC_GRACE", "30")))
     pump = Lain::Frontend::StdinPump.new(rail:, screen: tty)
     askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
+    typed = File.join(dir, "typed")
+    waiting = -> { Async::Task.current.sleep(0.02) until File.exist?(typed) }
+
+    approve = Lain::CLI::Command::Approve.new(
+      prompt: Lain::Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(question) })
+    )
+    registry = Lain::CLI::Command::Registry.new([approve, Lain::CLI::Command::Inbox.new])
+                                           .bind(Struct.new(:approvals, :replies).new(queue, replies))
 
     commands = Class.new do
-      def initialize(queue, dir, askers)
+      def initialize(queue, dir, askers, conductor, rail, waiting, registry)
         @queue = queue
         @dir = dir
         @askers = askers
+        @conductor = conductor
+        @rail = rail
+        @waiting = waiting
+        @registry = registry
+        @parked = 0
       end
 
       def serves_replies?(_text) = false
 
       def dispatch(text)
         File.write(File.join(@dir, "dispatched"), "#{text}\n", mode: "a")
-        return unless ["run the tests", "ask me"].include?(text)
+        return @registry.dispatch(text) { nil } if text.start_with?("/")
+        return unless ["run the tests", "ask me", "ask and park", "ask supervised"].include?(text)
 
         $stdout.write("DISPATCHING\n")
-        Async::Task.current.sleep(0.02) until File.exist?(File.join(@dir, "typed"))
-        text == "ask me" ? ask : park
+        @waiting.call
+        send(text.tr(" ", "_"))
         $stdout.write("SETTLED\n")
         nil
       end
 
       def park
-        @queue.call(Lain::Effect::ToolCall.new(tool_use_id: "call_1", name: "bash",
-                                               input: { "command" => "rm -rf build" }), nil)
+        @parked += 1
+        command = @parked == 1 ? "rm -rf build" : "rm -rf build#{@parked}"
+        @queue.call(Lain::Effect::ToolCall.new(tool_use_id: "call_#{@parked}", name: "bash",
+                                               input: { "command" => command }), nil)
+      end
+
+      def run_the_tests = park
+      def ask_me = ask
+
+      def ask_and_park
+        parking = Async::Task.current.async do
+          Async::Task.current.sleep(0.02) until @rail.published.kind == :human
+          park
+        end
+        ask
+        parking.wait
+      end
+
+      def ask_supervised
+        Sync { |task| @conductor.supervise(task, -> { Lain::Timeline.empty }) { ask } }
       end
 
       def ask
@@ -78,14 +120,35 @@ module PlainChatPromptGuards
                                                  Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
         File.write(File.join(@dir, "answer"), result.content.to_s)
       end
-    end.new(queue, dir, askers)
+    end.new(queue, dir, askers, conductor, rail, waiting, registry)
 
     if shape != "cockpit"
-      Sync do |task|
-        pump.start(task)
-        Lain::CLI::Repl.new(agent: Struct.new(:timeline).new(nil), tty:, replies:, commands:,
-                            chronicle: Lain::CLI::Chronicle::Null.new, conductor:, approvals: queue)
-                       .converse(first_prompt: { "plain" => "run the tests", "human" => "ask me" }[shape])
+      replies.bind_commands(registry)
+      first = { "plain" => "run the tests", "human" => "ask me", "queued" => "ask and park",
+                "supervised" => "ask supervised" }[shape]
+      repl = Lain::CLI::Repl.new(agent: Struct.new(:timeline).new(nil), tty:, replies:, commands:, supervisor:,
+                                 chronicle: Lain::CLI::Chronicle::Null.new, conductor:, approvals: queue, input: pump)
+      conductor.guard do
+        Sync do |task|
+          if shape.start_with?("actor")
+            task.async do
+              waiting.call
+              Async::Task.current.sleep(0.02) until supervisor.running?
+              # The park runs under the SUPERVISOR's task, where an adoption puts
+              # a subagent's work, so the chat's close reaps it.
+              supervisor.adopt(role: "actor") do
+                Array.new(shape == "actor2" ? 2 : 1) { Async::Task.current.parent.async { commands.park } }
+                Struct.new(:stopped) do
+                  def stop = self.stopped = true
+                  def stopped? = stopped ? true : false
+                  def dead? = false
+                  def address = "actor"
+                end.new(false)
+              end
+            end
+          end
+          repl.run(nvim: nil, store: nil, session: nil, first_prompt: first)
+        end
       end
     else
       editor = Class.new do
@@ -98,16 +161,17 @@ module PlainChatPromptGuards
                                                        tty:, conductor:)
       surfaces.bind_editor(editor)
       replies.bind_editor(editor)
-      approve = Lain::CLI::Command::Approve.new(
-        prompt: Lain::Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(tty, question) })
-      )
-      replies.bind_commands(Lain::CLI::Command::Registry.new([approve, Lain::CLI::Command::Inbox.new])
-                                                        .bind(Struct.new(:approvals, :replies).new(queue, replies)))
+      replies.bind_commands(registry)
+      conversation = Lain::CLI::Repl::ConversationScope.new(supervisor: Lain::Supervisor::Null, replies:, surfaces:)
       Sync do |task|
         pump.start(task)
-        Lain::CLI::Repl::LineScope.new(replies:, surfaces:).serve { commands.dispatch("run the tests") }
+        conversation.open(task)
+        commands.dispatch("run the tests")
+      ensure
+        conversation.close
       end
     end
+    File.write(File.join(dir, "exited"), "")
   RUBY
 
   # The far end of the PTY: what the human types, and everything the chat drew.
@@ -117,13 +181,14 @@ module PlainChatPromptGuards
     CURSOR_QUERY = "\e[6n"
     CURSOR_REPORT = "\e[1;1R"
 
-    def initialize(dir, window:, shape:, term: "xterm", answers_cursor: true)
+    def initialize(dir, window:, shape:, term: "xterm", answers_cursor: true, grace: nil)
       @dir = dir
       @screen = +""
       @lock = Mutex.new
       @answers_cursor = answers_cursor
       @during_query = nil
       env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
+      env["LAIN_SPEC_GRACE"] = grace.to_s if grace
       @output, @input, @pid = PTY.spawn(env, RbConfig.ruby, "-I", LIB, "-e", CHILD, dir, window.to_s, shape)
       @output.winsize = [40, 200]
       @pump = Thread.new { pump }
@@ -165,6 +230,12 @@ module PlainChatPromptGuards
       File.exist?(path) ? File.readlines(path, chomp: true) : []
     end
 
+    # Whether the chat ran to its end, rather than still reading.
+    def exited? = File.exist?(File.join(@dir, "exited"))
+
+    # The screen with its escape sequences taken out, as a human reads it.
+    def text = screen.gsub(/\e\[[\d;?]*[A-Za-z]/, "").gsub(/\e[>=]/, "")
+
     def close
       Process.kill("KILL", @pid)
       Process.wait(@pid)
@@ -201,7 +272,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
   describe "over a real terminal" do
     around do |example|
       Dir.mktmpdir do |dir|
-        @terminal = PlainChatPromptGuards::Terminal.new(dir, window:, shape:, term:, answers_cursor:)
+        @terminal = PlainChatPromptGuards::Terminal.new(dir, window:, shape:, term:, answers_cursor:, grace:)
         example.run
       ensure
         @terminal&.close
@@ -209,6 +280,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     end
 
     let(:window) { 30 }
+    let(:grace) { nil }
     let(:shape) { "plain" }
     let(:term) { "xterm" }
     let(:answers_cursor) { true }
@@ -449,6 +521,296 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       end
     end
 
+    # A gated call parks while `human>` is open for a question. The `[y/N]`
+    # waits its turn on the rail; its one-line arrival is enqueued at once,
+    # printed as soon as `human>` closes (nothing prints above a live prompt),
+    # and precedes the `[y/N]`'s draw.
+    describe "an approval queued behind a question" do
+      let(:shape) { "queued" }
+
+      it "announces the call once human> closes, then draws the [y/N]" do
+        terminal.typed
+        terminal.await(/human> /)
+        sleep(0.8)
+        expect(terminal.screen).not_to include("asks to run bash")
+
+        terminal.type("postgres\r")
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+
+        arrival = terminal.screen.index("agent asks to run bash(")
+        expect(arrival).not_to be_nil
+        expect(arrival).to be < terminal.screen.rindex("approve bash(")
+        terminal.type("n\r")
+        terminal.await(/SETTLED/)
+        expect(terminal.verdicts).to eq([%w[tty deny]])
+      end
+
+      context "when its queue timeout expires while human> is still open" do
+        let(:window) { 1.0 }
+
+        it "says, once human> closes, that the call was denied by timeout" do
+          terminal.typed
+          terminal.await(/human> /)
+          sleep(2.0)
+          terminal.type("postgres\r")
+          terminal.await(/decided by timeout: denied/)
+
+          expect(terminal.verdicts).to eq([%w[timeout deny]])
+          expect(terminal.screen.lines.grep(/decided by timeout: denied/).join).to include("rm -rf build")
+        end
+      end
+    end
+
+    # A Ctrl-C at `human>` under a supervised ask opens the shutdown countdown.
+    # The `human>` read steps aside for it -- anything half typed there is gone
+    # -- so the countdown's line draws rather than being held off by the read.
+    describe "Ctrl-C at human>" do
+      let(:shape) { "supervised" }
+
+      it "draws the shutdown countdown" do
+        terminal.typed
+        terminal.await(/human> /)
+        sleep(0.3)
+        terminal.type("\x03")
+        terminal.await(/closing in \d+s/)
+
+        expect(terminal.screen[terminal.screen.rindex("human> ")..]).to match(/closing in \d+s -- \[c\] cancel/)
+      end
+    end
+
+    # A plain chat at rest sits at `you>`, and a fleet actor's call would
+    # otherwise show only when the human next pressed Enter.
+    describe "a call parked while the chat sits at an empty you>" do
+      let(:shape) { "actor" }
+
+      it "draws its [y/N] at once, and you> again after it is answered" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.typed
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+
+        terminal.type("n\r")
+        sleep(0.5)
+        prompts_after = terminal.screen[terminal.screen.rindex("approve bash(")..]
+
+        expect(terminal.verdicts).to eq([%w[tty deny]])
+        expect(prompts_after).to include("you> ")
+        expect(terminal.dispatched).to be_empty
+      end
+
+      it "waits behind a you> the human has typed at, announced once that line is sent" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.type("half a thought")
+        sleep(0.2)
+        terminal.typed
+        sleep(1.0)
+        expect(terminal.screen).not_to match(PlainChatPromptGuards::APPROVAL)
+
+        terminal.type("\r")
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+
+        expect(terminal.dispatched).to eq(["half a thought"])
+        expect(terminal.screen.index("agent asks to run bash(")).to be < terminal.screen.rindex("approve bash(")
+      end
+    end
+
+    def arrivals = terminal.text.lines.grep(/! agent asks to run bash\(/).grep_v(/decided by/)
+
+    # A watcher asks about one parked call at a time, so the second of two calls
+    # parked together is asked the moment the first is answered -- which is the
+    # instant `you>` comes back, empty, before its line editor has opened.
+    describe "two calls parked together at an empty you>" do
+      let(:shape) { "actor2" }
+
+      it "draws the second [y/N] as soon as the first is answered, with nothing typed, then you>" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.typed
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+        sleep(0.3)
+        terminal.type("n\r")
+        terminal.await(/rm -rf build2/, timeout: 5)
+        sleep(0.5)
+        terminal.type("y\r")
+        sleep(1.0)
+
+        expect(terminal.verdicts).to eq([%w[tty deny], %w[tty approve]])
+        expect(terminal.dispatched).to be_empty
+        expect(terminal.text[terminal.text.rindex("rm -rf build2")..]).to include("you> ")
+      end
+    end
+
+    # A line held at a preempting `[y/N]` -- a `/`-line is never its answer --
+    # is the next line `you>` reads when it comes back, ahead of anything typed
+    # after it.
+    describe "a /-line typed at a [y/N] that preempted an empty you>" do
+      let(:shape) { "actor" }
+
+      it "is dispatched when you> returns, before the line typed next" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.typed
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+        sleep(0.3)
+        terminal.type("/goal off\r")
+        terminal.await(%r{held as your next prompt: /goal off})
+        sleep(0.3)
+        terminal.type("n\r")
+        sleep(1.5)
+        terminal.type("second line\r")
+        sleep(1.5)
+
+        expect(terminal.dispatched).to eq(["/goal off", "second line"])
+      end
+    end
+
+    # `/approve` typed while the watcher's own `[y/N]` for the same call waits
+    # behind it: one question for one call, and the prompt left over is taken
+    # down in words once the call is decided rather than asked again.
+    describe "/approve typed while the watcher's [y/N] for the same call is queued" do
+      let(:shape) { "actor" }
+
+      it "decides the call once, announces it once, and never contradicts the answer" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.type("/approve")
+        sleep(0.2)
+        terminal.typed
+        sleep(1.0)
+        terminal.type("\r")
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+        sleep(0.5)
+        terminal.type("y\r")
+        terminal.await(/bash: approved/)
+        sleep(0.5)
+        terminal.type("n\r")
+        sleep(1.0)
+
+        expect(terminal.verdicts).to eq([%w[tty approve]])
+        expect(arrivals.size).to eq(1)
+        expect(terminal.text).to include("-- decided by tty: approved")
+        expect(terminal.text).not_to include("bash: denied")
+        expect(terminal.dispatched).to eq(["/approve", "n"])
+      end
+    end
+
+    # Ctrl-C at a `[y/N]` that took the terminal from an idle `you>` is a
+    # Ctrl-C at a question, as at `human>`: the countdown draws, and a cancel
+    # puts the question back. It does not end the chat by itself.
+    describe "Ctrl-C at a [y/N] that preempted an idle you>" do
+      let(:shape) { "actor" }
+
+      it "draws the countdown, and c puts the [y/N] back, answerable" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.typed
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+        sleep(0.3)
+        terminal.type("\x03")
+        terminal.await(/closing in \d+s/)
+        sleep(1.2)
+        terminal.type("c")
+        sleep(1.5)
+        after_cancel = terminal.text[terminal.text.rindex("closing in")..]
+        terminal.type("n\r")
+        sleep(1.0)
+
+        expect(after_cancel).to include("approve bash(")
+        expect(terminal.verdicts).to eq([%w[tty deny]])
+        expect(terminal.exited?).to be(false)
+      end
+
+      # Nobody presses anything: the countdown means what it says. The chat
+      # closes, the fleet's parked call is reaped with it, and no prompt is put
+      # back on a screen the chat has finished with.
+      context "when nobody answers it" do
+        let(:grace) { 2 }
+
+        it "ends the chat, reaps the parked call, and draws no prompt after the close" do
+          terminal.await(/you> /)
+          sleep(0.3)
+          terminal.typed
+          terminal.await(PlainChatPromptGuards::APPROVAL)
+          sleep(0.3)
+          terminal.type("\x03")
+          terminal.await(/closing in \d+s/)
+          drawn = terminal.text.scan("approve bash(").size
+          sleep(6.0)
+
+          expect(terminal.exited?).to be(true)
+          expect(terminal.verdicts).to eq([%w[abandoned deny]])
+          expect(terminal.text.scan("approve bash(").size).to eq(drawn)
+        end
+
+        # "respond then exit" waits for a run to answer, and at `you>` there is
+        # none: pressed there it made the next typed line the thing waited for,
+        # and that line went with the session.
+        it "offers cancel and wait longer, and no respond-then-exit" do
+          terminal.await(/you> /)
+          sleep(0.3)
+          terminal.typed
+          terminal.await(PlainChatPromptGuards::APPROVAL)
+          sleep(0.3)
+          terminal.type("\x03")
+          terminal.await(/closing in \d+s/)
+
+          countdown = terminal.text[terminal.text.rindex("closing in")..]
+          expect(countdown).to include("[c] cancel", "[w] wait longer")
+          expect(countdown).not_to include("respond then exit")
+        end
+      end
+
+      # The line editor traps INT for its own read and reaches the chat's handler
+      # only from its key loop, so a Ctrl-C arriving as the `[y/N]` takes the
+      # terminal used to die with the read it interrupted. The chat holds that
+      # trap while a read is under way, and routes the signal against what is
+      # drawn when it is handled.
+      it "loses no Ctrl-C that lands as the [y/N] takes the terminal" do
+        terminal.await(/you> /)
+        sleep(0.3)
+        terminal.typed
+        sleep(0.008)
+        terminal.type("\x03")
+        sleep(2.0)
+
+        # Which of the two it is depends on whether `you>` was still the prompt
+        # when the signal was handled; that it is one of them is the claim.
+        expect([terminal.text.match?(/closing in \d+s/), terminal.exited?]).to include(true)
+      end
+
+      it "still ends the chat on a Ctrl-C at the idle you> itself" do
+        terminal.await(/you> /)
+        sleep(0.5)
+        terminal.type("\x03")
+        sleep(1.5)
+
+        expect(terminal.exited?).to be(true)
+      end
+    end
+
+    # A dumb terminal reads cooked, so nothing can say whether the human has
+    # begun typing at `you>`: an answer never takes the terminal there, and a
+    # line typed across the arrival stays one line.
+    context "with a dumb terminal at an idle you>" do
+      let(:shape) { "actor" }
+      let(:term) { "dumb" }
+
+      it "does not preempt a you> the human is typing at, and never splits the line" do
+        sleep(2.0)
+        terminal.type("ye")
+        sleep(0.3)
+        terminal.typed
+        sleep(1.5)
+        terminal.type("s\r")
+        sleep(1.5)
+
+        expect(terminal.text).not_to include("discarded: ye")
+        expect(terminal.dispatched).to eq(["yes"])
+        expect(terminal.verdicts).to be_empty
+      end
+    end
+
     # `command>` answers nothing, so a command typed a moment before the call
     # parked is read there as typed -- it is what the human reached for -- and
     # the `[y/N]` that command asks drains for itself.
@@ -480,11 +842,12 @@ RSpec.describe "a plain chat's inline prompts", :seam do
   end
 
   # A `[y/N]` still waiting its turn on the rail -- a `human>` is published
-  # ahead of it -- when the approval window decides its call was never
-  # published, so there is no line to end: a sentence printed for it would land
-  # inside the read that is open, naming no call.
+  # ahead of it -- when the approval window decides its call was never drawn,
+  # so it has no row to end: it says how its call was decided in a line of its
+  # own, naming the call. That line is held while `human>` is drawn, like any
+  # note, and printed once `human>` closes.
   describe "a prompt decided while it still waited behind another read" do
-    it "ends no line, because it drew none" do
+    it "prints a whole line naming the call and saying it was denied by timeout" do
       output = StringIO.new
       tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, history_path: File::NULL,
                                     pastel: Pastel.new(enabled: false))
@@ -505,7 +868,10 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         human.stop
       end
 
-      expect(output.string).not_to include("decided by")
+      expect(output.string.lines).to include(
+        a_string_including("! agent asks to run bash(", "rm -rf build", "its y/N is asked next"),
+        a_string_including("! agent asks to run bash(", "rm -rf build", "-- decided by timeout: denied")
+      )
       expect(Lain::Journal.records(journal_io.string.lines, type: "approval_decision").map { |r| r["surface"] }.to_a)
         .to eq(["timeout"])
     end

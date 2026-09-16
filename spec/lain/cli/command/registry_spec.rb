@@ -113,11 +113,9 @@ RSpec.describe Lain::CLI::Command::Registry do
     end
   end
 
-  # {Lain::CLI::Repl::LineScope} brackets every dispatched
-  # line in the human's reply surfaces, so a command that opens its OWN
-  # `human> ` read ({Command::Inbox}) would run with a second reader on the same
-  # stdin -- and the human's typed answer would go to whichever fiber won the
-  # dequeue. The Repl asks this BEFORE the line runs; the command declares it.
+  # A command that opens its OWN `human> ` read ({Command::Inbox}) declares it,
+  # so a reply prompt can detour into that drain for the set it is parked on
+  # rather than run a second drain for whichever set is oldest.
   describe "#serves_replies?" do
     let(:draining) do
       Struct.new(:name) do

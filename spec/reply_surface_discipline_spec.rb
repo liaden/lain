@@ -3,16 +3,15 @@
 require "ripper"
 require "pathname"
 
-# Mechanical enforcement of the terminal rule: A LINE THAT OWNS THE TERMINAL
-# READ GETS NO TERMINAL SURFACE.
+# Mechanical enforcement of a declaration: A COMMAND THAT READS THE HUMAN'S
+# ANSWER ITSELF SAYS SO ({Lain::CLI::Command::Registry#serves_replies?}).
 #
-# {Lain::CLI::Repl::LineScope} brackets every dispatched line in the surfaces
-# that read stdin -- the ask_human reply loop and the approval prompt -- and asks
-# the command surface first whether the LINE reads the terminal itself, so that
-# such a line is the only reader ({Lain::CLI::Command::Registry#serves_replies?}).
-# A command that reads the terminal and forgets to declare it gets a second
-# reader in silence, and the keystroke then goes to whichever fiber won it: an
-# answer meant for an inbox question landing as the `y` on a gated `bash`.
+# The declaration once decided which reply surfaces a dispatched line was given,
+# since two readers on one stdin sent a keystroke to whichever fiber won it.
+# Those surfaces now live for the whole conversation and every prompt takes its
+# turn on the input rail, so that race is the rail's to prevent. What still
+# reads the declaration is the reply prompt's `/inbox` detour
+# ({Lain::CLI::HumanReplies::Reply#classify}), pinned below.
 #
 # Silence is the whole problem, so the declaration is checked here rather than
 # left to whoever writes the next command -- {OutputDiscipline}'s idiom, for its
@@ -228,16 +227,15 @@ RSpec.describe "reply-surface discipline" do
 
     expect(undeclared).to be_empty, lambda {
       listing = undeclared.map { |subject, reads| "  #{subject.named}: #{reads.join(", ")}" }.join("\n")
-      "A command that reads the terminal must answer `serves_replies? => true`, or " \
-        "Repl::LineScope will open a second reader over it and the human's keystroke " \
-        "can reach a surface they were not answering. Found:\n#{listing}"
+      "A command that reads the terminal must answer `serves_replies? => true`, so the " \
+        "reply prompt's /inbox detour has been checked against it. Found:\n#{listing}"
     }
   end
 
   # `serves_replies?` has TWO readers that once meant different things by it.
   #
-  # {Lain::CLI::Repl::LineScope} reads it as "this line reads the terminal
-  # itself, so open no second reader over it" -- the rule this file enforces.
+  # A per-line bracket of reply surfaces once read it as "this line reads the
+  # terminal itself, so open no second reader over it".
   # {Lain::CLI::HumanReplies::Reply#classify} used to read it as "this line is
   # the inbox detour, so drain THIS parked item instead of dispatching", which
   # was true only because `/inbox` was the sole declarer -- and `/approve`,

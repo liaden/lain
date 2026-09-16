@@ -160,13 +160,9 @@ RSpec.describe Lain::CLI::Command::Inbox do
     end
   end
 
-  # Review BLOCKER 1. This command opens its OWN `human> ` read through the
-  # drain, and {Lain::CLI::Repl::LineScope} now brackets every dispatched line in
-  # the reply surfaces -- so without this declaration the loop and the drain
-  # would both read the one stdin, and the human's answer would land on
-  # whichever fiber won the dequeue (against `@inbox.oldest`, which by then is
-  # the loop's own item). It is the ONE command in the set that says this.
-  it "declares that it serves replies itself, so no second reply surface opens over it" do
+  # This command opens its OWN `human> ` read through the drain, and says so,
+  # which is how a reply prompt recognises it as the detour into that drain.
+  it "declares that it serves replies itself" do
     expect(command.serves_replies?).to be(true)
   end
 

@@ -44,9 +44,71 @@ module Lain
 
       DEFAULT_TICK = 1.0
 
+      # How often an open read looks whether the countdown has started or ended.
+      ASIDE_TICK = 0.05
+
+      # What a read withdrawn for the countdown hands back, to be asked again.
+      STEPPED_ASIDE = Object.new.freeze
+      private_constant :STEPPED_ASIDE
+
+      # The countdown keys an idle `you>` offers. No `r`: "respond then exit"
+      # waits for the run to answer, and at `you>` there is no run -- pressed
+      # there it made the next typed line the thing being waited for, and that
+      # line vanished with the session.
+      IDLE_KEYS = { "c" => :cancel, "w" => :extend }.freeze
+
+      # How long a Break gets to end the prompt it was raised into before the
+      # signal is handed to the countdown instead.
+      BREAK_GRACE = 0.5
+
       # The shutdown there is while no ask is supervised: nothing is counting down.
       module Unsupervised
         def self.state = :running
+      end
+
+      # What a countdown opened at `you>` closes the session with. Nothing was
+      # interrupted there, so its expiry is the operator's quit, as an idle
+      # SIGTERM is.
+      IdleClose = Struct.new(:conductor) do
+        def close(**) = conductor.close(reason: :exit)
+      end
+
+      # Signals arriving while `you>` is read, RECORDED in the trap and routed
+      # on the reactor ({Conductor#routed_idle}).
+      #
+      # The decision is not the trap's to make: a signal delivered as a prompt
+      # takes the terminal from `you>` read a screen that was already a
+      # transition old, so it was sent to the prompt breaker and the Break
+      # landed in the very read being stopped, where the stop absorbed it -- a
+      # Ctrl-C that did nothing at all. The trap does what a trap can do: one
+      # read of the rail's published generation and one nonblocking write of a
+      # byte ({Shutdown::Ingress}, whose class comment holds the trap-safety
+      # rules). A live fiber then routes each recorded signal against whatever
+      # is drawn when it is handled.
+      class IdleSignals
+        # What the trap recorded: the input, and the prompt generation it
+        # arrived at. A stale generation says the screen moved under it.
+        Arrived = Data.define(:name, :generation)
+
+        def initialize(rail:)
+          @rail = rail
+          @ingress = Shutdown::Ingress.new
+          @generation = 0
+        end
+
+        # Trap context: two ivar reads, one ivar write, one nonblocking write.
+        def signal(name)
+          @generation = @rail.glimpse.generation
+          @ingress.signal(name)
+        end
+
+        # Each recorded signal, until the ingress retires.
+        def each(&block)
+          Enumerator.produce { Arrived.new(name: @ingress.read, generation: @generation) }
+                    .lazy.take_while { |arrived| arrived.name != :retired }.each(&block)
+        end
+
+        def dispose = @ingress.dispose
       end
 
       # A conductor over a fresh {Signals} installer it also owns, so the exe
@@ -79,7 +141,8 @@ module Lain
         @supervisor = supervisor
         @run_clock = run_clock
         @clock = clock
-        @ticker = CountdownTicker.new(tty:, tick:, suppressed: -> { @replies_outstanding.positive? })
+        @ticker = CountdownTicker.new(tty:, tick:)
+        @idle_keys = IDLE_KEYS
         seed_ask_state
       end
 
@@ -123,11 +186,9 @@ module Lain
       # EOF and a rescued Break are not the user answering anything, so neither
       # records.
       #
-      # @param _tty [Object] the caller's name for where it reads; the line comes
-      #   off the rail whichever terminal that is
       # @param text [String] the prompt string, published unchanged
       # @return [String, nil] the line, or nil at EOF or on a signal-close
-      def read_prompt(_tty, text)
+      def read_prompt(text)
         line = read_breakable(text)
         @run_clock.record_input if line
         line
@@ -136,30 +197,30 @@ module Lain
         nil
       end
 
-      # Read an ask_human reply or a `[y/N]` through the conductor so it KNOWS a
-      # prompt is drawn for the span. Unlike {#read_prompt} there IS a run in
-      # flight, so signals stay routed at the coordinator and the grace clock
-      # keeps running; an expiry interrupts the run while
-      # {Repl::LineScope#serve}'s ensure stops the replier fiber parked here,
-      # which withdraws its prompt from the rail, so no breaker is needed.
+      # Read an ask_human reply or a `[y/N]`. Unlike {#read_prompt} there may be
+      # a run in flight, so signals stay routed at the coordinator and the grace
+      # clock keeps running.
       #
-      # What DOES change: the countdown ticker is suppressed. It would otherwise
-      # smear its status line against Reline's echo and STEAL a keystroke out of
-      # the operator's answer with its non-blocking key read -- an 'r' silently
-      # firing wait_responses. It reappears on the next tick once the last read
-      # has finished -- a COUNT, since a `human>` and a `[y/N]` can be open
-      # together.
+      # The countdown owns the terminal while it runs -- its status line and its
+      # key read, where an 'r' typed as an answer would fire wait_responses -- so
+      # this read STEPS ASIDE for it: the prompt is withdrawn once the countdown
+      # starts, and whatever was half typed at it is gone, and it is published
+      # again, empty, once the countdown is cancelled or the run drains. An
+      # expiry never gives it back: the run is interrupted instead.
       #
       # The prompt is an ANSWER on the rail: what the human typed before it was
       # drawn is held, never taken as the answer to it.
-      def read_reply(_tty, text) = owning_stdin { @rail.read(answer_kind(text), text) }
+      def read_reply(text) = aside_of_countdown(answer_kind(text), text)
 
       # The chat's `command>` read, which answers nothing: what the human typed
       # ahead of it is read AT it, because a `/approve` typed a moment before
       # the call parked is what they reached for. Every read that can answer
       # -- the `[y/N]` that `/approve` asks included -- goes through
-      # {#read_reply}.
-      def read_command(_tty, text) = owning_stdin { @rail.read(:command, text) }
+      # {#read_reply}. It steps aside for the countdown as that read does.
+      def read_command(text) = aside_of_countdown(:command, text)
+
+      # Whether the chat is waiting at `you>` for its next line.
+      def prompting? = @prompting
 
       # A line the human typed that was neither a command nor an answer, kept for
       # `you>` and said to be ({Frontend::InputRail#hold}).
@@ -173,8 +234,8 @@ module Lain
       def gather_typed_ahead = @rail.gather
 
       # Whether the grace countdown is running for the ask being supervised.
-      # A reader open beside the run asks, so it can close and let the
-      # countdown draw and read its keys: an open read suppresses both.
+      # A reader open beside the run asks, so it can get out of the countdown's
+      # way rather than swallow its keys.
       def counting_down? = @shutdown.state == :grace
 
       # The coordinator's `closer:` duck AND chat's normal-exit closer. Guarded so
@@ -252,32 +313,112 @@ module Lain
         @chronicle.close(reason:)
       end
 
-      # The ticker's suppressed thunk reads @replies_outstanding at tick time, so
-      # seeding after the ticker is constructed is safe.
       def seed_ask_state
         @timeline = nil
         @closed = false
-        @replies_outstanding = 0
+        @prompting = false
         @shutdown = Unsupervised
       end
 
-      def owning_stdin
-        @replies_outstanding += 1
+      def aside_of_countdown(kind, text)
+        Enumerator.produce { read_unless_counting_down(kind, text) }.lazy
+                  .reject { |heard| heard.equal?(STEPPED_ASIDE) }.first
+      end
+
+      # The window is closed before the prompt is published again, so the line
+      # editor never opens under the countdown's raw mode and has its own mode
+      # put back from under it. A closed session never draws a prompt again: the
+      # read waits to be stopped with the surface it belongs to, rather than
+      # putting a `[y/N]` back on a screen the chat has finished with.
+      def read_unless_counting_down(kind, text)
+        park_while { counting_down? || closed? }
         @ticker.stop
-        yield
+        reading = Async::Task.current.async(finished: false) { @rail.read(kind, text) }
+        watching = Async::Task.current.async { stepped_aside_for_countdown(reading) }
+        heard = reading.wait
+        reading.stopped? ? STEPPED_ASIDE : heard
       ensure
-        @replies_outstanding -= 1
+        watching&.stop
+        reading&.stop
+      end
+
+      def stepped_aside_for_countdown(reading)
+        park_while { !counting_down? }
+        reading.stop
+      end
+
+      # Parks while the block holds, at most `within` seconds when one is given.
+      def park_while(within = nil)
+        deadline = within && (Async::Clock.now + within)
+        Async::Task.current.sleep(ASIDE_TICK) while yield && (deadline.nil? || Async::Clock.now < deadline)
       end
 
       # No rescue here on purpose -- a Break, during the read OR during this
       # ensure's dispose, surfaces to {#read_prompt}'s rescue.
       def read_breakable(text)
         breaker = PromptBreaker.new(main: Thread.current)
-        route(breaker)
-        @rail.read(:you, text)
+        Sync { |task| read_you(task, text, breaker) }
       ensure
         route(Signals::NULL)
         breaker.dispose
+      end
+
+      # `you>` read as the run of a countdown of its own, which only a signal
+      # arriving while an answer stands in front of `you>` ever opens
+      # ({IdleSignals}). `you>` steps aside for that countdown too, or it would
+      # take the terminal back the moment the answer stepped aside. Settled as
+      # {#supervise} settles an ask, so an expiry closes the session before the
+      # countdown's fibers are stopped.
+      def read_you(task, text, breaker)
+        @prompting = true
+        # Recording FIRST, before a prompt exists to signal at: a signal arriving
+        # while this is still being set up is kept in the ingress and routed when
+        # the fiber below starts, rather than reaching a sink that is still NULL.
+        recorder = IdleSignals.new(rail: @rail)
+        route(recorder)
+        reading = task.async(finished: false) { aside_of_countdown(:you, text) }
+        shutdown = @shutdown = idle_shutdown(reading)
+        routing = task.async { routed_idle(recorder, shutdown, breaker) }
+        coordinator = task.async { shutdown.coordinate }
+        ticker_task = task.async { @ticker.run(shutdown, task, bindings: @idle_keys) }
+        reading.wait.tap { settle(shutdown, coordinator) }
+      ensure
+        @prompting = false
+        reading&.stop
+        recorder&.dispose
+        routing&.stop
+        teardown(shutdown, coordinator, ticker_task)
+      end
+
+      def idle_shutdown(reading)
+        Shutdown.new(run_task: reading, closer: IdleClose.new(self), budget: @budget, clock: @clock, grace: @grace)
+      end
+
+      # Each recorded signal, routed against what is drawn NOW: the prompt
+      # breaker while `you>` itself is still the prompt the signal arrived at,
+      # and otherwise the countdown, which is what a Ctrl-C means at any
+      # question.
+      def routed_idle(recorder, shutdown, breaker)
+        recorder.each { |arrived| deliver_idle(arrived, shutdown, breaker) }
+      end
+
+      # A Break is delivered by `Thread#raise`, and one raised into a `you>` read
+      # that is at that instant being stopped for a prompt taking the terminal is
+      # absorbed by that stop. So the delivery is CONFIRMED: a Break that has not
+      # ended the prompt hands its signal to the countdown instead, and no signal
+      # is lost.
+      def deliver_idle(arrived, shutdown, breaker)
+        return shutdown.signal(arrived.name) unless at_you?(arrived)
+
+        breaker.signal(arrived.name)
+        park_while(BREAK_GRACE) { at_you?(arrived) && !closed? }
+        shutdown.signal(arrived.name) unless closed?
+      end
+
+      # Whether `you>` is still the prompt that signal arrived at.
+      def at_you?(arrived)
+        published = @rail.published
+        published.kind == :you && published.generation == arrived.generation
       end
 
       def route(sink)
@@ -343,23 +484,33 @@ module Lain
       # cadence. Poll-driven, not transition-driven (see
       # {Conductor#build_shutdown}), so ONE cadence serves render and erase.
       class CountdownTicker
-        # @param tty [#render_countdown, #stop_countdown] the terminal surface the
-        #   countdown renders to and erases from ({Frontend::TTY})
+        # What the ticker sends the terminal. Checked when it is built: a
+        # message missing there killed the ticker's task inside Async on its
+        # first tick, and the countdown never drew, with one warning to say so.
+        NEEDS = %i[render_countdown stop_countdown prompt_drawn?].freeze
+
+        # @param tty [#render_countdown, #stop_countdown, #prompt_drawn?] the
+        #   terminal surface the countdown renders to and erases from
+        #   ({Frontend::TTY})
         # @param tick [Numeric] the poll cadence, in seconds
-        # @param suppressed [#call] -> Boolean, true while any reply owns
-        #   stdin ({Conductor#read_reply}); a suppressed tick renders nothing and
-        #   reads no key. Defaults to never-suppressed.
-        def initialize(tty:, tick:, suppressed: -> { false })
+        def initialize(tty:, tick:)
+          missing = NEEDS.reject { |message| tty.respond_to?(message) }
+          raise ArgumentError, "the countdown's terminal does not answer #{missing.join(", ")}" unless missing.empty?
+
           @tty = tty
           @tick = tick
-          @suppressed = suppressed
         end
 
         # The `loop` needs no break: `Async::Task#stop` unwinds it when
         # {Conductor#teardown} stops the fiber.
-        def run(shutdown, task)
+        #
+        # @param shutdown [CLI::Shutdown] the coordinator this renders the state of
+        # @param task [Async::Task] the fiber's own task, for its sleep
+        # @param bindings [Hash, nil] the keys this countdown offers, or nil for
+        #   the terminal's own default
+        def run(shutdown, task, bindings: nil)
           loop do
-            tick(shutdown)
+            tick(shutdown, bindings)
             task.sleep(@tick)
           end
         end
@@ -370,14 +521,15 @@ module Lain
 
         private
 
-        # A suppressed tick touches nothing, not even the erase: Reline owns the
-        # terminal for the reply span, and the status line was already erased at
-        # {Conductor#read_reply} entry.
-        def tick(shutdown)
-          return if @suppressed.call
+        # A tick while a line editor still holds the terminal touches nothing,
+        # not even the erase: a read that stepped aside is still unwinding, and
+        # Reline puts its own terminal mode back as it goes.
+        def tick(shutdown, bindings = nil)
+          return if @tty.prompt_drawn?
 
           if shutdown.state == :grace
-            @tty.render_countdown(deadline: shutdown.deadline, options: { coordinator: shutdown })
+            @tty.render_countdown(deadline: shutdown.deadline,
+                                  options: { coordinator: shutdown, **({ bindings: } if bindings).to_h })
           else
             stop
           end

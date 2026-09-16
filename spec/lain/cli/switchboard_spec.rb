@@ -753,8 +753,7 @@ RSpec.describe Lain::CLI::Switchboard do
       board = switchboard
       board.bind_snapshots(slot)
 
-      kwargs = board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor),
-                                    tty: instance_double(Lain::Frontend::TTY))
+      kwargs = board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor))
 
       expect(kwargs.fetch(:snapshots)).to be(slot)
     end
@@ -769,8 +768,7 @@ RSpec.describe Lain::CLI::Switchboard do
       policy = Lain::Sensitivity::Policy.new(sensitivity: classifier)
       board = switchboard(sensitivity: policy)
 
-      kwargs = board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor),
-                                    tty: instance_double(Lain::Frontend::TTY))
+      kwargs = board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor))
 
       expect(kwargs.fetch(:sensitivity)).to be(policy)
     end
@@ -778,13 +776,12 @@ RSpec.describe Lain::CLI::Switchboard do
 
   it "hands /approve a tty-signing drain prompt whose reads route through the conductor" do
     conductor = instance_double(Lain::CLI::Conductor)
-    tty = instance_double(Lain::Frontend::TTY)
-    prompt = switchboard.surface_kwargs(conductor:, tty:).fetch(:approval_prompt)
+    prompt = switchboard.surface_kwargs(conductor:).fetch(:approval_prompt)
     pending = Lain::Approval::Queue::Pending.new(
       effect: Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1"),
       requester: "agent", clock: -> { 0.0 }
     )
-    allow(conductor).to receive(:read_reply).with(tty, /bash/).and_return("y")
+    allow(conductor).to receive(:read_reply).with(/bash/).and_return("y")
 
     prompt.decide(pending)
 
@@ -837,14 +834,10 @@ RSpec.describe Lain::CLI::Switchboard do
       Lain::CLI::Command::Mode.new.call(args, instance_double(Lain::CLI::Command::Env, mode_switch: board.mode_switch))
     end
 
-    # The Repl's own fan-out, minus the terminal: the automatic surface is the
-    # only watcher, so whatever decides a pending here is that surface or the
-    # human the example plays after it.
-    def watching(board, build, task)
-      Lain::CLI::Repl::ApprovalSurfaces.new(approvals: board.approvals, auto_surface: build.auto_surface,
-                                            secret_surface: nil, tty: nil, conductor: nil)
-                                       .watch(task, terminal: false)
-    end
+    # The automatic surface as the Repl's fan-out spawns it, and the only
+    # watcher: whatever decides a pending here is that surface or the human the
+    # example plays after it.
+    def watching(board, build, task) = [task.async { build.auto_surface.watch(board.approvals) }]
 
     def dispatched(board, task, name, input)
       task.async { dispatch_call(name, input, toolset: board.toolset, layers: tool_stack(board), handler:) }
