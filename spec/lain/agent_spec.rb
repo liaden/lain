@@ -35,6 +35,30 @@ module A1PipelineSources
     end
   end
 
+  # The handoff fallback's seam, reduced to the two messages the Agent sends
+  # it. `answers` is what each #handoff call reports, so an example can script
+  # "room was made" and "nothing could be done" in one run; the calls are kept
+  # so the timeline and session it was handed can be asserted.
+  class HandingOff
+    attr_reader :calls
+
+    def initialize(*answers)
+      @answers = answers
+      @calls = []
+    end
+
+    def context_for(base:, **) = base
+
+    def droppable? = false
+
+    def handed_off? = @calls.any?
+
+    def handoff(**rest)
+      @calls << rest
+      @answers.fetch(@calls.size - 1, false)
+    end
+  end
+
   # A DIFFERENT pipeline per call -- the shape that tells "consulted every
   # turn" apart from "consulted once and cached".
   class Widening
@@ -1113,6 +1137,77 @@ RSpec.describe Lain::Agent do
 
       expect(withdrawn).to be_withdrawn
       expect(kept).not_to be_withdrawn
+    end
+
+    # When no cut can make room, the compaction source replaces the history
+    # before the current ask with one state document -- and THIS render is then
+    # worth sending again, because it is the first render that fits. There is
+    # no estimate before the send, so the refusal is what triggers it.
+    describe "when a handoff makes room" do
+      def handing_off(*answers) = A1PipelineSources::HandingOff.new(*answers)
+
+      def agent_with(source, *outcomes)
+        described_class.new(provider: scripted(*outcomes), toolset:, context:, pipeline_source: source)
+      end
+
+      it "retries the refused render once and answers the ask" do
+        source = handing_off(true)
+        a = agent_with(source, refusal, text_response("answered"))
+
+        expect(a.ask("a prompt that does not fit").text).to eq("answered")
+        expect(source.calls.size).to eq(1)
+        expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
+      end
+
+      it "hands the source the chain the refused render stood on, and the run's session" do
+        source = handing_off(true)
+        a = agent_with(source, refusal, text_response("answered"))
+        a.ask("a prompt that does not fit")
+
+        expect(source.calls.last[:session]).to be(a.session)
+        expect(source.calls.last[:timeline].head_digest).to eq(a.timeline.rewind(1).head_digest)
+      end
+
+      # A second refusal is the ask failing: there is nothing further to
+      # replace, so it withdraws and is worded like any other over-window
+      # refusal rather than looping.
+      it "refuses on a second refusal rather than handing off again" do
+        source = handing_off(true, true)
+        a = agent_with(source, refusal, refusal)
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+        expect(source.calls.size).to eq(1)
+        expect(a.timeline.to_a).to be_empty
+      end
+
+      it "still withdraws the prompt when the retry is refused too" do
+        withdrawn = refusal
+        expect { agent_with(handing_off(true), withdrawn, withdrawn).ask("hi") }.to raise_error(withdrawn)
+
+        expect(withdrawn).to be_withdrawn
+      end
+
+      it "does not retry when no handoff could be committed" do
+        source = handing_off(false)
+        a = agent_with(source, refusal, text_response("never sent"))
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+        expect(source.calls.size).to eq(1)
+      end
+
+      # The refusal's exact count is the reading compaction measures against,
+      # and the RETRY's refusal carries its own: a retry that did not observe
+      # its own count would leave the reading describing a prompt the handoff
+      # has already replaced. Driven over a chain the ask cannot withdraw --
+      # a tool round ran -- so the reading survives to be read back.
+      it "takes the retry's own refusal count as the reading" do
+        smaller = refusal_class.new("still too long", prompt_tokens: 9001, window_tokens: 8192, source: "spec")
+        a = agent_with(handing_off(true), tool_response(["tu_1", "echo", { "text" => "a" }]), refusal, smaller)
+
+        expect { a.ask("hi") }.to raise_error(refusal_class)
+
+        expect(a.occupancy(context_window: book)).to eq(9001.fdiv(8192))
+      end
     end
 
     # A request none of whose attempts wrote a byte reached no model either,

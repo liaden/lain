@@ -16,7 +16,8 @@ RSpec.describe Lain::Middleware::RequestBudget do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:droppable) { true }
-  let(:compaction) { instance_double(Lain::Compaction::Source, droppable?: droppable) }
+  let(:handed_off) { false }
+  let(:compaction) { instance_double(Lain::Compaction::Source, droppable?: droppable, handed_off?: handed_off) }
   let(:budget) { described_class.new(journal:, compaction:) }
   let(:model) { "qwen3:4b" }
 
@@ -151,6 +152,30 @@ RSpec.describe Lain::Middleware::RequestBudget do
         fixed = request(system: "you are a careful assistant. " * 2_000, text: "hi")
 
         expect(refused(fixed, prompt_tokens: 12_011, window_tokens: 2048).message).to include("--num-ctx", "/rewind")
+      end
+    end
+
+    # Once a handoff has already replaced the history with a state document,
+    # both of the lines above name a move that has been made. The turns a
+    # /rewind reaches are the ones still on the chain, which is why that is the
+    # move this arm leads with.
+    context "when a handoff has already replaced the history" do
+      let(:handed_off) { true }
+      let(:droppable) { false }
+
+      it "says the handoff happened and offers the moves that are left" do
+        message = refused(big).message
+
+        expect(message).to include("handoff", "/rewind", "/unpin", "narrower")
+        expect(message).not_to include("compaction")
+        expect(message.lines.size).to eq(1)
+      end
+
+      # Nothing droppable is the state a handoff LEAVES -- it collapses
+      # everything it can -- so the arm has to win over that reading, or the
+      # line would go on offering a compaction that already ran.
+      it "wins over the nothing-droppable line rather than being masked by it" do
+        expect(refused(big).message).not_to include("Nothing older can be compacted")
       end
     end
 

@@ -99,6 +99,38 @@ class SourceSpecStrandingSpan < Lain::Compaction::Strategy::Base
   end
 end
 
+# The handoff tier, reduced to the one call the fallback makes. It records the
+# slots it was shown, so an example can prove the question was asked ONCE and
+# over the held replacements rather than over the raw turns.
+class SourceSpecHandoffOracle
+  FIELDS = { "goal" => "finish the parser", "progress" => "the lexer lands",
+             "files_and_decisions" => "lexer.rb; no regexes", "open_todos" => "the parser",
+             "next_step" => "write parser.rb" }.freeze
+
+  attr_reader :asks
+
+  def initialize = (@asks = [])
+
+  def ask(inputs = {})
+    @asks << inputs
+    Lain::Oracle::Handoff.definition.answer(FIELDS)
+  end
+end
+
+# A tier whose reply the decoder cannot read. Wrapped in the real journaling
+# recorder, it is what leaves an `oracle_failed` line behind.
+class SourceSpecUndecodableOracle
+  attr_reader :definition
+
+  def initialize(definition) = (@definition = definition)
+
+  def model = "qwen3:4b"
+
+  def usage = {}
+
+  def ask(_inputs = {}) = raise(Lain::Oracle::UndecodableAnswer, "oracle reply was not decodable JSON")
+end
+
 RSpec.describe Lain::Compaction::Source do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -2455,6 +2487,335 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(Lain::Canonical).to have_received(:dump).with(head.messages).once
       expect(Lain::Canonical).to have_received(:dump).with(messages).once
+    end
+  end
+
+  # The fallback that fires when no cut can make room: one state document
+  # replaces the history before the current ask, and the ask is kept.
+  describe "handing off when no cut can make room" do
+    let(:session) { recording_session }
+    let(:keep_last) { 8 }
+    let(:oracle) { SourceSpecHandoffOracle.new }
+
+    def cuts = records.select { |record| record["type"] == "compaction_cut" }
+
+    def handing_off(**overrides)
+      source(fallback: Lain::Compaction::Source::Fallback.new(tier: -> { oracle }), **overrides)
+    end
+
+    # The ask fills the window by itself: the human's question, then two
+    # completed tool rounds, then the round nothing has answered yet.
+    def asking_timeline
+      [["user", [block(1)]],
+       ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => "read", "input" => { "n" => 2 } }]],
+       ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]],
+       ["assistant", [{ "type" => "tool_use", "id" => "call-4", "name" => "read", "input" => { "n" => 4 } }]],
+       ["user", [{ "type" => "tool_result", "tool_use_id" => "call-4", "content" => tool_body(4) }]]]
+        .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+          line.commit(role:, content:)
+        end
+    end
+
+    def refused_render(built, line)
+      context_for(built, line)
+      built.handoff(timeline: line, session:)
+    end
+
+    def replacement_text(messages)
+      messages.flat_map { |message| Array(message["content"]) }
+              .filter_map { |block| block["text"] if block.is_a?(Hash) }.join("\n")
+    end
+
+    it "commits one handoff cut and answers that it made room" do
+      line = timeline
+      built = handing_off
+
+      expect(refused_render(built, line)).to be(true)
+      expect(cuts.map { |record| record["kind"] }).to eq(["handoff"])
+      expect(session.compaction_cuts.size).to eq(1)
+    end
+
+    it "asks the summarizer exactly once" do
+      built = handing_off
+      refused_render(built, timeline)
+
+      expect(oracle.asks.size).to eq(1)
+    end
+
+    it "renders the state document's five headings in place of the history" do
+      line = timeline
+      built = handing_off
+      refused_render(built, line)
+
+      messages = render(context_for(built, line), line).messages
+
+      expect(replacement_text(messages))
+        .to include("Goal", "Progress", "Files and decisions", "Open todos", "Next step")
+    end
+
+    # The whole point of the fallback: the ask survives it. Its turn is
+    # retained verbatim, so the retried render still carries the question.
+    it "keeps the current ask verbatim beside the document" do
+      line = timeline
+      built = handing_off
+      refused_render(built, line)
+
+      messages = render(context_for(built, line), line).messages
+
+      expect(messages.last["role"]).to eq("user")
+      expect(messages.last["content"].first["text"]).to eq(block(6)["text"])
+    end
+
+    it "keeps a pinned turn verbatim, in position" do
+      line = timeline
+      allow(session).to receive(:pinned?) { |digest| digest == line.to_a[2].digest }
+      built = handing_off
+      refused_render(built, line)
+
+      messages = render(context_for(built, line), line).messages
+
+      expect(messages).to include("role" => "assistant", "content" => [block(3)])
+    end
+
+    # An ask whose own iterations fill the window: the rounds it already
+    # COMPLETED are inside the range, and the round nothing has answered is not
+    # -- collapsing half a tool pair renders a chain the API refuses.
+    it "covers the ask's completed rounds and retains the unanswered one whole" do
+      line = asking_timeline
+      built = handing_off
+      refused_render(built, line)
+
+      messages = render(context_for(built, line), line).messages
+
+      expect(cuts.last["collapses"].map { |collapse| collapse["span"] })
+        .to eq([[line.to_a[1].digest, line.to_a[2].digest]])
+      expect(messages.last(2).map { |message| message["role"] }).to eq(%w[assistant user])
+      expect(messages.last["content"].first)
+        .to include("tool_use_id" => "call-4", "content" => tool_body(4))
+      expect(messages.first["content"].first["text"]).to eq(block(1)["text"])
+    end
+
+    # With a cut already holding there is still something droppable past it,
+    # and the handoff fires anyway: the refused render WAS the newest cut, so
+    # an advance is a move that has already been made.
+    it "supersedes every cut that held, so the summaries do not accumulate" do
+      line = timeline
+      built = handing_off(keep_last: 2)
+      advance = Lain::Telemetry::CompactionCut.new(
+        digest: line.to_a[1].digest, head: Lain::Event.stands_on(line.to_a.last), strategy: built.collapse_strategy,
+        kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0,
+        collapses: [{ "span" => [line.to_a[0].digest, line.to_a[1].digest],
+                      "content" => [{ "type" => "text", "text" => "an earlier summary" }] }]
+      )
+      session.record_compaction_cut(advance)
+
+      refused_render(built, line)
+
+      expect(session.compaction_cuts.last.supersedes).to eq([advance.address])
+      expect(oracle.asks.last[:held]).to include("an earlier summary")
+    end
+
+    # A refusal with something still droppable is a refusal an ADVANCE can
+    # answer, and the refusal's own words say so. Spending a model call on a
+    # handoff there would replace a history compaction had not tried on.
+    it "declines while an ordinary compaction still has something to drop" do
+      line = timeline
+      built = handing_off(keep_last: 2)
+
+      expect(refused_render(built, line)).to be(false)
+      expect(cuts).to be_empty
+    end
+
+    it "declines when there is nothing but the ask to replace" do
+      line = Lain::Timeline.empty(store: Lain::Store.new).commit(role: "user", content: [block(1)])
+      built = handing_off
+
+      expect(refused_render(built, line)).to be(false)
+      expect(oracle.asks).to be_empty
+    end
+
+    it "does not fire before a refusal: no render commits a handoff cut" do
+      line = timeline
+      built = handing_off
+
+      render(context_for(built, line), line)
+
+      expect(cuts).to be_empty
+    end
+
+    describe "with the fallback off" do
+      it "leaves the refusal standing and records no cut" do
+        line = timeline
+        built = source
+
+        expect(built.handoff(timeline: line, session:)).to be(false)
+        expect(cuts).to be_empty
+      end
+    end
+
+    describe "when the oracle's answer cannot be decoded" do
+      let(:failing) do
+        definition = Lain::Oracle::Handoff.definition
+        Lain::Oracle::Recorded::Journaling.new(
+          inner: SourceSpecUndecodableOracle.new(definition), definition:, journal:
+        )
+      end
+
+      it "journals oracle_failed, commits nothing, and reports no room made" do
+        line = timeline
+        built = source(fallback: Lain::Compaction::Source::Fallback.new(tier: -> { failing }))
+
+        expect(refused_render(built, line)).to be(false)
+        expect(cuts).to be_empty
+        expect(records.count { |record| record["type"] == "oracle_failed" }).to eq(1)
+      end
+
+      it "leaves handed_off? false, so the refusal is worded as it was" do
+        built = source(fallback: Lain::Compaction::Source::Fallback.new(tier: -> { failing }))
+        refused_render(built, timeline)
+
+        expect(built.handed_off?).to be(false)
+      end
+    end
+
+    # A stuck session asks again, and again. A second handoff over a chain
+    # nothing has added to would re-write the very turns the first one
+    # replaced: a second model call, a second cut, and no more room.
+    describe "a second refusal over a chain the first handoff already covered" do
+      it "spends no second model call and commits no second cut" do
+        line = timeline
+        built = handing_off
+        refused_render(built, line)
+
+        expect(refused_render(built, line)).to be(false)
+        expect(oracle.asks.size).to eq(1)
+        expect(cuts.size).to eq(1)
+      end
+
+      it "does not drift: five stuck asks leave one call and one cut" do
+        line = timeline
+        built = handing_off
+        5.times { refused_render(built, line) }
+
+        expect(oracle.asks.size).to eq(1)
+        expect(cuts.size).to eq(1)
+      end
+
+      # `handed_off?` is documented as "has this run EVER handed off", and the
+      # refusal's words rest on it: the history is still replaced, whatever a
+      # later attempt could or could not do.
+      it "still reports handed_off?" do
+        line = timeline
+        built = handing_off
+        refused_render(built, line)
+        refused_render(built, line)
+
+        expect(built.handed_off?).to be(true)
+      end
+
+      # The chain GREW, so there is something new to fold in and the second
+      # handoff is the one that makes room. The distinction is what the guard
+      # has to keep.
+      it "fires again once the chain has turns no cut covers" do
+        line = timeline
+        built = handing_off
+        refused_render(built, line)
+        grown = (7..10).inject(line) { |chain, index| chain.commit(role: role_at(index), content: [block(index)]) }
+
+        expect(refused_render(built, grown)).to be(true)
+        expect(cuts.size).to eq(2)
+        expect(cuts.last["supersedes"]).to eq([session.compaction_cuts.first.address])
+      end
+    end
+
+    # The card's first escalation trigger, answered rather than escalated: the
+    # question's own input is bounded before it is asked, so a handoff cannot
+    # fail on the same window that refused the prompt.
+    describe "what the summarizer is shown" do
+      def question = oracle.asks.last
+
+      def bytes(question) = question.values.sum(&:bytesize)
+
+      # The conservative window, which is what a Source wired with no window
+      # thunk is asked in -- and the one the fallback defaults to.
+      def budget = Lain::Oracle::Handoff.budget_for(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+
+      it "stays inside the budget over four hundred turns" do
+        line = (1..400).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |chain, index|
+          chain.commit(role: role_at(index), content: [block(index)])
+        end
+
+        refused_render(handing_off(keep_last: 500), line)
+
+        expect(bytes(question)).to be <= budget
+        expect(question[:span]).to include("earlier turn(s) elided")
+      end
+
+      it "stays inside the budget for one pathological turn" do
+        line = Lain::Timeline.empty(store: Lain::Store.new)
+                             .commit(role: "user", content: [{ "type" => "text", "text" => "z" * 4_000_000 }])
+                             .commit(role: "assistant", content: [block(2)])
+                             .commit(role: "user", content: [block(3)])
+
+        refused_render(handing_off, line)
+
+        expect(bytes(question)).to be <= budget
+        expect(question[:span]).not_to include("z" * 300)
+      end
+
+      # A large tool result was already stubbed; a large TEXT block was not,
+      # so the oracle used to be handed the bytes that had just been refused.
+      it "bounds a large text block as well as a large tool result" do
+        line = Lain::Timeline.empty(store: Lain::Store.new)
+                             .commit(role: "user", content: [{ "type" => "text", "text" => "p" * 300_000 }])
+                             .commit(role: "assistant", content: [{ "type" => "text", "text" => "q" * 300_000 }])
+                             .commit(role: "user", content: [block(3)])
+
+        refused_render(handing_off, line)
+
+        expect(bytes(question)).to be < 2_000
+      end
+    end
+
+    # The containment is the TIER's, and nothing wider. A journal that cannot
+    # write and a bug in the range arithmetic are not "the summarizer was
+    # down", and reporting them that way would reach a human as an ordinary
+    # over-window refusal with no trace of the real fault.
+    describe "a failure that is not the tier's" do
+      it "lets a journal that cannot record the cut raise" do
+        line = timeline
+        built = handing_off
+        context_for(built, line)
+        allow(session).to receive(:record_compaction_cut).and_raise(IOError, "no space left on device")
+
+        expect { built.handoff(timeline: line, session:) }.to raise_error(IOError, /no space left/)
+      end
+
+      it "lets a raise from the range computation through" do
+        line = timeline
+        built = handing_off
+        context_for(built, line)
+        allow(Lain::IntervalPartition).to receive(:covering).and_raise(NoMethodError, "undefined method for nil")
+
+        expect { built.handoff(timeline: line, session:) }.to raise_error(NoMethodError)
+      end
+    end
+
+    it "reports handed_off? once a document has replaced the history" do
+      built = handing_off
+      refused_render(built, timeline)
+
+      expect(built.handed_off?).to be(true)
+    end
+
+    # Compaction is a derived view of one chat's own history and project memory
+    # is durable fact; neither reads the other. This object cannot reach a
+    # store, and the assertion is that it holds nothing that could.
+    it "writes no memory: the only record a handoff leaves is its cut" do
+      built = handing_off
+      refused_render(built, timeline)
+
+      expect(records.map { |record| record["type"] }).not_to include("memory_write", "memory_root")
     end
   end
 end

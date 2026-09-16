@@ -379,9 +379,13 @@ module Lain
       #   rather than staying with the collapse policy because {Head}
       #   disclaims the judgement and {Boundary} refuses to raise: this is the
       #   only object holding the head, the need and the occupancy at once.
+      # @param fallback [#call] what happens when no cut can make room --
+      #   {Fallback}, or {Fallback::None} for `--compact-fallback none`. Asked
+      #   only after a provider has refused a prompt, never on the render path.
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
-                     clock: -> { Time.now }, context_window: ContextWindow.default, sink: Sink::Null.new)
+                     clock: -> { Time.now }, context_window: ContextWindow.default, sink: Sink::Null.new,
+                     fallback: Fallback::None)
         arm = Collapse.of(strategy)
         @need = need
         @context_window = context_window
@@ -392,6 +396,8 @@ module Lain
         @idle = IdleGap.new(clock:)
         @scheduling = Scheduling.new(hard_cap:, journal:, model:, price_book:)
         @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy: arm.policy, journal:)
+        @fallback = fallback
+        @handed_off = false
       end
 
       # The observe half's response leg. A turn's own usage carries the
@@ -420,6 +426,45 @@ module Lain
       # @return [Boolean]
       def droppable? = @reporting.droppable?
 
+      # Whether this run has ever handed off. Read by the refusal that words
+      # what a human can still do: with the history already replaced by a
+      # state document, "make room with compaction" is advice for a move that
+      # has been made.
+      #
+      # @return [Boolean]
+      def handed_off? = @handed_off
+
+      # The last resort, asked AFTER a provider refused a prompt whole and
+      # never before it: there is no estimate of a prompt's token count good
+      # enough to anticipate a refusal, which is why this is a fallback rather
+      # than a fifth detector in {Need}.
+      #
+      # It fires only where an ordinary compaction has nothing left to offer:
+      # nothing droppable past the cuts that hold, or a render that already
+      # held the newest cut the session recorded and was refused anyway. With
+      # something still droppable and a cut still to advance past, the refusal
+      # is told to compact instead -- which is what the refusal's own words say.
+      #
+      # A handoff that fires twice over an unchanged chain would re-write the
+      # turns the first one replaced for a second model call; {HeldCut} refuses
+      # that by answering an empty plan, so this asks every time and a later
+      # ask whose new turns are what overflowed still gets one.
+      #
+      # @param timeline [Timeline] the chain the refused render stood on
+      # @param session [Session] the run's, which records the cut
+      # @return [Boolean] whether a handoff cut committed on THIS call
+      def handoff(timeline:, session:)
+        held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
+        return false unless stuck?(held_cut)
+
+        committed = @fallback.call(held_cut, pins: pinned(held_cut.walk, session))
+        # Latched, never assigned: a later attempt that could make no room does
+        # not unsay a handoff that really happened. The history it replaced is
+        # still replaced, and the refusal's words have to go on saying so.
+        @handed_off ||= committed
+        committed
+      end
+
       # {Agent::PipelineSource}'s duck.
       #
       # @param base [Context] the Agent's own Context
@@ -439,6 +484,11 @@ module Lain
       end
 
       private
+
+      # The two ways an ordinary compaction has run out: it had nothing to
+      # drop when it last decided, or the render that was refused was already
+      # sending the newest cut this session recorded.
+      def stuck?(held_cut) = !@reporting.droppable? || held_cut.holds_newest?
 
       # `#usage` ALONE is not the duck: {Telemetry::OracleAnswer} answers it
       # too and its usage Hash carries no cache fields, so a landed oracle
@@ -760,4 +810,6 @@ end
 # to exist first.
 require_relative "source/derived"
 require_relative "source/held_cut"
+# After {HeldCut}, whose handoff plan it commits.
+require_relative "source/fallback"
 require_relative "source/plan_steps"

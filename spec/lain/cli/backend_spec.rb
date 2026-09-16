@@ -1379,6 +1379,81 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
+    # `--compact-fallback` is an arm of the experiment, not a member of the run
+    # profile: a resumed chat defaults its BACKEND to what the header recorded,
+    # and a fallback is not a backend.
+    describe "--compact-fallback" do
+      def fallback_of(backend)
+        backend.pipeline_source(cache_profile: profile, journal:).instance_variable_get(:@fallback)
+      end
+
+      it "wires the handoff fallback by default, with no flag given" do
+        expect(fallback_of(compacting_backend)).to be_a(Lain::Compaction::Source::Fallback)
+      end
+
+      it "wires the Null fallback under none, so a refusal stands" do
+        expect(fallback_of(compacting_backend(compact_fallback: "none")))
+          .to be(Lain::Compaction::Source::Fallback::None)
+      end
+
+      # At CONSTRUCTION, on the summarizer flags' own rule: a typo that
+      # resolved silently to "none" would show up only as an ask that died
+      # where it should have been kept.
+      it "refuses an unknown arm as a Lain::Error, naming the flag and the valid set" do
+        expect { compacting_backend(compact_fallback: "vibes") }
+          .to raise_error(Lain::CLI::Backend::UnknownFallback, /--compact-fallback.*handoff, none/m)
+      end
+
+      it "records the arm in the session header's compaction section" do
+        expect(compacting_backend.compaction_header).to eq("compact_fallback" => "handoff")
+        expect(compacting_backend(compact_fallback: "none").compaction_header)
+          .to eq("compact_fallback" => "none")
+      end
+
+      # Built on FIRST USE. A chat that never hands off must not open a second
+      # provider for a tier nothing asks. `no_args` is the signature: the
+      # handoff tier waits for capacity, where the eager tier alone asks with
+      # `queue: false` and is built eagerly as it always was.
+      it "builds no handoff tier until one is asked for" do
+        backend = compacting_backend(provider: "ollama", model: "qwen3:4b")
+        allow(backend).to receive(:summarizer_provider).and_call_original
+
+        fallback_of(backend)
+
+        expect(backend).not_to have_received(:summarizer_provider).with(no_args)
+      end
+
+      it "builds the handoff tier over a RECORDED oracle, so a failure leaves oracle_failed" do
+        backend = compacting_backend(provider: "ollama", model: "qwen3:4b")
+
+        expect(backend.send(:handoff_oracle)).to be_a(Lain::Oracle::Recorded::Journaling)
+      end
+
+      # The question is sized to the window the SUMMARIZER answers in, which is
+      # not the chat's: they are different models by default, and sizing a
+      # local summarizer's input to a 1M-token Anthropic window would write an
+      # input it cannot read.
+      describe "the window the question is sized to" do
+        it "resolves the summarizer's model, not the chat's" do
+          backend = compacting_backend(summarizer_provider: "ollama", summarizer_model: "qwen3:4b")
+          allow(backend.context_window).to receive(:resolve).and_call_original
+
+          backend.send(:handoff_window)
+
+          expect(backend.context_window).to have_received(:resolve).with("qwen3:4b")
+        end
+
+        # A book that cannot identify the model degrades to the conservative
+        # window rather than guessing large, which is the whole reason the
+        # budget stopped being a constant.
+        it "falls back to the conservative window for a model nothing identifies" do
+          backend = compacting_backend(summarizer_provider: "ollama", summarizer_model: "a-model-nobody-lists")
+
+          expect(backend.send(:handoff_window)).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+        end
+      end
+    end
+
     # The sink already reaches {SpanSummarizer}; what it did not reach is the
     # Source, which is the object that discovers a warranted compaction with
     # nothing to drop and could not say so. A hand-built Source proves nothing

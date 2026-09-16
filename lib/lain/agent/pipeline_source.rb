@@ -36,8 +36,16 @@ module Lain
 
         def context_for(base:, **) = base
 
-        # Compaction is off, so there is never anything it could drop.
-        def droppable? = false
+        # Compaction is off, so there is never anything it could drop -- and
+        # nothing it could hand off to either, so a refused prompt stays
+        # refused and no retry is worth sending.
+        NO_ROOM = false
+
+        def droppable? = NO_ROOM
+
+        def handoff(**) = NO_ROOM
+
+        def handed_off? = NO_ROOM
       end
     end
   end

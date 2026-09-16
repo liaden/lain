@@ -563,6 +563,26 @@ RSpec.describe Lain::Compaction::Derivation do
           .to raise_error(ArgumentError, /past the keep_last boundary/)
       end
 
+      # The stated exception, and the only one: a handoff replaces the
+      # keep_last tail deliberately, having fired because that tail is what
+      # would not fit. It travels on the seam rather than being re-derived,
+      # so a resume reads the same exemption the live render took.
+      it "renders a seam that does not keep keep_last, past the boundary, without refusing" do
+        earlier = fixtures.history(9)
+        cut = seam_of(earlier)
+        handed = described_class::Seam.new(digest: cut.digest, collapses: cut.collapses, keeps_last: false)
+        rewound = Lain::Timeline.new(head_digest: earlier.to_a[6].digest, store: earlier.store)
+
+        derived = described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(rewound, cut: handed)
+
+        expect(derived.to_a.size).to be < rewound.to_a.size
+      end
+
+      it "keeps keep_last by default, so only a seam that says otherwise is exempt" do
+        expect(described_class::Seam.new(digest: "blake3:one", collapses: []).keeps_last).to be(true)
+        expect(described_class::UNCUT.keeps_last).to be(true)
+      end
+
       it "yields a seam that is a plain value, carrying no record of its own" do
         seam = seam_of(fixtures.history(9))
 

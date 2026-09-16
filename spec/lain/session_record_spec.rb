@@ -102,6 +102,21 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).not_to have_key("num_ctx")
   end
 
+  # The compaction section is the run's ARMS, kept apart from the profile
+  # because the two are read for different things: a resumed chat defaults its
+  # backend to the profile, while nothing resolves a fallback from a recording.
+  it "writes the run's compaction section into that header" do
+    described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_fallback" => "none" })
+
+    expect(of_type("session").first).to include("compact_fallback" => "none")
+  end
+
+  it "writes no compaction key when the run recorded no section" do
+    scribe
+
+    expect(of_type("session").first).not_to have_key("compact_fallback")
+  end
+
   describe "a chat turn is on disk before the reply renders" do
     it "holds the header, the user turn, the assistant turn, and the tool_result turns, each re-commit-verifiable" do
       scribe.catch_up(timeline)

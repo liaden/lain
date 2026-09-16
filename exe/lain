@@ -784,10 +784,10 @@ class LainCLI < Thor
   subcommand "bench", Bench
 
   # The compaction band of `chat`'s flag surface: whether to compact at all, the
-  # three byte knobs, and the summarizer TIER. Its own module because it is its
-  # own question -- "how does this run manage a growing history", answered by
-  # seven flags that only make sense read together, and `lain help chat` is where
-  # an operator meets them as a group.
+  # three byte knobs, what happens when no cut can make room, and the summarizer
+  # TIER. Its own module because it is its own question -- "how does this run
+  # manage a growing history", answered by eight flags that only make sense read
+  # together, and `lain help chat` is where an operator meets them as a group.
   #
   # It stays in the exe rather than lib/ for a hard reason: the library does not
   # depend on Thor, and a lib object calling `method_option` would make it.
@@ -816,6 +816,11 @@ class LainCLI < Thor
                                        desc: "History bytes that force a compaction even while the cache is warm"
       thor.method_option :compact_keep, type: :numeric, default: Backend::DEFAULT_KEEP_LAST,
                                         desc: "Trailing messages a compaction leaves verbatim"
+      thor.method_option :compact_fallback, type: :string, default: Backend::DEFAULT_COMPACT_FALLBACK,
+                                            desc: "What happens when no cut can make room " \
+                                                  "(#{Backend::COMPACT_FALLBACKS.join(", ")}): handoff replaces " \
+                                                  "the history before the current ask with one state document " \
+                                                  "and answers the ask; none lets the refusal stand"
     end
 
     # HOW a compacted span collapses, its own method for the same reason

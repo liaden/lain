@@ -47,17 +47,24 @@ module Lain
     # header already spells `provider` with, so one reader reads both. It is
     # what a resumed or forked chat defaults its backend to.
     #
+    # `compaction:` is the run's compaction section -- the arms of the
+    # experiment, `--compact-fallback` among them. It is kept apart from
+    # `profile:` because the two are read for different things: a resumed chat
+    # DEFAULTS its backend to the profile, while nothing resolves a fallback
+    # from a recording. It merges on `profile:`'s own rule, so a run that
+    # recorded none writes no key.
+    #
     # `writer:` is the process writing the file ({Liveness::Writer}), so a
     # reader elsewhere can tell a crashed session from a quiet one; an
     # unrecorded writer writes no field.
     def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {},
-               writer: Liveness::Writer::UNRECORDED)
+               compaction: {}, writer: Liveness::Writer::UNRECORDED)
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), profile, writer.to_header)
+      record = record.merge(context_pipeline(context), profile, compaction, writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 

@@ -86,6 +86,20 @@ module Lain
       # doing, since everything ahead survives only as summary or attestation.
       DEFAULT_KEEP_LAST = 20
 
+      # What `--compact-fallback` chooses between once no cut can make room:
+      # replace the history before the current ask with one state document and
+      # answer the ask, or let the refusal stand. ON by default, because the
+      # alternative is a session that can no longer be spoken to.
+      HANDOFF_FALLBACK = "handoff"
+      COMPACT_FALLBACKS = [HANDOFF_FALLBACK, "none"].freeze
+      DEFAULT_COMPACT_FALLBACK = HANDOFF_FALLBACK
+
+      # A `--compact-fallback` outside {COMPACT_FALLBACKS}. Refused at
+      # construction, for {InvalidCeiling}'s reason: a fallback that silently
+      # resolved to "none" would show up only as an ask that died where it
+      # should have been kept.
+      class UnknownFallback < Error; end
+
       # {Compaction::Scheduler} prices EVERY compacting turn, and the bench's
       # shared {PriceBook} raises on a model it has no list price for -- right
       # for a cost bench, fatal here, where it would turn the first compaction
@@ -137,6 +151,7 @@ module Lain
       # @option options [Integer] :compact_bytes head size that triggers a compaction
       # @option options [Integer] :compact_cap hard ceiling a compaction must reach
       # @option options [Integer] :compact_keep turns held back from collapsing
+      # @option options [String] :compact_fallback what happens when no cut can make room
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
@@ -145,6 +160,7 @@ module Lain
         @run_profile = profile
         summarizer_name
         summarizer_max_tokens
+        compact_fallback
         # BOTH arms, built for their refusals and dropped: `--summarizer-provider
         # ollama-cloud` is the same credential on the same wire as `--provider`,
         # and the summarizer flags refuse at construction whatever `--no-compact`
@@ -442,6 +458,30 @@ module Lain
       #   `--no-compact` turned it off
       def compaction? = @options.fetch(:compact, true)
 
+      # `--compact-fallback`, validated. An unset flag is the default arm, not
+      # "no fallback": a run that never typed the flag still keeps its asks.
+      #
+      # @return [String] a member of {COMPACT_FALLBACKS}
+      # @raise [UnknownFallback] on a name outside that set
+      def compact_fallback
+        name = @options[:compact_fallback] || DEFAULT_COMPACT_FALLBACK
+        unless COMPACT_FALLBACKS.include?(name)
+          raise UnknownFallback, "--compact-fallback #{name.inspect} is not one of " \
+                                 "#{COMPACT_FALLBACKS.join(", ")}"
+        end
+
+        name
+      end
+
+      # The compaction section of the session header: which fallback arm this
+      # run takes. It is NOT on {RunProfile} -- a profile says which model
+      # server answers, and a resumed chat defaults its backend to it, while
+      # this is an arm of the experiment, recorded so a bench can group runs by
+      # it and read nothing else back.
+      #
+      # @return [Hash{String=>Object}]
+      def compaction_header = { "compact_fallback" => compact_fallback }
+
       # The run's ONE {Skill::Library} -- the project's skills and the prompt
       # slots they render through, read once. Owned HERE because {#context}
       # renders the slots half into the system prompt, which makes this the
@@ -562,9 +602,41 @@ module Lain
           need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
-          eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:, sink:,
+          eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:, sink:, fallback:,
           strategy: SpanSummarizer.resolve(backend: self, options: @options, sink:)
         )
+      end
+
+      # The handoff tier answers on the render path's LAST chance, so it is
+      # built like {SpanSummarizer#tier} and not like {Summarizer#tier}: no
+      # `queue: false`, because the ask is already refused and a document worth
+      # waiting for is the only thing between it and failing.
+      def fallback
+        return Compaction::Source::Fallback::None unless compact_fallback == HANDOFF_FALLBACK
+
+        Compaction::Source::Fallback.new(tier: method(:handoff_oracle), window: method(:handoff_window))
+      end
+
+      # The window the HANDOFF tier will be asked in -- the summarizer's model
+      # through the run's own book, not the chat's. They are different models
+      # by default (a frontier chat summarizing locally), and sizing the
+      # question to the chat's window is how a 1M-token Anthropic run writes an
+      # input no local summarizer can read.
+      #
+      # Resolved per call, on {#run_journal}'s reasoning: the book probes, and
+      # this is asked only after a prompt has already been refused.
+      def handoff_window = context_window.resolve(summarizer_model).window_tokens
+
+      # ONE definition, two uses -- {SpanSummarizer}'s rule, and the journaling
+      # wrapper is what makes a failed handoff readable: it holds the
+      # definition an `oracle_failed` record names itself by.
+      def handoff_oracle = @handoff_oracle ||= journaling(Oracle::Handoff.definition)
+
+      def journaling(definition)
+        provider = Provider::Journaled.new(provider: summarizer_provider, journal: run_journal)
+        tier = Oracle::Model.new(definition:, provider:, model: summarizer_model,
+                                 max_tokens: summarizer_max_tokens, extra: summarizer_options)
+        Oracle::Recorded::Journaling.new(inner: tier, definition:, journal: run_journal)
       end
 
       # An unset numeric flag arrives as nil; the constant is the authority.

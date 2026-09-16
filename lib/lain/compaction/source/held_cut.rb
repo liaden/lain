@@ -30,10 +30,41 @@ module Lain
       # superseded cuts are what a chain below the collapse's commit head still
       # holds, so both readings have to stay available.
       #
+      # A HANDOFF is the one kind exempt from the boundary rule, and the
+      # exemption is the ruling rather than a loophole: a handoff exists
+      # precisely because the keep_last tail is what would not fit, so a cut
+      # that kept keep_last would be a cut that made no room. What replaces the
+      # resume guarantee is the kind itself -- it is on the record, so a
+      # resumed render reads the same exemption the live one took and the two
+      # render the same bytes.
+      #
       # Per turn, because the chain is; built once, so the held render a
       # rewrite is measured against and the one a deferring turn sends are one
       # derivation.
       class HeldCut
+        # The kinds a cut is recorded under, by the names {Telemetry::
+        # CompactionCut::KINDS} validates.
+        ADVANCE = "advance"
+        COLLAPSE = "collapse"
+        HANDOFF = "handoff"
+
+        # Hoisted, because a `[].freeze` literal allocates a fresh Array per read.
+        NOTHING = [].freeze
+        private_constant :NOTHING
+
+        # What a handoff would collapse on this chain, and what the question
+        # writing its document is shown. A value, so the ranges and the
+        # question cannot come from two different readings of one chain -- the
+        # span shown to the model and the span the cut records are the same
+        # slice by construction.
+        Handoff = Data.define(:ranges, :question) do
+          # Nothing to hand off: everything a handoff would collapse is the
+          # current ask, its unanswered round, the pins, or already inside a
+          # cut that holds. A document replacing none of it would cost a model
+          # call and make no more room.
+          def empty? = ranges.empty?
+        end
+
         # @param session [Session] whose recorded cuts are asked
         # @param timeline [Timeline] this turn's chain
         # @param derived [Derived] the run's derive-and-substitute step
@@ -48,7 +79,8 @@ module Lain
         end
 
         def self.holds?(cut, arm, at, boundary)
-          cut.strategy == arm && at.key?(cut.head) && at.fetch(cut.digest) < boundary
+          cut.strategy == arm && at.key?(cut.head) &&
+            (cut.kind == HANDOFF || at.fetch(cut.digest) < boundary)
         end
 
         # Root first. Every hop is on the chain: a child is committed while its
@@ -96,6 +128,54 @@ module Lain
         # @return [Boolean]
         def collapsible? = @held.size > 1
 
+        # Whether the render this chain takes already holds the newest cut the
+        # session recorded. A refusal over THAT render is a refusal an advance
+        # cannot answer: the latest thing compaction knows how to do is already
+        # in the prompt that was refused.
+        #
+        # @return [Boolean]
+        def holds_newest?
+          newest = @session.compaction_cuts.last
+          !newest.nil? && !@held.empty? && @held.last.address == newest.address
+        end
+
+        # What a handoff would replace on this chain, and what the question
+        # writing its document is shown. Built without asking anything, so a
+        # caller can find out there is nothing to hand off before it spends a
+        # model call.
+        #
+        # @param pins [Context::PinnedMessages] this turn's pins
+        # @param budget [Integer] bytes the question may cost, sized to the
+        #   window the summarizer tier will be asked in
+        # @return [Handoff]
+        def handoff(pins:, budget: Oracle::Handoff.budget_for(ContextWindow::CONSERVATIVE_FALLBACK))
+          ranges = handoff_ranges(pins)
+          Handoff.new(ranges:,
+                      question: Oracle::Handoff.question(held: replacements, span: uncollapsed(ranges), budget:,
+                                                         pins: at_indices(pins.indices_in(@walk.messages))))
+        end
+
+        # Record the handoff: one cut superseding every cut that holds, whose
+        # first range carries the state document and whose others collapse to
+        # nothing. The document stands where the history it replaces BEGAN, so
+        # a reader meets it before the ask it was written to keep -- and the
+        # later ranges are already inside it, which is what makes them a drop
+        # rather than a second summary of the same turns.
+        #
+        # @param ranges [Array<Range>] over this chain's messages
+        # @param document [String] the state document
+        # @return [self]
+        def hand_off(ranges, document)
+          collapses = ranges.each_with_index.map do |range, index|
+            { "span" => [digest_at(range.first), digest_at(range.max)],
+              "content" => index.zero? ? [{ "type" => "text", "text" => document }] : [] }
+          end
+          @session.record_compaction_cut(
+            cut(digest_at(ranges.last.max), kind: HANDOFF, supersedes: @held.map(&:address), collapses:)
+          )
+          self
+        end
+
         # The stretch a collapse re-writes: the held replacements, and whatever
         # the cuts retained between them, as this turn renders them.
         #
@@ -137,21 +217,91 @@ module Lain
         private
 
         def moved(shipped)
-          cut(shipped, kind: "advance", supersedes: [],
-                       collapses: shipped.seam.collapses.drop(@seam.collapses.size))
+          cut(shipped.seam.digest, kind: ADVANCE, supersedes: [],
+                                   collapses: shipped.seam.collapses.drop(@seam.collapses.size))
         end
 
         def collapse(shipped)
-          cut(shipped, kind: "collapse", supersedes: @held.map(&:address), collapses: shipped.seam.collapses)
+          cut(shipped.seam.digest, kind: COLLAPSE, supersedes: @held.map(&:address),
+                                   collapses: shipped.seam.collapses)
         end
 
-        def cut(shipped, kind:, supersedes:, collapses:)
+        def cut(digest, kind:, supersedes:, collapses:)
           Telemetry::CompactionCut.new(
-            digest: shipped.seam.digest, head: Event.stands_on(@walk.turns.last), strategy: @arm, kind:,
+            digest:, head: Event.stands_on(@walk.turns.last), strategy: @arm, kind:,
             parent: @lineage.last&.address, supersedes:, collapses:,
             plan_step_completions: @session.plan_step_completions
           )
         end
+
+        # Every turn before the round the model has not answered yet, less the
+        # ask's own turn and the pins -- as contiguous runs, so a retained turn
+        # stays in position between the ranges either side of it, exactly as a
+        # pin does under an ordinary collapse.
+        #
+        # NOTHING when every range falls below the cuts that already hold: a
+        # second handoff over an unchanged chain would re-write the very turns
+        # the first one replaced, for a second model call and a cut making no
+        # more room. The test is the RANGES and not the floor alone, because
+        # the ask's own retained turn always sits above the floor and would
+        # otherwise read as history still to collapse.
+        #
+        # The ranges still start at zero when there IS something new to fold
+        # in, because the cut that carries them supersedes the ones that held
+        # and must carry what they covered.
+        def handoff_ranges(pins)
+          retained = pins.indices_in(@walk.messages).to_set | [ask_index].compact.to_set
+          ranges = IntervalPartition.covering(0...unanswered_round, excluding: retained, owner: HANDOFF).validated
+          ranges.any? { |range| range.max >= @floor } ? ranges : NOTHING
+        end
+
+        # Where the round the model has not answered yet begins. Retained
+        # WHOLE: a chain whose `tool_use` was collapsed and whose `tool_result`
+        # was not is one the Messages API refuses, and a handoff fires on a
+        # chain that is already in trouble.
+        def unanswered_round
+          last = @walk.messages.size - 1
+          return last + 1 unless last.positive? && carries?(@walk.messages[last], "tool_result") &&
+                                 carries?(@walk.messages[last - 1], "tool_use")
+
+          last - 1
+        end
+
+        # The human's own question on this chain: the last user turn of plain
+        # text. Retained, because a handoff exists to ANSWER it -- replacing it
+        # with a document describing it is how the fallback loses the ask it
+        # was fired to keep.
+        def ask_index
+          @walk.messages.each_index.reverse_each.find do |index|
+            message = @walk.messages.fetch(index)
+            message.fetch("role") == "user" && blocks(message).all? { |block| block["type"] == "text" }
+          end
+        end
+
+        def carries?(message, type) = blocks(message).any? { |block| block["type"] == type }
+
+        # {Context::Conversation#blocks}' reading: a bare String content is a
+        # shape the API accepts and carries no blocks, rather than raising.
+        def blocks(message)
+          content = message.fetch("content")
+          content.is_a?(Array) ? content.grep(Hash) : []
+        end
+
+        # What the cuts that hold already replaced, as messages -- the
+        # summarizer's input is earlier replacements, which is the whole reason
+        # a handoff's own input fits.
+        def replacements
+          @seam.collapses.reject { |collapse| collapse.fetch("content").empty? }
+                         .map { |collapse| { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") } }
+        end
+
+        # The turns a handoff would collapse that no held cut has already: what
+        # the question has to be shown in full, stubs and all.
+        def uncollapsed(ranges) = at_indices(ranges.flat_map(&:to_a).select { |index| index >= @floor })
+
+        def at_indices(indices) = indices.map { |index| @walk.messages.fetch(index) }
+
+        def digest_at(index) = @walk.turns.fetch(index).digest
 
         # The cuts whose ranges this chain renders: the lineage with everything
         # a collapse in it re-wrote taken out. A superseding cut is recorded
@@ -162,10 +312,15 @@ module Lain
           lineage.reject { |cut| superseded.include?(cut.address) }
         end
 
+        # `keeps_last` travels on the seam rather than being re-derived at each
+        # reader, because every later seam built from this one inherits it: a
+        # chain that has handed off does not get the keep_last tail back by
+        # advancing past the handoff.
         def seam_of(held)
           return Derivation::UNCUT if held.empty?
 
-          Derivation::Seam.new(digest: held.last.digest, collapses: held.flat_map(&:collapses))
+          Derivation::Seam.new(digest: held.last.digest, collapses: held.flat_map(&:collapses),
+                               keeps_last: held.none? { |cut| cut.kind == HANDOFF })
         end
 
         def derives? = !@held.empty? || @derived.stale_edge?(nil, recorded: !@session.compaction_cuts.empty?)
@@ -225,7 +380,7 @@ module Lain
             merged = merges(policy, pins)
             return @cut if merged.empty?
 
-            Derivation::Seam.new(digest: @cut.digest, collapses: recorded(merged))
+            Derivation::Seam.new(digest: @cut.digest, collapses: recorded(merged), keeps_last: @cut.keeps_last)
           end
 
           private

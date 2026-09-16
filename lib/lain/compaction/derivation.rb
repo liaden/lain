@@ -92,12 +92,21 @@ module Lain
       # reach up to, and every held range with its replacement, root first. A
       # plain value, carrying no record of its own -- where it was committed,
       # by which arm and after which parent are its owner's to know.
-      Seam = Data.define(:digest, :collapses) do
+      #
+      # `keeps_last` is the one thing a seam knows that its ranges do not: a
+      # HANDOFF collapses the keep_last tail on purpose -- it exists because
+      # that tail is what would not fit -- so a seam carrying one is exempt
+      # from the boundary refusal below. It defaults true and is INHERITED by
+      # every seam built from this one, so the exemption cannot be picked up by
+      # an advance that never handed off, nor dropped by one that did.
+      Seam = Data.define(:digest, :collapses, :keeps_last) do
         # `make_shareable` and not `Canonical.normalize`: the collapses arrive
         # either from records already normalized or from replacements already
         # vetted, so freezing is what is missing, and re-normalizing a whole
         # lineage every turn would be the cost.
-        def initialize(digest:, collapses:) = super(digest:, collapses: Ractor.make_shareable(collapses))
+        def initialize(digest:, collapses:, keeps_last: true)
+          super(digest:, collapses: Ractor.make_shareable(collapses), keeps_last:)
+        end
 
         def spans = collapses.map { |collapse| collapse.fetch("span") }
       end
@@ -273,7 +282,7 @@ module Lain
           boundary = Boundary.new(messages: walk.messages, keep_last:)
           at = walk.turns.each_with_index.to_h { |turn, index| [turn.digest, index] }
           floor = cut.digest.nil? ? 0 : held_index(at, cut.digest) + 1
-          refuse_past(boundary, floor)
+          refuse_past(boundary, floor, cut)
           new(strategy:, walk:, boundary:, held: cut, floor:,
               held_ranges: cut.spans.map { |first, last| held_index(at, first)..held_index(at, last) },
               live_ranges: proposed(strategy, walk.messages, boundary, floor))
@@ -291,9 +300,12 @@ module Lain
         # A cut holds only on a chain containing the head it was committed at,
         # and there its floor never passes the boundary. One that does would
         # collapse turns keep_last retains -- a request no forward run sent --
-        # so it is refused rather than rendered.
-        def self.refuse_past(boundary, floor)
-          return if boundary.declined? || floor <= boundary.index
+        # so it is refused rather than rendered. A seam that does not keep
+        # keep_last is the stated exception and the only one: a handoff
+        # replaces that tail deliberately, having been fired because the tail
+        # is what would not fit.
+        def self.refuse_past(boundary, floor, cut)
+          return if boundary.declined? || !cut.keeps_last || floor <= boundary.index
 
           raise ArgumentError, "the held compaction cut ends at message #{floor}, past the keep_last boundary at " \
                                "#{boundary.index}; a cut holds only on a chain containing the head it was committed at"
@@ -388,7 +400,8 @@ module Lain
         def seam(collapsed)
           return held if live_ranges.empty?
 
-          Seam.new(digest: digest(live_ranges.last.max), collapses: collapsed.map { |pair| recorded(*pair) })
+          Seam.new(digest: digest(live_ranges.last.max), collapses: collapsed.map { |pair| recorded(*pair) },
+                   keeps_last: held.keeps_last)
         end
 
         private

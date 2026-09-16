@@ -68,11 +68,31 @@ module Lain
       # already answered the question this keyword asks. Nothing in lib/ writes
       # both -- a chat writes `compaction:`, a spawn writes `voice:`.
       #
+      # The moves, by whether the refused render left compaction anything to
+      # drop. Offered over an empty head, compaction is the one move that
+      # cannot happen, and every later prompt would be refused the same way.
+      MOVES = {
+        true => ". Make room with compaction (that count is now the reading it measures), /rewind, /unpin a " \
+                "pinned turn, or a narrower read",
+        false => ". Nothing older can be compacted yet, so make room with /rewind past the turn that grew it, " \
+                 "/unpin a pinned turn, or a narrower read"
+      }.freeze
+
+      # Said instead of either, once a handoff has already replaced the history
+      # with a state document: offering compaction there names a move that has
+      # been made, and the turns a /rewind would reach are the ones still here.
+      HANDED_OFF = ". The history before this ask was already replaced by a handoff state document, so make room " \
+                   "with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read"
+
+      LARGER_CONTEXT = "; the system prompt and tools alone come to about %<fixed>d tokens, so start with a " \
+                       "larger --num-ctx"
+
       # @param journal [#<<] where window_pressure records land; the run's
       #   record journal in a chat, and the Null channel by default
-      # @param compaction [#droppable?] the run's per-turn Context source, asked
-      #   whether the refused render left anything to drop; the Null source,
-      #   which never does, by default
+      # @param compaction [#droppable?, #handed_off?] the run's per-turn Context
+      #   source, asked whether the refused render left anything to drop and
+      #   whether a handoff has already replaced the history; the Null source,
+      #   which never does either, by default
       # @param voice [#subject, #withdrawal, #moves, #spawn] whose prompt this
       #   budget refuses, which decides both the words and who the record names
       def initialize(journal: Channel::Null.instance, compaction: Agent::PipelineSource::Null, voice: nil)
@@ -137,7 +157,7 @@ module Lain
         def spawn = nil
 
         def moves(error, request)
-          moves = MOVES.fetch(@compaction.droppable?)
+          moves = @compaction.handed_off? ? HANDED_OFF : MOVES.fetch(@compaction.droppable?)
           fixed = fixed_tokens(error, request)
           fixed < error.window_tokens ? "#{moves}." : "#{moves}#{format(LARGER_CONTEXT, fixed:)}."
         end

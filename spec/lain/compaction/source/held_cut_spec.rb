@@ -108,6 +108,66 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
     end
   end
 
+  # The one kind exempt from the boundary rule above, and the exemption IS the
+  # ruling: a handoff fires because the keep_last tail is what would not fit,
+  # so a handoff that kept keep_last would be one that made no room. The kind
+  # is on the record, which is what lets a resume take the same exemption.
+  describe "a handoff cut" do
+    def hand_off(line)
+      current = on(line)
+      current.hand_off(current.handoff(pins: Lain::Context::PinnedMessages::NONE).ranges, "the state document")
+      session.compaction_cuts.last
+    end
+
+    it "collapses everything but the ask, past the keep_last boundary" do
+      line = timeline(6)
+
+      cut = hand_off(line)
+
+      expect(cut).to have_attributes(kind: "handoff", supersedes: [], head: Lain::Event.stands_on(line.head))
+      expect(cut.spans).to eq([[line.to_a[0].digest, line.to_a[4].digest]])
+    end
+
+    it "holds on its own chain where an advance collapsing the same turns would not" do
+      line = timeline(6)
+      cut = hand_off(line)
+
+      expect(on(line).seam.digest).to eq(cut.digest)
+      expect(on(line).seam.keeps_last).to be(false)
+    end
+
+    it "renders the document and the ask, and nothing else" do
+      line = timeline(6)
+      hand_off(line)
+
+      expect(on(line).messages.map { |message| message["content"].first["text"] })
+        .to eq(["the state document", block(6)["text"]])
+    end
+
+    it "supersedes the cuts that held, so no earlier summary is rendered beside it" do
+      line = timeline(6)
+      advanced = advance(line)
+
+      cut = hand_off(line)
+
+      expect(cut.supersedes).to eq([advanced.address])
+      expect(on(line).seam.collapses).to eq(cut.collapses)
+    end
+
+    describe "#holds_newest?" do
+      it "is false with no cut on the chain" do
+        expect(on(timeline(6))).not_to be_holds_newest
+      end
+
+      it "is true once the chain renders the latest cut the session recorded" do
+        line = timeline(6)
+        advance(line)
+
+        expect(on(line)).to be_holds_newest
+      end
+    end
+  end
+
   describe "a collapse over the cuts it holds" do
     # Two advances, at 6 and at 8 turns, so two cuts hold on the longer chain.
     def two_advances
@@ -168,6 +228,22 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       expect(held.seam.collapses).to eq(cut.collapses)
       expect(held).not_to be_collapsible
       expect(held.messages.size).to eq(3)
+    end
+
+    # A record holding an advance, a collapse over two, and then a handoff is
+    # the shape a long stuck session really leaves. The handoff stands alone
+    # afterwards, so the render carries one replacement and not four.
+    it "is superseded whole by a handoff committed over it" do
+      line = two_advances
+      collapsed = collapse(line)
+      current = on(line)
+
+      current.hand_off(current.handoff(pins: Lain::Context::PinnedMessages::NONE).ranges, "the state document")
+
+      expect(session.compaction_cuts.map(&:kind)).to eq(%w[advance advance collapse handoff])
+      expect(session.compaction_cuts.last.supersedes).to eq([collapsed.address])
+      expect(on(line).messages.map { |message| message["content"].first["text"] })
+        .to eq(["the state document", block(8)["text"]])
     end
 
     it "records the advance past a collapse as the collapse's child" do

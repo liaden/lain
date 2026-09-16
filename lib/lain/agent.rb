@@ -623,14 +623,35 @@ module Lain
     # record carries the same answer to every live view.
     def call_model(on_stream_started)
       dispatch!
-      stands_on = Event.stands_on(@timeline.head)
+      attempt(Event.stands_on(@timeline.head), on_stream_started)
+    end
+
+    # ONE retry, and only where a handoff just made room: the refusal carries
+    # the provider's exact count, which is the first honest measurement this
+    # run has of a prompt that does not fit, and a fallback that could not use
+    # it would be a fallback that never fires. A SECOND refusal is the ask
+    # failing -- there is nothing further to replace -- and it withdraws and is
+    # worded like any other over-window refusal.
+    #
+    # The retry re-RENDERS rather than re-sending: the handoff committed a cut,
+    # and it is the next render through {#render_request} that holds it.
+    # {RequestOverride#deliver} restores a consumed one-shot on a raise, so an
+    # edited dispatch is re-sent rather than lost here.
+    def attempt(stands_on, on_stream_started, fallback: true)
       @request_override.deliver(render: -> { render_request }) do |request|
         model_caller.call(request, on_stream_started:, stands_on:)
       end
     rescue WindowExceeded => e
       accounting.observe_refusal(prompt_tokens: e.prompt_tokens, head: stands_on)
-      raise
+      raise unless fallback && handed_off
+
+      attempt(stands_on, on_stream_started, fallback: false)
     end
+
+    # Asks the run's compaction source for room and answers whether it made
+    # any. Past tense and no `?`, because this COMMITS: a handoff cut lands
+    # here, and a predicate name would read as a question about state.
+    def handed_off = @instrumentation.pipeline_source.handoff(timeline: @timeline, session: @session)
 
     # Composing the Workspace with the session's live reminders per render keeps
     # same-args-same-bytes; the args simply now vary with session state. Session

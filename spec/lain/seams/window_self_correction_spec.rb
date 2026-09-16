@@ -410,6 +410,12 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
   # chat builds: the real ollama provider and its error mapping, the model phase
   # and turn stack {Lain::CLI::Wiring} composes, a real {Lain::StatusFeed} on the
   # tee. Nothing is resident, so until the refusal the window is a guess.
+  #
+  # The handoff fallback is OFF here, and that is the fixture rather than the
+  # subject: it would otherwise write a state document on this very refusal and
+  # put a summarizer round trip on the same stubbed endpoint, so the counts
+  # below would stop being about chat turns. What a handoff does to a refused
+  # ask is `spec/lain/seams/handoff_spec.rb`.
   describe "an over-window refusal, over a guessed window" do
     around { |example| Dir.mktmpdir("lain-window-seam") { |dir| @state_dir = dir and example.run } }
 
@@ -425,7 +431,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
       @backend ||= begin
         provider = Lain::Provider::Ollama.new(config: zero_retry_config)
         Class.new(priced(Lain::CLI::Backend)) { define_method(:provider) { |**| provider } }
-             .new({ provider: "ollama", model:, max_tokens: 64 })
+             .new({ provider: "ollama", model:, max_tokens: 64, compact_fallback: "none" })
       end
     end
 

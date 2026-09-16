@@ -147,9 +147,12 @@ module Lain
       #   view would leave a record on disk this object had not followed.
       # @param profile [Hash{String=>Object}] the run profile's header fields
       #   (`CLI::RunProfile#to_header`); empty writes none
+      # @param compaction [Hash{String=>Object}] the run's compaction section
+      #   (`CLI::Backend#compaction_header`); empty writes none
       # @param writer [Liveness::Writer] the process writing this session
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                     message_journal: nil, live: Channel::Null.instance, profile: {}, writer: Liveness::Writer.current)
+                     message_journal: nil, live: Channel::Null.instance, profile: {}, compaction: {},
+                     writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal
         @live = live
@@ -158,7 +161,8 @@ module Lain
         # is the only question asked of it -- unlike {WrittenChain}, where the
         # ORDER is the claim.
         @spawned = Set.new
-        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:, writer:)
+        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:,
+                                         compaction:, writer:)
       end
 
       # The {Event::ChainWriter} observer duck: journal an off-render-chain
