@@ -914,13 +914,20 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     # alike, and the prefix survives (measured, not assumed: that fixture was
     # written first and came out green). What does it is the two definitions of
     # "nothing".
-    # {Announcement#headline} skips a first line of U+200B because {Blankness}
+    # {Announcement#headline} skips a first line of U+00A0 because {Blankness}
     # counts it blank; {Row#prose}'s `String#strip` does NOT remove it, because
     # Ruby strips ASCII whitespace. So the summary names the SECOND line while
     # the body still opens with the first. The safety property holds; the prefix
     # relation is not asserted here, because it is not owed.
+    #
+    # THE CHARACTER CHANGED AND THE SHAPE DID NOT. This was U+200B until
+    # {Lain::Tools::AskHuman::InboxRow.one_line} began removing the format
+    # characters a terminal obeys; the space-separator half of
+    # {Blankness::NOTHING_AT_ALL} -- U+00A0 here, U+2007, U+202F, U+3000 -- is
+    # `Zs`, survives that scrub, and is still not what `strip` removes. Picking
+    # the surviving half keeps the counterexample rather than the codepoint.
     it "is NOT a prefix when the headline is not where the body starts" do
-      lines = view.update(record(asked(one_question("db", "​\n#{long_question}"), agent: "researcher")))
+      lines = view.update(record(asked(one_question("db", "\u00A0\n#{long_question}"), agent: "researcher")))
 
       expect(lines.first).to include(long_question[0, 40])
       expect(unwrapped(lines)).to include(long_question)

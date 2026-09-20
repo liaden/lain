@@ -20,10 +20,15 @@ module Lain
     # The editor's read runs in a task of its own, stopped the moment its prompt
     # is withdrawn: the rail tells the pump, which never asks on a clock.
     class StdinPump
-      # The chat that reads no line, so nothing is started and nothing stopped.
+      # The chat that reads no line, so nothing is started and nothing stopped
+      # -- and nothing is ever open on the terminal, so a caller borrowing it
+      # waits for nobody and a prompt it drew was never typed at.
       module Idle
         def self.start(_task) = self
         def self.stop = nil
+        def self.untouched?(_prompt) = true
+
+        def self.exclusively(**) = yield(true)
       end
 
       # The countdown's keys, one at a time, from the terminal the pump holds.
@@ -44,6 +49,15 @@ module Lain
       # How long the line editor is left to install its own interrupt handler
       # before the chat takes it back ({#claim_interrupt}).
       INTERRUPT_CLAIM = 0.05
+
+      # How long {#exclusively} waits for an open read to end. Two seconds is
+      # several withdrawals' worth on the one path that takes this lock and a
+      # small fraction of the countdown that is waiting on it, so a borrower
+      # degrades well inside the window the human is watching.
+      HOLD_WAIT = 2.0
+
+      # How often the wait looks again.
+      HOLD_POLL = 0.01
 
       # No read open at a prompt that answers nothing, so nothing is untouched.
       NOT_EDITING = Draw.new(InputRail::Unpublished, nil).freeze
@@ -80,7 +94,8 @@ module Lain
       # here because it re-points the process's own descriptor, which building
       # an object must never do.
       #
-      # @param task [Async::Task] the conversation's task
+      # @param task [Async::Task] the task the pump's reader fiber is spawned
+      #   under, so it ends when the conversation does
       # @return [Async::Task] what stops the pump
       def start(task)
         @lines = Lines.new(seated(@input))
@@ -106,7 +121,65 @@ module Lain
       # lands at.
       def untouched?(prompt) = @editing.prompt == prompt && LineEditor.untouched?
 
+      # The terminal, held for the length of the block, so a caller that has to
+      # switch its mode does it with no read of this pump's open on it.
+      #
+      # IT HAS TO WAIT RATHER THAN JUST SWITCH. A read withdrawn for something
+      # else is stopped from another fiber and unwinds on this pump's, and
+      # Reline puts the mode it found back as it goes -- so a countdown that
+      # claimed raw mode the instant its prompt arrived had the mode taken back
+      # out from under it a moment later, and every key it offered then waited
+      # for an Enter a countdown has no way to ask for. Measured in a real PTY
+      # pane: the keys echoed and were read as a line.
+      #
+      # THE WAIT IS BOUNDED, and answering false rather than blocking for ever
+      # is the whole reason this is not a bare `synchronize`. The lock is held
+      # for the length of a read, and the only thing that ends a read is its
+      # prompt being withdrawn -- so a withdrawal that never arrives would park
+      # the caller with its words already on the screen and no key doing
+      # anything, which is the same symptom this method removes, turned from a
+      # race into a silent hang. The caller is told instead and may degrade.
+      #
+      # The same lock {#sweep} takes, and for the same reason stated there.
+      #
+      # @param within [Numeric] seconds to wait for an open read to end
+      # @yieldparam held [Boolean] whether the wait got the terminal. The block
+      #   runs EITHER WAY -- a borrower whose words are already on the screen
+      #   must still read keys -- and is told which it is, so it can say so.
+      # @return the block's value
+      def exclusively(within: HOLD_WAIT)
+        lock = locked_by(within)
+        begin
+          yield(!lock.nil?)
+        ensure
+          lock&.unlock
+        end
+      end
+
       private
+
+      # Ruby has no timed `Mutex#lock`, so the bound is a poll. Answers the
+      # monitor once this fiber holds it and nil once the wait has run out, so
+      # the caller's `ensure` can tell whether it owes an unlock.
+      def locked_by(within)
+        deadline = now + within.to_f
+        Enumerator.produce { @terminal.try_lock ? @terminal : waited(deadline) }
+                  .lazy.find { |settled| settled != :again }
+      end
+
+      # `Kernel#sleep` and not a fiber-only sleep: this is reached from a fiber
+      # under the pane's reactor and from a thread in a spec, and the scheduler
+      # hooks the former.
+      def waited(deadline)
+        return nil if now >= deadline
+
+        sleep(HOLD_POLL)
+        :again
+      end
+
+      # The house clock, read through the one constant that names the
+      # primitive -- `run_clock_spec` holds `lib/` to naming it exactly once.
+      def now = RunClock::MONOTONIC.call
 
       def run
         loop { serve(published) }

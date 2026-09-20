@@ -69,7 +69,7 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
       fence = lines.drop_while { |line| line != "```mermaid" }
       expect(fence[1]).to eq("flowchart TD")
       expect(fence).to include("    n_a --> n_b", "```")
-      expect(lines).to include(a_string_including(spawn_event("one").digest))
+      expect(lines).to include(a_string_including("- subagent  running"))
     end
 
     it "splits the mermaid source per line, so no rendered line carries a newline" do
@@ -165,19 +165,84 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
   end
 
   describe "the fleet" do
-    it "lists a spawn until the record that ends it arrives" do
+    def progress(spawn, **) = Lain::Telemetry::ChildProgress.new(spawn: spawn.digest, **)
+
+    def ended(spawn, lifecycle)
+      Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{lifecycle}", from: "child", to: "parent",
+                      body: { "lifecycle" => lifecycle }, causal_parents: [spawn.digest])
+    end
+
+    it "carries a spawn running, and says so when the record that ends it arrives" do
       view = described_class.new
       view.initial
       spawn = spawn_event("one")
 
-      expect(view.update(spawn)).to include(a_string_including(spawn.digest))
-      expect(view.update(completion(spawn))).not_to include(a_string_including(spawn.digest))
+      expect(view.update(spawn)).to include(a_string_including("running"))
+      expect(view.update(completion(spawn))).to include(a_string_including("done"))
+    end
+
+    # The whole point of the tree: a human reads which child is doing what,
+    # and which child spawned which, rather than a column of addresses.
+    it "draws a grandchild indented under the child whose head it was spawned from" do
+      view = described_class.new(clock: -> { Time.utc(2026, 9, 20, 12, 0, 0) })
+      view.initial
+      child = spawn_event("dev")
+      view.update(child)
+      view.update(progress(child, role: "dev", task_line: "port the parser", turns: 1, head: "blake3:dev-t1"))
+      grandchild = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-test", from: "parent", to: nil,
+                                   body: { "spawned_from" => "blake3:dev-t1" })
+      view.update(grandchild)
+
+      lines = view.update(progress(grandchild, role: "test_engineer", task_line: "write the specs", turns: 0))
+
+      expect(lines).to include("- dev  running  1t  0s  port the parser",
+                               "  - test_engineer  running  0t  0s  write the specs")
+    end
+
+    it "reads failed for a child that hit its ceiling" do
+      view = described_class.new
+      view.initial
+      spawn = spawn_event("one")
+      view.update(spawn)
+
+      lines = view.update(ended(spawn, Lain::StatusFeed::SpawnLifecycle::FAILED))
+
+      expect(lines).to include(a_string_including("failed"))
+    end
+
+    # The task line reaches this buffer as a row of its own, so a lone
+    # carriage return in it would overwrite the columns drawn before it.
+    it "keeps a forged task line to one line of the buffer" do
+      view = described_class.new
+      view.initial
+      spawn = spawn_event("one")
+      view.update(spawn)
+
+      lines = view.update(progress(spawn, role: "dev", task_line: "look\raround", turns: 0))
+
+      expect(lines.grep(/look/)).to contain_exactly(a_string_including("look around"))
+    end
+
+    # The same forgery the pane's header refuses. nvim draws an escape as a
+    # glyph rather than obeying it, so the cost here is a row of mojibake
+    # rather than a rewritten HUD -- but the rule is one rule, and this is the
+    # surface that would otherwise carry the raw bytes into a buffer.
+    it "draws a task line's terminal escape inert rather than passing the bytes through" do
+      view = described_class.new
+      view.initial
+      spawn = spawn_event("one")
+      view.update(spawn)
+
+      lines = view.update(progress(spawn, role: "dev", task_line: "clean\e[1A\e[2KPWNED", turns: 0))
+
+      expect(lines.grep(/PWNED/)).to contain_exactly(a_string_including("cleanPWNED"))
+      expect(lines.join).not_to include("\e")
     end
 
     it "draws a fleet that raises into the buffer instead of raising" do
       fleet = Class.new do
         def launched(_event) = raise(NoMethodError, "undefined method 'digest'")
-        def digests = []
+        def tree = []
       end.new
       view = described_class.new(fleet:)
       view.initial

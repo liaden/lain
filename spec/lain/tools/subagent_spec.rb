@@ -3345,4 +3345,66 @@ RSpec.describe Lain::Tools::Subagent do
       expect(tool.attenuates_from).to be(union)
     end
   end
+
+  # What a live fleet view is told while a child works, through the objects
+  # that really carry it: a real one-shot spawn, the seam's telemetry leg, and
+  # a real {Lain::StatusFeed} folding both the lineage events and the progress
+  # records. Nothing here doubles the fold, because the thing under test is
+  # the two halves agreeing about one spawn.
+  describe "the fleet tree a spawn publishes" do
+    let(:feed) { Lain::StatusFeed.new(path: File.join(state_dir, "state.json")) }
+    let(:state_dir) { Dir.mktmpdir("lain-subagent-fleet") }
+
+    let(:spawns) { [] }
+
+    # The scribe's own split, in one line: the events reach the tee, the
+    # child's turns stay record data. Feeding turns here would make this
+    # example prove something no production wiring does.
+    let(:tee) do
+      lambda do |event|
+        spawns << event if event.kind == :spawn
+        feed << event unless event.kind == :turn
+      end
+    end
+
+    after { FileUtils.remove_entry(state_dir) }
+
+    def rows = feed.state["fleet_tree"]
+
+    it "names the spawn, its role and its task line, and counts the turns the child committed" do
+      tool = build_subagent(provider: mock(text_response("done")), announces_as: "dev",
+                            observer: tee, telemetry: feed)
+
+      tool.run("port the parser\nand then the lexer")
+
+      expect(rows.map { |row| row.values_at("role", "task", "state") })
+        .to eq([["dev", "port the parser and then the lexer", "done"]])
+      expect(rows.first["turns"]).to be_positive
+    end
+
+    # The row is keyed on the spawn digest, which is the address a watcher
+    # names -- so the tree and the roster cannot come to disagree about which
+    # child they are describing.
+    it "keys the row on the spawn digest the roster carries" do
+      tool = build_subagent(provider: mock(text_response("done")), observer: tee, telemetry: feed)
+
+      tool.run("look around")
+
+      expect(rows.map { |row| row["spawn"] }).to eq(spawns.map(&:digest))
+    end
+
+    # The child asks for a tool it was never granted on every turn, so only
+    # the ceiling ends it -- and its row must say so rather than sitting at
+    # running for the rest of the session.
+    it "reads failed for a child that hit its ceiling" do
+      tool = described_class.new(provider: mock(tool_response(["e1", "echo", { "text" => "again" }])),
+                                 context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
+                                 parent:, budget: Lain::Agent::Budget.new(max_iterations: 2), max_depth: 3,
+                                 tool_middleware: ToolRegistry::UNGUARDED, observer: tee, telemetry: feed)
+
+      expect { tool.run("keep going") }.to raise_error(StandardError)
+
+      expect(rows.map { |row| row["state"] }).to eq(["failed"])
+    end
+  end
 end

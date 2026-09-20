@@ -40,6 +40,11 @@ module Lain
       # The pane that has said nothing yet about what it is drawing.
       NOTHING_DRAWN = { "generation" => 0 }.freeze
 
+      # Back to column 0 and erase to the end of the row. Written here rather
+      # than taken from tty-cursor because it is two bytes of meaning and the
+      # pane must not depend on a screen library to redraw its own header.
+      CLEAR_ROW = "\r\e[K"
+
       # @param path [String] the chat's input socket, from {CLI::InputSocket.path}
       # @param tty [Frontend::TTY] the pane's own terminal; it owns this pane
       #   and nothing else writes to it
@@ -60,6 +65,7 @@ module Lain
         @reported = nil
         @client = nil
         @quit = false
+        @pump = StdinPump::Idle
         @relay = Relay.new
         @rail.route(@relay)
       end
@@ -223,9 +229,19 @@ module Lain
       def drawn(client, frame)
         return counted(client, frame) if frame["kind"] == "countdown"
 
-        @tty.print_prompt("#{frame["header"]}\n") unless frame["header"].to_s.empty?
+        over_the_prompt(frame["header"])
         line = @rail.read(frame["kind"].to_sym, frame["text"].to_s, header: frame["header"].to_s)
         emit(client, line.nil? ? { "v" => "eof" } : answer(line, frame))
+      end
+
+      # The cursor is wherever the read this frame replaced left it -- mid-row,
+      # after a `you> ` the editor had already drawn -- so the row is taken back
+      # before the header goes on it. Without this a redraw printed
+      # `you> ❄ fleet:4 inbox:0` as one line and cost the pane a row of its six.
+      def over_the_prompt(header)
+        return if header.to_s.empty?
+
+        @tty.print_prompt("#{CLEAR_ROW}#{header}\n")
       end
 
       def answer(line, frame) = { "v" => "line", "text" => line, "generation" => frame["generation"] }
@@ -235,8 +251,8 @@ module Lain
       # each offered key leaves as the signal it names.
       def counted(client, frame)
         keys = frame["keys"].to_h { |key, name| [key, name.to_sym] }
-        Keys.new(input: @input, tick: @tick)
-            .offering(@tty, "#{frame["header"]}\n#{frame["text"]}") do |pressed|
+        Keys.new(input: @input, tick: @tick, terminal: @pump)
+            .offering(@tty, "#{CLEAR_ROW}#{frame["header"]}\n#{frame["text"]}") do |pressed|
               emit(client, { "v" => "signal", "name" => keys[pressed].to_s }) if keys.key?(pressed)
             end
       end
@@ -317,11 +333,34 @@ module Lain
       # ONCE around the whole countdown -- a per-read bracket would leave a key
       # pressed between reads cooked, and echo would bleed it onto the screen --
       # and the mode in force is given back however the window ends.
+      #
+      # THE WINDOW OPENS ONLY ONCE THE LINE EDITOR IS OUT OF IT, which is the
+      # other half of "the countdown owns the pane". A countdown arrives while
+      # a read is open at the prompt it replaces -- a Ctrl-C at a parked
+      # `[y/N]` is exactly that -- and that read unwinds on the pump's fiber
+      # AFTER this frame is handled, putting the mode it found back as it goes.
+      # So the pump's own hold on the terminal is taken first.
       class Keys
-        def initialize(input:, tick:)
+        # @param input [IO] the keyboard this window reads single keys from
+        # @param tick [Numeric] how often a nonblocking look is taken
+        # @param terminal [#exclusively] the pump that owns this terminal; the
+        #   idle one, which holds nothing, for a pane with no reader behind it
+        def initialize(input:, tick:, terminal: StdinPump::Idle)
           @keys = StdinPump.keys(input)
           @tick = tick
+          @terminal = terminal
         end
+
+        # What the human is told when the line editor would not let go in time.
+        # It names the CONSEQUENCE, and the consequence is that a key can be
+        # lost: the degraded window switches the terminal raw while the editor
+        # is still reading the same descriptor, so a keypress can be taken by
+        # the editor and reach the chat as a typed line rather than as the
+        # signal it named. That is the race the hold removes, deliberately
+        # preferred here over refusing to read at all -- so the words have to
+        # tell the human to press again.
+        UNHELD = "the input pane could not take the terminal from its line editor: " \
+                 "a key pressed now may be swallowed or arrive as text -- press it again."
 
         # @param screen [Frontend::TTY] where the window's words are drawn
         # @param words [String] the countdown as the chat composed it
@@ -330,14 +369,31 @@ module Lain
           screen.print_prompt("#{words}\n")
           return unless @keys.tty?
 
+          @terminal.exclusively do |held|
+            # Degraded rather than dead: the countdown's words are already on
+            # the screen, so refusing to read at all would leave offered keys
+            # that do nothing and say nothing.
+            #
+            # PRINTED, never noted. {TTY::Notes} holds a note while a prompt
+            # drawn by another fiber is still open, and that is exactly this
+            # path's premise -- the read that would not let go still has its
+            # prompt published -- so a noted sentence would arrive only once
+            # that read ended, which is the event whose absence caused the
+            # degrade. It goes out the way the countdown's own words above do.
+            screen.print_prompt("#{UNHELD}\n") unless held
+            raw_window(&pressed)
+          end
+        end
+
+        private
+
+        def raw_window(&pressed)
           saved = @keys.console_mode
           @keys.raw!(intr: true)
           loop { press(&pressed) }
         ensure
           @keys.console_mode = saved unless saved.nil?
         end
-
-        private
 
         # One nonblocking look per tick, {Frontend::TTY::Countdown#read_key}'s
         # policy: the window is raw for its whole length, so a key registers

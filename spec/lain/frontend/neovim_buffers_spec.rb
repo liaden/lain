@@ -445,7 +445,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do
         channel.push(spawn)
 
-        wait_until { status_text.include?(spawn.digest) }
+        wait_until { status_text.include?("- subagent  running") }
         expect(status_text).to include("demo", "0/2 done", "```mermaid", "flowchart TD", "n_a --> n_b")
         expect(buffer_lines("lain://status")).to include("```")
       end

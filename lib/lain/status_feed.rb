@@ -30,6 +30,12 @@ module Lain
   #   ended by a record naming it. {Fleet} owns both sides: the keying that
   #   makes a redelivered event a no-op rather than a phantom second entry, and
   #   the lifecycle reading that lets a finished child leave the roster.
+  # * `fleet_tree` -- the same spawns as ROWS, each nested under the spawn it
+  #   was launched from and carrying its role, its task line, its state, its
+  #   turn count and the instant it started. An instant and not an elapsed
+  #   count, for `cache_deadline`'s reason: a duration would make this struct
+  #   differ from itself once a second. {Fleet} owns the fold, and needs
+  #   {Telemetry::ChildProgress} beside the events to do it.
   # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN} and
   #   not yet named a causal parent by a committed turn. {Inbox} owns the
   #   projection, the fold, and the {Store} the live carrier's chain resolves
@@ -226,7 +232,7 @@ module Lain
       @approvals_pending = 0
       @compactions = 0
       @derivation_refusal_streak = 0
-      @fleet = Fleet.new
+      @fleet = Fleet.new(clock: @clock)
     end
     private :start_empty
 
@@ -262,6 +268,10 @@ module Lain
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
       remeasure if event.is_a?(Telemetry::RunInterrupted)
+      # Matched by class, for {#turn_usage?}'s reason. It is the one record the
+      # fleet reads that is not an {Event}, and {Telemetry::ChildProgress} says
+      # why the facts a tree needs ride beside a spawn rather than in it.
+      @fleet.progressed(event) if event.is_a?(Telemetry::ChildProgress)
       observe_rewind(event) if rewound?(event)
       observe_consumption(event)
       observe(event) if event.respond_to?(:kind)
@@ -575,7 +585,8 @@ module Lain
     #
     # @return [Hash] string-keyed, JSON-shaped
     def observed
-      { "cache_deadline" => @cache_deadline, "fleet" => @fleet.digests, "inbox_count" => @inbox.pending_size,
+      { "cache_deadline" => @cache_deadline, "fleet" => @fleet.digests, "fleet_tree" => @fleet.tree,
+        "inbox_count" => @inbox.pending_size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
         "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,

@@ -300,4 +300,195 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.digests).to eq([])
     end
   end
+
+  describe "#tree" do
+    # The tree's parent edge is the only thing the `:spawn` body cannot carry:
+    # it names the HEAD it was spawned from, and which spawn owns that head is
+    # a fact only the child's own progress records tell.
+    def spawn_from(_id, head)
+      payload = Lain::Event::Payload.new(kind: :spawn, body: { "spawned_from" => head })
+      Lain::Event.new(kind: :spawn, from: "parent", to: nil, payload_digest: payload.digest, body: payload.body)
+    end
+
+    def progress(spawn, **) = Lain::Telemetry::ChildProgress.new(spawn: spawn.digest, **)
+
+    let(:now) { Time.utc(2026, 9, 20, 12, 0, 0) }
+
+    it "is empty before anything has launched" do
+      expect(described_class.new.tree).to eq([])
+    end
+
+    it "opens a row running, at depth nought, with the role and task its dispatch named" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a")
+      fleet.launched(launch)
+
+      fleet.progressed(progress(launch, role: "dev", task_line: "port the parser", worker: "dev.1", turns: 0))
+
+      expect(fleet.tree).to eq([{ "spawn" => launch.digest, "role" => "dev", "task" => "port the parser",
+                                  "worker" => "dev.1", "state" => "running", "turns" => 0, "depth" => 0,
+                                  "started" => "2026-09-20T12:00:00Z" }])
+    end
+
+    it "puts a grandchild under the child whose head it was spawned from, with each one's turns" do
+      fleet = described_class.new(clock: -> { now })
+      child = spawn_event("dev")
+      fleet.launched(child)
+      fleet.progressed(progress(child, role: "dev", task_line: "port the parser", turns: 0))
+      fleet.progressed(progress(child, turns: 1, head: "blake3:dev-t1"))
+      grandchild = spawn_from("test", "blake3:dev-t1")
+      fleet.launched(grandchild)
+      fleet.progressed(progress(grandchild, role: "test_engineer", task_line: "write the specs", turns: 0))
+
+      expect(fleet.tree.map { |row| row.values_at("role", "state", "turns", "depth") })
+        .to eq([["dev", "running", 1, 0], ["test_engineer", "running", 0, 1]])
+    end
+
+    # The child stands on a new head every turn, and only the one it is
+    # standing on now can be spawned from -- so a grandchild launched after the
+    # parent moved on still lands under it.
+    it "places a grandchild against the head its parent is standing on now" do
+      fleet = described_class.new(clock: -> { now })
+      child = spawn_event("dev")
+      fleet.launched(child)
+      fleet.progressed(progress(child, turns: 1, head: "blake3:dev-t1"))
+      fleet.progressed(progress(child, turns: 2, head: "blake3:dev-t2"))
+
+      fleet.launched(spawn_from("test", "blake3:dev-t2"))
+
+      expect(fleet.tree.map { |row| row["depth"] }).to eq([0, 1])
+    end
+
+    # A spawn whose head nobody reported is nobody's child: the run's own chain
+    # spawns from a head no progress record ever names.
+    it "roots a spawn whose head no child ever reported" do
+      fleet = described_class.new(clock: -> { now })
+      fleet.launched(spawn_from("a", "blake3:the-chat-head"))
+
+      expect(fleet.tree.map { |row| row["depth"] }).to eq([0])
+    end
+
+    it "reads failed for a child that raised, and keeps its row where it was" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a")
+      fleet.launched(launch)
+
+      fleet.completed(message_event("ended", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED,
+                                                     "error" => "Lain::Agent::Budget::Exhausted" },
+                                             causal_parents: [launch.digest]))
+
+      expect([fleet.tree.map { |row| row["state"] }, fleet.digests]).to eq([["failed"], []])
+    end
+
+    it "reads done for a one-shot that answered, and stopped for one that was cancelled" do
+      fleet = described_class.new(clock: -> { now })
+      answered = spawn_event("a")
+      cancelled = spawn_event("b")
+      [answered, cancelled].each { |launch| fleet.launched(launch) }
+
+      fleet.completed(completion(answered))
+      fleet.completed(message_event("stop", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
+                                            causal_parents: [cancelled.digest]))
+
+      expect(fleet.tree.map { |row| row["state"] }).to eq(%w[done stopped])
+    end
+
+    # The struct is rewritten every turn, so a session's whole spawn history in
+    # it is a growing write per turn. Running rows are never dropped; the
+    # oldest ended ones are.
+    it "keeps every running row and only the most recent ended ones" do
+      fleet = described_class.new(clock: -> { now })
+      launches = Array.new(described_class::ENDED_SHOWN + 3) do |index|
+        spawn_event("s#{index}").tap { |launch| fleet.launched(launch) }
+      end
+
+      launches.each { |launch| fleet.completed(completion(launch, id: launch.digest)) }
+
+      expect(fleet.tree.size).to eq(described_class::ENDED_SHOWN)
+    end
+
+    it "ignores a progress record for a spawn it never carried" do
+      fleet = described_class.new(clock: -> { now })
+
+      fleet.progressed(progress(spawn_event("z"), turns: 4, head: "blake3:t4"))
+
+      expect(fleet.tree).to eq([])
+    end
+
+    # It is read from `StatusFeed#observed`, which runs on every event the tee
+    # carries -- a bash tool's stdout included -- while the fold moves only on
+    # a spawn, a completion or a progress record.
+    describe "the memo" do
+      it "hands back the same rows without rebuilding them" do
+        fleet = described_class.new(clock: -> { now })
+        fleet.launched(spawn_event("a"))
+
+        expect(fleet.tree).to be(fleet.tree)
+      end
+
+      it "is dropped by each of the three records that move the fold" do
+        fleet = described_class.new(clock: -> { now })
+        launch = spawn_event("a")
+        fleet.launched(launch)
+        after_launch = fleet.tree
+
+        fleet.progressed(progress(launch, role: "dev", turns: 1, head: "blake3:t1"))
+        after_progress = fleet.tree
+        fleet.completed(completion(launch))
+
+        expect([after_launch, after_progress, fleet.tree].map { |rows| rows.first["state"] })
+          .to eq(%w[running running done])
+        expect(after_progress.first["role"]).to eq("dev")
+      end
+    end
+  end
+
+  describe Lain::StatusFeed::Fleet::Row do
+    let(:published) do
+      { "spawn" => "blake3:s", "role" => "dev", "task" => "port the parser", "worker" => "dev.1",
+        "state" => "running", "turns" => 3, "depth" => 1, "started" => "2026-09-20T12:00:00Z" }
+    end
+
+    it "draws one line, indented by its depth, aged against the instant it is handed" do
+      row = described_class.at(published, now: Time.utc(2026, 9, 20, 12, 0, 45))
+
+      expect(row.to_s).to eq("  dev  running  3t  45s  port the parser")
+    end
+
+    # A row this renderer cannot age still draws: it is a status surface, and a
+    # torn instant must cost the age rather than the row.
+    it "ages to nothing rather than raising on an instant it cannot read" do
+      row = described_class.at(published.merge("started" => "not a time"), now: Time.utc(2026, 9, 20))
+
+      expect(row.to_s).to eq("  dev  running  3t  port the parser")
+    end
+
+    # The input pane's header IS the frame the chat publishes, and a pane
+    # redraws on a changed frame -- so a column that ticks costs a redraw a
+    # second. `lain://status` keeps the age, where a redraw is free.
+    it "leaves the age out for a surface that cannot afford to redraw" do
+      expect(described_class.undated(published).to_s).to eq("  dev  running  3t  port the parser")
+    end
+
+    # The published struct is JSON read back off disk by a separate process,
+    # so the record's own scrub is not the last word before a terminal.
+    it "draws a published task holding an escape sequence inert" do
+      row = described_class.undated(published.merge("task" => "clean\e[1A\e[2KPWNED"))
+
+      expect(row.to_s).to eq("  dev  running  3t  cleanPWNED")
+    end
+
+    # Ninety-six characters of CJK are 214 terminal columns, and the indent
+    # and four columns are drawn beside them.
+    it "clamps the whole drawn row to its column budget, not the task to a character count" do
+      row = described_class.undated(published.merge("task" => "\u65E5\u672C\u8A9E" * 40))
+
+      expect(Lain::Ext::Prompt.width(row.to_s)).to be <= described_class::COLUMNS
+      expect(row.to_s).to end_with("\u2026")
+    end
+
+    it "leaves a row inside the budget exactly as composed" do
+      expect(described_class.undated(published).to_s).not_to end_with("\u2026")
+    end
+  end
 end

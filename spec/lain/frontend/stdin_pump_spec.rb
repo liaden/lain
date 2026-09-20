@@ -491,6 +491,68 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  # The countdown in {Lain::Frontend::InputPane} borrows the terminal through
+  # this rather than switching it raw beside an open read -- the read unwinds
+  # on this pump's own fiber and puts the mode it found back on the way out.
+  #
+  # DRIVEN WITH FIBERS, and that is the example rather than incidental to it:
+  # the defect is two fibers of one reactor, so a two-thread version would
+  # prove only that a Mutex is a Mutex. The seam spec carries the rest of the
+  # weight, against a real PTY.
+  describe "#exclusively" do
+    let(:pump) do
+      described_class.new(rail: Lain::Frontend::InputRail.new(screen: Lain::Sink::Null.new),
+                          screen: Lain::Sink::Null.new, input: StringIO.new)
+    end
+
+    it "holds the terminal for the length of the block, against another fiber of the same reactor" do
+      order = []
+
+      Sync do |task|
+        holder = task.async do
+          pump.exclusively { order.push(:entered) and sleep(0.05) and order.push(:left) }
+        end
+        task.sleep(0.01)
+        pump.exclusively { order.push(:after) }
+        holder.wait
+      end
+
+      expect(order).to eq(%i[entered left after])
+    end
+
+    it "tells the block it got the terminal" do
+      expect(Sync { pump.exclusively { |held| held } }).to be(true)
+    end
+
+    # A withdrawal that never arrives must not park the borrower with the
+    # countdown's words already drawn and no key doing anything: that is the
+    # hang the bound turns back into a degradable refusal. The block still
+    # runs -- it is told it is running unheld.
+    it "gives up after its bound and tells the block it did not get the terminal" do
+      answered = Sync do |task|
+        holder = task.async { pump.exclusively { sleep(5) } }
+        task.sleep(0.02)
+        pump.exclusively(within: 0.05) { |held| held }.tap { holder.stop }
+      end
+
+      expect(answered).to be(false)
+    end
+
+    it "lets go again once the bound has passed, so a later borrower is not poisoned" do
+      Sync do |task|
+        holder = task.async { pump.exclusively { sleep(5) } }
+        task.sleep(0.02)
+        pump.exclusively(within: 0.05) { nil }
+        holder.stop
+        holder.wait
+      rescue Async::Stop
+        nil
+      end
+
+      expect(Sync { pump.exclusively { |held| held } }).to be(true)
+    end
+  end
+
   describe ".keys" do
     it "offers the countdown one key at a time from the pump's terminal, and nothing from a stream" do
       keys = described_class.keys(StringIO.new("c"))

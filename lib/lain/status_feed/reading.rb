@@ -70,6 +70,13 @@ module Lain
 
       GUESS = "~"
 
+      # How many fleet rows a header carries under the HUD line. Two, and the
+      # arithmetic is `lain up`'s: the input pane is six rows, and the HUD, the
+      # rows, the "+N more" and the prompt all live in them -- with a third row
+      # a countdown has nowhere of its own to draw. `lain://status` is where
+      # the whole tree is read.
+      HEADER_ROWS = 2
+
       # @param path [String] a published state file, absent or unreadable as
       #   often as not
       # @return [Reading] over whatever was there, or over nothing
@@ -118,6 +125,35 @@ module Lain
       #   sits hard against the right edge of a bar
       def hud(now:)
         [marker(now:), " fleet:#{fleet_size} inbox:#{inbox_count}", *optional_segments, " "].join
+      end
+
+      # The HUD with the fleet tree under it: what a surface with more than one
+      # line shows, which today is the input pane's header. The HUD line stays
+      # exactly what every one-line surface draws, so the two cannot drift.
+      #
+      # It takes the TOP of the tree and says what it left rather than growing
+      # with the fleet: this is drawn above a prompt a human is typing at, and a
+      # header that pushes the prompt off the bottom of the pane is worse than
+      # one that says there are more.
+      #
+      # NOTHING BELOW THE FIRST LINE READS A CLOCK, and that is a constraint
+      # rather than an omission. This string IS the frame the chat publishes to
+      # the pane, and a pane redraws whenever the frame changes: an age column
+      # would make it differ from itself once a second and cost a redraw a
+      # second, each printed where the line editor left the cursor. The rows
+      # are therefore {Fleet::Row.undated}; `lain://status` shows the age, where
+      # a redraw is a buffer rewrite nobody sees. `now:` still decides the HUD's
+      # own cache marker, which flips once rather than ticking.
+      #
+      # @param now [Time] the wall clock the HUD's marker is decided at
+      # @return [String] one line, or one line per row beneath it
+      def header(now:) = [hud(now:), *fleet_rows].join("\n")
+
+      # @return [Array<String>] the rows as drawn, indented under the HUD
+      def fleet_rows
+        rows = Array(@state["fleet_tree"])
+        drawn = rows.take(HEADER_ROWS).map { |row| "  #{Fleet::Row.undated(row)}" }
+        rows.size > HEADER_ROWS ? [*drawn, "  +#{rows.size - HEADER_ROWS} more"] : drawn
       end
 
       def fleet_size = Array(@state["fleet"]).size

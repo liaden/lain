@@ -38,8 +38,13 @@ module InputPaneSocket
                                   history_path: File.join(dir, "history"),
                                   state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::InputRail.new(screen: tty)
-    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox] },
-                                        header: -> { File.exist?(hud) ? File.read(hud).chomp : "" })
+    # The real composition, not a canned line: the chat's own `hud_line` is
+    # `Reading#header` over the published struct, so the file holds the STRUCT
+    # and the header is derived here exactly as `CLI::Wiring` derives it.
+    header = lambda do
+      File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).header(now: Time.now) : ""
+    end
+    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox] }, header:)
     begin
       socket.bind
     rescue Lain::CLI::InputSocket::InUse => e
@@ -77,11 +82,22 @@ module InputPaneSocket
       log.puts(JSON.generate({ "response" => outcome.response, "closed" => outcome.closed? }))
     end
 
+    parked = lambda do |task|
+      conductor.read_prompt("you> ")
+      outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
+        File.write(File.join(dir, "asking"), "")
+        log.puts(JSON.generate({ "reply" => conductor.read_reply("apply this edit? [y/N] ") }))
+        "answered"
+      end
+      log.puts(JSON.generate({ "response" => outcome.response, "closed" => outcome.closed? }))
+    end
+
     File.write(File.join(dir, "bound"), "yes")
     conductor.guard do
       Sync do |task|
         socket.start(task)
-        { "lines" => lines, "approval" => approval, "countdown" => countdown }.fetch(shape).call(task)
+        { "lines" => lines, "approval" => approval, "countdown" => countdown,
+          "parked" => parked }.fetch(shape).call(task)
       end
     end
     socket.stop
@@ -201,12 +217,74 @@ RSpec.describe "a chat fed by an input pane", :seam do
       .to eq({ "heard" => "hello" })
   end
 
+  # A published struct, as the chat's own header thunk composes one.
+  def publish(**state)
+    File.write(File.join(dir, "hud"), JSON.generate({ "fleet" => [], "inbox_count" => 0 }.merge(state)))
+  end
+
+  # One `fleet_tree` row, as `StatusFeed::Fleet#tree` publishes one.
+  def fleet_row(task: "port the parser", turns: 1)
+    { "spawn" => "blake3:dev", "role" => "dev", "task" => task, "worker" => "dev.1",
+      "state" => "running", "turns" => turns, "depth" => 0, "started" => Time.now.utc.iso8601 }
+  end
+
   it "shows the chat's header above the prompt, refreshed with no keypress" do
     cockpit_at("lines")
 
-    File.write(File.join(dir, "hud"), "fleet:2 inbox:1")
+    publish(fleet: %w[a b], inbox_count: 1)
 
     expect(cockpit.settles { cockpit.screen.include?("fleet:2 inbox:1") || nil }).to be(true)
+  end
+
+  # The fleet tree rides the header, so the header is no longer one line. A
+  # pane draws it whole above the prompt and republishes on every change, which
+  # is what makes a child's turn count live with nothing typed.
+  it "draws a multi-line header whole, and redraws it when a row moves" do
+    cockpit_at("lines")
+    publish(fleet: %w[a], fleet_tree: [fleet_row(turns: 1)])
+    first = cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    # The pane reads a prompt whose local read has not reopened yet as one
+    # being typed at, so a second header landing in the milliseconds after a
+    # redraw waits for the change after it. That window belongs to the
+    # round-trip, not to this example, whose subject is the header arriving
+    # whole and redrawing with no keypress.
+    sleep(0.5)
+
+    publish(fleet: %w[a], fleet_tree: [fleet_row(turns: 2)])
+
+    expect([first, cockpit.settles { cockpit.screen.include?("dev  running  2t") || nil }]).to eq([true, true])
+  end
+
+  # The header is the frame, and a pane redraws a changed frame at whatever
+  # column the line editor left the cursor on. Measured before the age left
+  # the header: seven redraws and seven header prints in eight seconds, and a
+  # six-row pane down to one row for its prompt.
+  it "redraws nothing while only the clock moves under a running fleet" do
+    cockpit_at("lines")
+    publish(fleet: %w[a], fleet_tree: [fleet_row])
+    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    # One publish tick past the redraw that carried the row, so the count is
+    # taken over a quiet window rather than across the change itself.
+    sleep(1)
+    settled = cockpit.screen.scan("you> ").size
+
+    sleep(3)
+
+    expect(cockpit.screen.scan("you> ").size).to eq(settled)
+  end
+
+  # The pane prints its header raw, so a model-written task line reaches a
+  # terminal as bytes: `\e[1A\e[2K` walks the cursor onto the HUD line and
+  # erases it. Captured off this very harness before the scrub moved to the
+  # row's owner.
+  it "draws a task line's terminal escape inert, leaving the HUD line where it was" do
+    cockpit_at("lines")
+
+    publish(fleet: %w[a], fleet_tree: [fleet_row(task: "clean\e[1A\e[2KPWNED THE HUD LINE")])
+
+    expect(cockpit.settles { cockpit.screen.include?("cleanPWNED THE HUD LINE") || nil }).to be(true)
+    expect(cockpit.screen).to include("fleet:1 inbox:0")
+    expect(cockpit.screen).not_to include("\e[2K")
   end
 
   it "decides a gated call from the pane, and the pane's surface signs the verdict" do
@@ -230,6 +308,27 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
     expect([drawn, cockpit.settles { cockpit.heard.find { |record| record.key?("response") } }])
       .to eq([true, { "response" => "answered", "closed" => false }])
+  end
+
+  # The race this pins: a countdown published while the pane's line editor is
+  # mid-read, which is what a Ctrl-C at a parked approval is. The editor's own
+  # finalize puts the terminal's mode back as that read unwinds, and it unwinds
+  # on the pump's fiber -- so a countdown that claimed raw mode the instant its
+  # frame arrived had the mode taken back out from under it, and every offered
+  # key then waited for an Enter the countdown has no way to ask for.
+  it "takes a countdown key pressed at a countdown that opened under an open read" do
+    cockpit_at("parked")
+    cockpit.type("go\r")
+    cockpit.settles { cockpit.screen.include?("[y/N]") || nil }
+
+    cockpit.type("\x03")
+    drawn = cockpit.settles { cockpit.screen.include?("[c] cancel") || nil }
+    cockpit.type("c")
+    cockpit.settles { cockpit.screen.scan("[y/N]").size > 1 || nil }
+    cockpit.type("y\r")
+
+    expect([drawn, cockpit.settles { cockpit.heard.find { |record| record.key?("reply") } }])
+      .to eq([true, { "reply" => "y" }])
   end
 
   it "rebinds the path a killed chat left behind, and the pane's next line reaches the new chat" do

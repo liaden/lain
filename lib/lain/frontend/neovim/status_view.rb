@@ -26,7 +26,9 @@ module Lain
         # buffer line, and the transport refuses a line that holds a newline.
         NEWLINES = /\R+/
 
-        # The only event kinds that move the fleet listing.
+        # The event kinds that move the fleet listing; a
+        # {Telemetry::ChildProgress} moves it too and is matched by class,
+        # since it answers no `#kind`.
         FLEET_KINDS = %i[spawn message].freeze
 
         # No epic resolved for this chat -- the frontend's null, answering the
@@ -83,10 +85,16 @@ module Lain
         end
 
         # @param epic [#lines] {Mounted}, or {Unmounted} for a chat in no epic
-        # @param fleet [StatusFeed::Fleet] the spawns still running
-        def initialize(epic: Unmounted, fleet: StatusFeed::Fleet.new)
+        # @param clock [#call] answers the current Time; every row in one
+        #   drawing is aged against ONE read of it, so two rows a second apart
+        #   cannot disagree about when the drawing happened. It is declared
+        #   ahead of `fleet:` because the fleet's own default is built with it:
+        #   a row started on one clock and aged against another reads negative.
+        # @param fleet [StatusFeed::Fleet] the spawns this buffer draws
+        def initialize(epic: Unmounted, clock: -> { Time.now }, fleet: StatusFeed::Fleet.new(clock:))
           @epic = epic
           @fleet = fleet
+          @clock = clock
           @epic_lines = nil
           @fleet_lines = nil
           @shown = nil
@@ -124,9 +132,18 @@ module Lain
 
         def fleet_lines = @fleet_lines ||= fleet_listing
 
+        # The tree, as a nested markdown list. A digest is not drawn: it is the
+        # watch address and 70 columns of it, and what a human reads a fleet
+        # for is which child is doing what -- so the row says that, and the
+        # address stays where a reader of the record can still find it.
         def fleet_listing
-          digests = @fleet.digests
-          ["## fleet", "", *(digests.empty? ? ["(nothing running)"] : digests.map { |digest| "- #{digest}" })]
+          rows = @fleet.tree
+          ["## fleet", "", *(rows.empty? ? ["(nothing running)"] : drawn(rows))]
+        end
+
+        def drawn(rows)
+          now = @clock.call
+          rows.map { |published| StatusFeed::Fleet::Row.at(published, now:).listed("- ") }
         end
 
         # {#folded}'s reason, for the other half: a malformed `:spawn` or
@@ -168,10 +185,17 @@ module Lain
                              Lain::Epic::StageTransition, Lain::Approval::GateDecision].freeze
         end
 
-        # Only these two move the fleet, so only these two rebuild its listing.
-        def fleet_event?(event) = event.respond_to?(:kind) && FLEET_KINDS.include?(event.kind)
+        # The two kinds that start and end a spawn, and the record that says
+        # how far one has got; nothing else rebuilds the listing.
+        def fleet_event?(event)
+          return true if event.is_a?(Telemetry::ChildProgress)
+
+          event.respond_to?(:kind) && FLEET_KINDS.include?(event.kind)
+        end
 
         def observe(event)
+          return @fleet.progressed(event) if event.is_a?(Telemetry::ChildProgress)
+
           case event.kind
           when :spawn then @fleet.launched(event)
           when :message then @fleet.completed(event)

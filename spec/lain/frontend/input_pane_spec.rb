@@ -100,7 +100,35 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(settles { screen.string.include?("ctx:42%") || nil }).to be(true)
   end
 
-  it "takes the commands it completes against from the chat, holding no registry" do
+  # The fleet tree rides this same header, which is what makes it live: a
+  # child's turn count moving republishes the prompt, so a pane sitting at an
+  # untouched `you>` shows the new count with nothing typed at it.
+  it "shows a fleet row's new turn count at an untouched prompt with no keypress" do
+    chat = open_pane
+    publish(chat, { "header" => "\u{1F525} fleet:1 inbox:0\n  dev  running  1t  4s  port the parser" })
+    settles { screen.string.include?("1t") || nil }
+
+    publish(chat, { "header" => "\u{1F525} fleet:1 inbox:0\n  dev  running  2t  9s  port the parser" })
+
+    expect(settles { screen.string.include?("2t") || nil }).to be(true)
+  end
+
+  # Two bytes with no other witness, and that is why they are pinned here.
+  # Dropping the ticking age took away the redraw that used to expose the
+  # dirty cursor, so a real pane now looks identical with and without them --
+  # but the cursor is still wherever the read this frame replaced left it, and
+  # every prompt that draws before a header does puts it mid-row. This is the
+  # one place that can say the row is taken back first.
+  it "takes the row back before it prints the header, so a drawn prompt cannot share it" do
+    chat = open_pane
+    publish(chat, { "header" => "\u2744 fleet:1 inbox:0" })
+
+    settles { screen.string.include?("fleet:1 inbox:0") || nil }
+
+    expect(screen.string).to include("#{described_class::CLEAR_ROW}\u2744 fleet:1 inbox:0\n")
+  end
+
+  it "takes commands it completes against from the chat, holding no registry" do
     chat = open_pane
     say(chat, { "v" => "context", "commands" => %w[approve inbox] })
 
@@ -212,5 +240,103 @@ RSpec.describe Lain::Frontend::InputPane do
     say(chat, { "v" => "closed" })
 
     expect(settles { @running.join(5) && @running.value }).to eq(0)
+  end
+
+  # The whole raw window belongs to the seam spec, which drives a real PTY.
+  # What is answerable here is the ordering the seam proved necessary -- the
+  # terminal is taken FROM the pump that owns it, so a read still unwinding
+  # cannot put its own mode back over the countdown's -- and what happens when
+  # the pump will not hand it over.
+  describe Lain::Frontend::InputPane::Keys do
+    let(:console) do
+      Class.new(StringIO) do
+        attr_reader :raw_calls
+
+        def initialize = super.tap { @raw_calls = 0 }
+
+        def tty? = true
+
+        def console_mode = :cooked
+
+        def console_mode=(_mode)
+          nil
+        end
+
+        def raw!(**) = @raw_calls += 1
+      end.new
+    end
+
+    # Records BOTH doors a degraded window could use, so an example can say
+    # which one carried the sentence rather than only that something did.
+    let(:screen) do
+      Class.new do
+        attr_reader :printed, :noted
+
+        def initialize
+          @printed = []
+          @noted = []
+        end
+
+        def print_prompt(text) = @printed << text
+
+        def render_warning(message) = @noted << message
+      end.new
+    end
+
+    # The window never returns on its own -- it is stopped with the countdown
+    # -- so an example runs it under a task it stops itself.
+    def offered(terminal)
+      Sync do |task|
+        window = task.async do
+          described_class.new(input: console, tick: 0.01, terminal:).offering(screen, "closing in 3s")
+        end
+        task.sleep(0.05)
+        window.stop
+      end
+    end
+
+    # A pump that grants the hold, and remembers what the terminal's mode had
+    # been switched to by the time it did -- which must be nothing.
+    def granting(held)
+      Class.new do
+        attr_reader :switches_before
+
+        def initialize(console, held) = (@console = console) && (@held = held)
+
+        def exclusively(**)
+          @switches_before = @console.raw_calls
+          yield(@held)
+        end
+      end.new(console, held)
+    end
+
+    it "switches the terminal's mode only once the pump has handed it over" do
+      pump = granting(true)
+
+      offered(pump)
+
+      expect([pump.switches_before, console.raw_calls,
+              screen.printed.select { |text| text.include?(described_class::UNHELD) }]).to eq([0, 1, []])
+    end
+
+    # A hold the pump never grants would otherwise leave the countdown's words
+    # drawn and no key doing anything -- the hang the bounded wait exists to
+    # turn back into a window that still reads, and says why it is degraded.
+    # PRINTED, not noted, and the difference is the whole point: {TTY::Notes}
+    # holds a note while another fiber's prompt is open, which is this path's
+    # own premise -- so a noted sentence reaches the human only once the read
+    # it was explaining has ended.
+    it "prints the degraded warning rather than noting it, so it is not held behind the open read" do
+      offered(granting(false))
+
+      expect([console.raw_calls, screen.printed.last, screen.noted]).to eq([1, "#{described_class::UNHELD}\n", []])
+    end
+
+    # The degraded window really can lose the key -- it switches raw while the
+    # editor is still reading the same descriptor -- so the sentence has to
+    # ask for the press again rather than merely explain itself.
+    it "tells the human the key may be lost and to press it again" do
+      expect(described_class::UNHELD).to include("swallowed").and include("press it again")
+    end
   end
 end

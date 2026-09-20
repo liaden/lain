@@ -262,10 +262,19 @@ module Lain
       def leased(record, prompt, scope:, on_stream_started:)
         lent = scope.lend(isolation)
         scope = Session::Unconfined if lent.equal?(isolation)
-        lent.hold(@name, journal:) do |worker_env, sync|
-          record.spawned(prompt)
-          run_child(record.built(build_child(record.parent, worker_env, scope)), prompt, sync, on_stream_started:)
+        lent.hold(@name, journal:) do |worker_env, sync, worker|
+          progress = reporting(record.spawned(prompt), prompt, worker)
+          child = build_child(record.parent, worker_env, scope, progress:)
+          run_child(record.built(child), prompt, sync, on_stream_started:)
         end
+      end
+
+      # The live views' half of the same dispatch. It goes out under the lease
+      # and after the :spawn, which is what lets the row name both the worker
+      # the child's writes land in and the spawn a watcher addresses it by.
+      def reporting(spawn, prompt, worker)
+        Progress.new(spawn: spawn.digest, tee: telemetry)
+                .dispatched(role: @announces_as, task: prompt, worker:)
       end
 
       # The answer, with what the lease's handback owes the parent folded in,
@@ -310,8 +319,8 @@ module Lain
         end
       end
 
-      def build_child(parent, worker_env, scope = @seam.scope.current)
-        @builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:)
+      def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null)
+        @builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:, progress:)
       end
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
@@ -974,9 +983,10 @@ module Lain
         # A child built while a scope confines runs in the scope's environment
         # whatever environment it was handed -- an actor's supervisor leases one
         # of the run's own -- and its session is confined to that scope.
-        def build(parent, ceiling:, worker_env: WorkerEnv.default, scope: @seam.scope.current)
+        def build(parent, ceiling:, worker_env: WorkerEnv.default, scope: @seam.scope.current,
+                  progress: Progress::Null)
           child = nil
-          chain = own_chain(parent) { child.timeline }
+          chain = own_chain(parent, progress) { child.timeline }
           union = child_union(chain.timeline, chain.escalation, ceiling)
           session = Session.new(worker_env: scope.env_over(worker_env), scope:)
           spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, session)
@@ -1008,10 +1018,10 @@ module Lain
         # inside {Chain#asking_handle} because that method's receiver is the
         # CHILD's own chain, which has no way back to the parent it was
         # spawned under.
-        def own_chain(parent, &timeline)
+        def own_chain(parent, progress, &timeline)
           base = @policy.prefix.base_timeline(parent:, store: parent.store)
           Chain.new(base:, timeline:, escalation: Chain.escalation_road(base, parent, @seam.escalation),
-                    feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
+                    feed: TurnFeed.new(observer: progress.watching(@seam.observer), base: base.head_digest))
         end
 
         # A spawn that raises past this point (a Context that will not render,
@@ -1170,6 +1180,7 @@ end
 # These children reopen Subagent, so they load after the class body. Log leads:
 # Lineage's `log:` default names Log::Null.
 require_relative "subagent/log"
+require_relative "subagent/progress"
 require_relative "subagent/lineage"
 require_relative "subagent/turn_feed"
 require_relative "subagent/actor"

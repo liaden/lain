@@ -301,6 +301,17 @@ RSpec.describe Lain::SessionRecord::Scribe do
         expect(of_type(Lain::SessionRecord::CHILD_TURN_TYPE).size).to eq(1)
       end
 
+      # The row a live fleet tree draws moves on a
+      # {Lain::Telemetry::ChildProgress} the SPAWN SEAM writes, never on one
+      # from here: the whole point of that record is that the row moves while
+      # the child's transcript stays durable-only.
+      it "writes no progress record of its own beside the turn it keeps durable" do
+        scribe.call(child_answering([question.digest]))
+
+        expect(sink.grep(Lain::Telemetry::ChildProgress)).to be_empty
+        expect(of_type("child_progress")).to be_empty
+      end
+
       it "still keeps the turn record itself off the tee" do
         scribe.call(child_answering([question.digest]))
 

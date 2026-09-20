@@ -463,9 +463,11 @@ module Lain
         Lain::CLI::InputSocket.path(name: input_socket_name, paths: @paths, cwd: project.cwd)
       end
 
-      # The one HUD line every surface shows, composed from the same published
-      # struct the tmux bar and the editor's lualine read.
-      def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now)
+      # What the input pane draws above its prompt: the one HUD line every
+      # surface shows, and the top of the fleet tree under it -- both composed
+      # from the same published struct the tmux bar and the editor's lualine
+      # read, so no surface carries a second derivation.
+      def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).header(now: Time.now)
 
       # Lazily: the command surface is assembled after the producer is built,
       # and a pane asks only once it has connected. Through the bound registry's

@@ -205,4 +205,63 @@ RSpec.describe Lain::StatusFeed::Reading do
       expect(reading(fleet: []).derivation_refusal_streak).to eq(0)
     end
   end
+
+  # The pane's header: the HUD line every surface shows, and the top of the
+  # fleet tree under it. The pane holds nothing of the chat, so what it draws
+  # it was told -- and this is where it is composed.
+  describe "the input pane's header" do
+    def row(role, depth: 0, turns: 0, state: "running", task: "", started: now)
+      { "spawn" => "blake3:#{role}", "role" => role, "task" => task, "worker" => nil,
+        "state" => state, "turns" => turns, "depth" => depth, "started" => started.utc.iso8601 }
+    end
+
+    it "is the HUD alone while nothing is running" do
+      expect(reading(fleet: [], fleet_tree: []).header(now:)).to eq("\u2744 fleet:0 inbox:0 ")
+    end
+
+    it "draws each row under the HUD, indented by its depth" do
+      tree = [row("dev", turns: 2, task: "port the parser", started: now - 90),
+              row("test_engineer", depth: 1, task: "write the specs")]
+
+      expect(reading(fleet_tree: tree).header(now:).lines.map(&:chomp).drop(1))
+        .to eq(["  dev  running  2t  port the parser",
+                "    test_engineer  running  0t  write the specs"])
+    end
+
+    # The header IS the frame the chat publishes, and a pane redraws on a
+    # changed frame -- printing the header where the line editor left the
+    # cursor. An age column would make the frame differ from itself once a
+    # second, so a human at an untouched prompt would watch their pane
+    # scroll. Measured in a real six-row pane: seven redraws in eight seconds.
+    it "does not change with the clock alone, so an idle pane is not redrawn" do
+      reading = reading(fleet_tree: [row("dev", task: "port the parser", started: now - 5)])
+
+      expect(reading.header(now:)).to eq(reading.header(now: now + 90))
+    end
+
+    # The whole row, not the task alone: the indent and four columns are drawn
+    # beside it, and 96 characters of CJK are 214 terminal columns.
+    it "clamps a row to the terminal columns it is drawn in" do
+      tree = [row("dev", task: "\u65E5\u672C\u8A9E" * 40)]
+
+      drawn = reading(fleet_tree: tree).header(now:).lines.last.chomp
+
+      expect(Lain::Ext::Prompt.width(drawn)).to be <= Lain::StatusFeed::Fleet::Row::COLUMNS + 2
+      expect(drawn).to end_with("\u2026")
+    end
+
+    # The header sits above a prompt a human is typing at, so it takes the top
+    # of the tree and says what it left rather than pushing the prompt off.
+    it "takes the top rows and says how many it left" do
+      tree = Array.new(described_class::HEADER_ROWS + 3) { |index| row("r#{index}") }
+
+      expect(reading(fleet_tree: tree).header(now:).lines.last.chomp).to eq("  +3 more")
+    end
+
+    # A state published before the field existed, and the one a --no-journal
+    # run never writes at all, both read as no fleet rather than as a failure.
+    it "is the HUD alone for a state that carries no tree" do
+      expect(reading(fleet: ["blake3:a"]).header(now:)).to eq(reading(fleet: ["blake3:a"]).hud(now:))
+    end
+  end
 end

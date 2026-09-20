@@ -135,11 +135,14 @@ module Lain
         # @param _role [String] unused: no worker is minted for a lent lease
         # @yieldparam worker_env [WorkerEnv] the held environment, as lent
         # @yieldparam sync [#call] a sync that rebases nothing
+        # @yieldparam worker [nil] no worker key: this lease was cut for the
+        #   LENDER, and naming the lender's worker as the child's would put a
+        #   checkout on a record beside a child that was never given one
         # @return [Held] the block's value, with nothing synced or handed back
         def hold(_role, **)
           none = SelfSync::Result::NONE
           @monitor.synchronize do
-            Held.new(value: yield(worker_env, ->(_worker) { none }), sync: none,
+            Held.new(value: yield(worker_env, ->(_worker) { none }, nil), sync: none,
                      report: WorkerHandoff::Report.nothing)
           end
         end
@@ -197,13 +200,16 @@ module Lain
       # @yieldparam sync [#call] `sync.call(worker)` rebases the checkout
       #   onto the working branch; the block calls it with the still-live
       #   child, between its answer and the reclaim here
+      # @yieldparam worker [String] the key this worker's resource is named
+      #   under, so a dispatch can say on its own record which checkout its
+      #   work is in -- the same key {Telemetry::IsolationLease} carries
       # @return [Held] the block's value and the handback's report
       def hold(role, journal:)
         worker = @lane.worker(role:, ordinal: next_ordinal)
         synced = nil
         lease = @backend.acquire(worker)
         value = yield(@sync.editorless(lease.worker_env),
-                      ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) })
+                      ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) }, worker)
         synced ||= SelfSync::Result::NONE
         Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
       ensure

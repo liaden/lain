@@ -39,6 +39,39 @@ module Lain
         # the buffer then stops taking writes with nothing said.
         BREAKS = /\R+/
 
+        # A terminal INSTRUCTION rather than text, removed whole and ahead of
+        # {OBEYED} so nothing of it is left behind: `\e[1A` walks the cursor
+        # onto the row above and `\e[2K` erases it, which is how a model-written
+        # summary rewrites the line a surface drew before it. Measured off a
+        # real pane: a task of `"clean\e[1A\e[2KPWNED"` put its own words on the
+        # HUD line. The four families are CSI, OSC, the string escapes
+        # (DCS/SOS/PM/APC), and every other two-character escape including a
+        # bare ESC.
+        SEQUENCES = %r{
+          \e\][^\a\e]*(?:\a|\e\\)?     # OSC, terminated by BEL or ST
+          | \e[P^_X][^\e]*(?:\e\\)?    # DCS, SOS, PM, APC
+          | \e\[[0-?]*[ -/]*[@-~]      # CSI
+          | \e[ -/]*[0-~]?             # any other escape, and a bare ESC
+        }x
+
+        # Kept as a space rather than dropped, because a tab is the one control
+        # character that is SEPARATING two words rather than instructing the
+        # terminal: deleting it joins them.
+        TABS = /\t+/
+
+        # What a terminal or a bidi renderer OBEYS: the whole Cc block -- C0,
+        # DEL, and the 8-bit introducers above U+007F that
+        # {Frontend::Completion.printable} argues for -- plus the Cf format
+        # characters, where U+202E reorders a row and U+200B hides in it.
+        #
+        # Cf IS covered here and deliberately is NOT in `Completion.printable`,
+        # and the surfaces are why. That one highlights grapheme clusters in a
+        # menu and needs the ZWJ inside a family emoji; this one composes ONE
+        # row out of several columns of somebody else's text, where a bidi
+        # override can reorder the columns around it. A ZWJ sequence degrading
+        # into its parts costs a glyph; a reordered row costs the reading.
+        OBEYED = /[[:cntrl:]\p{Cf}]/
+
         # Structural, not decoration: `70_inbox.lua` finds a row by the
         # separators around the age, and `05_records.lua` reads a line OPENING
         # with them as a continuation of the item above.
@@ -60,11 +93,27 @@ module Lain
           # (the terminal's arrival note), so {NAME_WIDTH} keeps one site.
           def sender(from) = one_line(from)[0, NAME_WIDTH]
 
+          # One line a terminal DRAWS rather than obeys. Every caller here
+          # composes a row out of text somebody else wrote -- a model's question
+          # summary, a spawn's task line -- and at least one of them prints it
+          # raw to a terminal, so the rule is the strongest of its surfaces'
+          # and not the weakest.
+          #
+          # THE ORDER IS FORCED. Breaks collapse to a space first, so words
+          # either side of a newline stay separate words; tabs become spaces for
+          # the same reason; whole escape sequences go before {OBEYED}, or the
+          # ESC alone would be stripped and `[1A` left as visible junk. That
+          # holds for the 7-bit forms {SEQUENCES} matches. An 8-BIT introducer
+          # (U+009B, U+009D) is removed by {OBEYED} instead and does leave its
+          # parameters as text -- inert, and not worth a second grammar.
+          #
           # THE STRIP IS LOAD-BEARING: the editor's fold compares a summary
           # against the whole item it may have elided, and a question ending in
           # a newline made those differ by one trailing space -- manufacturing a
           # two-line item out of whitespace no human can see.
-          def one_line(text) = text.to_s.gsub(BREAKS, " ").strip
+          def one_line(text)
+            text.to_s.gsub(BREAKS, " ").gsub(TABS, " ").gsub(SEQUENCES, "").gsub(OBEYED, "").strip
+          end
 
           # Coarse on purpose: an inbox answers "how stale", not "when exactly".
           #

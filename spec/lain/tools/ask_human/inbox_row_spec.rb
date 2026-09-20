@@ -46,6 +46,56 @@ RSpec.describe Lain::Tools::AskHuman::InboxRow do
     end
   end
 
+  # Every caller composes ONE row out of text somebody else wrote -- a model's
+  # question summary, a spawn's task line -- and at least one of them prints it
+  # raw to a terminal. So the rule is what a terminal DRAWS rather than what
+  # holds no newline: an escape sequence in a summary walked the cursor onto
+  # the row above and erased it, captured off a real pane.
+  describe ".one_line" do
+    def scrubbed(text) = described_class.one_line(text)
+
+    it "collapses every line break, and a run of them, into one space" do
+      expect([scrubbed("look\raround"), scrubbed("a\r\nb")]).to eq(["look around", "a b"])
+    end
+
+    it "removes a cursor-up and erase-line pair whole, leaving no bracket junk" do
+      expect(scrubbed("clean\e[1A\e[2KPWNED THE HUD LINE")).to eq("cleanPWNED THE HUD LINE")
+    end
+
+    it "removes a colour sequence, an OSC title and a device-control string" do
+      expect([scrubbed("a\e[31;1mred\e[0mb"), scrubbed("a\e]0;title\ab"), scrubbed("a\ePq junk \e\\b")])
+        .to eq(%w[aredb ab ab])
+    end
+
+    # `\ec` is a full terminal reset in two characters, so the character after
+    # a bare ESC goes with it rather than being left behind as text.
+    it "takes a bare escape and the character it introduces" do
+      expect(scrubbed("a\eb")).to eq("a")
+    end
+
+    it "removes backspace runs, DEL and the C1 introducers" do
+      expect([scrubbed("safe\b\b\b\bEVIL"), scrubbed("a\u007Fb"), scrubbed("a\u009Bb")])
+        .to eq(%w[safeEVIL ab ab])
+    end
+
+    # A bidi override reorders the columns drawn around it and a zero-width
+    # space hides inside one, so the format characters go too -- which is
+    # where this rule and {Lain::Frontend::Completion.printable} part company.
+    it "removes a bidi override and a zero-width space" do
+      expect([scrubbed("start\u202Edne"), scrubbed("a\u200Bb")]).to eq(%w[startdne ab])
+    end
+
+    # The one control character that SEPARATES rather than instructs: dropping
+    # it would join two words into one.
+    it "keeps a tab as a space" do
+      expect(scrubbed("a\tb")).to eq("a b")
+    end
+
+    it "leaves ordinary text, accents and wide glyphs alone" do
+      expect(scrubbed("port the parser \u00e9 \u65e5\u672c")).to eq("port the parser \u00e9 \u65e5\u672c")
+    end
+  end
+
   describe "#to_s" do
     it "draws sender, age and summary in one two-space-separated line" do
       expect(row(now: Time.at(1_090)).to_s).to eq("orchestrator  1m  which db?")

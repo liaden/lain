@@ -1786,7 +1786,8 @@ RSpec.describe Lain::StatusFeed do
 
       feed << turn_usage(cache_read: 1)
 
-      expect(published.keys).to contain_exactly("cache_deadline", "fleet", "inbox_count", "approvals_pending",
+      expect(published.keys).to contain_exactly("cache_deadline", "fleet", "fleet_tree", "inbox_count",
+                                                "approvals_pending",
                                                 "occupancy", "window_guessed", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
                                                 "run_tokens", "scope", "approval", "layers", "mode_lighter",
