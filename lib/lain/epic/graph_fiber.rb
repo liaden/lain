@@ -2,18 +2,6 @@
 
 module Lain
   module Epic
-    # The structural edits a revision may name, keyed by the operation it
-    # journals and valued by the arguments that operation replays FROM. Sorted,
-    # because {Canonical.normalize} sorts the keys a fiber carries. ONE
-    # declaration -- {Contracts::GraphRevision} and {GraphFiber}'s argument check
-    # both read it -- so an operation nothing can replay is exactly an operation
-    # no fiber may carry, with no second copy to drift beside the journal.
-    #
-    # The replay itself is `replay_<operation>` on {GraphFiber}: that naming
-    # contract is what lets the vocabulary and the dispatch be one table.
-    REVISION_OPS = { "add" => %w[discovered_from issue], "split" => %w[id into],
-                     "merge" => %w[as left right] }.freeze
-
     # One revision of an epic's issue graph, as everything a later reader needs to
     # perform it again.
     #

@@ -2,14 +2,7 @@
 
 module Lain
   module Epic
-    # The statuses an issue may CARRY. `ready` is deliberately not a member: it
-    # is a predicate the graph derives (pending with every blocker done), and a
-    # closed set holding a value no author may write is a special case waiting
-    # to be forgotten. Refusing it by name, with the reason, is what keeps the
-    # set closed and the derivation discoverable.
-    STORED_STATUSES = %w[pending in_flight done abandoned].freeze
-    DERIVED_STATUSES = %w[ready].freeze
-    # The one member of that set that means FINISHED, named because four
+    # The one member of {STORED_STATUSES} that means FINISHED, named because four
     # separate readers turn on it as a bare literal: {Graph#ready} (only a done
     # blocker is satisfied), {Progress#summary}'s tally, {Document::STATUS_MARKS}'
     # glyph, and `lain epic status`, whose remaining-work rule is "not done is
@@ -60,8 +53,6 @@ module Lain
     NO_SCENARIOS = "issue criteria declare no scenarios -- they must sit inside a ```gherkin fence, and " \
                    "the delimiters are part of the stored source so the markdown round-trip re-emits " \
                    "them verbatim"
-
-    class MalformedIssue < Error; end
 
     # One issue in an epic. `blocks` and `related` are edge SETS naming other
     # issue ids; `discovered_from` names the issue a split, merge, or mid-flight

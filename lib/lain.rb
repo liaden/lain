@@ -125,16 +125,14 @@ module Lain
   # Paths under lib/lain, relative to it, that the loader may not manage,
   # because a loader resolves ONE constant per path and each of these answers
   # to something else: several constants in one file (the telemetry record
-  # groups, `epic/records.rb`, `review/records.rb`), one constant beside the one
-  # the path names (`frontend/reline.rb` is {Frontend::LineEditor}), or no
-  # constant at all (`live.rb` defines only `Lain.live`). Every entry is a
-  # permanent pairing: an ignored path is invisible to the loader, so something
-  # must require it by hand -- today the manifest below, and
-  # spec/zeitwerk_spec.rb fails if any entry is left unrequired or stops needing
-  # to be here.
+  # groups, `review/records.rb`), one constant beside the one the path names
+  # (`frontend/reline.rb` is {Frontend::LineEditor}), or no constant at all
+  # (`live.rb` defines only `Lain.live`). Every entry is a permanent pairing:
+  # an ignored path is invisible to the loader, so something must require it by
+  # hand -- today the manifest below, and spec/zeitwerk_spec.rb fails if any
+  # entry is left unrequired or stops needing to be here.
   LOADER_IGNORES = %w[
     cli/command/small.rb
-    epic/records.rb
     forge/landing/run.rb
     frontend/reline.rb
     live.rb

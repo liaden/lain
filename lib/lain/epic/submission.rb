@@ -3,8 +3,8 @@
 module Lain
   module Epic
     module Contracts
-      # Reopened from {Records}' own `module Contracts`; that file's header is
-      # the one docstring, and carries the validate-then-freeze convention.
+      # Reopened from `epic/contracts.rb`; that file's header is the one
+      # docstring, and carries the validate-then-freeze convention.
 
       # `stage` IS restated here, unlike {Contracts::StageTransition}'s
       # deliberate omission: a Submission is built by its own class methods
