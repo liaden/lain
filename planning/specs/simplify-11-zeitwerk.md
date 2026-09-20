@@ -169,26 +169,36 @@ only what is removed. Zeitwerk **adds back** an `ignore` entry and an explicit r
 file — the "manifest in miniature" its own escalation trigger names — so the honest figure is the net,
 and the honest risk metric is the `ignore` list's size. Baseline measured 2026-09-20 at `76d872ed`.
 
-| | baseline | after T1 | after T2 | after T3 | after T4/T5 |
+| | baseline | after T1 | after A1+A2 | after A3 | after B |
 |---|---|---|---|---|---|
-| `lib/**/*.rb` files | 746 | 746 | | | |
-| `lib/` code lines | 54,997 | 55,025 | | | |
-| `require_relative` in `lib/` | 746 | 746 | | | |
-| external `require "…"` in `lib/` | 302 | 303 | | | |
-| `lib/lain.rb` code lines | 101 | 129 | | | |
-| pure index files | 21 | 21 | | | |
-| `CLAUDE.md` lines | 304 | 304 | | | |
-| **`ignore` entries (files)** | 0 | 17 | | | |
-| **`ignore` entries (dirs)** | 0 | 1 | | | |
-| **explicit requires kept** | 0 | 18 | | | |
-| **orphan constants** | 294 | 294 | | | |
+| `lib/**/*.rb` files | 746 | 746 | **759** | | |
+| `lib/` code lines | 54,997 | 55,025 | 55,090 | | |
+| `require_relative` in `lib/` | 746 | 746 | **759** | | |
+| external `require "…"` in `lib/` | 302 | 303 | 304 | | |
+| `lib/lain.rb` code lines | 101 | 129 | 127 | | |
+| pure index files | 21 | 21 | 21 | | |
+| `CLAUDE.md` lines | 304 | 304 | 307 | | |
+| **`ignore` entries (files)** | 0 | 17 | **14** | | |
+| **`ignore` entries (dirs)** | 0 | 1 | 1 | | |
+| explicit requires kept | 0 | 18 | 15 | | |
+| orphan constants *(see below)* | — | 294 | 278 | | |
 | `require "lain"` boot | 835 ms | 848 ms | | | |
-| `pspec` wall @ 12 workers | 95 s | 95 s | | | |
-| example count | 20,470 | 20,475 | | | |
+| `pspec` wall @ 12 workers | 95 s | 95 s | ~100 s | | |
+| example count | 20,470 | 20,475 | 20,475 | | |
 
 T1 is additive by design, so every removal row is flat and only the cost rows move. That is the card
 working as specified, not a null result: it buys the `ignore` list as a **measured** 18 rather than the
 plan's estimated "~13", and it buys both cost rows before anything is deleted.
+
+**Card A moves the headline metric the WRONG WAY, and that is correct.** `lib/` went 746 → 759 files and
+`require_relative` 746 → 759 with it, because splitting a file for its constant creates files and each
+one needs a manifest line while the manifest still stands. **Card A grows the manifest so that Card B can
+delete it.** Anyone reading this table mid-flight should expect the require count to keep climbing until
+B lands, and should judge Card A on `ignore entries` alone.
+
+The `external require` 303 → 304 is A1's `require "active_model"` in `declarative.rb`, which is exactly
+what CLAUDE.md's leaf-requires rule prescribes. The `CLAUDE.md` 304 → 307 is not this plan's doing — it
+is the corrected quiet-box gate, filed while here.
 
 Two rows are to be read adversarially. **`external require` must not move**: CLAUDE.md's rule that
 gem/stdlib requires live in the leaf files that use them is correct and untouched by this plan, so a
@@ -198,11 +208,22 @@ further movement is not. **`example count` must not drop**: no card here deletes
 means a file stopped loading and its specs silently vanished — precisely the failure autoloading makes
 possible. The +8 at T1 is `spec/zeitwerk_spec.rb`.
 
-**`orphan constants` is the row the spike drives**, and it is the one metric that did not exist when this
-plan was drafted: 294 constants across 102 files that no path implies, found only once T1's spec asked
-the strong question. It does not have to reach zero — under eager loading most are latent — but every
-one that a class body references at load time is a site T2 must fix, and nobody yet knows how many that
-is. A count that stays at 294 while T2 lands is not a failure; an *unexplained* one is.
+**`orphan constants` does NOT measure this plan's progress, and the row is kept only to stop anyone
+reading it that way.** It was added on 2026-09-20 as the row Card A drives; that was wrong, and a panel
+probe settled it. `ZeitwerkMapping.orphans` **rejects ignored files before comparing paths**, so a
+constant inside an ignored file was never counted in the first place. Removing an `ignore` entry
+therefore *adds* that file to the sweep: the count is **monotone non-decreasing** under exactly the work
+this plan does, and it will **rise** as Card A succeeds. Measured — re-adding A3's three entries returns
+exactly 294, and un-ignoring any survivor raises it (`epic/records.rb` +27, `frontend/reline.rb` +19,
+`telemetry/turn_stream.rb` +19, `live.rb` +0).
+
+So the falls recorded against A1 and A2 (−10 and −6) did not come from their `ignore` removals at all.
+They came from **relocating constants** into files whose paths name them, which is a different and
+smaller part of each card. Read the row as "constants whose loaded, non-ignored file does not name
+them", never as a burn-down.
+
+**The gauge that cannot be gamed is `ignore entries`.** An entry is in the list or it is not, and the
+list is the hidden manifest this plan exists to remove.
 
 **Two CLAUDE.md figures are stale, found by baselining.** It states the suite as *"51s at 12 workers,
 17,837 examples, 2026-09-13"*. Measured 2026-09-20 on this box: **95 s and 20,470 examples** — the suite
