@@ -58,6 +58,18 @@ RSpec.describe Lain::CLI::PaneCommand do
       expect(described_class.call("chat")).to start_with(described_class.scrubs)
     end
 
+    # `lain up`'s input pane, the newest caller and the one the PATH trap
+    # bites hardest: it is the pane the human types in, so a `lain` resolved
+    # off an inherited PATH would carry the whole conversation to another
+    # checkout rather than failing somewhere it could be read. The socket is
+    # a derived path, under $XDG_RUNTIME_DIR, so it is escaped for the shell
+    # tmux hands the line to like any other argument.
+    it "execs the LAUNCHING binary for the input pane, with its socket escaped" do
+      command = described_class.call("input", "--socket", "/run/lain sockets/input.sock")
+
+      expect(command).to end_with("exec #{$PROGRAM_NAME} input --socket /run/lain\\ sockets/input.sock")
+    end
+
     # The regression this pair exists for, and the reason PATH alone was not
     # enough: a tmux SERVER outlives the shell that started it, so a pane can
     # inherit an environment with no GEM_HOME however clean the window that

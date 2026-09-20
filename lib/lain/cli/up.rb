@@ -10,6 +10,12 @@ module Lain
     # give it the session-scoped HUD -- status-right/status-interval printing
     # the line {Lain::StatusFeed} published, `monitor-bell` on the chat window.
     #
+    # The window it builds is nvim on the left and, on the right, the chat's
+    # transcript over the pane the human types into -- a transcript scrolls,
+    # so the prompt cannot live in it and stay put. The two are joined by one
+    # input socket, named from the project and the session before either
+    # process exists, so neither pane waits on the other to start.
+    #
     # Session-scoped, never global: tmux's session-beats-global inheritance is
     # what keeps the theme plugin's globals untouched, so this needs zero
     # tmux.conf changes. Idempotent because #call probes `has-session` first, so
@@ -75,6 +81,41 @@ module Lain
 
       DEFAULT_SESSION = "lain"
       CHAT_WINDOW = "chat"
+
+      # tmux's OWN format syntax, single-quoted so it reaches tmux byte for
+      # byte. Every pane is asked for its id as it is made, because the window
+      # holds more than one now and "the chat pane" can no longer be spelled
+      # as the window: tmux resolves a window target to its ACTIVE pane, and
+      # the active one is the pane the human types in, by design.
+      # rubocop:disable Lint/InterpolationCheck
+      PANE_ID = '#{pane_id}'
+      # rubocop:enable Lint/InterpolationCheck
+
+      # Rows for the input pane. It is the human's whole surface -- the chat's
+      # HUD line, the prompt under it, and room for a countdown rail or a
+      # completion menu without either scrolling the header away -- and every
+      # row it takes comes off the transcript above it rather than off the
+      # editor beside it.
+      INPUT_PANE_HEIGHT = 6
+
+      # The shortest window that can seat both panes: the input pane's rows,
+      # as many again for the transcript, and the divider between them.
+      #
+      # THE DEGRADE IS THIS THRESHOLD, stated rather than left to tmux: below
+      # it the rows are not there to take, so lain stops asking for them and
+      # a one-row prompt, which still types, sits under a transcript that
+      # keeps the rest.
+      #
+      # What a terminal shorter than that actually gets is tmux's arithmetic
+      # and not lain's, with one measured caveat: at a 10-row client tmux
+      # accepts and ignores EVERY layout change -- `resize-pane` in either
+      # direction, `select-layout even-vertical` -- and merely evaluating the
+      # guard inside the layout hook makes it re-apply the layout's own cell
+      # sizes, so the input pane keeps its six and the transcript is left
+      # two. Neither split is a cockpit at that size, and the rows come back
+      # correctly the moment the terminal can seat them (measured: back to 24
+      # rows restores 16 over 6).
+      SEATED_WINDOW_HEIGHT = (INPUT_PANE_HEIGHT * 2) + 1
 
       # The size a CREATED session is built at. tmux sizes a client-less session
       # from `default-size`, 80x24 out of the box, and everything `lain up` does
@@ -221,6 +262,140 @@ module Lain
         # Private since {#argv} exists: composing an argv on this socket is
         # something this object does for callers, not a flag it lends them.
         def socket_flag = @socket ? ["-L", @socket] : []
+      end
+
+      # Which panes `lain up` built, recorded on the tmux session itself, and
+      # the two things the session then keeps true about them.
+      #
+      # A user option rather than a file, because it lives exactly as long as
+      # the session does: a killed server leaves nothing behind to mislead the
+      # next launch, and there is no pid anywhere to go stale.
+      #
+      # Every pane is named, the editor included and the ABSENT editor too --
+      # so "is there an editor in this window?" is a question about a pane lain
+      # made, not about how many panes happen to be there. The count answers
+      # nothing: a chat over its input pane is two panes, and so is a cockpit
+      # whose human split a shell into it.
+      class Panes
+        CHAT = "@lain_chat_pane"
+        INPUT = "@lain_input_pane"
+        EDITOR = "@lain_editor_pane"
+
+        # `--no-nvim`, or a cockpit that degraded for want of the binary.
+        # Recorded rather than left unset, so a window lain built says "no
+        # editor" and only a window lain did not build says nothing at all.
+        NO_EDITOR = ""
+
+        # What the session does whenever its layout settles. tmux hands a
+        # window's rows out afresh on every attach and resize and takes them
+        # off the BOTTOM pane first, so the rows `split-window -l` asked for
+        # last exactly until somebody looks at the cockpit: measured on 3.7b,
+        # a 24-row terminal left the input pane at ONE row with the HUD gone.
+        #
+        # `window-layout-changed`, NOT `client-resized`: measured on the same
+        # tmux, a client resize fires `client-resized` BEFORE the window has
+        # been resized, so a hook there reads the old geometry and whatever it
+        # resizes is undone by the redistribution that follows (6 rows became
+        # 11 on a grow and 1 on a shrink). The layout hook fires after.
+        #
+        # A FLOOR, NOT A FIXED HEIGHT, which is the pane-height half of the
+        # condition and a trade worth stating in both directions. The hook
+        # fires on a deliberate `resize-pane` too, so seating unconditionally
+        # made `prefix + arrow` on this pane inert -- fifteen rows asked for,
+        # six given back. Firing only from BELOW leaves that human alone; what
+        # it costs is that a growing window keeps tmux's own larger share
+        # instead of snapping back to six, and that a human who shrinks the
+        # pane UNDER the floor will see it restored at the next layout change.
+        #
+        # The window half is {Up::SEATED_WINDOW_HEIGHT}'s degrade, with no
+        # else branch on purpose: measured, every size a hook could ask for
+        # below the threshold is either what tmux already did or a request
+        # tmux refuses. Both are evaluated `-t` the input pane, so a fork
+        # window's geometry cannot answer for the chat window's.
+        #
+        # ARITHMETIC, not tmux's comparison operators: measured, `#{<:}` and
+        # its kin compare STRINGS -- `#{<:15,6}` is 1 -- so a pane at fifteen
+        # rows read as "below six" and the guard would have been decoration.
+        # `#{e|-:}` is real arithmetic, so the SIGN of the difference is the
+        # answer and `#{m:-*,...}` reads it; both halves are spelled as a
+        # strict "is negative" so neither needs a negation or a ternary.
+        SEAT_INPUT = "if -F -t %<input>s " \
+                     '"#{&&:#{m:-*,#{e|-:%<too_short>d,#{window_height}}},' \
+                     '#{m:-*,#{e|-:#{pane_height},%<rows>d}}}" ' \
+                     '"resize-pane -t %<input>s -y %<rows>d"'
+
+        # And what it does once a human is looking. {Up#run_chat} makes the
+        # chat pane hold its screen on ANY exit, which is what lets a chat that
+        # exited 0 be quoted rather than found missing; from the attach on, the
+        # window's own `failed` governs it again, so an ordinary `/exit` still
+        # closes the cockpit rather than leaving a corpse in it.
+        RELEASE_CHAT = "set-option -p -t %<chat>s remain-on-exit failed"
+
+        # @param tmux [Tmux] the server the session lives on
+        # @param session [String] the session the options are written to
+        # @param window [String] the chat window, whose panes are counted
+        def initialize(tmux:, session:, window:)
+          @tmux = tmux
+          @session = session
+          @window = window
+        end
+
+        # @param chat [String] the chat pane's id
+        # @param input [String] the input pane's id
+        # @param editor [String] the editor pane's id, or {NO_EDITOR}
+        def record(chat:, input:, editor:)
+          { CHAT => chat, INPUT => input, EDITOR => editor }
+            .each { |name, id| @tmux.act("set-option", "-t", @session, name, id) }
+          enforce(chat:, input:)
+        end
+
+        # The same two rules, re-asserted from what the session already
+        # records -- {Up#keep_failed_pane}'s reason, and its argument
+        # verbatim: a session `lain up` did not build this time, or built
+        # before these hooks existed, still earns them. Without it anyone who
+        # upgrades with a cockpit open keeps a one-row input pane until they
+        # kill the session, and `lain up` is the command they would reach for.
+        def rearm = enforce(chat: option(CHAT), input: option(INPUT))
+
+        # {NO_EDITOR} and an unset option are both the empty string, which
+        # `list-panes` can never answer with -- so a window with no editor
+        # recorded, and a window lain never built, both fall out as false
+        # without a guard.
+        #
+        # @return [Boolean] whether the editor pane this window was built with is still in it
+        def editor? = live.include?(option(EDITOR))
+
+        private
+
+        # A pane lain cannot name is a hook it must not write: an empty target
+        # would arm `resize-pane -t  -y 6`, which is a tmux error on every
+        # layout change rather than a missing nicety.
+        def enforce(chat:, input:)
+          unless input.empty?
+            # `too_short` is the tallest window that CANNOT seat both, so the
+            # hook's own test is the strict one arithmetic makes cheapest.
+            arm(SEAT_INPUT, "window-layout-changed", input:, too_short: SEATED_WINDOW_HEIGHT - 1,
+                                                     rows: INPUT_PANE_HEIGHT)
+          end
+          arm(RELEASE_CHAT, "client-attached", chat:) unless chat.empty?
+          self
+        end
+
+        # Best-effort, {Up#keep_failed_pane}'s rule: a tmux too old for a hook,
+        # a format comparison or a pane-scoped option must lose the nicety
+        # rather than the cockpit.
+        def arm(recipe, event, **fields)
+          @tmux.run("set-hook", "-t", @session, event, format(recipe, **fields))
+        end
+
+        # tmux exits nonzero on a user option nobody ever set, which is the
+        # ordinary answer here rather than a failure -- hence {Tmux#run}.
+        def option(name)
+          answer = @tmux.run("show-options", "-v", "-t", @session, name)
+          answer.exitstatus&.zero? ? answer.stdout.strip : ""
+        end
+
+        def live = @tmux.run("list-panes", "-t", @window, "-F", PANE_ID).stdout.split
       end
 
       # Asks `chat` whether it would refuse, before a session exists to hide the
@@ -387,8 +562,7 @@ module Lain
         MAX_BYTES = 4_000
 
         # tmux's OWN format syntax, single-quoted so it reaches tmux byte for
-        # byte. `display-message -p` resolves it against the window's ACTIVE
-        # pane, which is the chat pane in both shapes `lain up` builds.
+        # byte.
         # rubocop:disable Lint/InterpolationCheck
         FORMAT = '#{pane_dead} #{pane_dead_status}'
         # rubocop:enable Lint/InterpolationCheck
@@ -398,20 +572,31 @@ module Lain
         # arming it later, and no corpse for a pane that was never spawned.
         #
         # @param tmux [Tmux] the same server {Up} built the session on
-        # @param target [String] the chat window, `session:chat`
+        # @param target [String] the CHAT PANE's id, never the window: a
+        #   window target resolves to whichever pane is active, and the active
+        #   one is the input pane the human was left in, so a window here
+        #   reports the input pane's health and captures its screen
         # @param session [String] the session that will survive the pane, named
         #   separately because the advice is spelled in tmux's own words and
         #   `kill-session` takes a session rather than a window
+        # @param noun [String] what to call this pane in the sentence
+        # @param consequence [String] what its death costs this launch, which
+        #   is the one thing a corpse cannot know: the same death refuses the
+        #   attach for the chat pane and merely warns for the input pane
         # @param clock [#call] the monotonic source the grace is measured
         #   against, defaulted from {RunClock::MONOTONIC} because that constant
         #   is spec'd to have exactly one site -- and because it lets a spec pin
         #   the poll in probe counts rather than in wall time
-        def self.watching(tmux:, target:, session:, clock: RunClock::MONOTONIC) = new(tmux:, target:, session:, clock:)
+        def self.watching(tmux:, target:, session:, noun:, consequence:, clock: RunClock::MONOTONIC)
+          new(tmux:, target:, session:, noun:, consequence:, clock:)
+        end
 
-        def initialize(tmux:, target:, session:, clock: RunClock::MONOTONIC)
+        def initialize(tmux:, target:, session:, noun:, consequence:, clock: RunClock::MONOTONIC)
           @tmux = tmux
           @target = target
           @session = session
+          @noun = noun
+          @consequence = consequence
           @clock = clock
           @spawned_at = @clock.call
         end
@@ -444,12 +629,31 @@ module Lain
         #   it is dead
         def probe
           answer = @tmux.run("display-message", "-p", "-t", @target, FORMAT)
-          return :unanswerable unless answer.exitstatus&.zero?
+          return vanished unless answer.exitstatus&.zero?
 
           dead, status = answer.stdout.strip.split(" ", 2)
           dead == "1" ? status.to_s : :alive
         rescue StandardError
           :unanswerable
+        end
+
+        # A pane the SERVER does not list is a pane that exited and was not
+        # held -- a death with no status left to report, and the one shape
+        # that used to reach the operator as a cockpit with no chat in it and
+        # nothing said anywhere.
+        #
+        # Asked of the server's whole pane list rather than of `has-session`,
+        # so the two failures stay apart: a probe that merely could not run
+        # leaves the pane listed and reads, correctly, as "tmux would not
+        # say". A diagnostic that cannot tell must never close a cockpit that
+        # would otherwise open.
+        #
+        # @return [String, :unanswerable]
+        def vanished
+          listed = @tmux.run("list-panes", "-a", "-F", PANE_ID)
+          return :unanswerable unless listed.exitstatus&.zero?
+
+          listed.stdout.split.include?(@target) ? :unanswerable : ""
         end
 
         # An empty status is tmux before 2.9, which has `pane_dead` but not
@@ -463,10 +667,10 @@ module Lain
         # into that pane.
         def report(status)
           died = status.empty? ? "died" : "exited #{status}"
-          "the chat pane #{died} moments after `lain up` started it, so this did not attach. " \
+          "the #{@noun} pane #{died} moments after `lain up` started it, #{@consequence}. " \
             "Session '#{@session}' survives with the dead pane in it: another `lain up` attaches to " \
             "it as it stands, `tmux kill-session -t #{@session}` clears it for a fresh start. " \
-            "What #{@target} held:\n\n#{held}"
+            "What the #{@noun} pane held:\n\n#{held}"
         end
 
         # Same breadth as {#probe}, the other way round: the pane IS dead by
@@ -769,7 +973,8 @@ module Lain
       # that binary is not lain.
       def initialize(session: DEFAULT_SESSION, socket: nil, cwd: Dir.pwd,
                      state_path: ProjectDir.new(root: cwd).state_path,
-                     chat_command: nil, chat_args: [], status_interval: Hud::DEFAULT_INTERVAL,
+                     chat_command: nil, input_command: nil, chat_args: [],
+                     status_interval: Hud::DEFAULT_INTERVAL,
                      nvim: nil, paths: Paths.new,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new),
                      chat_preflight: ChatPreflight.new(shell_out_factory:, cwd:),
@@ -777,9 +982,12 @@ module Lain
         @session = session
         @tmux = Tmux.new(socket:, shell_out_factory:)
         @cwd = cwd
+        @paths = paths
+        @panes = Panes.new(tmux: @tmux, session: @session, window: chat_target)
         @hud = Hud.new(state_path:, interval: status_interval)
         @chat_args = chat_args
-        @chat_command = chat_command || default_chat_command
+        @chat_command = chat_command
+        @input_command = input_command
         @cockpit = Cockpit.new(option: nvim, cwd:, paths:)
         @binaries = Binaries.new(shell_out_factory:)
         @chat_preflight = chat_preflight
@@ -822,7 +1030,10 @@ module Lain
         died = @corpse&.call
         raise ChatDied, died if died
 
-        LaunchPlan.new(messages: report.messages, argv: attach_command(nested:))
+        # A dead INPUT pane is not a reason to withhold the transcript, so it
+        # is said rather than raised -- first, on {Report}'s warnings-first
+        # rule.
+        LaunchPlan.new(messages: [*@input_corpse&.call, *report.messages], argv: attach_command(nested:))
       end
 
       # `switch-client` when the CALLING shell is itself an attached tmux
@@ -851,7 +1062,31 @@ module Lain
       # `@chat_args` is the exe's `-- ARGS` capture: chat's own flags to
       # validate, never Up's. The recipe only escapes each one for the shell
       # tmux hands the string to; Up never parses or knows the flag names.
-      def default_chat_command = PaneCommand.call("chat", *@chat_args)
+      #
+      # ONE command for both shapes -- the cockpit's chat differs only by the
+      # editor socket in front of the same flags -- so an injected
+      # `chat_command:` overrides either.
+      def chat_pane_command(editor_flags)
+        @chat_command || PaneCommand.call("chat", *editor_flags, *input_flags, *@chat_args)
+      end
+
+      # The chat's end of the input rail, written before either process
+      # exists: the socket carries no pid, so both panes can name it from the
+      # project and the tmux SESSION alone -- the session, so two cockpits on
+      # one project do not share one human.
+      #
+      # AHEAD of `@chat_args`, so an operator who typed their own `--input`
+      # past the `--` still wins: Thor takes the last spelling of a flag.
+      def input_flags = ["--input", "#{InputSocket::PREFIX}#{@session}"]
+
+      # The pane's end of the same rail, by PATH rather than by name. Derived
+      # once here and handed over, so the two ends cannot disagree about the
+      # convention -- {Cockpit}'s rule for the editor socket, for the same
+      # reason.
+      def input_pane_command
+        @input_command ||
+          PaneCommand.call("input", "--socket", InputSocket.path(cwd: @cwd, name: @session, paths: @paths))
+      end
 
       # The ordering IS the fix, and each step is load-bearing.
       #
@@ -875,13 +1110,19 @@ module Lain
       # `-x`/`-y` for {DETACHED_WIDTH}'s reason: every pane below opens while
       # the session is still detached, so the size stated here is what the split
       # and nvim's own layout are computed against.
+      #
+      # The window's own pane is asked for its id as it is opened, because
+      # that is the only moment it is unambiguously THE pane: everything below
+      # targets an id rather than the window, which tmux would resolve to
+      # whichever pane is active by then.
       def create_session
         @warnings.concat(@chat_preflight.call(@chat_args))
         cockpit = cockpit_wanted?
-        @tmux.act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd,
-                  "-x", DETACHED_WIDTH.to_s, "-y", DETACHED_HEIGHT.to_s)
+        first = @tmux.act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd,
+                          "-x", DETACHED_WIDTH.to_s, "-y", DETACHED_HEIGHT.to_s,
+                          "-P", "-F", PANE_ID).stdout.strip
         keep_failed_pane
-        build_panes(cockpit)
+        build_panes(cockpit, first)
       end
 
       # `lain up` builds a WORKING session or none at all. Splitting
@@ -895,25 +1136,77 @@ module Lain
       # failed because another `lain up` just took the name must never be
       # answered by killing THEIR session.
       #
-      # {PaneCorpse} starts its clock HERE for both shapes, because the grace it
-      # measures is the PANE's life. Nothing builds one on the reattach path,
-      # which is what makes `@corpse` nil there.
-      def build_panes(cockpit)
-        cockpit ? spawn_cockpit_panes : spawn_chat_pane
-        @corpse = PaneCorpse.watching(tmux: @tmux, target: chat_target, session: @session)
+      # EVERY PANE IS SPLIT BEFORE ANY PANE IS GIVEN A COMMAND, and the chat's
+      # is given last. `remain-on-exit failed` REMOVES a pane that exits 0, so
+      # while the chat ran before the split that hangs off it, a chat that
+      # exited cleanly during start-up (`lain up -- --help`) took the pane the
+      # input pane was about to split from: measured five times, four raised a
+      # raw `can't find pane` out of tmux past {ChatDied}'s written sentence,
+      # and the fifth won the race and attached the operator to a lone input
+      # pane waiting forever for a chat that had gone. A login shell cannot
+      # vanish in between.
+      #
+      # {PaneCorpse} starts its clock HERE for both panes. For the chat that
+      # is its spawn, exactly; the input pane was spawned earlier, so its
+      # grace is already partly spent and it only ever waits less.
+      def build_panes(cockpit, first)
+        editor = cockpit ? first : Panes::NO_EDITOR
+        chat = cockpit ? split_chat_pane(first) : first
+        input = spawn_input_pane(chat)
+        @panes.record(chat:, input:, editor:)
+        run_editor(first) if cockpit
+        run_chat(chat, cockpit)
+        # Where the human types is where the cursor belongs, stated rather than
+        # left to the order the panes happened to be made in.
+        @tmux.act("select-pane", "-t", input)
+        watch_panes(chat:, input:)
       rescue StandardError
         @tmux.run("kill-session", "-t", @session)
         raise
       end
 
-      def spawn_chat_pane = @tmux.act("respawn-pane", "-k", "-t", chat_target, "-c", @cwd, @chat_command)
+      # The chat pane holds its screen on ANY exit, not just a failing one:
+      # that is what lets a chat which exited 0 be QUOTED rather than found
+      # missing, and {Panes::RELEASE_CHAT} hands it back to the window's own
+      # `failed` the moment a human attaches. Best-effort, {#keep_failed_pane}'s
+      # rule -- a tmux without pane-scoped options must lose the diagnostic
+      # rather than the cockpit.
+      def run_chat(chat, cockpit)
+        @tmux.run("set-option", "-p", "-t", chat, "remain-on-exit", "on")
+        @tmux.act("respawn-pane", "-k", "-t", chat, "-c", @cwd,
+                  chat_pane_command(cockpit ? @cockpit.chat_flags : []))
+      end
 
-      # Reattaching rebuilds nothing, so all it owes is the un-split warning and
-      # a re-assert of {#keep_failed_pane}: a session `lain up` did not create,
-      # or created before this option did, still earns its corpse.
+      # Two corpses, and only one of them refuses. Nothing to attach TO is a
+      # refusal; a cockpit with no keyboard is a sentence, because the
+      # transcript is still worth reading and the human can still kill the
+      # session from outside.
+      def watch_panes(chat:, input:)
+        @corpse = PaneCorpse.watching(tmux: @tmux, target: chat, session: @session,
+                                      noun: "chat", consequence: "so this did not attach")
+        @input_corpse = PaneCorpse.watching(tmux: @tmux, target: input, session: @session, noun: "input",
+                                            consequence: "so this cockpit has no keyboard -- a chat reading " \
+                                                         "its human from a pane reads no stdin of its own")
+      end
+
+      # Split off the CHAT pane rather than the window, which is what puts it
+      # under the transcript instead of under the whole cockpit: a window
+      # split would run the full width and take its rows from the editor too.
+      #
+      # @return [String] the input pane's id
+      def spawn_input_pane(chat)
+        @tmux.act("split-window", "-v", "-l", INPUT_PANE_HEIGHT.to_s, "-t", chat, "-c", @cwd,
+                  "-P", "-F", PANE_ID, input_pane_command).stdout.strip
+      end
+
+      # Reattaching rebuilds nothing, so all it owes is the missing-editor
+      # warning and a re-assert of the two things a session carries rather
+      # than a pane: a session `lain up` did not create, or created before
+      # either of them did, still earns its corpse and its seating.
       def reattach_session
-        warn_unsplit_reattach
+        warn_editorless_reattach
         keep_failed_pane
+        @panes.rearm
       end
 
       # The degrade contract, and its "degraded is never silent" rule: no nvim
@@ -932,29 +1225,33 @@ module Lain
         false
       end
 
-      # Reattaching with --nvim: #create_session never ran, so a chat window
-      # still un-split means the request is being ignored, and degraded is never
-      # silent. A window already carrying two panes IS the cockpit.
-      def warn_unsplit_reattach
-        return unless @cockpit.requested? && chat_window_unsplit?
+      # Reattaching with --nvim: #create_session never ran, so a window with no
+      # EDITOR pane means the request is being ignored, and degraded is never
+      # silent. Asked of {Panes} rather than of the pane count, which answers
+      # two for a plain chat over its input pane as readily as for half a
+      # cockpit.
+      def warn_editorless_reattach
+        return unless @cockpit.requested? && !@panes.editor?
 
         @warnings << "session '#{@session}' already exists without the nvim pane -- reattaching as-is " \
                      "(kill the session and re-run `lain up --nvim` for the cockpit, or attach plain)"
       end
 
-      # list-panes answers one line per live pane; the cockpit means two.
-      def chat_window_unsplit?
-        @tmux.run("list-panes", "-t", chat_target).stdout.lines.size < 2
+      # Opened EMPTY, carrying tmux's default shell, for {#build_panes}'s
+      # reason: the pane the input pane splits from must be one that cannot
+      # exit on its own. Its command arrives on {#run_chat}'s respawn.
+      #
+      # @return [String] the chat pane's id
+      def split_chat_pane(first)
+        @tmux.act("split-window", "-h", "-t", first, "-c", @cwd, "-P", "-F", PANE_ID).stdout.strip
       end
 
-      # Both panes pinned to ONE cwd with tmux's -c and handed ONE socket, so
-      # the convention cannot silently diverge between the editor and the chat
-      # that attaches to it.
-      def spawn_cockpit_panes
+      # Every pane pinned to ONE cwd with tmux's -c and the editor handed ONE
+      # socket, so the convention cannot silently diverge between the editor
+      # and the chat that attaches to it.
+      def run_editor(editor)
         warn_missing_plugin
-        @tmux.act("respawn-pane", "-k", "-t", chat_target, "-c", @cwd, @cockpit.nvim_pane_command)
-        @tmux.act("split-window", "-h", "-t", chat_target, "-c", @cwd,
-                  PaneCommand.call("chat", *@cockpit.chat_flags, *@chat_args))
+        @tmux.act("respawn-pane", "-k", "-t", editor, "-c", @cwd, @cockpit.nvim_pane_command)
       end
 
       # Probed only on the create path: a reattach never rebuilds the pane

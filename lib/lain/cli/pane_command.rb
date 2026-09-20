@@ -11,6 +11,11 @@ module Lain
     # without depending on {Up}'s session management -- the shape its three
     # production callers already forced before this file existed on its own.
     #
+    # `lain up`'s input pane runs through it for the same reason the chat pane
+    # does and one more: it is the pane a human TYPES in, so a pane that
+    # resolved `lain` off an inherited PATH would take the whole conversation
+    # somewhere else, rather than merely failing where it can be read.
+    #
     # Every value is read from the LAUNCHING process at call time, never
     # pinned as a literal, and every one is Shellwords-escaped: tmux
     # interprets this string with its OWN `$SHELL -c`, so this is the shell
