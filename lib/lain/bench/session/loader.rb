@@ -306,8 +306,11 @@ module Lain
           raise Corrupt, "damaged #{Compare::Mode::RECORD_TYPE.inspect} record: #{e.message}"
         end
 
+        # The WHOLE record array, in file order: the seed, the turns, the head
+        # moves and the roots are only foldable together, and a per-type
+        # partition is exactly what throws that order away.
         def memory
-          MemoryReplay.new(turns: of_type(TURN_TYPE), roots: of_type("memory_root")).recorded_memory
+          MemoryReplay.new(records: @records).recorded_memory
         end
       end
     end

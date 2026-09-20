@@ -92,12 +92,16 @@ module Lain
       #   the checkout a lease cut, if it cut one.
       # @raise [Lain::CLI::UnknownProvider] on a name outside the advertised set
       # @raise [Lain::CLI::Backend::MissingAPIKey] resolving anthropic keyless
+      # @param memory [#view] the project memory each spawned agent's view opens
+      #   on; {Memory::ProjectStore::Null} keeps an arm's writes out of the
+      #   operator's own project, which is what makes two sweeps comparable
       def initialize(backend:, provider: nil, tools: Harness::TOOLS, system: nil,
-                     instrumentation: Harness::INSTRUMENTATION)
+                     instrumentation: Harness::INSTRUMENTATION, memory: Memory::ProjectStore::Null)
         @provider = provider || backend.provider
         @context = backend.context(system_override: taught(system))
         @tools = tools
         @instrumentation = instrumentation
+        @memory = memory
       end
 
       # What every agent this seam spawns will ask, so a report can ATTRIBUTE
@@ -135,7 +139,7 @@ module Lain
       # @raise [UnroutableTemplate] on a routed sibling template
       def call(journal:, workspace: Workspace.empty, timeline: nil, base_timeline: nil,
                worker_env: nil, model: nil, template: nil, spawned_from: nil)
-        recorder = Memory::Recorder.new
+        recorder = @memory.view
         # Resolved ONCE: the Session the tools resolve paths against and the
         # guard stack the layout is held at must name the same checkout.
         env = worker_env || WorkerEnv.default

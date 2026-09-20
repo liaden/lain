@@ -226,8 +226,26 @@ module Lain
       end
 
       def fork_result(point, recording, forked, current)
-        result(Door.new(verb: "fork", path: point.path), forked, replay(point.path),
+        result(Door.new(verb: "fork", path: point.path), forked, forked_replay(point.path, forked),
                open: recording.open?, notices: mismatches(point.path, current))
+      end
+
+      # A fork checks out a turn BELOW the recorded head, so the view its child
+      # opens on is the one THAT chain carried -- not the one the file ended at.
+      # Otherwise the child is shown a memory its own chain never wrote, on
+      # every turn, and its first request disagrees with its own record. The
+      # same fold a `/rewind` retreats a live view through, run once at the
+      # door: {Memory::Recorder#follow} resolves the seed and the chain's writes
+      # TOGETHER, so a chain that spans several files of a resume costs nothing
+      # extra and a write the seed already holds is not counted twice.
+      #
+      # WHICH IS ALSO THE BOUNDARY: a fork below a write made in an EARLIER file
+      # of a resume chain still renders that write, because the newest file's
+      # seed already holds it and a seed is where the fold STARTS, not something
+      # the fold can take back. The same rule a fork below a write in THIS file
+      # is exact under -- one rule, two readings.
+      def forked_replay(path, forked)
+        replay(path).tap { |replay| replay.memory.follow(forked) }
       end
 
       def fork_refusal(point, reason) = Door.new(verb: "fork", path: point.path).refuse(reason)

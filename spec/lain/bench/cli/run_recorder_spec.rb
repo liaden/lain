@@ -217,4 +217,39 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
       end
     end
   end
+
+  # What a recorded run STARTED from. The default is the empty version, and
+  # that default is a measurement decision: a sweep that began from whatever
+  # the operator's project happened to remember is not comparable with the same
+  # sweep a week later.
+  describe "the memory a run starts from" do
+    def loaded_in(path)
+      records_in(path).select { |record| record["type"] == "memory_loaded" }
+    end
+
+    it "names the empty version, with no items, when no memory source is given" do
+      Dir.mktmpdir do |tmp|
+        path = run_recorder.record(File.join(tmp, "1.ndjson"))
+
+        expect(loaded_in(path).size).to eq(1)
+        expect(loaded_in(path).first.fetch("version")).to eq(Lain::Memory::ProjectStore.empty.version)
+        expect(loaded_in(path).first.fetch("items")).to eq([])
+      end
+    end
+
+    it "names the project store's version and items when it is given one" do
+      Dir.mktmpdir do |tmp|
+        store = Lain::Memory::ProjectStore.new(
+          project_dir: Lain::ProjectDir.new(root: tmp, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => tmp,
+                                                                                     "HOME" => tmp }))
+        )
+        store.append(Lain::Memory::Item.new(id: "db-conventions", description: "naming", body: "snake"))
+        path = described_class.new(provider:, context:, attribution:, prompts: ["hi"], memory: store)
+                              .record(File.join(tmp, "1.ndjson"))
+
+        expect(loaded_in(path).first.fetch("version")).to eq(store.load.version)
+        expect(loaded_in(path).first.fetch("items").map { |item| item.fetch("id") }).to eq(["db-conventions"])
+      end
+    end
+  end
 end

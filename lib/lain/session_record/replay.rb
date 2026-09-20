@@ -21,12 +21,15 @@ module Lain
     # renders is the compaction source's question, and a rewind below a
     # collapse holds the cuts it re-wrote.
     #
-    # The manifest needs no third record type: a run's `turn` / `memory_root`
-    # chain is already what {Bench::Session::MemoryReplay} reconstructs a
-    # {Memory::Index} from, and that index is what {Session}'s `memory:` wants.
-    # That constant is reached inside a method body, resolved at CALL time -- the
-    # same lazy cross-unit reach {Session}'s own `memory:` default already makes
-    # from #21 in `lain.rb`'s load order to Memory at #40.
+    # The manifest is the session's project-memory VIEW: the `memory_loaded`
+    # record naming the store version this chain opened on, the `memory_write`
+    # turns recorded after it, and the `rewound` records that decide which of
+    # them the chain still carries -- all of which
+    # {Bench::Session::MemoryReplay} reconstructs a {Memory::Index} from, and
+    # that index is what {Session}'s `memory:` wants. That constant is reached
+    # inside a method body, resolved at CALL time -- the same lazy cross-unit
+    # reach {Session}'s own `memory:` default already makes from #21 in
+    # `lain.rb`'s load order to Memory at #40.
     #
     # A record type with zero occurrences replays to that type's neutral state
     # (no reads, no todo reminder, an empty manifest) -- the tolerant
@@ -37,7 +40,6 @@ module Lain
       READ_REDACTED_TYPE = "read_redacted"
       SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
-      MEMORY_ROOT_TYPE = "memory_root"
       COMPACTION_CUT_TYPE = "compaction_cut"
       CUT_FIELDS = Telemetry::CompactionCut.members.freeze
       READ_FIELDS = Telemetry::SessionRead.members.map(&:to_s).freeze
@@ -75,13 +77,28 @@ module Lain
       # tools ("one index, three views"); a second recorder here would give
       # the manifest and the tools silently divergent indexes.
       #
+      # The whole record array goes in, in file order: the seed this chain's
+      # newest `memory_loaded` names, the writes recorded after it and the head
+      # moves that decide which of them the chain still carries are readable
+      # only together. It carries NO store -- this is the recorded view, and
+      # {Memory::ProjectStore#resumed} is what binds it to the project's store
+      # for the run that resumes it.
+      #
       # @return [Memory::Recorder]
       def memory
-        @memory ||= Memory::Recorder.new(index: Bench::Session::MemoryReplay.new(turns:, roots:)
-                                                                            .recorded_memory.index)
+        @memory ||= built_from(Bench::Session::MemoryReplay.new(records: Journal.records(@records)))
       end
 
       private
+
+      # The SEED rides along, not just the folded index: a caller holding a
+      # chain shorter than the recorded one -- a `/fork` below a memory_write --
+      # re-folds through {Memory::Recorder#follow}, and a recorder that had
+      # forgotten what it opened on would reseed from nothing and drop every
+      # item the session inherited.
+      def built_from(replay)
+        Memory::Recorder.new(index: replay.recorded_memory.index, loaded: replay.loaded)
+      end
 
       # The read-set is THREE record types, folded together here because they
       # rebuild one thing: what the model has seen of each file, and on which
@@ -227,14 +244,6 @@ module Lain
 
       def items(record)
         record.fetch("todos").map { |todo| Todo.new(content: todo.fetch("content"), status: todo.fetch("status")) }
-      end
-
-      def turns
-        Journal.records(@records, type: SessionRecord::TURN_TYPE).to_a
-      end
-
-      def roots
-        Journal.records(@records, type: MEMORY_ROOT_TYPE).to_a
       end
     end
   end

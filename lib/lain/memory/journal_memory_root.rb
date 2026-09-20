@@ -27,6 +27,14 @@ module Lain
     # forwards untouched with NO paired memory_root. {Agent::Accounting} is the
     # only turn_usage writer today and always sends the event object; broaden the
     # match when a real second writer exists, not speculatively.
+    #
+    # It also writes the session's ONE {Telemetry::MemoryLoaded}, immediately
+    # ahead of the first root it explains. Here rather than at each wiring site
+    # because a root means nothing without the view it was taken over: every
+    # construction site of this decorator -- a chat, a bench recording, an arm,
+    # the consolidation clerk -- gets a self-contained record without having to
+    # remember to write one, and a reader scanning forward meets the load
+    # before the first snapshot of it.
     class JournalMemoryRoot
       # @param journal [#<<] the real Journal (or another Journal-duck) every
       #   entry is forwarded to
@@ -34,18 +42,34 @@ module Lain
       def initialize(journal:, recorder:)
         @journal = journal
         @recorder = recorder
+        @loaded = false
       end
 
       # @param entry [Hash, #to_journal]
       # @return [self]
       def record(entry)
         @journal << entry
-        if entry.is_a?(Telemetry::TurnUsage)
-          @journal << Telemetry::MemoryRoot.new(turn_digest: entry.digest, root: @recorder.root)
-        end
+        paired(entry) if entry.is_a?(Telemetry::TurnUsage)
         self
       end
       alias << record
+
+      private
+
+      def paired(entry)
+        announce_load
+        @journal << Telemetry::MemoryRoot.new(turn_digest: entry.digest, root: @recorder.root)
+      end
+
+      # A session with no turn at all writes nothing: there is no root to
+      # explain, and a load nothing was ever rendered over is not a fact about
+      # any recorded run.
+      def announce_load
+        return if @loaded
+
+        @loaded = true
+        @journal << Telemetry::MemoryLoaded.of(@recorder.loaded)
+      end
     end
   end
 end

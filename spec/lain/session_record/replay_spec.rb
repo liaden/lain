@@ -507,4 +507,88 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect([session, replayed].map { |side| side.on_chain(rerun).read?(path) }).to eq([false, false])
     end
   end
+
+  # The project-memory view a resume renders from: the `memory_loaded` record
+  # seeds it, the recorded memory_write turns fold onto it, and a `rewound`
+  # record decides which of them the chain still carries.
+  describe "the memory view it rebuilds" do
+    def item(id) = Lain::Memory::Item.new(id:, description: "about #{id}", body: "body of #{id}")
+
+    def loaded_record(*items)
+      Lain::Telemetry::MemoryLoaded.of(Lain::Memory::ProjectStore::Loaded.of(items)).to_journal
+    end
+
+    def write_turn(digest, id, parent: nil)
+      { "type" => "turn", "digest" => digest, "parent" => parent,
+        "content" => [{ "type" => "tool_use", "id" => "tu_#{id}", "name" => "memory_write",
+                        "input" => { "id" => id, "description" => "about #{id}", "body" => "body of #{id}" } }] }
+    end
+
+    def answered(digest, id, parent:)
+      { "type" => "turn", "digest" => digest, "parent" => parent,
+        "content" => [{ "type" => "tool_result", "tool_use_id" => "tu_#{id}", "is_error" => false }] }
+    end
+
+    let(:recorded) do
+      [{ "type" => "session" }, loaded_record(item("seeded")),
+       write_turn("d1", "written"), answered("d2", "written", parent: "d1")]
+    end
+
+    it "renders the seeded items and the chain's own writes in the session's manifest" do
+      replayed = described_class.new(recorded)
+
+      expect(replayed.memory.index.to_h.keys).to contain_exactly("seeded", "written")
+      expect(replayed.session.reminders.join).to include("seeded", "written")
+    end
+
+    it "drops a write the chain was rewound past" do
+      replayed = described_class.new(recorded + [{ "type" => "rewound", "from" => "d2", "to" => nil }])
+
+      expect(replayed.memory.index.to_h.keys).to eq(["seeded"])
+    end
+
+    # The SEED rides on the recorder, not just the folded index: a caller
+    # holding a chain shorter than the recorded one -- a `/fork` below a
+    # memory_write -- re-folds from it, and a recorder that had forgotten what
+    # it opened on would reseed from nothing and drop what the session
+    # inherited.
+    it "carries the seed the chain opened on" do
+      expect(described_class.new(recorded).memory.loaded.items.map(&:id)).to eq(["seeded"])
+    end
+
+    it "carries no store, so rebuilding a record writes nothing durable" do
+      rebuilt = described_class.new(recorded).memory
+      rebuilt.write(item("late"))
+
+      expect(rebuilt.index.to_h.keys).to include("late")
+      expect(Lain::Memory::ProjectStore::Null.load.items).to be_empty
+    end
+
+    it "re-folds to a shorter chain from that seed, dropping what the chain no longer carries" do
+      rebuilt = described_class.new(recorded).memory
+      rebuilt.follow(Lain::Timeline.empty)
+
+      expect(rebuilt.index.to_h.keys).to eq(["seeded"])
+    end
+
+    # THE BOUNDARY of that rule, named rather than left to be discovered: a fork
+    # below a write made in an EARLIER file of a resume chain still renders that
+    # write, because the newer file's seed already holds it and a seed is where
+    # the fold starts. Exact for a write made in the SAME file, which is the
+    # case `cli/resume_spec` drives through the real door.
+    it "still carries a write the newer file's seed inherited, however short the chain" do
+      chain = [{ "type" => "session" }, write_turn("d1", "inherited"),
+               answered("d2", "inherited", parent: "d1"), loaded_record,
+               { "type" => "session" }, loaded_record(item("inherited")),
+               write_turn("d3", "later", parent: "d2"), answered("d4", "later", parent: "d3")]
+      rebuilt = described_class.new(chain).memory
+      rebuilt.follow(Lain::Timeline.empty)
+
+      expect(rebuilt.index.to_h.keys).to eq(["inherited"])
+    end
+
+    it "rebuilds an empty view for a record that carries no memory at all" do
+      expect(described_class.new([{ "type" => "session" }]).memory.index).to be_empty
+    end
+  end
 end

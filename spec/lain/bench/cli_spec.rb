@@ -823,6 +823,43 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # A name outside the advertised set is a typo on a money-spending command,
+    # and reading it as the default would silently measure a different run.
+    it "refuses a --memory name that is not a memory source" do
+      Dir.mktmpdir do |tmp|
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 1, out: tmp, backend:, provider:, memory: "store") }
+          .to raise_error(described_class::Refusal, /empty or project/)
+      end
+    end
+
+    # The invariant CLI::Wiring#project_memory states, held on the bench too: a
+    # sweep run from a subdirectory must measure recall against the memory of
+    # the project it is in, not against an empty store nobody ever wrote to.
+    it "keys --memory project to the project root, not to the process's cwd" do
+      Dir.mktmpdir do |tmp|
+        was = ENV.fetch("XDG_STATE_HOME", nil)
+        ENV["XDG_STATE_HOME"] = tmp
+        root = File.join(tmp, "proj")
+        nested = File.join(root, "lib", "deep")
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        FileUtils.mkdir_p(nested)
+        at_root = Lain::Memory::ProjectStore.new(project_dir: Lain::ProjectDir.new(root:))
+        at_root.append(Lain::Memory::Item.new(id: "db-conventions", description: "naming", body: "snake"))
+
+        out = File.join(tmp, "sessions")
+        FileUtils.mkdir_p(out)
+        path = Dir.chdir(nested) do
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, backend:, provider:, memory: "project").first
+        end
+        records = File.foreach(path).map { |line| JSON.parse(line) }
+        loaded = records.find { |record| record["type"] == "memory_loaded" }
+
+        expect(loaded.fetch("version")).to eq(at_root.load.version)
+      ensure
+        ENV["XDG_STATE_HOME"] = was
+      end
+    end
+
     it "refuses a missing task file with a Refusal, not a raw ENOENT" do
       Dir.mktmpdir do |tmp|
         expect { cli.record(taskfile: File.join(tmp, "absent.txt"), runs: 2, out: tmp, backend:, provider:) }

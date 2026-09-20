@@ -41,8 +41,9 @@ module Lain
     # reaches the child, because the parent's live ENV is inherited too.
     # {Session::Null} sidesteps this by recomputing {WorkerEnv.default} per call.
     #
-    # @param memory [#index] the run's memory source, projected onto
-    #   {#reminders} whenever its index holds items
+    # @param memory [#index, #follow] the run's memory source, projected onto
+    #   {#reminders} whenever its index holds items, and told where the chain
+    #   stands by {#rewound_to}
     # @param worker_env [WorkerEnv] the host context tools resolve paths and
     #   shell out against
     # @param journal [#<<] where {Telemetry::SessionRead} /
@@ -165,6 +166,20 @@ module Lain
     def on_chain(timeline)
       withheld(@reads.withhold_undelivered)
       @reads.move_to(timeline)
+      self
+    end
+
+    # The head moved BACKWARD, so every chain-scoped projection this session
+    # holds re-derives from where it now stands: the read-set, and the memory
+    # view. Called by {Agent#rewind} rather than by {#on_chain}, which runs once
+    # per tool round and would pay a whole-chain memory fold on every one of
+    # them to answer a question only a rewind can change.
+    #
+    # @param timeline [Timeline] the chain as the rewind left it
+    # @return [self]
+    def rewound_to(timeline)
+      on_chain(timeline)
+      @memory.follow(timeline)
       self
     end
 
@@ -494,6 +509,27 @@ module Lain
       self
     end
 
+    # Point the manifest at a memory source. The RESUMED case needs it for
+    # {#journals_into}'s reason: {SessionRecord::Replay} builds this Session
+    # over the view it folded out of the record, and the run that resumes it
+    # re-opens that view on the project's store
+    # ({Memory::ProjectStore#resumed}) -- so the manifest must follow, or it
+    # renders a snapshot the memory tools no longer write into.
+    #
+    # Unguarded where {#journals_into} refuses a second call, because the two
+    # are different risks: a second journal splits a record across two files
+    # silently, where a second view is what a resume legitimately is.
+    #
+    # @param memory [#index, #follow] the run's memory view; {#rewound_to} sends
+    #   it `#follow`, so a collaborator standing in for one owes both messages
+    # @return [self]
+    def watch_memory(memory)
+      @memory = memory
+      @manifest_root = nil
+      @manifest_reminders = [].freeze
+      self
+    end
+
     # The scope of a session nothing confines: its tools resolve and run where
     # it was built, and a child it spawns leases as the run's isolation says.
     module Unconfined
@@ -693,12 +729,6 @@ module Lain
     def withheld(rounds)
       @journal << Telemetry::SessionReadWithheld.new(rounds:) unless rounds.empty?
       self
-    end
-
-    def watch_memory(memory)
-      @memory = memory
-      @manifest_root = nil
-      @manifest_reminders = [].freeze
     end
 
     def todo_reminders
@@ -957,6 +987,9 @@ module Lain
 
       # @return [self]
       def on_chain(_timeline) = self
+
+      # @return [self]
+      def rewound_to(_timeline) = self
 
       # @return [self]
       def record_delivery(**) = self

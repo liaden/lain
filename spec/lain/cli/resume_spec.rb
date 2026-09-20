@@ -642,6 +642,52 @@ RSpec.describe Lain::CLI::Resume do
       expect(result.session.reminders.join).to include("ibuprofen")
     end
 
+    # A fork checks out a turn BELOW the recorded head, so the view it opens on
+    # is the one that chain carried -- not the one the file ended at. Otherwise
+    # the child is shown, on every turn, a memory its own chain never wrote,
+    # and its first request disagrees with its own record.
+    describe "the memory view a fork opens on" do
+      def forked_at(digest) = resume.fork(selector: "20260101@#{digest.delete_prefix("blake3:")[0, 12]}")
+
+      it "carries nothing when the fork point is below the write" do
+        forked = forked_at(memory_chain.to_a.first.digest)
+
+        expect(forked.recorder.index.to_h.keys).to eq([])
+        expect(forked.session.reminders.join).not_to include("aspirin")
+      end
+
+      it "carries the write when the fork point is above it" do
+        forked = forked_at(memory_chain.head_digest)
+
+        expect(forked.recorder.index.to_h.keys).to eq(["aspirin"])
+        expect(forked.session.reminders.join).to include("aspirin")
+      end
+
+      # The retreat drops what the forked-past turns wrote, never what the
+      # session inherited from the project store before its first turn -- the
+      # seed is where the fold starts, not something the fold can take back.
+      it "keeps the seed the session opened on while dropping the forked-past write" do
+        seeded = Lain::Memory::ProjectStore::Loaded.of(
+          [Lain::Memory::Item.new(id: "db-conventions", description: "naming", body: "snake")]
+        )
+        write_closed("20260102T000000-1.ndjson", memory_chain,
+                     extra: [Lain::Telemetry::MemoryLoaded.of(seeded).to_journal])
+
+        forked = resume.fork(selector: "20260102@#{memory_chain.to_a.first.digest.delete_prefix("blake3:")[0, 12]}")
+
+        expect(forked.recorder.index.to_h.keys).to eq(["db-conventions"])
+      end
+
+      # The recorder a fork hands back is still the session's ONE manifest
+      # source, exactly as a plain resume's is.
+      it "keeps the forked recorder as the session's manifest source" do
+        forked = forked_at(memory_chain.to_a.first.digest)
+        forked.recorder.write(Lain::Memory::Item.new(id: "ibuprofen", description: "alt", body: "10mg/kg"))
+
+        expect(forked.session.reminders.join).to include("ibuprofen")
+      end
+    end
+
     it "folds run-state from EVERY file of a resume chain, not just the resumed head" do
       chained = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson",
                                             "head" => memory_chain.head_digest })

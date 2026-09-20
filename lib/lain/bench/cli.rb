@@ -44,6 +44,13 @@ module Lain
       # environment and cuts nothing.
       CONTAINING_BACKENDS = %w[worktree].freeze
 
+      # What `--memory` may name. `empty` is the default and the comparable
+      # one: a run that started from whatever the operator's project happened
+      # to remember is not comparable with the same run a week later, so a
+      # sweep starts from the empty version unless it is told otherwise.
+      # `project` measures recall against the real store instead.
+      MEMORIES = %w[empty project].freeze
+
       # The three-section {Variance} report over recorded session files.
       #
       # A run that measured nothing is named rather than averaged in: a
@@ -212,10 +219,11 @@ module Lain
       #   named, and no `router` was given
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
+      # @param memory [String, nil] `--memory`: what each arm's view starts from
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
                       decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil, cheap_model: nil,
-                      price_book: PriceBook.default, **spawn_options)
+                      price_book: PriceBook.default, memory: nil, **spawn_options)
         # Declared before anything that could be interrupted, so the rescue
         # below always has an Array to report on rather than the bare local a
         # Ctrl-C before the first grade would otherwise leave nil.
@@ -229,7 +237,7 @@ module Lain
         # operator asked for and only the cheap branch departs from it.
         spawn_options = journaled_provider(backend, journal, spawn_options)
         LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
-        spawn_seam = SpawnSeam.new(backend:, **spawn_options)
+        spawn_seam = SpawnSeam.new(backend:, memory: memory_store(memory), **spawn_options)
         # {Grader::Journaling} REUSED rather than a bespoke observer: it already
         # does exactly what an interrupt handler needs -- pass the {Grade}
         # through unchanged and journal a {Telemetry::GradeRecord} beside it --
@@ -341,21 +349,17 @@ module Lain
       # @return [Array<String>] one line per run, in run order: the written
       #   session path, or for a run whose round trip failed, the path it was
       #   set aside under and why
+      # @param memory [String, nil] `--memory`: what each run's view starts from
       # @raise [Refusal] when no run recorded at all, naming each set aside
       def record(taskfile:, out:, backend:, runs: RECORD_DEFAULTS.fetch(:runs),
                  system: nil, provider: nil, tools: Harness::NO_TOOLS,
-                 instrumentation: Harness::INSTRUMENTATION)
+                 instrumentation: Harness::INSTRUMENTATION, memory: nil)
         refuse_unisolated_writes!(tools, isolation: nil, flag: nil)
         runs = check_runs(runs)
-        prompts = prompts_from(taskfile)
         current_run = RunRecorder::CurrentRun.new
-        provider ||= recording_provider(backend, current_run)
-        context = backend.context(system_override: system)
-        # The attribution must name what ACTUALLY rendered: `--system` renders
-        # instead of the slots, and `SlotFills.from` owns that distinction.
-        attribution = Telemetry::SlotFills.from(backend.slots, override: system)
-        run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:, tools:, instrumentation:,
-                                       current_run:)
+        run_recorder = recorder_for(backend:, system:, memory:, tools:, instrumentation:, current_run:,
+                                    provider: provider || recording_provider(backend, current_run),
+                                    prompts: prompts_from(taskfile))
         said = (1..runs).to_h do |index|
           path = File.join(out, "#{index}.ndjson")
           [path, run_recorder.record(path)]
@@ -366,6 +370,35 @@ module Lain
       end
 
       private
+
+      # The attribution must name what ACTUALLY rendered: `--system` renders
+      # instead of the slots, and `SlotFills.from` owns that distinction.
+      def recorder_for(backend:, system:, memory:, **rest)
+        RunRecorder.new(context: backend.context(system_override: system),
+                        attribution: Telemetry::SlotFills.from(backend.slots, override: system),
+                        memory: memory_store(memory), **rest)
+      end
+
+      # `--memory`, resolved. Unset and `empty` are the same answer, which is
+      # why the flag carries no Thor default: a run that names nothing starts
+      # from the empty version, and the record says so either way.
+      #
+      # @param name [String, nil]
+      # @raise [Refusal] on a name outside {MEMORIES}
+      # Keyed to the PROJECT's root and never to `Dir.pwd`, the invariant
+      # {CLI::Wiring#project_memory} states: a sweep run from a subdirectory
+      # must measure recall against the memory of the project it is in, not
+      # against an empty store nobody wrote to.
+      def memory_store(name)
+        return Memory::ProjectStore::Null if name.nil? || name == "empty"
+        if name == "project"
+          return Memory::ProjectStore.new(
+            project_dir: ProjectDir.new(root: ::Lain::Project::Resolver.default_project.root)
+          )
+        end
+
+        raise Refusal, "--memory #{name} is not a memory source; #{MEMORIES.join(" or ")}"
+      end
 
       # What {#arms_report} says instead of the comparison when Ctrl-C
       # arrives mid-run: every run in `graded` finished and was scored before

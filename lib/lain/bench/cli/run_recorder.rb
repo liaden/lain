@@ -64,8 +64,15 @@ module Lain
         #   -> Agent::Instrumentation`, asked once per recorded run
         # @param current_run [CurrentRun] the destination `provider` was built
         #   over, pointed at each run's file while it records
-        def initialize(provider:, context:, attribution:, prompts:,
-                       tools: Harness::NO_TOOLS, instrumentation: Harness::INSTRUMENTATION, current_run: CurrentRun.new)
+        # @param memory [#view] the project memory each run's view opens on.
+        #   {Memory::ProjectStore::Null} by default, and that default is a
+        #   measurement decision: a recording that started from whatever the
+        #   operator's project happened to remember is not comparable with one
+        #   taken a week later, so a sweep starts from the empty version unless
+        #   `--memory project` says otherwise.
+        def initialize(provider:, context:, attribution:, prompts:, tools: Harness::NO_TOOLS,
+                       instrumentation: Harness::INSTRUMENTATION, current_run: CurrentRun.new,
+                       memory: Memory::ProjectStore::Null)
           @provider = provider
           @context = context
           @attribution = attribution
@@ -73,6 +80,7 @@ module Lain
           @tools = tools
           @instrumentation = instrumentation
           @current_run = current_run
+          @memory = memory
           freeze
         end
 
@@ -156,11 +164,12 @@ module Lain
           agent
         end
 
-        # ONE recorder per run, shared by the two halves that must agree about
+        # ONE view per run, shared by the two halves that must agree about
         # it: the `memory_write`/`memory_read` tools write into it, and
         # {Memory::JournalMemoryRoot} pairs each turn's digest with the root it
-        # held when that turn rendered, so a later run's recall replays against
-        # the exact snapshot. Building it here rather than inside either factory
+        # held when that turn rendered -- and writes the run's one
+        # `memory_loaded`, so the version this run started from is part of its
+        # record. Building it here rather than inside either factory
         # is what makes that sharing a fact of this method rather than a
         # coincidence between two lambdas.
         #
@@ -173,7 +182,7 @@ module Lain
         # taken without them -- a different prompt, a different cache prefix and
         # a different task -- so which harness a run used is part of its record.
         def build_agent(journal)
-          recorder = Memory::Recorder.new
+          recorder = @memory.view
           Agent.new(provider: @provider, toolset: @tools.call(recorder:, journal:), context: @context,
                     instrumentation: @instrumentation.call(journal:, recorder:, worker_env: WorkerEnv.default))
         end

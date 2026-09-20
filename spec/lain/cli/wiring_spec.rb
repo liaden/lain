@@ -3004,13 +3004,65 @@ RSpec.describe Lain::CLI::Wiring do
     # not the other is a run whose usage records name a memory root its reads
     # never wrote.
     describe "a resumed run's state" do
-      it "restores the resumed recorder and session rather than building fresh ones" do
-        recorder = Lain::Memory::Recorder.new
-        session = Lain::Session.new(memory: recorder)
+      def recorded(item)
+        Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty.write(item))
+      end
 
-        restored, = wiring.run_state(WiringSpecResumed.new(recorder:, session:))
+      let(:remembered) do
+        Lain::Memory::Item.new(id: "db-conventions", description: "how this project names tables", body: "snake")
+      end
 
-        expect(restored).to be(recorder)
+      # The recorded VIEW is restored, re-opened on the project's store: the
+      # same items, so the manifest is what was recorded, and a write from here
+      # lands durably where the next fresh chat will see it.
+      it "restores the resumed view's items rather than opening on the store head" do
+        restored, = wiring.run_state(WiringSpecResumed.new(recorder: recorded(remembered),
+                                                           session: Lain::Session.new))
+
+        expect(restored.index.to_h.keys).to eq(["db-conventions"])
+        expect(restored.loaded.items.map(&:id)).to eq(["db-conventions"])
+      end
+
+      # The resumed Session already holds the read-set, pin-set and todo list
+      # replay restored, so it is POINTED at the re-opened view rather than
+      # rebuilt -- and its manifest has to follow, or it renders a snapshot the
+      # memory tools no longer write into.
+      it "points the resumed session's manifest at the re-opened view" do
+        session = Lain::Session.new(memory: recorded(remembered))
+
+        restored, restored_session = wiring.run_state(WiringSpecResumed.new(recorder: recorded(remembered),
+                                                                            session:))
+        restored.write(Lain::Memory::Item.new(id: "later", description: "written after the resume", body: "x"))
+
+        expect(restored_session).to be(session)
+        expect(restored_session.reminders.join).to include("later")
+      end
+
+      # A resume keeps its own view on purpose, so what other chats added since
+      # is reported rather than silently absent. Its own state home, because the
+      # store is a FILE and the suite's is shared by every example in the process.
+      it "says how many newer entries the store holds, and says nothing when it holds none" do
+        Dir.mktmpdir do |state|
+          isolated = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                         paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state,
+                                                                       "HOME" => state }))
+          resumed = WiringSpecResumed.new(recorder: recorded(remembered), session: Lain::Session.new)
+          restored, = isolated.run_state(resumed)
+
+          expect(isolated.memory_notices(restored, resumed)).to eq([])
+          Lain::Memory::ProjectStore.new(
+            project_dir: Lain::ProjectDir.new(root: isolated.project.root,
+                                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state,
+                                                                            "HOME" => state }))
+          ).view.write(Lain::Memory::Item.new(id: "elsewhere", description: "d", body: "b"))
+          expect(isolated.memory_notices(restored, resumed).join).to include("1 entry newer")
+        end
+      end
+
+      it "tells a fresh chat nothing, because its view already holds them" do
+        recorder, = wiring.run_state(nil)
+
+        expect(wiring.memory_notices(recorder, nil)).to eq([])
       end
 
       # The fresh half, and the one thing about it that is this class's own

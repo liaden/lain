@@ -799,5 +799,39 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect { described_class.new(records).recording }
         .to raise_error(Lain::Bench::Session::Corrupt, /memory_root/)
     end
+
+    # The seed: a run that opened on a project store renders its items at every
+    # turn, and its own roots still verify byte for byte -- which is what makes
+    # the session file self-contained rather than a delta on a store the reader
+    # would have to open.
+    context "when the run opened on a non-empty view" do
+      let(:seeded) do
+        Lain::Memory::ProjectStore::Loaded.of(
+          [Lain::Memory::Item.new(id: "db-conventions", description: "naming", body: "snake")]
+        )
+      end
+      let(:recorder) { Lain::Memory::Recorder.new(index: seeded.index, loaded: seeded) }
+
+      it "records the load once and replays every turn over it" do
+        records = memory_records
+        loaded = records.select { |record| record["type"] == "memory_loaded" }
+
+        expect(loaded.size).to eq(1)
+        expect(loaded.first.fetch("version")).to eq(seeded.version)
+        loaded_recording = described_class.new(records).recording
+        loaded_recording.timeline.to_a.each do |turn|
+          expect(loaded_recording.memory_at(turn.digest).key?("db-conventions")).to be(true)
+        end
+      end
+
+      it "keeps the journaled memory_root chain answerable by #memory_root_at" do
+        records = memory_records
+        loaded = described_class.new(records).recording
+
+        journaled_roots(records).each do |record|
+          expect(loaded.memory_root_at(record.fetch("turn_digest"))).to eq(record.fetch("root"))
+        end
+      end
+    end
   end
 end

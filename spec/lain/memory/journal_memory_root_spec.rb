@@ -40,7 +40,7 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
       decorator << turn_usage("blake3:aaa")
 
       types = parsed_records.map { |record| record.fetch("type") }
-      expect(types).to eq(%w[turn_usage memory_root])
+      expect(types).to eq(%w[turn_usage memory_loaded memory_root])
       expect(parsed_records.last.fetch("turn_digest")).to eq("blake3:aaa")
     end
 
@@ -72,11 +72,43 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
     end
   end
 
+  # The session's ONE memory_loaded, ahead of the first root it explains: a
+  # root means nothing without the view it was taken over, and a reader
+  # scanning forward has to meet the load first.
+  describe "the load it announces" do
+    it "names the view's version and its items, once, before the first root" do
+      recorder.write(item("a"))
+      decorator << turn_usage("blake3:h1")
+      decorator << turn_usage("blake3:h2")
+
+      types = parsed_records.map { |record| record.fetch("type") }
+      expect(types).to eq(%w[turn_usage memory_loaded memory_root turn_usage memory_root])
+      expect(parsed_records[1].fetch("version")).to eq(recorder.loaded.version)
+    end
+
+    it "carries the loaded items' ids, descriptions and bodies" do
+      seeded = Lain::Memory::ProjectStore::Loaded.of([item("db-conventions")])
+      described_class.new(journal: real_journal,
+                          recorder: Lain::Memory::Recorder.new(index: seeded.index,
+                                                               loaded: seeded)) << turn_usage("blake3:h3")
+
+      expect(parsed_records[1].fetch("items"))
+        .to eq([{ "id" => "db-conventions", "description" => "desc of db-conventions",
+                  "body" => "body of db-conventions" }])
+    end
+
+    it "writes nothing at all for a session that never committed a turn" do
+      decorator << { "type" => "custom" }
+
+      expect(parsed_records.map { |record| record.fetch("type") }).to eq(["custom"])
+    end
+  end
+
   describe "#record" do
     it "is the same behaviour as #<<, matching Journal's own record/<< duck" do
       decorator.record(turn_usage("blake3:ggg"))
 
-      expect(parsed_records.map { |record| record.fetch("type") }).to eq(%w[turn_usage memory_root])
+      expect(parsed_records.map { |record| record.fetch("type") }).to eq(%w[turn_usage memory_loaded memory_root])
     end
   end
 end

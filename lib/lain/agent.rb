@@ -342,12 +342,20 @@ module Lain
     # through, because the lock is reentrant: {CLI::ResendBridge} rewinds from
     # inside the very lock that makes its own run exclusive.
     #
+    # The Session is told where the chain now stands, and it is the only thing
+    # told: this object stays memory-blind: it never names a {Memory::Index} or
+    # a {Memory::Recorder}, and what the Session does with the move -- retire
+    # reads the chain no longer carries, drop a memory the rewind went past --
+    # is the Session's own business. Inside the lock, so the move and the
+    # projections that follow it cannot be split by a run starting between them.
+    #
     # @raise [InFlight] while another caller's run holds the dispatch lock
     def rewind(count = 1)
       raise InFlight, IN_FLIGHT unless @dispatch_lock.try_enter
 
       begin
         @timeline = @timeline.rewind(count)
+        @session.rewound_to(@timeline)
         reopen!
         self
       ensure

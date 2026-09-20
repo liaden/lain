@@ -186,6 +186,17 @@ RSpec.describe "lain bench arms" do
       expect(run("help", "arms").stdout).to include("spends real API money")
     end
 
+    # An arm's memory_write goes through the same view a chat's does, so
+    # `--memory project` does not merely READ the operator's durable memory --
+    # it permanently appends to it. A money-spending sweep that mutates state
+    # the next chat will remember has to say so on the flag.
+    it "warns on the memory flag that project appends to the operator's own store" do
+      help = command.options.fetch(:memory).description
+
+      expect(help).to include("APPENDS")
+      expect(help).to include("what your next chat remembers")
+    end
+
     it "names every backend the resolver accepts in the isolation flag's help" do
       expect(declared).to include(:isolation)
       expect(command.options.fetch(:isolation).description)
@@ -589,14 +600,24 @@ RSpec.describe "lain bench record" do
     expect(kwargs.fetch(:backend).context.model).to eq("qwen3")
   end
 
-  # The three flags the command reads literally rather than through the band, and
+  # The four flags the command reads literally rather than through the band, and
   # the shape of the call itself -- so a flag that stopped being threaded, or a
   # loose sampler flag that came back beside the Backend, both fail here.
-  it "reads its own three flags literally and passes nothing else" do
-    run_record("-n", "3", "--system", "be terse")
+  it "reads its own four flags literally and passes nothing else" do
+    run_record("-n", "3", "--system", "be terse", "--memory", "project")
 
-    expect(kwargs).to include(taskfile: "task.txt", out: "sessions", runs: 3, system: "be terse")
-    expect(kwargs.keys.sort).to eq(%i[backend out runs system taskfile])
+    expect(kwargs).to include(taskfile: "task.txt", out: "sessions", runs: 3, system: "be terse",
+                              memory: "project")
+    expect(kwargs.keys.sort).to eq(%i[backend memory out runs system taskfile])
+  end
+
+  # Unset reaches the library as nil, which is where "empty" is decided: the
+  # flag carries no Thor default, so the command and the library cannot each
+  # hold their own answer.
+  it "passes an unset --memory through as nil" do
+    run_record
+
+    expect(kwargs.fetch(:memory)).to be_nil
   end
 
   it "defaults the run count and the ceiling to RECORD_DEFAULTS, not to arms' ceiling" do

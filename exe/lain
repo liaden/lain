@@ -634,6 +634,15 @@ class LainCLI < Thor
     # report subcommand is one line with no repeated rescue.
     include Boundary
 
+    # One sentence for both paid commands: what a run's memory view starts
+    # from. Written once so `record` and `arms` cannot advertise it differently.
+    MEMORY_DESC = "What each run's memory view starts from " \
+                  "(#{Lain::Bench::CLI::MEMORIES.join(", ")}). Unset is empty, which is what makes two " \
+                  "sweeps comparable. project starts every run from this project's own memory store AND " \
+                  "APPENDS each run's memory_write to it permanently, so a sweep changes what your next " \
+                  "chat remembers".freeze
+    private_constant :MEMORY_DESC
+
     def self.exit_on_failure? = true
 
     desc "variance DIR_OR_FILES...", "Report determinism/divergence/distribution across recorded sessions"
@@ -644,6 +653,9 @@ class LainCLI < Thor
                       desc: "how many runs"
     method_option :out, type: :string, required: true, desc: "directory the session files land in"
     method_option :system, type: :string, desc: "system prompt"
+    # NO Thor `default:`: unset and `empty` are the same answer, and the
+    # library says so once rather than the flag and the library each saying it.
+    method_option :memory, type: :string, desc: MEMORY_DESC
     ModelFlags.declare(self, max_tokens: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
     # One `say` of the newline-joined paths, through the SAME Boundary#render
     # every other bench subcommand sits on. The Backend is built INSIDE the
@@ -651,7 +663,8 @@ class LainCLI < Thor
     def record(taskfile)
       render do
         Lain::Bench::CLI.new.record(taskfile:, backend: model_backend, out: options[:out],
-                                    runs: options[:n], system: options[:system]).join("\n")
+                                    runs: options[:n], system: options[:system],
+                                    memory: options[:memory]).join("\n")
       end
     end
 
@@ -702,6 +715,7 @@ class LainCLI < Thor
                             desc: "NDJSON file this run's grade records and isolation lease telemetry " \
                                   "are recorded into; --isolation leases the workers, and refuses " \
                                   "without somewhere to record them"
+    method_option :memory, type: :string, desc: MEMORY_DESC
     # The Backend is built INSIDE `render`, as `record` does: a refusal from its
     # own construction is a Lain::Error like any other, and outside the block
     # nothing would map it to Thor's contract. The `ensure` below tolerates a
@@ -712,7 +726,7 @@ class LainCLI < Thor
       render do
         Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend: model_backend, journal:,
                                          system: options[:system], isolation: options[:isolation],
-                                         cheap_model: options[:cheap_model])
+                                         cheap_model: options[:cheap_model], memory: options[:memory])
       end
     ensure
       # Closing is what discards a journal this run created and never wrote to,
