@@ -59,7 +59,6 @@ RSpec.describe Lain::Context::Compact do
   end
 
   it "composes with other combinators via >>" do
-    require "lain/context/base"
     composed = described_class.new(threshold: 10, keep_last: 1, summarizer:) >> Lain::Context::Identity
     expect(composed.call(messages).size).to eq(2)
   end

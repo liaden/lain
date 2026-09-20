@@ -73,17 +73,6 @@ RSpec.describe Lain::Context::Combinator do
     end
   end
 
-  describe Lain::Context::Identity do
-    it "passes the message list through unchanged" do
-      messages = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }]
-      expect(described_class.call(messages)).to eq(messages)
-    end
-
-    it "declares no capabilities" do
-      expect(described_class.requires).to eq([])
-    end
-  end
-
   describe "a combinator with no override" do
     it "is the identity by default" do
       messages = [{ "role" => "user", "content" => [] }]

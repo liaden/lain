@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "active_model"
 require "active_support/concern"
 
 module Lain
@@ -157,3 +158,17 @@ end
 
 require_relative "declarative/types"
 require_relative "declarative/carrier"
+
+# Registered HERE rather than in the file defining the types, because a
+# declaration names a type by SYMBOL (`attribute :body, :lain_canonical`) and a
+# symbol cannot make {Lain::Declarative::Types} load. Naming the constants is
+# what does, and every declaring class reaches this file first -- through
+# `include Declarative` or by subclassing {Lain::Declarative::Carrier} -- so the
+# registry is populated before any `declare` block looks a symbol up.
+#
+# Prefixed (`lain_...`), not a bare `:canonical`/`:strict_integer`:
+# `ActiveModel::Type`'s registry is process-wide and last-write-wins with no
+# error, so a generic symbol can be silently taken over by another gem
+# registering the same name.
+ActiveModel::Type.register(:lain_strict_integer, Lain::Declarative::Types::StrictInteger)
+ActiveModel::Type.register(:lain_canonical, Lain::Declarative::Types::Canonicalized)

@@ -5,7 +5,7 @@
 # `Data.define`) and `Context::Combinator` (a monoid over composed stages,
 # compared by observed behavior rather than `==`) satisfy the SAME two laws, and
 # so do the compaction strategies' `|` and `Mode::Layer`: usage_spec.rb,
-# context/base_spec.rb, context/dedupe_tool_calls_spec.rb,
+# context/combinator_spec.rb, context/dedupe_tool_calls_spec.rb,
 # context/purge_failed_inputs_spec.rb, compaction/strategy_spec.rb and
 # mode/layer_spec.rb all consume this group instead of duplicating the
 # property-testing machinery -- see the generator note below for what that
@@ -32,7 +32,7 @@
 #   equal      [#call(a, b) -> bool]     defaults to `==`. Override when
 #                                        equality must be OBSERVATIONAL: two
 #                                        composed combinators are never `==`
-#                                        as objects, so context/base_spec.rb
+#                                        as objects, so context/combinator_spec.rb
 #                                        passes a comparator that runs both
 #                                        through the same probe.
 #
@@ -102,7 +102,7 @@ end
 
 # Opt-in, and deliberately separate from "a monoid" above: not every monoid
 # here is commutative. Context combinator composition is order-sensitive BY
-# DESIGN -- a stage feeds the next one -- so context/base_spec.rb must never be
+# DESIGN -- a stage feeds the next one -- so context/combinator_spec.rb must never be
 # asked to satisfy this law. Usage and the compaction strategies' `|` include
 # both; Context::Combinator includes only "a monoid".
 RSpec.shared_examples "a commutative monoid" do |config|

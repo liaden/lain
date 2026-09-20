@@ -62,6 +62,7 @@ require_relative "lain/credential_patterns"
 require_relative "lain/sensitivity"
 require_relative "lain/middleware"
 require_relative "lain/usage"
+require_relative "lain/stop_reason"
 require_relative "lain/response"
 require_relative "lain/store"
 require_relative "lain/event"
@@ -105,41 +106,15 @@ require_relative "lain/arm"
 require_relative "lain/tools"
 require_relative "lain/consolidation"
 
-# The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
-#
-# The rescue exists because the artifact is GITIGNORED (`*.so`, and it is 47MB),
-# so a fresh clone, a fresh `git worktree`, and a fresh checkout on another
-# machine have never had it -- and Ruby's own LoadError for it says only
-# `cannot load such file -- lain/lain`, which names an internal path a human has
-# no reason to recognise and no hint of what to do. Reported from a first-run on
-# macOS, 2026-08-05, against `./exe/lain` and `bundle exec exe/lain --help`
-# alike; CLAUDE.md already records the same trap biting fresh worktrees, where it
-# surfaces as every spec failing at load.
-#
-# Re-raised as LoadError, not a Lain::Error: nothing of lain is loaded yet, so
-# Lain::Error does not exist to be raised, and a caller rescuing LoadError around
-# an optional require must keep working.
-begin
-  require "lain/lain"
-rescue LoadError => e
-  raise LoadError, <<~SENTENCE.strip
-    #{e.message}
-
-    lain's compiled Rust extension is not built. It is gitignored, so a fresh
-    clone or worktree never has it -- build it once with:
-
-        bundle install && bundle exec rake compile
-
-    (needs a Rust toolchain: https://rustup.rs). If that succeeded and this
-    persists, the built artifact is for a different Ruby or platform than the
-    one running now -- `bundle exec rake clean compile` rebuilds it.
-  SENTENCE
-end
-
 # An agent harness built as a study bench: context strategies, tool designs, and
 # orchestration tactics are swappable, observable, and comparable.
 module Lain
-  # The compiled extension's own namespace, defined from Rust by magnus.
+  # The compiled extension's own namespace. THIS line defines it and magnus
+  # reopens it to hang `init_tracing` on, so between here and the `require
+  # "lain/lain"` below `loader.setup` there is a window where `Lain::Ext` is
+  # defined and empty. Nothing tests `defined?(Lain::Ext)` for the extension's
+  # presence, and nothing may start to: `Lain::Ext.respond_to?(:init_tracing)`
+  # is the question that survives the window.
   module Ext; end
 
   # The three spellings the loader's inflector cannot derive from a path. The
@@ -150,17 +125,15 @@ module Lain
   # Paths under lib/lain, relative to it, that the loader may not manage,
   # because a loader resolves ONE constant per path and each of these answers
   # to something else: several constants in one file (the telemetry record
-  # groups, `epic/records.rb`, `review/records.rb`), one constant nested deeper
-  # than the path (`config/gates.rb` is {Config::Epics::Gates}) or beside it
-  # (`frontend/reline.rb` is {Frontend::LineEditor}), or no constant at all
-  # (`live.rb` defines only `Lain.live`). Every entry is a permanent pairing:
-  # an ignored path is invisible to the loader, so something must require it by
-  # hand -- today the manifest below, and spec/zeitwerk_spec.rb fails if any
-  # entry is left unrequired or stops needing to be here.
+  # groups, `epic/records.rb`, `review/records.rb`), one constant beside the one
+  # the path names (`frontend/reline.rb` is {Frontend::LineEditor}), or no
+  # constant at all (`live.rb` defines only `Lain.live`). Every entry is a
+  # permanent pairing: an ignored path is invisible to the loader, so something
+  # must require it by hand -- today the manifest below, and
+  # spec/zeitwerk_spec.rb fails if any entry is left unrequired or stops needing
+  # to be here.
   LOADER_IGNORES = %w[
     cli/command/small.rb
-    config/gates.rb
-    context/base.rb
     epic/records.rb
     forge/landing/run.rb
     frontend/reline.rb
@@ -200,4 +173,40 @@ loader.inflector.inflect(Lain::LOADER_INFLECTIONS)
 # those two different answers, and ignores keyed to the wrong one match nothing.
 loader.ignore(Lain::LOADER_IGNORES.map { File.join(loader.dirs.first, "lain", _1) })
 loader.setup
+
+# The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
+#
+# BELOW `loader.setup`, because magnus's init asks for `Lain::Error` as it runs:
+# the autoloads have to be registered by then for that name to resolve without
+# the manifest above having already defined it.
+#
+# The rescue exists because the artifact is GITIGNORED (`*.so`, and it is 47MB),
+# so a fresh clone, a fresh `git worktree`, and a fresh checkout on another
+# machine have never had it -- and Ruby's own LoadError for it says only
+# `cannot load such file -- lain/lain`, which names an internal path a human has
+# no reason to recognise and no hint of what to do. Reported from a first-run on
+# macOS, 2026-08-05, against `./exe/lain` and `bundle exec exe/lain --help`
+# alike; CLAUDE.md already records the same trap biting fresh worktrees, where it
+# surfaces as every spec failing at load.
+#
+# Re-raised as LoadError, not a Lain::Error: the failure is a missing build
+# artifact rather than anything lain models, and a caller rescuing LoadError
+# around an optional require must keep working.
+begin
+  require "lain/lain"
+rescue LoadError => e
+  raise LoadError, <<~SENTENCE.strip
+    #{e.message}
+
+    lain's compiled Rust extension is not built. It is gitignored, so a fresh
+    clone or worktree never has it -- build it once with:
+
+        bundle install && bundle exec rake compile
+
+    (needs a Rust toolchain: https://rustup.rs). If that succeeded and this
+    persists, the built artifact is for a different Ruby or platform than the
+    one running now -- `bundle exec rake clean compile` rebuilds it.
+  SENTENCE
+end
+
 loader.eager_load

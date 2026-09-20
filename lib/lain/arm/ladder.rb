@@ -3,7 +3,7 @@
 module Lain
   class Arm
     # research -> epic_plan -> issue_plan -> implementation -> land, closed and
-    # frozen: {Epic::STAGES} plus the one rung that is not a gated stage at
+    # frozen: {::Lain::Epic::STAGES} plus the one rung that is not a gated stage at
     # all, `land`, which every arm eventually reaches whether or not an epic
     # gated its way there.
     #
@@ -18,7 +18,10 @@ module Lain
     # denial makes their traces diverge, and measuring that divergence is what
     # a round-trip count is for.
     class Ladder
-      RUNGS = (Epic::STAGES + %w[land]).freeze
+      # Root-qualified because {Arm::Epic} shadows the top-level {Lain::Epic}
+      # for everything lexically inside {Arm}: a bare `Epic` here names the arm,
+      # which has no STAGES.
+      RUNGS = (::Lain::Epic::STAGES + %w[land]).freeze
 
       # An arm's rungs are the SUFFIX of the ladder starting at its entry rung
       # -- one-shot enters at `implementation` and never sees a gate, plan-only

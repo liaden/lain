@@ -3,12 +3,12 @@
 require "tomlrb"
 
 # The tables load before this file's body, which builds {Config::EMPTY} -- and so an
-# {Epics} -- while it loads. `config/gates` REOPENS `Epics` to hang the sub-table on
-# it, so it follows the file that defines it. {Config::Refusal} is first: every
+# {Epics} -- while it loads. `config/epics/gates` REOPENS `Epics` to hang the sub-table
+# on it, so it follows the file that defines it. {Config::Refusal} is first: every
 # table raises it, so it has to exist before any of them is read.
 require_relative "config/refusal"
 require_relative "config/epics"
-require_relative "config/gates"
+require_relative "config/epics/gates"
 require_relative "config/answers"
 require_relative "config/isolation"
 # Last: {Config::Resolved} builds all four tables above, and the two that live

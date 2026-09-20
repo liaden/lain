@@ -158,9 +158,3 @@ module Lain
     end
   end
 end
-
-# Prefixed (`lain_...`), not the bare `:canonical`/`:strict_integer` this file used before this
-# fix round: `ActiveModel::Type`'s registry is process-wide and last-write-wins with no error, so
-# a generic symbol can be silently taken over by another gem registering the same name.
-ActiveModel::Type.register(:lain_strict_integer, Lain::Declarative::Types::StrictInteger)
-ActiveModel::Type.register(:lain_canonical, Lain::Declarative::Types::Canonicalized)

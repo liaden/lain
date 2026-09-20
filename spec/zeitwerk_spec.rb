@@ -121,11 +121,14 @@ RSpec.describe "the Zeitwerk loader" do
   end
 
   # The case the path sweep structurally cannot see, named rather than counted:
-  # `response.rb` is the loader's path for {Lain::Response}, and it defines
-  # {Lain::StopReason} too. No autoload will ever carry that name.
+  # `agent/loop_machine.rb` is the loader's path for {Lain::Agent::LoopMachine},
+  # and its `included` hook `const_set`s {Lain::Agent::STATES} from the machine
+  # it has just built. No autoload will ever carry that name, and no rename
+  # could give it one -- the constant is written at include time rather than
+  # spelled in any file.
   it "finds a constant no path names, through the file that does define it" do
-    expect(Lain::LOADER.all_expected_cpaths.values).not_to include("Lain::StopReason")
-    expect(ZeitwerkMapping.orphans).to include("Lain::StopReason" => "lain/response.rb")
+    expect(Lain::LOADER.all_expected_cpaths.values).not_to include("Lain::Agent::STATES")
+    expect(ZeitwerkMapping.orphans).to include("Lain::Agent::STATES" => "lain/agent/loop_machine.rb")
   end
 
   describe "the ignore list" do

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
-require_relative "context/base"
+require_relative "context/combinator"
+require_relative "context/composed"
+require_relative "context/identity"
 require_relative "context/protected_patterns"
 require_relative "context/pinned_messages"
 require_relative "context/cache_breakpoints"

@@ -60,7 +60,6 @@ RSpec.describe Lain::Context::CacheBreakpoints do
   end
 
   it "composes with other combinators via >>" do
-    require "lain/context/base"
     messages = [message("user", text("hello"))]
     composed = described_class.new >> Lain::Context::Identity
     expect(composed.call(messages).last["content"].last["cache"]).to be(true)

@@ -96,7 +96,7 @@ RSpec.describe Lain::Config::Epics::Gates do
     # The manifest is the authority on what precedes config, so the prefix is
     # read from it rather than restated here and left to rot.
     def manifest_prefix_through_config
-      root = File.expand_path("../../..", __dir__)
+      root = File.expand_path("../../../..", __dir__)
       units = File.readlines(File.join(root, "lib", "lain.rb"))
                   .filter_map { |line| line[/^require_relative "(.+)"/, 1] }
 
