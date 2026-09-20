@@ -96,12 +96,14 @@ manifest-free probe finds at least four sites, in this order:
 - **T3 is a PREREQUISITE of T2, not its wave-mate.** Finding 2 is the proof: an index file whose body is
   only requires defines no constant, so under a manifest-free loader it raises. The 21 index files must
   go *with* the manifest, in one change. The Waves section below is wrong as written.
-- **The manifest was HIDING a real cycle, which inverts CLAUDE.md's stated justification for it.**
-  CLAUDE.md argues *"that one ordered list is where a circular dependency has to show itself."* It did
-  not show itself — the hand-maintained order silently worked around it, for as long as the file has
-  existed. `loader.eager_load` surfaced it on the first manifest-free run. The plan's replacement claim
-  is not merely as strong as the rule it replaces; it is **stronger**, and T5 should say so in those
-  terms.
+- ~~**The manifest was HIDING a real cycle.**~~ **RETRACTED 2026-09-20 by the T2a spike — there is no
+  cycle.** `config/gates.rb` defines `Config::Epics::Gates`, so the file is simply in the wrong place:
+  `git mv config/gates.rb config/epics/gates.rb` dissolves the failure *and* its `ignore` entry. The
+  earlier probe called it irrecoverable because it reached for an explicit require, **which is the move
+  that manufactures the cycle**. CLAUDE.md's cycle justification is therefore neither confirmed nor
+  inverted by this plan, and T5 must not claim it is. What the episode does show is the spike's real
+  structural finding, below: an `ignore` entry is not a neutral accommodation — it can create the very
+  defect it appears to work around.
 - **The tail is unmeasured.** **293 constants across 101 files are orphans** — no prefix of the constant
   path maps to the file defining it. Under eager loading most are latent, because every file loads
   regardless; the live hazard is only references made at **class-body/load time**, which is the set
@@ -111,6 +113,54 @@ manifest-free probe finds at least four sites, in this order:
 manifest-free eager load, fix each load-time failure as it surfaces (the `config/epics` cycle included),
 repeat until it completes clean — whose output is the true worklist, a real count, and T2's actual boot
 and `pspec` numbers. T2 is re-planned against that, not against an estimate.
+
+### T2a — the worklist spike, and what it changes (2026-09-20)
+
+A manifest-free tree was built and **it boots**: zero `require_relative` under `lib/`, `eager_load` kept,
+no shim. The suite runs **20,475 examples against a 20,475 baseline — nothing silently vanished**, which
+is the failure this whole exercise exists to avoid. Thirteen examples fail, and every one of them is a
+spec that *pins the manifest itself* (three `require "lain/context/base"` in specs, three rows in
+`review/deletability_spec` naming index files, `thread_view_spec` asserting a literal `require_relative`
+line, `config/gates_spec`, and `zeitwerk_spec`'s own orphan exemplar).
+
+**The honest measurement, at last.** Boot `0.87 s → 0.90 s`, **+3%, a wash**; per-worker spec load time
+**improves**, 2.97 s → 2.16 s. Prior figures were taken with both mechanisms live and were only a floor.
+**The plan cannot be sold on speed — it is not faster.**
+
+**The worklist is 13 sites, not 4**: 3 one-line root-qualifications, 8 mechanical file moves or splits,
+**2 needing real thought**. The reason nobody had the number is that the earlier probe enumerated one
+boot at a time; an enumerator that reports the whole remaining list in a single 2-second run is what
+unstuck it.
+
+**Two hazards nobody anticipated, and the second is the serious one.**
+
+1. **The compiled extension's magnus init calls `Lain.const_get("Error")` at load**, so `loader.setup`
+   must run *before* `require "lain/lain"`. An ordering constraint Zeitwerk does not remove, merely moves.
+2. **`declarative/types.rb` registers `:lain_canonical` with ActiveModel as a top-level side effect.**
+   No constant reference can ever trigger its autoload, so **Zeitwerk is structurally blind to it**. This
+   is exactly the class CLAUDE.md's own trap names — a file depending on load *order* rather than on a
+   constant being defined — and it is the one shape autoloading cannot represent at all.
+
+**T3 is reversed: keep the index files, do not delete them.** Deletion boots, but an implicit namespace
+is a bare `Module` with nowhere to put a unit-level constant (`Epic::STAGES`) or a docstring — and **5 of
+9 carry the only prose describing their namespace**, `provider/http.rb`'s ruby_llm fork provenance among
+them. The card's premise that they are "pure indexes" is false for most of them.
+
+**The structural finding, which is the one to carry forward.** The `ignore` list does not delete the
+manifest — **it hides it**. An ignored file needs a hand-written require, and that require's position
+relative to `eager_load` is load-bearing, with real members on both sides. Fourteen ignores remain and
+they **work by construction, not by proof**. The `config/gates.rb` episode is the proof of the danger: an
+`ignore` entry manufactured a failure that looked irrecoverable and was in fact a misplaced file.
+
+**Recommendation from the spike, and it re-shapes the remaining work into two cards.**
+
+- **Card A — make every file name its own constant, driving `ignore` entries to 0.** Renames, moves and
+  splits, landing **with the manifest still in place**, green at every step and stoppable anywhere. It is
+  the whole risk, taken in safe increments, and it has standalone value: a tree where path and constant
+  agree is better under the manifest too.
+- **Card B — the sweep.** Once A is done, deleting the manifest is small.
+
+This supersedes the `T2+T3 as one card` shape recorded above.
 
 ## Simplification ledger
 
@@ -368,11 +418,16 @@ no constant, so removing the manifest while the index files stand raises `Zeitwe
 first one loaded. They are one change to one load sequence, exactly as the seal once was. The schedule
 as executed:
 
-    Wave 1:  T1                      [landed 2026-09-20]
-    Wave 1b: T2a — the worklist spike [bounded investigation, no deletion]
-    Wave 2:  T2+T3 as ONE card, re-planned against T2a's findings
-    Wave 3:  T4, T5
-    Critical path: T1 → T2a → T2+T3 → T4
+    Wave 1:  T1                      [landed 2026-09-20, 203085a9 / f5b277b9]
+    Wave 1b: T2a — the worklist spike [done 2026-09-20, findings above]
+    Wave 2:  Card A — every file names its own constant; ignores -> 0.
+                      Lands WITH the manifest in place, green at every step.
+    Wave 3:  Card B — delete the manifest. Small, once A is done.
+    Wave 4:  T4, T5
+    Critical path: T1 → T2a → A → B → T4
+
+**T3 is struck**, not rescheduled: the spike found the index files must be kept. Its deletions were
+premised on their being pure indexes, and most are not.
 
 T2 owns the registry's close as well as the manifest's removal, because the manifest's **last statement**
 is the seal — they are one change to one load sequence, and splitting them would leave the registry either
