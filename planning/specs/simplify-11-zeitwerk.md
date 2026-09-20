@@ -842,6 +842,78 @@ the fourth is A6's own.
 - **Do not delete a docstring to move a constant.** Five of nine index files carry the only prose for
   their namespace, `provider/http.rb`'s ruby_llm fork provenance among them.
 
+### Card B — delete the manifest   [wave 3] [risk: high]
+
+**Written 2026-09-20 from the T2a spike and A6's census.** Replaces T2's second half.
+
+**Depends on:** Card A entire, because a manifest-free tree boots only once every path names its
+constant. `LOADER_IGNORES` must read zero first: an ignored file needs a hand-written require, and
+under no manifest there is nothing left to write it in.
+
+Delete every `require_relative` under `lib/` — `lib/lain.rb`'s and each unit index's — and let the
+loader do all of it. `eager_load` **stays**: 278 orphan constants are latent only because every file
+loads regardless, and dropping it converts each one into a load-order dependency that boots clean and
+raises in production from a method body.
+
+**What survives in `lib/lain.rb`:** the loader with its inflections, the compiled-extension require and
+its `LoadError` re-raise, the bare `module Lain` purpose statement, and whatever namespace members
+Card A's A5 placed there. External gem and stdlib requires stay in the leaf files that use them —
+CLAUDE.md's rule is correct and untouched.
+
+**Index files are KEPT.** Only their `require_relative` lines go. T3's deletion is struck: an implicit
+namespace is a bare `Module` with nowhere for a unit-level constant or a docstring, and five of nine
+carry the only prose describing their namespace.
+
+**The worklist is known, which is what makes this card tractable.** `bin/zeitwerk-census` (A6) boots a
+scratch copy of `lib/` with every internal require stripped, under the loader alone, in **sorted and
+reverse-sorted order** — two of the sites below are invisible in forward order, by alphabetical luck
+alone. Run it first and work its output; do not rediscover this by bisecting one boot at a time, which
+is how two earlier attempts stalled.
+
+Seven load-time orphan references stood on 2026-09-20: `Epic::STAGES` from `arm/ladder.rb:24`
+(A1 correctly removed the *shadow* there; the constant still lives in `epic/stage.rb`, which maps to
+`Epic::Stage`), `Price` from `bench/decider_sweep.rb:70`, `Mode::LayerSet`, `Provider::HTTP`,
+`Telemetry::SessionRead`, `Epic::MalformedDocument`, `Epic::MalformedGraph` — plus
+`epic/submission.rb:18` reading `STAGES`, found by A2's panel. **Re-derive rather than trusting this
+list**; Card A moved constants after it was taken.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the library loads with no internal require
+  When the library is searched for internal relative requires
+  Then none is found
+
+Scenario: every command still loads
+  When each top-level command is invoked with a help flag
+  Then none fails to load
+
+Scenario: the tree boots in either directory order
+  Given the loader alone, with no manifest
+  When the tree is eager-loaded in sorted and in reverse-sorted order
+  Then both complete
+
+Scenario: the shareability sweep still sees every value class
+  When the value-object shareability spec runs
+  Then it examines the same number of classes as before
+```
+→ spec files: `spec/zeitwerk_spec.rb`, `spec/value_object_shareability_spec.rb` (existing — **the count
+is the check**), plus `bin/zeitwerk-census` run whole-tree
+
+**Escalation triggers**
+- **The example count is the canary and it must not drop.** `parallel_tests` reports only the examples
+  that SURVIVED, so a file that stops loading takes its specs with it and still reads as a pass. Take a
+  `--dry-run` count first; it is load-immune.
+- **Do not drop `eager_load`** to make something pass. That is the one change that converts 278 latent
+  orphans into live ones, and the failure would surface in production, not here.
+- The compiled extension's magnus init calls `Lain.const_get("Error")`, so `loader.setup` must precede
+  `require "lain/lain"`. Confirm the build instruction still reaches a reader with no `.so` — by hiding
+  the artifact, not by reading the code.
+- **This is the card that finally measures the thing.** Every boot and `pspec` figure so far was taken
+  with both mechanisms live, so `eager_load` loaded nothing and the numbers are a floor. Record both
+  here. The spike's one-off read was boot 0.87 s → 0.90 s and per-worker spec load 2.97 s → 2.16 s;
+  **the plan cannot be sold on speed** and this card should say so plainly rather than quietly.
+
 ### T5 — Rewrite the rules the manifest supported   [wave 3] [risk: medium]
 
 **Depends on:** T2
