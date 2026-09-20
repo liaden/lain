@@ -44,8 +44,16 @@ module Lain
       # scheduler-controlled yield point, so `ensure` blocks run and the
       # immutable Timeline is only ever stopped BETWEEN whole commits. The task
       # is duck-typed as "responds to #stop"; Budget stays ignorant of async.
-      def interrupt(task)
-        task.stop
+      # A `cause` rides WITH the cancellation, because every stop unwinds as
+      # the same `Async::Stop` and the reason has nowhere else to travel: an
+      # ask stopped on purpose ({Lain::Stopped}) and one a grace window expired
+      # on are otherwise indistinguishable to whatever catches the unwind.
+      # Absent, the scheduler's own cause stands.
+      #
+      # @param task [#stop] the task hosting the run
+      # @param cause [Exception, nil] what the cancellation carries
+      def interrupt(task, cause: nil)
+        cause.nil? ? task.stop : task.stop(false, cause:)
       end
     end
   end

@@ -41,20 +41,27 @@ module Lain
       # synthesized from the reactor timeout, the other from the pipe closing.
       BYTES = {
         sigint: "\x01", sigterm: "\x02", sigquit: "\x03",
-        cancel: "\x04", extend: "\x05", wait_responses: "\x06", promote: "\x07"
+        cancel: "\x04", extend: "\x05", wait_responses: "\x06", promote: "\x07",
+        stop: "\x08"
       }.freeze
 
       DECODE = BYTES.invert.freeze
 
       # Which policy method each input drives. `sigint`/`sigterm` request a
       # graceful window (or promote if one is already counting down);
-      # `sigquit`/`promote` interrupt at once.
+      # `sigquit`/`promote` interrupt at once; `stop` ends the ask and leaves
+      # the session open.
       HANDLERS = {
         sigint: :request_grace, sigterm: :request_grace,
         sigquit: :interrupt_now, promote: :interrupt_now,
-        cancel: :cancel, extend: :extend_deadline,
+        cancel: :cancel, extend: :extend_deadline, stop: :stop_ask,
         wait_responses: :drain, expired: :expire, retired: :retire
       }.freeze
+
+      # What a stopped ask answers with, and what the human reads for it. One
+      # sentence, because the whole point of the input is that the thing it
+      # ends is the ask and not the conversation.
+      STOPPED = "the ask was stopped -- the session is still open"
 
       GRACE_DEFAULT = 60
 
@@ -63,8 +70,12 @@ module Lain
       delegate :signal, :dispose, :disposed?, to: :@ingress
 
       # @param run_task [#stop, #wait] the `task.async` handle hosting the run
-      # @param closer [#close] journals the session's end; `close(reason:)` with
-      #   a {Telemetry::SessionClosed::REASONS} value ({CLI::Chronicle} satisfies it)
+      # @param closer [#close, #ask_in_flight?, #stopped] journals what became
+      #   of the run: `close(reason:)` with a {Telemetry::SessionClosed::REASONS}
+      #   value for the session's end, `ask_in_flight?` for whether what this
+      #   coordinator holds is an ask at all -- a `you>` read is not one -- and
+      #   `stopped(cause)` for an ask stopped under a session that goes on.
+      #   {CLI::Conductor} and {CLI::Conductor::IdleClose} both answer all three
       # @param budget [#interrupt] the interrupt seam; {Agent::Budget} by default
       # @param clock [#call] monotonic time source, injectable for tests (the
       #   injected-clock idiom {Frontend::TTY} and {Frontend::Neovim::Compose}
@@ -104,6 +115,14 @@ module Lain
         self
       end
 
+      # Whether a stop would reach an ask here, which is what
+      # {Frontend::InputRail} asks its sink before it lifts a `/stop` line off
+      # the rail. Both halves matter: the closer knows whether what this
+      # coordinator holds is an ask at all, and a run that has already answered
+      # must not be recorded as stopped over the answer it committed. Two
+      # lock-free reads, so the question is safe in trap context.
+      def ask_in_flight? = @closer.ask_in_flight? && still_running?
+
       private
 
       def seed_policy
@@ -112,6 +131,10 @@ module Lain
         @deadline = nil
         @retired = false
       end
+
+      # `Async::Task#running?` answers nil, not false, for a task whose fiber
+      # is gone, and a predicate owes its caller a predicate.
+      def still_running? = @run_task.running? == true
 
       def closed? = @state == :closed
       def counting_down? = @state == :grace
@@ -160,6 +183,28 @@ module Lain
 
       def interrupt_now = force_stop(:interrupted)
       def expire = force_stop(:grace_expired)
+
+      # The one input that ends the ask and NOT the session. The window, if one
+      # was counting down, is abandoned and announced BEFORE the interrupt --
+      # {#force_stop}'s rule, and here it is also what lets a waiter see a
+      # coordinator that is not closing and retire it. The cause travels with
+      # the cancellation, so an unwinding reader can tell this stop from a
+      # Ctrl-C: both arrive as `Async::Stop`. The closer is told AFTER the
+      # unwind settles, so what it anchors is the true last commit.
+      #
+      # An input with no ask behind it does nothing at all -- not even the
+      # cancel, which would otherwise kill the `you>` read an idle coordinator
+      # holds, or write a stop over an ask that had already answered.
+      def stop_ask
+        return unless ask_in_flight?
+
+        cause = Lain::Stopped.new(STOPPED)
+        @deadline = nil
+        enter(:running)
+        @budget.interrupt(@run_task, cause:)
+        @run_task.wait
+        @closer.stopped(cause)
+      end
 
       # The ingress closed under us: end the fiber without touching the closer
       # -- retirement is nobody-will-ever-signal, not a session outcome.

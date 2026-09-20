@@ -36,9 +36,12 @@ RSpec.describe Lain::CLI::Conductor do
       def initialize
         @renders = []
         @stops = 0
+        @warnings = []
         @rendered = Async::Queue.new
       end
-      attr_reader :renders, :stops, :rendered
+      attr_reader :renders, :stops, :rendered, :warnings
+
+      def render_warning(text) = tap { @warnings << text }
 
       def render_countdown(deadline:, **)
         @renders << deadline
@@ -92,7 +95,7 @@ RSpec.describe Lain::CLI::Conductor do
   end
 
   def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new,
-                      countdown: described_class::RailCountdown::Unoffered)
+                      countdown: described_class::RailCountdown::Unoffered, rail: self.rail)
     described_class.new(tty:, chronicle:, signals:, rail:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new,
                         run_clock:, countdown:)
   end
@@ -259,9 +262,131 @@ RSpec.describe Lain::CLI::Conductor do
         driver.wait
       end
 
-      expect(offered.keys).to eq({ "c" => :cancel, "w" => :extend, "r" => :wait_responses })
-      expect(offered.text).to eq("closing in 30s -- [c] cancel  [w] wait longer  [r] respond then exit")
+      expect(offered.keys).to eq({ "c" => :cancel, "w" => :extend, "r" => :wait_responses, "s" => :stop })
+      expect(offered.text)
+        .to eq("closing in 30s -- [c] cancel  [w] wait longer  [r] respond then exit  [s] stop this ask")
       expect(conductor.closed?).to be(false)
+    end
+  end
+
+  # `/stop` and the countdown's `s` both arrive here as one input, and it is
+  # the only one that ends the ask while the conversation carries on: the
+  # record holds a run_interrupted and no session_closed, and the ask answers
+  # with the cause so the repl says it in one line.
+  describe "a stop during an ask" do
+    it "ends the ask, records run_interrupted stopped, closes nothing" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      outcome = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          rail << Lain::Frontend::InputRail::Signal.new(name: :stop)
+        end
+        outcome = conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect(chronicle.events).to eq([:catch_up, [:interrupted, agent.timeline.head_digest, :stopped]])
+      expect([outcome.response.class, outcome.closed?, conductor.closed?]).to eq([Lain::Stopped, false, false])
+    end
+  end
+
+  # At `you>` the conversation is between asks by construction, so a stop that
+  # reaches the idle routing has nothing to stop and must not break the prompt.
+  describe "a stop with nothing running" do
+    it "says no ask is running and leaves the prompt reading" do
+      signals = Lain::CLI::Signals.new
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
+      typist = Thread.new do
+        sleep(0.002) until rail.published.generation.positive?
+        rail << Lain::Frontend::InputRail::Signal.new(name: :stop)
+        sleep(0.002) until tty.warnings.any?
+        rail << typed("still here", rail.published)
+      end
+      line = conductor.read_prompt("you> ")
+      typist.join
+
+      expect([line, tty.warnings]).to eq(["still here", [Lain::CLI::Command::Stop::NOTHING_RUNNING]])
+      expect(conductor.closed?).to be(false)
+    end
+  end
+
+  # The closer every idle `you>` coordinator is built with. The duck the
+  # coordinator declares is #close, #ask_in_flight? and #stopped; a closer
+  # answering only the first would have the coordinator cancel the read and
+  # then die of NoMethodError, wedging the prompt.
+  describe "the idle prompt's closer" do
+    it "answers the coordinator's whole duck, and a stop there cancels nothing" do
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      idle = described_class::IdleClose.new(conductor)
+      answers = nil
+
+      Sync do |task|
+        run = task.async { task.sleep(5) }
+        shutdown = Lain::CLI::Shutdown.new(run_task: run, closer: idle, budget: Lain::Agent::Budget.new,
+                                           clock: clock_returning(1000.0))
+        coordinator = task.async { shutdown.coordinate }
+        shutdown.signal(:stop)
+        shutdown.signal(:sigint)
+        pumped_until(task, reason: "the window armed") { shutdown.state == :grace }
+        answers = [idle.respond_to?(:stopped), idle.ask_in_flight?, run.running?]
+
+        coordinator.stop
+        run.stop
+        shutdown.dispose
+      end
+
+      expect(answers).to eq([true, false, true])
+      expect(conductor.closed?).to be(false)
+    end
+  end
+
+  # `/stop` and the countdown's `s` both arrive here as one input, and it is
+  # the only one that ends the ask while the conversation carries on: the
+  # record holds a run_interrupted and no session_closed, and the ask answers
+  # with the cause so the repl says it in one line.
+  # What the rail asks before it lifts a `/stop` off as a signal.
+  describe "#ask_in_flight?" do
+    it "says an ask is in flight only while one is supervised" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      inside = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          inside = conductor.ask_in_flight?
+          release.enqueue(true)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect([inside, conductor.ask_in_flight?]).to eq([true, false])
+    end
+  end
+
+  # A slash command drives its own work inside the repl's dispatch, outside
+  # every supervision, so a `/stop` typed at a prompt it parked reaches no run.
+  # It must not vanish: before this it would have been the answer or a held
+  # line the human was told about, and it still is.
+  describe "/stop at a prompt no supervision owns" do
+    it "answers the prompt rather than disappearing into a coordinator that is not there" do
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+
+      answer = Sync do |task|
+        reading = task.async { conductor.read_reply("[y/N] run bash? ") }
+        typed_at(task, :human, "/stop")
+        reading.wait
+      end
+
+      expect([answer, tty.warnings]).to eq(["/stop", []])
     end
   end
 

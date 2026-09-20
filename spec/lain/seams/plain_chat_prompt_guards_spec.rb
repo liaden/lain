@@ -49,7 +49,17 @@ module PlainChatPromptGuards
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::InputRail.new(screen: tty)
     supervisor = Lain::Supervisor.new
-    conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new, supervisor:,
+    # A real record only where a shape asserts one, so every other shape keeps
+    # the Null it had and writes no file.
+    chronicle = if shape == "supervised"
+      session_io = File.open(File.join(dir, "session.ndjson"), "a").tap { |io| io.sync = true }
+      Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: session_io))
+                          .start(context: Lain::Context.new(model: "m", max_tokens: 64),
+                                 toolset: Lain::Toolset.new([]))
+    else
+      Lain::CLI::Chronicle::Null.new
+    end
+    conductor = Lain::CLI::Conductor.new(tty:, chronicle:, supervisor:,
                                          signals: Lain::CLI::Signals.new, rail:,
                                          grace: Float(ENV.fetch("LAIN_SPEC_GRACE", "30")))
     pump = Lain::Frontend::StdinPump.new(rail:, screen: tty)
@@ -228,6 +238,14 @@ module PlainChatPromptGuards
     def dispatched
       path = File.join(@dir, "dispatched")
       File.exist?(path) ? File.readlines(path, chomp: true) : []
+    end
+
+    # The session record's entries of one type, for the shapes that keep one.
+    def records(type)
+      path = File.join(@dir, "session.ndjson")
+      return [] unless File.exist?(path)
+
+      Lain::Journal.records(File.readlines(path), type:).to_a
     end
 
     # Whether the chat ran to its end, rather than still reading.
@@ -575,6 +593,25 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         terminal.await(/closing in \d+s/)
 
         expect(terminal.screen[terminal.screen.rindex("human> ")..]).to match(/closing in \d+s -- \[c\] cancel/)
+      end
+
+      # The key that ends the ask and nothing else: the window offers it at the
+      # chat's own terminal too, and the chat is still there afterwards.
+      it "offers stop, and s ends the ask while the session carries on" do
+        terminal.typed
+        terminal.await(/human> /)
+        sleep(0.3)
+        terminal.type("\x03")
+        terminal.await(/closing in \d+s/)
+        countdown = terminal.text[terminal.text.rindex("closing in")..]
+        terminal.type("s")
+        sleep(2.0)
+
+        expect(countdown).to include("[s] stop this ask")
+        expect(terminal.exited?).to be(false)
+        expect(terminal.screen).to include("you> ")
+        expect(terminal.records("run_interrupted").map { |record| record["reason"] }).to eq(["stopped"])
+        expect(terminal.records("session_closed")).to be_empty
       end
     end
 

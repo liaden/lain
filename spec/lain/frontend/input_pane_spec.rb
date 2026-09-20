@@ -136,6 +136,20 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(settles { commands == %w[stop] || nil }).to be(true)
   end
 
+  # `/stop` leaves the pane as the LINE the human typed. Nothing behind this
+  # rail is running an ask -- the pane holds no agent and no session -- so the
+  # chat's own rail is the one that knows whether there is a run to stop, and
+  # a pane that decided here would send a stop to a chat with nothing to stop.
+  it "sends /stop typed at a parked prompt as a line, leaving the chat's rail to decide" do
+    chat = open_pane
+    publish(chat, { "kind" => "human", "text" => "[y/N] run bash? ", "generation" => 7 })
+    settles { screen.string.include?("[y/N] run bash?") || nil }
+
+    keyboard.write("/stop\n")
+
+    expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "/stop", "generation" => 7 })
+  end
+
   it "draws the countdown the chat published, keys and all" do
     chat = open_pane
     publish(chat, { "kind" => "countdown", "text" => "closing in 30s -- [c] cancel  [w] wait longer",

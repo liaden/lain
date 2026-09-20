@@ -967,8 +967,9 @@ module Lain
       # forwards offered keys to the shutdown coordinator. Nested rather than its
       # own file: this collaborator has no life outside a TTY.
       class Countdown
-        DEFAULT_BINDINGS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses }.freeze
-        LABELS = { cancel: "cancel", extend: "wait longer", wait_responses: "respond then exit" }.freeze
+        DEFAULT_BINDINGS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses, "s" => :stop }.freeze
+        LABELS = { cancel: "cancel", extend: "wait longer", wait_responses: "respond then exit",
+                   stop: "stop this ask" }.freeze
 
         def initialize(output:, input:, pastel:, clock:)
           @output = output

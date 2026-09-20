@@ -23,6 +23,15 @@ RSpec.describe Lain::Frontend::InputRail do
 
   def line(text, generation) = described_class::Line.new(text:, generation:)
 
+  # The routed sink's whole duck: where a signal lands, and whether a stop put
+  # there would reach an ask at all ({Lain::CLI::Signals}).
+  def sink_over(received, ask_in_flight:)
+    Struct.new(:received, :flight) do
+      def signal(name) = received << name
+      def ask_in_flight? = flight
+    end.new(received, ask_in_flight)
+  end
+
   # A producer that answers each published prompt as a human at it would.
   def answered_when_published(task, generation: nil)
     task.async do
@@ -548,11 +557,87 @@ RSpec.describe Lain::Frontend::InputRail do
   describe "a signal" do
     it "reaches the routed sink at once, whether or not a prompt is open" do
       received = []
-      rail.route(Struct.new(:received) { def signal(name) = received << name }.new(received))
+      rail.route(sink_over(received, ask_in_flight: false))
 
       rail << described_class::Signal.new(name: :cancel)
 
       expect(received).to eq([:cancel])
+    end
+  end
+
+  # `/stop` is the one line that is not a line. While an ask is in flight the
+  # prompt in front of the human belongs to whatever that ask parked on, so a
+  # producer has no other way to reach the run; at `you>` there is no ask, and
+  # the command registered under that name says so. And where NO ask is in
+  # flight -- a slash command driving its own work -- nothing is lifted at all,
+  # because a line lifted into a sink with no run behind it just vanishes.
+  describe "/stop typed at a prompt an ask parked on" do
+    let(:received) { [] }
+
+    def in_flight(ask_in_flight) = rail.route(sink_over(received, ask_in_flight:))
+
+    it "leaves the rail as a stop signal rather than as the prompt's answer" do
+      in_flight(true)
+
+      answer = Sync do |task|
+        reading = task.async { rail.read(:approval, "[y/N] run bash? ") }
+        pumped_until(task, reason: "the prompt published") { rail.published.kind == :approval }
+        rail << line("/stop", rail.published.generation)
+        pumped_until(task, reason: "the signal routed") { received.any? }
+        reading.stop
+        reading.stopped? ? :still_asking : reading.wait
+      end
+
+      expect([received, answer]).to eq([[:stop], :still_asking])
+    end
+
+    it "is an ordinary line at you>, where there is never an ask to stop" do
+      in_flight(true)
+
+      answer = Sync do |task|
+        answered_when_published(task) { "/stop" }
+        rail.read(:you, "you> ")
+      end
+
+      expect([answer, received]).to eq(["/stop", []])
+    end
+
+    it "is held, not signalled, when a producer keeps it for the next you>" do
+      in_flight(true)
+      rail.hold("/stop")
+
+      expect([rail.take_held, received]).to eq(["/stop", []])
+    end
+
+    # A slash command drives its own work outside every supervision, so the
+    # rail's sink is the Null one. Lifting there would drop the line into
+    # nothing: not the answer, not held, nothing said.
+    it "stays a line with no ask in flight, so the prompt that cannot take it holds it" do
+      in_flight(false)
+      refusing = Class.new(String) { def takes?(text) = %w[y n].include?(text) }.new("[y/N] ")
+
+      answer = Sync do |task|
+        reading = task.async { rail.read(:approval, refusing) }
+        pumped_until(task, reason: "the prompt published") { rail.published.kind == :approval }
+        rail << line("/stop", rail.published.generation)
+        pumped_until(task, reason: "the line held") { !screen.said.empty? }
+        reading.stop
+        reading.stopped? ? :still_asking : reading.wait
+      end
+
+      expect([received, rail.take_held, answer]).to eq([[], "/stop", :still_asking])
+      expect(screen.said).to include([:held, "/stop"])
+    end
+
+    it "answers a prompt that takes anything when no ask is in flight" do
+      in_flight(false)
+
+      answer = Sync do |task|
+        answered_when_published(task) { "/stop" }
+        rail.read(:human, "human> ")
+      end
+
+      expect([answer, received]).to eq(["/stop", []])
     end
   end
 

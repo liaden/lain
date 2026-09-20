@@ -28,6 +28,9 @@ module Lain
       # nothing behind it, so {#route} never needs a nil check.
       class Null
         def signal(_name) = self
+
+        # Nothing is routed, so nothing a stop could reach.
+        def ask_in_flight? = false
       end
 
       NULL = Null.new
@@ -64,6 +67,13 @@ module Lain
         @sink.signal(name)
         self
       end
+
+      # The sink's other answer, asked by {Frontend::InputRail} before it lifts
+      # a `/stop` line off the rail as a signal: a line lifted while nothing is
+      # routed would be dropped here and never seen again, which is worse than
+      # any prompt's refusal of it. Read without a lock, like the sink itself,
+      # so the whole question stays safe in trap context.
+      def ask_in_flight? = @sink.ask_in_flight?
 
       # Install INT/TERM/QUIT, capturing each prior handler for {#uninstall}. The
       # trap body reads @sink at delivery time, so a later {#route} redirects

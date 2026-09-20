@@ -883,6 +883,7 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include("[c] cancel")
       expect(output.string).to include("[w] wait longer")
       expect(output.string).to include("[r] respond then exit")
+      expect(output.string).to include("[s] stop this ask")
     end
 
     it "forwards a pressed offered key to the coordinator as a signal" do
@@ -892,6 +893,17 @@ RSpec.describe Lain::Frontend::TTY do
       tty.render_countdown(deadline: 103, options: { coordinator: })
 
       expect(coordinator).to have_received(:signal).with(:extend)
+    end
+
+    # The key that keeps the session: everything else the window offers either
+    # closes it or waits, and this one ends only the ask.
+    it "forwards the stop key as the stop input" do
+      input.string = "s"
+      tty = interactive_tty
+
+      tty.render_countdown(deadline: 103, options: { coordinator: })
+
+      expect(coordinator).to have_received(:signal).with(:stop)
     end
 
     it "ignores a key that is not one of the offered bindings" do

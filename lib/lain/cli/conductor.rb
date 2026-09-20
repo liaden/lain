@@ -30,8 +30,11 @@ module Lain
     # preserves {Repl}'s catch_up -> run_interrupted -> session_closed order,
     # which the signal path would otherwise skip.
     class Conductor
-      # `response` is nil when the run was interrupted before it committed one;
-      # `closed` is the repl loop's exit signal.
+      # `response` is nil when the run was interrupted before it committed one,
+      # and the {Lain::Stopped} cause when the ask was stopped -- a refusal the
+      # repl says in one line, since a stop keeps the conversation and owes the
+      # human a word about where their ask went. `closed` is the repl loop's
+      # exit signal.
       Outcome = Data.define(:response, :closed) do
         def closed? = closed
       end
@@ -51,10 +54,11 @@ module Lain
       STEPPED_ASIDE = Object.new.freeze
       private_constant :STEPPED_ASIDE
 
-      # The countdown keys an idle `you>` offers. No `r`: "respond then exit"
-      # waits for the run to answer, and at `you>` there is no run -- pressed
-      # there it made the next typed line the thing being waited for, and that
-      # line vanished with the session.
+      # The countdown keys an idle `you>` offers. Neither `r` nor `s`, for one
+      # reason: both name a run, and at `you>` there is none. "respond then
+      # exit" pressed there made the next typed line the thing being waited
+      # for, and that line vanished with the session; "stop this ask" would
+      # stop the read itself.
       IDLE_KEYS = { "c" => :cancel, "w" => :extend }.freeze
 
       # How long a Break gets to end the prompt it was raised into before the
@@ -71,6 +75,16 @@ module Lain
       # SIGTERM is.
       IdleClose = Struct.new(:conductor) do
         def close(**) = conductor.close(reason: :exit)
+
+        # A `you>` read is not an ask, so a stop reaches nothing here and the
+        # read is left alone rather than cancelled out from under the human.
+        def ask_in_flight? = false
+
+        # The coordinator's duck is answered WHOLE, not down to what today's
+        # routing happens to reach: the cost of a closer that answered only
+        # part of it is a cancelled read and a dead coordinator fiber, which
+        # is a prompt that never comes back.
+        def stopped(_cause) = conductor.no_ask_running
       end
 
       # Signals arriving while `you>` is read, RECORDED in the trap and routed
@@ -109,6 +123,10 @@ module Lain
         end
 
         def dispose = @ingress.dispose
+
+        # Nothing is supervised while `you>` is read, so a stop reaching this
+        # recorder has no ask behind it.
+        def ask_in_flight? = false
       end
 
       # A conductor over a fresh {Signals} installer it also owns, so the exe
@@ -157,13 +175,16 @@ module Lain
       # @return [Outcome]
       def supervise(task, timeline, &block)
         @timeline = timeline
+        @stopped = nil
+        @supervising = true
         run = task.async(&block)
         shutdown = @shutdown = build_shutdown(run)
         coordinator, ticker_task = start_shutdown(task, shutdown)
         response = run.wait
         settle(shutdown, coordinator)
-        Outcome.new(response:, closed: shutdown.state == :closed)
+        Outcome.new(response: @stopped || response, closed: shutdown.state == :closed)
       ensure
+        @supervising = false
         teardown(shutdown, coordinator, ticker_task)
       end
 
@@ -269,6 +290,33 @@ module Lain
 
       def closed? = @closed
 
+      # Whether an ask is in flight here at all -- which is only ever inside
+      # {#supervise}. A slash command drives its own work in the repl's
+      # dispatch, outside every supervision, and a `you>` read is between asks
+      # by construction; a `/stop` typed at either must stay the line it is,
+      # because the rail would otherwise lift it into a sink with no run
+      # behind it and nobody would ever see it again.
+      def ask_in_flight? = @supervising
+
+      # What a stop with no ask behind it is told to the human as. One
+      # spelling with the command that answers the same question at `you>`.
+      def no_ask_running = @tty.render_warning(Command::Stop::NOTHING_RUNNING)
+
+      # The coordinator's other record-keeping duck: the ask stopped and the
+      # session did not. It anchors a run_interrupted exactly as {#close} does
+      # on an interrupt reason, and writes NO session_closed -- the whole point
+      # of the input is that the conversation goes back to `you>`. The cause is
+      # kept for {#supervise}'s Outcome, so the ask answers with the refusal
+      # rather than with a bare nil the repl would read as a breach.
+      #
+      # @param cause [Lain::Stopped] what the cancellation carried
+      def stopped(cause)
+        @stopped = cause
+        catch_up
+        @chronicle.interrupted(head: @timeline.call.head_digest, reason: Agent::StopReason.for(cause))
+        self
+      end
+
       # Install the OS signal traps for the block, then restore them -- even on a
       # raise. Traps come off AFTER the block returns, by which point every
       # per-ask coordinator pipe and prompt breaker is already disposed, so
@@ -319,6 +367,8 @@ module Lain
         @timeline = nil
         @closed = false
         @prompting = false
+        @stopped = nil
+        @supervising = false
         @shutdown = Unsupervised
       end
 
@@ -411,12 +461,19 @@ module Lain
         recorder.each { |arrived| deliver_idle(arrived, shutdown, breaker) }
       end
 
+      # A stop is the exception to that routing, and it is said rather than
+      # delivered: whenever this prompt is drawn the conversation is between
+      # asks -- the repl dispatches a line and the ask it starts completes
+      # inside that dispatch -- so there is no run to stop, and handing the
+      # input to the countdown's coordinator would stop the READ instead.
+      #
       # A Break is delivered by `Thread#raise`, and one raised into a `you>` read
       # that is at that instant being stopped for a prompt taking the terminal is
       # absorbed by that stop. So the delivery is CONFIRMED: a Break that has not
       # ended the prompt hands its signal to the countdown instead, and no signal
       # is lost.
       def deliver_idle(arrived, shutdown, breaker)
+        return no_ask_running if arrived.name == :stop
         return shutdown.signal(arrived.name) unless at_you?(arrived)
 
         breaker.signal(arrived.name)
@@ -503,7 +560,7 @@ module Lain
       # it takes its turn, the read it interrupts steps aside for it, and the
       # reads behind it are held until it closes.
       class RailCountdown
-        DEFAULT_KEYS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses }.freeze
+        DEFAULT_KEYS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses, "s" => :stop }.freeze
 
         # How often the window's state is re-read. {Conductor::ASIDE_TICK}'s
         # cadence, for the same reason: a countdown the human cannot answer for

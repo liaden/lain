@@ -37,7 +37,21 @@ module Lain
       ANSWERS = %i[human approval].freeze
 
       # {CLI::Shutdown}'s inputs a producer may send.
-      SIGNALS = %i[sigint sigterm sigquit cancel extend wait_responses].freeze
+      SIGNALS = %i[sigint sigterm sigquit cancel extend wait_responses stop].freeze
+
+      # The line that is not a line. While an ask is in flight the prompt in
+      # front of the human belongs to whatever that ask parked on, so typing is
+      # a producer's only way to reach the run -- and a line typed there is
+      # either that prompt's answer or held for later, neither of which stops
+      # anything. So this one leaves as a {Signal} instead, landing where an OS
+      # signal lands.
+      #
+      # Two exceptions, and both are "there is no ask to stop": `you>`, which
+      # is read only between asks, and a sink with nothing supervised behind
+      # it -- a slash command driving its own work. In both it stays an
+      # ordinary line, answering the prompt or held and said, and the command
+      # of that name is what tells the human nothing was running.
+      STOP = "/stop"
 
       Prompt = Data.define(:kind, :text, :header, :keys, :generation)
       Line = Data.define(:text, :generation)
@@ -99,7 +113,8 @@ module Lain
       # A producer's value. A signal is delivered on the producer's stack; a
       # line or an end of stream waits for the reader whose prompt it answers.
       def <<(value)
-        value.is_a?(Signal) ? @sink.signal(value.name) : @inbound.push(value)
+        sent = stops_a_run?(value) ? Signal.new(name: :stop) : value
+        sent.is_a?(Signal) ? @sink.signal(sent.name) : @inbound.push(sent)
         self
       end
 
@@ -181,6 +196,20 @@ module Lain
       end
 
       private
+
+      # Read off what is published rather than off the line's own generation:
+      # the question is what the human is looking at, and a `/stop` typed
+      # anywhere but `you>` was typed while an ask held the terminal ({STOP}).
+      # The sink is asked too, because a line lifted with no ask behind it
+      # lands in {CLI::Signals::Null} and is gone -- neither the answer, nor
+      # held, nor said -- which is worse than any prompt's refusal of it.
+      #
+      # Every read here is lock-free ({#glimpse}, not {#published}), so a real
+      # `Signal.trap` body calling `#<<` is safe whatever the conjuncts'
+      # order.
+      def stops_a_run?(value)
+        value.is_a?(Line) && value.text.strip == STOP && glimpse.kind != :you && @sink.ask_in_flight?
+      end
 
       # The prompt's line is ended HERE, as the reader stops, and not by the
       # producer once it notices: a reader is stopped from inside another

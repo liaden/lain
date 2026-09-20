@@ -1505,9 +1505,10 @@ RSpec.describe Lain::CLI::Repl do
 
     # Answers each line once, then EOF, so the conversation is exactly as long
     # as the lines given. `supervisions` counts the real #supervise calls.
-    def conductor_over(lines, clock: -> { 1000.0 })
+    def conductor_over(lines, clock: -> { 1000.0 }, rail: Lain::Frontend::InputRail.new)
       @signals = Lain::CLI::Signals.new.install
-      Lain::CLI::Conductor.new(tty:, chronicle:, signals: @signals, grace: 60, clock:, tick: 0.01).tap do |conductor|
+      Lain::CLI::Conductor.new(tty:, chronicle:, signals: @signals, grace: 60, clock:, tick: 0.01,
+                               rail:).tap do |conductor|
         conductor.define_singleton_method(:read_prompt) { |*| lines.shift }
         supervisions = @supervisions = []
         conductor.define_singleton_method(:supervise) do |*args, &block|
@@ -1558,6 +1559,25 @@ RSpec.describe Lain::CLI::Repl do
           # routing signals to its shutdown, and a human's key arrives later.
           Async::Task.current.sleep(0.05)
           signals.each { |name| Process.kill(name, Process.pid) }
+          Async::Task.current.sleep(3)
+          log << :finished
+          env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "late" }],
+                                                 stop_reason: :end_turn))
+        ensure
+          log << :unwound
+        end
+      end.new
+    end
+
+    # {#parked}'s sibling for the input a producer sends rather than the OS:
+    # a stop put on the rail, which only ends the ask.
+    def stopped_from_the_rail(rail)
+      log = self.log
+      Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &_app|
+          log << :entered
+          Async::Task.current.sleep(0.05)
+          rail << Lain::Frontend::InputRail::Signal.new(name: :stop)
           Async::Task.current.sleep(3)
           log << :finished
           env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "late" }],
@@ -1669,6 +1689,22 @@ RSpec.describe Lain::CLI::Repl do
       expect(out.string.scan("the fleet could not drain").size).to eq(1)
       expect(out.string).not_to include(Lain::CLI::Repl::MIDDLEWARE_BREACH)
       expect(chronicle.events).to eq([%i[interrupted torn]])
+    end
+
+    # A stop ends the ask and not the conversation: the refusal is said in the
+    # one line an ask's refusal gets, the record holds it with no session_closed
+    # behind it, and the next line is read as though nothing had happened.
+    it "says a stopped ask in one line, records only the stop, and reads on" do
+      rail = Lain::Frontend::InputRail.new
+      conductor = conductor_over(["/park", "quit"], rail:)
+
+      converse(stopped_from_the_rail(rail), conductor)
+
+      expect(log).to eq(%i[entered unwound])
+      expect(out.string).to include(Lain::CLI::Shutdown::STOPPED)
+      expect(out.string).not_to include(Lain::CLI::Repl::MIDDLEWARE_BREACH)
+      expect(chronicle.events).to eq([%i[interrupted stopped]])
+      expect(conductor).not_to be_closed
     end
 
     # The model turn a pass-through middleware reaches is supervised by the

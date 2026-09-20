@@ -19,6 +19,9 @@ RSpec.describe Lain::CLI::Signals do
       attr_reader :received
 
       def signal(name) = @received << name
+
+      # The sink's other answer: whether a stop put here would reach an ask.
+      def ask_in_flight? = true
     end.new
   end
 
@@ -61,6 +64,19 @@ RSpec.describe Lain::CLI::Signals do
       signals.route(sink.class.new).signal(:cancel)
 
       expect(sink.received).to eq([:sigint])
+    end
+  end
+
+  # The rail asks this before it lifts a `/stop` off as a signal, so a line
+  # typed while nothing is routed stays a line rather than vanishing.
+  describe "whether a stop would reach an ask" do
+    it "answers the routed sink's word, and false with nothing routed" do
+      signals = described_class.new(sink:)
+
+      routed = signals.ask_in_flight?
+
+      expect([routed, described_class.new.ask_in_flight?, described_class::NULL.ask_in_flight?])
+        .to eq([true, false, false])
     end
   end
 

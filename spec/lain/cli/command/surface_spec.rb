@@ -188,7 +188,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
         "quit", "rewind", "undo", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
         "ruby", "mode", "goal", "meta", "introspect", "review", "review-submit", "survey",
-        "implement-epic", "help", "approve", "model"
+        "implement-epic", "stop", "help", "approve", "model"
       )
     end
   end

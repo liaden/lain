@@ -152,7 +152,7 @@ module Lain
         # command joins a NAMED group (#history_commands, #review_commands) or
         # founds one, one splat here, rather than growing this line.
         def builtins
-          [Quit.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
+          [Quit.new, Stop.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
            Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands,
            *epic_commands]
         end

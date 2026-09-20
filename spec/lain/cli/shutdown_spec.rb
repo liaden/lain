@@ -19,11 +19,26 @@ RSpec.describe Lain::CLI::Shutdown do
   # so a test double is three lines.
   let(:closer) do
     Class.new do
-      def initialize = @reasons = []
-      attr_reader :reasons
+      def initialize
+        @reasons = []
+        @stops = []
+        @in_flight = true
+      end
+      attr_reader :reasons, :stops
+      attr_writer :in_flight
 
       def close(reason:)
         @reasons << reason
+        self
+      end
+
+      # Whether what the coordinator holds is an ask at all: a `you>` read is
+      # not one, and only the closer knows which it built the coordinator over.
+      def ask_in_flight? = @in_flight
+
+      # The other half of the duck: the ask stopped and the session did not.
+      def stopped(cause)
+        @stops << cause
         self
       end
     end.new
@@ -311,6 +326,138 @@ RSpec.describe Lain::CLI::Shutdown do
     end
   end
 
+  # The one input that ends the ask and NOT the session. The run is cancelled
+  # carrying a Lain::Stopped cause, so an unwinding reader can tell a stop from
+  # a Ctrl-C (both arrive as Async::Stop); the closer records it; and the
+  # machine goes back to running with nothing closed.
+  describe "stop, the ask ended without the session" do
+    it "cancels the run with a Stopped cause, records the stop, and returns to running" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(park_on: 1, entered:, release:, responses: [text_response])
+      unwound = nil
+
+      Sync do |task|
+        run = task.async do
+          agent.ask("hi")
+        rescue Async::Stop => e
+          unwound = e
+          raise
+        end
+        entered.dequeue
+        shutdown = build_coordinator(run_task: run, agent:, clock: clock_returning(1000.0))
+        coordinator = task.async { shutdown.coordinate }
+
+        shutdown.signal(:stop)
+        expect(transitions.dequeue).to eq(:running)
+        pumped_until(task, reason: "the stop recorded") { closer.stops.any? }
+        expect([shutdown.state, shutdown.deadline]).to eq([:running, nil])
+
+        coordinator.stop
+        shutdown.dispose
+      end
+
+      expect(closer.reasons).to be_empty
+      expect(Lain::Agent::StopReason.for(unwound)).to eq(:stopped)
+      expect(closer.stops.map { |cause| cause.is_a?(Lain::Stopped) }).to eq([true])
+    end
+
+    it "takes the countdown down with it, so a stop pressed at the window closes nothing" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(park_on: 1, entered:, release:, responses: [text_response])
+
+      Sync do |task|
+        run = task.async { agent.ask("hi") }
+        entered.dequeue
+        shutdown = build_coordinator(run_task: run, agent:, clock: clock_returning(1000.0))
+        coordinator = task.async { shutdown.coordinate }
+
+        shutdown.signal(:sigint)
+        expect(transitions.dequeue).to eq(:grace)
+        shutdown.signal(:stop)
+        expect(transitions.dequeue).to eq(:running)
+        pumped_until(task, reason: "the stop recorded") { closer.stops.any? }
+
+        coordinator.stop
+        shutdown.dispose
+      end
+
+      expect(closer.reasons).to be_empty
+    end
+
+    # A stop byte that lands as the ask answers must not write a stop over the
+    # answer it committed: a fabricated run_interrupted is a lie in the
+    # experiment record. The following sigint is the synchronisation -- the
+    # coordinator has provably handled the stop by the time the window arms.
+    it "records nothing for a run that answered before the stop arrived" do
+      answered = nil
+
+      Sync do |task|
+        run = task.async { "the model's answer" }
+        answered = run.wait
+        shutdown = described_class.new(run_task: run, closer:, budget: Lain::Agent::Budget.new,
+                                       clock: clock_returning(1000.0), on_transition:)
+        coordinator = task.async { shutdown.coordinate }
+
+        shutdown.signal(:stop)
+        shutdown.signal(:sigint)
+        expect(transitions.dequeue).to eq(:grace)
+
+        coordinator.stop
+        shutdown.dispose
+      end
+
+      expect([answered, closer.stops, closer.reasons]).to eq(["the model's answer", [], []])
+    end
+
+    # The idle `you>` coordinator's closer says its run is not an ask, and the
+    # read it holds must survive a stop that reaches it.
+    it "leaves the run alone when the closer says what it holds is not an ask" do
+      closer.in_flight = false
+      alive = nil
+
+      Sync do |task|
+        run = task.async { task.sleep(5) }
+        shutdown = described_class.new(run_task: run, closer:, budget: Lain::Agent::Budget.new,
+                                       clock: clock_returning(1000.0), on_transition:)
+        coordinator = task.async { shutdown.coordinate }
+
+        shutdown.signal(:stop)
+        shutdown.signal(:sigint)
+        expect(transitions.dequeue).to eq(:grace)
+        alive = run.running?
+
+        coordinator.stop
+        run.stop
+        shutdown.dispose
+      end
+
+      expect([alive, closer.stops, closer.reasons]).to eq([true, [], []])
+    end
+
+    # What the rail asks before it lifts a `/stop` off as a signal: both halves
+    # have to hold, or the line would be dropped into a coordinator with
+    # nothing to stop.
+    it "answers the rail that an ask is in flight only while the closer says so and the run lives" do
+      answers = nil
+
+      Sync do |task|
+        run = task.async { task.sleep(5) }
+        shutdown = described_class.new(run_task: run, closer:, budget: Lain::Agent::Budget.new)
+        running = shutdown.ask_in_flight?
+        closer.in_flight = false
+        no_ask = shutdown.ask_in_flight?
+        closer.in_flight = true
+        run.stop
+        answers = [running, no_ask, shutdown.ask_in_flight?]
+        shutdown.dispose
+      end
+
+      expect(answers).to eq([true, false, false])
+    end
+  end
+
   describe "a non-positive grace" do
     it "refuses zero and negative windows loudly at construction" do
       [0, -1, nil].each do |grace|
@@ -444,7 +591,7 @@ RSpec.describe Lain::CLI::Shutdown do
     it "maps every accepted input to a distinct, frozen, single byte that round-trips" do
       bytes = described_class::BYTES
 
-      expect(bytes.keys).to match_array(%i[sigint sigterm sigquit cancel extend wait_responses promote])
+      expect(bytes.keys).to match_array(%i[sigint sigterm sigquit cancel extend wait_responses promote stop])
       expect(bytes.values).to all(satisfy { |byte| byte.bytesize == 1 && byte.frozen? })
       expect(bytes.values.uniq.size).to eq(bytes.size)
       expect(described_class::DECODE).to eq(bytes.invert)

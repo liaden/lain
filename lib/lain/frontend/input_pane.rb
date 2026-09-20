@@ -299,6 +299,11 @@ module Lain
         # Trap context: one `write(2)`.
         def signal(name) = @ingress.signal(name)
 
+        # Nothing here runs an ask -- this pane holds no agent and no session
+        # -- so a `/stop` stays the line it is and travels to the chat, whose
+        # own rail is the one that knows whether there is a run to stop.
+        def ask_in_flight? = false
+
         # Each recorded signal, until the relay retires.
         def each(&block)
           Enumerator.produce { @ingress.read }.lazy.take_while { |name| name != :retired }.each(&block)
