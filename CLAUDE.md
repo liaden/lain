@@ -53,8 +53,11 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
   interpreter before believing it.**
 - **`TMPDIR` is shared mutable state between concurrent agents.** A red `pspec` is not evidence
   until nothing else is running: `pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'`
-  must read 0 (`ps | grep` over-counts and deadlocks two waiters), and `pgrep -f '[p]re-commit'`
-  too — the hook autostashes repo-wide, so another worktree's `git status` lies while it runs.
+  must read 0 (`ps | grep` over-counts and deadlocks two waiters), and
+  `pgrep -cf '[p]re-commit (hook-impl|run)'` too — the hook autostashes repo-wide, so another
+  worktree's `git status` lies while it runs. **That pattern is precise on purpose**: a bare
+  `[p]re-commit` matches any command line merely *containing* the word, your own echo label
+  included, so it reads busy on a quiet box.
 - **`LAIN_SPEC_WORKERS=12`** is the measured optimum *on this box*; `physical - 1` is the worst
   count tried. The wall is a MAX over files, not a sum, so **never shard a spec to game the
   packer** — one spec file per public entry point, at its mirrored path. See

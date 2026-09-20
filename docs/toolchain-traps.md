@@ -358,6 +358,16 @@ the cop.
   (`bundle exec rubocop lib spec exe`) when the tree holds work you have not committed. This is
   separate from the never-name-a-`.toml` rule above, which is about what gets parsed as Ruby.
 
+  Added 2026-09-20, from a chunk running three implementers and three reviewers at once. Both went
+  red under that load, in more than one run, and both pass alone on a quiet box. Both assert against
+  a **wall clock**, which is the shape that fails first when a box is loaded:
+  `Lain::Frontend::HeadlessEditor #reap escalates to KILL when the editor ignores TERM, instead of
+  waiting on it forever` (it read `expected 0.32 to be between 2 and 5` — the grace window elapsed
+  while the box was busy, so the assertion measured the load rather than the reap); and
+  `a prompt the approval window decides ends its line with who decided it and how, and a y typed
+  afterwards decides nothing` in `plain_chat_prompt_guards_spec`, whose
+  `terminal.await(/decided by timeout: denied/)` never drew.
+
   Added 2026-08-24, found by a nine-run `spec:flakes` sweep: `Lain::Tools::ReadFile refusing a read
   that is too large to hand back reads at most a bounded probe of the file it refuses, and never
   slurps it` went red in **1 run of 9** and green in the other eight, on an otherwise quiet box.
