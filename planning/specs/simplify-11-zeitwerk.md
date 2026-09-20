@@ -169,22 +169,26 @@ only what is removed. Zeitwerk **adds back** an `ignore` entry and an explicit r
 file — the "manifest in miniature" its own escalation trigger names — so the honest figure is the net,
 and the honest risk metric is the `ignore` list's size. Baseline measured 2026-09-20 at `76d872ed`.
 
-| | baseline | after T1 | after A1+A2 | after A3 | after B |
-|---|---|---|---|---|---|
-| `lib/**/*.rb` files | 746 | 746 | **759** | | |
-| `lib/` code lines | 54,997 | 55,025 | 55,090 | | |
-| `require_relative` in `lib/` | 746 | 746 | **759** | | |
-| external `require "…"` in `lib/` | 302 | 303 | 304 | | |
-| `lib/lain.rb` code lines | 101 | 129 | 127 | | |
-| pure index files | 21 | 21 | 21 | | |
-| `CLAUDE.md` lines | 304 | 304 | 307 | | |
-| **`ignore` entries (files)** | 0 | 17 | **14** | | |
-| **`ignore` entries (dirs)** | 0 | 1 | 1 | | |
-| explicit requires kept | 0 | 18 | 15 | | |
-| orphan constants *(see below)* | — | 294 | 278 | | |
-| `require "lain"` boot | 835 ms | 848 ms | | | |
-| `pspec` wall @ 12 workers | 95 s | 95 s | ~100 s | | |
-| example count | 20,470 | 20,475 | 20,475 | | |
+| | baseline | after T1 | A1+A2 | **A1–A3** | after A4–A6 | after B |
+|---|---|---|---|---|---|---|
+| `lib/**/*.rb` files | 746 | 746 | 759 | **762** | | |
+| `lib/` code lines | 54,997 | 55,025 | 55,090 | 55,102 | | |
+| `require_relative` in `lib/` | 746 | 746 | 759 | **762** | | |
+| external `require "…"` in `lib/` | 302 | 303 | 304 | 304 | | |
+| `lib/lain.rb` code lines | 101 | 129 | 127 | 124 | | |
+| pure index files | 21 | 21 | 21 | 21 | | |
+| `CLAUDE.md` lines | 304 | 304 | 307 | 307 | | |
+| **`ignore` entries (files)** | 0 | 17 | 14 | **12** | | |
+| **`ignore` entries (dirs)** | 0 | 1 | 1 | **0** | | |
+| explicit requires kept | 0 | 18 | 15 | 12 | | |
+| orphan constants *(see below)* | — | 294 | 278 | 278 | | |
+| `require "lain"` boot | 835 ms | 848 ms | | | | |
+| `pspec` wall @ 12 workers | 95 s | 95 s | ~100 s | ~99 s | | |
+| example count | 20,470 | 20,475 | 20,475 | **20,475** | | |
+
+**The directory ignore is gone**, which matters more than the count suggests: a directory entry hid a
+whole subtree from the loader, so `review/records/` could have grown new unmapped files indefinitely
+without the sweep noticing. Twelve file entries remain, all in `telemetry/` bar four.
 
 T1 is additive by design, so every removal row is flat and only the cost rows move. That is the card
 working as specified, not a null result: it buys the `ignore` list as a **measured** 18 rather than the
