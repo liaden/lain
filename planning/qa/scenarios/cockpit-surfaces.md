@@ -32,6 +32,129 @@ scenario is already running** rather than driving a session just for it.
 
 ---
 
+## 0 — Three panes, and the one the human types in
+
+**The cockpit is three panes since round 18**, and a round that reads it as two will look for the
+prompt in the wrong place. `lain up` cuts an `nvim --listen` pane, splits the `chat` pane beside
+it, and splits an **input pane** beneath the chat pane. `lain up --no-nvim` drops the editor only:
+the chat is still a transcript over an input pane. Each pane's tmux id is recorded as a
+**session** user option, so address panes by those rather than by "whichever pane is active" —
+and note the pane *count* answers nothing, since a chat over its input pane is two panes and so
+is a cockpit whose human split a shell into it:
+
+```bash
+for o in @lain_editor_pane @lain_chat_pane @lain_input_pane; do
+  printf '%s=%s\n' "$o" "$(tmux show-options -v -t lain "$o")"
+done
+tmux list-panes -t lain:chat -F '#{pane_id} #{pane_height} #{pane_current_command}'
+```
+
+`@lain_editor_pane` is recorded as the **empty string** under `--no-nvim`, or when the cockpit
+degraded for want of the binary — recorded rather than left unset, so a window lain built says
+"no editor" and only a window lain did not build says nothing at all.
+
+Checks:
+
+1. **Three panes exist**, and `lain up --no-nvim` in a second session gives two.
+2. **The input pane is seated at a floor, not a fixed height.** It starts at 6 rows. Grow it
+   (`tmux resize-pane -t <input> -y 12`) and it **stays** at 12 across a later layout change;
+   shrink it below 6 and the next `window-layout-changed` puts it back to 6. In a window shorter
+   than 13 rows the hook stands aside rather than squeezing the transcript away — check that by
+   resizing the client small and confirming the transcript still has rows. **Detach and
+   reattach**, which is the case the hook exists for: tmux hands a window's rows out afresh on
+   every attach and takes them off the bottom pane first, and a 24-row terminal was measured
+   leaving the input pane at ONE row with the HUD gone. The hook is on
+   `window-layout-changed` and deliberately not `client-resized`, which fires before tmux's own
+   redistribution. `lain up` re-arms it on a session it did not build this time, so an operator
+   who upgrades with a cockpit open gets the floor without killing the session — worth checking
+   once against a session started by an older binary.
+3. **The HUD is in the input pane, above the prompt, and it refreshes with no keypress.** Start
+   an ask that runs for a while, type a few characters into the input pane without submitting,
+   and watch the header change under your draft. That is the whole reason for the split: the
+   chat pane is a scrolling transcript and cannot hold a live line.
+4. **The header carries the top of the fleet tree under the HUD.** Spawn two subagents and
+   watch rows appear beneath the HUD line, each indented two spaces and nested a further two
+   per level, in the shape `role  state  Nt  task`:
+
+   ```
+   ❄ fleet:2 inbox:0
+     dev  running  2t  port the parser
+       test_engineer  running  0t  write the specs
+   ```
+
+   **Two rows, then `+N more`.** Spawn a third and the last header line must read `  +1 more`
+   rather than a third row — the pane is six rows and the HUD, the rows, the `+N more` and the
+   prompt all have to fit, with a countdown still needing somewhere to draw.
+   [`lain://status`](#1--every-view-is-alive-and-says-what-it-awaits) is where the whole tree is
+   read, and §1 drives it.
+5. **The header carries NO age, and that is the check.** Leave the pane untouched with a child
+   running and watch it for a minute: the header must not change, and the pane must not redraw.
+   An age column here would make the frame differ from itself once a second — measured at seven
+   redraws in eight seconds in a real six-row pane — so the age lives in `lain://status` only.
+   A header that ticks is the regression, not a feature.
+6. **A long task line cannot wrap the pane.** Both surfaces clamp a drawn row to 80 terminal
+   columns — the *whole* line, its lead and indent included, measured by grapheme cluster rather
+   than by character — and an over-long one ends in `…`. Ask for a subagent whose prompt opens
+   with a long line of CJK, 96 characters of which draw 214 columns, and confirm the row still
+   occupies exactly one pane row. **Measure it rather than eyeballing it**: a lead added outside
+   the clamp once put a header line at 82 columns, which looks right until the terminal is
+   exactly 80 wide and it wraps. Check the same row in `lain://status` too — the clamp is
+   shared, so a row that fits one surface and not the other is a finding.
+7. **A task line cannot repaint the surface.** It is a model's words drawn on a terminal, so
+   every cell of every row is scrubbed: newlines and tabs become spaces, then whole ANSI escape
+   sequences are removed, then the control and format characters. Ask for a subagent whose task
+   begins `clean\e[1A\e[2KPWNED` (send the real escape bytes) and confirm the row draws
+   `cleanPWNED` — both sequences gone **whole**, with no `[1A` or `[2K` left behind as visible
+   junk, and **the HUD line above it untouched**. That exact task was measured putting its own
+   words on the HUD line before the scrub landed: `\e[1A` walks the cursor up a row and `\e[2K`
+   erases it. A bidi override (`U+202E`) in a task must likewise not reorder the row around it,
+   and a tab inside one must become a space rather than vanish — deleting it would join two
+   words.
+8. **Every prompt is answered in the input pane** — `you>`, `[y/N]`, `human>`, the countdown.
+   Nothing is typed into the chat pane.
+9. **The pane is an ordinary command.** Kill it (`tmux kill-pane -t <input>`) and the chat stays
+   alive; `lain input --name lain` in a new pane reconnects to the same socket and is redrawn
+   with the current prompt and HUD, not left blank until something changes. The socket is
+   `$XDG_RUNTIME_DIR/lain/input-<project-hash>-<session>.sock` (`lain up` passes the tmux session
+   name, so two cockpits on one project do not collide) and it carries **no pid**, because both
+   panes derive it before either process exists. A second `lain input` on the same socket is
+   *accepted*, not refused — panes are clients — so what to check there is that a line typed in
+   either one reaches the chat exactly once. The refusal lives on the other side: a second
+   **chat** trying to bind a socket a live chat already holds is refused by name rather than
+   stealing it, while a stale file left by a dead chat is rebound.
+
+**Stopping an ask, and keeping the session.** Two gestures, one outcome:
+
+- `/stop` typed at whatever prompt the run parked on — it is lifted off the input rail before the
+  command registry sees it, so it works from a `[y/N]` or a `human>` and not only from `you>`.
+- Ctrl-C, then `s` at the countdown. (`c` cancels the countdown, `w` extends it, `r` waits for
+  responses. An **idle** `you>` countdown offers only `c` and `w`, because there is no ask.)
+
+**Drive the countdown from a prompt that already had a read open** — a Ctrl-C at a parked
+`[y/N]` is exactly that shape, and it is where the pane's countdown used to misbehave. The
+window now takes the terminal from the line editor before it switches the mode, waiting a
+bounded couple of seconds for the open read to unwind; without that, the editor put the mode it
+found back a moment later and every offered key echoed and was read as a **line** instead of
+firing. So: park an approval, Ctrl-C, and confirm a single `s` stops the ask with **no echo and
+no Enter** needed. If the editor will not let go in time the window degrades rather than dying,
+and says so — a sentence telling you a key may be swallowed or arrive as text, and to press it
+again. That sentence appearing routinely is a finding; the keys silently doing nothing is the
+older one.
+
+And the countdown must take back the row it draws on rather than appending to whatever the
+editor left: a header printed after a `you> ` once rendered as `you> ❄ fleet:4 inbox:0` on one
+line and cost the pane a row of its six. Read the pane, not just the journal.
+
+Either one must leave the prompt at `you>` **in the same session**: the journal gains a
+`run_interrupted` with `"reason": "stopped"` and **no** `session_closed`, and the next thing you
+ask runs on the same chain. With nothing running, `/stop` answers *"no ask is running -- /stop at
+the prompt it parks on, or s at a countdown"* and changes nothing.
+
+**What wrong looks like:** a `session_closed` record beside the stop; the prompt coming back as a
+fresh session; `/stop` answered by the model as prose (the rail did not intercept it, which is
+correct only when no ask was running); or a `run_interrupted` with no `reason`, or with
+`interrupted` where the human pressed `s`.
+
 ## 1 — Every view is alive, and says what it awaits
 
 `Surfaces#prime`'s own docstring states the principle: prime every view so "an idle session that
@@ -51,8 +174,9 @@ for b in journal timeline workspace diff inbox request status approval; do
 done
 ```
 
-Expected placeholders, all eight. Seven of them were measured round 9; **`lain://status` is new and
-has never been driven here**, so record what it actually holds rather than confirming the row below.
+Expected placeholders, all eight. Seven of them were measured round 9; **`lain://status` has
+still never been driven here**, so record what it actually holds rather than confirming the row
+below — and note that round 18 changed what its fleet half draws (below).
 **Note `diff` is plural and `request` is singular** — that is not a typo here, and a driver grepping
 for one string across both will miss:
 
@@ -87,6 +211,60 @@ rest is the over-correction to watch for.
 It is also deliberately *not* in the runtime's `LainAttach` buffers payload — the runtime creates it
 itself — so a config iterating that payload sees seven names (`00_constants.lua`'s `BUFFERS`, which
 `lain://status` **is** in). Seven there and eight here is correct, not a discrepancy.
+
+### `lain://status`'s fleet half is a tree, and it is the only surface that renders the whole one
+
+Round 18 replaced the bare digest listing under `## fleet`. What is drawn now is a **nested
+markdown list**, one row per child, indented under the parent it was spawned from:
+
+```
+## fleet
+
+- dev  running  2t  3m  port the parser
+  - test_engineer  running  0t  1m  write the specs
+```
+
+Six things to drive, in one session with a subagent that itself spawns:
+
+1. **A grandchild is nested.** Ask for a subagent that spawns a subagent, and confirm the third
+   row is indented two levels. The parent edge is the head a child reports, not anything in the
+   `:spawn` record, so this is the check that the two-record fold actually places branches.
+2. **No digest is drawn.** A row names the role, the state, the turn count, the age and the task
+   — not the spawn address. That is deliberate: the address is what
+   [`lain watch`](../../../docs/commands.md#lain-watch) takes, and seventy columns of it is not
+   what a human reads a fleet for. A digest back in a row is a regression.
+3. **The turn count moves while the child works**, without the row being rewritten from scratch:
+   the dispatch record carries the role and the task, each later one carries only the turns and
+   the head, and a reader folds them by spawn. A row that loses its task line on the child's
+   second turn is that fold taking a nil it should have ignored.
+4. **`lain://status` shows the AGE and the input pane's header does not.** Read both at once
+   with a child running. This is not an inconsistency to file — the pane's header is the frame
+   the chat publishes and an age would cost it a redraw a second (§0), while nvim rewrites the
+   whole buffer anyway. Both rows must otherwise be **identical in their columns**, because both
+   are drawn from the same row object; a column present in one and missing from the other is
+   the real finding.
+5. **An ended child stays visible, and does not accumulate for ever.** A child that failed or
+   was stopped keeps its row, with its state reading `failed` or `stopped` rather than
+   `running` — vanishing from the surface that was watching it is the thing this exists to
+   prevent. But only the most recent handful of ended rows are kept; a long session's whole
+   spawn history in the struct would be a growing write every turn.
+6. **The spawn record is byte-identical to before.** This is the ruling the whole tree rests on:
+   nothing about the fleet view was added to the `:spawn` body, because its digest is an address
+   bench arms join on and `lain watch` follows. Compare a `:spawn` body's keys against what
+   `subagents-and-backends.md` §2 documents — `task`, `prefix`, `posture`, `only`,
+   `spawned_from` — and confirm no role, task line or worker key joined them. The fleet's own
+   facts ride in separate `child_progress` records:
+
+   ```bash
+   ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+     next unless r["type"]=="child_progress"
+     puts [r["spawn"][0,12], r["role"], r["turns"], r["head"].to_s[0,12], r["task_line"]].join("\t")}' "$LAIN_QA_JOURNAL"
+   ```
+
+   The first record for a spawn carries the role and the task line; the rest carry only the turn
+   count and the head. A `worker` key is on the record's shape but **nothing renders it yet**,
+   and the in-place lease mints none, so expect it nil — its absence from both surfaces is
+   correct, not a gap.
 
 That view is still named misleadingly: it renders `Telemetry::ToolOutput` (streamed tool bytes)
 only, never the NDJSON session journal, and a rename was proposed rather than taken because
@@ -504,7 +682,8 @@ the chat pane and, inside `$TMUX`, runs `tmux display-message` with the arrival 
 notifier behind it. Read the bell off a `pipe-pane` capture of the chat pane rather than by ear, and
 the message off a `tmux` wrapper on the chat's `PATH` that logs its arguments (a detached test
 server has no client to show it on). *Driven 2026-09-14* in a `--no-nvim` chat inside tmux with
-`/mode +notify` (`accept_edits: no layers active -> accept_edits: notify (BELL)`), for the parent's
+`/mode +notify` (recorded 2026-09-14 as `accept_edits: no layers active -> accept_edits: notify
+(BELL)`; a mode reads `checkout ask: notify (BELL)` since round 18), for the parent's
 own `ask_human`:
 
 - the pane stream carried `? lain What is your favourite colour?  -- answer in lain://inbox, or
@@ -544,6 +723,26 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
 Check the `approval_pending` and `approval_decision` COUNTS match too — round 9 read **12 and 12**,
 both surfaces represented, no pending left unanswered. That is the shape F40's
 eleven-pendings-to-one-prompt violated, and it is cheaper to read than the panes.
+
+**Pair them by `tool_use_id`, and within an id by order.** Both records carry the field, so a
+decision names the call it settled rather than leaving a reader to guess from timing. One call
+can park **twice** — at the path gate, and again at the release of a masked region — so an id
+with two pendings and two decisions is correct, and the pairing inside that id is positional:
+first pending with first decision. Counting alone cannot tell that apart from two unrelated
+calls, which is why the field is there:
+
+```bash
+ruby -rjson -e 'seen=Hash.new{|h,k| h[k]=[]}; ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  next unless %w[approval_pending approval_decision].include?(r["type"])
+  seen[r["tool_use_id"]] << r["type"]}
+  seen.each { |id, kinds| puts "#{id} #{kinds.join(" ")}" }' "$LAIN_QA_JOURNAL"
+```
+
+Every id must read `approval_pending approval_decision` (twice over for a gated-and-released
+read), in that order. A decision with no pending before it, or a pending with no id at all, is a
+finding. A pending carrying `"humans_only": true` is the withheld-output case
+(`shell-term-approval.md`): it may only be settled by a person, so a decision on it from
+`surface=auto` is a finding too.
 
 Both the arrival line and the `[y/N]` must **name the requester** (`agent` / `researcher` /
 `subagent`) — with `fleet 2` on the status line you otherwise cannot tell a parent from its child.
@@ -829,15 +1028,22 @@ What is worth checking:
   and nothing else). Each is checked against the behaviour it names, not just its letters:
   - `AA` means the automatic approver is really on. `method.md` bans raising that layer during a
     round, so check it off a launch: `lain chat --auto-approve --prompt /mode` answered
-    `accept_edits: auto_approve (AA)` (driven 2026-09-14).
+    `accept_edits: auto_approve (AA)` (driven 2026-09-14). **Since round 18 a mode reads as
+    scope then approval then layers**, so the same launch now answers `checkout ask:
+    auto_approve (AA)` — an answer still naming `accept_edits` is a stale binary, not a pass.
   - `GOAL` stands exactly while a goal drives. *Driven 2026-09-14*: `/goal <objective>` journaled
     `mode_switch … to_layers: ["goal"] surface: goal`, `/mode` typed mid-drive answered
-    `accept_edits: goal (GOAL)`, and `/goal off` journaled the matching `from_layers: ["goal"],
-    to_layers: []`. `/mode +goal` with no goal refuses (`repl-commands.md` §1).
+    `accept_edits: goal (GOAL)` (now `checkout ask: goal (GOAL)`), and `/goal off` journaled the
+    matching `from_layers: ["goal"], to_layers: []`. `/mode +goal` with no goal refuses
+    (`repl-commands.md` §1).
   - `VI` switches the line editor at the next read. *Driven 2026-09-14* in a tmux pane: the prompt
     after `/mode +vi` read `qwen3-coder:30b VI idle 0s` over `[ins]you>`, `Escape` made it
-    `[cmd]you>`, and `/mode -vi` gave back a plain `you>`.
+    `[cmd]you>`, and `/mode -vi` gave back a plain `you>`. In a cockpit this is the **input
+    pane's** prompt, not the chat pane's (§0).
   - `BELL` rings on arrivals (§5).
+  - `PLAN` and `AUTO` are the two **axis** lighters, not layers, and they sit before the colon:
+    `plan (PLAN) ask: no layers active`. `checkout` and `ask` carry an empty lighter on purpose,
+    so the default mode's prompt shows neither — do not read their absence as missing support.
 
 ## 8 — Fold state on the approval and inbox rows
 

@@ -42,6 +42,7 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--btw` | off | Ephemeral session (`<ts>-<pid>.btw.ndjson`), reaped on clean exit unless promoted with [`/keep`](#keep). |
 | `--prompt` | unset | Seed the first question, then read the terminal as usual. |
 | `--nvim SOCKET` | off | Attach a Neovim frontend to an `nvim --listen` socket. |
+| `--input socket:NAME` | off | Read the human from a [`lain input`](#lain-input) pane instead of from this terminal. `NAME` is a name, not a path — the socket is derived from it under this project. Bare `socket:` means `chat`; `lain up` passes the tmux session's name, so two cockpits on one project do not collide. |
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
 | `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in plain chat** — see [Isolation](#isolation-flag). |
 | `--epic SLUG` | the sole epic in the home | Mount an epic: its documents become reviewable, [`/implement-epic`](#implement-epic) has something to work, and `lain://status` draws its graph. A home holding several epics with no slug here starts anyway, with a notice. |
@@ -149,23 +150,36 @@ Create or reattach to the `lain` tmux session: a `chat` window plus a session-sc
 if it is not a directory. Flags after `--` are forwarded to [`lain chat`](#lain-chat).
 
 ```bash
-lain up                                        # chat window + HUD, in this directory
+lain up                                        # editor | transcript over input pane, + HUD
 lain up ~/dev/other-project                    # ...in that one instead
-lain up --no-nvim                              # plain chat window, no nvim pane
+lain up --no-nvim                              # no nvim pane; still transcript over input pane
 lain up --nvim-socket /tmp/lain-abc123.sock    # explicit nvim socket
 lain up -- --provider ollama --no-compact
 ```
 
+**The window is three panes**, not two: an `nvim --listen` pane, a `chat` pane beside it, and an
+**input pane** split beneath the chat pane. `--no-nvim` drops the editor and nothing else — the
+chat is still a transcript over an input pane, because the reason for the split is that the chat
+pane scrolls. The input pane runs [`lain input`](#lain-input): it draws the HUD above the prompt
+and refreshes it without a keypress, and every gesture the prompt ever had works there, `[y/N]`
+and `human>` included.
+
+Its height is a **floor, not a fixed size**. lain seats it at 6 rows on a
+`window-layout-changed` hook, and only when something drove it below that — grow the pane
+yourself and it stays grown. In a window shorter than 13 rows the hook stands aside and lets
+tmux's own arithmetic run, rather than squeezing the transcript out of existence.
+
 | Flag | Default | What it does |
 |---|---|---|
-| `--session` | `Up::DEFAULT_SESSION` | tmux session name. |
+| `--session` | `Up::DEFAULT_SESSION` | tmux session name. Also the input socket's name, so two cockpits on one project do not collide. |
 | `--socket` | tmux's default | tmux socket (`-L`). |
-| `--nvim` / `--no-nvim` | on | Split the chat window into an nvim + chat cockpit. |
+| `--nvim` / `--no-nvim` | on | Add the nvim pane beside the chat. The input pane is there either way. |
 | `--nvim-socket PATH` | derived | Listen on this nvim socket instead of the per-project one lain derives. Must be absolute — the socket is the one name both panes have to agree on, and a relative one resolves against whichever pane reads it. |
 
-One directory feeds all three of the places `up` names one: both panes' `-c`, the nvim socket's
-hash, and the HUD's state file — which lives under `$XDG_STATE_HOME/lain/status/`, keyed by that
-same directory's hash, rather than inside the project. `up` prints the resolved path on every
+One directory feeds all four of the places `up` names one: every pane's `-c`, the nvim socket's
+hash, the input socket's hash, and the HUD's state file — which lives under
+`$XDG_STATE_HOME/lain/status/`, keyed by that same directory's hash, rather than inside the
+project. `up` prints the resolved path on every
 launch, because nothing else in the program names it.
 
 **Write a value-taking flag with an `=` when it is the last thing before `--`.** `lain up /tmp
@@ -175,6 +189,35 @@ instead. `--nvim-socket=/tmp/x.sock` cannot be read that way.
 
 `lain up` `exec`s into tmux, replacing the process. From inside tmux it uses `switch-client`;
 from outside, `attach`.
+
+### lain input
+
+The pane a human types into, feeding a `lain chat --input socket:NAME`. `lain up` runs it for
+you; you run it by hand only to bring a dead input pane back, or to drive a chat you started
+yourself.
+
+```bash
+lain input                       # the chat socket named `chat`, under this project
+lain input --name lain           # the socket `lain up --session lain` derived
+lain input --socket /run/user/1000/lain/input-ab12cd34ef56-lain.sock
+```
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--name NAME` | `chat` | The chat's input socket, by name, derived under this project. |
+| `--socket PATH` | derived from `--name` | The chat's input socket, by path. |
+
+The derived path is `$XDG_RUNTIME_DIR/lain/input-<project-hash>-<name>.sock` (`/tmp/lain/` when
+`$XDG_RUNTIME_DIR` is unset), in a directory created at `0700`. It carries **no pid**, on
+purpose: the chat and the pane have to derive the same name before either process exists. A
+stale socket file left by a dead chat is rebound; one a live chat still holds is refused by name
+rather than stolen. Panes themselves are clients, so a second `lain input` on the same socket
+simply connects — and is redrawn with the prompt and HUD standing at that moment rather than
+waiting for the next change.
+
+The pane draws the chat's HUD above the prompt and refreshes it without a keypress, completes
+`/command` names, and shows the mode's layer lighters beside the prompt. It holds no agent, so
+Ctrl-C and `/stop` there travel to the chat's own rail rather than being answered locally.
 
 ### lain sessions
 
@@ -408,7 +451,18 @@ List the registered commands and the loaded skills.
 
 ### /status
 
-Cache warmth, fleet size, and inbox count for this session.
+Cache warmth, fleet size, and inbox count for this session. Cache warmth has **three** answers,
+not two: warm, cold, and a feed that has published no deadline at all, which is not a cache that
+went cold.
+
+**`fleet` here is a count, deliberately.** The fleet's shape — one row per child, nested under
+the parent it was spawned from — is drawn in `lain://status` in the editor, and its top two rows
+sit in the input pane's header under the HUD. A row names the child's role, whether it is
+running, how many turns it has committed and the first line of its task; `lain://status` also
+shows the child's age, which the pane's header leaves out so that the header does not change
+once a second. Neither surface prints the spawn digest: that is the address
+[`lain watch`](#lain-watch) takes, and it is seventy columns of what a human reading a fleet is
+not looking for.
 
 ### /sessions
 
@@ -418,6 +472,66 @@ List recorded sessions, newest first. `/sessions --all` includes ephemeral `.btw
 
 `/model` shows the model in force. `/model <id>` switches the next turn's model, mid-session.
 
+### /mode
+
+A mode is **scope × approval**, plus a set of layers. Its usage line:
+
+```
+/mode [scope] [approval] [+layer] [-layer] [!]
+```
+
+Bare `/mode` reports and changes nothing.
+
+| Token | Axis | What it means |
+|---|---|---|
+| `checkout` | scope | Writes and commands land in the project's own checkout. |
+| `plan` | scope | Writes and commands are confined to a **spike** — a worktree cut on `lain/plan/<key>` from the checkout's tracked state, or a scratch directory outside a git repository. |
+| `ask` | approval | A gated call parks for a surface to answer. |
+| `auto` | approval | A gated call is approved at the ladder's last rung. |
+| `+layer` / `-layer` | layers | Enable or disable one of `auto_approve`, `goal`, `notify`, `vi`. |
+| `!` | — | Reset: `ask` approval, no layers, and then `plan` scope. |
+
+Tokens **fold over one mode and switch once**, so `/mode auto +notify -goal` journals a single
+flip naming where the session started and where it ended. An axis holds one value, so two tokens
+naming the same axis refuse whole and name both — taking the last would hand a typo the gate.
+
+`auto` is not a different gate, only a different last rung: the triage and the rule denies run
+first either way, so a protected path still refuses under `auto`. The `auto_approve` **layer** is
+a separate thing entirely — it leaves the ladder in place and adds a model judge at its end.
+
+`plan` scope is confinement, not a sandbox. It checks the location a tool **names** —
+`write_file`/`edit_file`'s path, `bash`'s `cwd` — and refuses anything outside the spike by name,
+pointing at `/mode checkout`. A human-approved shell command's own words can still write
+elsewhere. Leaving `plan` keeps the spike's branch if it carries commits and deletes it if it
+does not, saying which.
+
+A **scope** move is refused while a turn is in flight, since a running tool call may be writing
+where the session's writes would stop landing: wait, or `/stop`. `/mode !` is the exception — it
+lands everything but the scope immediately, because dropping `auto` is the part that cannot
+wait, and says the scope move waits for the turn to end.
+
+`manual` and `accept_edits` are retired, and are refused by name rather than as typos: approval
+is `ask` or `auto`, and `ask` gates everything `manual` gated.
+
+### /stop
+
+`/stop` stops the ask in flight and **keeps the session**. The run's task is interrupted, a
+`run_interrupted` record is written with reason `stopped`, no `session_closed` is written, and
+the prompt comes back as `you>` in the same conversation.
+
+It is answered by the input rail rather than by the command registry whenever an ask is actually
+running, so it works from a prompt a run is waiting on — a `[y/N]` or a `human>` — and not only
+from `you>`. With nothing running there is nothing to intercept and the command answers instead:
+*"no ask is running -- /stop at the prompt it parks on, or s at a countdown"*.
+
+The countdown's `s` key is the same gesture: Ctrl-C opens the grace window, and `s` there stops
+the ask while `c` cancels the countdown, `w` extends it and `r` waits for responses. An idle
+`you>` countdown offers only `c` and `w`, since there is no ask to stop.
+
+**Every stopped ask says why.** The reason recorded on `run_interrupted` is one of `stopped`,
+`ceiling`, `over_window`, `transport`, `stalled_stream` and `torn` (plus `interrupted` and
+`grace_expired`, which come from Ctrl-C and the shutdown window rather than from an ask).
+
 ### /rewind
 
 `/rewind` moves the session back one turn. `/rewind N` moves back N. `/rewind <digest>` moves to a
@@ -425,12 +539,19 @@ recorded turn. The Timeline is content-addressed, so nothing is destroyed and th
 reachable.
 
 **A prompt left unanswered at the head goes out again with your next one.** A failure after the
-request reached the provider, a Ctrl-C or `/stop`, a failed resend, or a `/rewind` that lands on a
-prompt all leave a prompt with no answer on the chain. The next thing you ask is sent as one turn
-carrying both texts, cut from that prompt's parent, and the chat says so. To leave the earlier
-prompt out, `/rewind 1` before asking. A prompt that provably never reached the provider (every
-connection refused, or refused for not fitting the context) is withdrawn instead, so it does not
-come back.
+request reached the provider, a Ctrl-C or [`/stop`](#stop), a failed resend, or a `/rewind` that
+lands on a prompt all leave a prompt with no answer on the chain. The next thing you ask is sent
+as **one** turn carrying both texts, cut from that prompt's parent — never as a second prompt
+stacked beside the first — and the chat says so before the wire:
+
+> the prompt at the head has no answer on this chain, so this ask carries it too -- /rewind 1
+> before asking to leave it out
+
+So `/rewind 1` is the escape, and it is named in the warning rather than left to be remembered.
+
+A prompt that provably never reached the provider is **withdrawn** instead, so it does not come
+back. Exactly two shapes qualify: every connection refused before the request was sent, and a
+prompt the provider refused whole for not fitting its context. Anything else is kept.
 
 ### /undo
 
@@ -560,10 +681,25 @@ open.
 
 ```
 /review <pull-request|branch> [--base <ref>] [--scope cumulative|commits|by_directory] [--permissive]
+/review close
 ```
 
 Same editor rule as `/survey`: no editor is a refusal, not a Null surface. Same one-surface rule
 too, from the other side.
+
+**`/review close` lets the open round go without a verdict.** It takes nothing after it —
+`/review close --base main` is either a typo or a review of a branch called `close`, and
+guessing would do one of them wrongly — so it refuses and says that a branch named `close` is
+reviewed as `refs/heads/close`. In a repository that really has such a branch, that hint is
+printed beside whatever the close answers. A round that already carries a verdict refuses, and
+so does one already closed. The close journals a `changeset_closed` record naming who closed it,
+`human` or `refusal`.
+
+The `refusal` half is the other half of the same gesture: a round bound and then refused — a
+ceiling refusal, say — is closed on the way out, so **a refused round binds nothing**. The rails
+unbind, the outbox is released, and the refusal is what you are told, instead of both surfaces
+staying bound over a round nobody will ever see. `:LainReviewClose` is the editor's spelling of
+the same command.
 
 `--permissive` is here so the partial-review refusal stays honest from a `/review` round as well
 as a `/survey` one. Submitting `approve` over a changeset that is not fully reviewed is refused
@@ -593,7 +729,8 @@ clears it.
 
 `/implement-epic` works the mounted epic's approved issues to its working branch. Each issue runs as
 its own actor in a worktree cut from `epic/<slug>`, rebases itself, and lands serially through one
-queue; the issue graph and the live fleet are drawn in [`lain://status`](../README.md#the-cockpit).
+queue; the issue graph and the live fleet are drawn in [`lain://status`](../README.md#the-cockpit),
+the fleet as a tree with each issue's own children nested under it.
 
 ```
 /implement-epic [--width N]

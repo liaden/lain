@@ -137,9 +137,24 @@ silently truncating an over-window prompt and every reader believing the truncat
 50%, then 16%, on a request that had lost its system prompt and tools). Lain now asks ollama not to
 truncate, so an over-window prompt is **refused** and journals `window_pressure kind=over_window`
 with the server's own `prompt_tokens` and `window_tokens`; that count becomes the run's reading, so
-compaction can fire on it (`rails-blog.md` §1b has the driven refusal). On an ordinary session
-`window_pressure` must be **absent**, and `input_tokens` must never fall below the previous turn's
-without one. **Known and not a finding:** the window book can keep a stale smaller runner's context
+compaction can fire on it (`rails-blog.md` §1b has the driven refusal).
+
+**"`window_pressure` must be absent" is stale as of round 18.** The record is now a *signal* the
+compaction path acts on: a refusal on a source that has nothing left to drop triggers the handoff
+fallback, so a long session may legitimately carry one followed by a `compaction_cut` of
+`kind: handoff` and an answered ask. What is still a finding is a `window_pressure` with nothing
+after it, and `input_tokens` falling below the previous turn's with no record explaining it. Two
+fields the record gained: `stands_on`, the turn the reading is believed on (so a live reader tags
+it the way the agent does instead of inferring it, and nil is legitimate on an empty chain), and
+`spawn`, the child whose prompt it was — nil for the run's own ask.
+
+**And the refused count can now VOUCH for the window.** An over-window 400 carries the context the
+server actually loaded, so that number is adopted as an authoritative reading rather than being
+weighed against a probe — which also corrects a book that probed a stale, smaller runner before
+the request reloaded it. The stale-runner case below is therefore narrower than it was: it still
+bites before any refusal has happened, and a refusal clears it.
+
+**Known and not a finding:** the window book can keep a stale smaller runner's context
 after ollama reloads a bigger one, so occupancy can read near 100% and compaction fire early — a
 follow-up the discharging chunk recorded, not this section's defect.
 
@@ -220,6 +235,33 @@ Three things to read carefully, because each is a place a driver files the wrong
   at the first compacting turn instead — refusing at resolve time is a design decision nobody has
   taken. A launch-time refusal here would be the *unexpected* result. (Reaching the actual raise
   needs volume: `rails-blog.md`.)
+
+### 7a — `--compact-fallback`, and what happens when no cut can make room
+
+Round 18 gave the over-window wall a fallback, and a flag that chooses whether to take it. Two
+arms, resolved at LAUNCH like everything else here:
+
+```bash
+run --compact-fallback nonesuch     # refuses, naming both arms
+run --compact-fallback none         # legal: the refusal stands
+run --compact-fallback handoff      # legal, and the DEFAULT
+```
+
+`handoff` is the default because the alternative is a session that can no longer be spoken to. It
+replaces the history before the current ask with **one** state document — written by exactly one
+summarizer call — and answers the ask. `none` leaves the provider's refusal standing.
+
+Two launch-level checks, both free:
+
+- **The unknown arm refuses at construction**, naming `handoff, none`, before stdin is read. A
+  `--compact-fallback` that silently resolved to `none` would show up only as an ask that died
+  where it should have been kept, which is exactly the failure this refusal exists to prevent.
+- **The session header records the arm.** Read `compact_fallback` back out of the header, the way
+  §9 reads `context_pipeline`, and confirm an unflagged launch records the default rather than
+  nothing — an unrecorded arm cannot be told apart from an older file.
+
+Reaching the fallback itself needs volume and belongs to `rails-blog.md` §1b, which drives the
+handoff end to end and checks it replays byte-identically.
 
 ## 8 — The price table, and the lint that keeps it honest
 

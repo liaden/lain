@@ -91,7 +91,12 @@ looks, because **ollama's own defaults are wrong for this workload**:
   llama.cpp's own default of 2048; there is no
   server-side setting for it. `exe/lain`'s `--num-batch` flag (`$LAIN_NUM_BATCH`) threads it into
   the request, alongside `--num-ctx` (`$LAIN_NUM_CTX`) for context length — both strictly
-  opt-in: leave either unset and the payload carries no `options` key at all. On the RX 7900
+  opt-in: leave either unset and the payload carries no `options` key at all. Both belong to the
+  **run profile**, so they are declared by the one `ModelFlags` band on every model-calling
+  command — `chat`, `epic submit`, `bench record`, `bench arms`, `consolidate` and `improve` —
+  recorded in the session header beside the provider and the api base, and re-used by `--resume`,
+  `--fork`, `/fork` and `/btw`. A command that could not carry them was how a bench arm ended up
+  reloading the runner at `-b 512` while the chat beside it ran at 2048. On the RX 7900
   XTX, `DEBUGGING_OLLAMA.md`'s 2026-08-14 entry measured this costing up to **3x decode and 8x
   prefill** (`qwen3-coder:30b` prefill: 340 → 2,222 tok/s, 6.5x, going from `num_batch=512` to
   `2048`), strongly model-dependent (1.1x–2.7x on decode across four models). The 2026-08-15

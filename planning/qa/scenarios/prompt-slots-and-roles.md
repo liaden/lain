@@ -116,9 +116,25 @@ Must refuse:
 unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto_approver, court_clerk, dev, diff_critic, diff_docent, gate_adjudicator, harness_improver, issue_orchestrator, merge_resolver, meta_harness, meta_summarizer, researcher, reviewer_code, reviewer_dba, reviewer_security, reviewer_sre, test_engineer
 ```
 
-naming **all 17** shipped roles, alphabetically, not a truncated sample. *Driven 2026-09-14*, exit 1,
-with the names then spelled with hyphens; the role files took the catalog's underscore spelling on 2026-09-15, and a
-hyphenated `.lain/slots/role/test-engineer.md` now refuses naming the rename to `test_engineer.md`. **The count moves; re-derive it** from `Lain::Role::Catalog.names.size` through
+naming **all 17** shipped roles, alphabetically, not a truncated sample. *Driven 2026-09-14*, exit
+1 — but with the names then spelled with **hyphens**, which is the thing to correct on the next
+drive.
+
+**Role slot files are spelled exactly as the role is, with underscores, since 2026-09-15.** The
+hyphen-translation step is gone, so `auto_approver.md` and `gate_adjudicator.md` are the
+filenames, and a hyphenated `.lain/slots/role/test-engineer.md` gets its own refusal naming the
+rename rather than the generic unknown-role one:
+
+```
+role slot files are spelled as the role is: rename ".../.lain/slots/role/test-engineer.md" to test_engineer.md
+```
+
+Drive both: a hyphenated name (the rename refusal) and a genuinely unknown one (`chef.md`, the
+roll-call refusal above). They are different messages on purpose — a human who typed a hyphen has
+a rename to do, not a role to look up. And a role slot carrying the **wrong extension** now names
+the extension it needs (`slot files end in .md`), rather than being read as an unknown role.
+
+**The count moves; re-derive it** from `Lain::Role::Catalog.names.size` through
 `/ruby` rather than from this line — it read 14 until round 17 counted 16, and `diff_critic` (the
 read-only role `/critique` spawns per chunk over a held review) joined on 2026-09-14. Delete the fixture and confirm the session
 launches clean again before moving on — a refusal that leaves the tree in a state the NEXT launch

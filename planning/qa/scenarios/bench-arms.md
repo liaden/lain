@@ -21,9 +21,26 @@ lain bench arms spec/fixtures/arms/tasks.yml --provider ollama --model qwen3-cod
 repository to branch checkouts from, and the sandbox's is the one to lend it (the 2026-09-14 drives
 below ran from an empty-commit repository with the fixture named by absolute path).
 
-`--provider` defaults to the literal `"anthropic"` rather than through `EnvDefaults`, so `.envrc`'s
-`LAIN_PROVIDER` does **not** reach it and the command refuses on a missing key. `--isolation` unset
-is not `none`, and `--journal` without `--isolation` refuses.
+**Round 18 put every model-calling command on one flag band, and `bench arms` is one of them.**
+`ModelFlags` declares `--provider`, `--model`, `--api-base`, `--num-ctx` and `--num-batch` on
+`chat`, `epic submit`, `bench record`, `bench arms`, `consolidate` and `improve` alike, and it
+replaced `RECORD_FLAGS`/`ARMS_FLAGS`' backend halves and `EpicSubmit::Adjudication.flags`. Three
+consequences worth driving here, because this is where the old split bit hardest:
+
+- **The throughput flags reach the bench now.** `LAIN_NUM_BATCH=2048 lain bench arms …` against
+  the local runner must show **no `-b 512` reloads** in the ollama log — the arms carry
+  `num_batch`/`num_ctx` into their requests the way a chat does, where before they could not and
+  every arm quietly ran the runner at ollama's own default.
+- **The flags declare no Thor default**, so an unset flag is distinguishable from one typed at
+  the default value. That is what makes a recorded profile usable; a band that defaulted would
+  make every flag look typed.
+- **`--provider` still resolves to `anthropic` when nothing names one**, so `.envrc`'s
+  `LAIN_PROVIDER` does not silently decide a bench run and the command refuses on a missing key.
+  The resolution order is typed → recorded → environment → built-in, and a bench invocation
+  records nothing to read back, so for `bench arms` it is effectively typed → environment →
+  built-in.
+
+`--isolation` unset is not `none`, and `--journal` without `--isolation` refuses.
 
 **Round 17 could not run this scenario at all, and two corrections came out of trying.** Both
 refusals below are pre-spend, and both were *driven 2026-09-14* against the built binary:
@@ -132,6 +149,25 @@ local recording that had turns (`no price for model "qwen3-coder:30b"; configure
 degrade`, exit 1), while this report degraded only its cost section (F109). Its cost row now reads
 `not priced` with the ledger's reason and the rest of the comparison renders. *(Prediction, not yet
 driven: needs two `lain bench record` recordings of a local model.)*
+
+**A failed recording is set aside, and the remaining runs continue** — round 18's answer to a
+run whose round trip dies partway through. The file is renamed to `<stem>.failed.ndjson` (hard
+link, then unlink, and a name already taken refuses rather than clobbering), the sweep goes on to
+the next run, and `bench variance` grows a `== Set aside ==` section listing each one with a
+**reason**: `failed recording (<ErrorClass>: <message>)` off the `recording_failed` record, or
+`no usage recorded beside a truncated stream` for a `.ndjson` that has neither. Drive it by
+severing the transport mid-recording (`failure-injection.md` §4's proxy) on run 2 of 3, then:
+
+```bash
+ls "$QA/records"/*.failed.ndjson        # exactly one, named for the run that died
+lain bench variance "$QA/records"       # a "Set aside" section naming it and why
+```
+
+Three things, and the third is the one that matters: the other two runs completed; the set-aside
+file is **not** counted among the n≥2 recordings the distribution is computed over; and the
+reason is in the report rather than only in the filename. A variance report that silently drops
+the failed run, or that refuses whole because one run died, is the finding. Ctrl-C during a
+recording takes the same path.
 
 To see real figures, run one small sweep against a priced model — and note what the number excludes:
 **LLM-judge tokens are not on the arms' ledgers**, so a rubric-graded run's cost omits the judge. That

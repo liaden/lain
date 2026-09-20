@@ -1182,7 +1182,8 @@ class LainCLI < Thor
     render { journal_pass(Lain::CLI::Improve.from_options(options, selector:, profile: ModelFlags.profile(options))) }
   end
 
-  desc "up [PATH] [-- CHAT_FLAGS...]", "Create/attach the lain tmux session in PATH (chat window + status HUD)"
+  desc "up [PATH] [-- CHAT_FLAGS...]",
+       "Create/attach the lain tmux session in PATH (editor | chat transcript over an input pane, + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION, desc: "tmux session name"
   method_option :socket, type: :string, desc: "tmux socket (-L); default tmux socket when unset"
   # BOOLEAN, and that is what makes `lain up --nvim PATH` mean what it reads
@@ -1192,8 +1193,8 @@ class LainCLI < Thor
   # all. A valueless boolean cannot swallow anything, `--no-nvim` is Thor's
   # own negation of it, and the explicit socket moved to its own flag.
   method_option :nvim, type: :boolean, default: true,
-                       desc: "Split the chat window into an nvim + chat cockpit (the default); " \
-                             "--no-nvim for a plain chat window"
+                       desc: "Add the nvim pane beside the chat (the default); --no-nvim for chat alone. " \
+                             "The input pane under the chat transcript is there either way"
   method_option :nvim_socket, type: :string, banner: "PATH",
                               desc: "Listen on this nvim socket instead of the per-project one lain derives"
   def up(path = nil, *chat_args)

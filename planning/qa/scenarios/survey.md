@@ -281,7 +281,23 @@ $QA/nv.sh expr "string(get(b:,'lain_thread_anchors','<unset>'))"   # <unset> => 
    question text)` and holds while the first answer is outstanding. A duplicate here is a duplicate
    subagent, a duplicate provider call, real money and two answers in one pane.
 3. **text typed after the answer still sends.**
-4. **the exchange lands in the chat's own journal** and replays with it.
+4. **the exchange lands in the chat's own journal** and replays with it — **and so does the
+   child's ending, since round 18.** A docent is a one-shot spawn, and a one-shot child that
+   fails, is stopped, or is refused a lease now writes a completion `:message` naming its
+   `lifecycle` (`settled`, `stopped` or `failed`) and, when it failed, the error's class. So a
+   pane stuck at `(thinking …)` is diagnosable from the record rather than only from the screen,
+   and a child that never settled retires out of the fleet count instead of pinning it. Check the
+   lineage's two ends:
+
+   ```bash
+   ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+     next unless r["type"]=="message" && r.dig("payload","lifecycle")
+     puts "#{r["payload"]["lifecycle"]} #{r["payload"]["error"]}"}' "$LAIN_QA_JOURNAL"
+   ```
+
+   Every `:spawn` must have a completion beside it. A failed one carries no `result` key at all,
+   which is what keeps it out of every finished-work reader; a `:spawn` with no completion is the
+   finding, and a lease refused **before** the spawn must leave neither.
 5. **the answerer names itself on the record** — the journalled role is what the answerer reports,
    never the `ROLE` constant. Journaling the constant made two genuinely different arms produce
    byte-identical records; an arm that cannot name itself must record as `anonymous_arm`.
@@ -300,7 +316,18 @@ than answering — which `qwen3-coder:30b` did on the second question of a threa
 surfaces disagree: `lain://inbox` renders the question and offers `:LainReply`, the HUD reads
 `fleet 1`, and `:LainReply` itself refuses saying the inbox line is stale. Typing a NEW question into
 the thread still works, so the damage is one orphaned exchange — but the orphan is permanent and
-replays with the conversation. Check for it before reading a stall as a hang:
+replays with the conversation.
+
+**Round 18 narrowed this without closing it, and the difference is what to record.** A docent
+**still parks** — deliberately, because nothing that could answer that park is waiting on the
+docent, unlike a child spawned by an approval judge, which now refuses instead of parking. What
+changed is that the reply surface `:LainReply` needs now lives for the **whole conversation**
+rather than for the dispatched line that opened it, so "the inbox line is stale" should no longer
+be the answer, and a child that gives up leaves the retiring record check 4 names. So: if the
+pane stalls, answer the question from `lain://inbox` and see whether the thread completes. A
+stall that an answer clears is F64 narrowed to a rendering gap; a stall that an answer cannot
+clear, or a `:LainReply` still refusing as stale, is F64 as filed. Check for it before reading a
+stall as a hang:
 
 ```bash
 ruby -rjson -e 'File.foreach(ARGV[0]){|l| r=(JSON.parse(l) rescue next)

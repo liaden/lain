@@ -64,14 +64,15 @@ Without an API key the offline paths still run: dry replay, the sweeps, `lain fr
 ## Usage
 
 `lain` is one Ruby process that owns the loop, and it runs tmux-native. `lain up` creates (or
-reattaches to) a tmux session with a `chat` window and a session-scoped status HUD, and splits that
-window into an `nvim --listen` pane and a `chat` pane pinned to one cwd and one deterministic
-socket, so the editor and the chat that attaches to it can never diverge.
+reattaches to) a tmux session with a `chat` window and a session-scoped status HUD, and lays that
+window out as three panes: an `nvim --listen` pane beside a `chat` transcript, with an **input
+pane** under the transcript. All of them are pinned to one cwd and one deterministic socket, so
+the editor and the chat that attaches to it can never diverge.
 
 ```bash
-lain up                       # the cockpit + editor, in this directory
+lain up                       # the cockpit: editor | transcript over input pane
 lain up ~/dev/other-project   # ...in that one instead
-lain up --no-nvim             # plain chat window, no editor pane
+lain up --no-nvim             # no editor pane; still a transcript over an input pane
 lain                          # just the chat, no tmux
 ```
 
@@ -86,6 +87,8 @@ Typed at `you>`. Each dispatches lib-side, ahead of the skill middleware, with z
 * [/status](docs/commands.md#status): cache warmth, fleet size, inbox count.
 * [/sessions](docs/commands.md#sessions): recorded sessions, newest first.
 * [/model](docs/commands.md#model): show the model in force, or switch the next turn's model.
+* [/mode](docs/commands.md#mode): show or move the mode — scope (`checkout`/`plan`) × approval (`ask`/`auto`), plus layers.
+* [/stop](docs/commands.md#stop): stop the ask in flight and keep the session.
 * [/rewind](docs/commands.md#rewind): move back N turns, or to a recorded digest.
 * [/undo](docs/commands.md#undo): put back the files the last file-changing turn wrote; `/undo skip` drops that turn instead.
 * [/implement-epic](docs/commands.md#implement-epic): work the mounted epic's approved issues to its working branch.
@@ -363,31 +366,49 @@ posture and its measurements are in [`docs/concurrency.md`](docs/concurrency.md)
 
 ### The cockpit
 
-`lain up --nvim` is the full setup. One tmux window, split into an editor pane and a chat pane
-pinned to the same cwd and the same socket, with a status HUD along the bottom.
+`lain up --nvim` is the full setup. One tmux window, **three panes** — an editor pane, a chat
+transcript beside it, and an input pane under the transcript — all pinned to the same cwd and
+the same socket, with a status HUD along the bottom.
 
 **Requires nvim 0.11+.** Below that, lain does not degrade gracefully: the review rail's refusal
 delivery reads `'messagesopt'`, an option that does not exist yet, and a refusal either arrives as
 nvim's own `stack traceback:` or does not arrive at all.
 
 ```
-┌─ nvim ──────────────────┬─ chat ──────────────────┐
+┌─ nvim ──────────────────┬─ chat (transcript) ─────┐
 │ lain://journal          │ you> refactor the Store │
 │  [a3f grep] 12 matches  │                         │
 │  [a3f read] store.rb    │ ● read_file store.rb    │
 │                         │ ● grep "def fetch"      │
-├─ lain://timeline ───────┤ ⚠ bash: rm -rf tmp/     │
-│  user   refactor the... │   approve? [y/N]        │
-│  asst   tool_use ×2     │                         │
-├─ lain://inbox ──────────┤ you> _                  │
-│  2m  which Store impl?  │                         │
-├─ lain://request ────────┤                         │
-│  system: You are...     │                         │
+├─ lain://timeline ───────┤ ! docent asks to run    │
+│  user   refactor the... │   bash(..) -- answer in │
+│  asst   tool_use ×2     │   lain://approval       │
+├─ lain://inbox ──────────┼─ input ─────────────────┤
+│  2m  which Store impl?  │ 🔥 fleet:2 inbox:1      │
+├─ lain://request ────────┤   researcher running 3t │
+│  system: You are...     │     docent running 1t   │
+│                         │ you> _                  │
 └─────────────────────────┴─────────────────────────┘
   🔥 fleet:2 inbox:1                          14:32
 ```
 
-**The HUD** is the `🔥 fleet:2 inbox:1` segment. 🔥 means the provider's cached prefix was inside
+**The input pane is where you type**, and it is a separate pane because the chat pane is a
+scrolling transcript: a prompt drawn into it scrolls away, and a HUD drawn into it cannot be
+refreshed in place. So `lain up` runs `lain input` in a pane beneath the transcript, which draws
+the HUD above the prompt — with the **top two rows of the fleet tree** under it, and a `+N more`
+when there are others — refreshes them without a keypress, and feeds each line back to the chat
+over a Unix socket. Two rows is `lain up`'s own arithmetic: six rows in the pane, and the HUD,
+the rows, the `+N more` and the prompt all have to live in them, with a countdown still needing
+somewhere to draw. [`lain://status`](#the-cockpit) is where the whole tree is read. It is seated at a **floor** of 6 rows rather than a fixed height: grow it and
+it stays grown, and only a layout change that drove it under the floor puts it back. Every
+gesture works there — `[y/N]`, `human>`, `↑`/`↓` history, `C-g`, `C-x`, Ctrl-C's countdown and
+its `s` key — and the HUD stays live while an ask runs and while you type.
+
+`lain input` is an ordinary command, so a pane that dies can be restarted by hand:
+`lain input --name <tmux session>` derives the same socket `lain up` did.
+
+**The HUD** is the `🔥 fleet:2 inbox:1` segment, drawn both in the input pane and along the
+bottom of the window. 🔥 means the provider's cached prefix was inside
 its sliding TTL **at the last publish** and ❄ means it was not, `fleet` is how many subagents are running,
 and `inbox` is how many questions are waiting on you. It reads the state file `Lain::StatusFeed`
 publishes — under `$XDG_STATE_HOME/lain/status/`, keyed by project rather than written into your
@@ -399,7 +420,9 @@ never an error.
 **The marker is as fresh as the last publish, and a publish happens on an event.** Sit idle past
 the provider's cache window and the HUD still shows the marker your last turn earned — which is
 wrong in the optimistic direction, 🔥 where the truth is ❄. The prompt's own ●/○ is re-derived at
-every turn boundary and no more often, so neither surface updates during a long idle. `elapsed`,
+every turn boundary and no more often. The input pane redraws its header without a keypress,
+which is a redraw and not a new reading: the figure behind it still only moves on an event, so
+no surface updates during a long idle. `elapsed`,
 `idle` and `since_compaction` in the state file have always had the same property. Treat the
 marker as "how the cache stood when lain last did something", not as a live reading.
 
@@ -415,7 +438,21 @@ buffers exist:
 | `lain://request` | the exact prompt about to be sent | **yes** |
 | `lain://workspace` | the workspace projection, on demand | no |
 | `lain://diff` | pending edits, in nvim's own diff filetype | no |
-| `lain://status` | the mounted epic's issue graph, as a list and as mermaid, over the live fleet | no |
+| `lain://status` | the mounted epic's issue graph, as a list and as mermaid, over the live fleet — drawn as a **tree**, one row per child, nested under the parent it was spawned from | no |
+
+**The fleet is a tree in both places.** One row per child — its role, whether it is running,
+how many turns it has committed, and the first line of the task it was given — indented under the
+parent it was spawned from, so a grandchild reads as one. Both surfaces draw from the same row
+object, so they cannot come to disagree, and **both clamp** a drawn row to 80 terminal columns —
+measured by display width, not by character count — so a long task line cannot wrap the pane out
+of a row. The **one** deliberate difference is the age: `lain://status` shows it and the input
+pane's header does not, because an age that ticks would make the header differ from itself once
+a second and cost the pane a redraw a second.
+
+A task line is text a model wrote, so it is scrubbed before any terminal sees it: newlines and
+tabs become spaces, then whole ANSI escape sequences are removed, then the control and format
+characters. A task of `clean\e[1A\e[2KPWNED` was measured putting its own words on the HUD line
+before that landed.
 
 `:LainStart` lays them out: journal down the left, timeline over inbox over request on the right.
 
@@ -426,7 +463,8 @@ That is the fastest way to test whether a context tactic was the thing that matt
 **Keys.** Everything below is bound by the injected runtime, so it works with the plugin
 uninstalled. `:help lain-runtime-commands` is the full contract; this is the index.
 
-At `you>` in the chat pane:
+At `you>` — in the input pane under the cockpit, or in the terminal itself for a plain `lain
+chat`:
 
 | Key | Does |
 |---|---|
@@ -435,7 +473,7 @@ At `you>` in the chat pane:
 | `C-x` | completion menu for the token under the cursor |
 | `\` at end of line | continue onto another line instead of submitting. Emacs and vi *insert* mode only — vi command mode submits on `<CR>` regardless, a Reline limitation |
 | `C-c` | open the grace window; a second `C-c` interrupts now |
-| `c` / `w` / `r` | inside that window: cancel, extend, wait for responses |
+| `c` / `w` / `r` / `s` | inside that window: cancel, extend, wait for responses, or **stop the running ask** and keep the session. An idle `you>` countdown offers only `c` and `w`, since there is no ask to stop |
 | `C-d` | EOF — end the session |
 
 `C-g` and `C-x` are the only two control keys free across all three keymaps lain binds (emacs,

@@ -394,15 +394,23 @@ regression introduced here.
 
 **The commit→journal shield.** The torn-commit guarantee above has a second half. The Timeline
 commit is a pure reference swap with no yield point, so it can never tear internally — but the
-journal write that immediately follows it (`Accounting#observe` pushing a `Telemetry::TurnUsage`)
-*is* IO-shaped, and a stop parked inside `journal.<<` would leave a committed assistant turn
-with no usage record. The reverse tear is structurally impossible (the journal writes strictly
-after the commit), but this direction is a real loss: bench cost accounting reads the Journal,
-never `turn.meta`, so an interrupted turn's spend would silently price as free in the experiment
-record. The fix is `Async::Task#defer_stop` around the pair (`Agent#commit_and_account`): a stop
-requested inside the region is held until the region exits, so commit and journal write land as
-one atom, and the stop still lands — at the region's exit, before the loop can take another
-turn. Probe-verified precedence note: a stop deferred across the region *preempts* an exception
+journal writes that immediately follow it *are* IO-shaped, and a stop parked inside `journal.<<`
+would leave a committed assistant turn with nothing written about it. The reverse tear is
+structurally impossible (the journal writes strictly after the commit), but this direction is a
+real loss: bench cost accounting reads the Journal, never `turn.meta`, so an interrupted turn's
+spend would silently price as free in the experiment record. The fix is `Async::Task#defer_stop`
+around the whole region (`Agent#commit_and_account`): a stop requested inside it is held until
+the region exits, so commit and journal writes land as one atom, and the stop still lands — at
+the region's exit, before the loop can take another turn.
+
+**The region covers the `turn` record too, and the order inside it is load-bearing.**
+`Agent#account` settles the turn through the turn-phase middleware *before* it observes the
+usage, so the session file gets the `tool_use` turn first and the `TurnUsage` second — and
+before any tool in the round has started. Everything the round goes on to write cites that turn
+(the usage record, a memory root, a spawn, a child's question), so a process killed between two
+of those writes must never leave a citation of a turn the file lacks. That ordering is what
+makes a session killed mid-tool resumable, and `Middleware.settles!` refuses at construction any
+turn-phase stack whose members cannot be settled, so the guarantee cannot be lost by wiring. Probe-verified precedence note: a stop deferred across the region *preempts* an exception
 raised inside it, so a simultaneous interrupt and token-ceiling bust settles as the stop
 (`Async::Stop` replaces `Budget::Exceeded` at the region boundary). Both are the harness
 deciding to halt, so either is a legal outcome; the interrupt being the more imperative of the

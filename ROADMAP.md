@@ -626,6 +626,12 @@ on tmux-native placement, with the desktop-config findings kept as a historical 
   attaches to it cannot diverge. Lain prefers **attaching to the already-running editor** and
   spawns its own only as fallback (`plugin/nvim` owns the socket convention). `--nvim` without
   an `nvim` binary degrades to the plain chat window with a named warning.
+- ✅ **The chat pane is a transcript, and the human types in a pane of its own** (item 48). The
+  window is three panes: editor, chat transcript, and a `lain input` pane split beneath the
+  transcript on its own Unix socket, `--no-nvim` dropping only the editor. That is what the
+  "segregate the prompting area" bullet below asked for, taken one step further: a scrolling
+  transcript cannot hold a prompt or refresh a HUD in place, so it holds neither. The pane is
+  seated at a **floor** height rather than a fixed one, on a `window-layout-changed` hook.
 - ✅ **Subagents get their own windows** — tmux-native, programmatic (`split-window`/`new-window`
   ids lain can track and kill), survivable across detach. `chat --windows` opens a read-only
   `lain watch` viewer window per spawn; `/fork` opens a window on the forked H-lineage. Per-pane
@@ -638,16 +644,24 @@ on tmux-native placement, with the desktop-config findings kept as a historical 
   on in the dotfiles), nvim `FocusLost`, and time-at-prompt are the sensors; the interface layer
   reports idleness, the `Compact` scheduling policy decides `[exp]`.
 - **Segregate the prompting area from the Ruby REPL** (irb/pry/`rdbg`) — chat input and the live-Ruby
-  console are distinct panes, never one interleaved stream.
+  console are distinct panes, never one interleaved stream. The chat-input half landed with the
+  input pane above; the Ruby console still shares the chat pane through `/ruby`.
 - **Crash-resume ↔ tmux-resurrect**: design `lain chat --resume` idempotent-by-default so
   `@resurrect-processes 'lain'` revives the bench after a reboot (TODO 3) `[exp]`.
 
 **Neovim buffer surface** `[exp]` (plan Interface §; TODO 41–42)
-- `lain://timeline` (the linear first-parent chain from one head — **not** the causal DAG; no
-  surface projects `spawn`/`child_turn` parent-child edges today, deferred not scheduled — see
-  `planning/qa/README.md`'s known-gaps entry) · `lain://request` (**editable** — `:LainResend`) ·
-  `lain://workspace` · `lain://diff`. The **cache-annotated full-prompt transparency view**
-  (prompt-slots arm) renders here.
+- `lain://timeline` (the linear first-parent chain from one head — **not** the causal DAG) ·
+  `lain://request` (**editable** — `:LainResend`) · `lain://workspace` · `lain://diff`. The
+  **cache-annotated full-prompt transparency view** (prompt-slots arm) renders here.
+- ✅ **The causal fan has a surface** (item 48, 2026-09-20). `lain://status` draws the live fleet
+  as a nested tree, each child under the parent it was spawned from, and the input pane's header
+  carries the top of it; that closes `planning/qa/README.md`'s long-standing known gap, which
+  said no surface projected `spawn`/`child_turn` parent-child edges. `lain://timeline` is
+  unchanged and still first-parent only, deliberately: the fan is a fleet view, not a chain
+  view. The edge is carried by `Telemetry::ChildProgress` records **beside** each `:spawn`
+  rather than in its body, because a spawn digest is an address a bench arm joins on and `lain
+  watch` follows, and re-addressing every spawn in a project to feed a status line is not a
+  trade this project takes.
 - Markdown-rendered planning docs with inline annotation → the diff-driven plan-iteration loop
   (`planning/crdt-exploration.md` for the co-editing substrate).
 - **Mermaid renders inline via `snacks.image`, pending a terminal switch.** snacks.nvim (installed)
@@ -706,20 +720,35 @@ on tmux-native placement, with the desktop-config findings kept as a historical 
   remote surface must not subclass `Approval::QueueSurface`** — that class exists so
   `AutoSurface`/`SecretSurface` *partition* the parked set (`auto_surface.rb:58` /
   `secret_surface.rb:107`, with a spec asserting the exclusive-or); a human surface races instead.
-- **It is `auto_approve`'s missing half, and the posture `auto` is a different thing entirely.**
+- **It is `auto_approve`'s missing half, and approval `auto` is a different thing entirely.**
   `AutoSurface` settles only on confidence; a `defer` "leaves the pending for the human surface or
   the fail-closed timeout" — and away from the desk there *is* no human surface, so every defer is
-  300s of wall clock (`queue.rb:40`) followed by a denial. The run pays the latency and gets the
-  refusal, on exactly the calls where judgement was worth having. Posture `auto` (`approve_all`,
-  `posture.rb:171`) parks nothing at all and the app is inert under it, so the away-from-desk
-  combination is `accept_edits` + `+auto_approve` + a remote layer — and that layer answers
-  `alters_outcome?` **true**, so `Layer::Declaration` requires it to carry a lighter (`layer.rb:58`).
-- **Two prerequisites fall out, both worth landing on their own.** `AutoSurface#settle` is a no-op on
-  `:defer` (`auto_surface.rb:64`), so an abstention is journaled nowhere: the bench cannot count what
-  the oracle punted on, and a remote surface has no honest "the oracle has had its say" trigger. And
-  the `notify` mode layer is declared `alters_outcome: false` with **no consumer anywhere in `lib/` or
-  `exe/`** (`layer.rb:86`) while dunstify's Approve button is the third *deciding* surface — the
-  silently-active policy `Layer::Declaration` exists to prevent, sitting inert in the tree.
+  `Approval::Queue::DEFAULT_TIMEOUT` seconds of wall clock followed by a denial. The run pays the
+  latency and gets the refusal, on exactly the calls where judgement was worth having. Approval
+  `auto` is **no longer approve-all** (item 48): it is the same ladder as `ask` — the triage rung,
+  then the rule chain — with `Escalation::Remainder` at the bottom instead of the surfaces, so a
+  triage deny or a rule deny still refuses, and a command barred by a withheld automatic output
+  gets a *final* deny naming `/mode ask` as the way out. What it still does is **park nothing**,
+  so a phone is inert under it exactly as it was under the old posture. The away-from-desk
+  combination is therefore `ask` + `+auto_approve` + a remote layer — and that layer answers
+  `alters_outcome?` **true**, so `Layer::Declaration` requires it to carry a lighter (`layer.rb`).
+- **One prerequisite still falls out, and it is worth landing on its own.** `AutoSurface#settle`
+  is a no-op on `:defer` (`auto_surface.rb:64`), so an abstention is journaled nowhere: the bench
+  cannot count what the oracle punted on, and a remote surface has no honest "the oracle has had
+  its say" trigger.
+- **The second one is discharged, and the entry is corrected rather than deleted.** This bullet
+  used to say the `notify` mode layer was declared `alters_outcome: false` with *no consumer
+  anywhere in `lib/` or `exe/`* — a silently-active policy sitting inert in the tree — beside a
+  dunstify Approve button that was a third *deciding* surface. Neither half holds. The layer
+  (`layer.rb:88`) has a real consumer: `Frontend::TTY::Bell`, built with
+  `raised: -> { layers.call.include?(:notify) }` and wired in production from `wiring.rb`, so
+  while the layer is up an arrival rings the terminal bell and hands its note to tmux. That is
+  the whole of what it does, and `alters_outcome: false` is therefore the right declaration
+  rather than an unenforced one. The desktop notifier it was measured against no longer exists —
+  `Lain::Notify`, `--desktop` and `LAIN_DESKTOP` were deleted in `c40ab419` — so there is no
+  out-of-band deciding surface for a remote one to sit beside. Note for anyone re-checking: a
+  grep for the *word* `notify` in the mode files finds nothing, because the consumer looks the
+  layer up by symbol inside a lambda.
 - **Scope is a frontend, not an approval remote** (ruled 2026-08-26). Visibility, history and remote
   chat are wanted too, and the two want different wires: an approval surface is request/response, a
   frontend is a durable subscription with backpressure and resume. Three tiers — **watch** (one more
@@ -772,7 +801,11 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
   optional enrichment, only visible when the editor pane is focused. Making cache economics
   *visible at the moment of typing* is the point. **✅ Landed 2026-07-17**: `StatusFeed` + tee
   (`86a2be0`), TTY prompt warmth (`66fd148`), `lain up` tmux HUD (`9b9ecd2`) — the nvim lualine
-  enrichment remains `[exp]`.
+  enrichment remains `[exp]`. **Amended by item 48:** "reline can't refresh mid-wait" was a
+  property of drawing the HUD into the pane that also reads the line. The input pane draws it
+  above its own prompt and recomposes it on a cadence, so the cockpit's HUD is live while an ask
+  runs and while you type. The reading behind it still only moves on an event, so the
+  staleness caveat below is unchanged — what changed is the redraw, not the measurement.
 - **Time-travel as editor motion**: in `lain://timeline`, cursor motion over a turn re-renders
   `lain://request`/`lain://diff` at that digest — scrubbing the session; `:LainFork` at the cursor
   opens a speculative branch. The human UI for `fork_and_try`/`rewind_to`/`diverge_at`; only a
@@ -1811,8 +1844,11 @@ XDG path relative, which put machine state back inside the user's repository)
    - **Coordinating `/undo` across two chats on one project.** Chat A can write between chat B's
      prime and settle, so B's `/undo` may delete A's file. Documented limit today; the undo reply
      lists every deletion.
-   - **`Run#refused_before_merging?` lists refusal classes by hand**, so a refusal class added
-     later would wrongly advise `--resume`.
+   - ~~**`Run#refused_before_merging?` lists refusal classes by hand**, so a refusal class added
+     later would wrongly advise `--resume`.~~ **Closed by item 48.** A refusal declares itself:
+     `Lain::RefusedBeforeActing` is a marker module the refusal classes include, and
+     `refused_before_merging?` is an `is_a?` against it, so a new refusal class carries its own
+     answer rather than waiting to be added to a list.
    - **An unjournaled merge has no adoption path.** A merge whose handback record never reached
      the journal refuses both `land` and `--resume`, with no command to adopt it — it needs a way
      out, e.g. `lain epic land --adopt`.
@@ -1843,7 +1879,7 @@ XDG path relative, which put machine state back inside the user's repository)
    pre-images (item 46's follow-up). `/critique` over a held review goes Docent-style over the
    changeset's objects, verified by a manual `/critique` of lain on itself. 29 cards, 6 waves.
 
-48. **Planned (2026-09-15, panel-reviewed)** — `planning/specs/chunk-qa-round18-fix-at-the-owner.md`:
+48. **✅ Landed 2026-09-20 — planned (2026-09-15, panel-reviewed)** — `planning/specs/chunk-qa-round18-fix-at-the-owner.md`:
    the QA round-18 discharge (`planning/qa-findings-round18-2026-09-15.md`, with the research pass in
    `planning/qa-round18-research/`), taken as one chunk that fixes each finding at its owner and deletes
    what the owner makes redundant. There are no production users, so nothing is aliased.
@@ -1857,7 +1893,8 @@ XDG path relative, which put machine state back inside the user's repository)
      - Readings are tagged with their head.
      - Held cuts re-collapse, and a handoff state document is the fallback when no cut can make room.
    - **The human.**
-     - One input rail, with a tmux input pane beside the chat transcript.
+     - One input rail, with a tmux input pane **under** the chat transcript — the cockpit is three
+       panes now, and a `--no-nvim` window is still a transcript over an input pane.
      - Every approval surface is conversation-scoped.
      - `/stop` stops the running ask, and the fleet shows as a tree in `lain://status`.
    - **Authority.**
@@ -1873,8 +1910,9 @@ XDG path relative, which put machine state back inside the user's repository)
    - **Size:** 48 cards in 8 waves.
    - **Panel verdict: REQUEST-CHANGES, with every blocker applied** (socket naming, the profile's real
      write path, the docent/judge split, the project-memory view, and waves recomputed over spec files).
-   - **Before executing:** ratify the planner's choices listed in the plan's Intent, and commit the
-     round-18 QA documents.
+   - **✅ Landed 2026-09-20.** All 48 cards. It discharges round 18 and closes item 46's
+     refusal-class follow-up. Round 19 is scheduled as a **full** round over every scenario, since
+     this chunk moved the input surface, the modes and memory together.
 
 ## Map of the documents
 

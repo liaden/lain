@@ -107,6 +107,31 @@ subagents with different prompts in one message and confirm two distinct spawn d
 of an IDENTICAL prompt from one head still share one address, by decision** (the discharging chunk's
 Open decision 5) — do not file that. *(Prediction, not yet driven.)*
 
+**A child that fails, is stopped, or is refused a lease leaves a record that retires it**, new in
+round 18. Before it, only a child that finished wrote a completion, so a crashed one left a
+`:spawn` with nothing beside it: the fleet count never came down and every lineage reader waited
+forever. Now the completion `:message` carries a `lifecycle` of `settled`, `stopped` or `failed`,
+and a failed one also names the error's **class** — and carries **no** `result` key at all, which
+is what keeps it out of every finished-work reader:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  next unless r["type"]=="message" && r.dig("payload","lifecycle")
+  puts "#{r["payload"]["lifecycle"]}\t#{r["payload"]["error"]}"}' "$JOURNAL"
+```
+
+Three things to drive:
+
+1. **Every `:spawn` has a completion.** Count them. A spawn with none is the regression.
+2. **A killed child retires.** Ask for a spawn, `/stop` the ask while it runs, and read
+   `lifecycle`. The fleet count in the HUD must come back down.
+3. **A lease refused before the spawn leaves neither record.** The lease is taken *before* the
+   `:spawn` is written, so a refusal there must not leave a spawn with no child — that ordering
+   is the fix, and a lone `:spawn` from a refused lease is the old bug.
+
+A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
+record was lost, rather than dropped silently.
+
 Then the depth cap: ask for a subagent that spawns a subagent that spawns a subagent. The refusal
 **emits no event and touches no Store** — so check both halves. A depth refusal that journals a
 spawn has created a child that does not exist, and every later fold counts it. **Unreachable from
@@ -227,9 +252,26 @@ Then the backend's own behaviour:
   at exit 0, and the `--exec` help now says so (*driven 2026-09-14*: "`docker` takes one argv, so a
   pipeline it cannot reconstruct falls back to the model's own string, run as `sh -c` INSIDE the
   container").
-- **The timeout kills the client.** Drive `sleep 600` against the deadline and confirm the named
-  `Timeout` rather than a hang. This is the same shape as `rust-cli.md`'s long-running-command
-  section, one backend over.
+- **The timeout kills the client AND ends its container.** Drive `sleep 600` against the deadline
+  and confirm the named `Timeout` rather than a hang. This is the same shape as `rust-cli.md`'s
+  long-running-command section, one backend over. **Round 18 added the second half**, which is
+  the one to drive now: every `docker run` carries `--init` (so PID 1 relays signals even where
+  the image's entrypoint will not) and a `--name` of the shape `lain-<pid>-<entropy>-<n>`, and a
+  timeout runs `docker kill` then `docker rm -f` against that name under a **5-second cleanup
+  budget of its own**, separate from the command's timeout, so a black-holed daemon cannot turn a
+  bounded timeout into an unbounded hang.
+
+  ```bash
+  docker ps -a --format '{{.Names}}' | grep '^lain-' || echo "clean"
+  ```
+
+  Take it before and after, and use a process that **ignores TERM** (`trap '' TERM; sleep 600`)
+  so the check is about the kill rather than about the process being polite. Nothing `lain-*` may
+  be left behind. If cleanup could not *confirm* the stop, the `Timeout`'s message says so —
+  `container <name> may still be running -- cleanup could not confirm it stopped` — and that
+  sentence beside an actually-clean `docker ps -a` is correct, not a finding: it reports the
+  confirmation failing, not the container surviving. A leftover container **with** no such
+  sentence is the finding.
 - **A stopped daemon surfaces as a tool error**, named in the class doc rather than pretended away.
   Stop the daemon mid-session and confirm the model gets a legible tool error and the session
   survives. A session that dies because docker did is worse than the error. **On this box `docker`

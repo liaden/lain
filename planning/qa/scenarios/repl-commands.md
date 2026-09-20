@@ -20,12 +20,12 @@ all. That makes this the cheapest scenario in the set and the one with the highe
 **Needs:** `bench.md` up for §7–§8. tmux for `/btw` and `/fork` (both open panes). nvim not
 required.
 
-**Read `method.md`'s standing rule about `/mode auto` first.** It says never to raise the posture to
-`auto` during a round — correctly, because an approve-all gate answers every question the rest of
-the method exists to ask. §6 is one of its sanctioned exceptions (derive the current list with the
-grep `method.md` gives), it is scoped to a throwaway tree, and it exists to check that `auto` does
-what it claims **and no more**. Do not carry the posture into another section: §6 ends with
-`/mode !`.
+**Read `method.md`'s standing rule about `/mode auto` first.** It says never to raise the approval
+level to `auto` during a round — correctly, because a gate that asks nobody answers every question
+the rest of the method exists to ask. §6 is one of its sanctioned exceptions (derive the current
+list with the grep `method.md` gives), it is scoped to a throwaway tree, and it exists to check
+that `auto` does what it claims **and no more**. Do not carry the approval level into another
+section: §6 ends with `/mode !`.
 
 ---
 
@@ -77,15 +77,41 @@ drive it in both states, because it exists to answer a question honestly rather 
 Before any turn: occupancy reads "no turn yet in this run" and review reads "none held by /review or
 /survey". After a turn: occupancy is a percentage, the token rows are populated, and the cache-hit
 row reads a ratio or "nothing billed on the way in yet" if nothing was. **Check the `unreported`
-row names all three gaps by word, every time** — which provider is answering, how large the window
-is and whether that size was measured or guessed, and a review the agent opened for itself via
-`request_review` (the outbox `/introspect` reads holds only what `/review` and `/survey` put there).
+row names all three gaps by word, every time**, each on its own indented row beneath it:
+
+- `provider` — *which provider is answering, and where it is running*
+- `window` — *how large this run's context window is, and whether that size was measured or assumed*
+- `reviews` — *a review the agent opened for itself -- only rounds from /review and /survey show above*
+
+The `window` gap is the one to read twice now that an over-window 400 can **vouch** for a real
+size (`session-and-window.md`): `/introspect` still cannot see which of the two it got, so it must
+keep saying so rather than quietly reporting a number. The `provider` gap likewise survives the
+run profile — the profile is recorded in the session **header**, which this command does not read.
+Read the recorded backend out of the header instead:
+
+```bash
+head -1 "$LAIN_QA_JOURNAL" | ruby -rjson -e 'r=JSON.parse(STDIN.read)
+  puts r.values_at("provider","model","api_base","num_ctx","num_batch").inspect'
+```
+
 A row that goes quiet instead of naming its gap, or a number that looks measured but was guessed, is
 the failure this command exists to catch — read `cli/command/introspect.rb`'s class doc for the
-fabrication this was written against.
+fabrication this was written against. The `scope` row is the same discipline applied to the token
+totals: this run only, every model it called.
 
-`/mode` reports the posture and its active layers. The postures, most restrictive first, are
-`plan`, `manual`, `accept_edits`, `auto`; the layers are `auto_approve`, `goal`, `notify`, `vi`.
+**A mode is scope × approval, since round 18.** `/mode` reports the scope, the approval level and
+the active layers. Scope is `checkout` or `plan`; approval is `ask` or `auto`; the layers are
+`auto_approve`, `goal`, `notify`, `vi`. The old posture ladder is gone, and `manual` and
+`accept_edits` are refused **by name** rather than as typos:
+
+| typed | answered |
+|---|---|
+| `/mode manual` | `error: manual is retired: approval is ask or auto, and ask gates everything manual gated` |
+| `/mode accept_edits` | `error: accept_edits is retired: it is ask now` |
+
+Anything below that quotes an `accept_edits: …` answer is a **record of a 2026-09-14 drive**, kept
+because the finding it discharges is worth reading; the same drive today answers
+`checkout ask: …`.
 
 **Round 17 found the layers were lighters and nothing else** (F104): `+auto_approve` lit `AA` and
 approved nothing, `/goal` never raised `goal`, `notify` named a deleted notifier, `vi` never reached
@@ -127,56 +153,72 @@ with no approver behind it.
   notify (BELL)`, and `/mode -notify` back. `cockpit-surfaces.md` §5 drives the bell itself —
   including that a `--no-nvim` chat's inline `[y/N]` is not an arrival line and does not ring.
 
-`/help` describes the command, not the layers: `/mode [posture] [+layer] [-layer] [!] -- show the
-mode, switch the posture, toggle a layer, or reset to plan` (driven 2026-09-14).
+`/help` describes the command, not the values: `/mode [scope] [approval] [+layer] [-layer] [!] --
+show the mode, switch its scope or approval, toggle a layer, or reset`.
 
 Drive the full grammar:
 
 ```
-you> /mode +notify        enable one layer, posture unchanged
-you> /mode -notify        disable it
-you> /mode +nosuchlayer   must name the four valid layers
-you> /mode plan
-you> /mode nosuchposture  must name the four postures, most restrictive first
-you> /mode !              reset -- most restrictive posture, NO layers
+you> /mode +notify         enable one layer, both axes unchanged
+you> /mode -notify         disable it
+you> /mode +nosuchlayer    must name the four valid layers
+you> /mode plan            move the scope
+you> /mode checkout        move it back
+you> /mode plan ask        both axes in one command, one record
+you> /mode plan checkout   refuses whole, naming the scope axis twice
+you> /mode nosuchmode      must name the values of one axis
+you> /mode manual          refuses by name, saying where manual went
+you> /mode !               reset -- ask approval, NO layers, then plan scope
 ```
+
+**Two tokens naming the same axis refuse whole and name both.** This is the fix for round 18's
+P46, where `/mode` took the last of contradictory tokens and `/mode accept_edits auto` landed
+silently on the approve-all rung. `method.md` still bans `auto` in a grammar probe; drive the
+contradiction with `/mode plan checkout` instead, which is safe in every direction.
 
 **`/mode !` is a reset, not a step**, and the design note says why it leads: like `<Esc><Esc>` in
-vim, its promise is that afterwards you know where you are. Set `accept_edits` plus two layers, then
-`!`, then `/mode` — the report must show `plan` with **no** layers. `accept_edits` is not the top
-rung, but it is two rungs above the floor, so the same reset still proves that `/mode !` drops every
-layer **and** walks the posture all the way to `plan` in one move, not merely off whatever rung it
-was on. (`method.md` sanctions raising the posture to `auto` only in the sections its grep derives,
-and §1 is not one — see §6 for that drive.) A reset that keeps a layer, or that walks the posture down one
-rung at a time, is the finding.
+vim, its promise is that afterwards you know where you are and that nothing is being decided
+behind you. It lands **`ask` approval and no layers first**, because dropping `auto` or a
+surviving `+auto_approve` is the part that cannot wait, and then enters `plan`, the most confined
+scope there is. Raise two layers, then `!`, then `/mode`: the report must show `plan` scope, `ask`
+approval and **no** layers. A reset that keeps a layer is the finding.
 
-**And check the switch writes ONE record, not an intermediate ladder.** A `/mode !` from
-`accept_edits` that journals `manual` on the way down to `plan` has written a posture the session was
-never really in, and every later fold reads it as real.
+**A reset in a repository where no spike can be cut still lands everything else**, in the
+checkout, and says why. And a reset **mid-turn** lands the approval and the layers immediately
+while the scope move waits: the answer says the move waits until the turn in flight ends. A plain
+`/mode checkout` or `/mode plan` mid-turn is refused outright — a running tool call may still be
+writing where the session's writes would stop landing.
 
-**The prompt itself shows the posture, and it must follow `/mode` at the very next prompt.** This is
-the half that had no check: `/mode` reporting correctly while the prompt shows a stale posture is two
+**And check the switch writes ONE record, not an intermediate ladder.** Tokens fold over one mode
+and switch once, so `/mode plan ask +notify` is a single `mode_switch` naming where the session
+started and where it ended. Two records for one command means a mode the session was never really
+in reached the file, and every later fold reads it as real. A `/mode` naming the mode already in
+force writes **nothing at all** — journalling a no-op switch is the other half of the same defect.
+
+**The prompt itself shows the mode, and it must follow `/mode` at the very next prompt.** This is
+the half that had no check: `/mode` reporting correctly while the prompt shows a stale mode is two
 surfaces disagreeing about the same state, which is the class of defect this whole scenario exists
-for. Drive `/mode accept_edits`, then look at the prompt *before* typing anything else, then
-`/mode !` and look again. The wiring hands the prompt composer the **live** mode switch rather than a
-snapshotted posture precisely so this works; a prompt frozen at the posture the session started in
-is the regression, and it is invisible to `/mode`.
+for. Drive `/mode plan`, then look at the prompt *before* typing anything else, then `/mode !` and
+look again. In a cockpit that prompt is in the **input pane**. The wiring hands the prompt composer
+the **live** mode switch rather than a snapshot precisely so this works.
 
-**Each switch record names the toolset the flip resolved** — `toolset_digest` plus `tool_names`, read
-*before* the flip applies, so the record describes the set the incoming posture declared and not the
-outgoing one's. Two checks on the journal:
+**`checkout` and `ask` both carry an empty lighter**, so the default mode's prompt is
+byte-identical to one with no mode support at all. Only `plan` (`PLAN`), `auto` (`AUTO`) and the
+layers show. That is deliberate, not a missing segment.
+
+**The record's shape.** A `mode_switch` names both axes on both sides plus both layer sets:
 
 ```bash
-ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="mode_switch";
-  puts "#{r["from"]}->#{r["to"]} #{r["toolset_digest"]} (#{Array(r["tool_names"]).size} tools)"}' "$JOURNAL"
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="mode_switch"
+  puts "#{r["from_scope"]}/#{r["from_approval"]}#{r["from_layers"]} -> " \
+       "#{r["to_scope"]}/#{r["to_approval"]}#{r["to_layers"]} (#{r["surface"]})"}' "$JOURNAL"
 ```
 
-Every `mode_switch` line must carry a non-null `toolset_digest` — it is a required attribute, so a
-null means some caller journalled without one and the validation was bypassed. And the digest must
-**change across a posture flip that changes the tools**: `plan` and `auto` resolving to the same
-digest means the record is reading a live slot rather than the resolution, which would file each
-flip under the previous posture's tools. Cross-check one digest against the session header's
-toolset digest to confirm they are comparable values and not different shapes.
+It names **no toolset**, and that is the point rather than an omission: a mode never changes what
+the model is shown, so the session header's declared set stands for the whole run and a flip
+cannot move the tool block a prompt cache keys on. A `toolset_digest` on this record would be a
+regression toward the posture model. Check instead that the header's toolset digest is unchanged
+across a session that flipped the scope.
 
 ## 2 — `/pin` and `/unpin`
 
@@ -198,8 +240,13 @@ you> /unpin <never pinned> should refuse, not silently succeed
 ```
 
 *Driven 2026-09-14:* `/mode +nosuchlayer` → `error: unknown mode layer "nosuchlayer", expected one
-of [:auto_approve, :goal, :notify, :vi]`; `/mode nosuchposture` → `error: unknown posture
-"nosuchposture", expected one of [:plan, :manual, :accept_edits, :auto]`.
+of [:auto_approve, :goal, :notify, :vi]`. The bare-token refusal was rewritten in round 18 and now
+names the whole grammar rather than one roster: `/mode nosuchmode` → `error: unknown /mode token
+"nosuchmode" -- /mode takes ask, auto, checkout, plan, !, +layer and -layer (layers: auto_approve,
+goal, notify, vi)`. The two retired words get their own sentence and that same grammar line after
+it. **A typo in the third token abandons the first two**: the fold is guarded whole, nothing is
+written, and the mode in force is still the one on the prompt — check that after
+`/mode plan +notify nosuchmode`.
 
 **Every refusal on the digest path says the grammar out loud.** That is deliberate and it is the
 thing to check: a refusal that says only "no turn matching …" leaves a human guessing whether they
@@ -334,29 +381,36 @@ Confirm the two halves of that sentence are both true: the files it would have r
 **still on disk**, and the next `/undo` reaches the turn *before* the skipped one. A `skip` that
 restores anything, or that leaves the log pointing at the same turn, defeats the whole escape.
 
-**The write-set scope can put a turn back now, and round 17 found it could not.** Under `manual` or
-`plan` (the write-set scope) nothing recorded a path's state before a turn first wrote it, so
+**The write-set scope can put a turn back now, and round 17 found it could not.** Under the
+write-set snapshot scope nothing recorded a path's state before a turn first wrote it, so
 **every** created file and every first overwrite of a tracked file refused as `unrecorded` — worded
-then as "first written in that turn", which was false for a committed file — and after a posture
+then as "first written in that turn", which was false for a committed file — and after a mode
 change the refusal blamed paths the turn never touched (F107). Since 2026-09-14 `write_file` and
 `edit_file` record a pre-image (absent, or the bytes) the first time a turn writes a path, and
-`/undo` reads it. Drive, in a `manual` session *(predictions, not yet driven)*:
+`/undo` reads it. The four checks below are *(predictions, not yet driven)*, and since round 18
+the write-set scope is a **fallback** rather than something a mode selects, so reaching them means
+degrading the shadow store deliberately rather than typing a `/mode`:
 
 - a turn that **created** `x.txt` → `/undo` deletes it and the reply names it as deleted;
 - a turn that overwrote a **committed** `keep.txt` → `/undo` restores its committed bytes;
-- `accept_edits` turns writing `c.txt`, then one `manual` turn writing only `e.txt` → `/undo` names
+- shadow-git turns writing `c.txt`, then one write-set turn writing only `e.txt` → `/undo` names
   `e.txt` and **no other path**;
-- the shadow-git (`accept_edits`) undo is unchanged.
+- the shadow-git undo is unchanged.
 
 `unrecorded` is now left for a path a turn wrote by a route the tools did not see first — a `bash`
 redirection is the one to try.
 
+**Round 18 cut the last link between the mode and the snapshot scope.** Every mode now writes
+under **shadow-git**, and the write-set scope is reached only as the slot's own fallback when the
+shadow store fails. So a round cannot switch scopes by typing a mode, and the caveat above is a
+report of a degraded shadow store rather than of a posture. Read it off the reply; do not infer a
+scope from `/mode`.
+
 **One scope caveat to read in the output, not in the code.** A turn recorded under the **write-set**
 scope appends `Only files lain's own tools wrote were restored: that turn ran under the write-set
-scope, which records nothing a shell did.` Drive one turn in each posture — the snapshot scope
-follows the posture — and confirm the caveat appears on the write-set one and **not** on the
-shadow-git one. A caveat printed unconditionally is as bad as one never printed: it teaches a human
-to distrust a complete restore.
+scope, which records nothing a shell did.` Confirm the caveat appears on a write-set turn and
+**not** on a shadow-git one. A caveat printed unconditionally is as bad as one never printed: it
+teaches a human to distrust a complete restore.
 
 **The journal carries two records, and which one appears is the assertion:** `workspace_undone`
 (with `turn`, `snapshot`, `written`, `deleted`) for a revert, `workspace_undo_skipped` (`turn`,
@@ -426,42 +480,56 @@ Two distinct refusals; "nothing is open" and "there is nowhere to post" have not
 remedies and must not share a sentence. `changeset-review.md` §7 drives the third case (a local
 branch review) and the no-network check; do not repeat it here.
 
-## 6 — `/mode auto`: reaching an approve-all gate, once, deliberately
+## 6 — `/mode auto`: a gate that asks nobody, once, deliberately
 
 One of the sanctioned exceptions to `method.md`'s standing prohibition, in a throwaway tree with nothing
 sensitive in it beyond the fixture `secret-boundary.md` §0 builds. §1 drove the `/mode` *grammar*;
-this section drives what the top rung actually does to the gate, which nothing else here reaches.
+this section drives what the bottom rung actually does to the gate, which nothing else here reaches.
 
 ```
 you> /mode auto
 you> /mode
 ```
 
-Check four things and then stop:
+**`auto` is no longer approve-all, and that is the change this section now measures.** Since
+round 18 it is the **same ladder** `ask` runs — the triage rung, then the rule chain — with
+`Escalation::Remainder` where `ask` has `Surfaces`. `Mode::Resolution` *selects* a pre-built
+policy per approval level rather than building one, and it hands the gate no `ApproveAll`.
 
-1. `/mode` reflects it — an `auto` that does not show up in the posture report is a hidden state
-   change, and the HUD lighter must read `AUTO` too (`cockpit-surfaces.md` §7). `accept_edits`'s
-   lighter is the empty string, so `AUTO` appearing is the only visible difference and its absence
-   is the finding.
-2. A gated `bash` now runs without a prompt. That is the claim.
-3. **Nothing parks.** `auto` **replaces** the ladder rather than short-circuiting it —
-   `Mode::Resolution` hands the Gate `ApproveAll` in the ladder's place — so the queue is still
-   built and `/approve` still drains it, it simply never receives anything. Type `/approve` after
-   the unprompted call and it must answer `no pending approvals`, and the journal must carry no
-   escalation rungs for that call. A parked-and-auto-drained call and a never-parked one look
-   identical at the prompt and are not the same session.
-4. **A `denied` path is still refused.** `read_file` on the fixture key must fail under `auto`
-   exactly as it does at `accept_edits`: `Middleware::Sensitivity` runs *ahead of* the gate, so no
+Check five things and then stop:
+
+1. `/mode` reflects it — an `auto` that does not show up in the mode report is a hidden state
+   change, and the HUD lighter must read `AUTO` too (`cockpit-surfaces.md` §7). `checkout` and
+   `ask` both carry an empty lighter, so `AUTO` appearing is the only visible difference and its
+   absence is the finding.
+2. A gated `bash` that no rung refuses now runs without a prompt. That is the claim.
+3. **Nothing parks**, but the ladder still ran. Type `/approve` after the unprompted call: it must
+   answer `no pending approvals`. The journal, though, must carry the rungs — ending in
+   `rung=auto` with *"approval is auto, and no rung above refused this call"*. A call with **no**
+   escalation records at all means the ladder was replaced rather than bottomed out, which is the
+   old behaviour and now the finding.
+4. **A triage deny and a rule deny still refuse under `auto`.** This is the whole point of the
+   change: `cat` the fixture key's absolute path and watch it refuse at the triage rung, under
+   `auto`, with no human asked and no approval possible. Compare the same command under `ask`
+   (§5's tree): the rung and the reason must be identical, and only the bottom of the ladder
+   differs.
+5. **A `denied` path is still refused.** `read_file` on the fixture key must fail under `auto`
+   exactly as it does under `ask`: `Middleware::Sensitivity` runs *ahead of* the gate, so no
    policy can lift it. Type the path **resolved and absolute**, for the reason `secret-boundary.md`
    §5 gives — a `~` or a `$HOME` is not expanded on the `read_file` arm. The `bash` spelling of the
    same probe (`cat` on that path) is §5's and goes through a different rung; drive it there, and
    read §5 before assuming the two answer alike. Running the `read_file` half in both places is
    deliberate, because a regression could land in the command surface rather than in the boundary.
 
-Then `/mode !` and confirm the floor is back — posture `plan`, no layers — before anything else in
-the round. **`!` lands on `plan`, which permits reads only**, so type `/mode accept_edits` to get the
-round's default back before §7, whose `/goal` drives edits and would otherwise be refused by the
-posture rather than by anything under test.
+One more, if `shell-term-approval.md` has already run in this tree: a command **barred** from
+automatic approval by a withheld output gets a *final* deny under `auto`, telling the human to
+switch to `/mode ask` to approve it. There is no queue to park it on, so the refusal has to carry
+the way out in words.
+
+Then `/mode !` and confirm the floor is back — `plan` scope, `ask` approval, no layers — before
+anything else in the round. **`!` lands in `plan` scope, which confines writes to a spike**, so
+type `/mode checkout` to get the round's default back before §7, whose `/goal` drives edits into
+the real tree and would otherwise land in the spike rather than where the section is looking.
 
 ## 7 — `/goal`: the only loop a command starts
 

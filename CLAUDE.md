@@ -228,6 +228,16 @@ one round trip, never a loop — Lain owns the loop, because the loop is the obj
   `lain watch`'s `LineageFilter` follows the same records as they arrive.
 - **`Project` splits root from cwd**: **root** is the authority boundary (what `.lain/` governs),
   **cwd** is where a relative path resolves. `$HOME` is never *inferred* as a root.
+- **Every human line arrives on one `Frontend::InputRail`** — the `lain input` pane's socket, the
+  in-process line editor, and nvim's gesture rail all feed it, `Frontend::StdinPump` is the only
+  reader of stdin, and the rail owns both the prompt queue and the one generation rule that
+  replaced the typeahead special cases.
+- **A mode is scope × approval**: scope (`checkout`/`plan`) decides *where* a named write or
+  command may land, approval (`ask`/`auto`) decides *who* answers a gated call, and `auto` keeps
+  the triage and rule denies rather than replacing the ladder.
+- **All durable memory lives in one `Memory::ProjectStore` per project**, so a fresh chat sees
+  what earlier chats and `lain consolidate` wrote; compaction is a different subsystem with its
+  own records, and neither reads the other.
 - **The secret boundary is three places, and the split is forced** — a path classifier answers
   before a file is opened, a region detector cannot until it has the bytes. Gate on the effect
   (`Sensitivity::Policy`), filter on the result (`Middleware::WithholdSecretPaths`), mask on the

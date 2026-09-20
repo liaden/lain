@@ -118,12 +118,17 @@ affordable is that the derived chain is bounded by `keep_last`, not by history l
 source turns alike).
 
 The negative is about a derivation taken with **no compaction cut held**. A committed compaction
-records a cut (`Telemetry::CompactionCut`: a source digest, the head it was committed at, and the
-replacement of each range it newly collapsed), and later derivations on a chain containing that
-commit head hold it: still from the source root, still with no derived head kept, but with the
-ranges at or before the cut written from the record. Between two advances of a held cut
+records a cut (`Telemetry::CompactionCut`: a source digest, the turn the committing render stood
+on, and the replacement of each range it newly collapsed), and later derivations on a chain
+containing that commit head hold it: still from the source root, still with no derived head kept,
+but with the ranges at or before the cut written from the record. The commit head is the render's
+own footing rather than the prompt it was asked with, so a prompt withdrawn before any model saw
+it leaves the cut standing instead of taking it off the chain. Between two advances of a held cut
 the map *is* monotone, since the replacement's bytes and parent chain do not move, and that is the
-point of holding one: the prefix a provider caches stops changing. The derivation spec's "extends
+point of holding one: the prefix a provider caches stops changing. Once more than one cut is held
+they **re-collapse**: one `collapse` cut supersedes them, written from what they render between
+them, so the summaries do not accumulate one per advance — and monotonicity is given up exactly
+there, deliberately, for the same reason a first compaction gives it up. The derivation spec's "extends
 its derived chain as the source extends, while the cut holds and nothing new collapses" and the
 source spec's "extends the derived chain turn by turn while a committed cut holds and nothing new
 collapses" pin the positive beside the two negatives.

@@ -543,19 +543,26 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
 - **A tripped tool bound leaves no journal record.** The bounds are checkable, but only through the
   `tool_result` text — so nothing here can answer "did a bound fire during ordinary use", which is
   the question that would say whether a ceiling is set too low.
-- **Subagent structure — no scenario covers it because no surface renders it.** `Buffers::TimelineView`
-  walks only `render_parent` (`Timeline#ancestors`), a linear chain from one head; no frontend file
-  references `child_turn` or a `:spawn` event; and `StatusFeed#observed` publishes the fleet as
-  `@fleet.keys` off a `{spawn_digest => true}` map (`status_feed.rb:388,457`), which every reader
-  (`prompt_composer.rb:409`, `cli/command/status.rb:53`) immediately collapses to `.size` — an
-  integer count, with no parent/child edge reaching any display. Round 5 journaled 29 `child_turn`
-  and 10 `message` records in one `fleet 2` session and none of it showed anywhere outside the
-  journal. A scenario cannot drive this until a surface exists to project the causal edges
-  (`spawn`/`child_turn`/`message` parent-child structure) rather than just their count; that surface
-  is deferred, not scheduled (`planning/specs/chunk-qa-round5-causal-fold-and-surfaces.md`, T13).
-  **Partly narrowed 2026-08-23:** `lain watch` IS a surface over one actor's lineage, and
-  `subagents-and-backends.md` §5 drives it. What stays undrivable is the *fan* — parent/child edges
-  across a fleet — which is what T13 owes; one lineage at a time is not it.
+- **Subagent structure — CLOSED 2026-09-20, and the entry is kept so the discharge is on the
+  record.** It said no scenario could cover the causal fan because no surface rendered it:
+  `Buffers::TimelineView` walked only `render_parent`, no frontend file referenced `child_turn`
+  or a `:spawn`, and the fleet was published as a set of digests every reader collapsed to
+  `.size` — an integer count, with no parent/child edge reaching any display. Round 5 journaled
+  29 `child_turn` and 10 `message` records in one `fleet 2` session and none of it showed
+  anywhere outside the journal. The 2026-08-23 narrowing (`lain watch` is a surface over *one*
+  lineage, driven by `subagents-and-backends.md` §5) left the **fan** owed.
+  **The fan now has two surfaces.** `lain://status` draws the fleet as a nested tree, one row
+  per child under the parent it was spawned from, and the input pane's header carries the top of
+  the same tree. The parent edge is real causal structure rather than a flattened list: a
+  grandchild is placed against the head its parent reported, since a `:spawn` names the head it
+  came from and not the spawn that owns it. `cockpit-surfaces.md` §1 drives the tree — including
+  the grandchild nesting, which is the check that the edge resolves — and §0 drives the header.
+  **What stays true, and is a ruling rather than a gap:** none of it was added to the `:spawn`
+  body. A spawn digest is an address a bench arm joins on and `lain watch` follows, so the
+  fleet's own facts ride in `child_progress` records beside it and the spawn stays
+  byte-identical. Two costs of that are written into the fold and are not findings: identical
+  twins share one spawn digest and therefore one row, and a row's parent is resolved once, when
+  it launches.
 
 Still uncovered as of 2026-08-23, and **not** addressed by the six scenarios added that day, so that
 a full directory does not read as completeness:

@@ -61,27 +61,35 @@ from the driver's seat, and telling them apart is that round's real job. The mea
 are the exception and are marked as such; they came from `bundle exec ruby -Ilib` against
 `lib/lain/shell/` on this box, not from reasoning.
 
-## The three postures, named once, because they decide differently
+## The three gates, named once, because they decide differently
 
-Every section below says which posture it means. A driver who conflates them will file a false
-finding, and the shapes are close enough that it is easy.
+Postures are gone. Since round 18 a mode is **scope × approval**, and it is the *approval* axis
+that decides here. Every section below says which one it means. A driver who conflates them will
+file a false finding, and the shapes are close enough that it is easy.
 
-| posture | what adjudicates | what this scenario's subject does there |
+| gate | what adjudicates | what this scenario's subject does there |
 |---|---|---|
-| **attended** (`manual`, `accept_edits`) | the `[Triage, Rules, Surfaces]` ladder (`escalation.rb:145`) | everything here is live |
-| **`/mode auto`** | `Middleware::Gate::ApproveAll` (`middleware/gate.rb:35-37`), which **replaces** the ladder | the ladder never runs, so **no rung is journalled at all** — see §11 |
-| **unattended** (no queue) | a one-rung `Unattended` deny-all ladder (`switchboard.rb:265,385-396`) | every gated call is denied before any of this is consulted |
+| **`ask`** (the default) | the `[Triage, Rules, Surfaces]` ladder | everything here is live |
+| **`auto`** | the **same** `[Triage, Rules, …]` ladder with `Escalation::Remainder` at the bottom | every rung above still runs and is journalled; only the parking is gone — see §11 |
+| **unattended** (no queue) | a one-rung `Unattended` deny-all ladder (`switchboard.rb:387,419-426`) | every gated call is denied before any of this is consulted |
 
-**There is no `accept_all` posture** — round 17 corrected this table, which used to list one. The
-postures are exactly `[:plan, :manual, :accept_edits, :auto]` (*driven 2026-09-14*:
-`/mode nosuchposture` answered `unknown posture "nosuchposture", expected one of [:plan, :manual,
-:accept_edits, :auto]`). The `auto_approve` **layer** is not a posture either: it leaves the ladder
-in place and adds the `auto_approver` surface at its last rung.
+**Approval is exactly `ask` or `auto`**, and `manual` and `accept_edits` are refused by name.
+Round 17's correction to this table ("there is no `accept_all` posture") is superseded rather than
+wrong: there is no posture at all. The `auto_approve` **layer** is still a third thing: it leaves
+the ladder in place and adds the `auto_approver` surface beside the human at the `Surfaces` rung,
+so it applies under `ask` and has nothing to add under `auto`.
 
-`plan` is a fourth thing worth stating separately: it is `deny_all` over a read-only permit set
-**that does not contain `bash`**, so a command typed at the floor is refused by the *posture* and
-never reaches the ladder. Recording that as "the rung refused" voids the section. **The round's
-default for everything below is `accept_edits`.**
+**`auto` no longer replaces the ladder**, and a round carrying the old expectation will read a
+correct run as broken. It used to hand the gate `Middleware::Gate::ApproveAll`, so nothing was
+journalled; now a triage deny or a rule deny refuses under `auto` exactly as under `ask`, and the
+bottom rung journals `rung=auto`. See §11.
+
+**Scope is the other axis, and `plan` is where it bites.** It does not remove `bash` from the
+toolset — no scope ever changes the toolset — it **confines** the `cwd` a call names to the
+leased spike, refusing anything outside it by name and pointing at `/mode checkout`. Recording
+that as "the rung refused" voids the section: it is refused before the ladder, by
+`Middleware::ConfineToScope`. **The round's default for everything below is `checkout ask`**,
+which is also the session's default, so nothing has to be typed to reach it.
 
 ---
 
@@ -95,7 +103,7 @@ printf 'hello\nworld\nthird\n' > README.md
 printf 'alpha\nbeta\n'         > notes.txt
 ```
 
-Bring the cockpit up on `$T` at `accept_edits`, per `method.md`.
+Bring the cockpit up on `$T` at the default `checkout ask`, per `method.md`.
 
 **The arm oracle, and it is the thing that makes this whole scenario checkable.** `Tools::Bash`
 picks its arm silently — `arm_for(decision) = decision.allow? && @exec.takes_term?(decision.term)
@@ -107,7 +115,7 @@ record was T5/T7's still-unlanded work (§8) — so the belt-and-braces oracle b
 **single-stage** command whose two arms *disagree* regardless of backend, and `Shell::Pipeline`'s
 class doc names exactly one such family: a **shell builtin with no binary on disk**. T5/T7 have
 since landed and the dedicated record now exists (§8), but the oracle is kept here: it needs no
-journal read at all, and it is what §11 uses to prove the arm was chosen even in a posture that
+journal read at all, and it is what §11 uses to prove the arm was chosen even at an approval level that
 writes no `escalation` record.
 
 **⚠️ CORRECTED, round 15 — the arm IS observable from the outside today, for an attended session,
@@ -118,7 +126,7 @@ only ever sees the verdict, never the backend, so it cannot distinguish this sec
 oracle from a multi-stage pipe that would land on the string arm under `--exec docker` regardless
 of the verdict (§9). It is sound for exactly the single-stage commands this section uses.
 `escalation.rb:540` builds the reason as `"shell verdict #{decision.name} -- …"`, so, in the
-attended posture, over the `exit 3` oracle:
+under `ask`, over the `exit 3` oracle:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
@@ -132,15 +140,14 @@ produced 127 (term); `echo "hello world"` journalled
 consumed (string). **So a round can answer this document's own headline question — "can a driver tell
 from the outside which arm ran?" — with YES, for an attended session, from the journal**, and use
 `exit 3` as corroboration rather than as the only instrument. §8 states the same boundary precisely
-— this escalation-based method is inferable for attended sessions only — and §11 is where the hole
-in *this method* actually gets driven: under `/mode auto` the ladder is never consulted, so no
-`escalation` record is written at all, and this oracle's own attended-only reach is exactly what
-makes that posture's silence real for a reader relying on it. **T5 and T7 have since landed, and
-they close the underlying gap by a different route**: the dedicated `Telemetry::ShellArm` record
-(§8, driven in full at `shell-terms.md` §6) names the arm *directly* on every gated call, and —
-unlike the escalation record this oracle reads — it is written in **every** posture including
-`/mode auto`. So the arm was never truly unobservable under `auto`; only this section's own
-escalation-based derivation was.
+— this escalation-based method is inferable wherever a ladder runs — and §11 is where the
+approval level's effect on it actually gets driven. **The hole that used to be here is closed
+twice over.** `auto` once handed the gate `ApproveAll` and consulted no rung, so no `escalation`
+record was written at all and this oracle went dark; since round 18 `auto` runs the same ladder
+with a different bottom rung, so the record is there under both levels. And separately, T5 and
+T7's dedicated `Telemetry::ShellArm` record (§8, driven in full at `shell-terms.md` §6) names the
+arm *directly* on every gated call, at every approval level. Two independent accounts of one
+call, which is what makes §11's cross-check worth doing.
 
 ```
 you> run: exit 3
@@ -326,7 +333,7 @@ the regression the first two sections exist to catch.
 
 ## 3 — Which arm ran, through the real tool
 
-**DRIVABLE NOW.** One turn per row. Posture: `accept_edits`, approving each call at the gate.
+**DRIVABLE NOW.** One turn per row. Mode: the default `checkout ask`, approving each call at the gate.
 
 ```
 you> run: cat README.md | head -2
@@ -468,7 +475,7 @@ So: **a term whose every word is ordinary, printing a file nothing may lift.**
 **What saved it before T9, and still catches it as a second line today:** the `Triage` rung
 abstains (`an allow claims the command is literal and fully understood, never that it is safe`),
 the call reaches a human, and the human reads `grep -r . /home/…/.ssh` and says no. Drive that
-once at `accept_edits` and confirm you are asked, if driving this posture on its own:
+once under `ask` and confirm you are asked, if driving this section on its own:
 
 ```
 you> run: grep -r . <H>/.ssh
@@ -594,6 +601,21 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
   | `cat /tmp/evil/cat f` | measured as an **allow** with `/tmp/evil/cat` as argv0 — basenaming is correct for a denylist and unsafe for an allowlist, and T9 must not reuse it |
   | `git log --oneline -5` | abstains at the verdict; the chunk does not lift it |
   | `cat README.md \| tee out.txt` | allowed by the verdict, refused by the runner (§3a) — an approval rule that says yes to a command the runner then refuses is a UX finding at minimum |
+  | `cat <a world-readable, ordinary-classified file that holds an `API_KEY=…` line>` | **the content predicate**, new in round 18: the rule opens every word that resolves to a real file (≤ 64 KiB, world-readable, `O_NOFOLLOW`) and refuses to vouch for one `Sensitivity::Regions` finds a region in. Classification alone said this file was ordinary, and it is; the bytes are the thing that disqualifies it |
+  | `cat <an `exempt`ed `.env`>` | an exemption lifts the **human read prompt** and nothing else, so an ordinary-by-exemption verdict still fails the rule. Before this, one basename exemption for a fixture `.env` approved `cat` of every `.env` in the tree with nobody asked |
+
+  **Two things must still auto-approve**, and they are the controls that keep the content
+  predicate from being a blanket refusal:
+
+  - `cat README.md` — allowlisted program, ordinary classification, world-readable, small, no
+    region. The predicate opens it and says nothing.
+  - `cat ~/.ssh/id_ed25519.pub` (spelled absolute) — both the denied and the gated `.ssh` rules
+    carry `except: "*.pub"`, so it classifies ordinary, **and** the detector recognises a parsed
+    OpenSSH or PEM **public** key as not a region. That second half is by structure, not by
+    extension: renaming a private key to `.pub` does not get it past the detector.
+
+  A round that finds either of these now prompting has found a content predicate that is too
+  broad, which is a finding in the other direction and just as real.
 
   **`cat .netrc` is the one to drive first and file loudest.** `escalation.rb:420-426` gives three
   reasons the bare-word downgrade is safe; the first is that the call reaches a human anyway. Any
@@ -607,6 +629,35 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
 
   It must answer `"cwd"`. If it ever answers something else, the whole shape of this section has
   changed and the constraint T9 was built around has moved.
+
+### 7a — the other half of the content check runs *after* the command
+
+Content is controlled **twice**: the predicate above before the command runs, and a scan of the
+result after it. The second is what covers the command whose output holds a credential no path
+and no argument could have predicted — `env`, a `grep` that happens to hit one, a script that
+prints one.
+
+When an **automatically approved** call's result carries a region, `Middleware::WithholdAutomaticOutput`:
+
+1. **withholds the result whole** — the model gets an error, not a masked body — with a message
+   naming the tool, the count of regions, and that the command now needs a human's approval;
+2. **bars that exact command string from automatic approval** for the rest of the session, for
+   this agent and its children alike;
+3. journals an `automatic_output_withheld` record carrying the `tool_use_id` and the region
+   **count** only, never bytes.
+
+Drive it: put an `API_KEY=` line in a file under `$T`, get `cat` of it auto-approved (it will be,
+if the file is ordinary and the predicate above passes — use a file the model itself writes so
+the pre-check sees it empty), then read three things. The model's `tool_result` must be the
+refusal and not the bytes. The **retry** must reach a human: the same command typed again
+abstains at the rules rung with a `barred` reason and parks, where before it would have been
+auto-approved a second time. And the pending it parks on carries `"humans_only": true` — under
+`/mode auto` there is no queue, so the same command gets a *final* deny naming `/mode ask` as the
+way out (§11).
+
+**What wrong looks like:** the bytes reaching the model; a masked result instead of a withheld one
+(there is no release key for a pathless result, which is why it withholds rather than masks); the
+record carrying the region's text; or the retry auto-approving again.
 
 ## 8 — The journal record naming the arm
 
@@ -622,16 +673,16 @@ command grep -n 'journal' lib/lain/tools/bash.rb                  # journal_arm 
 ```
 
 **This is `shell-terms.md` §6's ground in full** — the record's six fields, driving it twice
-(once attended, once under `/mode auto`) and confirming it is present in **both**, is driven
+(once under `ask`, once under `/mode auto`) and confirming it is present in **both**, is driven
 there; do not redrive it here. What is worth keeping in this section is the boundary between the
 dedicated record and the older, indirect method the rest of this document (§0) still leans on:
 `Escalation` separately writes one record per rung consulted, `"type" => "escalation"`, and the
 Triage rung's reason begins `shell verdict allow` / `shell verdict abstain`
-(`escalation.rb:540`) — so **the arm is *also* inferable from the gate's record, for attended
-sessions only**, which is what §0 uses as its corroborating oracle. That escalation-based method
-has the hole `shell-terms.md` §6 names: under `/mode auto` the ladder is never consulted, so no
-`escalation` record is written at all, though the `shell_arm` record still is. §11 drives that
-gap for the escalation record specifically; the dedicated `shell_arm` record does not have it.
+(`escalation.rb:540`) — so **the arm is *also* inferable from the gate's record**, which is what
+§0 uses as its corroborating oracle. That method used to have a hole: `auto` replaced the ladder,
+so no `escalation` record was written and only the `shell_arm` record remained. Round 18 closed
+it — `auto` is the same ladder with `Escalation::Remainder` at the bottom — so both records are
+present at both approval levels, and §11 checks that they agree.
 
 ## 9 — A pipeline under `--exec docker`
 
@@ -710,11 +761,16 @@ the half that is easy to ship broken: stand up a local responder returning a `30
 names the *hop's* host. **The check is lexical on the host**, so a public name resolving into a
 blocked range is still reachable — record that as a stated limit of the rung, not as a defect.
 
-## 11 — `/mode auto`: everything above is inert
+## 11 — `/mode auto`: the ladder still runs, and only the parking is gone
 
 **DRIVABLE NOW.** One of the named exceptions to `method.md`'s standing prohibition on raising the
-posture, on the precedent of `repl-commands.md` §6 and `secret-boundary.md` §5. **Scope it to `$T`,
-the throwaway tree from §0, and end the section with `/mode !`.**
+approval level, on the precedent of `repl-commands.md` §6 and `secret-boundary.md` §5. **Scope it
+to `$T`, the throwaway tree from §0, and end the section with `/mode !`.**
+
+**This section inverted in round 18.** It used to check that *nothing* was journalled, because
+`auto` replaced the ladder with `Middleware::Gate::ApproveAll`. Now `Mode::Resolution` selects a
+pre-built ladder per approval level, `auto`'s is the same one `ask` runs with
+`Escalation::Remainder` at the bottom, and the old expectation is the finding.
 
 ```
 you> /mode auto
@@ -722,42 +778,44 @@ you> run: exit 3
 you> /approve
 ```
 
-Four things, then stop:
+Five things, then stop:
 
-1. **No prompt.** That is the posture's claim and it is not what this section is about.
-2. **Nothing parked.** `auto` **replaces** the ladder — `Mode::Resolution` hands the Gate
-   `ApproveAll` — so the queue is still built and `/approve` still drains it; it simply never
-   receives anything. `/approve` must answer `no pending approvals`.
-3. **No `escalation` records for that `tool_use_id`.** Not a bypassed rung, not a rung that abstained
-   — *none*. Grep the journal by the id.
-4. **The arm was still chosen.** `Tools::Bash` picks its arm from the verdict regardless of posture,
-   so §0's oracle must still read `exit status: 127`. **This is no longer where the section's
-   finding lives, now that T5/T7 have landed:** the dedicated `Telemetry::ShellArm` record is
-   written here too (`shell-terms.md` §6 drives it), so a reader with that record does not need
-   §0's oracle under `auto` at all. What genuinely stays invisible is narrower — no rung was
-   consulted, and nothing in the journal says *why* the arm ran unchallenged, only that it did.
-   Grep for the `shell_arm` record on this `tool_use_id` and confirm it reads
-   `"verdict":"allow","arm":"term"` beside the missing `escalation` record from point 3.
+1. **No prompt.** That is `auto`'s claim and it is not what this section is about.
+2. **Nothing parked.** The queue is still built and `/approve` still drains it; it simply never
+   receives anything, because the bottom rung answers instead of asking. `/approve` must answer
+   `no pending approvals`.
+3. **The `escalation` records for that `tool_use_id` are there**, ending in `rung=auto` with
+   *"approval is auto, and no rung above refused this call"*. Grep the journal by the id. **No
+   records at all is the regression** — it means the ladder was replaced rather than bottomed out.
+4. **A rung above still refuses.** Drive the triage rung under `auto`: `cat` an absolute path
+   inside the fixture's protected set (§4's probe) and read the deny. Under `auto` there is no
+   queue to fall back to, so this is a refusal with no way to approve it, and the message says so.
+   A call that runs here is the serious finding in this section.
+5. **The arm was still chosen.** `Tools::Bash` picks its arm from the verdict regardless of the
+   approval level, so §0's oracle must still read `exit status: 127`, and the
+   `Telemetry::ShellArm` record on this `tool_use_id` must read `"verdict":"allow","arm":"term"`
+   (`shell-terms.md` §6 drives that record on its own).
 
-**What wrong looks like:** `exit status: 3` here. That would mean the posture changed which *arm*
-executes, which nothing is supposed to do — the ladder decides whether a human is asked, and the
-verdict decides which arm runs, and they are meant to be independent axes.
+**What wrong looks like:** `exit status: 3` here. That would mean the approval level changed which
+*arm* executes, which nothing is supposed to do — the ladder decides whether a human is asked, and
+the verdict decides which arm runs, and they are meant to be independent axes.
 
-**This is the limit to state in any write-up, and it holds regardless of what has landed:**
-everything the chunk builds inside the escalation ladder is **inert here**. The exclusion table
-cannot deny under `auto`, and the approval rule cannot approve under it, because neither rung is
-consulted. Do not drive §6's or §7's checks from this posture and conclude the feature is broken.
+**What genuinely stays out of reach under `auto`** is narrower than it was: the `Surfaces` rung and
+everything that depends on a human answering — §7's "approved by a human once, remembered" path,
+and any check whose evidence is a prompt. §6's exclusion table and §4's triage are **live** here
+and should be driven rather than skipped.
 
 Then:
 
 ```
 you> /mode !
-you> /mode accept_edits
+you> /mode checkout
 ```
 
-`!` lands on `plan`, which permits reads only and does not permit `bash` at all — so a command typed
-there is refused by the posture, and a driver who leaves the session at the floor will read the next
-section's posture refusal as a rung refusal. Confirm the posture report before continuing.
+`!` lands in `plan` scope, which confines a `bash` call's `cwd` to the spike — so a command typed
+there against `$T` is refused *before* the ladder, by `Middleware::ConfineToScope`, and a driver
+who leaves the session there will read the next section's confinement refusal as a rung refusal.
+Confirm the mode report reads `checkout ask` before continuing.
 
 ---
 

@@ -229,21 +229,61 @@ driven — this is integration check 7 of the discharging chunk)*:
   it loaded, so no model saw it, and it was withdrawn. Nothing older can be compacted yet, so make
   room with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read.` — with one
   `window_pressure` record (`kind: over_window`, `source: ollama`, `prompt_tokens`,
-  `window_tokens`) and `run_interrupted`. When the refused render left something droppable, the tail
-  reads `. Make room with compaction (that count is now the reading it measures), /rewind, /unpin a
-  pinned turn, or a narrower read` instead *(prediction, not yet driven)*, and the refused count
-  becomes the reading compaction fires on. `window_pressure` must be **absent** on every ordinary
-  turn. Round 17's F90 was the opposite: a 330 KB request silently truncated to 16,386 tokens, read
-  as 50% then 16% occupancy, and a model that had lost its tools.
+  `window_tokens`) and `run_interrupted` carrying `reason: over_window`. When the refused render
+  left something droppable, the tail reads `. Make room with compaction (that count is now the
+  reading it measures), /rewind, /unpin a pinned turn, or a narrower read` instead *(prediction,
+  not yet driven)*, and the refused count becomes the reading compaction fires on. Round 17's F90
+  was the opposite: a 330 KB request silently truncated to 16,386 tokens, read as 50% then 16%
+  occupancy, and a model that had lost its tools.
+
+  **"`window_pressure` must be absent on every ordinary turn" is no longer the rule** — round 18
+  turned this refusal into a **signal** the compaction path acts on rather than an outcome. A
+  refusal on a stuck source now triggers the handoff below, so a long session may legitimately
+  carry one `window_pressure` followed by a `compaction_cut` of `kind: handoff` and an **answered**
+  ask. What is still a finding is a `window_pressure` with nothing after it, or an `input_tokens`
+  that falls below the previous turn's with no record explaining it. Two fields to read while you
+  are there: `stands_on` names the turn the reading is believed on, so a live view tags it the way
+  the agent does rather than inferring it, and `spawn` names the child whose prompt it was (nil for
+  the run's own ask) — a child's over-window refusal in a session with subagents is expected, not
+  the parent's.
+
+- **When no cut can make room, one handoff answers the ask.** This is the fallback round 18 added,
+  and `rails-blog` is the scenario long enough to reach it. It fires only after the provider has
+  refused a prompt whole **and** the source is stuck — nothing droppable, or the refused render
+  already held the newest cut — and it spends exactly **one** summarizer call. Drive the session
+  until it happens and read four things:
+
+  1. one `compaction_cut` with `"kind": "handoff"`, superseding every cut that held;
+  2. the ask **is answered** — the handoff is a fallback that keeps the question, not a refusal;
+  3. the state document carries all five sections (`Goal`, `Progress`, `Files and decisions`,
+     `Open todos`, `Next step`) and sits where the replaced history began, with the later ranges
+     collapsing to empty content rather than to a second summary;
+  4. what survives beside it is exactly the current ask, an unanswered `tool_use`/`tool_result`
+     pair if there was one, and the pins — nothing else.
+
+  Then `--resume` and confirm the first resumed request is **byte-identical** to the live one: a
+  handoff is recorded like any other cut and replayed like one, with no second summarizer call.
+  And nothing of it may reach project memory — grep the project's `store.ndjson` for a phrase from
+  the document; a hit there is the one finding this check exists for.
 - **Summaries no longer re-key the runner.** Round 17 measured every summarized tool result
   reloading ollama twice under `LAIN_NUM_BATCH=2048` (29.4 s against 1.6 s, F95). A secondary call on
   the chat's own model now carries the chat's `num_batch`/`num_ctx`, visible in its journaled
   `request_sent.extra`. *(Prediction, not yet driven.)* A ~30 s `provider_wait` per summary is F95
   back.
 
-Two open decisions the chunk left standing, so do not file them here: held replacements never
-re-collapse (ten cuts under `summarize-conversation` render ten summaries), and a `/pin` on a turn
-inside a held range is silently ignored.
+**Held replacements re-collapse, since round 18**, so the open decision this section used to
+record — ten cuts under `summarize-conversation` rendering ten summaries — is closed and its old
+expectation is now the finding. Once more than one cut is held, a signal with nothing newly
+droppable commits one `collapse` cut over what they render between them, superseding them all.
+Drive it: reach two held cuts, then keep going, and read the `compaction_cut` records —
+`"kind": "collapse"` with at least two addresses in `supersedes`, the rendered prompt shrinking
+rather than accumulating, and a collapse that would not shrink declined as `would_not_shrink`
+like any other. Resume afterwards and confirm the render is byte-identical; replay refuses a
+collapse naming a cut its file lacks, so a resumed session that renders the superseded summaries
+again is the finding.
+
+One open decision does still stand, so do not file it: a `/pin` on a turn inside a held range is
+silently ignored.
 
 ### 2. Tool-result volume
 

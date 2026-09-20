@@ -48,7 +48,7 @@ restates `shell-term-approval.md` §9; the `web_fetch` refusal-string table (thi
 §8) restates `shell-term-approval.md` §10. `shell-term-approval.md` points back here for the
 parts it does not re-derive. What stays unique to this scenario in those same sections is the
 broader sweep — the full sixteen-command `ComposedTerm` predicate audit in §4, the
-both-postures `shell_arm` record check in §6 — and, with no counterpart anywhere else in the
+both-approval-levels `shell_arm` record check in §6 — and, with no counterpart anywhere else in the
 directory, **§9's paid arm-distribution measurement off a real session's journal.**
 
 **The question it answers:** *does the deterministic half of the shell subsystem decide the
@@ -81,40 +81,52 @@ the document in place and say which you did.
 
 ---
 
-## 0 — three postures, and conflating them files a false finding
+## 0 — three gates, and conflating them files a false finding
 
 Read this before driving anything. **Nothing below is true of all three**, and the two
 sections that most look like defects (§3, §6) are only findings under the wrong one.
 
-| posture | how you get it | what decides a `bash` call |
+Postures are gone since round 18: a mode is **scope × approval**, and it is the approval axis
+(`ask` or `auto`) that decides here.
+
+| gate | how you get it | what decides a `bash` call |
 |---|---|---|
-| **attended** | the ordinary cockpit (`lain up`, `lain chat`) | the three-rung ladder: `Triage` → `Rules` → `Surfaces` (`escalation.rb:145-147`) |
-| **`/mode auto`** | typing `/mode auto` | **the ladder is replaced wholesale.** `Posture` `auto` carries `gate_policy: :approve_all` (`mode/posture.rb:115-116`), which resolves to `Middleware::Gate::ApproveAll` (`mode/resolution.rb:107`). **Neither the exclusion table nor the approval rule fires** — no rung is consulted, and no `escalation` record is written |
-| **unattended** | a session with no queue: `lain chat --non-interactive --prompt '…'` (the flag **requires** `--prompt`; without it the launch refuses with `--non-interactive needs --prompt: it reads no line from the terminal, so a run with no question seeded has nothing to ask`) | a ladder of **one** rung that refuses everything (`cli/switchboard.rb:299`), reason verbatim: `no human is attached to this session, so no rung can ask anybody and nothing can approve` (`switchboard.rb:420`) |
+| **`ask`** (the default) | the ordinary cockpit (`lain up`, `lain chat`) | the three-rung ladder: `Triage` → `Rules` → `Surfaces` |
+| **`auto`** | typing `/mode auto` | **the same ladder**, with `Escalation::Remainder` where `Surfaces` was. Triage and the rules rung still run, still refuse, and still journal an `escalation` record; the bottom rung answers `rung=auto` instead of parking |
+| **unattended** | a session with no queue: `lain chat --non-interactive --prompt '…'` (the flag **requires** `--prompt`; without it the launch refuses with `--non-interactive needs --prompt: it reads no line from the terminal, so a run with no question seeded has nothing to ask`) | a ladder of **one** rung that refuses everything, reason verbatim: `no human is attached to this session, so no rung can ask anybody and nothing can approve` (`switchboard.rb:419-426`) |
 
-**`/mode +auto_approve` is not a fourth posture, and since 2026-09-14 it is not a lighter either.**
-The layer leaves the ladder in place and switches on the automatic approver at its `surfaces` rung
-(a model judge answering as the `auto_approver` surface), so triage and the rules rung still run
-first and a triage deny still stands. Before that chunk the layer lit `AA` and approved nothing
-(round 17's F104). `method.md` still bans it during an ordinary round.
+**`auto` used to replace the ladder wholesale** — `Posture` `auto` carried
+`gate_policy: :approve_all`, which resolved to `Middleware::Gate::ApproveAll`, so neither the
+exclusion table nor the approval rule fired and no `escalation` record was written at all. That
+is the behaviour round 18 removed, and a section driven against the old expectation will read a
+correct run as broken.
 
-Two consequences worth stating flatly, because both read as bugs:
+**`/mode +auto_approve` is not a third approval level, and since 2026-09-14 it is not a lighter
+either.** The layer leaves the ladder in place and switches on the automatic approver at its
+`surfaces` rung (a model judge answering as the `auto_approver` surface), so triage and the rules
+rung still run first and a triage deny still stands. Before that chunk the layer lit `AA` and
+approved nothing (round 17's F104). `method.md` still bans it during an ordinary round.
 
-- **`/mode auto` does not make the exclusion table stricter or looser — it makes it
-  inert at the ladder.** The table still reaches `Shell::Verdict`, so a `deny` is still
-  *computed* and still journalled by §6's record. Nothing acts on it.
-- **The `shell_arm` record is the only account of arm selection under `/mode auto`.** The
-  `shell verdict …` line a driver may remember lives inside an `escalation` record, and
-  `ApproveAll` writes none. That is why §6 drives both postures.
+Three consequences worth stating flatly:
 
-Confirm the posture you are in before every section that names one:
+- **`auto` does not make the exclusion table stricter or looser, and it no longer makes it
+  inert.** The table reaches `Shell::Verdict` as before, a `deny` is computed and journalled by
+  §6's record, **and** the triage rung now acts on it under `auto` too.
+- **A command barred by a withheld automatic output has no way through under `auto`.** There is
+  no queue to park it on, so `Remainder` answers a *final* deny telling the human to switch to
+  `/mode ask`. That is the one place `auto` is **stricter** than `ask`.
+- **The `shell_arm` record is still the only account of arm selection that does not depend on a
+  rung**, which is why §6 drives both levels: the `shell verdict …` line a driver may remember
+  lives inside an `escalation` record, and the two accounts must agree.
+
+Confirm the mode you are in before every section that names one:
 
 ```
-you> /ruby Lain::Mode::Posture.for(:auto).gate_policy
+you> /mode
 ```
-→ `:approve_all`
+→ `checkout ask: no layers active` by default; `checkout auto (AUTO): …` after `/mode auto`.
 
-**The unattended arm is the one posture no section below drives**, because reaching its refusal
+**The unattended arm is the one gate no section below drives**, because reaching its refusal
 needs the model to emit a `bash` call inside a `--non-interactive --prompt` run — one local
 completion, outside this section's free budget. It is worth an optional five minutes if the round
 has one: ask for `cat README.md` and expect the `escalation` record to read
@@ -322,20 +334,21 @@ Expected: `["verdict=deny", "arm=string", "handed=\"curl http://example.com\""]`
 
 **This is documented behaviour, not a finding.** What it means at the tool — refuse
 outright, or run as a term anyway — is named as the next rung on the chunk's *what reaches a
-shell* axis and is a design question, not a patch. **File it only if the attended posture
-reaches the tool at all**, which it must not: the triage rung denies first (§2). The two
-postures that *do* reach the tool are exactly the two that skip the ladder — `/mode auto`
-and an agent in a run with no chat — a bench arm, `lain improve`, `lain consolidate`, or a child one
-of them spawns — whose stack `CLI::ToolGuard.detached` builds with a gate over
-`Middleware::Gate::ApproveAll` (a chat's own children are gated over the parent's board). If you
-can make an attended session run
-an excluded program, that is a real and serious finding.
+shell* axis and is a design question, not a patch. **File it only if a session with a human
+behind it reaches the tool at all**, which it must not: the triage rung denies first (§2), and
+since round 18 it denies under `/mode auto` as well. The one arm that *does* reach the tool with
+no ladder above it is an agent in a run with **no chat** — a bench arm, `lain improve`, `lain
+consolidate`, or a child one of them spawns — whose stack `CLI::ToolGuard.detached` builds with a
+gate over `Middleware::Gate::ApproveAll`, because nobody is at a surface to answer (a chat's own
+children are gated over the parent's board). If you can make an attended session run an excluded
+program, that is a real and serious finding.
 
 ## 4 — what the approval rule approves, and what it refuses *(free — `/ruby`)*
 
-`Approval::ComposedTerm` is a conjunction of five predicates over the parsed term
-(`composed_term.rb:326-329`), and it approves nothing unless all of them hold. The
-allowlist is small and it is worth reading before predicting anything:
+`Approval::ComposedTerm#approvable?` is a conjunction over the parsed term, and it approves
+nothing unless every one holds: bare names, allowlisted programs, ordinary words, no
+disqualifying flag, no aliasing segment, confined to the project root, and — added in round 18 —
+**plain content**. The allowlist is small and it is worth reading before predicting anything:
 
 ```
 you> /ruby Lain::Approval::ComposedTerm::PROGRAMS.keys
@@ -390,7 +403,7 @@ shape:
 | `cat README.md \| head -20` | `every stage is a bare allowlisted reader over ordinary words: cat, head` |
 | `grep -n foo lib \| wc -l` | `every stage is a bare allowlisted reader over ordinary words: grep, wc` |
 | `wc -l README.md` | `every stage is a bare allowlisted reader over ordinary words: wc` |
-| `cat id_ed25519.pub` | `every stage is a bare allowlisted reader over ordinary words: cat` — the `*.pub` carve-out, the false-positive control for the widened table below |
+| `cat id_ed25519.pub` | `every stage is a bare allowlisted reader over ordinary words: cat` — the `*.pub` carve-out, the false-positive control for the widened table below. **It survives the content predicate too**, and by structure rather than by extension: the detector parses an OpenSSH or PEM **public** key and declines to call it a region, so renaming a private key to `.pub` does not get it through |
 
 **Abstains — every other line above**, each for a different predicate, and the predicate is
 what a round should check rather than the outcome:
@@ -407,6 +420,8 @@ what a round should check rather than the outcome:
 | `tail -f README.md` | `-f` never returns |
 | `cat config/master.key`, `cat config/credentials.yml.enc`, `cat .pgpass`, `cat id_rsa`, `cat .bash_history` | classify **gated** since 2026-09-14 — round 17's F91 approved every one of these with nobody asked. The widened `Sensitivity` table names `config/master.key`, `*.key`, `credentials.yml.enc`, `.pgpass`, `*_history`, `.gem/credentials`, `.ssh/config`, `rclone.conf`, `*.keyring`/`keyrings/**` and a bare `id_rsa`/`id_ed25519`/`id_ecdsa` anywhere except `*.pub`; *driven 2026-09-14*, `Sensitivity#classify` read `gated credential` for each, and `ordinary` for `id_ed25519.pub` |
 | `cat ../outside/notes.txt`, `cat /etc/hostname` | **the root predicate.** Every path-like word, and the call's own cwd, must resolve under the project root — lexically and again through the real path, so a symlink out of the root does not count as in it. A call whose cwd is `/` abstains even for `cat README.md` (*driven 2026-09-14*) |
+| `cat secrets.txt`, where `secrets.txt` is an ordinary-classified file holding an `API_KEY=…` line | **the content predicate**, new in round 18 and the last one checked, because it is the only one that opens a file. Every word that resolves to a real regular file must be world-readable, at most 64 KiB, and carry **no region** `Sensitivity::Regions` can find. Classification said this file was ordinary and it is; the bytes are what disqualify it. Not-a-file words (a nonexistent path, a directory) pass trivially; a FIFO, socket or device does not, and the open is `O_NOFOLLOW` |
+| `cat <an exempted `.env`>` | **also the content predicate's neighbour, the ordinary-words one.** An `exempt` entry lifts the human read prompt and nothing else, so an ordinary-**by-exemption** verdict still fails here. One basename exemption for a fixture `.env` used to approve `cat` of every `.env` in the tree with nobody asked |
 
 **Two roots approve nothing at all, whatever the command.** A session rooted at `$HOME` (or above
 it), and one whose root nothing detected (`detected_by: :none`, i.e. wherever the process started
@@ -499,7 +514,7 @@ Note the split: `.netrc`, `.env` and `/proc/self/environ` are refused by the **b
 say "with `.netrc` denied in `[sensitivity]`"; that is not required, and adding a config
 entry for it would test the config rather than the floor.
 
-## 6 — the shell-arm record, in attended **and** in `/mode auto` *(cheap — local model)*
+## 6 — the shell-arm record, under `ask` **and** under `/mode auto` *(cheap — local model)*
 
 `Telemetry::ShellArm` journals as `"type": "shell_arm"` and is written on **every** gated
 `bash` call, both arms, before the command runs (`bash.rb:256-259`). Its six fields, from a
@@ -514,8 +529,8 @@ real allowed pipeline:
 
 **Round 17 found this section void, and it is measurable again since 2026-09-14.** The record was
 written, but onto the chat's *display* channel, which renders three record types and drops the
-rest — 0 `shell_arm` records against 20 `bash` calls, in attended, `/mode auto` and `--exec docker`
-sessions alike (F92). The toolset now journals through the session file's own reader, which is
+rest — 0 `shell_arm` records against 20 `bash` calls, under `ask`, under `/mode auto` and with
+`--exec docker` alike (F92). The toolset now journals through the session file's own reader, which is
 never the live-view tee, so the record reaches the file under `--nvim` and without it. *Driven
 2026-09-14* in a `--no-nvim` chat: three `cat README.md | head -20` calls, three `shell_arm`
 records, the first verbatim —
@@ -527,20 +542,23 @@ records, the first verbatim —
 **A zero here is F92 back, not a quiet session.** Count `shell_arm` against the `tool_use` blocks
 named `bash` before reading anything else in this section.
 
-Drive `cat README.md | head -20` **twice**: once attended, then `/mode auto` and again. **This is
-one of `method.md`'s sanctioned approve-all sections, and it carries that rule's conditions:
-drive it in a throwaway tree holding nothing but `README.md` (§2's scratch root will do), and end
-the section with `/mode !` then `/mode accept_edits` before anything else in the round.**
+Drive `cat README.md | head -20` **twice**: once under `ask`, then `/mode auto` and again.
+**This is one of `method.md`'s sanctioned sections for raising the approval level, and it carries
+that rule's conditions: drive it in a throwaway tree holding nothing but `README.md` (§2's scratch
+root will do), and end the section with `/mode !` then `/mode checkout` before anything else in
+the round.**
 
-- **Attended**: one `shell_arm` record *and* one `escalation` record, whose reason begins
+- **Under `ask`**: one `shell_arm` record *and* one `escalation` record, whose reason begins
   `shell verdict allow -- …`. The two accounts of one call share `verdict`, `reason` and
   `term` as field names on purpose.
-- **`/mode auto`**: the `shell_arm` record is still there and still says
-  `"verdict":"allow","arm":"term"`. **There is no `escalation` record at all** — `ApproveAll`
-  consults no rung. Before this chunk an `auto` session recorded *nothing* about arm
-  selection, so an absent `shell_arm` here is the regression this section exists to catch.
+- **Under `/mode auto`**: the `shell_arm` record is still there and still says
+  `"verdict":"allow","arm":"term"` — **and so is the `escalation` record**, now ending at
+  `rung=auto` rather than at `surfaces`. That is the round-18 change: `auto` runs the same
+  ladder and only swaps the bottom rung, where it used to hand the gate `ApproveAll` and consult
+  no rung at all. An absent `shell_arm` is still the regression this section exists to catch;
+  an absent `escalation` is a new one.
 
-Take one abstaining command in each posture too (`git log --oneline -5` will do): expect
+Take one abstaining command at each approval level too (`git log --oneline -5` will do): expect
 `"verdict":"abstain","arm":"string","term":[]`. **A record written only on the interesting
 branch cannot answer §9's question**, so a missing abstention record is a finding even
 though nothing about it looks wrong.
@@ -747,7 +765,8 @@ bought. Do not report a local number as the paid one.
   (`exec/core.rb:42`, permanently `false`). Spec-covered; not drivable from a cockpit.
 - **An agent with no chat to ask.** An agent in a run with no chat — a bench arm, `lain improve`,
   `lain consolidate`, or a child one of them spawns — whose stack `CLI::ToolGuard.detached` builds
-  with a gate over `Middleware::Gate::ApproveAll`, is the other posture that reaches the tool with no ladder, and driving it belongs with
+  with a gate over `Middleware::Gate::ApproveAll`, is the one arm that reaches the tool with no
+  ladder, and driving it belongs with
   [`subagents-and-backends.md`](subagents-and-backends.md), which owns actor mode and the
   isolation backends. §3 names the consequence; it does not drive the spawn.
 - **Piped terms inside a container.** Deliberately out of scope for the chunk: `docker run`

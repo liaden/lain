@@ -325,6 +325,28 @@ lain epic submit epic_plan other-epic     # MUST proceed -- partitions are (epic
 A global drain would let one epic's unreviewed research block every other epic's planning, and
 concurrent epics are the normal case. **Both halves, or this section tests nothing.**
 
+**Drained is not enough: round 18 added positive approval evidence.** A stage used to open when
+the earlier stages held nothing parked, which quietly counted a *denial* as progress — an empty
+queue is not an approval. The boundary now asks two questions of every preceding stage: is it
+drained, **and** is the newest terminal decision on its `(epic_slug, stage[, issue_id])`
+partition an approval? Drive the case the old rule got wrong:
+
+```bash
+printf '[epics.gates]\nresearch = "interactive"\n' > .lain/config.toml
+lain epic submit research          # then DENY it at the gate
+lain epic queue                    # nothing parked -- the stage is drained
+lain epic submit epic_plan         # MUST refuse: drained, but never approved
+```
+
+The refusal names both conditions, and names the stages under each: still-parked stages and
+never-approved stages are listed apart, because the remedies differ (answer them, versus submit
+and approve again). Then re-submit `research`, approve it, and confirm `epic_plan` opens.
+
+**And a denied resubmission withdraws a standing approval.** Approve `research`, submit it again,
+deny it, and `epic_plan` must close again — approval is the *newest terminal decision* on the
+partition, not a flag that latches. An `epic_plan` that stays open there is the serious finding
+in this section.
+
 ## 7 — `queue`, `approve`, `deny`: draining is journaling
 
 The queue is a **fold**, not a file: an artifact is parked exactly when a `deferred` decision has no
@@ -625,6 +647,18 @@ and that moving the `epic/<slug>` tip and finishing again is treated as a **new*
 **Known gap, and not a finding:** a merge whose handback record never reached the journal refuses
 both `land` and `--resume` — **with the same refusal** (round 17) — and there is no command to adopt
 it. If you hit it, record it; it is a recorded follow-up.
+
+**Each epic lands in a checkout of its own** since round 18: `<worktree root>/landings/<slug>`,
+one per epic, where there used to be a single shared `landing/` directory that made two epics
+landing at once impossible. Confirm the path shape, and drive the case the old shape refused:
+
+```bash
+ls "$(lain worktrees gc --dry-run 2>/dev/null >/dev/null; true)"   # or read the path off the run's output
+find "${XDG_STATE_HOME:-$HOME/.local/state}/lain/worktrees" -maxdepth 3 -path '*/landings/*' -print
+```
+
+Two epics driven concurrently must show two directories under `landings/`, and neither run may
+refuse because the other holds one. A single `landing/` directory is the stale shape.
 
 **The landing checkout is locked while a run holds it** since 2026-09-14 (round 17's F116 found gc
 reaping a fresh, unlocked landing worktree as "landed on main" while an `--epic` cockpit was live).

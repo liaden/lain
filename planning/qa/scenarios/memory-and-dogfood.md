@@ -1,10 +1,20 @@
 # Scenario: memory, and the two passes that read a finished session
 
-**What it exercises:** `memory_write` / `memory_read` and their shared ceiling, `Memory::Index`'s
-content-addressed chain, `Memory::JournalMemoryRoot` (the `memory_root` record beside every
-`turn_usage`), the memory manifest riding every Request through `Workspace`, `lain consolidate`,
-`lain improve`, `improvement_write`, `lain improvements`, and `lain bench sweep` — the offline
-five-arm retrieval eval.
+**What it exercises:** `memory_write` / `memory_read` and their shared ceiling,
+`Memory::ProjectStore` (the one durable store per project), `Memory::Index`'s content-addressed
+chain, `Memory::JournalMemoryRoot` (the `memory_root` record beside every `turn_usage`),
+`Telemetry::MemoryLoaded` (the store version a session opened on), the memory manifest riding
+every Request through `Workspace`, `lain consolidate`, `lain improve`, `improvement_write`,
+`lain improvements`, and `lain bench sweep` — the offline five-arm retrieval eval.
+
+**Round 18 made memory durable and project-wide, which changes what this scenario expects.**
+Before it, each chat kept its own index and nothing survived the process that wrote it; the
+"read it back in a fresh session" check in §4 was a hope. Now there is one append-only
+`store.ndjson` per project under `$XDG_STATE_HOME/lain/memory/<project-hash>/`, and **the fresh-session
+read-back is the expected outcome rather than the aspiration**. It is also strictly separate from
+compaction: different objects, different records, and neither reads the other — a handoff state
+document never reaches the store, and the consolidation clerk never reads a compaction
+replacement.
 
 **The question it answers:** does what a session learned come back, and does the record say where
 it came from? Memory is the one subsystem where a silent no-op is indistinguishable from success:
@@ -143,6 +153,26 @@ quietly reach a model; the report names the provider and model a live pass would
 confirm the dry report still runs. A dry run that refuses on a missing key is reaching for a provider
 it promised not to.
 
+**Which provider it names is the session's own, since round 18.** The pass resolves the same
+`RunProfile` the chat recorded in its session header rather than falling back to a built-in
+default, so a session driven against ollama clerks against ollama with no flags typed. A flag you
+*do* type still wins, and says so: `recorded with provider ollama; continuing with anthropic (the
+current flags win)`. A dry report naming `anthropic` over an ollama session with no flag on the
+command line is the finding.
+
+**And the scaffold it would send is masked, fail-closed.** Every rendered turn's text goes
+through region detection and masking before it reaches a provider, because nobody is at a surface
+to release a region in a headless pass. Plant an `API_KEY=` line in a turn the lineage covers and
+confirm the dry report's scaffold shows it masked — `--dry-run` renders the identical scaffold
+objects a live pass sends, which is what makes this checkable for free. The digests lain's own
+frame wraps the record in (the lineage spawn digest, the spawned-from digest) stay intact: only
+the record's bytes are masked, so the clerk can still cite what it read.
+
+**The pass writes its own journal, not into the chat's.** It lands under
+`$XDG_STATE_HOME/lain/consolidation/<project-hash>/`, a sibling of `sessions/`, so a clerk pass
+never shows up in `lain sessions`. Confirm both: the directory exists after a live pass, and
+`lain sessions` is unchanged by it.
+
 It must name the lineages that WOULD be clerked. **Round 17 found it named none, ever** (F98):
 `Consolidation` walked `turn` records for a `meta.spawned_from` no chat session writes, so a session
 manufactured exactly as above answered `consolidate: no completed subagent lineages found.`, dry and
@@ -171,10 +201,38 @@ prefix — and confirm they are **not** `lain chat --resume`'s three, which are 
 A driver who assumes they are the same will file a false defect the first time a selector that
 resumes fine fails to consolidate.
 
-Then the outcome: new memory items, written through the recorder, with a new root. Read them back
-with `memory_read` in a **fresh** session to prove the chain survived the process that wrote it.
-That round trip is the whole point of the pass, and it is the only check that distinguishes "the
-pass ran" from "the pass persisted anything".
+Then the outcome: new memory items, written through the recorder, with a new root. **Read them
+back with `memory_read` in a fresh `lain chat` on the same project.** That round trip is the whole
+point of the pass, it is the only check that distinguishes "the pass ran" from "the pass persisted
+anything", and since round 18 it is an **expectation**: the clerk appends to the same
+`Memory::ProjectStore` a chat opens on, so a new chat sees its items immediately.
+
+Read the store directly beside the read-back, so a failure says which half broke:
+
+```bash
+STORE="${XDG_STATE_HOME:-$HOME/.local/state}/lain/memory"
+ls "$STORE"/*/store.ndjson
+wc -l "$STORE"/*/store.ndjson          # grows by the clerk's writes, never shrinks
+```
+
+Three properties on the fresh chat:
+
+1. **`memory_read` finds the clerk's items**, by id, with no `--resume`.
+2. **One `memory_loaded` record, written once, ahead of the first `memory_root`.** It carries the
+   store `version` the session opened on and the item bodies, so the session file is
+   self-contained about what memory it started from. Two of them, or one that arrives after a
+   `memory_root`, is the finding.
+3. **`memory_loaded`'s `version` and a turn's `memory_root` are different quantities** and must
+   not be conflated: the first is the *store* fold this session read, the second is the live
+   index's content address at one turn. A round that expects them to be equal has misread both.
+
+Two more, cheap and worth taking:
+
+- **A resumed chat does not inherit what other chats wrote meanwhile.** Write an item from a
+  second chat, then `--resume` the first: the resumed one reproduces the roots its own file
+  recorded. The item is still durable — a *fresh* chat sees it.
+- **A `/rewind` past a `memory_write` drops it from the live view and not from the store.**
+  `memory_read` in that session stops finding it; a fresh chat still does.
 
 ## 5 — `lain improve`, `improvement_write`, `lain improvements`
 

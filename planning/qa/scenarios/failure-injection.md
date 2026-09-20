@@ -135,6 +135,40 @@ undiagnosable failure. A silent all-zero `turn_usage` with no `truncated_stream`
 still the regression to watch for; an absent record after a sever that also committed no turn at
 all is not that regression.
 
+**And read what happened to the PROMPT, which is the other half of the same failure.** Round 18
+made the rule explicit and typed:
+
+- **A failure after the request reached the wire keeps the prompt.** It stays on the chain,
+  unanswered, and the **next** ask carries it too: one user turn holding both texts, cut from the
+  stranded prompt's parent. The chat says so before the wire —
+  *"the prompt at the head has no answer on this chain, so this ask carries it too -- /rewind 1
+  before asking to leave it out"* — and the journal shows the retreat and the folded turn written
+  together. A **second** prompt stacked beside the first, rather than one folded turn, is the
+  regression.
+- **Only a provably pre-wire failure withdraws it.** Every connection refused (§5's unroutable
+  address) and a prompt refused for not fitting the window are the two shapes that retreat the
+  Timeline, and only while that prompt is still the head. Anything else — a mid-stream sever, a
+  stall, a `/stop`, a ceiling — leaves it stranded.
+
+`counts_absent` above is a *post*-wire failure by construction, so drive the fold from it: sever
+after the terminal frame, read the refusal, then ask something else and confirm one turn carries
+both texts. Then `/rewind 1` before a third ask and confirm the earlier prompt is left out.
+
+**Every stopped ask says why.** `run_interrupted` carries a `reason` from the closed set
+`interrupted`, `grace_expired`, `stopped`, `ceiling`, `over_window`, `transport`,
+`stalled_stream`, `torn`:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  puts "#{r["ts"]} run_interrupted reason=#{r["reason"]}" if r["type"]=="run_interrupted"}' "$JOURNAL"
+```
+
+Each section below that stops an ask names the reason it should carry: §4 and §5 `transport`, the
+stalled-stream shape `stalled_stream`, §7 `ceiling`, §9's over-window refusal `over_window`,
+`/stop` `stopped`, Ctrl-C `interrupted` or `grace_expired`. **`torn` is the default for a cause
+nothing classified** — a run of `torn`s is not a passing run, it is the classifier failing to
+recognise its own failures, and it is worth filing as such.
+
 ## 2 — A torn `turn` record
 
 **Tear a `turn` record specifically.** Skipping unparseable lines is `Journal.records`' documented
@@ -286,18 +320,41 @@ failure is on the first turn. `--prompt '<text>'` is the cheap vehicle, in a win
   Not the ~20 minutes of silence this used to cost.
 - A scheme-less typo (`localhost:11434`), the mistake a human actually makes: must refuse at
   construction naming `--api-base`, **not** crash with a Faraday backtrace. It is a *valid* URI —
-  scheme `localhost`, opaque `11434` — so a `URI::InvalidURIError` guard does not catch it.
+  scheme `localhost`, opaque `11434` — so a `URI::InvalidURIError` guard does not catch it. Since
+  round 18 the refusal offers the shape it wanted: `--api-base "localhost:11434" has no host;
+  <remedy>, e.g. http://localhost:11434`.
+
+**This is the pre-wire shape, so the prompt is WITHDRAWN here**, not folded: every attempt failed
+before the server saw anything, so it does not come back with the next ask. Confirm the
+difference against §1b's post-wire fold — the two must not behave alike, and a withdrawn prompt
+reappearing is as much a finding as a stranded one vanishing.
 
 Count the real attempts with a counting TCP listener (`method.md`), then check the rendered ordinals
 **against** that count: since T18 the give-up line names the attempt that failed rather than the
 retry budget, so `1, 2, 3, 3` for four attempts is the regression and `1, 2, 3, 4` is the pass. See
 `session-and-window.md` §2 for the expected lines.
 
-## 6 — Ctrl-C during a parked `ask_human`
+## 6 — Ctrl-C during a parked `ask_human`, and `/stop`
 
-Known uncovered: signals are routed to a null handler outside an ordinary turn's ask, so either the
-process dies outright or the ask stays parked. Both are the documented gap; **the actual check is
-that the session journal still parses afterwards.**
+This used to be a documented gap: signals were routed to a null handler outside an ordinary
+turn's ask, so either the process died outright or the ask stayed parked, and the only real check
+was that the session journal still parsed afterwards. **Round 18 gave the signal a route and the
+human a verb**, so there is something to drive:
+
+- The trap now only **records** the signal; a live fiber routes each recorded one against
+  whatever is on screen, so a signal arriving while the prompt is changing is not lost. Press
+  Ctrl-C while an `ask_human` is parked and the countdown must appear.
+- At that countdown, **`s` stops the ask** and keeps the session: the journal gains a
+  `run_interrupted` with `"reason": "stopped"`, there is **no** `session_closed`, and the prompt
+  comes back as `you>` on the same chain.
+- **`/stop` does the same thing from the parked prompt itself.** It is lifted off the input rail
+  before the command registry sees it, so it works at a `human>` or a `[y/N]`, not only at
+  `you>`.
+- The stopped ask's prompt is **kept**, not withdrawn (§1b): the next ask folds it.
+
+Still check that the journal parses afterwards — that was the old check and it is still the
+cheapest one. A `session_closed` beside the stop, or a session that has to be `--resume`d to
+continue, is the finding.
 
 ## 7 — The iteration ceiling
 
@@ -343,18 +400,32 @@ turn.
 **A tripped bound writes no journal record** (`method.md`): its only trace is a `tool_result` block
 with `"is_error": true`, so use that reduction, not a record-type grep.
 
-The live ceilings, read from the process rather than the source:
+**Round 18 replaced the scattered per-tool constants with one table.**
+`Tool::Bounds::CEILINGS` maps every result-returning tool to the same `RESULT_BYTES`, and the
+number is sized to the smallest local window rather than to a model: at the worst measured
+density one result is about 40% of a 32k window. Read it from the process rather than the source:
 
 ```bash
-$QA/drive.sh '/ruby [Lain::Tools::ReadFile::WHOLE_BOUND.limit, Lain::Tools::ReadFile::WINDOW_BOUND.limit,
-                     Lain::Tools::Bash::OUTPUT_BOUND.limit, Lain::Tools::ListFiles::BOUND.limit]' 6 30 >/dev/null
+$QA/drive.sh '/ruby [Lain::Tool::Bounds::CEILINGS.values.uniq, Lain::Tool::Bounds::CEILINGS.size,
+                     Lain::Tools::ReadFile::BOUND.limit, Lain::Tools::Bash::OUTPUT_BOUND.limit,
+                     Lain::Tools::ListFiles::BOUND.limit]' 6 30 >/dev/null
 $QA/peek.sh 6
 ```
 
-Expected `[262144, 1048576, 131072, 500]` — 256 KiB for a whole read, 1 MiB through a window, 128 KiB
-of command output, 500 rows for a listing. `memory_read`/`memory_write` share the 256 KiB artifact
-ceiling; `glob` shares 500; `file_symbols` (definitions) and `test_pattern` cap at 200;
-`file_symbols` references at 500; `web_search` at 20.
+Expected `[[16384], 16, 16384, 16384, 500]` — **one** ceiling, 16 KiB, over all sixteen tools, so
+a whole read, a windowed read and command output are now bounded alike. Row caps are a separate
+axis and are unchanged: 500 rows for a listing and for `glob`, 200 for `file_symbols`
+definitions and `test_pattern`, 500 for `file_symbols` references, 20 for `web_search`. The old
+figures — 256 KiB whole, 1 MiB windowed, 128 KiB of output — are what a driver will remember;
+finding them is a stale binary.
+
+Two consequences worth driving, because they are what the drop from 256 KiB to 16 KiB buys and
+costs:
+
+- **`bash` output is bounded while it is captured**, not measured after the fact, so a command
+  that would print a gigabyte does not first buffer one.
+- **`edit_file` on any file over 16 KiB now depends on §9's windows adding up.** That is not a
+  side effect; it is the reason the adding-up rule exists.
 
 ### The refusing shape
 
@@ -497,15 +568,17 @@ this order:
    with one `window_pressure` record (`kind: over_window`). To reach step 5 on this box, raise
    `--num-ctx` past the file (and the server's `OLLAMA_CONTEXT_LENGTH` with it) or use a smaller
    `mid.rb`. Silent truncation — `input_tokens` falling below the previous turn's with no
-   `window_pressure` — is F90 back. **The per-tool ceilings are still not window-relative** (the
-   discharging chunk's Open decision 2): a read the tool admits can still overrun the window, and the
-   refusal above is what catches it.
+   `window_pressure` — is F90 back. **The per-tool ceilings are still not window-relative**, and
+   that is now a ruling rather than an open decision: round 18 made them static and sized them to
+   the smallest local window instead (§8). A read the tool admits can still overrun the window in
+   aggregate, and the refusal above is what catches it — but a single 300 KB read no longer gets
+   past the tool at all.
 5. `edit_file` on `mid.rb` again → **must be permitted**.
 
 **Step 5 is the deadlock guard and the reason this sequence exists.** If a full-cover window did not
-complete the read set, every file over 256 KiB would be permanently uneditable and the only escape
-would be `write_file`, which overwrites whole the very file too large to read. Confirm the read-set
-state directly rather than inferring it from the edit:
+complete the read set, every file over the tool ceiling would be permanently uneditable and the
+only escape would be `write_file`, which overwrites whole the very file too large to read. Confirm
+the read-set state directly rather than inferring it from the edit:
 
 ```bash
 $QA/drive.sh '/ruby [session.read?(File.expand_path("mid.rb")), session.partially_read?(File.expand_path("mid.rb"))]' 6 30 >/dev/null
@@ -513,6 +586,29 @@ $QA/peek.sh 6
 ```
 
 `[false, true]` after step 2; `[true, false]` after step 4.
+
+**6. Several windows ADD UP, which is new in round 18 and now the ordinary path.** With the
+ceiling at 16 KiB (§8), a single full-cover window is impossible for most real files, so a read
+is complete when the line spans the model actually saw **cover the file between them**. Drive it:
+read lines 1–50, then 51–120, then 121–end, each a separate call, and confirm `session.read?`
+flips to true on the last one without any single call having covered the whole file. Spans are
+merged per **file identity** (device, inode, size, mtime), not per path, and they must be
+contiguous — leave a gap of one line in the middle and the file must stay incomplete. A gap that
+still completes is the serious finding here: it means `edit_file` will clobber lines nobody saw.
+
+**7. A read counts only while the turn that delivered it is on the chain.** `/rewind` past the
+turn whose `tool_result` carried the read and the file must go back to unread — `edit_file`
+refuses again. This is the round-18 fix for a read set that outlived its own evidence:
+
+```
+you> (read mid.rb fully, across windows)
+you> /rewind <past the reading turn>
+you> (ask for an edit to mid.rb)   -> must refuse, naming the window
+```
+
+An edit permitted after that `/rewind` is the regression. Two shapes to check beside it: a read
+whose result was an **error** never counts at all, and a read still in flight counts (it is
+pending, not absent) so a round is not made impossible by its own bookkeeping.
 
 **The refusals now name the file, by its RESOLVED ABSOLUTE PATH** -- they used to say the literal
 word `path`, which told a model nothing when several files were in play. Match on the remedy and the

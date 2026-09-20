@@ -10,11 +10,25 @@ code, follow the code.
 ## Process topology
 
 `lain` is one Ruby process that owns the loop, and it runs tmux-native. `lain up` creates (or
-reattaches to) a tmux session with a `chat` window and a session-scoped status HUD. `lain up
---nvim` splits that window into an `nvim --listen` pane and a `chat` pane pinned to one cwd and
-one deterministic socket, so the editor and the chat that attaches to it can never diverge. The
-window layer is a multiplexer concern, so the same tmux session renders under iTerm2's `tmux
+reattaches to) a tmux session with a `chat` window and a session-scoped status HUD. The window
+is **three panes**: `lain up --nvim` (the default) cuts an `nvim --listen` pane, splits a `chat`
+pane beside it, and splits an **input pane** beneath that chat pane. `--no-nvim` drops only the
+editor; the chat is still a transcript over an input pane. All of them are pinned to one cwd and
+one deterministic nvim socket, so the editor and the chat that attaches to it can never diverge.
+The window layer is a multiplexer concern, so the same tmux session renders under iTerm2's `tmux
 -CC` on macOS.
+
+The split exists because the chat pane is a **scrolling transcript**: anything drawn into it
+scrolls away, so a prompt and a live HUD cannot share it. The input pane runs `lain input`
+(`Frontend::InputPane`, `lib/lain/frontend/input_pane.rb`), which draws the HUD and the top of
+the fleet tree above the prompt and refreshes them without a keypress, and feeds what the human types back
+to `lain chat --input socket:NAME` over a Unix socket (`CLI::InputSocket`,
+`lib/lain/cli/input_socket.rb`) at
+`${XDG_RUNTIME_DIR:-/tmp}/lain/input-<project-hash>-<name>.sock`. Both panes derive that path
+identically before either process starts, so it carries no pid. `Up::INPUT_PANE_HEIGHT` is 6
+rows and is a **floor rather than a fixed height**: a `window-layout-changed` hook re-seats the
+pane only when something drove it under the floor, so a human who grows it keeps the larger size.
+Below `Up::SEATED_WINDOW_HEIGHT` (13 rows) the hook backs off and lets tmux's own arithmetic run.
 
 Two frontends subscribe to one Journal, and the agent knows about neither. `Frontend::TTY`
 (`lib/lain/frontend/tty.rb`) is the chat pane. `Frontend::Neovim`
@@ -31,10 +45,12 @@ bench's exec-comparison arm only. `ext/lain` is in-process and built.
 ```mermaid
 flowchart LR
   subgraph sess["tmux session 'lain' (or iTerm2 tmux -CC)"]
-    TTY["chat pane<br/>lain (Ruby) · TTY frontend · owns the loop"]
+    TTY["chat pane<br/>lain (Ruby) · TTY frontend · owns the loop<br/>scrolling transcript"]
+    IN["input pane<br/>lain input · HUD + top of the fleet tree, over the prompt<br/>seated at a 6-row floor"]
     NVIM["nvim pane (lain up --nvim)<br/>nvim --listen"]
     WATCH["subagent viewer windows<br/>lain watch · read-only"]
   end
+  IN <-->|lines up, HUD frames down<br/>unix socket · one input rail| TTY
   TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
   TTY -->|read-only journal tail| WATCH
   TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>tracing → NDJSON · Canonical<br/>persistent DAG · BM25 · AST search"]
@@ -334,12 +350,26 @@ what is removed and reintroduces exactly that silent disagreement.
 
 **A committed compaction is held, not re-decided.** The Timeline is never rewritten: a compacting
 turn renders a derived chain, and what it commits is **policy state**, a `Telemetry::CompactionCut`
-(`lib/lain/telemetry/compaction_cut.rb`) naming the source digest it collapsed up to, the source
-head it was committed at, the arm that collapsed it, and the ranges this advance *newly* collapsed
-with their replacements. Earlier ranges are its `parent`'s, linked by the parent record's content
-address, so a record's size stays flat however many advances precede it.
+(`lib/lain/telemetry/compaction_cut.rb`) over
+`digest, head, strategy, kind, parent, supersedes, collapses, plan_step_completions`: the source
+`digest` it collapsed up to, the `head` it was committed at, the `strategy` arm that collapsed it,
+and the ranges this cut *newly* collapsed with their replacements. Earlier ranges are its
+`parent`'s, linked by the parent record's content address, so a record's size stays flat however
+many advances precede it. A cut is addressed by its own content rather than by its source digest,
+because a re-collapse can share a digest with the last cut it replaces.
 `Session#record_compaction_cut` keeps and journals it beside the pin-set, refusing a cut whose
 parent it never recorded, and `SessionRecord::Replay` folds it back.
+
+**`head` is the turn the committing render STOOD ON**, `Event.stands_on`: the model's own turn at
+the head, or, where the render added a user turn that was refused before any model saw it, the
+turn *beneath* that withdrawn prompt. Pinning it to the asked prompt instead made every withdrawn
+ask re-commit the same cut, because the prompt it named left the chain with it.
+
+**`kind` is one of `advance`, `collapse` and `handoff`**, and `supersedes` is what tells them
+apart structurally. An `advance` carries only the newly collapsed ranges and supersedes nothing.
+A `collapse` names at least two cut addresses in `supersedes` and re-summarizes what they render
+between them. A `handoff` supersedes every cut that held. Both validations are on the record, so
+an `advance` with a non-empty `supersedes` is not writable.
 
 Every later turn, `Compaction::Source::HeldCut` picks the latest recorded cut that meets three
 conditions: its commit head is on the head's chain, it was committed by this run's arm, and its
@@ -363,9 +393,28 @@ defer keeps it pending and the first cold render compacts. The commit records th
 `Session#plan_step_completions` it consumed on its cut, which is how a resume sees a consumed step
 as consumed.
 
-Two consequences are open decisions rather than behaviour: held replacements are never
-re-collapsed, so summaries accumulate one per advance; and a pin placed inside a range a held cut
-already collapsed does not bring that turn back.
+**Held cuts re-collapse.** Once more than one cut is held, a signal with nothing newly droppable
+past them used to have nowhere to go, and the summaries accumulated one per advance forever. Now
+`HeldCut#collapsible?` is true at two held cuts, `Source#movable?` admits a move on it alone, and
+`Source::Derived#collapsed` offers the strategy the `HeldCut::Stretch` — the held replacements
+plus whatever was retained between them, as this chain renders it — and commits one `collapse`
+superseding them all. Readers fold the superseded cuts out; a `collapse` that would not shrink is
+declined and journaled as `would_not_shrink` like any other; and replay refuses a `collapse`
+naming an address its file lacks. A pin placed inside a range a held cut already collapsed still
+does not bring that turn back, and that one remains an open decision.
+
+**When no cut can make room at all, the fallback is a handoff.** `Compaction::Source::Fallback`
+(`lib/lain/compaction/source/fallback.rb`) fires only after a provider has refused a prompt whole
+(`WindowExceeded`) *and* the source is stuck — nothing droppable, or the refused render already
+held the newest cut. It spends exactly one summarizer call, through `Oracle::Handoff`
+(`lib/lain/oracle/handoff.rb`), whose schema is five required strings: `goal`, `progress`,
+`files_and_decisions`, `open_todos`, `next_step`. The rendered state document replaces everything
+before the current ask and **keeps three things**: the ask itself, an unanswered `tool_use` /
+`tool_result` pair (the Messages API refuses a split pair), and the pins. It is recorded like any
+other cut — one record of `kind: handoff`, the document positioned where the replaced history
+began and the later ranges collapsing to empty content — and replayed like one, so `--resume`
+renders what the live run sent. `--compact-fallback` chooses between it and `Fallback::None`, and
+a chain that has handed off does not regain the `keep_last` tail by advancing past it.
 
 `Compaction::Prepared` (`lib/lain/compaction/prepared.rb`) is the third policy, separate from
 both: what happens across repeated **idle ticks**. Idle time is a series of ticks, so a naive
@@ -402,7 +451,48 @@ are the 3 shipped questions.
 `bm25`/`hybrid` retrieval, written through `memory/recorder.rb` and read back by
 `Context::Recall`, which injects **after the last cache breakpoint** so a recall cannot break the
 cached prefix. `Embedder` (`lib/lain/embedder/`) is the batched seam for a real embedding backend
-against a deterministic PHI-free one.
+against a deterministic PHI-free one. Each `hybrid` arm truncates to `Hybrid::CANDIDATES` hits
+before RRF sees a rank, a bound whose reason does not depend on any corpus.
+
+**Memory is durable and project-wide.** `Memory::ProjectStore`
+(`lib/lain/memory/project_store.rb`) is one append-only `store.ndjson` per project, under
+`$XDG_STATE_HOME/lain/memory/<project-hash>/`, written under a sibling lock file so concurrent
+chats and `lain consolidate` can all append. `ProjectStore::Loaded` folds it last-write-wins by
+id and derives a `version` from the folded digests. `#view` opens a fresh chat on the current
+fold, so a new chat sees what earlier chats and the consolidation clerk wrote; `#resumed`
+re-addresses a replayed recorder's own items instead of re-reading the file, so a resume
+reproduces the roots its own file recorded rather than inheriting what other chats wrote
+meanwhile. A session's view is its `Memory::Recorder`: the items the store resolved at load time,
+plus this chain's own writes, re-folded by `#follow` on a `/rewind`. Two records carry it into the
+session file, and they are not the same quantity: `memory_loaded` is written once and names the
+**store version** this session opened on, with the item bodies, so the file is self-contained;
+`memory_root` is written once per committed turn and names the live index's content address at
+that turn.
+
+`lain consolidate` writes through the same store, so its `court_clerk` pass is durable rather
+than in-process. Its own journal lands under `$XDG_STATE_HOME/lain/consolidation/<project-hash>/`,
+a sibling of `sessions/`, so a clerk pass never appears in a chat listing. The scaffolds it builds
+are **masked fail-closed**: every rendered turn's text goes through `Sensitivity::Regions` and
+`Sensitivity::Masking` before it reaches a provider, because nobody is at a surface to release a
+region. Only the record's bytes are masked; the digests lain's own frame wraps them in stay
+intact, so the clerk can still cite what it read.
+
+### Project memory and compaction are different subsystems
+
+They are named apart on purpose, and neither reads the other.
+
+| | project memory | compaction |
+|---|---|---|
+| what it is | durable facts written with `memory_write` or by `lain consolidate` | a derived, rebuildable view of one chat's own history |
+| lives in | `Memory::ProjectStore`, `$XDG_STATE_HOME/lain/memory/<project-hash>/` | `Compaction::Source` state, and `compaction_cut` records in the session file |
+| scope | the project, across chats | one chain |
+| records | `memory_loaded`, `memory_root`, `memory_write` tool turns | `compaction_cut` (`advance`, `collapse`, `handoff`) |
+
+A handoff state document is never written to project memory, and the consolidation clerk never
+reads a compaction replacement. Both directions are pinned structurally by
+`spec/memory_compaction_separation_discipline_spec.rb`: nothing under `lib/lain/compaction/`
+names `Memory::ProjectStore`, and a consolidation scaffold never carries a cut's replacement
+text.
 
 ## Effects, handlers, Gate, and Middleware
 
@@ -482,7 +572,67 @@ loop: `#dispatch` runs the stack with the handler as its innermost block.
 The loop itself, `Lain::Agent` (`lib/lain/agent.rb`) with `Agent::Budget` and
 `lib/lain/agent/loop_machine.rb`, is a `state_machines` state machine. A spec generates
 [`docs/agent-state-machine.md`](docs/agent-state-machine.md) from it and fails the build on
-drift. That document covers `stop_reason` handling, which this one does not repeat.
+drift. That document covers the wire's `stop_reason` handling, which this one does not repeat;
+the harness's own typed reasons for a *stopped ask* are below.
+
+### Why an ask stopped, and what happens to the prompt
+
+`Agent::StopReason` (`lib/lain/agent/stop_reason.rb`) classifies whatever the ask raised against
+its whole cause chain and answers one of `stopped`, `ceiling`, `over_window`, `stalled_stream`
+and `transport`, defaulting to `torn` when nothing matches. That symbol is what
+`Telemetry::RunInterrupted` records, over the closed
+`REASONS = %i[interrupted grace_expired stopped ceiling over_window transport stalled_stream torn]`
+— the first two come from Ctrl-C and the shutdown window rather than from an ask. It is a
+different enum from `Lain::StopReason`, which is the model's own wire-level stop.
+
+**The prompt is withdrawn only for a provably pre-wire failure.** `Agent#withdrawing` retreats
+the Timeline for `WindowExceeded` and `Lain::PreWire` alone, and only while that prompt is still
+the head. Everything else leaves the prompt **stranded**: unanswered at the head, and folded into
+the next ask. `Agent#prompted` cuts one user turn carrying both texts from the stranded turn's
+parent rather than stacking a second prompt, and the chat says so, naming `/rewind 1` as the way
+to leave the earlier one out.
+
+**The `tool_use` turn settles before any tool runs.** `Middleware.settles!` refuses a turn-phase
+stack whose members answer only `#call`, and `Agent#account` calls `turn_middleware.settle` — so
+`Middleware::JournalTurns` writes the turn to the session file — before the usage record and
+before the round's first tool starts, all inside the same cancellation-shielded commit atom. A
+session killed while a tool runs therefore resumes, and no later record can cite a turn the file
+lacks. That is what retired the child-only settle handles and `Bench::Session::Lineages::InFlight`.
+
+## Modes: a mode is scope × approval
+
+`Lain::Mode` (`lib/lain/mode.rb`) is `Data.define(:scope, :approval, :layers)`, and the first two
+are the axes:
+
+| axis | values | what it decides |
+|---|---|---|
+| scope (`mode/scope.rb`) | `checkout`, `plan` | *where* a write or a command may land |
+| approval (`mode/approval.rb`) | `ask`, `auto` | *who* answers for a gated call |
+
+`checkout` is the project's own working tree, unconfined. `plan` confines the paths a tool
+**names** — `write_file`/`edit_file`'s `path`, `bash`'s `cwd` — to a leased spike, refusing
+anything else by name and pointing at `/mode checkout`. `Isolation::Spike`
+(`lib/lain/isolation/spike.rb`) cuts that spike as a worktree on `lain/plan/<key>` from a commit
+of the checkout's tracked state, built through a temporary index so the real index, stash and
+reflog are untouched; outside a git repository `Isolation::Scratch` hands out an empty directory
+instead. **It is confinement, not a sandbox**: a human-approved shell command's own words can
+still write anywhere, because only the named location is checked.
+
+`ask` and `auto` are the same ladder — `Escalation::Triage`, then the rule chain — and differ
+only at the bottom rung: `ask` parks on `Approval::Surfaces`, `auto` takes `Remainder`. So a
+triage deny or a rule deny still refuses under `auto`. A scope never changes the toolset, so a
+flip cannot move the tool block a prompt cache keys on.
+
+Layers (`mode/layer.rb`) are the orthogonal, non-exclusive third member: `auto_approve`, `goal`,
+`notify`, `vi`. Only `auto_approve` answers `alters_outcome?`, and it is the one that adds the
+`auto_approver` model judge at the ladder's last rung — a different thing from approval `auto`,
+which removes the rung instead.
+
+`Mode::Switch` (`mode/switch.rb`) is the live slot, and it journals **only a move**: switching to
+the mode already in force writes nothing. The posture table, `Permits::All`/`Only`, `READ_ONLY`,
+`ToolsetBuild::PosturePermits`, `Subagent::Seam#permits`, the `deny_all` gate-policy entry and
+the `manual` and `accept_edits` tokens are all gone; `/mode` refuses the two retired words by
+name rather than as typos.
 
 ## Tools, tiers, and the toolset
 
@@ -540,6 +690,16 @@ journals a `refused` record. The
 consequence worth remembering is that **under `:handler_union` the rendered schema does not
 determine the capability set**: 2 children with different `only` sets render byte-identical tools
 blocks, which is what makes the sibling cache sharing the posture exists for possible.
+
+**Every tool result has a static byte ceiling**, and they are one table rather than a constant
+per tool: `Tool::Bounds::CEILINGS` (`lib/lain/tool/bounds.rb`) maps all 16 result-returning tools
+to the same `RESULT_BYTES` of 16 KiB, measured on the bytes the model sees. The number is sized
+to the smallest local window, not to a model: at the worst measured density one result is about
+40% of a 32k window. The same file holds the four bound *shapes* a tool chooses between —
+`Enumeration` (a row cap with an in-band notice), `Fill` (byte-bounded rows with a trailer),
+`Artifact` (refuses whole, no payload) and `Handback` (hands the overrun back for a caller or a
+human to decide). `web_fetch` is an `Artifact`, and it is measured on the **readable text** its
+nokogiri converter produces rather than on the markup; `raw: true` asks for the markup instead.
 
 `Tool::Input` (`lib/lain/tool/input.rb`) is ActiveModel: one field declaration yields both the
 JSON Schema the model sees and the local validation, so they cannot diverge, and coercion is
@@ -637,6 +797,17 @@ that keeps a gate from refusing a path the listing beside it enumerates.
 
 Both gate and filter turn on **not ordinary**, never on `Verdict#gated?`, which is false for a
 DENIED path and would wave `~/.ssh/id_rsa` through while withholding `.env`.
+
+**A `[sensitivity]` pattern can be anchored at the project root.** A leading `/` anchors there
+exactly as a leading `~/` anchors at home, and a bare pattern stays a basename glob; a
+path-shaped bare pattern is refused at load rather than silently matching nothing. An anchored
+pattern is a **literal, clean path** — no glob character, no empty, `.` or `..` segment — because
+the rule it states is subtree containment, not matching: under `denied` or `gated`, `/vault`
+covers `vault` and everything beneath it, with or without the trailing slash. Under `exempt` an
+anchored pattern names **exactly one file**, a directory is refused, and what the exemption lifts
+is the human read prompt and nothing else: an ordinary-by-exemption verdict still fails the
+automatic shell approver's own test, so one fixture's exemption cannot approve `cat` of every
+`.env` in the tree.
 
 `Policy::PATH_FIELDS` is the whole of what the boundary knows about tools — which input field
 names a path, per tool. That coupling cannot be abolished (something must know `bash` names a
@@ -800,16 +971,70 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
   fibers. It hosts the `Supervisor`'s reactor task for the conversation's life (`OM-6`: an
   actor's fiber must outlive any single ask) and nests an optional `Frontend::Neovim`
   (`lib/lain/frontend/neovim.rb`) inside the `Frontend::TTY` (`lib/lain/frontend/tty.rb`) run.
+- **`Repl::ConversationScope`** (`lib/lain/cli/repl/conversation_scope.rb`) owns how long a
+  surface lives, and the answer is **the whole conversation**. It opens the reply surfaces and
+  the approval watchers once, against the repl's own task rather than any ask's, and closes them
+  on every exit path. The per-dispatched-line `Repl::LineScope` it replaced is deleted: a surface
+  that lived for one line could not answer a question that outlived it.
 - **`HumanReplies`** is the `ask_human` reply surface: a TTY drain loop plus, when `--nvim` is
   attached, an `:LainReply` consumer reading the editor's command inbox. `AskHuman`
   (`lib/lain/tools/ask_human.rb`), built with a `notify:` seam, is the tool both surfaces resolve.
+
+### One input rail, and one reader of stdin
+
+Every line a human types reaches the chat through `Frontend::InputRail`
+(`lib/lain/frontend/input_rail.rb`), whatever produced it: `Frontend::StdinPump`
+(`lib/lain/frontend/stdin_pump.rb`) for a plain `lain chat`, `CLI::InputSocket` for the `lain
+input` pane, and the editor's gesture consumer for nvim. `StdinPump` is **the one reader of
+stdin**: on a tty it drives the line editor, and off a tty it reads a private `dup` of fd 0 with
+`$stdin` reseated onto `/dev/null`, so a shelled-out child cannot move a shared file offset under
+it. The stdin-arbitration machinery this replaced — `Repl::LineScope`, `LineEditor::READS`,
+`Conductor#owning_stdin`, and the three typeahead special cases in `Frontend::TTY` — is gone.
+
+Two rules live on the rail rather than in any surface. **Generation**: a line whose generation
+predates the prompt it arrives at was begun before that prompt was drawn, so it is held and can
+never be the answer to a prompt a run is waiting on. That one rule replaced the typeahead special
+cases. **Order**: the rail is also the prompt *queue*, so an answer-kind prompt (`[y/N]`,
+`human>`) is inserted ahead of a still-waiting `you>` and everything else joins the tail, with
+`#about` deduplicating the announcement when two readers ask about the same parked call. A prompt
+that has to wait says so, and one decided elsewhere before it ever drew says how it was decided.
+
+`/stop` rides the same rail. A line reading exactly `/stop` is lifted off it as a stop signal
+**only** when an ask is in flight and the prompt is not an idle `you>`; otherwise it stays an
+ordinary line and the registered command answers it, saying that nothing is running. The
+countdown offers `s` for the same thing while a run is parked. Stopping interrupts the task
+hosting `Agent#ask`, records `run_interrupted` with reason `stopped`, writes **no**
+`session_closed`, and returns to `you>` in the same session.
 - **`LiveViews`** builds the `--nvim` and `--journal` tee: a `Channel::DropOldest`
   (`lib/lain/channel/drop_oldest.rb`) for the editor and a `StatusFeed`
   (`lib/lain/status_feed.rb`) for the tmux HUD, fanned through one `CLI::JournalTee`
   (`lib/lain/cli/journal_tee.rb`). See the fan-out section below.
 
-`CLI::Backend` (`lib/lain/cli/backend.rb`) is the provider, model, and sampler resolution that
-`chat` and `bench record` share.
+`CLI::Backend` (`lib/lain/cli/backend.rb`) is the provider, model, and sampler resolution every
+model-calling command shares.
+
+### `RunProfile`: one resolved backend per chat
+
+`CLI::RunProfile` (`lib/lain/cli/run_profile.rb`) is `Data.define(:provider, :model, :api_base,
+:num_ctx, :num_batch, :typed)`. The sixth member is the one that makes the rest work: `typed`
+names which of the five flags the human actually put on argv, which is only knowable because
+`exe/lain` declares them with **no Thor `default:`** — a default would materialize the key and
+make a typed flag indistinguishable from an unset one.
+
+`ModelFlags` (in `exe/lain`) is the single band that declares those five, plus the sampling and
+throughput flags, on every command that calls a model: `chat`, `epic submit`, `bench record`,
+`bench arms`, `consolidate` and `improve`. It replaced `EpicSubmit::Adjudication.flags` and the
+backend halves of `RECORD_FLAGS` and `ARMS_FLAGS`, and `JournalPassFlags` now composes it rather
+than carrying a provider default of its own.
+
+A chat writes its resolved profile into the session header (`#to_header`, over every field but
+`model`, which the header already carries). `#over` then lays a recorded profile under a typed
+one, so resolution is **typed → recorded → environment → built-in**: `--resume`, `--fork`, `/fork`
+and `/btw` default to the backend the header records, which is why a fork's pane command carries
+no backend flags and therefore no secret. **A flag the human types wins loudly**:
+`CLI::Resume::MismatchNotices` prints one line per disagreeing field — *"recorded with `<label>`
+`<recorded>`; continuing with `<current>` (the current flags win)"* — rather than switching
+backends in silence.
 
 ## Channel, JournalTee, and StatusFeed fan-out
 
@@ -832,8 +1057,58 @@ short-circuiting on it (quitting Neovim closes its `Channel`), so one dead sink 
 the others.
 
 `StatusFeed` (`lib/lain/status_feed.rb`) is one such sink. It derives a small state struct
-(cache-warmth deadline, the fleet of live spawns, the human-inbox count) from the events it
-observes and republishes it for the tmux, TTY, and nvim renderers. That file used to sit in
+(cache-warmth deadline, the fleet of live spawns as both a count and a tree, the human-inbox
+count) from the events it observes and republishes it for the tmux, TTY, and nvim renderers.
+
+### The fleet is a tree, and the spawn body is why it is built from two records
+
+`StatusFeed::Fleet` (`lib/lain/status_feed/fleet.rb`) folds every spawn the feed has carried into
+the tree `lain://status` draws and the input pane's header shows the top of. **The tree is not
+built from the `:spawn` event's body**, and that is the ruling the rest of it rests on: a spawn's
+digest is an *address* — a bench arm joins two runs on it, `lain watch` follows it, an actor is
+told by it — so growing its body by a prompt's first line would re-address every spawn in the
+project for the sake of a status line. What a live view needs rides in
+`Telemetry::ChildProgress` (`lib/lain/telemetry/child_progress.rb`) **beside** the spawn, naming
+it, and the spawn stays byte-identical.
+
+That record has **two shapes and one class**. The dispatch one carries what does not change —
+`role`, `task_line`, and the `worker` key its lease was cut under. Each later one carries only
+what moved, `turns` and `head`, so a fifteen-turn child costs one task line rather than fifteen.
+A reader folds them onto one row by `spawn`, which is what makes the omissions safe: a fold takes
+only the fields a record actually carries, because a turn record names no role and taking its nil
+would erase what the dispatch said. `Tools::Subagent::Progress`
+(`lib/lain/tools/subagent/progress.rb`) writes them, wrapping the child's turn observer so the
+durable promotion happens **first** — a row claiming three turns where the session record holds
+four is worse than a row with no count.
+
+**`head` is the tree's parent edge.** A `:spawn` names the head it came from and not the spawn
+that owns that head, so a grandchild is placeable only against the heads its parent has reported;
+a spawn whose `spawned_from` matches no reported head is a root. Two costs of the address ruling
+are known and written down in the fold: identical twins share one `:spawn` digest and therefore
+one row, and the parent edge is resolved once, at launch.
+
+**Both surfaces render from one `StatusFeed::Fleet::Row`**, so the columns cannot come to differ
+between them; each keeps only its own lead, a bullet for the markdown buffer and none for the
+header.
+
+**Clamping is shared, not one surface's habit.** `Row#listed` is what both call, and it clamps
+the whole drawn line — the lead, the indent and every column — to 80 terminal columns, measured
+by grapheme cluster through `Ext::Prompt.width` rather than by character. A character bound on
+the task alone could not do it: 96 characters of CJK draw 214 columns, and only here is the
+whole line known.
+
+**Exactly one thing differs deliberately: the age.** `lain://status` shows it and the pane's
+header does not. The header *is* the frame the chat publishes to the pane, and the pane redraws
+whenever the frame changes — so an age column would make the frame differ from itself once a
+second and buy a redraw a second. The started instant is published either way, so a surface that
+can afford the redraw shows it; nvim rewrites the whole buffer regardless.
+
+Every cell of every row goes through `Tools::AskHuman::InboxRow.one_line` — line breaks and tabs
+to spaces, then whole ANSI sequences removed, then the control and format characters. The order
+is forced: strip the ESC first and `[1A` is left behind as visible junk. That is what stops a
+model-written task line from repainting the surface above it.
+
+**Where the published struct lives.** The state file `StatusFeed` writes used to sit in
 `.lain/`, argued as a project artifact next to `.git/`; it is machine state by behaviour — rewritten
 every turn, with nothing in `lib/` writing a `.gitignore` for it — so every session left permanent
 `git status` noise in the user's repository (F50). It now resolves to
@@ -869,6 +1144,11 @@ walk are untouched by spawning. A child's tool stack is its parent's, built by t
 `CLI::ToolGuard` over the parent's board, so a child is guarded and gated as its parent is, and a
 child's refused path lands in the same session journal. `max_depth` is a hard, transitively-decrementing ceiling enforced at construction
 time, not at call time.
+
+Those two events are the **record**, and they are deliberately not the whole of what a watching
+human needs. What a child is *for* and how far it has got ride beside them in
+`Telemetry::ChildProgress`, so the spawn's address never moves — the fleet-tree section above has
+the argument.
 
 `Skill::RoleSpawn` (`lib/lain/skill/role_spawn.rb`) is the sibling seam a `@role/skill` repl
 line folds through: same attenuated union, same spooled provider, chosen per call rather than
@@ -1436,11 +1716,14 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 > whichever card happens to add the next record type. Trust the recipe, not the digits.
 
 *Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
-`session` / `turn` / `rewound` (`session_record.rb:31-33`, and `bench/session.rb:73-74` writes the
-first two for the bench), `journal_error` (`journal.rb:261`, `approval/queue.rb:211`),
-`approval_decision` (a hand-written `#to_journal` at `approval/queue.rb:88-93`),
-`goal_iteration` / `goal_pin` / `goal_pin_missed` (`cli/goal_driver.rb:244,318,310`), and
-`live_replay` / `live_replay_turn` (`bench/live_replay.rb:95,84`). That list is a **floor**: it is
+`session` / `turn` / `rewound` (`session_record.rb:27-29`, and `bench/session.rb:67-68` writes the
+first two for the bench), `journal_error` (`journal.rb:276`, `approval/queue.rb:364`),
+`approval_decision` (a hand-written `#to_journal` at `approval/queue.rb:203`, over
+`tool_use_id`, `requester`, `tool`, `surface`, `verdict`, `timed_out` and `latency` — the
+`tool_use_id` is what pairs a decision with its `approval_pending`, and because one call can park
+twice, at the path gate and again at the release, records within an id pair **in order**),
+`goal_iteration` / `goal_pin` / `goal_pin_missed` (`cli/goal_driver.rb:332,403,395`), and
+`live_replay` / `live_replay_turn` (`bench/live_replay.rb:101,90`). That list is a **floor**: it is
 what a sweep of `"type" =>` literals in `lib/` turned up once content blocks and JSON Schema
 fragments were excluded, not a proof of completeness. A reader of the NDJSON should discriminate
 on the `type` string and always have an `else`.
