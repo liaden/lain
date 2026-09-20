@@ -1,11 +1,167 @@
 # Simplify 11 — retire the manifest that every new unit has to edit
 
-status: draft — **queued, not shelved: runs after simplify-08 and simplify-10 land, alone, in a window of
-its own** (human, 2026-09-13). The "runs alone" part is the reason for the sequencing, not a footnote on
-it — see Open decisions.
+status: in-progress — the 2026-09-13 ruling ("runs after simplify-08 and simplify-10 land, alone")
+was **re-decided by the human on 2026-09-20** once the gate's premise was measured false. See the
+Execution log.
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
+
+## Execution log
+
+**Executed 2026-09-20**, base ref `main` @ `76d872ed`. **`origin/main` is `b1927ce7`, 442 commits
+behind HEAD** — every worktree is cut from `HEAD` explicitly, never from `origin/main`.
+
+**The sequencing gate was re-decided, on evidence.** The 2026-09-13 ruling deferred this plan until
+simplify-08 and simplify-10 had landed. Both were audited card-by-card against the tree on 2026-09-20
+and **neither had**: 08 is 4 of 9 (T1–T4 landed; T5–T9 not), 10 is 4 of 12 plus one card closed by
+ruling and one dropped (T1, T3, T4, T7 landed; T2, T6, T8, T10, T11, T12 untouched). The commit history
+shows why: the nine card commits form one contiguous block from `cb27ae5d` (09-13 19:35) to `2f79c971`
+(09-14 06:44), and at 09-14 09:43 `9b2ac4e7` pivots the work to simplify-09-orders-as-types. **Both
+plans were abandoned mid-flight, not completed.**
+
+**The gate's stated reason does not hold, so the human lifted it.** The reason was concurrency —
+*"any other plan in flight will conflict on almost every file it touches."* Nothing is in flight: the
+outstanding cards are unstarted, so there is no branch to rebase across 746 files. The ordering argument
+runs the other way, and it is this plan's own thesis: 08's T6 (`arm/catalog.rb`), 08's T7
+(`compare/sheet.rb`, `compare/metric.rb`) and 10's T11 (`lib/lain/refusals.rb`) each create a new lib
+file, which under the manifest means a new manifest line this plan then deletes. Running this plan first
+makes those cards smaller.
+
+**simplify-08's T9 is decided: WIRE.** (human, 2026-09-20.) It was never reached during 08's run, so the
+question had never actually been put. The altitude cluster is kept and given a door; `Grader::LeaseHarness`
+— the only ground-truth outcome metric in the repo — stays reachable. **Consequence for T4: it does NOT
+shrink.** `lib/lain/bench/live_arms.rb` and `lib/lain/bench/altitude.rb` both survive, so all four
+workarounds are in scope, as the card's original text has them. 08's own wiring work lands later, on the
+post-Zeitwerk tree.
+
+**What is moot, and it is the registry half of T2.** `simplify-09-orders-as-types` (`7a1d4602`) deleted
+`Lain::Algebra`, its registry, its seal and `spec/algebra_laws_spec.rb`. Verified absent on 2026-09-20:
+`lib/lain/algebra.rb`, `lib/lain/algebra/`, `spec/algebra_laws_spec.rb`. `lib/lain.rb` holds no `.seal`
+call. So T2's AC 5 and AC 6, its two seal escalation triggers, and the third Integration check have **no
+referent** and are struck rather than re-scoped. `spec/value_object_shareability_spec.rb`'s sweep is
+untouched and remains the real load-completeness canary.
+
+**T4's fifth item is confirmed delivered.** `Fold::INDENT` (`lib/lain/frontend/neovim/fold.rb:29`) is the
+one Ruby spelling, read by `inbox_view.rb:85` and `approval_view.rb:96`. T4 verifies that leaf under
+autoloading rather than re-doing it.
+
+**Grounding re-measured 2026-09-20; every headline figure had drifted.** `lib/` holds **746** `.rb` files
+and **746** `require_relative` lines, not 749/748. `lib/lain.rb` is **101 code lines, 86 requires**, not 99.
+There are **21** pure index files, not 24. Zeitwerk **2.8.2** is confirmed resolved in `Gemfile.lock`
+(transitively, via ActiveSupport) — that claim holds.
+
+**T1's `ignore` list is materially larger than the plan's estimate, which its own escalation trigger
+asked to be told.** Deriving the expected constant from each path and checking whether the file defines
+it yields **26 mismatches**, of which 9 are pure index files that T3 *deletes* (Zeitwerk supplies the
+namespace) and **17 are permanent `ignore` + explicit require**, against the plan's "~13":
+
+    cli/command/small.rb   context/base.rb        epic/records.rb        forge/landing/run.rb
+    frontend/reline.rb     live.rb                review/records.rb      review/vocabulary.rb
+    silent.rb              version.rb
+    telemetry/{secret_boundary,session_lifecycle,session_state,stream_signals,switches,test_layout,turn_stream}.rb
+
+Three are worse-shaped than "grouped values": `live.rb` defines only the **method** `Lain.live` and no
+constant at all; `silent.rb` defines `SILENT`; `context/base.rb` defines `Combinator`/`Identity`/`Composed`
+and nothing named `Base`. Seven sit in `telemetry/` — but only 7 of that directory's 33 files, so there is
+no wholesale-ignore shortcut. **And the plan never counted the non-Ruby tree**: ~20 directories under
+`lib/` hold 68 non-`.rb` files (`prompt/templates/**`, `structural/queries/**`, `bench/corpus`, the Lua
+under `frontend/neovim/runtime`) which also want `ignore` entries. The 2 acronym inflections (`CLI`, `TTY`)
+are confirmed as the only ones.
+
+### T1's panel review restructured the plan (2026-09-20)
+
+T1 landed APPROVE-WITH-FIXES. Its measurements are real (boot +13.4 ms by the implementer, +3.3 ms on
+the panel's independent re-measure; `pspec` unchanged at 95 s) but **neither can authorise T2**: with the
+manifest still live, `eager_load` loads no file, so both are the cost of *walking* the tree and both are
+a floor. **Nothing short of building T2 produces T2's number**, and the Open decision should say that
+rather than cite +1.6%.
+
+**T1's escalation was falsified, and the method is why.** It enumerated load-time breakage by registering
+autoloads and then requiring every file **in manifest order** — which defines each constant before the
+referencing file loads, so the method structurally cannot observe the failures it was looking for. A
+manifest-free probe finds at least four sites, in this order:
+
+1. `lib/lain/agent.rb:67` — `::Lain::StopReason`, defined by `response.rb`, which maps to
+   `Lain::Response`; no autoload is ever registered for it.
+2. `lib/lain/bench.rb` — `Zeitwerk::NameError: expected file lain/bench.rb to define constant
+   Lain::Bench, but didn't`. **A pure index file**, resolving today only because the manifest defined
+   the namespace from its children first.
+3. `lib/lain/config/epics.rb:78` — `Gates.empty` in a default argument. **Irrecoverable**; the explicit
+   require does not clear it. A real cycle, and enumeration stops here.
+4. `lib/lain/arm/ladder.rb:21` — the originally claimed "only" site, never reached.
+
+**Three structural consequences, and the first changes the waves.**
+
+- **T3 is a PREREQUISITE of T2, not its wave-mate.** Finding 2 is the proof: an index file whose body is
+  only requires defines no constant, so under a manifest-free loader it raises. The 21 index files must
+  go *with* the manifest, in one change. The Waves section below is wrong as written.
+- **The manifest was HIDING a real cycle, which inverts CLAUDE.md's stated justification for it.**
+  CLAUDE.md argues *"that one ordered list is where a circular dependency has to show itself."* It did
+  not show itself — the hand-maintained order silently worked around it, for as long as the file has
+  existed. `loader.eager_load` surfaced it on the first manifest-free run. The plan's replacement claim
+  is not merely as strong as the rule it replaces; it is **stronger**, and T5 should say so in those
+  terms.
+- **The tail is unmeasured.** **293 constants across 101 files are orphans** — no prefix of the constant
+  path maps to the file defining it. Under eager loading most are latent, because every file loads
+  regardless; the live hazard is only references made at **class-body/load time**, which is the set
+  enumeration is blocked on.
+
+**Ruling (human, 2026-09-20): spike the worklist before deleting anything.** A bounded investigation —
+manifest-free eager load, fix each load-time failure as it surfaces (the `config/epics` cycle included),
+repeat until it completes clean — whose output is the true worklist, a real count, and T2's actual boot
+and `pspec` numbers. T2 is re-planned against that, not against an estimate.
+
+## Simplification ledger
+
+Kept per card, because this plan's headline (*"−748 `require_relative` lines and −24 files"*) counts
+only what is removed. Zeitwerk **adds back** an `ignore` entry and an explicit require per mismatched
+file — the "manifest in miniature" its own escalation trigger names — so the honest figure is the net,
+and the honest risk metric is the `ignore` list's size. Baseline measured 2026-09-20 at `76d872ed`.
+
+| | baseline | after T1 | after T2 | after T3 | after T4/T5 |
+|---|---|---|---|---|---|
+| `lib/**/*.rb` files | 746 | 746 | | | |
+| `lib/` code lines | 54,997 | 55,025 | | | |
+| `require_relative` in `lib/` | 746 | 746 | | | |
+| external `require "…"` in `lib/` | 302 | 303 | | | |
+| `lib/lain.rb` code lines | 101 | 129 | | | |
+| pure index files | 21 | 21 | | | |
+| `CLAUDE.md` lines | 304 | 304 | | | |
+| **`ignore` entries (files)** | 0 | 17 | | | |
+| **`ignore` entries (dirs)** | 0 | 1 | | | |
+| **explicit requires kept** | 0 | 18 | | | |
+| **orphan constants** | 294 | 294 | | | |
+| `require "lain"` boot | 835 ms | 848 ms | | | |
+| `pspec` wall @ 12 workers | 95 s | 95 s | | | |
+| example count | 20,470 | 20,475 | | | |
+
+T1 is additive by design, so every removal row is flat and only the cost rows move. That is the card
+working as specified, not a null result: it buys the `ignore` list as a **measured** 18 rather than the
+plan's estimated "~13", and it buys both cost rows before anything is deleted.
+
+Two rows are to be read adversarially. **`external require` must not move**: CLAUDE.md's rule that
+gem/stdlib requires live in the leaf files that use them is correct and untouched by this plan, so a
+change there is usually a card exceeding its scope. It moved 302 → 303 at T1, and that one is
+**legitimate** — `require "zeitwerk"` in `lib/lain.rb`, which is exactly what the rule prescribes. Any
+further movement is not. **`example count` must not drop**: no card here deletes an example, and a drop
+means a file stopped loading and its specs silently vanished — precisely the failure autoloading makes
+possible. The +8 at T1 is `spec/zeitwerk_spec.rb`.
+
+**`orphan constants` is the row the spike drives**, and it is the one metric that did not exist when this
+plan was drafted: 294 constants across 102 files that no path implies, found only once T1's spec asked
+the strong question. It does not have to reach zero — under eager loading most are latent — but every
+one that a class body references at load time is a site T2 must fix, and nobody yet knows how many that
+is. A count that stays at 294 while T2 lands is not a failure; an *unexplained* one is.
+
+**Two CLAUDE.md figures are stale, found by baselining.** It states the suite as *"51s at 12 workers,
+17,837 examples, 2026-09-13"*. Measured 2026-09-20 on this box: **95 s and 20,470 examples** — the suite
+grew 15% and the wall nearly doubled inside a week. **T5 edits CLAUDE.md and should correct both**, since
+the plan's own premise is that a document's ledger shifts under it.
+
+The net is what settles whether this plan was worth running: `−746 require_relative` and `−21` files
+against `+(ignore entries + explicit requires + loader config)` in `lib/lain.rb`, plus whatever the
+eager load costs on every boot and 12× on every suite run.
 
 ## Intent
 
@@ -200,10 +356,23 @@ the ledger has shifted.
 
 ## Waves
 
-Wave 1: T1
-Wave 2: T2, T3
-Wave 3: T4, T5
-Critical path: T1 → T2 → T4
+**Superseded 2026-09-20 by T1's panel review — see the Execution log.** The original reading was:
+
+    Wave 1: T1
+    Wave 2: T2, T3
+    Wave 3: T4, T5
+    Critical path: T1 → T2 → T4
+
+It is wrong in one structural way: **T2 and T3 cannot be independent cards.** A pure index file defines
+no constant, so removing the manifest while the index files stand raises `Zeitwerk::NameError` on the
+first one loaded. They are one change to one load sequence, exactly as the seal once was. The schedule
+as executed:
+
+    Wave 1:  T1                      [landed 2026-09-20]
+    Wave 1b: T2a — the worklist spike [bounded investigation, no deletion]
+    Wave 2:  T2+T3 as ONE card, re-planned against T2a's findings
+    Wave 3:  T4, T5
+    Critical path: T1 → T2a → T2+T3 → T4
 
 T2 owns the registry's close as well as the manifest's removal, because the manifest's **last statement**
 is the seal — they are one change to one load sequence, and splitting them would leave the registry either
@@ -257,6 +426,22 @@ Scenario: a circular dependency is reported
   Then it raises, naming both
 ```
 → spec file: `spec/zeitwerk_spec.rb`
+
+**Amended 2026-09-20, after the card landed (human ruling).** Two of the four scenarios above are no
+longer specs, and the reason generalises: **a misconfigured loader needs no spec, because it stops
+`require "lain"` and every example in the suite fails with it.** *"An acronym resolves"* and *"a circular
+dependency is reported"* are both of that kind — the second doubly so, since it exercised Zeitwerk's own
+cycle reporting rather than anything of lain's. Two further examples went with them for the same reason
+(per-path constant resolution; an ignored file left unrequired), taking the file from 10 examples to 5
+and 216 lines to 147, and removing its only `:seam`.
+
+What stays is what **survives a green boot and is still wrong**: a constant no path names, findable only
+because the file defining it is one the loader loads (the orphan invariant, which is what measured the
+294); an ignore entry the loader never needed, which silently narrows it; and an entry naming a file that
+is gone, which is inert. The dividing line — *can this guard fail independently of the app booting?* —
+is the repo's own, and both precedents hold it: `spec/value_object_shareability_spec.rb` stays in the
+suite, while simplify-10's T3 moved `spec_discipline_spec.rb` out to `bin/spec-census` as *"a disabled
+guard wearing a spec's name."*
 
 **Escalation triggers**
 - **Report the two measurements before anyone proceeds to T2.** If eager-loading adds materially to boot
