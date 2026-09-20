@@ -736,6 +736,87 @@ Scenario: no comment claims a load-order constraint that no longer exists
   constant map would construct three arms (and therefore an `Arm::Instrument`, and therefore a
   `PriceBook`) at require time, that is worse than the builder. Check what the map would eagerly build.
 
+### Card A — every file names its own constant   [wave 2] [risk: medium]
+
+**Written 2026-09-20 from the T2a spike.** Replaces T2's first half and all of T3.
+
+The goal is one sentence: **every file under `lib/` defines exactly the constant its path names, and
+`LOADER_IGNORES` reaches zero.** Everything lands **with the manifest still in place**, so the tree is
+green at every step and the card is stoppable anywhere — which is what makes a 120-file change safe.
+Nothing here deletes a `require_relative`; that is Card B.
+
+Each sub-card is a disjoint file tree and they run in parallel. All of them touch `lib/lain.rb`'s
+manifest, which is the one shared file — **hand back those lines as a diff, do not merge them.**
+
+- **A1 — the one-liners and the three small moves.** `loader.setup` above the extension require (magnus
+  calls `Lain.const_get("Error")` at init); root-qualify `arm/ladder.rb:21`; name `Types` in
+  `declarative.rb`. Then `config/gates.rb` → `config/epics/gates.rb` (it is `Config::Epics::Gates`; this
+  is the whole of the reported "cycle"), `context/base.rb` → three files, and `StopReason` out of
+  `response.rb`.
+- **A2 — the Epic cluster.** `STORED_STATUSES`, `DERIVED_STATUSES`, `MalformedIssue` and `REVISION_OPS`
+  move into `epic.rb`, the namespace file. Split `epic/records.rb` (220 code lines, ~18 record types).
+- **A3 — the Review cluster.** `review/vocabulary.rb` merges into `review.rb` — it *is* the namespace's
+  vocabulary, and `review.rb` is already a declaration file with a docstring, so the two join cleanly.
+  `review/records/corpus_extended.rb` moves up a level. Split `review/records.rb` (136 lines, ~7 types).
+- **A4 — the telemetry record groups.** Seven files, same shape:
+  `{secret_boundary,session_lifecycle,session_state,stream_signals,switches,test_layout,turn_stream}.rb`.
+- **A5 — the small five.** `cli/command/small.rb`, `forge/landing/run.rb`, `frontend/reline.rb` (defines
+  `Frontend::LineEditor`), `live.rb` (defines only the method `Lain.live`, no constant at all),
+  `silent.rb` (defines `SILENT`).
+- **A6 — the enumerator, as a permanent guard.** The spike's `t2a-enumerate.rb` is the only thing that
+  sees the fragility described below. It becomes a checked-in tool in the `bin/comment-census` /
+  `bin/spec-census` tradition.
+
+**The convention this establishes, and it must be written down or it will not hold.** An index file is
+no longer a require list. It is **the namespace's docstring and the namespace's own constants** — which
+is why T3's deletion is struck and why A2's four `Epic` constants move *into* `epic.rb` rather than
+anywhere else. The codebase does not have this convention today. T5 writes it into CLAUDE.md.
+
+**Why A6 is not optional.** Some constants resolve today **by alphabetical luck**: Zeitwerk's eager load
+walks each directory in sorted order, so `epic/issue.rb` happens to precede `epic/records.rb`, and
+`review/anchor.rb` happens to follow `review.rb`. **Rename a file and a latent orphan becomes a boot
+failure**, with the error surfacing at an unrelated file. That fragility is invisible to the suite, to
+`rubocop` and to a reader. Only the enumerator sees it.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a file defines the constant its path names
+  Given the loader's expected constant for each managed path
+  When the tree is eager-loaded
+  Then each managed file defines the constant expected of it
+
+Scenario: the ignore list is empty
+  When the loader's ignore list is read
+  Then it names nothing
+
+Scenario: the manifest still loads the tree
+  Given the manifest unchanged but for moved paths
+  When the library is required
+  Then every constant resolves as before
+
+Scenario: a constant referenced at load time is reported before it breaks a boot
+  Given a constant named at class-body time from a file no path implies
+  When the enumerator runs
+  Then it names that site
+```
+→ spec files: `spec/zeitwerk_spec.rb` (the first two — the existing orphan sweep is the check, and its
+`ignore`-list examples become assertions about an empty list); the third is the suite staying green;
+the fourth is A6's own.
+
+**Escalation triggers**
+- **`epic/records.rb` and `review/records.rb` are the largest mechanical job in the exercise** (~25 new
+  files between them) and they collide with the *"one spec file per public entry point"* rule. If
+  splitting either forces a spec split that rule forbids, stop and report — that is a rule conflict, not
+  a judgement call.
+- **`live.rb` defines no constant at all.** It cannot be made to name one without inventing a namespace
+  for a single method. If the honest answer is that it stays an `ignore`, say so — a list of one is a
+  different argument from a list of fourteen.
+- `frontend/reline.rb` defines `Frontend::LineEditor`. Renaming the file is the obvious fix; confirm
+  nothing outside `lib/` names the path.
+- **Do not delete a docstring to move a constant.** Five of nine index files carry the only prose for
+  their namespace, `provider/http.rb`'s ruby_llm fork provenance among them.
+
 ### T5 — Rewrite the rules the manifest supported   [wave 3] [risk: medium]
 
 **Depends on:** T2
