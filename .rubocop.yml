@@ -339,10 +339,22 @@ ThreadSafety/ClassInstanceVariable:
 # clock's own ensure, touching no state outside its instance mutex -- and it is named per
 # request, so a survivor in a watchdog dump says which request it was watching.
 #
+# The sixth is the input socket's accept and publish loops, plus one reader per connected
+# pane. The human at the far end of that socket must reach the chat whatever the
+# conversation's reactor is doing -- it can spend a long stretch inside work that yields to
+# nothing -- and an accept loop scheduled there would tie the interrupt to the very run it
+# exists to interrupt. Two of the loops start in `#start` and the readers start on the accept
+# thread as panes connect; every one of them is REGISTERED under the instance's mutex as it
+# begins and removed as it ends, so `#stop` owns each one it started. Each touches only that
+# mutex-guarded client list and a Frontend::InputRail, whose class comment states that it is
+# shared across threads and fibers alike, and no write to a pane can block -- see the class
+# comment on why a blocking one would park the chat's own exit.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
   Exclude:
+    - "lib/lain/cli/input_socket.rb"
     - "lib/lain/cli/prompt_breaker.rb"
     - "lib/lain/frontend/neovim.rb"
     - "lib/lain/frontend/neovim/rpc_thread.rb"

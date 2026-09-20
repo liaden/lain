@@ -56,6 +56,15 @@ module Lain
         self
       end
 
+      # This object is itself a sink, which is how a producer that is not an OS
+      # trap reaches the same place the traps do: {Frontend::InputRail} routes
+      # here once and never again, and every later {#route} redirects the rail
+      # WITH the traps rather than beside them, so the two cannot drift.
+      def signal(name)
+        @sink.signal(name)
+        self
+      end
+
       # Install INT/TERM/QUIT, capturing each prior handler for {#uninstall}. The
       # trap body reads @sink at delivery time, so a later {#route} redirects
       # already-installed traps without reinstalling.

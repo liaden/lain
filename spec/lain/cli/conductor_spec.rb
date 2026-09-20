@@ -91,9 +91,10 @@ RSpec.describe Lain::CLI::Conductor do
     Lain::Agent.new(provider: ParkProvider.new(entered:, release:, responses:), toolset:, context:)
   end
 
-  def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new)
+  def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new,
+                      countdown: described_class::RailCountdown::Unoffered)
     described_class.new(tty:, chronicle:, signals:, rail:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new,
-                        run_clock:)
+                        run_clock:, countdown:)
   end
 
   # A human at the rail, on a thread of their own because an idle prompt is read
@@ -230,6 +231,37 @@ RSpec.describe Lain::CLI::Conductor do
       rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
 
       expect([armed, conductor.closed?]).to eq([true, false])
+    end
+  end
+
+  # The human is in another pane, so the grace window cannot be a status line on
+  # a screen they are not looking at: it is published on the rail instead, and
+  # answered with one of its own keys.
+  describe "the countdown drawn as a rail prompt" do
+    it "offers its keys, and a key answers it where an OS signal would" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      railed = described_class::RailCountdown.new(rail:, clock: -> { 1030.0 }, tick: 0.005)
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals: Lain::CLI::Signals.new, countdown: railed)
+      offered = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+          pumped_until(task, reason: "the countdown published") { rail.published.kind == :countdown }
+          offered = rail.published
+          rail << Lain::Frontend::InputRail::Signal.new(name: offered.keys.fetch("c"))
+          release.enqueue(true)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect(offered.keys).to eq({ "c" => :cancel, "w" => :extend, "r" => :wait_responses })
+      expect(offered.text).to eq("closing in 30s -- [c] cancel  [w] wait longer  [r] respond then exit")
+      expect(conductor.closed?).to be(false)
     end
   end
 

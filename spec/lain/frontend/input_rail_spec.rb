@@ -54,6 +54,13 @@ RSpec.describe Lain::Frontend::InputRail do
       expect { described_class::Signal.new(name: :explode) }.to raise_error(ArgumentError, /explode/)
     end
 
+    it "carries a countdown's keys frozen, each naming a signal a producer may send" do
+      prompt = described_class::Prompt.new(kind: :countdown, text: "closing in 30s", generation: 1,
+                                           keys: { c: "cancel" })
+
+      expect([prompt.keys, Ractor.shareable?(prompt)]).to eq([{ "c" => :cancel }, true])
+    end
+
     it "calls a prompt an answer only when a run waits on what is typed at it" do
       kinds = described_class::KINDS.select do |kind|
         described_class::Prompt.new(kind:, text: "x", generation: 1).answer?
@@ -522,6 +529,19 @@ RSpec.describe Lain::Frontend::InputRail do
       end
 
       expect(screen.said).to be_empty
+    end
+  end
+
+  describe "a countdown" do
+    it "publishes the keys it accepts, so a producer that is not at the terminal can offer them" do
+      keys = Sync do |task|
+        reading = task.async { rail.read(:countdown, "closing in 30s", keys: { "c" => :cancel }) }
+        published = rail.published.keys
+        reading.stop
+        published
+      end
+
+      expect(keys).to eq({ "c" => :cancel })
     end
   end
 

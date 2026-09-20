@@ -1792,6 +1792,44 @@ RSpec.describe Lain::CLI::Wiring do
         .with(hash_including(journal: be(chronicle.durable_journal)))
     end
 
+    # `--input socket:<name>` puts the human in another pane. The chat then has
+    # no reader for its own stdin at all, which is the point: a `lain up` chat
+    # pane is a scrolling transcript nobody types into.
+    it "reads the human from an input socket, never this terminal, when --input names one" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        path = Lain::CLI::InputSocket.path(name: "wiring", paths:, cwd: Dir.pwd)
+        stdin = StringIO.new("never read\n")
+        allow(status_feed).to receive(:state).and_return({})
+        wiring = described_class.new(options: { grace: 5, input: "socket:wiring" }, chronicle:, status_feed:,
+                                     paths:, stdin:, tty_factory: tty_factory(dir), conductor_opener:)
+        pane = Thread.new { end_the_chat_from_a_pane(path) }
+
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+
+        expect([pane.value, stdin.pos]).to eq([path, 0])
+      end
+    end
+
+    # Connects as a `lain input` pane would, waits for a frame, and ends the
+    # stream. Answers the path it reached, so the assertion names the socket
+    # that was there rather than a bare true.
+    def end_the_chat_from_a_pane(path)
+      client = Enumerator.produce { connect_to(path) }.lazy.grep(UNIXSocket).first
+      client.gets
+      client.write(%({"v":"eof"}\n))
+      client.flush
+      path
+    end
+
+    def connect_to(path)
+      UNIXSocket.new(path)
+    rescue SystemCallError
+      sleep(0.01)
+      nil
+    end
+
     it "threads the injected tty/conductor seams -- the conductor the opener built is the one exposed" do
       wiring = run_wiring
 

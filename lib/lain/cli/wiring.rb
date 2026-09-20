@@ -312,7 +312,17 @@ module Lain
       # published `idle` never resets; this class only passes on what
       # {ChatLaunch} built.
       def open_conductor(tty, rail)
-        @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:)
+        @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:,
+                               countdown: countdown_for(rail))
+      end
+
+      # The grace window is drawn where the human is: the chat's own status line
+      # when they are at this terminal, and a rail prompt when they are in the
+      # input pane, which has no way to see this screen.
+      def countdown_for(rail)
+        return Lain::CLI::Conductor::RailCountdown::Unoffered unless input_socket_name
+
+        Lain::CLI::Conductor::RailCountdown.new(rail:)
       end
 
       # What a chat's RUN STATE is, fresh or resumed: the memory view and the
@@ -426,8 +436,49 @@ module Lain
       end
 
       # Nobody types into a chat run under --non-interactive, so nothing reads.
+      # An attended chat reads its own stdin unless `--input socket:<name>` puts
+      # the human in another pane, in which case this process reads no stdin at
+      # all and every line arrives over the socket.
       def input_for(rail, tty)
-        attended? ? Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin) : Lain::Frontend::StdinPump::Idle
+        return Lain::Frontend::StdinPump::Idle unless attended?
+        return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin) unless input_socket_name
+
+        input_socket(rail, tty)
+      end
+
+      def input_socket_name = Lain::CLI::InputSocket.named(options[:input])
+
+      # Bound BEFORE the conversation starts, so a second chat on one socket is
+      # refused while the first is still the only one reading the human.
+      # `notice:` is the chat's own screen: a pane dropped for falling behind,
+      # or a line refused for its size, is something the human has to be able
+      # to read, and the pane is the one surface that cannot report it.
+      def input_socket(rail, tty)
+        Lain::CLI::InputSocket.new(rail:, path: input_socket_path, header: method(:hud_line),
+                                   commands: method(:command_names), layers: method(:live_layers),
+                                   notice: tty.method(:render_warning)).bind
+      end
+
+      def input_socket_path
+        Lain::CLI::InputSocket.path(name: input_socket_name, paths: @paths, cwd: project.cwd)
+      end
+
+      # The one HUD line every surface shows, composed from the same published
+      # struct the tmux bar and the editor's lualine read.
+      def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now)
+
+      # Lazily: the command surface is assembled after the producer is built,
+      # and a pane asks only once it has connected. Through the bound registry's
+      # own registry, because what the Repl holds is the set curried over the
+      # session's Env and the names belong to the set, not to the currying.
+      def command_names
+        bound = @command_surface&.commands
+        bound ? bound.registry.map { |command| command.name.to_s } : []
+      end
+
+      def live_layers
+        in_force = @switchboard.mode_switch.layers
+        Lain::Frontend::InputPane::LAYERS.select { |layer| in_force.include?(layer) }
       end
 
       # The first line at which the run HAS a Store, so it is where the HUD's

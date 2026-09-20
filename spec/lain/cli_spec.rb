@@ -294,6 +294,21 @@ RSpec.describe LainCLI do
     it "offers no desktop option, the surface it consented to having been deleted" do
       expect(described_class.commands.fetch("chat").options).not_to have_key(:desktop)
     end
+
+    it "takes --input, which names the pane a human types in instead of this terminal" do
+      expect(described_class.commands.fetch("chat").options.fetch(:input).banner).to eq("socket:NAME")
+    end
+  end
+
+  # The pane half of the split cockpit. Both ends name one path with no pid in
+  # it, so `lain up` can write both pane commands before either process starts.
+  describe "the input pane command" do
+    it "is declared, and derives the same socket the chat binds in the same directory" do
+      named = described_class.commands.fetch("input").options.fetch(:name).default
+
+      expect([named, Lain::CLI::InputSocket.path(name: named, cwd: Dir.pwd)])
+        .to eq([Lain::CLI::InputSocket::DEFAULT_NAME, Lain::CLI::InputSocket.path(name: "chat", cwd: Dir.pwd)])
+    end
   end
 
   # `--exec` names WHERE a shell command becomes a process, and an

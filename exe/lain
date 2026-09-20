@@ -103,6 +103,14 @@ class LainCLI < Thor
       raise Thor::Error, e.message
     end
 
+    # The input socket this directory's chat binds. Derived rather than passed
+    # because the path carries no pid: both panes name it from the project and
+    # the session alone, before either process exists.
+    def derived_input_socket
+      project = project_override.fetch(:project_factory) { -> { Lain::Project::Resolver.default_project } }.call
+      Lain::CLI::InputSocket.path(name: options[:name], cwd: project.cwd)
+    end
+
     # The one journal-pass shape `consolidate` and `improve` share: `--dry-run`
     # picks the METHOD, so the flag stops at the boundary that parsed it instead
     # of travelling into the pass as a boolean that changes what #report means.
@@ -1087,6 +1095,12 @@ class LainCLI < Thor
                                   "session is never isolated"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
+  # Where the human types. Unset is this terminal; `socket:<name>` is a `lain
+  # input` pane at the other end of a Unix socket, and a chat in that mode reads
+  # no stdin at all. The name is `lain up`'s tmux session, so two cockpits on one
+  # project do not share a socket.
+  method_option :input, type: :string, banner: "socket:NAME",
+                        desc: "Read the human from a `lain input` pane on this socket instead of this terminal"
   # The chat-side half of `lain up PATH`: name the project instead of letting
   # the shell's directory decide it. `--root` is rung 1 of the detection ladder
   # (Lain::Project::Resolver's `:flag`, exempt from the refusal set, so
@@ -1118,6 +1132,18 @@ class LainCLI < Thor
   desc "sessions", "List this project's recorded sessions (newest first)"
   method_option :all, type: :boolean, default: false, desc: "Include ephemeral (--btw) sessions"
   def sessions = render { Lain::CLI::Sessions.new.listing(all: options[:all]) }
+
+  desc "input", "The pane a human types into, feeding a `lain chat --input socket:NAME`"
+  # Either half names the socket: `--socket` for a path already derived (what
+  # `lain up` writes into the pane command), `--name` for the tmux session name
+  # this pane derives it from, which is the same path the chat derives in the
+  # same directory.
+  method_option :socket, type: :string, banner: "PATH", desc: "The chat's input socket, by path"
+  method_option :name, type: :string, default: Lain::CLI::InputSocket::DEFAULT_NAME,
+                       desc: "The chat's input socket, by name, derived under this project"
+  def input
+    exit_status { Lain::Frontend::InputPane.open(path: options[:socket] || derived_input_socket).run }
+  end
 
   desc "watch SELECTOR", "Read-only live tail of one actor's lineage (SELECTOR = spawn digest prefix)"
   method_option :session, type: :string, desc: "Session file to tail; defaults to this project's newest"

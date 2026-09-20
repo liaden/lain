@@ -114,8 +114,8 @@ module Lain
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, rail:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
-                    run_clock: RunClock.new)
-        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:)
+                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered)
+        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
@@ -131,7 +131,7 @@ module Lain
       # feeding it by default, for a conductor that supervises and never reads.
       def initialize(tty:, chronicle:, signals:, rail: Frontend::InputRail.new, grace: Shutdown::GRACE_DEFAULT,
                      budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
-                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK)
+                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered)
         @tty = tty
         @chronicle = chronicle
         @signals = signals
@@ -142,7 +142,9 @@ module Lain
         @run_clock = run_clock
         @clock = clock
         @ticker = CountdownTicker.new(tty:, tick:)
+        @countdown = countdown
         @idle_keys = IDLE_KEYS
+        @rail.route(@signals)
         seed_ask_state
       end
 
@@ -378,9 +380,7 @@ module Lain
         route(recorder)
         reading = task.async(finished: false) { aside_of_countdown(:you, text) }
         shutdown = @shutdown = idle_shutdown(reading)
-        routing = task.async { routed_idle(recorder, shutdown, breaker) }
-        coordinator = task.async { shutdown.coordinate }
-        ticker_task = task.async { @ticker.run(shutdown, task, bindings: @idle_keys) }
+        routing, coordinator, ticker_task = idle_fibers(task, shutdown, recorder, breaker)
         reading.wait.tap { settle(shutdown, coordinator) }
       ensure
         @prompting = false
@@ -388,6 +388,15 @@ module Lain
         recorder&.dispose
         routing&.stop
         teardown(shutdown, coordinator, ticker_task)
+      end
+
+      # The three fibers an idle `you>` needs beside its read -- the recorded
+      # signals' routing, the coordinator, and the ticker -- and the rail's own
+      # offering of the countdown they drive, which {#teardown} withdraws.
+      def idle_fibers(task, shutdown, recorder, breaker)
+        @countdown.offering(shutdown, task, keys: @idle_keys)
+        [task.async { routed_idle(recorder, shutdown, breaker) }, task.async { shutdown.coordinate },
+         task.async { @ticker.run(shutdown, task, bindings: @idle_keys) }]
       end
 
       def idle_shutdown(reading)
@@ -421,10 +430,10 @@ module Lain
         published.kind == :you && published.generation == arrived.generation
       end
 
-      def route(sink)
-        @signals.route(sink)
-        @rail.route(sink)
-      end
+      # The rail was routed at THIS object's routing once, in {#initialize}, so
+      # there is one place a signal's destination changes rather than two that
+      # can disagree about it.
+      def route(sink) = @signals.route(sink)
 
       # A prompt names its own kind when it has one ({Frontend::ApprovalPolicy::Asked});
       # otherwise it is a question's `human>`.
@@ -447,6 +456,7 @@ module Lain
       # this raises (they are nil then).
       def start_shutdown(task, shutdown)
         route(shutdown)
+        @countdown.offering(shutdown, task)
         [task.async { shutdown.coordinate }, task.async { @ticker.run(shutdown, task) }]
       end
 
@@ -465,6 +475,7 @@ module Lain
       def teardown(shutdown, coordinator, ticker_task)
         @shutdown = Unsupervised
         route(Signals::NULL)
+        @countdown.withdraw
         ticker_task&.stop
         @ticker.stop
         shutdown&.dispose
@@ -479,6 +490,90 @@ module Lain
     class Conductor
       # Reopened rather than nested, the shutdown.rb idiom: the split keeps each
       # body within Metrics/ClassLength instead of loosening it.
+
+      # The grace window as a PROMPT on the {Frontend::InputRail}, for a chat
+      # whose human is not at its terminal. {Frontend::TTY::Countdown} owns the
+      # bottom line of the chat's own screen and reads its keys off the chat's
+      # stdin; neither is any use when the human is in another pane, so the same
+      # window is published as a `countdown` prompt and answered with a
+      # {Frontend::InputRail::Signal} -- which lands exactly where an OS signal
+      # would, so {Shutdown} needs no second door.
+      #
+      # A prompt rather than a status line also makes the window OBEY the rail:
+      # it takes its turn, the read it interrupts steps aside for it, and the
+      # reads behind it are held until it closes.
+      class RailCountdown
+        DEFAULT_KEYS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses }.freeze
+
+        # How often the window's state is re-read. {Conductor::ASIDE_TICK}'s
+        # cadence, for the same reason: a countdown the human cannot answer for
+        # a whole second is a countdown they will not believe.
+        TICK = 0.05
+
+        # The chat whose human is at its own terminal, where the countdown is
+        # the TTY's status line. Publishing a second one on the rail there would
+        # open the line editor under the key reader's raw mode.
+        module Unoffered
+          def self.offering(_shutdown, _task, keys: nil) = keys
+          def self.withdraw = nil
+        end
+
+        def initialize(rail:, clock: RunClock::MONOTONIC, tick: TICK)
+          @rail = rail
+          @clock = clock
+          @tick = tick
+          @task = nil
+        end
+
+        # Watch `shutdown` for the length of one supervision, drawing the window
+        # whenever it is open.
+        def offering(shutdown, task, keys: DEFAULT_KEYS)
+          withdraw
+          @task = task.async { watching(shutdown, keys) }
+        end
+
+        def withdraw
+          @task&.stop
+          @task = nil
+        end
+
+        private
+
+        # The `loop` needs no break: {Conductor#teardown} stops the fiber.
+        def watching(shutdown, keys)
+          task = Async::Task.current
+          loop { window(task, shutdown, keys) }
+        end
+
+        def window(task, shutdown, keys)
+          park(task) { shutdown.state != :grace }
+          drawing = task.async { drawn(shutdown, keys) }
+          park(task) { shutdown.state == :grace }
+          drawing.stop
+        end
+
+        def park(task)
+          task.sleep(@tick) while yield
+        end
+
+        # A line typed at the countdown answers nothing -- the keys are signals
+        # -- so it is held for the next `you>` rather than swallowed, and the
+        # window is published again under a fresh generation.
+        def drawn(shutdown, keys)
+          Enumerator.produce { @rail.read(:countdown, offer(shutdown, keys), keys:) }
+                    .lazy.take_while { |line| !line.nil? }.each { |line| @rail.hold(line) }
+        end
+
+        # {Frontend::TTY::Countdown}'s own words, so the two surfaces say one
+        # thing. The remaining seconds are stamped when the window opens and do
+        # not tick: a pane redraw costs the human's half-typed line, and the
+        # deadline the number describes is the chat's to enforce either way.
+        def offer(shutdown, keys)
+          remaining = [(shutdown.deadline - @clock.call).ceil, 0].max
+          labels = Frontend::TTY::Countdown::LABELS
+          "closing in #{remaining}s -- #{keys.map { |key, act| "[#{key}] #{labels.fetch(act, act.to_s)}" }.join("  ")}"
+        end
+      end
 
       # Renders the TTY's grace-window UI from the coordinator's state on a fixed
       # cadence. Poll-driven, not transition-driven (see

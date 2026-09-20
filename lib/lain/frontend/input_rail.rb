@@ -28,7 +28,10 @@ module Lain
     # and fibers alike: the state sits under a mutex that is never held across a
     # wait.
     class InputRail
-      KINDS = %i[you human approval command].freeze
+      # `countdown` is the shutdown window drawn as a prompt, for a producer
+      # that is not at the chat's own terminal: it answers with one of the
+      # prompt's `keys` as a {Signal}, never with a line.
+      KINDS = %i[you human approval command countdown].freeze
 
       # The kinds a run is parked on.
       ANSWERS = %i[human approval].freeze
@@ -36,7 +39,7 @@ module Lain
       # {CLI::Shutdown}'s inputs a producer may send.
       SIGNALS = %i[sigint sigterm sigquit cancel extend wait_responses].freeze
 
-      Prompt = Data.define(:kind, :text, :header, :generation)
+      Prompt = Data.define(:kind, :text, :header, :keys, :generation)
       Line = Data.define(:text, :generation)
       Signal = Data.define(:name)
       Eof = Data.define
@@ -45,6 +48,9 @@ module Lain
       module Unpublished
         def self.generation = 0
         def self.kind = nil
+        def self.text = ""
+        def self.header = ""
+        def self.keys = {}
       end
 
       # The rail nobody is watching: holds and closings are told to no one.
@@ -162,11 +168,13 @@ module Lain
       #   `takes?(line)` refuses a line it is not an answer to, and one that
       #   answers `closed` ends its own line when it is withdrawn
       # @param header [String] what a producer draws above the prompt's line
+      # @param keys [Hash] single keys a producer may answer a `countdown` with,
+      #   each naming one of {SIGNALS}
       # @return [String, nil]
-      def read(kind, text, header: "")
+      def read(kind, text, header: "", keys: {})
         turn = Turn.new(Thread::Queue.new, kind, text, false, false)
         enter(turn)
-        (take_held if kind == :you) || answered(turn, Prompt.new(kind:, text:, header:, generation: 0), text)
+        (take_held if kind == :you) || answered(turn, Prompt.new(kind:, text:, header:, keys:, generation: 0), text)
       ensure
         leave(turn)
         @screen.drop_prompt(text) if turn.waited && !turn.published
@@ -312,10 +320,11 @@ module Lain
       # Reopened for the values' validation, since a constant defined inside a
       # `Data.define` block belongs to the enclosing class instead.
       class Prompt
-        def initialize(kind:, text:, generation:, header: "")
+        def initialize(kind:, text:, generation:, header: "", keys: {})
           raise ArgumentError, "#{kind.inspect} is not a prompt kind (#{KINDS.join(", ")})" unless KINDS.include?(kind)
 
-          super(kind:, text: String.new(text).freeze, header: String.new(header).freeze, generation:)
+          super(kind:, text: String.new(text).freeze, header: String.new(header).freeze,
+                keys: keys.to_h { |key, name| [String.new(key.to_s).freeze, name.to_sym] }.freeze, generation:)
         end
 
         def answer? = ANSWERS.include?(kind)

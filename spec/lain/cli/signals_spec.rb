@@ -53,6 +53,17 @@ RSpec.describe Lain::CLI::Signals do
     end
   end
 
+  describe "standing in for the sink it routes to" do
+    it "forwards a signal on, so the rail routes here once and never again" do
+      signals = described_class.new(sink:)
+
+      signals.signal(:sigint)
+      signals.route(sink.class.new).signal(:cancel)
+
+      expect(sink.received).to eq([:sigint])
+    end
+  end
+
   describe "a swappable sink (a fresh coordinator per ask)" do
     it "routes to whichever sink is currently in force" do
       other = sink.class.new
