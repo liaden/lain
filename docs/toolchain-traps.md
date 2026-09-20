@@ -368,6 +368,11 @@ the cop.
   afterwards decides nothing` in `plain_chat_prompt_guards_spec`, whose
   `terminal.await(/decided by timeout: denied/)` never drew.
 
+  Added 2026-09-20 on a **second** sighting — two agents, two runs, both under a sibling suite, and
+  110/0 alone each time: `Lain::Frontend::TTY a note rendered while a prompt is drawn holds the note
+  while the prompt is drawn, keeps the typed words, and prints the note as the prompt closes`. It is
+  `:seam`-tagged and drives a real tmux, which is the family every entry above belongs to.
+
   Also 2026-09-20, and a **first sighting** rather than an established mechanism — recorded by name
   now so a second is recognised as a second: `Lain::Provider::Ollama::Transport spooling into a WAL
   frame does not tee a failed response's body into the frame`. It went red in a `pre-commit` suite
