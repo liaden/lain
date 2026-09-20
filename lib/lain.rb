@@ -125,7 +125,7 @@ module Lain
   # Paths under lib/lain, relative to it, that the loader may not manage,
   # because a loader resolves ONE constant per path and each of these answers
   # to something else: several constants in one file (the telemetry record
-  # groups, `review/records.rb`), one constant beside the one the path names
+  # groups, `cli/command/small.rb`), one constant beside the one the path names
   # (`frontend/reline.rb` is {Frontend::LineEditor}), or no constant at all
   # (`live.rb` defines only `Lain.live`). Every entry is a permanent pairing:
   # an ignored path is invisible to the loader, so something must require it by
@@ -136,9 +136,6 @@ module Lain
     forge/landing/run.rb
     frontend/reline.rb
     live.rb
-    review/records
-    review/records.rb
-    review/vocabulary.rb
     silent.rb
     telemetry/secret_boundary.rb
     telemetry/session_lifecycle.rb

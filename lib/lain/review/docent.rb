@@ -74,8 +74,8 @@ module Lain
     # == Why one file, and where its seams are
     #
     # Four concerns live here -- the service, {Threads}, {Conversation}/{Exchanges},
-    # {Brief} -- plus the journal records, which elsewhere in `Review` live in
-    # `records.rb`. That is a DELETABILITY choice: every one of them exists only
+    # {Brief} -- plus the journal records, which elsewhere in `Review` each get a
+    # file of their own. That is a DELETABILITY choice: every one of them exists only
     # because a docent does, they have no reader outside this file, and the
     # deletion map is "this file and one line in each of five others". Splitting
     # them would spread that map across six files whose only tie is this one. The

@@ -174,11 +174,11 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # the sidebar's set is exactly `Review::MARK_STATES`.
       #
       # The set EQUALITY is the assertion, not `include`. A third state added to
-      # `review/vocabulary.rb` and not here would pass an `include`, ship a
-      # sidebar that cannot express it, and be refused -- silently -- at the far
-      # end of the wire; a key sending a fourth spelling would pass it too, and be
-      # refused at `Review::Marks.normalize`. This is `48_annotate`'s MARKERS
-      # defence, one module over.
+      # `Review`'s vocabulary in `review.rb` and not here would pass an
+      # `include`, ship a sidebar that cannot express it, and be refused --
+      # silently -- at the far end of the wire; a key sending a fourth spelling
+      # would pass it too, and be refused at `Review::Marks.normalize`. This is
+      # `48_annotate`'s MARKERS defence, one module over.
       let(:mark_maps) do
         <<~LUA
           local restore = vim.api.nvim_get_current_buf()

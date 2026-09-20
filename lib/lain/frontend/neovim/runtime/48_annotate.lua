@@ -55,9 +55,9 @@
 -- take one, because the chunk shares a scope.
 local review_notes = {
   -- The inline marker per kind. THE SECOND SPELLING of a closed set that
-  -- `review/vocabulary.rb` owns (`Lain::Review::ANNOTATION_KINDS`), and it is
-  -- forced: lua cannot read a Ruby constant, and a marker per kind needs the
-  -- members anyway. `spec/lain/frontend/neovim/annotate_spec.rb` pins these keys
+  -- `review.rb` owns (`Lain::Review::ANNOTATION_KINDS`), and it is forced: lua
+  -- cannot read a Ruby constant, and a marker per kind needs the members
+  -- anyway. `spec/lain/frontend/neovim/annotate_spec.rb` pins these keys
   -- against that declaration, the same defence `Anchor::SIDES`' spec applies to
   -- `Review::SIDES` -- so a fourth kind added on one side and not the other
   -- fails there rather than being refused, silently, at the far end of a wire.

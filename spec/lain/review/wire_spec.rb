@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # `Wire.unquote` alone. The rest of {Lain::Review::Wire} is exercised through the
-# records that cross it (`records_spec.rb`); this one has two callers that are not
-# records at all, which is why it is worth pinning on its own.
+# records that cross it (each record's own spec beside this one); this one has
+# two callers that are not records at all, which is why it is worth pinning on
+# its own.
 RSpec.describe Lain::Review::Wire do
   describe ".unquote" do
     def unquote(field) = described_class.unquote(field)

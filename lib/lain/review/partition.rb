@@ -153,9 +153,10 @@ module Lain
       # a strategy whose two spellings disagreed could not register under the one
       # it does not answer.
       #
-      # Declared here rather than in `vocabulary.rb` because THIS is where the
-      # strategies are -- it IS the scope vocabulary now, and that file used to
-      # hold a second `SCOPES` list naming two of the three.
+      # Declared here rather than beside the namespace's other closed sets in
+      # `review.rb` because THIS is where the strategies are -- it IS the scope
+      # vocabulary now, and the set that lived over there was a second `SCOPES`
+      # list naming two of the three.
       STRATEGIES = [Whole, ByCommit, ByDirectory]
                    .map { |strategy| strategy.new.freeze }
                    .each { |strategy| Strategy.check!(strategy) }

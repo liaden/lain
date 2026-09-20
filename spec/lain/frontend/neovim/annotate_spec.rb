@@ -1003,7 +1003,7 @@ end
 # The one closed set this runtime has to restate, pinned against the declaration
 # that owns it. lua cannot read `Lain::Review::ANNOTATION_KINDS`, and the module
 # needs the members anyway to render a marker per kind -- so the second spelling
-# is forced, and the pair itself is the trap `review/vocabulary.rb` was written
+# is forced, and the pair itself is the trap `Review`'s vocabulary was written
 # about. This is the same defence `Anchor::SIDES`' spec applies to `Review::SIDES`:
 # a fourth kind added on one side and not the other fails here rather than being
 # refused, in silence, at the far end of a wire.
