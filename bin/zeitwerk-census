@@ -1,0 +1,629 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "open3"
+require "pathname"
+require "tmpdir"
+
+# What a green boot, a green suite and a clean `rubocop` all agree on, and all
+# three are wrong about: which constants in `lib/` resolve only because
+# `lib/lain.rb`'s manifest and the unit indexes under it still require every
+# file by hand.
+#
+# `spec/zeitwerk_spec.rb` asks the loader whether it can FIND each constant the
+# manifest defines, and the answer is yes for hundreds of them that have no path
+# of their own -- findable through the file, never through the name. That spec
+# owns the orphan invariant and this script does not restate it. The question
+# here is the next one down, and it is the one a rename answers badly: with the
+# manifest gone, does the tree still boot?
+#
+# Four modes:
+#
+#   census  (default)   every finding, in full, behind its own banner
+#   --counts            the summary lines only
+#   --check             the RATCHET: non-zero when a finding is not in {Known}
+#
+# == How the question is asked
+#
+# By asking it, not by reading for it. A static scan cannot tell a load-time
+# constant reference from one inside a method body that will never run at boot,
+# and that distinction IS the finding -- so the tree is really booted, in a
+# child, three times:
+#
+#   1. SURVEY. `require "lain"` the normal way and walk {Lain} with
+#      `const_source_location`, which is Ruby's own answer to "what file defines
+#      this constant" rather than a regex's. The same walk copies `lib/` to a
+#      scratch tree with every `require_relative` line removed -- a mechanical
+#      statement of "the manifest is gone", derived from the real files so it
+#      cannot drift from them.
+#   2/3. PROBE, twice, over the scratch tree: register Zeitwerk's autoloads,
+#      then require every managed file in sorted order, then in REVERSE sorted
+#      order. Two orders because Zeitwerk eager loads a directory sorted, so a
+#      reference that resolves today may be resolving by ALPHABETICAL LUCK --
+#      `epic/document.rb` simply sorts before `epic/intake.rb`. Reversing the
+#      order is what turns that luck into a finding; run forward only and
+#      {Lain::Epic::MalformedDocument} is invisible.
+#
+# The probe installs a `Module#const_missing` that requires the defining file
+# and records the site, so ONE run reports every remaining reference instead of
+# stopping at the first. It is PREPENDED rather than defined: `super` has to
+# reach Ruby's own `const_missing` so that a name this census knows nothing
+# about still raises the NameError it should, un-masked. A name it does know is
+# recorded once and then resolved, because the run has to continue to be a
+# census at all.
+#
+# == What it cannot see
+#
+#   * A reference recorded ONCE. After the first hit the defining file is
+#     loaded, so a second file naming the same constant resolves silently. The
+#     CONSTANT set is complete across the two orders; the SITE list names one
+#     site per constant per order, not all of them.
+#   * A load-time reference reached only through a branch, an `if defined?`, or
+#     a platform this box is not.
+#   * Anything `spec/`, `exe/` or the nvim plugin names. This boots `lib/`.
+#   * The paths in `Lain::LOADER_IGNORES`. The probe drives the loader's own
+#     `all_expected_cpaths`, which excludes an ignored path by definition, so
+#     those files are never required manifest-free. Emptying that list can only
+#     ADD findings here, never remove one -- but until it is empty, a clean
+#     census is a claim about the managed tree and not about all of `lib/`.
+#
+# Unlike `bin/comment-census` and `bin/spec-census` this is NOT pure stdlib in
+# effect: the children need Bundler, the gems and the compiled extension,
+# because a boot is the only thing that can answer the question. The PARENT --
+# everything below that classifies, ratchets and formats -- touches none of
+# that, which is what lets `spec/lain/zeitwerk_census_spec.rb` exercise it
+# against fixtures.
+module ZeitwerkCensus
+  REPO_ROOT = Pathname(__dir__).join("..").expand_path
+
+  # The seeded ratchet, and the reason it is a list of NAMES rather than
+  # `bin/spec-census`'s count. That script's own doc explains why 184 cannot be
+  # an allowlist: one sized to the count is a disabled guard wearing a gate's
+  # name. The inverse argument applies at this size. Each entry below is a
+  # single latent boot failure with an address, a fix, and no siblings to hide
+  # among -- so identity is the stronger ratchet: a count lets a new orphan in
+  # free the moment somebody fixes an old one, which is exactly the trade a
+  # rename makes.
+  #
+  # An entry is REMOVED when its finding is fixed, never edited to point
+  # somewhere else. A new entry is a commit that says why, the way a raised
+  # `.rubocop.yml` limit is.
+  module Known
+    # A file the loader expects to define a constant, that defines nothing once
+    # its `require_relative` lines are gone: the unit index is the whole file.
+    # The fix is to give the file the `module Foo` it already stands for.
+    NAMESPACES = %w[
+      lain/bench.rb
+      lain/forge.rb
+      lain/memory.rb
+      lain/oracle.rb
+      lain/plan.rb
+      lain/provider/http.rb
+      lain/structural.rb
+      lain/survey.rb
+    ].freeze
+
+    # A constant reached while a file LOADS whose own name maps to no file --
+    # written in a class body, or in a method default that a load-time constant
+    # assignment then calls. The fix is to move it to the path its name
+    # implies, or to stop reaching it at load time.
+    REFERENCES = %w[
+      Lain::Epic::MalformedDocument
+      Lain::Epic::MalformedGraph
+      Lain::Epic::STAGES
+      Lain::Mode::LayerSet
+      Lain::Price
+      Lain::Telemetry::SessionRead
+    ].freeze
+  end
+
+  # One thing that stops resolving when the manifest goes, in the terms a
+  # reader fixes it in. `name` is the ratchet key and is deliberately NOT a
+  # line number: a site drifts within days, and CLAUDE.md's rule for recording
+  # a flaky spec by name rather than by line is the same rule for the same
+  # reason. `where` carries the drifting detail, for reading only.
+  #
+  # `blame` is the one extra fact each shape carries so {Cascades} can ask
+  # whether this finding is already counted above: for a `:namespace` it is the
+  # constant path that file fails to define, for an `:unclassified` it is the
+  # file that really defines the constant the failure named, and for a
+  # `:reference` it is nil. One field rather than three because exactly one
+  # question is asked of it.
+  Finding = Struct.new(:shape, :name, :where, :blame) do
+    def to_s = "#{name.ljust(38)} #{where}"
+  end
+
+  # The four shapes. Two carry an allowlist and ratchet against it; `:cascade`
+  # is reported and never ratcheted, because each of its entries is already
+  # counted once as the namespace it falls behind and a reader who fixes that
+  # namespace fixes these for free. `:unclassified` ratchets against an EMPTY
+  # allowlist, so any probe failure this script cannot place fails `--check` --
+  # `bin/comment-census` sets that house precedent: teach the classifier
+  # before you sweep.
+  SHAPES = {
+    namespace: { title: "index-only namespace -- the file defines nothing without its requires",
+                 known: Known::NAMESPACES, ratchet: true },
+    reference: { title: "load-time orphan reference -- reached while a file LOADS, no path maps to it",
+                 known: Known::REFERENCES, ratchet: true },
+    cascade: { title: "already counted above -- fix the namespace it falls behind, not these",
+               known: [], ratchet: false },
+    unclassified: { title: "UNCLASSIFIED -- teach bin/zeitwerk-census before believing this run",
+                    known: [], ratchet: true }
+  }.freeze
+
+  # Zeitwerk's own words for an index-only namespace. Parsed rather than
+  # guessed at because the file that FAILED to define the constant is the
+  # finding, while the file being required when it surfaced is a cascade --
+  # `tools/ast_search.rb` fails for `structural.rb`'s reason, and reporting
+  # ast_search.rb would send a reader to the wrong file.
+  MISSING_CONSTANT = /\Aexpected file (?<file>\S+) to define constant (?<cpath>\S+), but didn't\z/
+
+  # The namespace findings, as the two questions every later finding is checked
+  # against. Both answers mean "already counted once, above, and fixed by the
+  # same edit":
+  #
+  #   * it lives UNDER a flagged file's subtree -- nothing under
+  #     `provider/http/` can load while `provider/http.rb` defines no
+  #     `Lain::Provider::HTTP`, and the failures there surface as NameErrors
+  #     against the `anthropic` gem's own top-level module, the constant
+  #     shadowing CLAUDE.md already records, reached through a hole this census
+  #     opened rather than a finding of its own.
+  #   * it IS the constant a flagged file fails to define, seen from the other
+  #     side -- `provider/ollama/transport.rb` naming `Lain::Provider::HTTP` at
+  #     load time is one fact with `provider/http.rb`, not a second, and listing
+  #     both has a reader budget one more fix than there is.
+  #
+  # Asked of `blame` rather than of the failing SITE, because a cascade surfaces
+  # wherever the load happened to reach: the one that cost this census a red
+  # gate arrived at `Lain::LOADER.eager_load`, which is not a file and is under
+  # no subtree at all.
+  class Cascades
+    def initialize(findings)
+      flagged = findings.select { _1.shape == :namespace }
+      @subtrees = flagged.map { "#{_1.name.delete_suffix(".rb")}/" }
+      @cpaths = flagged.map(&:blame)
+    end
+
+    def covers?(found)
+      return @subtrees.any? { found.blame.to_s.start_with?(_1) } if found.shape == :unclassified
+      return @cpaths.include?(found.name) if found.shape == :reference
+
+      false
+    end
+  end
+
+  # Turns two probe runs into one sorted, de-duplicated finding list. Its own
+  # module so the classification can be exercised against fixture Hashes:
+  # booting the tree is {Boot}'s job and is not a precondition for testing this.
+  module Classify
+    module_function
+
+    # @param runs [Array<Hash>] one decoded probe result per load order
+    # @return [Array<Finding>]
+    def findings(runs)
+      first_seen = (runs.flat_map { |run| references(run) } + runs.flat_map { |run| failures(run) })
+                   .group_by(&:name).values.map(&:first)
+      demote(first_seen).sort_by { |found| [found.shape.to_s, found.name] }
+    end
+
+    def demote(findings)
+      cascades = Cascades.new(findings)
+      findings.map do |found|
+        cascades.covers?(found) ? Finding.new(:cascade, found.name, found.where, found.blame) : found
+      end
+    end
+
+    # `from` is where the name is written and `at` is the load-time body that
+    # reached it, and they are often different files: `Mode::LayerSet` is
+    # written as a keyword-argument default in `mode.rb`, which runs only
+    # because `cli/command/mode.rb` calls `Mode.new` while assigning a
+    # constant. A reader needs the second to understand why this fires at all.
+    def references(run)
+      run.fetch("hits").map do |hit|
+        Finding.new(:reference, hit.fetch("const"),
+                    "#{hit.fetch("from")}#{" via #{hit["at"]}" if hit["at"]} " \
+                    "-> #{hit.fetch("defined_in")} [#{run.fetch("order")}]")
+      end
+    end
+
+    # A probe failure is an index-only namespace when Zeitwerk says so in as
+    # many words, and unclassified otherwise. An unclassified one is NAMED by
+    # the file that defines the constant it could not find, when the probe could
+    # resolve one -- the site it surfaced at is the cascade, and naming that
+    # would send a reader to `(eager_load)`.
+    def failures(run)
+      run.fetch("fails").map { |failure| failure(failure, run.fetch("order")) }
+    end
+
+    def failure(failure, order)
+      named = MISSING_CONSTANT.match(failure.fetch("message"))
+      return Finding.new(:namespace, named[:file], "#{named[:cpath]} [#{order}]", named[:cpath]) if named
+
+      blame = failure["blamed"] || failure.fetch("file")
+      Finding.new(:unclassified, blame,
+                  "#{failure.fetch("class")}: #{failure.fetch("message")} at #{failure.fetch("file")} [#{order}]",
+                  blame)
+    end
+  end
+
+  # One shape's findings against one shape's allowlist: what is new, what the
+  # allowlist still names, and what it names that is already fixed.
+  Census = Struct.new(:shape, :title, :found, :known, :ratchet) do
+    def names = found.map(&:name)
+
+    def new_entries = found.reject { |entry| known.include?(entry.name) }
+
+    def stale = known - names
+
+    # A stale entry does NOT fail. Failing on good news makes the guard
+    # adversarial to whoever just fixed something, and the entry is printed
+    # loudly either way -- the same posture `bin/spec-census` takes when a
+    # count lands under its ceiling.
+    def over? = ratchet && new_entries.any?
+  end
+
+  # The three children, and the scratch tree they share. Everything here is
+  # `spawn`/`JSON`; the code the children RUN lives in {Survey} and {Probe} in
+  # this same file, reached through the flags {CLI} keeps out of its usage.
+  module Boot
+    ORDERS = %w[forward reverse].freeze
+
+    module_function
+
+    # One decoded probe result per load order. The scratch tree is named
+    # by `mktmpdir` rather than by a fixed path: CLAUDE.md records a generic
+    # filename in a shared scratchpad as shared mutable state between agents,
+    # and the failure mode is a confident green from another tree.
+    #
+    # @return [Array<Hash>]
+    def runs
+      Dir.mktmpdir("zeitwerk-census-") do |scratch|
+        spec = File.join(scratch, "survey.json")
+        child("--survey", spec, File.join(scratch, "lib"))
+        ORDERS.map { |order| JSON.parse(child("--probe", spec, order)) }
+      end
+    end
+
+    # Bundler and the compiled extension both have to be there, and a child
+    # that half-boots reports a clean census of nothing -- so its stderr is
+    # carried into the raise rather than dropped.
+    def child(*args)
+      out, err, status = Open3.capture3(*command, __FILE__, *args)
+      return out if status.success?
+
+      raise "#{File.basename(__FILE__)} #{args.first} failed (#{status.exitstatus})\n#{err}"
+    end
+
+    # `bundle exec` unless already inside it, because the children need the
+    # gems and this script is also useful typed bare. The REAL `lib/` is on the
+    # child's load path either way: the survey requires lain through it, and the
+    # probe reaches the compiled extension through it while Zeitwerk drives the
+    # scratch tree by absolute path.
+    def command
+      inner = [RbConfig.ruby, "-I#{REPO_ROOT.join("lib")}"]
+      ENV["BUNDLE_GEMFILE"] ? inner : ["bundle", "exec", *inner]
+    end
+  end
+
+  # CHILD ONE, and the only one that boots the real tree: Ruby's own answer to
+  # "which file defines this constant", plus the scratch copy the probes run
+  # against.
+  module Survey
+    module_function
+
+    def run(spec_path, scratch_lib)
+      require "lain"
+      lib = Lain::LOADER.dirs.first
+      strip(lib, scratch_lib)
+      File.write(spec_path, JSON.generate({ "lib" => scratch_lib, "map" => constants(lib) }))
+    end
+
+    # `{ "Lain::Foo::BAR" => "lain/foo.rb" }`, relative so it keys against the
+    # scratch tree as readily as against `lib/`. Relies on nothing but
+    # `const_source_location`; a constant with no Ruby source (the 26 the
+    # compiled extension defines) is absent, which is correct -- the probe
+    # requires the extension by name like the real boot does.
+    def constants(lib)
+      walk(Lain, "Lain", Set.new([Lain]), {}, lib)
+    end
+
+    def walk(mod, cpath, seen, out, lib)
+      mod.constants(false).each_with_object(out) do |cname, acc|
+        here = "#{cpath}::#{cname}"
+        file = mod.const_source_location(cname, false)&.first
+        acc[here] = file.delete_prefix("#{lib}/") if file&.start_with?("#{lib}/")
+        value = mod.const_get(cname, false)
+        walk(value, here, seen, acc, lib) if value.is_a?(Module) && seen.add?(value)
+      end
+    end
+
+    # `lib/` with every internal `require_relative` line gone. Ruby files are
+    # copied line-filtered; everything else -- the 47MB compiled extension, the
+    # nvim runtime -- is symlinked, so the copy costs milliseconds and can
+    # never write back through a hard link.
+    def strip(lib, dest)
+      FileUtils.mkdir_p(dest)
+      Dir.glob("#{lib}/**/*").each { |path| place(path, File.join(dest, path.delete_prefix("#{lib}/"))) }
+    end
+
+    def place(path, target)
+      return Dir.mkdir(target) unless File.file?(path)
+
+      return File.symlink(path, target) unless path.end_with?(".rb")
+
+      File.write(target, File.readlines(path).reject { _1.lstrip.start_with?("require_relative ") }.join)
+    end
+  end
+
+  # CHILDREN TWO AND THREE: boot the stripped tree in one load order and report
+  # what did not resolve. Runs with `lib/lain.rb` never required -- it is read,
+  # `eager_load` stripped off the end so the order is this script's to choose,
+  # and eval'd under the scratch tree's own path so `Zeitwerk::Loader.for_gem`
+  # derives that root from it rather than this script's directory.
+  module Probe
+    module_function
+
+    def run(spec_path, order)
+      spec = JSON.parse(File.read(spec_path))
+      state = State.new(spec.fetch("lib"), spec.fetch("map"))
+      Module.prepend(state.shim)
+      boot(state, order)
+      puts JSON.generate({ "order" => order, "hits" => state.hits, "fails" => state.fails })
+    end
+
+    def boot(state, order)
+      lib = state.lib
+      # Zeitwerk skips the file it is being set up FROM, and knows that file by
+      # `$LOADED_FEATURES`. An eval is not a require, so it is said here.
+      $LOADED_FEATURES << "#{lib}/lain.rb"
+      source = File.readlines("#{lib}/lain.rb").reject { _1.start_with?("loader.eager_load") }.join
+      eval(source, TOPLEVEL_BINDING, "#{lib}/lain.rb") # rubocop:disable Security/Eval
+      files(lib, order).each { |file| state.guard(file) { require file } }
+      state.guard("(eager_load)") { Lain::LOADER.eager_load }
+    end
+
+    # Every file the loader manages, in the chosen order, minus the entry point
+    # the eval above already stands for.
+    def files(lib, order)
+      managed = Lain::LOADER.all_expected_cpaths.keys
+                            .select { _1.end_with?(".rb") && _1 != "#{lib}/lain.rb" }.sort
+      order == "reverse" ? managed.reverse : managed
+    end
+
+    # The probe's whole mutable world: what has been seen, what is mid-flight,
+    # and the `const_missing` that records the first. Injected into the shim
+    # rather than reached through a constant, so nothing in the child depends on
+    # load order to find it.
+    class State
+      attr_reader :lib, :hits, :fails
+
+      def initialize(lib, map)
+        @lib = lib
+        @map = map.transform_values { File.join(lib, _1) }
+        @hits = []
+        @fails = []
+        @inflight = Set.new
+      end
+
+      # Prepended, never defined: `super` has to reach Ruby's own
+      # `const_missing` so an unknown name still raises its real NameError.
+      def shim
+        state = self
+        Module.new do
+          define_method(:const_missing) { |name| state.resolve(self, name) { super(name) } }
+        end
+      end
+
+      # Ruby has already searched the lexical scope and the ancestors by the
+      # time this runs, so the candidate walk retraces the enclosing namespaces
+      # outward -- `StopReason` named inside `Lain::Agent` may mean
+      # `Lain::Agent::StopReason` or `Lain::StopReason`.
+      def resolve(mod, name)
+        cpath = candidates(mod, name).find { @map.key?(_1) }
+        return yield unless cpath && @inflight.add?(cpath)
+
+        record(cpath)
+        load_once(cpath)
+        Object.const_defined?(cpath) ? Object.const_get(cpath) : yield
+      end
+
+      # In-flight for exactly the duration of the require, so a file that names
+      # a constant its own load is in the middle of defining yields a real
+      # NameError instead of recursing -- and so a require that RAISES does not
+      # leave the name pinned, which would fake a cascade onto every later
+      # reference to it.
+      def load_once(cpath)
+        require @map.fetch(cpath)
+      ensure
+        @inflight.delete(cpath)
+      end
+
+      def candidates(mod, name)
+        parts = mod.name&.split("::") || []
+        parts.length.downto(0).map { |depth| (parts.take(depth) + [name.to_s]).join("::") }
+      end
+
+      # The innermost `lib/` frame is where the name is WRITTEN. The next frame
+      # in a DIFFERENT file is what reached it at load time, and the two are
+      # often not the same edit: `Mode::LayerSet` is written as a keyword
+      # default in `mode.rb` and only ever evaluated because
+      # `cli/command/mode.rb:53` assigns a constant from `Mode.new`. Absent
+      # when the whole chain is one file -- there is nothing to add then.
+      def record(cpath)
+        frames = caller.select { _1.start_with?(@lib) }.map { site(_1) }
+        @hits << { "const" => cpath, "from" => frames.first,
+                   "at" => frames.find { file(_1) != file(frames.first) },
+                   "defined_in" => @map.fetch(cpath).delete_prefix("#{@lib}/") }
+      end
+
+      def site(frame) = frame.delete_prefix("#{@lib}/").split(":in ").first
+
+      def file(site) = site.split(":").first
+
+      # One file's failure must not end the run, or the census reports the
+      # first blocker and nothing behind it. `Exception` rather than
+      # `StandardError` because `Zeitwerk::NameError` is a `NameError` but a
+      # cascading `SystemStackError` is not, and both are findings.
+      def guard(file)
+        yield
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        @fails << { "file" => file.delete_prefix("#{@lib}/"), "class" => e.class.name,
+                    "message" => e.message.gsub("#{@lib}/", ""), "blamed" => blamed(e) }
+      end
+
+      # The file that really defines the constant a NameError names. The
+      # failing SITE cannot say what a cascade is behind -- the eager load is
+      # not a file -- but the missing constant can, and the survey's map is
+      # already the answer. Matched on a SUFFIX because Ruby reports the name
+      # as spelled (`Anthropic::Chat`), not as resolved.
+      #
+      # A named receiver spells the name in full, so it matches exactly or not
+      # at all and this never guesses. A bare name reaches here only from an
+      # ANONYMOUS module, and then the first suffix match wins -- which with
+      # both `Lain::Config` and `Lain::Foo::Bar::Config` in the map answers
+      # whichever the map happened to list first. No such site exists today;
+      # if one ever reports here, verify its blame by hand rather than
+      # trusting it, because a wrong blame landing under a flagged subtree
+      # demotes a real finding to report-only and drops it from `--check`.
+      def blamed(error)
+        spelled = spelled_name(error)
+        key = spelled && @map.keys.find { _1 == spelled || _1.end_with?("::#{spelled}") }
+        key && @map.fetch(key).delete_prefix("#{@lib}/")
+      end
+
+      def spelled_name(error)
+        return nil unless error.is_a?(NameError)
+
+        owner = error.receiver
+        owner.is_a?(Module) && owner.name ? "#{owner.name}::#{error.name}" : error.name.to_s
+      rescue ArgumentError, NameError
+        nil
+      end
+    end
+  end
+
+  # Turns censuses into the worklist a reader acts on. Separate from
+  # {Classify} for the reason {AssertionReport} is separate from `Assertions`
+  # in `bin/spec-census`: detection and formatting are different
+  # responsibilities, and folding the second into the first is what pushes
+  # either over `Metrics/ModuleLength`.
+  module Report
+    BANNER = <<~TEXT
+      ZEITWERK CENSUS -- bin/zeitwerk-census
+
+      ======================================================================
+      WHAT THIS BOOTED: lib/, three times in child processes, with every
+      internal `require_relative` removed -- once normally to ask Ruby which
+      file defines which constant, then twice under Zeitwerk alone, in sorted
+      and in REVERSE sorted order.
+
+      Every entry below boots green today and is a NameError the moment the
+      manifest in lib/lain.rb goes away -- or, for a reference the sorted order
+      happens to satisfy, the moment a file is renamed past it. That is the
+      whole point: the suite, rubocop and a reader are all silent about these.
+
+      This is a WORKLIST, not a count. The number of orphan CONSTANTS in the
+      tree is a different figure and a poorer gauge -- spec/zeitwerk_spec.rb
+      owns that invariant and this script does not restate it.
+      ======================================================================
+    TEXT
+
+    module_function
+
+    def text(censuses)
+      ([BANNER, counts(censuses)] + censuses.map { |census| section(census) }).join("\n")
+    end
+
+    def counts(censuses)
+      ["Counts (found / allowlisted -- new / stale):",
+       *censuses.map { |census| "  #{row(census)}" }, ""].join("\n")
+    end
+
+    def row(census)
+      return "#{"#{census.shape}:".ljust(16)}#{census.found.size} -- report only" unless census.ratchet
+
+      "#{"#{census.shape}:".ljust(16)}#{census.found.size} / #{census.known.size} " \
+        "-- new #{census.new_entries.size}, stale #{census.stale.size}"
+    end
+
+    def section(census)
+      ["--- #{census.title} (#{census.found.size}) ---",
+       *census.found.map { |found| "  #{mark(census, found)}#{found}" },
+       *census.stale.map { |name| "  STALE  #{name} -- fixed; delete its line from Known" }, ""].join("\n")
+    end
+
+    def mark(census, found) = !census.ratchet || census.known.include?(found.name) ? "       " : "NEW    "
+  end
+
+  # The entry points, and the only place this can FAIL.
+  module CLI
+    USAGE = <<~TEXT
+      usage: bin/zeitwerk-census [--counts | --check]
+
+        (no flag)   every finding in full, behind its banner
+        --counts    the summary lines only
+        --check     exit non-zero on a finding the allowlist in this script
+                    does not already name
+
+      Boots lib/ in child processes and takes no file arguments. Needs the gems
+      and the compiled extension; run it under `bundle exec` or `direnv exec .`.
+    TEXT
+
+    MODES = { nil => :census, "--counts" => :counts, "--check" => :check }.freeze
+
+    module_function
+
+    # The two hidden flags are the children this script spawns of itself, and
+    # they are kept out of {USAGE} because nobody types them.
+    def run(argv)
+      return Survey.run(argv[1], argv[2]) if argv.first == "--survey"
+      return Probe.run(argv[1], argv[2]) if argv.first == "--probe"
+
+      mode = MODES[argv.first] if argv.size <= 1
+      return warn(USAGE) || exit(2) unless mode
+
+      public_send(mode)
+    end
+
+    def census(found = censuses) = puts(Report.text(found))
+
+    def counts(found = censuses) = puts(Report.counts(found))
+
+    # Reports EVERY census before exiting, so a reader who fixes the first is
+    # not met by a second they were never shown.
+    def check(found = censuses)
+      puts(found.map { |census| verdict(census) }.join("\n"))
+      exit 1 if found.any?(&:over?)
+    end
+
+    def verdict(census)
+      return over(census) if census.over?
+      return "ok   #{census.shape}: #{census.found.size} (report only, never ratcheted)" unless census.ratchet
+
+      "ok   #{census.shape}: #{census.found.size} known#{stale_note(census)}"
+    end
+
+    def stale_note(census)
+      census.stale.empty? ? "" : ", #{census.stale.size} stale (#{census.stale.join(", ")}) -- delete those lines"
+    end
+
+    def over(census)
+      ["FAIL #{census.shape}: #{census.new_entries.size} not in the allowlist",
+       *census.new_entries.map { |found| "       #{found}" },
+       "     Fix it, or add its name to ZeitwerkCensus::Known in bin/zeitwerk-census,",
+       "     in its own commit, saying why there. `bin/zeitwerk-census` with no flag",
+       "     prints every finding with the site that names it."].join("\n")
+    end
+
+    def censuses(runs = Boot.runs)
+      found = Classify.findings(runs).group_by(&:shape)
+      SHAPES.map do |shape, spec|
+        Census.new(shape, spec.fetch(:title), found.fetch(shape, []), spec.fetch(:known), spec.fetch(:ratchet))
+      end
+    end
+  end
+end
+
+ZeitwerkCensus::CLI.run(ARGV) if $PROGRAM_NAME == __FILE__

@@ -168,6 +168,22 @@ So: never add an internal `require_relative` to a leaf file. Add the new file to
 and a new unit to `lain.rb` where its dependencies place it (a load-time `NameError` means the
 entry is too early).
 
+`bin/zeitwerk-census` is the worklist for getting OUT of that regime, the third sibling of
+`bin/comment-census` and `bin/spec-census`. It boots `lib/` in child processes with every internal
+`require_relative` stripped — Zeitwerk alone, in sorted order and again in REVERSE sorted order —
+and reports what stops resolving: a namespace file that is nothing but its index, and a constant
+reached while a file loads that no path maps to. Everything it finds boots green today, so neither
+the suite nor `rubocop` can see any of it. Most of them are broken the moment the manifest goes
+whatever the order; **2 of the 6 references today resolve only because their defining file happens
+to sort first**, and a rename is enough to turn one of those into a boot failure — which is what
+the reverse pass is for. It reads only what the loader manages, so the paths in `LOADER_IGNORES`
+are unprobed and a clean census is a claim about the managed tree. `spec/zeitwerk_spec.rb` owns the *other* question,
+whether the loader can find every constant the manifest defines, and the census does not restate
+it. `--check` is a ratchet against a **named allowlist** rather than a count, because at this size
+identity is the stronger gate: a count lets a new orphan in free the moment an old one is fixed.
+Nothing gates on it, deliberately — one pass is three boots and ~4s, which is not a per-commit price.
+Removing a fixed entry is the mechanism; adding one goes in its own commit, saying why.
+
 ## Testing
 
 Write specs alongside the code. Three levels, and the middle one is where this codebase's real
