@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   module CLI
     # `lain improvements [--project <hash-or-path>] [--kind knob|bug|missing-feature|doc]`:
@@ -32,6 +34,24 @@ module Lain
       # "the file is damaged", and the remedies are nothing alike.
       class UnreadableRecord < Error; end
 
+      # What a `--project` narrowed the report to, and how to say it back.
+      # The operator typed a path or a hash and the message says both, so a
+      # refusal can be read without recomputing a sha256.
+      Scope = Data.define(:given, :resolved) do
+        def covers?(record) = record["project_hash"] == resolved
+
+        def named = given == resolved ? given : "#{given} (project #{resolved})"
+      end
+
+      # No `--project` at all. A Null object rather than a nil, so neither the
+      # filter nor the empty-store wording carries a `project.nil?` branch
+      # somebody can forget on one of the two paths.
+      module EveryProject
+        def self.covers?(_record) = true
+
+        def self.named = nil
+      end
+
       # Kind-first canonical order within a project section, so the report
       # reads the same closed vocabulary every time regardless of which kind
       # a repo happened to log first -- {Improvement::KINDS} is already that
@@ -57,9 +77,9 @@ module Lain
         assert_known_kind!(kind)
         scope = resolve_project(project)
         path = @paths.improvements_path
-        scoped = scoped_records(read(path), project: scope)
+        scoped = read(path).select { |record| scope.covers?(record) }
         records = kind.nil? ? scoped : scoped.select { |r| r["kind"] == kind }
-        return empty_render(path, scoped:, kind:) if records.empty?
+        return empty_render(path, scope:, scoped:, kind:) if records.empty?
 
         render(records)
       end
@@ -88,11 +108,11 @@ module Lain
       # the directory EXISTS is deliberately not asked: a nonexistent path is
       # legal input here, and there is a spec pinning `--project /some/repo`.
       def resolve_project(project)
-        return if project.nil?
+        return EveryProject if project.nil?
 
         raise UnusableProject, empty_project_message if project.empty?
 
-        HASH_FORMAT.match?(project) ? project : @paths.project_hash(project)
+        Scope.new(given: project, resolved: HASH_FORMAT.match?(project) ? project : @paths.project_hash(project))
       rescue ArgumentError => e
         raise UnusableProject, unusable_project_message(project, e)
       end
@@ -107,24 +127,59 @@ module Lain
           "Pass a 12-hex-char project hash, or a path this process can expand."
       end
 
+      # {Improvement::Sink} appends one whole line per record under O_APPEND,
+      # so the only line a writer can be mid-way through is the LAST one, and
+      # that one is tolerated: it is what a crash between the bytes and their
+      # newline leaves, and the next append lands after it.
+      #
+      # Any line that is not JSON AT ALL with a whole record after it was
+      # damaged by something else, and skipping it drops a dogfood note while
+      # the report still reads as complete -- {Bench::Session::Lineages}'
+      # torn-line rule, for its reason.
       def read(path)
         return [] unless File.exist?(path)
 
-        Journal.records(File.foreach(path), type: "improvement").to_a
+        lines = File.readlines(path)
+        lines.each_with_index
+             .filter_map { |line, index| record_in(path, line, index + 1, torn: index == lines.size - 1) }
+             .select { |record| record["type"].to_s == "improvement" }
       end
 
-      def scoped_records(records, project:)
-        project.nil? ? records : records.select { |r| r["project_hash"] == project }
+      def record_in(path, line, number, torn:) = Journal.parse(line) || skipped(path, line, number, torn:)
+
+      # nil for a blank line, for somebody else's record and for the torn
+      # tail -- all three skipped, {Bench::Session::Lineages.refuse_torn}'s
+      # shape. A blank line is the commonest accidental hand-edit to a file
+      # whose own refusal invites the operator to repair a line in it, and no
+      # note was lost to one. A valid-JSON NON-OBJECT is another writer's
+      # record: {Journal.parse} answers nil for it exactly as it does for
+      # damage, so only re-parsing tells the two apart.
+      def skipped(path, line, number, torn:)
+        return nil if line.strip.empty? || (torn && !line.end_with?("\n"))
+
+        JSON.parse(line)
+        nil
+      rescue JSON::ParserError
+        raise UnreadableRecord, damaged_line_message(path, number)
       end
 
-      # An empty STORE (or an empty PROJECT scope) says so plainly; an empty
-      # KIND against a non-empty scope says how many recorded improvements the
-      # filter passed over, so `--kind knob` finding nothing does not read as
-      # "nothing has been recorded" when two `doc` notes sit right there.
-      def empty_render(path, scoped:, kind:)
-        return "no improvements recorded yet -- looked for #{path}" if scoped.empty?
+      def damaged_line_message(path, number)
+        "line #{number} of #{path} is not JSON, and it is a complete line -- " \
+          "so no crash mid-append left it, and a dogfood note may have been lost. " \
+          "Repair or delete that line in #{path}."
+      end
 
-        "no #{kind} improvements among #{scoped.size} recorded"
+      # Three emptinesses, three different places to send a reader. An empty
+      # STORE says where it looked. A `--project` that matched nothing NAMES
+      # the project: "no improvements recorded yet" over a store holding two
+      # other projects' notes answers a question nobody asked, and is how a
+      # mistyped `--project` passes for a clean dogfood queue. An empty KIND
+      # against a non-empty scope says how many the filter passed over.
+      def empty_render(path, scope:, scoped:, kind:)
+        return "no #{kind} improvements among #{scoped.size} recorded" unless scoped.empty?
+        return "no improvements recorded yet -- looked for #{path}" if scope.named.nil?
+
+        "no improvements are recorded for #{scope.named} -- looked for #{path}"
       end
 
       def render(records)

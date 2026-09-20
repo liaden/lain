@@ -35,13 +35,23 @@ module Lain
     # it. The default path is a timestamped NDJSON file under {Paths#sessions_dir}
     # (`$XDG_STATE_HOME/lain/sessions/<project-hash>/`).
     #
+    # WITH A BLOCK the Journal's lifetime is the block's: it is closed on the
+    # way out however the block leaves, which is what a caller that opens a
+    # journal for one bounded piece of work wants. Every such caller had
+    # written the same eight-line `begin`/`ensure` by hand, and the failure
+    # mode of the copy that drifts is a leaked fd and an unclosed record,
+    # where {.stem}'s is only a filename. Without a block the caller owns the
+    # Journal and must {#close} it -- a chat's journal outlives every method
+    # that could bracket it.
+    #
     # @param path [String, nil] the file to append to (created, with parents);
     #   defaults to {default_path}
     # @param clock [#call] returns the timestamp string stamped on each record
     # @param fsync [Boolean] fsync the fd after every {#record} -- see {#initialize}
     # @param paths [Paths] resolves the default location; injectable so a spec
     #   never touches the real XDG env
-    # @return [Journal]
+    # @yieldparam journal [Journal] closed when the block returns or raises
+    # @return [Journal, Object] the Journal, or what the block answered
     def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new)
       path ||= default_path(paths:)
       FileUtils.mkdir_p(File.dirname(path))
@@ -50,7 +60,14 @@ module Lain
       # thing licensing #close to unlink, and a file that already existed is
       # somebody else's.
       created = create(path)
-      new(io: created || File.new(path, "ab"), clock:, owns_io: true, fsync:, path: created && path)
+      journal = new(io: created || File.new(path, "ab"), clock:, owns_io: true, fsync:, path: created && path)
+      return journal unless block_given?
+
+      begin
+        yield journal
+      ensure
+        journal.close
+      end
     end
 
     # O_CREAT|O_EXCL answers the fd only if this call brought the file into
@@ -88,9 +105,18 @@ module Lain
 
     # @param paths [Paths] resolves `sessions_dir`; injectable for specs
     # @return [String] a timestamped path under `paths.sessions_dir`
-    def self.default_path(paths: Paths.new)
-      File.join(paths.sessions_dir, "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{Process.pid}.ndjson")
-    end
+    def self.default_path(paths: Paths.new) = File.join(paths.sessions_dir, stem)
+
+    # What a journal file is CALLED, wherever it lands: UTC to the second, then
+    # the pid, so two runs that started in the same second write two files and
+    # a directory listing sorts chronologically. A passing run that is not a
+    # chat ({CLI::Consolidate}, {CLI::Improve}) journals into its own state
+    # container rather than into `sessions`, and takes this name with it --
+    # spelled once here, because a third copy of the format is how the two
+    # start disagreeing about what a journal is called.
+    #
+    # @return [String]
+    def self.stem = "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{Process.pid}.ndjson"
 
     DEFAULT_CLOCK = -> { Time.now.utc.iso8601(6) }
 

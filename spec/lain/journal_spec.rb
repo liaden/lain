@@ -254,6 +254,57 @@ RSpec.describe Lain::Journal do
         expect(Dir.glob(File.join(paths.sessions_dir, "*.ndjson")).size).to eq(1)
       end
     end
+
+    # The block form is what a caller opening a journal for one bounded piece
+    # of work wants -- {CLI::Consolidate} and {CLI::Improve} both do -- and it
+    # exists because each of them had hand-written the same begin/ensure,
+    # where the copy that drifts leaks an fd.
+    describe "with a block" do
+      it "answers what the block answered and closes the journal on the way out" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "s.ndjson")
+          closed = nil
+
+          answer = described_class.open(path) do |journal|
+            journal.record("type" => "hello")
+            closed = journal
+            :the_block_value
+          end
+
+          expect(answer).to eq(:the_block_value)
+          expect(closed).to be_closed
+        end
+      end
+
+      it "closes it when the block RAISES, which is the whole reason for the bracket" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "s.ndjson")
+          escaped = nil
+
+          expect do
+            described_class.open(path) do |journal|
+              journal.record("type" => "hello")
+              escaped = journal
+              raise "the pass blew up"
+            end
+          end.to raise_error("the pass blew up")
+
+          expect(escaped).to be_closed
+        end
+      end
+
+      # {Unwritten#discard}'s rule reaches through the bracket unchanged: a
+      # block that journaled nothing leaves no file behind.
+      it "removes a file it created and never wrote to" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "s.ndjson")
+
+          described_class.open(path) { |journal| journal }
+
+          expect(File).not_to exist(path)
+        end
+      end
+    end
   end
 
   # .open creates the file, but the session header lands much later

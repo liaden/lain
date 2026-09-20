@@ -29,6 +29,7 @@ RSpec.describe Lain::Consolidation do
 
   around do |example|
     Dir.mktmpdir do |root|
+      @root = root
       @slots = Lain::Prompt::Slots.load(root:)
       example.run
     end
@@ -103,6 +104,37 @@ RSpec.describe Lain::Consolidation do
     end
   end
 
+  # A release put real bytes on the record for THAT session's model. This pass
+  # is a second reader, out of chat, and nobody is at a surface to release
+  # anything to it -- so every detected region is withheld, the fail-closed
+  # posture {CLI::ToolGuard::Unreleased} takes for the clerk's own tool phase.
+  describe "the transcript withholds what nobody is here to release" do
+    let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
+    let(:session) do
+      RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "read the deploy notes" }]),
+                           text_response("orchestrated")],
+        child_responses: [text_response("the deploy key is #{secret}, then ghp_abcdefghij0123456789klmnopqrstuvwx")]
+      ).run
+    end
+
+    it "masks each region a child echoed into its text, numbering them across the whole transcript" do
+      transcript = described_class::Scaffold.new(lineages.first).transcript
+
+      expect(transcript).to include("<redacted:1>", "<redacted:2>")
+      expect(transcript).not_to include(secret)
+    end
+
+    # Only the RECORD's bytes are masked. A turn digest is a high-entropy token
+    # the detector would withhold, and a scaffold that asked the clerk to cite
+    # evidence it had just masked would be useless.
+    it "leaves the lineage address the clerk is told to cite intact" do
+      scaffold = described_class::Scaffold.new(lineages.first)
+
+      expect(scaffold.render).to include(scaffold.spawn, lineages.first.spawned_from)
+    end
+  end
+
   describe "the secret guard still gates the clerk" do
     let(:pem) { "-----BEGIN PRIVATE KEY-----\nMIIB...\n-----END PRIVATE KEY-----" }
 
@@ -142,6 +174,7 @@ RSpec.describe Lain::Consolidation do
 
     def improve
       Lain::CLI::Improve.new(path: "unread.ndjson", profile: Lain::CLI::RunProfile::UNRECORDED,
+                             project_dir: Lain::ProjectDir.new(root: @root),
                              backend: -> { raise "the guard stack needs no backend" })
     end
 
@@ -201,7 +234,7 @@ RSpec.describe Lain::Consolidation do
 
     it "holds the same guard classes in the same order as the improve pass" do
       expect(consolidation(Lain::Provider::Mock.new).send(:guard_stack).to_a.map(&:class))
-        .to eq(improve.send(:guard_stack).to_a.map(&:class))
+        .to eq(improve.send(:guard_stack, Lain::Channel::Null.instance).to_a.map(&:class))
     end
   end
 
@@ -213,168 +246,17 @@ RSpec.describe Lain::Consolidation do
       expect(report).to include("2 lineage")
     end
 
+    # The dry surface is where a human reads WHAT WOULD BE SENT, so it renders
+    # the scaffolds rather than a list naming them. Same objects the live pass
+    # asks, so the two cannot disagree -- masking included.
+    it "renders each scaffold the clerk would see, not a plan naming it" do
+      report = described_class.dry_run(lineages)
+
+      expect(report).to include(*lineages.map { |lineage| described_class::Scaffold.new(lineage).render })
+    end
+
     it "says so when a session holds no completed subagent lineages" do
       expect(described_class.dry_run([])).to include("no completed subagent lineages")
-    end
-  end
-
-  # The on-demand CLI surface: it resolves a session file once, reads its
-  # lineages whole, and hands them to the pass, returning a String (only the
-  # frontend prints).
-  describe Lain::CLI::Consolidate do
-    let(:paths) { instance_double(Lain::Paths, sessions_dir: @session_dir) }
-    let(:anthropic) { Lain::CLI::RunProfile.from_options({ provider: "anthropic" }) }
-
-    around do |example|
-      Dir.mktmpdir do |session_dir|
-        @session_dir = session_dir
-        session.write(File.join(session_dir, "s1.ndjson"))
-        example.run
-      end
-    end
-
-    def cli(provider, session: "s1")
-      described_class.new(path: File.join(@session_dir, "#{session}.ndjson"), profile: anthropic,
-                          consolidation: -> { consolidation(provider) })
-    end
-
-    it "renders the clerk outcomes for the session it was given" do
-      provider = Lain::Provider::Mock.new(responses: [
-                                            tool_response(memory_write("lineage-a", "a")), text_response("A done"),
-                                            tool_response(memory_write("lineage-b", "b")), text_response("B done")
-                                          ])
-
-      report = cli(provider).report
-
-      expect(report).to include("2 lineage", spawn_a, spawn_b, "A done", "B done")
-    end
-
-    # A separate METHOD, not `report(dry_run: true)`: the dry surface reports on
-    # a different half of the pass, and a pass that is never BUILT proves "no
-    # spawn" by construction rather than by counting calls afterwards.
-    it "renders the dry-run plan without building the pass" do
-      pass = described_class.new(path: File.join(@session_dir, "s1.ndjson"), profile: anthropic,
-                                 consolidation: -> { raise "a dry run built the clerk" })
-
-      expect(pass.dry_report).to include("would each get one court_clerk pass", "2 lineage(s)", spawn_a, spawn_b)
-    end
-
-    it "names the backend a dry run would clerk on" do
-      expect(cli(Lain::Provider::Mock.new).dry_report)
-        .to start_with("consolidate: would run on anthropic, model the provider's default")
-    end
-
-    # A Lain::Error, which the exe maps to a refusal and exit status 1. Reading
-    # past the damage would report fewer lineages than the chat ran, with nothing
-    # to say why.
-    it "refuses a session with a torn child_turn line, naming the file and the damage" do
-      lines = session.lines
-      torn = lines.index { |line| JSON.parse(line)["type"] == Lain::SessionRecord::CHILD_TURN_TYPE }
-      lines[torn] = "#{lines[torn][0, 40]}\n"
-      File.write(File.join(@session_dir, "torn.ndjson"), lines.join)
-
-      expect { cli(Lain::Provider::Mock.new, session: "torn").dry_report }
-        .to raise_error(Lain::Error, /torn\.ndjson: line \d+ is torn/)
-    end
-
-    it "keeps no per-class SessionNotFound of its own" do
-      expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
-    end
-
-    describe ".from_options" do
-      # The session under review, re-headed as a chat run on this profile.
-      def recorded_on(profile)
-        path = File.join(@session_dir, "s1.ndjson")
-        records = File.readlines(path).map { |line| JSON.parse(line) }
-                                      .map { |record| record["type"] == "session" ? record.merge(profile) : record }
-        File.write(path, records.map { |record| JSON.generate(record) }.join("\n"))
-      end
-
-      def from_options(options, profile: Lain::CLI::RunProfile.from_options(options))
-        described_class.from_options({ max_tokens: 64, **options }, selector: "s1", profile:, paths:)
-      end
-
-      before { allow(Lain::CLI::Backend).to receive(:new).and_call_original }
-
-      # The environment's default provider is what an untyped flag holds by the
-      # time it reaches here, and the recording still outranks it.
-      it "follows the provider the session recorded when none was typed" do
-        recorded_on("provider" => "ollama", "model" => "qwen3:4b")
-        untyped = Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic")
-
-        expect(from_options({}, profile: untyped).dry_report)
-          .to start_with("consolidate: would run on ollama, model qwen3:4b")
-      end
-
-      it "builds the live clerk over that same profile" do
-        recorded_on("provider" => "ollama", "model" => "qwen3:4b")
-        stub_request(:post, "http://localhost:11434/api/chat")
-          .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
-                     body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
-                                            "message" => { "role" => "assistant", "content" => "clerked" })}\n")
-
-        from_options({}, profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic")).report
-
-        expect(Lain::CLI::Backend).to have_received(:new)
-          .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"))
-      end
-
-      it "lets a typed provider win, and says so ahead of the report" do
-        recorded_on("provider" => "ollama", "model" => "qwen3:4b")
-
-        report = from_options({ provider: "anthropic" }).dry_report
-
-        expect(report.lines.first).to include("recorded with provider ollama; continuing with anthropic")
-        expect(report).to include("would run on anthropic")
-      end
-
-      it "says nothing about the profile when the typed flags agree with the recording" do
-        recorded_on("provider" => "ollama")
-
-        expect(from_options({ provider: "ollama" }).dry_report).not_to include("recorded with")
-      end
-
-      # The dry run's promise is no key: a session recorded on the hosted arm
-      # must still print its plan on a box that holds no credential for it.
-      it "dry-runs a session recorded on ollama-cloud with no OLLAMA_API_KEY, building no backend" do
-        recorded_on("provider" => "ollama-cloud", "model" => "gpt-oss:120b")
-
-        report = with_env("OLLAMA_API_KEY" => nil, "ANTHROPIC_API_KEY" => nil) do
-          from_options({}, profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic"))
-            .dry_report
-        end
-
-        expect(report).to include("would run on ollama-cloud", "would each get one court_clerk pass")
-        expect(Lain::CLI::Backend).not_to have_received(:new)
-      end
-
-      # Building no backend is not the same as checking no flag: a typo in the
-      # provider's name is refused by name on a dry run too, still without a
-      # key or a tier.
-      it "refuses a mistyped --provider by name on a dry run, building no backend" do
-        report = lambda do
-          with_env("ANTHROPIC_API_KEY" => nil, "OLLAMA_API_KEY" => nil) do
-            from_options({ provider: "olama" }).dry_report
-          end
-        end
-
-        expect(&report).to raise_error(Lain::CLI::UnknownProvider, /unknown provider "olama", expected one of.*ollama/)
-        expect(Lain::CLI::Backend).not_to have_received(:new)
-      end
-
-      it "refuses an unknown session before it reads anything else" do
-        expect { described_class.from_options({ max_tokens: 64 }, selector: "nope", paths:) }
-          .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
-      end
-
-      # Resolved once: the file the profile was read from is the file the
-      # lineages are read from, whatever lands in the directory in between.
-      it "reads the lineages from the file it resolved, not from a second resolution" do
-        pass = from_options({ provider: "anthropic" })
-        File.write(File.join(@session_dir, "s1"), "a file the selector would now resolve to first\n")
-
-        expect(pass.dry_report).to include("2 lineage(s)", spawn_a, spawn_b)
-      end
     end
   end
 

@@ -54,8 +54,14 @@ module Lain
     end
 
     # Never spawns, and needs nothing a spawn does, so a dry run builds no
-    # provider and reads no key. The dry-run surface and the live pass read
-    # the same lineages, so "what would run" and "what ran" can never disagree.
+    # provider and reads no key.
+    #
+    # It renders the SCAFFOLDS, not a plan naming them. The dry surface is
+    # where a human reads what would be sent, and {CLI::Improve#dry_report}
+    # has always answered that question -- a list of lineage digests says a
+    # pass would happen and nothing about what it would carry. The same
+    # {Scaffold} objects the live pass asks, so "what would be sent" and
+    # "what was sent" cannot disagree, masking included.
     #
     # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
     # @return [String]
@@ -64,8 +70,13 @@ module Lain
       return "consolidate: no completed subagent lineages found." if scaffolds.empty?
 
       ["consolidate: #{scaffolds.size} lineage(s) would each get one court_clerk pass",
-       *scaffolds.map { |scaffold| "  - lineage #{scaffold.spawn} (#{scaffold.turn_count} turns)" }].join("\n")
+       *scaffolds.map { |scaffold| rendered_scaffold(scaffold) }].join("\n\n")
     end
+
+    def self.rendered_scaffold(scaffold)
+      "-- lineage #{scaffold.spawn} (#{scaffold.turn_count} turns) --\n#{scaffold.render}"
+    end
+    private_class_method :rendered_scaffold
 
     # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
     # @return [Array<Outcome>] one per lineage, in the order they were recorded
@@ -154,16 +165,33 @@ module Lain
         PROMPT
       end
 
-      # Deterministic, one line per turn.
+      # Deterministic, one line per turn. The ordinals run across the whole
+      # transcript rather than per turn, so two withheld regions two turns
+      # apart are two numbers and a reader can count them.
       def transcript
-        lineage.child_turns.map { |turn| render_turn(turn) }.join("\n")
+        ordinals = (1..).each
+        lineage.child_turns.map { |turn| render_turn(turn, ordinals) }.join("\n")
       end
 
       private
 
-      def render_turn(turn)
+      def render_turn(turn, ordinals)
         summaries = Array(turn.content).grep(Hash).filter_map { |block| summarize(block) }
-        "[#{turn.role}] #{summaries.join(" ")}".rstrip
+        "[#{turn.role}] #{withheld(summaries.join(" "), ordinals)}".rstrip
+      end
+
+      # A release put real bytes on the record for the model of the session
+      # that asked for it. This pass is a SECOND reader, out of chat, and
+      # nobody is at a surface to release anything to it -- so every region the
+      # detector finds is withheld, the answer {CLI::ToolGuard::Unreleased}
+      # already gives the clerk's own tool phase.
+      #
+      # Only the record's own bytes go through it. The frame around them is
+      # lain's, and a turn digest is a high-entropy token the detector would
+      # withhold: a scaffold that asked the clerk to cite evidence it had just
+      # masked would be useless.
+      def withheld(text, ordinals)
+        Sensitivity::Masking.render(text, Sensitivity::Regions.detect(text), ordinals:)
       end
 
       # A closed `case`: an unknown block kind summarizes to nil and `filter_map`

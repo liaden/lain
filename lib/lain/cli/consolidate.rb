@@ -9,14 +9,35 @@ module Lain
     # {Lain::Consolidation} court-clerk pass over it. Returns a String; only the
     # frontend prints (output discipline, {CLI::Friction}'s precedent).
     #
+    # == What the pass leaves behind
+    #
+    # Two durable things, both assembled HERE rather than in the domain class,
+    # because both are questions about this machine rather than about clerking.
+    #
+    # The clerk writes into the project's ONE memory store, so what it distills
+    # is what the NEXT chat in this project opens its view on. A pass whose
+    # memories lived and died inside its own process distilled nothing.
+    #
+    # The pass journals into its own state container, {JOURNAL_KIND}, keyed by
+    # project -- a sibling of `sessions` and `status`, never `sessions` itself:
+    # a clerk pass is not a chat, and a reader listing this project's chats
+    # must not find one among them. Its turn usage, its memory roots and every
+    # refusal and mask its guards record land there, where the run was
+    # previously answering them to a Null channel.
+    #
     # == Two methods, not one boolean
     #
-    # {#report} runs the pass; {#dry_report} names the lineages that WOULD be
-    # clerked. They are separate because `report_for(dry_run: true)` was a flag
-    # that changed what the method MEANT -- different work, different sentence,
-    # one signature covering both. The exe's `--dry-run` picks the method, and
-    # the boolean stops at the flag it came from.
+    # {#report} runs the pass; {#dry_report} renders the scaffolds the clerks
+    # WOULD have seen, masking and all. They are separate because
+    # `report_for(dry_run: true)` was a flag that changed what the method
+    # MEANT -- different work, different sentence, one signature covering
+    # both. The exe's `--dry-run` picks the method, and the boolean stops at
+    # the flag it came from. A dry run opens no journal and touches no memory
+    # store for the same reason it builds no provider.
     class Consolidate
+      # The segment under `$XDG_STATE_HOME/lain` this pass's journals live in.
+      JOURNAL_KIND = "consolidation"
+
       # The exe's assembly seam. The session is resolved ONCE, here, and every
       # later read -- the recorded profile, the lineages -- is of that file.
       #
@@ -34,22 +55,29 @@ module Lain
       # @param selector [String] the session under review
       # @param profile [RunProfile] what the model flag band resolved
       # @param paths [Paths] resolves the session dir
+      # @param project_dir [ProjectDir] keyed to the PROJECT's root rather than
+      #   to `Dir.pwd`, {CLI::Wiring#project_memory}'s invariant: consolidating
+      #   from a subdirectory must write into the memory of the project it is
+      #   in. It locates the memory store and this pass's own journal.
       # @option options [String] :provider the model flag band's provider, which
       #   the profile was resolved from
       # @option options [String] :model the model flag band's model id
       # @return [Consolidate]
       # @raise [SessionFile::SessionNotFound] before anything else is read
-      def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new)
+      def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new,
+                            project_dir: ProjectDir.new(root: Project::Resolver.default_project.root, paths:))
         path = SessionFile.resolve(selector, paths:)
         mismatches = Resume::MismatchNotices.new(path:)
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
-        new(path:, profile: resolved, notices: mismatches.call(profile: resolved, model: resolved.model),
-            consolidation: -> { clerk_over(Backend.new(options, profile: resolved)) })
+        new(path:, profile: resolved, project_dir:,
+            notices: mismatches.call(profile: resolved, model: resolved.model),
+            consolidation: ->(journal) { clerk_over(Backend.new(options, profile: resolved), journal, project_dir) })
       end
 
-      def self.clerk_over(backend)
-        Lain::Consolidation.new(provider: backend.provider, recorder: Memory::Recorder.new,
+      def self.clerk_over(backend, journal, project_dir)
+        Lain::Consolidation.new(provider: backend.provider, journal:,
+                                recorder: Memory::ProjectStore.new(project_dir:).view,
                                 context: backend.context, slots: backend.slots)
       end
       private_class_method :clerk_over
@@ -57,12 +85,17 @@ module Lain
       # @param path [String] the session file under review, already resolved
       # @param profile [RunProfile] the backend the pass runs on, which a dry
       #   run names
-      # @param consolidation [#call] answers the pre-wired {Lain::Consolidation};
-      #   called by {#report} only
+      # @param project_dir [ProjectDir] where this pass's journal lands;
+      #   REQUIRED, so a caller that forgot it is a loud ArgumentError here
+      #   rather than a record written into whatever project this process
+      #   happens to sit in
+      # @param consolidation [#call] handed the pass's journal, answers the
+      #   pre-wired {Lain::Consolidation}; called by {#report} only
       # @param notices [Array<String>] said ahead of either report
-      def initialize(path:, profile:, consolidation:, notices: [])
+      def initialize(path:, profile:, project_dir:, consolidation:, notices: [])
         @path = path
         @profile = profile
+        @project_dir = project_dir
         @consolidation = consolidation
         @notices = notices
       end
@@ -72,14 +105,11 @@ module Lain
       # @return [String]
       # @raise [Bench::Session::Corrupt] naming the file and its damage
       def report
-        outcomes = @consolidation.call.call(lineages)
-        return said("consolidate: no completed subagent lineages found.") if outcomes.empty?
-
-        said(["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
-              *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n"))
+        journaled { |journal| said(rendered(@consolidation.call(journal).call(lineages))) }
       end
 
-      # Which lineages the pass WOULD clerk, and on what, spawning nothing.
+      # What the pass WOULD send, and on what, spawning nothing: the scaffolds
+      # themselves, so a human reads the prompt rather than a promise of one.
       #
       # @return [String]
       # @raise [Bench::Session::Corrupt] naming the file and its damage
@@ -89,6 +119,18 @@ module Lain
       end
 
       private
+
+      # A Journal that created its file and wrote no record removes it on
+      # close, so a pass that clerked nothing leaves the container empty
+      # rather than littered with zero-byte files.
+      def journaled(&block) = Journal.open(File.join(@project_dir.container(JOURNAL_KIND), Journal.stem), &block)
+
+      def rendered(outcomes)
+        return "consolidate: no completed subagent lineages found." if outcomes.empty?
+
+        ["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
+         *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n")
+      end
 
       def said(*report) = [*@notices, *report].join("\n")
 

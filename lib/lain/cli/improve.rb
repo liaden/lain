@@ -34,16 +34,28 @@ module Lain
     # parent's prompt, so it spawns over a FRESH Timeline root
     # ({Role#spawn_policy}'s default `:fresh` prefix).
     #
+    # == What the pass leaves behind
+    #
+    # The notes, and a journal of its own under {JOURNAL_KIND}, keyed by
+    # project -- a sibling of `sessions`, never `sessions` itself: an improver
+    # pass is not a chat, and a reader listing this project's chats must not
+    # find one among them. {CLI::Consolidate} journals the same way, for the
+    # same reason.
+    #
     # == Two methods, not one boolean
     #
     # {#report} spawns the improver; {#dry_report} renders the scaffold it
     # WOULD have seen. Separate methods, because `report_for(dry_run: true)`
     # was a flag that changed what the method MEANT. Both read the session
-    # ONCE, through the same private {Review}.
+    # ONCE, through the same private {Review}. A dry run opens no journal for
+    # the same reason it builds no backend.
     class Improve
       # The role every session is handed to: read_file/list_files/glob/grep/
       # improvement_write, and no memory tools, by design.
       ROLE = :harness_improver
+
+      # The segment under `$XDG_STATE_HOME/lain` this pass's journals live in.
+      JOURNAL_KIND = "improve"
 
       # The session's {Friction::Report} beside a per-turn digest summary. A
       # pure function of the session's record -- no provider is touched -- so
@@ -82,22 +94,37 @@ module Lain
 
         def turn_count = turns.size + lineages.sum { |lineage| lineage.child_turns.size }
 
+        # The ordinals run across the whole summary rather than per turn, so
+        # two withheld regions two turns apart are two numbers and a reader can
+        # count them.
         def summary
-          (turns.map { |turn| line(turn["role"], turn["digest"], turn["content"]) } +
-            lineages.flat_map { |lineage| lineage_lines(lineage) }).join("\n")
+          ordinals = (1..).each
+          (turns.map { |turn| line(turn["role"], turn["digest"], turn["content"], ordinals) } +
+            lineages.flat_map { |lineage| lineage_lines(lineage, ordinals) }).join("\n")
         end
 
-        def lineage_lines(lineage)
+        def lineage_lines(lineage, ordinals)
           ["subagent #{lineage.spawn.digest}, spawned from #{lineage.spawned_from}:",
-           *lineage.child_turns.map { |turn| "  #{line(turn.role, turn.digest, turn.content)}" }]
+           *lineage.child_turns.map { |turn| "  #{line(turn.role, turn.digest, turn.content, ordinals)}" }]
         end
 
-        def line(role, digest, content)
-          "[#{role}] #{digest} #{trace(content)}".rstrip
+        def line(role, digest, content, ordinals)
+          "[#{role}] #{digest} #{trace(content, ordinals)}".rstrip
         end
 
-        def trace(content)
-          Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
+        # A release put real bytes on the record for the model of the session
+        # that asked for it. This pass is a SECOND reader, out of chat, and
+        # nobody is at a surface to release anything to it -- so every region
+        # the detector finds is withheld, the answer {ToolGuard::Unreleased}
+        # already gives the improver's own tool phase.
+        #
+        # Only the record's own bytes go through it. A turn digest is a
+        # high-entropy token the detector would withhold, and the improver is
+        # asked to cite those digests; the friction render beside them is
+        # mechanical signals and digests too, and carries no turn text at all.
+        def trace(content, ordinals)
+          text = Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
+          Sensitivity::Masking.render(text, Sensitivity::Regions.detect(text), ordinals:)
         end
 
         # An unknown block kind summarizes to nil and `filter_map` drops it,
@@ -128,17 +155,21 @@ module Lain
       # @param selector [String] the session under review
       # @param profile [RunProfile] what the model flag band resolved
       # @param paths [Paths] resolves the session dir and the improvements sink
+      # @param project_dir [ProjectDir] keyed to the PROJECT's root rather than
+      #   to `Dir.pwd`, so a pass run from a subdirectory journals under the
+      #   project it is in
       # @option options [String] :provider the model flag band's provider, which
       #   the profile was resolved from
       # @option options [String] :model the model flag band's model id
       # @return [Improve]
       # @raise [SessionFile::SessionNotFound] before anything else is read
-      def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new)
+      def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new,
+                            project_dir: ProjectDir.new(root: Project::Resolver.default_project.root, paths:))
         path = SessionFile.resolve(selector, paths:)
         mismatches = Resume::MismatchNotices.new(path:)
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
-        new(path:, profile: resolved, backend: -> { Backend.new(options, profile: resolved) }, paths:,
+        new(path:, profile: resolved, backend: -> { Backend.new(options, profile: resolved) }, paths:, project_dir:,
             notices: mismatches.call(profile: resolved, model: resolved.model))
       end
 
@@ -150,17 +181,18 @@ module Lain
       #   dry run names
       # @param backend [#call] answers what the spawn reads -- `#provider`,
       #   `#context` and `#slots` -- and is called by {#report} only
-      # @param journal [#<<] where the improver's turn usage and any
-      #   {Telemetry::WriteRefused} land; the Null channel by default -- a real
-      #   Null object, not a nil, so it stays a default rather than a mis-wire
+      # @param project_dir [ProjectDir] where this pass's journal lands;
+      #   REQUIRED, so a caller that forgot it is a loud ArgumentError here
+      #   rather than a record written into whatever project this process
+      #   happens to sit in
       # @param paths [Paths] resolves the improvements sink's destination and
       #   project hash; injectable for specs
       # @param notices [Array<String>] said ahead of either report
-      def initialize(path:, profile:, backend:, journal: Channel::Null.instance, paths: Paths.new, notices: [])
+      def initialize(path:, profile:, backend:, project_dir:, paths: Paths.new, notices: [])
         @path = path
         @profile = profile
         @backend = backend
-        @journal = journal
+        @project_dir = project_dir
         @paths = paths
         @notices = notices
       end
@@ -171,8 +203,10 @@ module Lain
       # @raise [Bench::Session::Corrupt] naming the file and its damage
       def report
         review = session_review
-        result = build_improver(review.session, @backend.call).ask(review.prompt).text
-        said("improve: ran a harness_improver pass over session #{review.session}\n#{result}")
+        journaled do |journal|
+          result = build_improver(review.session, @backend.call, journal).ask(review.prompt).text
+          said("improve: ran a harness_improver pass over session #{review.session}\n#{result}")
+        end
       end
 
       # The scaffold the improver WOULD see, and what it would run on,
@@ -206,13 +240,18 @@ module Lain
         raise Lain::Error, "#{path}: #{e.message}"
       end
 
-      def build_improver(session, backend)
+      # A Journal that created its file and wrote no record removes it on
+      # close, so a pass that noted nothing leaves the container empty rather
+      # than littered with zero-byte files.
+      def journaled(&block) = Journal.open(File.join(@project_dir.container(JOURNAL_KIND), Journal.stem), &block)
+
+      def build_improver(session, backend, journal)
         allowed = role.attenuate(improver_union(session))
         Agent.new(
           provider: backend.provider, context: role.child_context(backend.context, slots: backend.slots),
           toolset: allowed,
           handler: Effect::Handler::Live.new, timeline: fresh_root,
-          session: Session.new(worker_env: WorkerEnv.default), journal: @journal, tool_middleware: guard_stack
+          session: Session.new(worker_env: WorkerEnv.default), journal:, tool_middleware: guard_stack(journal)
         )
       end
 
@@ -228,8 +267,8 @@ module Lain
       # could drift from it.
       def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
 
-      # Refusals and masks are recorded into the raw `@journal`.
-      def guard_stack = ToolGuard.detached(journal: @journal).call(WorkerEnv.default)
+      # Refusals and masks are recorded into the pass's own journal.
+      def guard_stack(journal) = ToolGuard.detached(journal:).call(WorkerEnv.default)
 
       def role = @role ||= Role::Catalog.fetch(ROLE)
     end

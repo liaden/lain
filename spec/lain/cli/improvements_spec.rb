@@ -100,10 +100,24 @@ RSpec.describe Lain::CLI::Improvements do
       expect(report).not_to include("project bbbbbbbbbbbb:")
     end
 
-    it "renders the friendly no-records message when a project filter matches nothing at all" do
+    # NOT the empty-store message. Two projects' notes are sitting right there,
+    # so "no improvements recorded yet" answers a question nobody asked and
+    # reads as a store that was never written -- which is how a mistyped
+    # --project passes for a clean dogfood queue.
+    it "names the project when a project filter matches nothing at all" do
       report = cli.report(project: "cccccccccccc")
 
-      expect(report).to eq("no improvements recorded yet -- looked for #{improvements_path}")
+      expect(report).to eq("no improvements are recorded for cccccccccccc -- looked for #{improvements_path}")
+    end
+
+    # A path is not the hash it resolves to, and the operator typed the path:
+    # the message says both, so it can be read without recomputing a sha256.
+    it "names a path-form project as it was typed, beside the hash it resolved to" do
+      report = cli.report(project: "/some/repo")
+
+      expect(report)
+        .to eq("no improvements are recorded for /some/repo (project #{paths.project_hash("/some/repo")}) " \
+               "-- looked for #{improvements_path}")
     end
 
     it "names the count within the project scope when --kind matches nothing there, not the empty-store message" do
@@ -130,17 +144,74 @@ RSpec.describe Lain::CLI::Improvements do
     end
   end
 
-  describe "a torn line in the improvements file (a crash mid-write)" do
-    it "still renders every intact record, skipping the torn one" do
+  # {Improvement::Sink} appends one whole line per record under O_APPEND, so
+  # the only line a writer can be mid-way through is the one at the end of the
+  # file. That one is tolerated. A damaged line with a complete record after it
+  # was damaged by something else, and skipping it drops a dogfood note while
+  # the report still reads as complete -- {CLI::SessionJournals}' rule, for its
+  # reason.
+  describe "a torn line in the improvements file" do
+    def tear(text) = File.open(improvements_path, "a") { |file| file.write(text) }
+
+    it "tolerates an unterminated last line, which is what a crash mid-append leaves" do
       append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "an intact note before the tear")
-      File.open(improvements_path, "a") { |file| file.write("{\"type\":\"improvement\",\"note\":\"cut off mid\n") }
-      append(project_hash: "aaaaaaaaaaaa", kind: "bug", note: "an intact note after the tear")
+      tear(%({"type":"improvement","note":"cut off mid))
 
       report = cli.report
 
       expect(report).to include("an intact note before the tear")
-      expect(report).to include("an intact note after the tear")
       expect(report).not_to include("cut off mid")
+    end
+
+    it "refuses a damaged line a complete record follows, rather than dropping a note in silence" do
+      append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "an intact note before the tear")
+      tear(%({"type":"improvement","note":"cut off mid\n))
+      append(project_hash: "aaaaaaaaaaaa", kind: "bug", note: "an intact note after the tear")
+
+      expect { cli.report }
+        .to raise_error(Lain::CLI::Improvements::UnreadableRecord, /line 2 .*#{Regexp.escape(improvements_path)}/m)
+    end
+
+    # A complete last line that is not one of our records was not interrupted
+    # either: nothing was still being written when the file ended.
+    it "refuses a damaged last line that carries its own newline" do
+      append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "an intact note")
+      tear(%({"type":"improvement","note":"cut off mid\n))
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord, /line 2/)
+    end
+  end
+
+  # Damage is a line that is not JSON at all. These two are neither damage nor
+  # ours, and refusing the whole cross-project queue over either would be a
+  # false diagnosis on a file whose own refusal invites a human to edit it.
+  describe "lines that are neither ours nor damage" do
+    def raw(text) = File.open(improvements_path, "a") { |file| file.write(text) }
+
+    it "skips a blank line, the commonest accidental edit to the file it tells operators to repair" do
+      append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "a good note")
+      raw("\n")
+      append(project_hash: "aaaaaaaaaaaa", kind: "bug", note: "a note after the blank")
+
+      expect(cli.report).to include("a good note", "a note after the blank")
+    end
+
+    it "skips a trailing blank line, where the file simply ends in two newlines" do
+      append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "a good note")
+      raw("\n")
+
+      expect(cli.report).to include("a good note")
+    end
+
+    # {Journal.parse} answers nil for valid JSON that is not an object, exactly
+    # as it does for damage, so the two are told apart by re-parsing. This is
+    # the promise every Journal reader makes about a foreign record.
+    it "filters a valid-JSON non-object line by type rather than refusing the report" do
+      append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "a good note")
+      raw("[1,2,3]\n")
+      append(project_hash: "aaaaaaaaaaaa", kind: "bug", note: "a note after the array")
+
+      expect(cli.report).to include("a good note", "a note after the array")
     end
   end
 
