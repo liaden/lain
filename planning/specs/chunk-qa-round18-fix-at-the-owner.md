@@ -1,6 +1,6 @@
 # QA round 18: fix it at the owner
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (with Lua in the nvim runtime)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -390,6 +390,163 @@ before this plan was presented.
 - **Ratification.** The planner's choices on owed research decisions are listed for ratification before
   wave 1.
 - **Risk ratings.** T8, T29, T38 and T40 were raised.
+
+
+**Execution complete, 2026-09-20.** Forty-eight cards landed on `main` in eight waves, one commit each
+except T15 (which needed its refusal module landed separately, ahead of its dependants) and T36 (whose
+gemspec line is its own commit). Two commits are the orchestrator's own, both named below.
+
+### Landed
+
+| Card | SHA | Subject |
+|---|---|---|
+| T1 | `c8b4430f` | agent: the tool_use turn reaches the session file before its tools run |
+| T2 | `a0d6557b` | backend: a chat records its run profile, and resumed chats default to it |
+| T3 | `2f9e8d05` | commands: /fork and /btw refuse while a tool call is in flight |
+| T4 | `72bb1716` | session: a read counts only on its chain, and seen windows add up |
+| T5 | `96407a56` | window: probe budget spent by cost; an over-window 400 vouches |
+| T6 | `185fb686` | oracle: a failed fire leaves a record, and the summarizer asks for JSON |
+| T7 | `b404cfec` | approval: automatic shell approval reads the file before vouching for it |
+| T8 | `d1b56197` | approval: a region release leaves a record; decisions carry the call |
+| T9 | `96144228` | review: a changeset's NEW side is the reviewed head unless checked out |
+| T10 | `76894dfa` | commands: /survey, /review and /implement-epic parse arguments one way |
+| T11 | `c2f3e8e9` | survey: a corpus's line refusal names its own way out |
+| T12 | `ac29fa9f` | memory: each hybrid arm offers a bounded candidate list before fusion |
+| T13 | `ef3066f1` | frontend: one input rail feeds the chat, and one pump reads stdin |
+| T14 | `9917fa1b` | epic: a stage opens only over positive approval evidence |
+| T15 | `24656f33`, `f4743669` | epic driver: a refused launch no longer ends the run; epics land apart / refusals declare they came before acting |
+| T16 | `d4cc7df6` | epic: a terminal gate times the real wait, and Ctrl-C is a refusal |
+| T17 | `38b8becb` | epic: graph edits keep both criteria and respect gates and status |
+| T18 | `008ba39e` | agent: say why an ask stopped, withdraw only pre-wire failures, fold |
+| T19 | `4740280d` | subagent: a one-shot child that fails or stops leaves a record |
+| T20 | `02c5a3d5` | backend: every model-calling command resolves the run profile |
+| T21 | `db1755fd` | pins: a pinned tool turn keeps its counterpart; /pin says what it did |
+| T22 | `29ad2952` | approval: withhold an automatically approved command's secret output |
+| T23 | `fa4f1485` | sensitivity: config patterns anchor at the root; exempt stays human |
+| T24 | `df586002` | review: a note's evidence comes from the reviewed objects |
+| T25 | `43c46fd8` | approval: every surface lives for the conversation, and prompts queue |
+| T26 | `17739c3d` | epic: a re-run asks whether to keep or delete earlier issue branches |
+| T27 | `bec91493` | liveness: one verdict on a writer, for resume, watch, sessions and gc |
+| T28 | `1bc9ca4a` | reading: tag the believed reading with its head; a held cut survives |
+| T29 | `48a1b6ed` | tools: one table of static per-tool result ceilings |
+| T30 | `280c1a43` | approval: a leased child's shell calls are judged in its own worktree |
+| T31 | `421ef0d5` | review: a round can be closed, and a refused one binds nothing |
+| T32 | `b01f5a31` | frontend: a chat can read its human from a socket, fed by lain input |
+| T33 | `c8bdcb80` | mode: a mode is scope and approval; the posture table is gone |
+| T34 | `c73a64b2` | subagent: a child has a model phase, and its refusals speak as the child |
+| T35 | `344d389c` | compaction: held cuts re-collapse into one superseding cut |
+| T36 | `d202720a`, `fa44ae32` | web_fetch: return a page's readable text, not its markup / gemspec: nokogiri |
+| T37 | `738417ac` | bash: capture is bounded while it runs, on one runner for both arms |
+| T38 | `c92b9b47` | approval: judges ask no human, and a judge's child refuses, not parks |
+| T39 | `e8d54d35` | memory: one project store, and each session's own view of it |
+| T40 | `6ae86263` | up: the cockpit puts the chat over an input pane |
+| T41 | `138e4af2` | chat: /stop ends the running ask and keeps the session |
+| T42 | `5ca48507` | exe: DSL files, Ctrl-C and arms reports fail in words |
+| T43 | `13aed7a7` | compaction: hand off to one state document when no cut can make room |
+| T44 | `06717d60` | exec: a docker timeout ends its container |
+| T45 | `c9a86049` | consolidate: the clerk's memory is durable, and scaffolds are masked |
+| T46 | `0e48e2de` | status: the fleet is a live tree, and a row is text a terminal draws |
+| T47 | `15391cbc` | mode: plan scope confines writes and commands to a spike |
+| T48 | `b76a648d` | docs: restate the architecture and scenarios against what landed |
+
+The orchestrator's own: `82989f8b` (below), and the conflict resolutions folded into the cards they
+belonged to.
+
+### What the panel caught that a green suite did not
+
+Every card was reviewed by the five-persona panel after its implementer reported green. The suite was
+green each time. These are the defects that survived it, and the ruling that closed each:
+
+- **A leased child could read the parent's denied `vault/`.** The classifier was anchored on the session,
+  not on the call. Ruled: one classifier per gated call, anchored on the cwd *that call named*, with a
+  session-anchored fallback — because the fallback must not be a disarm.
+- **The output withholder scanned the gate's own refusals**, and later skipped detached bench runs.
+- **`write_nonblock` sliced characters, not bytes**, so a multibyte HUD frame tore mid-codepoint.
+- **A Ctrl-Z'd pane wedged the chat**; a deaf pane could win a bind race.
+- **`/stop` vanished silently when unsupervised.**
+- **A resumed chat became unresumable** once memory verification widened.
+- **A forged-root exemption keyed on an absence.**
+- **The handoff oracle's own input was unbounded** — 391 KB pushed into an 8 KiB window.
+- **`Float::INFINITY` timeouts crashed every interactive `epic submit`** on the EPoll backend.
+- **Tool commands shared lain's controlling terminal.**
+- **The input pane collapsed to one row on client attach.**
+- **A model-written task line with ANSI escapes overwrote the pane HUD** — `clean\e[1A\e[2KPWNED` put its
+  own words on the HUD line of a real pane. Fixed at the owner: one scrub in
+  `Tools::AskHuman::InboxRow.one_line`, breaks and tabs to spaces, whole escape sequences, then the
+  control and format characters, in that order. Thirty-two defeat vectors were tried against it.
+
+### Rulings worth keeping
+
+- **The panel was right and I was wrong about the secret boundary.** I told T48 that `auto` keeping the
+  ladder merely *closed* §5's long-standing known-open. Its implementer went further and called a failure
+  there a live regression; the reviewer proved it by driving the real ladder against a planted key and
+  watching the triage rung deny it. §5 now reads as a regression check.
+- **Ticket references stay in planning prose.** The ban is scoped, by CLAUDE.md's own words, to `lib/`,
+  `spec/` and the nvim Lua runtime. Planning docs, README and ROADMAP are the archive, and already carry
+  a hundred such citations.
+- **T29's ceilings are one figure, 16 KiB**, measured at 1.31 bytes per token worst case. The human may
+  prefer per-tool figures; nothing downstream assumes the single number.
+- **`CLEAR_ROW` stays and is now pinned.** Reverting it left the suite green and the pane pixel-identical,
+  because dropping the age had removed the redraw that exposed the dirty cursor — an unobservable
+  defence, kept with a spec that fails without it.
+
+### Measurements
+
+- **T12:** hybrid recall@5 rose .333 → .417 once each arm offers a bounded candidate list before fusion.
+- **T46:** the fleet tree memoised, 150.2 µs / 205 objects → 0.1 µs / 0 objects at 25 members; the pane
+  header's redraws over eight seconds, 7 → 1, matching the count before the tree existed.
+- **T29:** the single ceiling is 16 KiB, at a measured worst case of 1.31 bytes per token.
+- **T1:** the stop latency on a slow disk, measured rather than assumed.
+
+### A trap re-confirmed
+
+The first attempt at `82989f8b` reported **80 failures**. None were real: the suite's own watchdog said
+`STARVED` — 2% of one core across 30 seconds, load average 25.1 against 16 cores — because two other
+agents were working at the time. The same commit was green on an idle box minutes later. This is
+`docs/toolchain-traps.md`'s "a red `pspec` is not evidence until nothing else is running", and it is worth
+recording that the watchdog, not the reader, is what caught it.
+
+### Integration checks, run on `b76a648d`
+
+- **The suite, on a quiet machine.** `bundle exec rake pspec`: **20,470 examples, 0 failures, 13
+  pendings**, with both `pgrep` preconditions reading 0 first. The pre-chunk baseline was 18,701, so the
+  chunk added 1,769 examples.
+- **`bundle exec rubocop`:** 1,637 files, no offences. No `Metrics/*` limit raised, no inline disable
+  added; the one `.rubocop.yml` change is T32's argued `ThreadSafety/NewThread` exclusion for
+  `input_socket.rb`.
+- **`bin/comment-census --check-tickets`:** 0 project schemes, 0 unclassified. The single AMBIGUOUS entry
+  is pre-existing and is Unicode's C1 control block, which this file already names as the example of why
+  the classifier is enumerated rather than heuristic.
+- **`bin/spec-census --check`:** reported, not acted on, as this plan directs. Assertions **199 against a
+  ceiling of 184**; `lib_reach` **64 against 76**, which the census itself says to lower. No ceiling was
+  raised in this chunk.
+- **The core tier** (`rake core:build && rspec --tag core`), for T37's daemon-arm parity: **35 examples, 0
+  failures**.
+
+### Follow-ups this chunk opened and did not close
+
+Each is real, each was ruled out of scope for the card that found it, and none blocks the round.
+
+- **`request_review` has no byte ceiling** — the one content-bearing tool T29's table does not cover.
+- **The input pane reprints a changed header below the last**, so several stale headers can stack in a
+  six-row pane. The fix is redraw-in-place, which belongs to the input-socket design, not to the tree.
+- **A second header change within milliseconds of a redraw is dropped.** Bounded, and pre-existing.
+- **Plan-scope wording is missing from the human's approval prompt** — it needs a reason field on the
+  queue entry.
+- **Spike paths trip the entropy detector**, and sensitivity patterns are not re-rooted under a spike.
+- **A non-descendant plan branch is never reaped.**
+- **Friction graders no longer see failed children.**
+- **`Approve#serves_replies?` is inert**; the countdown polls at 50 ms.
+- **The source supplies its own refusal words** rather than taking the caller's.
+- **`checked_out?` is not on the source port.**
+- **The epic-gate question after a `--resume` head repair cites an in-memory turn.**
+- **`ollama_run_tool_loop.yml` is stale** and wants re-recording against the current `web_fetch` schema.
+- **`worker` is published and rendered by nothing.**
+- **ARCHITECTURE's Telemetry record counts are stale again** now `ChildProgress` joins the list; the
+  file's own policy is to trust the recipe rather than the number.
+- **`planning/qa/scenarios/survey.md` has an unbalanced code fence**, pre-existing.
+- **`bin/spec-census --check` fails at 199 assertions against a ceiling of 184.** Reported, not raised, as
+  the plan directs. `lib_reach` improved to 64 against a ceiling of 76, and the census says to lower it.
 
 ## Tasks
 
