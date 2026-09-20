@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "zeitwerk"
+
 # THE load-order manifest. Internal requires live here and in each unit's own
 # index file (foo.rb requires foo/**), never in leaf files -- so the dependency
 # order below is the one place a cycle would have to show itself. Entries are
@@ -139,4 +141,63 @@ end
 module Lain
   # The compiled extension's own namespace, defined from Rust by magnus.
   module Ext; end
+
+  # The three spellings the loader's inflector cannot derive from a path. The
+  # `version.rb` -> VERSION rule is not here because a gem loader already
+  # carries it.
+  LOADER_INFLECTIONS = { "cli" => "CLI", "http" => "HTTP", "tty" => "TTY" }.freeze
+
+  # Paths under lib/lain, relative to it, that the loader may not manage,
+  # because a loader resolves ONE constant per path and each of these answers
+  # to something else: several constants in one file (the telemetry record
+  # groups, `epic/records.rb`, `review/records.rb`), one constant nested deeper
+  # than the path (`config/gates.rb` is {Config::Epics::Gates}) or beside it
+  # (`frontend/reline.rb` is {Frontend::LineEditor}), or no constant at all
+  # (`live.rb` defines only `Lain.live`). Every entry is a permanent pairing:
+  # an ignored path is invisible to the loader, so something must require it by
+  # hand -- today the manifest below, and spec/zeitwerk_spec.rb fails if any
+  # entry is left unrequired or stops needing to be here.
+  LOADER_IGNORES = %w[
+    cli/command/small.rb
+    config/gates.rb
+    context/base.rb
+    epic/records.rb
+    forge/landing/run.rb
+    frontend/reline.rb
+    live.rb
+    review/records
+    review/records.rb
+    review/vocabulary.rb
+    silent.rb
+    telemetry/secret_boundary.rb
+    telemetry/session_lifecycle.rb
+    telemetry/session_state.rb
+    telemetry/stream_signals.rb
+    telemetry/switches.rb
+    telemetry/test_layout.rb
+    telemetry/turn_stream.rb
+  ].freeze
+
+  # The loader is kept rather than dropped on the floor: spec/zeitwerk_spec.rb
+  # asks IT which constant each path is expected to yield, so the equivalence
+  # check reads Zeitwerk's own answer instead of restating its rules and
+  # agreeing with itself.
+  LOADER = Zeitwerk::Loader.for_gem(warn_on_extra_files: false)
 end
+
+# Zeitwerk beside the manifest above, loading nothing the manifest already
+# loaded: every constant is defined by the time this runs, so each file is
+# shadowed and the eager load is a no-op -- EXCEPT where a path and its constant
+# disagree, which is the one thing the two cannot both be right about. Those
+# raise here, at boot, which is what makes this a check and not decoration.
+#
+# `warn_on_extra_files` is off because a Zeitwerk warning writes to $stderr, and
+# only the frontend may do that.
+loader = Lain::LOADER
+loader.inflector.inflect(Lain::LOADER_INFLECTIONS)
+# Against the loader's own root rather than `__dir__`: a lib/ reached through a
+# symlink (spec/lain_spec.rb mirrors one to hide the compiled artifact) gives
+# those two different answers, and ignores keyed to the wrong one match nothing.
+loader.ignore(Lain::LOADER_IGNORES.map { File.join(loader.dirs.first, "lain", _1) })
+loader.setup
+loader.eager_load

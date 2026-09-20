@@ -21,6 +21,7 @@ PATH
       tty-color (~> 0.6)
       tty-cursor (~> 0.7)
       tty-screen (~> 0.8)
+      zeitwerk (~> 2.8)
 
 GEM
   remote: https://rubygems.org/

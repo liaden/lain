@@ -123,6 +123,14 @@ Gem::Specification.new do |spec|
   spec.add_dependency "tty-color", "~> 0.6"
   spec.add_dependency "tty-cursor", "~> 0.7"
   spec.add_dependency "tty-screen", "~> 0.8"
+  # The code loader. Already in the bundle transitively -- ActiveSupport is
+  # built on it -- and declared for the same reason msgpack is: lib/lain.rb
+  # requires it directly, and a transitive dependency is one upstream refactor
+  # away from vanishing. Pinned to the 2.8 series because the loader's
+  # configuration is version-shaped: the gem inflector's version.rb rule and the
+  # scan that skips directories holding no Ruby file are both behaviour this
+  # project's ignore list is written against.
+  spec.add_dependency "zeitwerk", "~> 2.8"
 
   # `ruby_llm` is deliberately NOT a dependency, optional or otherwise.
   #
