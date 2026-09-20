@@ -368,6 +368,13 @@ the cop.
   afterwards decides nothing` in `plain_chat_prompt_guards_spec`, whose
   `terminal.await(/decided by timeout: denied/)` never drew.
 
+  Also 2026-09-20, and a **first sighting** rather than an established mechanism — recorded by name
+  now so a second is recognised as a second: `Lain::Provider::Ollama::Transport spooling into a WAL
+  frame does not tee a failed response's body into the frame`. It went red in a `pre-commit` suite
+  run alongside `worktree_handback`'s known teardown race, and both passed alone immediately after
+  (40 and 94 examples, no code changed between). The commit that surfaced it touched only
+  `lib/lain/epic/`, which is the clearest evidence it was the load and not the diff.
+
   Added 2026-08-24, found by a nine-run `spec:flakes` sweep: `Lain::Tools::ReadFile refusing a read
   that is too large to hand back reads at most a bounded probe of the file it refuses, and never
   slurps it` went red in **1 run of 9** and green in the other eight, on an otherwise quiet box.
