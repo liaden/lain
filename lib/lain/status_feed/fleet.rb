@@ -323,7 +323,12 @@ module Lain
         #   markdown list's dash, or nothing for a header that is not a list.
         #   It goes INSIDE the indent, or a nested row's dash would not line up
         #   under its parent's.
-        def listed(bullet) = Row.clamped("#{indent}#{bullet}#{columns.join(GAP)}")
+        # @param under [String] what the surface sets the whole tree in from,
+        #   OUTSIDE the indent: the pane's header stands its rows under a HUD.
+        #   It is part of the drawn line, so it is clamped with it -- prefixing
+        #   a clamped row instead draws past the terminal's edge and wraps,
+        #   costing the pane the row the clamp was there to save.
+        def listed(bullet, under: "") = Row.clamped("#{under}#{indent}#{bullet}#{columns.join(GAP)}")
 
         def to_s = listed("")
 

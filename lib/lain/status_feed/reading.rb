@@ -77,6 +77,10 @@ module Lain
       # the whole tree is read.
       HEADER_ROWS = 2
 
+      # What the tree is set in from, so the rows read as standing under the
+      # HUD rather than beside it. It is handed to the row and clamped with it.
+      LEAD = "  "
+
       # @param path [String] a published state file, absent or unreadable as
       #   often as not
       # @return [Reading] over whatever was there, or over nothing
@@ -152,8 +156,8 @@ module Lain
       # @return [Array<String>] the rows as drawn, indented under the HUD
       def fleet_rows
         rows = Array(@state["fleet_tree"])
-        drawn = rows.take(HEADER_ROWS).map { |row| "  #{Fleet::Row.undated(row)}" }
-        rows.size > HEADER_ROWS ? [*drawn, "  +#{rows.size - HEADER_ROWS} more"] : drawn
+        drawn = rows.take(HEADER_ROWS).map { |row| Fleet::Row.undated(row).listed("", under: LEAD) }
+        rows.size > HEADER_ROWS ? [*drawn, "#{LEAD}+#{rows.size - HEADER_ROWS} more"] : drawn
       end
 
       def fleet_size = Array(@state["fleet"]).size

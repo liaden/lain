@@ -240,13 +240,16 @@ RSpec.describe Lain::StatusFeed::Reading do
     end
 
     # The whole row, not the task alone: the indent and four columns are drawn
-    # beside it, and 96 characters of CJK are 214 terminal columns.
-    it "clamps a row to the terminal columns it is drawn in" do
+    # beside it, and 96 characters of CJK are 214 terminal columns. The lead
+    # this header sets its tree in from counts too -- it is drawn, so a budget
+    # that excused it would put the line two columns past the terminal's edge,
+    # wrap it, and cost the pane the row the clamp exists to save.
+    it "clamps a row, its lead included, to the terminal columns it is drawn in" do
       tree = [row("dev", task: "\u65E5\u672C\u8A9E" * 40)]
 
       drawn = reading(fleet_tree: tree).header(now:).lines.last.chomp
 
-      expect(Lain::Ext::Prompt.width(drawn)).to be <= Lain::StatusFeed::Fleet::Row::COLUMNS + 2
+      expect(Lain::Ext::Prompt.width(drawn)).to be <= Lain::StatusFeed::Fleet::Row::COLUMNS
       expect(drawn).to end_with("\u2026")
     end
 
