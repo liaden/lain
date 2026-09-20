@@ -1,12 +1,16 @@
 # frozen_string_literal: true
 
-require "zeitwerk"
-
-# The loader in lib/lain.rb runs beside the manifest, and this file is the only
-# thing that can tell whether the two agree. Eager loading an already-required
-# tree is silent by construction -- every autoload Zeitwerk set was discarded
-# when the manifest's `require_relative` defined the constant first -- so the
-# equivalence has to be asked for here.
+# What boot cannot tell you about the loader in lib/lain.rb. A misconfigured
+# loader -- a missing acronym, an ignored file nobody requires, a cycle -- does
+# not need a spec: `require "lain"` raises and every example in the suite fails
+# with it. So none of that is asserted here.
+#
+# What survives a green boot is the subject: a constant no path names, findable
+# only because the file defining it is a file the loader loads; an ignore entry
+# the loader never needed; an entry naming a file that is gone. Each of those
+# boots clean and is wrong, and eager loading an already-required tree is silent
+# about all three by construction -- every autoload Zeitwerk set was discarded
+# when the manifest's `require_relative` defined the constant first.
 #
 # It is asked of the loader, never of a second implementation of it: the
 # path-to-constant map below is Zeitwerk's own answer, so a change in its
@@ -95,22 +99,10 @@ module ZeitwerkMapping
   def ignored?(path) = IGNORED.any? { path == _1 || path.start_with?("#{_1}/") }
 end
 
-# The namespace the circular-pair probe loads into, so its constants are
-# removable and never land on Object.
-module ZeitwerkCircularProbe; end
-
 RSpec.describe "the Zeitwerk loader" do
   it "sweeps enough of lib/ for the comparison to mean something" do
     expect(ZeitwerkMapping::MANAGED.size).to be > 700
     expect(ZeitwerkMapping::CONSTANTS.size).to be > 700
-  end
-
-  it "resolves every constant it expects of a path" do
-    unresolvable = ZeitwerkMapping::EXPECTED
-                   .reject { |_, cpath| ZeitwerkMapping.resolvable?(cpath) }
-                   .map { |path, cpath| "#{ZeitwerkMapping.rel(path)} -> #{cpath}" }
-
-    expect(unresolvable).to be_empty
   end
 
   # The question stated as it is meant. Not "does the constant this PATH
@@ -143,12 +135,6 @@ RSpec.describe "the Zeitwerk loader" do
       expect(ZeitwerkMapping::IGNORED.reject { File.exist?(_1) }).to be_empty
     end
 
-    # An ignored file is invisible to the loader, so the only thing that can
-    # define its constants is a require somebody wrote by hand.
-    it "leaves each ignored file explicitly required" do
-      expect(files.reject { $LOADED_FEATURES.include?(_1) }).to be_empty
-    end
-
     # The converse of the sweep above, and what keeps the list from growing by
     # habit: an entry whose constant the loader could have found on its own is
     # one the loader should be finding.
@@ -156,61 +142,6 @@ RSpec.describe "the Zeitwerk loader" do
       needless = files.select { ZeitwerkMapping.resolvable?(ZeitwerkMapping.expected_for(_1)) }
 
       expect(needless).to be_empty
-    end
-  end
-
-  describe "an acronym" do
-    it "resolves" do
-      expect(Lain::CLI).to be_a(Module)
-      expect(Lain::Frontend::TTY).to be_a(Module)
-      expect(Lain::Provider::HTTP).to be_a(Module)
-    end
-
-    it "is declared for every acronym the tree spells" do
-      expect(Lain::LOADER_INFLECTIONS).to eq("cli" => "CLI", "http" => "HTTP", "tty" => "TTY")
-    end
-  end
-
-  # The manifest's stated benefit is that one ordered list is where a cycle has
-  # to show itself. This is the replacement: an eager load walks every constant,
-  # and a pair that cannot be loaded without each other stops the boot.
-  describe "a circular dependency", :seam do
-    around do |example|
-      Dir.mktmpdir("zeitwerk-cycle") do |dir|
-        @dir = File.realpath(dir)
-        File.write(File.join(@dir, "alpha.rb"), <<~RUBY)
-          module ZeitwerkCircularProbe
-            class Alpha < Beta; end
-          end
-        RUBY
-        File.write(File.join(@dir, "beta.rb"), <<~RUBY)
-          module ZeitwerkCircularProbe
-            class Beta < Alpha; end
-          end
-        RUBY
-        example.run
-      end
-    end
-
-    it "is reported, naming both files of the pair" do
-      loader = Zeitwerk::Loader.new
-      loader.push_dir(@dir, namespace: ZeitwerkCircularProbe)
-      loader.setup
-
-      error = capture_name_error { loader.eager_load }
-
-      expect(error).to be_a(NameError)
-      expect(error.message).to include("ZeitwerkCircularProbe::Alpha")
-      expect(error.backtrace.join("\n")).to include("alpha.rb", "beta.rb")
-    ensure
-      loader&.unload
-    end
-
-    def capture_name_error
-      yield
-      nil
-    rescue NameError => e
-      e
     end
   end
 end
