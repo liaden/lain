@@ -1,16 +1,15 @@
 # frozen_string_literal: true
 
-# What boot cannot tell you about the loader in lib/lain.rb. A misconfigured
-# loader -- a missing acronym, an ignored file nobody requires, a cycle -- does
-# not need a spec: `require "lain"` raises and every example in the suite fails
-# with it. So none of that is asserted here.
+# What a green boot cannot tell you about the loader in lib/lain.rb. A
+# misconfigured loader -- a missing acronym, a cycle, a path whose constant
+# disagrees with it -- needs no spec: it stops `require "lain"` and every
+# example in the suite fails with it. So none of that is asserted here.
 #
-# What survives a green boot is the subject: a constant no path names, findable
-# only because the file defining it is a file the loader loads; an ignore entry
-# the loader never needed; an entry naming a file that is gone. Each of those
-# boots clean and is wrong, and eager loading an already-required tree is silent
-# about all three by construction -- every autoload Zeitwerk set was discarded
-# when the manifest's `require_relative` defined the constant first.
+# What survives a green boot is the subject: HUNDREDS of constants that no path
+# names, reachable only through the file that happens to define them. The tree
+# boots because eager loading loads every file regardless, which is a property
+# of loading everything and not of the names resolving -- so the question worth
+# asking is whether each one's defining file is a file the loader loads.
 #
 # It is asked of the loader, never of a second implementation of it: the
 # path-to-constant map below is Zeitwerk's own answer, so a change in its
@@ -29,9 +28,10 @@ module ZeitwerkMapping
 
   module_function
 
-  # The loader is not asked about an ignored path -- that is what ignoring one
-  # means -- so its inflector is asked instead, which is still the loader's
-  # answer and not a second one.
+  # For a path the loader has no mapping for -- the compiled extension, or
+  # anything else that reaches $LOADED_FEATURES without being managed -- its
+  # inflector is asked instead, which is still the loader's answer rather than
+  # a second one.
   def expected_for(path)
     segments = path.delete_prefix("#{LIB}/").delete_suffix(".rb").split("/")
     (["Lain"] + segments.drop(1).map { Lain::LOADER.inflector.camelize(_1, path) }).join("::")
@@ -39,9 +39,9 @@ module ZeitwerkMapping
 
   def rel(path) = path.delete_prefix("#{LIB}/")
 
-  # Every constant the manifest's load left under {Lain}, against the file that
-  # defined it. That is the set the equivalence is really about, and it is not
-  # the set of paths: a file may define constants no path names.
+  # Every constant a full load leaves under {Lain}, against the file that
+  # defined it. That is the set the question is really about, and it is not the
+  # set of paths: a file may define constants no path names.
   def defined_constants = walk(Lain, "Lain", Set.new([Lain]), {})
 
   def walk(mod, cpath, seen, out)
@@ -61,9 +61,9 @@ module ZeitwerkMapping
   # the loader, which is what makes those findable.
   def compiled = $LOADED_FEATURES.select { _1.start_with?("#{LIB}/") && !_1.end_with?(".rb") }
 
-  # The files the loader will load: the ones it manages, plus the ignored ones
-  # something has required by hand, plus the extension. A constant is findable
-  # if and only if the file that defines it is in here.
+  # The files the loader will load: the ones it manages, plus the compiled
+  # extension, which lib/lain.rb requires by name. A constant is findable if
+  # and only if the file that defines it is in here.
   def loadable
     (MANAGED + compiled).to_set
   end
@@ -87,13 +87,12 @@ RSpec.describe "the Zeitwerk loader" do
   end
 
   # The question stated as it is meant. Not "does the constant this PATH
-  # implies exist" -- which a tree the manifest has already loaded answers yes
-  # to for reasons of its own -- but "can the loader find every constant the
-  # manifest defines".
+  # implies exist", which a fully loaded tree answers yes to for reasons of its
+  # own, but "can the loader find every constant lib/ defines".
   # Hundreds of them it cannot find by NAME at all, having no path of their
   # own. What makes those findable is the file defining them being a file the
   # loader loads -- which eager loading guarantees and lazy loading would not.
-  it "finds every constant the manifest defines" do
+  it "finds every constant lib/ defines" do
     loadable = ZeitwerkMapping.loadable
     unfindable = ZeitwerkMapping::CONSTANTS
                  .reject { |_, file| loadable.include?(File.join(ZeitwerkMapping::LIB, file)) }

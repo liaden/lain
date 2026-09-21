@@ -31,7 +31,10 @@ export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; 
 
 ```bash
 bundle exec rake pspec         # THE suite command: ~101s at 12 workers, 20,499 examples, 2026-09-20.
-                               # Bare `rspec` is the same examples SERIALLY, ~3m17s, no extra signal.
+                               # Bare `rspec` is the same examples SERIALLY, ~22m, 2026-09-20 -- 13x
+                               # the wall, and NOT "no extra signal": it is how you tell a real
+                               # failure from a contention flake. The tmux/nvim/wall-clock specs
+                               # that red under 12 workers ran 20,499/0 serially.
 bundle exec rspec path/to/one_spec.rb   # one file or one example: use this, not a bare `rspec`
 bundle exec rubocop -a         # safe autocorrect only; never -A
 bundle exec rake compile       # builds the Rust extension into lib/lain/lain.so (needs clang)
