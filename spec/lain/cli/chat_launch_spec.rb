@@ -700,7 +700,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     request = backend.context.render(timeline:, toolset: Lain::Toolset.new)
 
     expect(backend.run_profile.provider).to eq("ollama")
-    expect(Lain::Provider::Ollama.new.encode(request)[:options]).to eq(num_batch: 2048)
+    expect(Lain::Provider::Ollama.new.encode(request)[:options].except(:num_predict)).to eq(num_batch: 2048)
   end
 
   it "threads --btw into Chronicle.for as btw: true" do

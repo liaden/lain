@@ -15,12 +15,28 @@ module Lain
   # the same prompt cache, and two that do not, will not. The bench leans on this.
   Request = Data.define(:model, :system, :tools, :messages, :max_tokens, :stream, :reasoning, :extra) do
     def initialize(model:, messages:, max_tokens:, system: nil, tools: [], stream: true, reasoning: nil, extra: {})
+      ceiling = Integer(max_tokens)
+      # A non-positive ceiling is not a small ceiling. Ollama reads
+      # `num_predict` -1 as "generate until the model stops" and -2 as "fill
+      # the context", so such a Request asks for the OPPOSITE of the bound it
+      # states, and 0 asks for no tokens at all. {CLI::Backend::Ceiling}
+      # refuses these at the flag, so what arrives here is a ceiling nobody
+      # typed: a bench arm, an Oracle, a hand-assembled Request -- and the one
+      # worth naming, a RECORDED SESSION HEADER, which `--resume` reads
+      # `max_tokens` back out of as data through {Bench::Session::Loader}.
+      # That path is the one that escapes, because {Context} accepts the value:
+      # the resume succeeds and this raise lands at the first #render instead,
+      # mid-turn, where no rescue watching for a {Lain::Error} sees it. Raised
+      # rather than clamped all the same -- a bound corrected in silence is a
+      # bound nobody can see.
+      raise ArgumentError, "max_tokens must be positive, got #{ceiling}" unless ceiling.positive?
+
       super(
         model: -model.to_s,
         system: system && Canonical.normalize(system),
         tools: Canonical.normalize(tools),
         messages: Canonical.normalize(messages),
-        max_tokens: Integer(max_tokens),
+        max_tokens: ceiling,
         stream: !stream.nil? && stream != false,
         reasoning: reasoning && Canonical.normalize(reasoning),
         extra: Canonical.normalize(extra)

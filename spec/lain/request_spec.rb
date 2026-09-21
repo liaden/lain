@@ -30,6 +30,37 @@ RSpec.describe Lain::Request do
     expect(request.system).to be_nil
   end
 
+  # A non-positive ceiling is not a small ceiling. Ollama reads `num_predict`
+  # -1 as "generate until the model stops" and -2 as "fill the context", so
+  # such a Request asks for the OPPOSITE of the bound it appears to state; 0
+  # asks for no tokens at all. The CLI refuses both at its flag
+  # ({CLI::Backend::Ceiling}), but every other builder -- a bench arm, an
+  # Oracle, a hand-assembled Request -- reaches a provider straight through
+  # this constructor, so the invariant belongs here, where all of them pass.
+  describe "the token ceiling" do
+    it "refuses a zero ceiling, which asks a provider for no tokens" do
+      expect { request(max_tokens: 0) }.to raise_error(ArgumentError, /max_tokens must be positive, got 0/)
+    end
+
+    it "refuses -1, the value ollama reads as unbounded generation" do
+      expect { request(max_tokens: -1) }.to raise_error(ArgumentError, /max_tokens must be positive, got -1/)
+    end
+
+    it "refuses -2, the value ollama reads as fill-the-context" do
+      expect { request(max_tokens: -2) }.to raise_error(ArgumentError, /max_tokens must be positive, got -2/)
+    end
+
+    it "still accepts a positive ceiling, including one that arrives as a String" do
+      expect(request(max_tokens: "64").max_tokens).to eq(64)
+    end
+
+    # `#with` builds through this same constructor, so the invariant cannot be
+    # edited out of a Request that was valid when it was made.
+    it "refuses a non-positive ceiling through #with as well" do
+      expect { request.with(max_tokens: -1) }.to raise_error(ArgumentError, /max_tokens must be positive/)
+    end
+  end
+
   describe "#digest" do
     it "is stable across key insertion order" do
       a = request(extra: { "b" => 1, "a" => 2 })

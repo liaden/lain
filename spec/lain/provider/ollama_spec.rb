@@ -449,12 +449,15 @@ RSpec.describe Lain::Provider::Ollama do
     it "reads temperature, seed, and num_ctx from Request#extra into options" do
       req = request(extra: { temperature: 0, seed: 42, num_ctx: 8192 })
       encoded = described_class.new(transport: transport_sync({})).encode(req)
-      expect(encoded[:options]).to eq({ temperature: 0, seed: 42, num_ctx: 8192 })
+      expect(encoded[:options]).to eq({ num_predict: 64, temperature: 0, seed: 42, num_ctx: 8192 })
     end
 
-    it "omits options entirely when no sampler knobs are given" do
+    # The sampler knobs are opt-in; the generation cap is not, and it shares
+    # their object. So a request that tuned nothing still sends `options`, with
+    # the cap alone in it.
+    it "sends only the generation cap in options when no sampler knobs are given" do
       encoded = described_class.new(transport: transport_sync({})).encode(request)
-      expect(encoded).not_to have_key(:options)
+      expect(encoded[:options]).to eq({ num_predict: 64 })
     end
 
     # AC: think round-trips. `think` is a top-level wire field (a sibling of
@@ -463,7 +466,7 @@ RSpec.describe Lain::Provider::Ollama do
     it "carries think onto its own top-level field, not into options" do
       encoded = described_class.new(transport: transport_sync({})).encode(request(extra: { think: true }))
       expect(encoded[:think]).to be(true)
-      expect(encoded[:options]).to be_nil
+      expect(encoded[:options]).to eq({ num_predict: 64 })
     end
 
     # AC: non-think runs unchanged. No think extra means no `think` key at

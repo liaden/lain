@@ -40,10 +40,10 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
   # `think` is set LOW on every request here for a reason that is about money,
   # not about reasoning quality: gpt-oss emits an analysis channel whether or
   # not one is asked for, `think: false` does not suppress it (measured
-  # 2026-08-24 -- see cloud.md), and `num_predict` is not among
-  # Ollama::Encoding::SAMPLER_KEYS, so there is no way to cap output length
-  # through a Request at all. Low reasoning is the only lever this arm has over
-  # what a live example costs.
+  # 2026-08-24 -- see cloud.md), and the `max_tokens` the encoder now sends as
+  # `num_predict` bounds the total generation without making the analysis any
+  # cheaper -- a truncated answer costs what it cost. Low reasoning is the only
+  # lever this arm has over what a live example spends.
   def chat(prompt, **overrides)
     request = Lain::Request.new(
       model:, max_tokens: 256, stream: false,

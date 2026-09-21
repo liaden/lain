@@ -686,10 +686,13 @@ module Lain
       # arrives as nil, and nil is the only absence there is here.
       #
       # The two throughput knobs are resolved HERE and not defaulted inside
-      # {Provider::Ollama::Encoding}, because an encoder-side default would put
-      # an `options` object on every ollama request in the process, where a flag
-      # the operator did not set leaves the payload byte-identical. Only an
-      # ollama chat gets {OLLAMA_ONLY_KEYS}. The two runner knobs come off the
+      # {Provider::Ollama::Encoding}, because they are tuning an operator opts
+      # into: a flag nobody set must add nothing to the payload. The generation
+      # cap is the opposite case and lives in the encoder for exactly that
+      # reason -- every Request already declares a max_tokens, so that one is on
+      # every ollama payload rather than waiting for a flag, and `options` is
+      # therefore no longer a witness to a flag having been set. Only an ollama
+      # chat gets {OLLAMA_ONLY_KEYS}. The two runner knobs come off the
       # {#run_profile} and the sampling pair off the flags.
       def sampler_extra
         keys = Provider::Ollama::Encoding::SAMPLER_KEYS

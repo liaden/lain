@@ -29,6 +29,14 @@
 RSpec.shared_examples "a Lain::Provider" do |config|
   provider_factory = config.fetch(:provider_factory)
 
+  # Every spelling an arm is allowed to send the generation cap under: Anthropic
+  # says `max_tokens` and so does the neutral cache_payload Mock echoes, while
+  # Ollama says `num_predict` inside `options`. ENUMERATED rather than matched
+  # by value, because a payload that merely happens to hold the number 8
+  # somewhere is not evidence the bound reached the wire -- an arm with a fourth
+  # spelling teaches this list instead of passing by accident.
+  cap_keys = %w[max_tokens num_predict].freeze
+
   # ---- fixtures, over spec/support/mock_recording.rb ------------------------
   #
   # The parity_ prefix keeps this group's fixture names clear of anything an
@@ -43,6 +51,19 @@ RSpec.shared_examples "a Lain::Provider" do |config|
 
   def parity_tool_response(*calls)
     tool_response(*calls, thinking: "considering")
+  end
+
+  # Every value an encoded payload files under one of the cap spellings, however
+  # deeply nested -- Ollama's lives inside `options`, Anthropic's at the top.
+  def parity_cap_values(payload, keys)
+    case payload
+    when Hash
+      payload.flat_map do |key, value|
+        (keys.include?(key.to_s) ? [value] : []) + parity_cap_values(value, keys)
+      end
+    when Array then payload.flat_map { |item| parity_cap_values(item, keys) }
+    else []
+    end
   end
 
   define_method(:parity_agent) do |provider_factory, responses, toolset: nil, **overrides|
@@ -82,6 +103,16 @@ RSpec.shared_examples "a Lain::Provider" do |config|
       first = provider.encode(sample_request)
       second = provider.encode(sample_request)
       expect(Lain::Canonical.dump(first)).to eq(Lain::Canonical.dump(second))
+    end
+
+    # A Request cannot be built without a max_tokens, so an arm that sends none
+    # is not declining a knob -- it is dropping a bound the caller already
+    # stated, and nothing downstream can tell. The ollama arm did exactly that
+    # for the life of the provider: `--max_tokens` was journaled and never sent.
+    it "puts the Request's generation cap on the wire under its own spelling" do
+      encoded = provider.encode(sample_request)
+
+      expect(parity_cap_values(encoded, cap_keys)).to include(sample_request.max_tokens)
     end
 
     it "supports? and require! answer consistently with the declared capabilities" do

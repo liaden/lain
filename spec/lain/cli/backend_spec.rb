@@ -1807,7 +1807,7 @@ RSpec.describe Lain::CLI::Backend do
     it "carries options.temperature 0 and options.seed 7 into the encoded Ollama payload" do
       request = render(provider: "ollama", model: nil, temperature: 0, seed: 7)
       payload = Lain::Provider::Ollama.new.encode(request)
-      expect(payload[:options]).to include(temperature: 0, seed: 7)
+      expect(payload[:options].except(:num_predict)).to eq(temperature: 0, seed: 7)
     end
 
     it "renders a Request whose cache_payload is identical to the flagless render" do
@@ -1820,15 +1820,15 @@ RSpec.describe Lain::CLI::Backend do
     it "omits absent sampler keys entirely (0 is present, nil is not)" do
       request = render(provider: "ollama", model: nil, temperature: 0, seed: nil)
       payload = Lain::Provider::Ollama.new.encode(request)
-      expect(payload[:options]).to eq(temperature: 0)
+      expect(payload[:options]).to eq(num_predict: 1024, temperature: 0)
     end
   end
 
   # The two throughput knobs reach the wire the same way temperature
-  # and seed do -- through #sampler_extra, so an UNSET flag leaves the options
-  # hash untouched. Defaulting num_batch inside the encoder instead would put
-  # an `options` key on every ollama request in the suite; the third example is
-  # what pins that it did not happen.
+  # and seed do -- through #sampler_extra, so an UNSET flag adds nothing to the
+  # options hash, which is what the third example pins. The hash itself is no
+  # longer evidence of a flag: the encoder seeds it with the generation cap,
+  # which every Request declares and no flag is needed to ask for.
   describe "num_batch and num_ctx threading" do
     let(:store) { Lain::Store.new }
     let(:timeline) do
@@ -1843,21 +1843,21 @@ RSpec.describe Lain::CLI::Backend do
     end
 
     it "carries an operator-set batch size into the encoded request options" do
-      expect(payload_for(num_batch: 2048)[:options]).to eq(num_batch: 2048)
+      expect(payload_for(num_batch: 2048)[:options]).to eq(num_predict: 1024, num_batch: 2048)
     end
 
     it "carries an operator-set context length into the encoded request options" do
-      expect(payload_for(num_ctx: 8192)[:options]).to eq(num_ctx: 8192)
+      expect(payload_for(num_ctx: 8192)[:options]).to eq(num_predict: 1024, num_ctx: 8192)
     end
 
-    it "emits no options key at all when no sampler flag was given" do
-      expect(payload_for.key?(:options)).to be(false)
+    it "adds no sampler key to the options when no sampler flag was given" do
+      expect(payload_for[:options].keys).to eq([:num_predict])
     end
 
     # The same claim from argv: the exe's flag band leaves the two runner knobs
     # nil when neither a flag nor LAIN_NUM_BATCH/LAIN_NUM_CTX says anything, and
     # the launch's profile carries that absence into the Backend.
-    it "sends no options object for a flagless chat resolved through the exe's profile band" do
+    it "sends no sampler knob for a flagless chat resolved through the exe's profile band" do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
       profile = with_env("LAIN_PROVIDER" => "ollama", "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil) do
@@ -1866,7 +1866,7 @@ RSpec.describe Lain::CLI::Backend do
       request = Lain::CLI::ChatLaunch.new(options, profile:).backend
                                      .context.render(timeline:, toolset: Lain::Toolset.new)
 
-      expect(Lain::Provider::Ollama.new.encode(request)).not_to have_key(:options)
+      expect(Lain::Provider::Ollama.new.encode(request)[:options].keys).to eq([:num_predict])
     end
 
     # A sampler knob is not a prompt: the same cache-identity claim temperature
@@ -1934,7 +1934,7 @@ RSpec.describe Lain::CLI::Backend do
       provider = answering_provider
       summarize_through(backend_for(provider: "ollama", max_tokens: 64, num_batch: 2048), provider)
 
-      expect(ollama_options(provider.last_request)).to eq(num_batch: 2048)
+      expect(ollama_options(provider.last_request).except(:num_predict)).to eq(num_batch: 2048)
       expect(journal.events.grep(Lain::Telemetry::RequestSent).last.extra).to include("num_batch" => 2048)
     end
 
@@ -1951,11 +1951,11 @@ RSpec.describe Lain::CLI::Backend do
       expect(JSON.generate(transport.calls.last)).not_to include("num_batch")
     end
 
-    it "sends no options key at all on a flagless run" do
+    it "sends no sampler key at all on a flagless run" do
       provider = answering_provider
       summarize_through(backend_for(provider: "ollama", max_tokens: 64), provider)
 
-      expect(Lain::Provider::Ollama.new.encode(provider.last_request)).not_to have_key(:options)
+      expect(ollama_options(provider.last_request).keys).to eq([:num_predict])
     end
 
     it "carries the batch size and never the temperature or seed to a summarizer on the chat's own model" do
@@ -1963,7 +1963,7 @@ RSpec.describe Lain::CLI::Backend do
       summarize_through(backend_for(provider: "ollama", model: "qwen3-coder:30b", max_tokens: 64,
                                     temperature: 0.2, seed: 7, num_batch: 2048), provider)
 
-      expect(ollama_options(provider.last_request)).to eq(num_batch: 2048)
+      expect(ollama_options(provider.last_request).except(:num_predict)).to eq(num_batch: 2048)
     end
 
     it "carries none of them to a summarizer pinned to a different model" do
@@ -1971,7 +1971,7 @@ RSpec.describe Lain::CLI::Backend do
       summarize_through(backend_for(provider: "ollama", model: "qwen3-coder:30b", max_tokens: 64, temperature: 0.2,
                                     num_batch: 2048, num_ctx: 32_768, summarizer_model: "qwen3:4b"), provider)
 
-      expect(Lain::Provider::Ollama.new.encode(provider.last_request)).not_to have_key(:options)
+      expect(ollama_options(provider.last_request).keys).to eq([:num_predict])
     end
 
     # The value {Lain::Oracle::SecretRead.tier} is handed: a local ollama arm on

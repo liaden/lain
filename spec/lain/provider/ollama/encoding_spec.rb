@@ -29,7 +29,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     it "asks it on every request, whatever else the request carries" do
       encoded = encoder.encode(request(stream: true, extra: { "num_ctx" => 8192, "think" => true }))
 
-      expect(encoded).to include(truncate: false, think: true, options: { num_ctx: 8192 })
+      expect(encoded).to include(truncate: false, think: true, options: { num_predict: 64, num_ctx: 8192 })
     end
   end
 
@@ -44,13 +44,14 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       expect(encoded[:format]).to eq(schema)
     end
 
-    # THE CRITICAL AC: no structured format means no `format` key, and every
-    # other field is exactly what today's plain encode already produces.
-    it "encodes byte-identically to today when no structured format is present" do
+    # THE CRITICAL AC: no structured format means no `format` key, and the
+    # marker's absence adds nothing else either -- what is sent is the plain
+    # payload, whole, down to the generation cap every Request declares.
+    it "encodes to the plain payload, with no format key, when no structured format is present" do
       encoded = encoder.encode(request)
 
       expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
-                            truncate: false)
+                            truncate: false, options: { num_predict: 64 })
       expect(encoded.key?(:format)).to be(false)
     end
 
@@ -63,7 +64,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     it "omits format when extra carries only sampler keys" do
       encoded = encoder.encode(request(extra: { "temperature" => 0 }))
 
-      expect(encoded[:options]).to eq(temperature: 0)
+      expect(encoded[:options]).to eq(num_predict: 64, temperature: 0)
       expect(encoded.key?(:format)).to be(false)
     end
 
@@ -73,7 +74,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       encoded = encoder.encode(request(extra: { "keep_alive" => "5m" }))
 
       expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
-                            truncate: false)
+                            truncate: false, options: { num_predict: 64 })
     end
 
     # Review SHOULD-FIX: a nil marker (key present, value nil) must no-op
@@ -105,22 +106,49 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     it "carries num_batch from Request#extra into options" do
       encoded = encoder.encode(request(extra: { "num_batch" => 2048 }))
 
-      expect(encoded[:options]).to eq(num_batch: 2048)
+      expect(encoded[:options]).to eq(num_predict: 64, num_batch: 2048)
     end
 
     it "carries num_ctx from Request#extra into options" do
       encoded = encoder.encode(request(extra: { "num_ctx" => 8192 }))
 
-      expect(encoded[:options]).to eq(num_ctx: 8192)
+      expect(encoded[:options]).to eq(num_predict: 64, num_ctx: 8192)
     end
 
-    # Strictly opt-in, like every other sampler key: an encoder that defaulted
-    # num_batch on would put an `options` key on every request that has none
-    # today, which is the shape the guard below and Ollama's own spec pin.
-    it "emits no options key at all when no sampler key is present" do
+    # Both stay strictly opt-in: a request nobody tuned sends neither, and
+    # defaulting either one here would be a wire change for callers who asked
+    # for nothing. What such a request does carry is the generation cap below,
+    # so the absence worth pinning is of the KNOBS, not of the `options` object
+    # they used to be the only reason for.
+    it "emits neither throughput knob for a request that tuned nothing" do
       encoded = encoder.encode(request)
 
-      expect(encoded.key?(:options)).to be(false)
+      expect(encoded[:options].keys).to eq([:num_predict])
+    end
+  end
+
+  # The generation cap, which is not a sampler knob and not opt-in: every
+  # Request declares a max_tokens, and this arm was the one that never sent it.
+  # Ollama spells the bound `num_predict` and keeps it inside `options`, so the
+  # `options` object now rides every request -- a Thinking finetune left with no
+  # ceiling deliberates until it decides to stop.
+  describe "the generation cap" do
+    it "carries the Request's max_tokens into options as num_predict" do
+      encoded = encoder.encode(request(max_tokens: 4096))
+
+      expect(encoded[:options]).to eq(num_predict: 4096)
+    end
+
+    it "does not displace a tuned sampler knob" do
+      encoded = encoder.encode(request(max_tokens: 4096, extra: { "num_batch" => 2048 }))
+
+      expect(encoded[:options]).to eq(num_predict: 4096, num_batch: 2048)
+    end
+
+    # The cap is not something a caller opts into, so there is no request shape
+    # left that sends no `options` at all.
+    it "sends an options object on a request that tuned nothing" do
+      expect(encoder.encode(request)).to include(options: { num_predict: 64 })
     end
   end
 end

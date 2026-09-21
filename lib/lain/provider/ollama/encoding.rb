@@ -28,10 +28,12 @@ module Lain
         # the ONLY place it can be corrected. Measured on this box at 1.31x
         # prefill (docs/providers/ollama.md, "Serving performance").
         #
-        # Every key is strictly opt-in, so a request nobody tuned renders with
-        # no `options` object at all. Defaulting one on here would be a wire
-        # change for every caller that never asked for it; resolution belongs at
-        # the CLI, where an operator's flag is.
+        # Every key here is strictly opt-in: defaulting one on would be a wire
+        # change for a caller that asked for nothing, so resolution belongs at
+        # the CLI, where an operator's flag is. The generation cap is the
+        # opposite case and deliberately NOT one of these -- see
+        # {#encode_options} -- so `options` itself is no longer opt-in even
+        # though every member of this list still is.
         SAMPLER_KEYS = %w[temperature seed num_batch num_ctx].freeze
 
         # `think` requests the reasoning trace onto `message.thinking` (qwen3
@@ -68,13 +70,14 @@ module Lain
 
         private
 
-        # An empty `tools`/`options` renders as an ABSENT key, and each flag
-        # appears only when Request#extra asked for it -- a Request that asked
-        # for none must produce byte-identical bytes to before these existed.
+        # An empty `tools` renders as an ABSENT key, and each flag appears only
+        # when Request#extra asked for it. `options` keeps no such company: it
+        # carries the generation cap, which every Request has, so it is built
+        # unconditionally rather than filtered for emptiness it cannot reach.
         def optional_fields(request)
-          { tools: encode_tools(request.tools), options: encode_options(request.extra) }
-            .reject { |_key, value| value.empty? }
-            .merge(extra_flag_fields(request.extra))
+          tools = encode_tools(request.tools)
+          fields = tools.empty? ? {} : { tools: }
+          fields.merge(options: encode_options(request)).merge(extra_flag_fields(request.extra))
         end
 
         def extra_flag_fields(extra)
@@ -157,9 +160,23 @@ module Lain
           end
         end
 
-        def encode_options(extra)
-          SAMPLER_KEYS.each_with_object({}) do |key, options|
-            options[key.to_sym] = extra[key] if extra.key?(key)
+        # Ollama's `options` object: the opt-in sampler knobs, over a generation
+        # cap that is not one. `num_predict` is how ollama spells `max_tokens`,
+        # every Request declares one, and this arm was the one that sent it
+        # nowhere -- so a Thinking finetune deliberated until it chose to stop,
+        # bounded by nothing the caller had asked for. It seeds the object
+        # rather than joining SAMPLER_KEYS because it answers to no flag:
+        # {CLI::Backend#sampler_extra} reads that list and keys on `extra.key?`,
+        # which a cap living on the Request itself can never satisfy.
+        #
+        # One consequence worth stating: a `num_predict` written into
+        # Request#extra reaches the wire nowhere. It is not a sampler key, so
+        # the loop below never copies it, and the seed here is the Request's own
+        # ceiling -- which is the single source for the bound on purpose, since
+        # two places to write it is two answers to "what bounded this turn".
+        def encode_options(request)
+          SAMPLER_KEYS.each_with_object({ num_predict: request.max_tokens }) do |key, options|
+            options[key.to_sym] = request.extra[key] if request.extra.key?(key)
           end
         end
 

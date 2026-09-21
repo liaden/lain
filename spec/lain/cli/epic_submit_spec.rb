@@ -663,7 +663,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(chat).to have_been_requested.at_least_twice
       expect(a_request(:post, "http://localhost:11434/api/chat")
-               .with { |request| JSON.parse(request.body)["options"] != { "num_batch" => 2048 } }).not_to have_been_made
+               .with { |req| JSON.parse(req.body).dig("options", "num_batch") != 2048 }).not_to have_been_made
     end
 
     it "builds no backend when every stage is interactive" do

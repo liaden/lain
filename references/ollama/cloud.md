@@ -365,15 +365,19 @@ made, and that is the correct design: `/api/ps` lists **loaded runners**, a conc
 host does not have. A rescue-based approach would spend a round trip per denominator lookup against
 somebody's quota purely to rediscover a 404.
 
-### `num_predict` works on the wire but is unreachable from a Request
+### `num_predict` works on the wire but was unreachable from a Request
 
 `options.num_predict` is honoured by the cloud host — a capped request returns
 `done_reason: "length"` with exactly that many eval tokens. But `num_predict` is **not** in
 `Ollama::Encoding::SAMPLER_KEYS` (which holds only `temperature`, `seed`, `num_batch`, `num_ctx`),
-and `Request#max_tokens` is carried for the neutral contract and **not sent**. So **there is no way
-to cap output length through a `Lain::Request` on either ollama arm.** Harmless on a free local
-server; on a metered one it means the caller cannot bound what a turn costs. Recorded as a finding,
-not fixed here.
+and `Request#max_tokens` was carried for the neutral contract and **not sent**. So at the time of
+measurement **there was no way to cap output length through a `Lain::Request` on either ollama
+arm.** Harmless on a free local server; on a metered one it meant the caller could not bound what
+a turn cost.
+
+Resolved 2026-09-21: `Ollama::Encoding#encode_options` seeds the `options` object with
+`num_predict: request.max_tokens` on every request. Still not a sampler key — it answers to no
+flag, being the bound the Request already declares.
 
 ### `think: false` does not suppress reasoning on gpt-oss
 

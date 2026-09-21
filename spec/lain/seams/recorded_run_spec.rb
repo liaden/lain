@@ -186,11 +186,13 @@ module T14RecordedRun
 
   # Terse to the point of being curt, and that is the whole reason for it. A
   # streamed NDJSON body is ONE JSON OBJECT PER TOKEN, so the reply's token count
-  # IS the cassette's size -- and qwen3:4b is a Thinking finetune with no ceiling
-  # to hold it: {Provider::Ollama::Encoding} renders no `num_predict`, so
-  # `max_tokens` below bounds nothing on this arm.
+  # IS the cassette's size -- and qwen3:4b is a Thinking finetune, which spends
+  # tokens deliberating before it answers. `max_tokens` below is a real ceiling
+  # on this arm now that the encoder sends it as `num_predict`, but a ceiling
+  # only truncates: it bounds the cassette without leaving a reply the run can
+  # be recorded against.
   #
-  # What bounds it is how much there is to deliberate about. Measured against the
+  # What bounds it usefully is how much there is to deliberate about. Measured against the
   # live server at temperature 0, one instruction at a time, thinking on:
   #
   #     "read_file NOTES.md"                                  173 tokens

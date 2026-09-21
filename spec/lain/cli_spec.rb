@@ -267,7 +267,7 @@ RSpec.describe LainCLI do
     it "carries options.temperature 0 and options.seed 7 into the encoded payload" do
       request = render(provider: "ollama", model: nil, max_tokens: 4096, temperature: 0, seed: 7)
       payload = Lain::Provider::Ollama.new.encode(request)
-      expect(payload[:options]).to include(temperature: 0, seed: 7)
+      expect(payload[:options].except(:num_predict)).to eq(temperature: 0, seed: 7)
     end
 
     it "renders a Request whose cache_payload is identical to the flagless render" do
@@ -280,7 +280,7 @@ RSpec.describe LainCLI do
     it "omits absent sampler keys entirely (0 is present, nil is not)" do
       request = render(provider: "ollama", model: nil, max_tokens: 4096, temperature: 0, seed: nil)
       payload = Lain::Provider::Ollama.new.encode(request)
-      expect(payload[:options]).to eq(temperature: 0)
+      expect(payload[:options]).to eq(num_predict: 4096, temperature: 0)
     end
   end
 
@@ -836,14 +836,14 @@ RSpec.describe LainCLI do
       backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
                               "LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil)
 
-      expect(encoded_options(backend)).to eq(num_batch: 2048)
+      expect(encoded_options(backend).except(:num_predict)).to eq(num_batch: 2048)
     end
 
     it "sends LAIN_NUM_BATCH on every ollama request `bench record` encodes" do
       backend = bench_backend(%w[record task.txt --out runs --provider ollama], :record,
                               "LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil)
 
-      expect(encoded_options(backend)).to eq(num_batch: 2048)
+      expect(encoded_options(backend).except(:num_predict)).to eq(num_batch: 2048)
     end
 
     it "takes the provider from LAIN_PROVIDER when `bench arms` is given none" do
@@ -852,12 +852,14 @@ RSpec.describe LainCLI do
       expect(backend.run_profile.provider).to eq("ollama")
     end
 
-    it "sends no options object from a flagless ollama `bench arms`" do
+    # The generation cap shares the object and answers to no flag, so what a
+    # flagless run proves is that no SAMPLER knob was invented for it.
+    it "sends no sampler knob from a flagless ollama `bench arms`" do
       backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
                               "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil, "LAIN_SEED" => nil,
                               "LAIN_TEMPERATURE" => nil)
 
-      expect(encoded_options(backend)).to be_nil
+      expect(encoded_options(backend).keys).to eq([:num_predict])
     end
   end
 end
