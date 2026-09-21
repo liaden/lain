@@ -6,14 +6,8 @@ require "tomlrb"
 # {Epics} -- while it loads. `config/epics/gates` REOPENS `Epics` to hang the sub-table
 # on it, so it follows the file that defines it. {Config::Refusal} is first: every
 # table raises it, so it has to exist before any of them is read.
-require_relative "config/refusal"
-require_relative "config/epics"
-require_relative "config/epics/gates"
-require_relative "config/answers"
-require_relative "config/isolation"
 # Last: {Config::Resolved} builds all four tables above, and the two that live
 # outside this subtree, on demand.
-require_relative "config/resolved"
 
 module Lain
   # Reads `<root>/.lain/config.toml`. Absence is not an error -- {.load} on a
@@ -204,10 +198,11 @@ module Lain
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
-    # `Epic::STAGES` and {Approval::Gate::Policies}, and neither exists yet
-    # while this file loads -- config.rb sits far above both in lain.rb's
-    # manifest. A non-empty default here breaks `require "lain"` outright,
-    # which is every spec at once rather than one, so no test is owed for it.
+    # `Epic::STAGES` and {Approval::Gate::Policies}, so a non-empty default
+    # here would reach two unrelated units while this file loads -- reaching
+    # config would then reach the epic tier and the approval gate with it.
+    # `gates_spec.rb` boots a child without the eager load and asks exactly
+    # that.
     EMPTY = new(epics: Epics.new(home: :xdg)).freeze
     private_constant :EMPTY
   end

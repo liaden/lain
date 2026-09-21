@@ -5,19 +5,6 @@ require "monitor"
 require "state_machines"
 require "active_support/core_ext/module/delegation"
 
-require_relative "agent/accounting"
-require_relative "agent/budget"
-require_relative "agent/instrumentation"
-require_relative "agent/loop_machine"
-require_relative "agent/model_caller"
-require_relative "agent/pipeline_source"
-require_relative "agent/request_override"
-require_relative "agent/snapshot_slot"
-require_relative "agent/stop_reason"
-require_relative "agent/tool_delivery"
-require_relative "agent/tool_runner"
-require_relative "agent/transition_listener"
-
 module Lain
   # The loop, written as an explicit state machine rather than a while-loop over
   # a `case`.

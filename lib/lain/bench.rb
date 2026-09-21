@@ -1,21 +1,10 @@
 # frozen_string_literal: true
 
-require_relative "bench/harness"
-require_relative "bench/dry_replay"
-require_relative "bench/session"
-require_relative "bench/variance"
-require_relative "bench/sweep"
-require_relative "bench/disclosure_sweep"
-require_relative "bench/decider_sweep"
-require_relative "bench/spawn_seam"
-require_relative "bench/live_arms"
-require_relative "bench/cli"
-require_relative "bench/live_replay"
-require_relative "bench/rewrites"
-require_relative "bench/speculative"
-require_relative "bench/variance_fixtures"
-require_relative "bench/arm_tasks"
-require_relative "bench/arm_sweep"
-require_relative "bench/plan_sweep"
-require_relative "bench/epic_metrics"
-require_relative "bench/altitude"
+module Lain
+  # The study bench itself: replay a recorded session, re-run one against the
+  # live API, and sweep a strategy across arms so two answers can be compared
+  # rather than argued about. `dry_replay` is free and byte-diffable,
+  # `live_replay` costs money, and the sweeps are the reason the harness
+  # records anything at all.
+  module Bench; end
+end

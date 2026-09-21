@@ -66,8 +66,8 @@ Decomposition heuristics (the repo's principles applied one level up):
   sequenced before both.
 - A card that cannot state its Gherkin without naming another card's internals is coupled to
   it — merge them or re-cut the seam.
-- Flag **orchestrator-owned shared files** (the require manifest `lib/lain.rb`, the gemspec,
-  `.rubocop.yml`, `spec/spec_helper.rb`). Cards touch these only via one-line wiring diffs
+- Flag **orchestrator-owned shared files** (the gemspec, `.rubocop.yml`, `spec/spec_helper.rb`,
+  and whatever else the repo loads or lints through one place). Cards touch these only via one-line wiring diffs
   handed back to the orchestrator, never as card scope.
 
 ## Phase 4 — Panel review of the plan

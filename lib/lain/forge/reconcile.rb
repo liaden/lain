@@ -421,4 +421,3 @@ end
 # sibling it borrows -- must exist before it is read. The subtree index owns
 # its own children (CLAUDE.md, Requires); `forge.rb` names the unit, not the
 # unit's insides.
-require_relative "reconcile/world"

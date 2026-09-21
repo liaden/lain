@@ -190,5 +190,3 @@ end
 
 # ShadowGit's own subtree index: its children reopen the class, so they load
 # after it.
-require_relative "shadow_git/repository"
-require_relative "shadow_git/tree_pair"

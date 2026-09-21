@@ -297,4 +297,3 @@ end
 
 # At the bottom, not the top: Unwritten reopens Lain::Journal to nest itself, so
 # the class has to exist first.
-require_relative "journal/unwritten"

@@ -548,6 +548,3 @@ module Lain
     end
   end
 end
-require_relative "gate/policy"
-require_relative "gate/adjudicator"
-require_relative "gate/policies"

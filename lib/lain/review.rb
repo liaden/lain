@@ -22,9 +22,8 @@ module Lain
     #
     # They live in the NAMESPACE file because every guard that cites one
     # resolves it while its class body runs, and the namespace file is the one
-    # thing guaranteed to be defined before anything beneath it -- under the
-    # manifest below by position, and under the loader by how a namespace is
-    # established at all.
+    # thing guaranteed to be defined before anything beneath it, by how a
+    # namespace is established at all.
 
     # Which side of a diff a position is on. Closed for {Epic::STAGE_EVENTS}'
     # reason: `side` is what tells an old-side anchor (a buffer materialized from
@@ -95,48 +94,25 @@ end
 # The vocabulary above binds the class-body reads: `Anchor::SIDES` derives from
 # `Review::SIDES`, `verdict/policy` reads `Marks::REVIEWED`, and `session` names
 # every record type in `Replay::TYPES`, so the aggregate stays LAST.
-require_relative "review/wire"
-require_relative "review/keying"
-require_relative "review/anchor"
-require_relative "review/hunk"
-require_relative "review/marks"
-require_relative "review/source"
-require_relative "review/partition"
-require_relative "review/changeset"
-require_relative "review/lazy_file"
-require_relative "review/bounds"
-require_relative "review/surface"
 
 # The journal records: a round opened, widened, marked, annotated, and judged or
 # closed. Each is a {Telemetry::Journalable} value whose guards cite {Wire}
 # refusals and the vocabulary above while its class body runs, which is their
 # lower bound; `Replay::TYPES` names all six at class-body time, which is their
 # upper one. Nothing orders them among themselves, so they read alphabetically.
-require_relative "review/annotation_placed"
-require_relative "review/changeset_closed"
-require_relative "review/changeset_opened"
-require_relative "review/corpus_extended"
-require_relative "review/hunk_marked"
-require_relative "review/review_verdict"
 
 # AFTER the records: it builds an {AnnotationPlaced} out of an {Anchor}, so both
 # have to exist by the time anything calls it.
-require_relative "review/annotations"
-require_relative "review/verdict"
-require_relative "review/session"
 # AFTER the aggregate it holds. Its two nulls are named from METHOD bodies only,
 # so neither binds load order the way `annotations` above does.
-require_relative "review/handover"
 # AFTER `source`: `OpenedBanner::FILE_SIDE` selects the file's side out of
 # `Source::HEAD_SIDE_ONLY` while its CLASS body runs.
-require_relative "review/opened_banner"
 
 # The tail is two independently deletable units, each one file plus its one
 # require line.
 
 # The whole of the GitHub write path. After the aggregate it reads; nothing else
 # requires it and nothing reads it.
-require_relative "review/submit"
 
 # The docent is a ROLE, so removing it also takes the `:diff_docent` catalog
 # entry, its role template, and `CLI::Wiring::ToolsetBuild`'s one `#docent` line.
@@ -145,9 +121,7 @@ require_relative "review/submit"
 #
 # After `changeset`, whose hunks and revisions it reads, and after the records,
 # whose {Wire} refusals its own guards use while their class bodies run.
-require_relative "review/docent"
 
 # `/critique` over a held round. After `bounds`, whose chunking it sizes, and
 # after the records, whose {Wire} refusals its record uses while its class body
 # runs. Nothing else in `Review` names it.
-require_relative "review/critique"

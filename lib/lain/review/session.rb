@@ -564,8 +564,3 @@ end
 
 # All five are reached from method bodies only, so this placement is free; it
 # reads in the order a reader meets them.
-require_relative "session/scope"
-require_relative "session/marked_changeset"
-require_relative "session/replay"
-require_relative "session/widening"
-require_relative "session/marking"

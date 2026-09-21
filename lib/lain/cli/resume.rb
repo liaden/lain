@@ -399,9 +399,3 @@ end
 # All six reopen Resume to nest themselves, and Resume sends each of them
 # messages, so they are required here as the dependent units even though all six
 # resolve at runtime -- the ordering note {Bench::Session}'s require block makes.
-require_relative "resume/cancellation"
-require_relative "resume/mid_tool"
-require_relative "resume/salvager"
-require_relative "resume/selector"
-require_relative "resume/mismatch_notices"
-require_relative "resume/chain_walk"

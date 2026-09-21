@@ -132,7 +132,3 @@ module Lain
     private_class_method :unlanded?
   end
 end
-
-require_relative "session_record/scribe"
-require_relative "session_record/replay"
-require_relative "session_record/salvage"

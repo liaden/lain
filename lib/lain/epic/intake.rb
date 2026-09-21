@@ -190,4 +190,3 @@ end
 
 # Loaded last: Account is `Data.define(*KINDS)`, so the vocabulary above has to
 # exist before this file is read (the same rule effect/handler.rb's children follow).
-require_relative "intake/delta"

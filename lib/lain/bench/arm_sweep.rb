@@ -172,5 +172,3 @@ end
 # is not on disk. Separate FILES, not nested
 # classes, because `Metrics/ClassLength` counts a nested class's lines as the
 # enclosing class's own.
-require_relative "arm_sweep/recordings"
-require_relative "arm_sweep/report"

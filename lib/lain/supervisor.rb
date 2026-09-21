@@ -585,4 +585,3 @@ end
 
 # Restart reopens Supervisor and its records mix in Telemetry::Journalable, so it
 # loads after the class body; supervisor.rb is this subtree's index.
-require_relative "supervisor/restart"

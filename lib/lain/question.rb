@@ -471,8 +471,3 @@ module Lain
     end
   end
 end
-
-require_relative "question/set"
-require_relative "question/answer"
-require_relative "question/answer_set"
-require_relative "question/document"

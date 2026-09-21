@@ -3,8 +3,6 @@
 require "tmpdir"
 require "mixlib/shellout"
 
-require_relative "test_harness/adapter"
-
 module Lain
   module Grader
     # Grade a project by running its OWN test suite -- the deterministic grader

@@ -1004,6 +1004,3 @@ end
 # load after the class body. InboxRow reopens it too, and reaches nothing of
 # this file at load time -- nor does either frontend reach IT at load time, so
 # `lain.rb`'s ordering (frontends before tools) stays legal.
-require_relative "ask_human/directory"
-require_relative "ask_human/inbox_row"
-require_relative "ask_human/unattended"

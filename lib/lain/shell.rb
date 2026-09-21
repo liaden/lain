@@ -24,9 +24,3 @@ module Lain
   module Shell
   end
 end
-
-require_relative "shell/exclusions"
-require_relative "shell/parse"
-require_relative "shell/verdict"
-require_relative "shell/pipeline"
-require_relative "shell/out"

@@ -37,8 +37,8 @@ module Lain
   # reading keyword arguments has both, and its whole population was two classes.
   #
   # A validation set given as a lambda is called at VALIDATION time, so a
-  # declaration may cite a constant defined further down the load manifest than
-  # the file declaring it.
+  # declaration may cite a constant whose own file has not been read yet when
+  # the declaring class body runs.
   #
   # `raising:` is per-DECLARATION, not per-rule: a namespace needing a different
   # exception class per broken rule computes that where the rule lives, rather
@@ -155,9 +155,6 @@ module Lain
     end
   end
 end
-
-require_relative "declarative/types"
-require_relative "declarative/carrier"
 
 # Registered HERE rather than in the file defining the types, because a
 # declaration names a type by SYMBOL (`attribute :body, :lain_canonical`) and a

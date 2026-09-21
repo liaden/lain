@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
-require_relative "survey/unit"
-require_relative "survey/chunker"
-require_relative "survey/withheld"
-require_relative "survey/walk"
-require_relative "survey/projection"
+module Lain
+  # Reading a whole corpus rather than a diff: which paths under a root a
+  # survey may open ({Survey::Walk}), what it refused to ({Survey::Withheld}),
+  # and how a gated file is projected to its released regions
+  # ({Survey::Projection}) instead of hidden outright.
+  module Survey; end
+end

@@ -51,4 +51,3 @@ module Lain
 end
 
 # Handler subclasses reopen Effect::Handler, so the class body must load first.
-require_relative "effect/handler"

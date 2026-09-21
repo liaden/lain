@@ -231,11 +231,3 @@ end
 
 # Loader last: it is the class that sends the others messages, so it reads as
 # the dependent unit even though all six resolve at runtime.
-require_relative "session/anchor"
-require_relative "session/memory_replay"
-require_relative "session/message_replay"
-require_relative "session/request_replay"
-require_relative "session/resume_chain"
-require_relative "session/chain_fold"
-require_relative "session/loader"
-require_relative "session/lineages"

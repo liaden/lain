@@ -72,6 +72,3 @@ module Lain
     end
   end
 end
-
-require_relative "decorators/provider_retry"
-require_relative "decorators/snapshot_degraded"

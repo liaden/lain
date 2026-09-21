@@ -161,15 +161,3 @@ end
 
 # After the class body: the concrete arms and the driver reference Arm and
 # Arm::Run, so they load once the class exists.
-require_relative "arm/ladder"
-require_relative "arm/instrument"
-require_relative "arm/ledger_state"
-require_relative "arm/single_thread"
-require_relative "arm/adaptive_router"
-require_relative "arm/dual_ledger"
-require_relative "arm/synthesis"
-require_relative "arm/orchestrator_worker"
-require_relative "arm/one_shot"
-require_relative "arm/plan_only"
-require_relative "arm/epic"
-require_relative "arm/driver"

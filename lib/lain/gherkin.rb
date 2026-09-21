@@ -287,4 +287,3 @@ end
 
 # A plain sibling class, not a reopen, but it depends on Criteria/Scenario
 # existing first, so it loads after the module body above.
-require_relative "gherkin/test_generation"

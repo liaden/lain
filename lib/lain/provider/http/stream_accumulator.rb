@@ -2,8 +2,6 @@
 
 require "json"
 require "securerandom"
-require_relative "stream_accumulator/think_tag_scanner"
-require_relative "stream_accumulator/tool_call_accumulator"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/stream_accumulator.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::.

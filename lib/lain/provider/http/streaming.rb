@@ -3,8 +3,6 @@
 require "event_stream_parser"
 require "faraday"
 require "json"
-require_relative "streaming/error_handling"
-require_relative "streaming/faraday_handlers"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/streaming.rb.
 # Dropped upstream's `event: error` fast path and added an end-of-stream flush

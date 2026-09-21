@@ -8,7 +8,6 @@ require "fileutils"
 # parent's body runs rather than after, which is where a sibling-subtree
 # require usually goes (see {Prompt}'s own index for that usual shape) --
 # here load order runs the other way.
-require_relative "paths/shipped"
 
 module Lain
   # Paths come off a subprocess's stdout, `Dir.children` and `File.realpath` as
@@ -50,9 +49,10 @@ module Lain
     # directory on the machine a project. This one guards a home used as a JOIN
     # BASE, where `/` works fine -- `$HOME=/` is what root gets in a container,
     # and `/.local/state/lain` is a real answer. So `$HOME=/` is ACCEPTED here
-    # and REFUSED there, deliberately. Two classes rather than one because load
-    # order forces it: `paths.rb` precedes `project.rb` in the manifest, so this
-    # file cannot name that one.
+    # and REFUSED there, deliberately. Two classes rather than one because the
+    # two answers to `$HOME=/` are the whole difference between them -- a single
+    # class would have to take a flag saying which guard it was being, which is
+    # the pair back again with the reason hidden in an argument.
     class NonAbsoluteHome < Error
       def initialize(value)
         super("$HOME is #{value.inspect}, which is not an absolute path -- " \

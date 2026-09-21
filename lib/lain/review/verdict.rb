@@ -52,5 +52,3 @@ module Lain
     end
   end
 end
-
-require_relative "verdict/policy"

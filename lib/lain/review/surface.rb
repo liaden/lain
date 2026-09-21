@@ -222,10 +222,6 @@ module Lain
 end
 
 # The port's own value, ahead of every adapter: it belongs to none of them.
-require_relative "surface/message"
-require_relative "surface/null"
-require_relative "surface/text"
 # LAST, and the one entry here with a load-order reason: this adapter names
 # `Frontend::Neovim::ReviewView` as its default collaborator, which resolves
 # only because `lain.rb` loads `lain/frontend` before `lain/review`.
-require_relative "surface/neovim"

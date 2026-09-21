@@ -217,9 +217,9 @@ module Lain
       # @raise [LiveArms::UnroutableBackend] when the resolved model has no
       #   cheaper sibling named, or the server says it has not got the one
       #   named, and no `router` was given
+      # @param memory [String, nil] `--memory`: what each arm's view starts from
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
-      # @param memory [String, nil] `--memory`: what each arm's view starts from
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
                       decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil, cheap_model: nil,
@@ -346,10 +346,10 @@ module Lain
       #   by default, for the reason above
       # @param instrumentation [#call] what each recorded run REPORTS through,
       #   the per-turn Context source included
+      # @param memory [String, nil] `--memory`: what each run's view starts from
       # @return [Array<String>] one line per run, in run order: the written
       #   session path, or for a run whose round trip failed, the path it was
       #   set aside under and why
-      # @param memory [String, nil] `--memory`: what each run's view starts from
       # @raise [Refusal] when no run recorded at all, naming each set aside
       def record(taskfile:, out:, backend:, runs: RECORD_DEFAULTS.fetch(:runs),
                  system: nil, provider: nil, tools: Harness::NO_TOOLS,
@@ -736,4 +736,3 @@ end
 
 # After the class body: RunRecorder reopens CLI (and raises CLI::Refusal), and
 # nothing above needs it before runtime.
-require_relative "cli/run_recorder"

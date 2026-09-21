@@ -129,10 +129,6 @@ module Lain
       # `class Partition` would beat the `Data.define` above to the name. The
       # port before its implementations is the only ordering constraint among
       # the four -- nothing in a strategy's body cites another strategy.
-      require_relative "partition/strategy"
-      require_relative "partition/whole"
-      require_relative "partition/by_directory"
-      require_relative "partition/by_commit"
 
       # Every strategy this ships, by the name a scope spells it with.
       #

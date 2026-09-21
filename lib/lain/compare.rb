@@ -297,6 +297,3 @@ end
 # before `lain/bench`, because Bench::Sweep resolves Compare::ArmFold::HEADERS
 # while evaluating its own COLUMNS constant. Swap those two lines and the suite
 # dies with `sweep.rb: uninitialized constant Lain::Bench::Sweep::Compare`.
-require_relative "compare/table"
-require_relative "compare/arm_fold"
-require_relative "compare/mode"

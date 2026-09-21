@@ -3,7 +3,6 @@
 # {Row} must exist before this file's body runs `private_constant` on it, so it
 # loads FIRST. It reads no constant of this file's at LOAD time, which is what
 # keeps that order legal.
-require_relative "inbox_view/row"
 
 module Lain
   module Frontend
@@ -78,8 +77,8 @@ module Lain
         WIDTH = Fold::WIDTH
 
         # The ONE spelling the runtime tests for (`05_records.lua`'s
-        # CONTINUATION), now read off {Fold::INDENT} rather than spelled a
-        # second time: `neovim.rb`'s manifest loads {Fold} before this file, so
+        # CONTINUATION), read off {Fold::INDENT} rather than spelled a second
+        # time: naming the constant is what loads the file that defines it, so
         # the load-order reason the two spellings used to be independent no
         # longer holds.
         INDENT = Fold::INDENT
@@ -454,4 +453,3 @@ end
 # LAST, and the twin of the require at the top: {Gestures} names {InboxView}'s
 # own NAME and {Opened} in its body, so it can only be read once that body has
 # run -- where {Row} had to be read BEFORE it, to be made private there.
-require_relative "inbox_view/gestures"

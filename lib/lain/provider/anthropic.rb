@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "anthropic/retry_tap"
-require_relative "anthropic/stream_assembler"
-require_relative "anthropic/transport"
-
 module Lain
   class Provider
     # The forked provider: Lain's own HTTP transport instead of the official SDK.

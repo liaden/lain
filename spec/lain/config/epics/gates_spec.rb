@@ -86,27 +86,36 @@ RSpec.describe Lain::Config::Epics::Gates do
   end
 
   # `Epic::STAGES` and `Approval::Gate::Policies` are read inside METHOD BODIES,
-  # at call time, and this pins them there. `lain.rb` loads config eight units in
-  # and epic sixty further down, so a class-body reference to either -- the shape
-  # a declarative closed-set validation naturally takes -- would resolve during
-  # `require` and take the whole library down, not merely this file's specs.
-  # EMPTY is the proof case: built while this file loads, and surviving only
-  # because an empty table is answered before either set is read.
-  describe "the load order it is declared under" do
-    # The manifest is the authority on what precedes config, so the prefix is
-    # read from it rather than restated here and left to rot.
-    def manifest_prefix_through_config
+  # at call time, and this pins them there. A class-body reference to either --
+  # the shape a declarative closed-set validation naturally takes -- would make
+  # reaching the config unit reach two unrelated units with it, which is what
+  # this asks and refuses. EMPTY is the proof case: built while this file loads,
+  # and surviving only because an empty table is answered before either set is
+  # read.
+  #
+  # Asked of a child booted WITHOUT the eager load, because that is the only
+  # boot in which the question has an answer: eager loading defines every
+  # constant in lib/ whatever any one file references, so the reachability
+  # claim is invisible from inside this process.
+  #
+  # And asked of $LOADED_FEATURES rather than of `const_defined?`, which
+  # answers TRUE for a name the loader has merely registered an autoload for --
+  # every constant in lib/, from `setup` onward. Whether the file RAN is the
+  # only form of the question autoloading leaves standing.
+  describe "what reaching it pulls in" do
+    def lazy_boot_script
       root = File.expand_path("../../../..", __dir__)
-      units = File.readlines(File.join(root, "lib", "lain.rb"))
-                  .filter_map { |line| line[/^require_relative "(.+)"/, 1] }
-
-      units[0..units.index("lain/config")].map { |unit| File.join(root, "lib", "#{unit}.rb") }
+      entry = File.join(root, "lib", "lain.rb")
+      <<~RUBY
+        source = File.readlines(#{entry.inspect}).reject { |line| line.start_with?("loader.eager_load") }.join
+        eval(source, TOPLEVEL_BINDING, #{entry.inspect})
+      RUBY
     end
 
-    it "loads the whole config unit without defining Epic or Approval" do
-      script = manifest_prefix_through_config.map { |file| "require #{file.inspect}" }.join("\n")
-      script += "\nprint [Lain::Config.empty.class.name, Object.const_defined?(\"Lain::Epic\"), " \
-                "Object.const_defined?(\"Lain::Approval\")].inspect"
+    it "reaches the whole config unit without loading the epic or approval units" do
+      script = "#{lazy_boot_script}\n" \
+               "loaded = ->(unit) { $LOADED_FEATURES.any? { |path| path.end_with?(\"/lain/\#{unit}.rb\") } }\n" \
+               "print [Lain::Config.empty.class.name, loaded.call(\"epic\"), loaded.call(\"approval\")].inspect"
 
       out, status = Open3.capture2e(RbConfig.ruby, "-e", script)
 

@@ -2,8 +2,6 @@
 
 require "bigdecimal"
 
-require_relative "ledger/index"
-
 module Lain
   # Aggregates token usage and dollar cost across one or more Timelines: the
   # spend attributable to the turns REACHABLE from the given heads, joined from

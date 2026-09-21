@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "tool/contracts"
-
 module Lain
   # The abstract base every tool subclasses.
   #
@@ -385,12 +383,3 @@ module Lain
     end
   end
 end
-
-require_relative "tool/file_target"
-require_relative "tool/bounds"
-require_relative "tool/bounds/walk_cap"
-require_relative "tool/input"
-require_relative "tool/invocation"
-require_relative "tool/result_block"
-require_relative "tool/cancellation"
-require_relative "tool/spawn_policy"

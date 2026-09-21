@@ -248,5 +248,3 @@ module Lain
     end
   end
 end
-
-require_relative "completion/sources"

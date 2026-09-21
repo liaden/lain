@@ -162,6 +162,3 @@ module Lain
     end
   end
 end
-
-require_relative "toolset/disclosure"
-require_relative "toolset/unheld"

@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "chat/message_formatting"
-require_relative "chat/thinking_payload"
-require_relative "chat/response_parsing"
-
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/providers/anthropic/chat.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::. `build_system_content`'s
 # module-qualified `Media.format_content` (not vendored -- leak site 7) is
@@ -108,3 +104,11 @@ module Lain
     end
   end
 end
+
+# Mixed in HERE rather than from anthropic.rb: this file reopens that class, so
+# an include written over there would wait on a require already in flight
+# whenever the loader reached this file first. Outside the class body, and so
+# fully qualified, to leave that body a pure namespace -- the one shape
+# Style/Documentation exempts without a second docstring on a reopened class,
+# which is a docstring YARD silently discards.
+Lain::Provider::HTTP::Providers::Anthropic.include(Lain::Provider::HTTP::Providers::Anthropic::Chat)

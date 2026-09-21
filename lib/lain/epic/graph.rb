@@ -16,8 +16,6 @@ module Lain
                     "the epic graph holds no such issue"
     private_constant :DANGLING_EDGE
 
-    class MalformedGraph < Error; end
-
     # One structural edit to an epic's issue set: the issues leaving, the issues
     # arriving in their place, and the edge rewrite that keeps every third party
     # naming something the graph still holds. Split, merge and add are all this

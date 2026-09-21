@@ -9,6 +9,3 @@ module Lain
   module Friction
   end
 end
-
-require_relative "friction/cache_waste"
-require_relative "friction/report"

@@ -2,16 +2,6 @@
 
 module Lain
   module Epic
-    # The stages an epic walks, in order. A CLOSED set, like
-    # {Epic::STORED_STATUSES}: the order is the pipeline, so membership and
-    # position are the same fact and neither may be spelled twice.
-    STAGES = %w[research epic_plan issue_plan implementation].freeze
-
-    # The stages whose artifact is about ONE issue, so their gates are opened,
-    # parked and approved per issue. research and epic_plan are the epic's own
-    # documents and stay epic-wide.
-    ISSUE_STAGES = %w[issue_plan implementation].freeze
-
     # Loud at construction, because a stage is a partition key: a typo that
     # constructs folds onto a partition nothing writes to, and reads as drained.
     class UnknownStage < Error; end

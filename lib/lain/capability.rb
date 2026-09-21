@@ -9,7 +9,3 @@ module Lain
   module Capability
   end
 end
-
-require_relative "capability/degraded_set"
-require_relative "capability/policy"
-require_relative "capability/guard"

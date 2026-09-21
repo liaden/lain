@@ -1,13 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "backend/ceiling"
-require_relative "backend/endpoint"
-require_relative "backend/ollama_tier"
-require_relative "backend/summarizer"
-require_relative "backend/span_summarizer"
-require_relative "backend/num_ctx"
-require_relative "backend/window_book"
-
 module Lain
   module CLI
     # Turns the CLI flags into the two collaborators a run needs a CHOICE about --

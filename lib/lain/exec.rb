@@ -98,8 +98,3 @@ module Lain
     end
   end
 end
-
-require_relative "exec/capture"
-require_relative "exec/local"
-require_relative "exec/core"
-require_relative "exec/docker"

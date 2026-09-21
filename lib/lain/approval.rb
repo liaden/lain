@@ -10,17 +10,3 @@ module Lain
   module Approval
   end
 end
-
-require_relative "approval/queue"
-require_relative "approval/queue_surface"
-require_relative "approval/auto_surface"
-require_relative "approval/secret_surface"
-require_relative "approval/policy_switch"
-require_relative "approval/signoff_queue"
-require_relative "approval/gate"
-require_relative "approval/rule"
-require_relative "approval/rule_chain"
-require_relative "approval/risk"
-require_relative "approval/remembered"
-require_relative "approval/composed_term"
-require_relative "approval/escalation"

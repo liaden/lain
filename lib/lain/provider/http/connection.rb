@@ -3,7 +3,6 @@
 require "faraday"
 require "faraday/retry"
 require "timeout"
-require_relative "connection/middleware_stack"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/connection.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::.

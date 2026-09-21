@@ -9,14 +9,23 @@ module Lain
   # the UNIT rather than to any one file in it. A sibling naming one in its
   # CLASS BODY -- {Epic::Contracts} reads four of these and {Epic::Intake} a
   # fifth -- can only do so if the definition has already run, and the
-  # namespace file is the one file guaranteed to have. Left in a child, that
-  # guarantee is the require manifest's order: true today and alphabetical luck
-  # the moment a loader is doing the requiring.
+  # namespace file is the one file guaranteed to have. Left in a child, the
+  # only guarantee is the order the loader happens to walk a directory in.
   #
   # The unit already keeps a constant this way one level down -- `intake.rb`
   # holds KINDS for `intake/delta.rb`'s class body -- so this is that pattern
   # at the namespace's own level rather than a new one.
   module Epic
+    # The stages an epic walks, in order. A CLOSED set, like
+    # {STORED_STATUSES}: the order is the pipeline, so membership and position
+    # are the same fact and neither may be spelled twice.
+    STAGES = %w[research epic_plan issue_plan implementation].freeze
+
+    # The stages whose artifact is about ONE issue, so their gates are opened,
+    # parked and approved per issue. research and epic_plan are the epic's own
+    # documents and stay epic-wide.
+    ISSUE_STAGES = %w[issue_plan implementation].freeze
+
     # The statuses an issue may CARRY. `ready` is deliberately not a member: it
     # is a predicate the graph derives (pending with every blocker done), and a
     # closed set holding a value no author may write is a special case waiting
@@ -51,40 +60,14 @@ module Lain
     REVISION_OPS = { "add" => %w[discovered_from issue], "split" => %w[id into],
                      "merge" => %w[as left right] }.transform_values(&:freeze).freeze
 
-    # Bytes an author wrote that are not an issue. A {Lain::Error}, so exe/lain
-    # renders it instead of crashing, and one of {Intake}'s PARSE_FAILURES.
+    # The three ways bytes an author wrote can fail to be an epic, gathered
+    # here rather than beside the parsers that raise them because {Intake}'s
+    # PARSE_FAILURES names all three in a class body -- it can only do that if
+    # they are defined by the time it loads, and the namespace file is the one
+    # file guaranteed to be. Each is a {Lain::Error}, so exe/lain renders it
+    # instead of crashing.
+    class MalformedDocument < Error; end
+    class MalformedGraph < Error; end
     class MalformedIssue < Error; end
   end
 end
-
-# Index for the epic/ unit. It sits after `plan` in lain.rb because Issue reads
-# Gherkin::Criteria and Canonical. Contracts loads first: {Epic::Submission}
-# reopens it, so the file the module's docstring lives in has to be the file
-# that defines it.
-require_relative "epic/contracts"
-require_relative "epic/issue"
-require_relative "epic/blocking"
-require_relative "epic/graph"
-require_relative "epic/graph_fiber"
-require_relative "epic/stage"
-require_relative "epic/document"
-require_relative "epic/intake"
-require_relative "epic/submission"
-require_relative "epic/issue_transition"
-require_relative "epic/stage_transition"
-require_relative "epic/doc_written"
-require_relative "epic/graph_revision"
-require_relative "epic/wire_integer"
-require_relative "epic/review_claim"
-require_relative "epic/review_opened"
-require_relative "epic/review_closed"
-require_relative "epic/annotation_value"
-require_relative "epic/annotation"
-require_relative "epic/review/annotations"
-require_relative "epic/review"
-require_relative "epic/progress"
-require_relative "epic/mermaid"
-require_relative "epic/home"
-require_relative "epic/scribe"
-require_relative "epic/in_flight"
-require_relative "epic/advance"

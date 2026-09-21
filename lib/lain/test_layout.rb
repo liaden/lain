@@ -219,7 +219,3 @@ module Lain
 end
 
 # The parts reopen the class, so they load once `Data.define` has made it.
-require_relative "test_layout/shapes"
-require_relative "test_layout/mapping"
-require_relative "test_layout/constant_index"
-require_relative "test_layout/guard"

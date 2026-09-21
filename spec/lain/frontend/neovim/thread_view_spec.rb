@@ -123,24 +123,26 @@ RSpec.describe Lain::Frontend::Neovim::ThreadView do
     #
     # The row, and what a deletion owes each entry:
     #
-    #   1. `lib/lain/frontend/neovim.rb` -- the require line. A dangling
-    #      `require_relative` is a LoadError rather than a missing feature. (No
-    #      such line for the lua module: the runtime loader globs the directory.)
-    #   2. `lib/lain/review/surface/neovim.rb` -- the port adapter renders
+    #   1. `lib/lain/review/surface/neovim.rb` -- the port adapter renders
     #      `#annotate` and `#thread` through {ThreadView}. Those two messages are
     #      the PORT's, so deleting the pane does not delete them: a deletion has
     #      to decide what they become. Left as they are they would post to a lua
     #      entry point that no longer exists -- a silent nil call inside a notify,
     #      not a LoadError, which is exactly the failure this row exists to make
     #      impossible.
-    #   3. `lib/lain/review/docent.rb` -- the docent asks a review surface whether
+    #   2. `lib/lain/review/docent.rb` -- the docent asks a review surface whether
     #      it has a pane to draw an answer into, and takes the one it finds. It
     #      costs a deletion nothing extra: the deletion map already records that removing
     #      the pane forces the docent out with it, so this reference goes with the
     #      file it lives in. It is listed because THIS sweep is a flat allowlist
     #      and knows nothing about that nesting. Its own spec is here for the same
     #      reason: it stands a surface in that answers `#thread_view`.
-    #   4. the two specs that drive the rail.
+    #   3. the two specs that drive the rail.
+    #
+    # There is no require line to list: nothing under lib/ requires anything
+    # under lib/, so deleting thread_view.rb leaves the two consumers above
+    # naming a constant the loader can no longer find -- a NameError at the
+    # site that wanted it, which is what the rows exist to route a deletion to.
     #
     # THE CAPABILITY OWNS TWO SPEC FILES, not one: the editor half at
     # `spec/lain/frontend/neovim/runtime/51_thread_spec.rb` and the Ruby half
@@ -156,9 +158,8 @@ RSpec.describe Lain::Frontend::Neovim::ThreadView do
       own = ["lib/lain/frontend/neovim/thread_view.rb", "lib/lain/frontend/neovim/runtime/51_thread.lua",
              "spec/lain/frontend/neovim/runtime/51_thread_spec.rb",
              "spec/lain/frontend/neovim/thread_view_spec.rb", "spec/support/recording_thread_inlet.rb"]
-      consumers = ["lib/lain/frontend/neovim.rb", "lib/lain/review/docent.rb",
-                   "lib/lain/review/surface/neovim.rb", "spec/lain/review/docent_spec.rb",
-                   "spec/lain/review/surface/neovim_spec.rb"]
+      consumers = ["lib/lain/review/docent.rb", "lib/lain/review/surface/neovim.rb",
+                   "spec/lain/review/docent_spec.rb", "spec/lain/review/surface/neovim_spec.rb"]
       # `deletability_spec.rb` is the MAP, so it names every deletable
       # capability by construction and exempts itself from its own sweep for the
       # same reason. It is not a consumer: the thread pane's deletion takes its
@@ -175,8 +176,6 @@ RSpec.describe Lain::Frontend::Neovim::ThreadView do
                       .map { |path| path.delete_prefix("#{root}/") }
 
       expect((naming - own).sort).to eq(consumers.sort), unlisted
-      expect(File.read(File.join(root, "lib/lain/frontend/neovim.rb")).scan(/^.*thread_view.*$/))
-        .to eq(['require_relative "neovim/thread_view"'])
     end
 
     # The manual is not in the glob above and cannot be: it names `:LainThread`

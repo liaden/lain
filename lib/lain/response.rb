@@ -63,4 +63,3 @@ module Lain
 end
 
 # After the Data.define: the lens reopens `Response`, which has to exist first.
-require_relative "response/tool_use"

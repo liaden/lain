@@ -81,9 +81,3 @@ module Lain
     end
   end
 end
-
-require_relative "mode/layer"
-require_relative "mode/scope"
-require_relative "mode/approval"
-require_relative "mode/switch"
-require_relative "mode/resolution"

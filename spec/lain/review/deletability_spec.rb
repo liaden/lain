@@ -13,10 +13,9 @@ require "tmpdir"
 # == Why a reference sweep alone is not the proof
 #
 # A sweep shows nothing points at a capability. It does not show the tree still
-# LOADS without it, and the two failures are not the same shape: a dangling
-# `require_relative` is a LoadError at boot, and a constant read in a class body
-# is a NameError at boot -- neither of which any amount of grepping for a
-# constant NAME finds, because the name is exactly what is gone. So each row
+# LOADS without it, and a constant read in a class body is a NameError at boot
+# -- which no amount of grepping for a constant NAME finds, because the name is
+# exactly what is gone. So each row
 # here is also booted with its files removed; the negative control below
 # proves the NameError shape specifically, over a synthetic pair rather than a
 # real row, because a real row is deletable by definition and the control has
@@ -70,17 +69,19 @@ require "tmpdir"
 # {DeletionMap} rows carry the literal MARKER each edit site must contain, so a
 # path or a line that has drifted fails by name rather than by silence.
 #
-# Note the asymmetry the rows record: a **lua** module has no require line at
-# all -- the runtime loader globs the directory, so deleting the file is the whole edit
-# -- while every **Ruby** unit has exactly one.
+# What the rows no longer record is a require line, for either language: the
+# nvim runtime loader globs its directory and the Ruby loader resolves a unit
+# by its path, so deleting the file is the whole edit on both sides. The
+# require-omission failure above is history, and one example below is what
+# keeps it history.
 
 # One deletable capability, as one row of the map.
 #
 # `files` are deleted outright. `consumers` are files OUTSIDE the capability that
 # name its constants in code and must be edited; the sweep pins that list
 # exactly, so a new consumer is a red example rather than a silent extra site.
-# `edits` are files that must change but do NOT name a constant -- a require
-# path, a role symbol, a manual stanza -- so nothing but a literal marker can
+# `edits` are files that must change but do NOT name a constant -- a role
+# symbol, a wire string, a manual stanza -- so nothing but a literal marker can
 # find them. `forces` is the nesting the plan records as data. `plan` is the
 # planning document that decided this row was deletable, so a reader can find
 # the reasoning rather than the verdict alone. `untestable` names, in words,
@@ -106,9 +107,10 @@ module DeletionMap
   # `@outbox.open?` to it and nothing else does.
   OUTBOX_REACH = %w[outbox: @outbox.hold @outbox.held_source @outbox.held_verdict @outbox.target].freeze
 
-  # The rows. A Ruby unit's `require` line is spelled here as it appears in the
-  # file, because a dangling `require_relative` is a LoadError rather than a
-  # missing feature and only a literal finds it.
+  # The rows. An `edits` marker is spelled as a literal because that is the only
+  # thing that finds a site naming no constant -- a role symbol, a wire string,
+  # a manual stanza. No row records a require line: nothing under `lib/` loads
+  # anything else under it, so a deletion is the files and nothing beside them.
   CAPABILITIES = [
     Capability.new(
       key: "thread",
@@ -125,13 +127,7 @@ module DeletionMap
       # not a removal, which is the one thing the plan's "annotations still work"
       # does not say.
       consumers: ["lib/lain/review/surface/neovim.rb", "spec/lain/review/surface/neovim_spec.rb"],
-      edits: {
-        # Down from four markers to one: the other three named the protocol-9
-        # changelog entry and the two examples that swept it, and the changelog
-        # went when the handshake token stopped being a hand-maintained integer.
-        "lib/lain/frontend/neovim.rb" => ['require_relative "neovim/thread_view"'],
-        "plugin/nvim/doc/lain.txt" => ["*:LainThread*", "*lain://thread*"]
-      },
+      edits: { "plugin/nvim/doc/lain.txt" => ["*:LainThread*", "*lain://thread*"] },
       forces: %w[docent], plan: REVIEW_SURFACE, untestable: nil
     ),
     Capability.new(
@@ -148,7 +144,6 @@ module DeletionMap
                   "lib/lain/cli/wiring/toolset_build.rb", "spec/lain/cli/command/survey_spec.rb",
                   "spec/lain/cli/wiring/toolset_build_spec.rb"],
       edits: {
-        "lib/lain/review.rb" => ['require_relative "review/docent"'],
         # The catalog and the shipped templates are pinned equal in BOTH
         # directions, so a template without its catalog entry is a red spec and
         # a catalog entry without its roll-call name is another.
@@ -171,9 +166,6 @@ module DeletionMap
                   "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb",
                   "spec/lain/cli/command/introspect_spec.rb", "spec/lain/seams/critique_over_held_review_spec.rb"],
       edits: {
-        "lib/lain/review.rb" => ['require_relative "review/submit"'],
-        "lib/lain/forge/gh.rb" => ['require_relative "gh/endpoint"'],
-        "lib/lain/cli/command.rb" => ['require_relative "command/review_submit"'],
         # FIVE sites the constant sweep is blind to: two spell the verb as the
         # wire STRING, one is the command set pinned as a LITERAL (the wiring
         # examples beside it go too), and BOTH review commands reach the outbox
@@ -208,7 +200,6 @@ module DeletionMap
       # the only thing that ever builds one of these.
       consumers: ["lib/lain/cli/review.rb"],
       edits: {
-        "lib/lain/review/source.rb" => ['require_relative "source/github_pr"'],
         # The spec drives that leg through the COMMAND, naming the source only
         # in prose, so the constant sweep is blind to eight examples that stop
         # compiling the moment the leg goes.
@@ -238,7 +229,7 @@ module DeletionMap
       # bench sweep names either subclass, so the strategy seam has never been
       # on a live request path.
       consumers: [],
-      edits: { "lib/lain/toolset.rb" => ['require_relative "toolset/disclosure"'] },
+      edits: {},
       # The map's only LOAD-TIME force, now that `diagnostics` -> `prefill` has
       # been executed: `disclosure_sweep.rb` reads both arms into `ARMS` while
       # its class body runs, so removing this row alone is a NameError at boot
@@ -259,7 +250,6 @@ module DeletionMap
       # questions, and the bounds sweep exempts it by fully-qualified name.
       consumers: ["spec/support/tool_registry.rb", "spec/tool_bounds_discipline_spec.rb"],
       edits: {
-        "lib/lain/tools.rb" => ['require_relative "tools/tool_search"'],
         # A roll call that spells the tool's model-facing NAME and never its
         # constant, so the sweep is blind to it: the parallel-safety table's
         # opted-out set.
@@ -276,7 +266,7 @@ module DeletionMap
               "spec/fixtures/bench/disclosure/malformed_tool.yml",
               "spec/fixtures/bench/disclosure/missing_recorded_arm.yml"],
       consumers: ["spec/tool_bounds_discipline_spec.rb"],
-      edits: { "lib/lain/bench.rb" => ['require_relative "bench/disclosure_sweep"'] },
+      edits: {},
       forces: [], plan: VERIFIED_DELETIONS, untestable: nil
     ),
     Capability.new(
@@ -405,36 +395,38 @@ class BootWithout
   # rather than shipped in `lib/`, where it would be permanently-dead
   # production code the next reachability audit would flag for deletion.
   #
-  # `source` is copied WHOLE, so the fixture's full shape is on disk in the
-  # copy; `requires` controls which of it the copy's own `lain.rb` actually
-  # loads -- omitting one is how the control simulates that half having been
-  # deleted, without needing a second call back into `apply`.
+  # `files` names which of the fixture's halves lands in the copy, and that
+  # list is the whole of the simulation now that nothing under `lib/` requires
+  # anything else under it: a half left OUT is a half the loader has no path
+  # for, which is exactly the state its row having been executed leaves behind.
+  # Copying the directory whole and controlling a require list instead would
+  # control nothing -- the eager load reads what is on disk.
   #
-  # Lands at `lib/<basename(source)>/` -- a name that collides with anything
-  # already under `lib/` (today, only `lain/` and `lain.rb` exist to collide
-  # with) is refused rather than silently overwritten: `FileUtils.cp` onto an
-  # EXISTING path opens it for writing rather than creating a new inode, and
-  # every such path here is hardlinked to the real tree, so overwriting one
-  # is the exact corruption this class exists to make impossible.
+  # Lands at `lib/lain/review/<basename(source)>/`, the path the fixture's own
+  # constants name, so the only thing that can fail the boot is the missing
+  # half rather than a constant the loader cannot place. A name that collides
+  # with something already there is refused rather than silently overwritten:
+  # `FileUtils.cp` onto an EXISTING path opens it for writing rather than
+  # creating a new inode, and every such path here is hardlinked to the real
+  # tree, so overwriting one is the exact corruption this class exists to make
+  # impossible.
   #
   # @param source [String] a directory of `.rb` fixture sources
-  # @param requires [Array<String>] basenames (no extension) to require, in order
+  # @param files [Array<String>] basenames (no extension) to install
   # @raise [RuntimeError] if the destination path already exists in the copy
-  def install(source, requires:)
-    name = File.basename(source)
-    dest = File.join(@dir, "lib", name)
+  def install(source, files:)
+    dest = File.join(@dir, "lib", "lain", "review", File.basename(source))
     FileUtils.mkdir_p(dest)
-    Dir.children(source).each do |file|
-      target = File.join(dest, file)
+    files.each do |file|
+      target = File.join(dest, "#{file}.rb")
       if File.exist?(target)
         raise "#{target} already exists in the copy -- install refuses to overwrite a path this copy " \
               "shares an inode with the real tree on; pick a fixture directory whose basename does not " \
               "collide with anything under lib/"
       end
 
-      FileUtils.cp(File.join(source, file), target)
+      FileUtils.cp(File.join(source, "#{file}.rb"), target)
     end
-    append_requires(File.join(@dir, "lib", "lain.rb"), requires.map { |req| %(require_relative "#{name}/#{req}") })
   end
 
   private
@@ -444,26 +436,15 @@ class BootWithout
     cap.edits.each { |path, markers| drop_lines(path, markers) if path.start_with?("lib/") }
   end
 
-  # Only a whole line the row records verbatim -- a `require_relative`. Anything
-  # else in `edits` is a site a human has to think about, and this object's
-  # claim is only that the LOAD survives.
+  # Only a whole line the row records verbatim. Anything else in `edits` is a
+  # site a human has to think about, and this object's claim is only that the
+  # LOAD survives -- which today no `edits` marker under lib/ can affect, since
+  # none of them is a whole line.
   def drop_lines(path, markers)
     full = File.join(@dir, path)
     kept = File.readlines(full).reject { |line| markers.include?(line.strip) }
     File.delete(full)
     File.write(full, kept.join)
-  end
-
-  # `cp -al` HARDLINKS every file into the copy, so an in-place append (`File.open(path,
-  # "a")`) writes through to the REAL file `BootWithout` was built to leave alone --
-  # `install`'s first version did exactly that and corrupted the real `lib/lain.rb` for
-  # every OTHER example that ran after it, in the same process and the next. `drop_lines`
-  # above already gets this right by unlinking first; this is the same shape for an
-  # append instead of a line removal.
-  def append_requires(path, lines)
-    content = File.read(path)
-    File.delete(path)
-    File.write(path, content + lines.map { |line| "#{line}\n" }.join)
   end
 end
 
@@ -504,9 +485,10 @@ RSpec.describe "the deletion map", :seam do
                        "drifted deletes nothing and leaves the capability behind."
   end
 
-  # Would have caught: four rows that omitted the `require` line their unit is
-  # loaded by. A marker is a literal because that is the only thing that finds a
-  # site naming no constant -- a require PATH, a role symbol, a manual stanza.
+  # Would have caught: four rows that omitted the `require` line their unit was
+  # loaded by, back when a unit had one. A marker is a literal because that is
+  # the only thing that finds a site naming no constant -- a role symbol, a
+  # wire string, a manual stanza.
   it "names, for every edit site, a marker still present in that file" do
     stale = map.flat_map do |cap|
       cap.edits.flat_map do |path, markers|
@@ -554,27 +536,21 @@ RSpec.describe "the deletion map", :seam do
     end
   end
 
-  # The asymmetry, asserted rather than described: a lua module has NO require
-  # line (the runtime loader globs the directory), every Ruby unit under `lib/` has
-  # exactly one, and the row must name the file it lives in.
-  it "records the one require site of every Ruby unit it deletes, and none for a lua one" do
+  # What used to be an asymmetry -- a lua module globbed by the runtime loader
+  # against a Ruby unit named by exactly one `require_relative` -- and is now
+  # one rule for both: nothing under `lib/` loads anything else under `lib/`,
+  # so no row owes a require site at all and deleting a file is the whole of
+  # deleting it. Kept as an assertion rather than deleted with the rows it
+  # emptied, because a reintroduced require is a LoadError this map would
+  # otherwise route nobody to.
+  it "records no require site for anything it deletes, because lib/ has none to record" do
     testable.each do |cap|
-      cap.own.grep(%r{^lib/.*\.rb$}).each do |unit|
-        requiring = TreeSweep.requiring(unit)
+      requiring = cap.own.flat_map { |path| TreeSweep.requiring(path).map { |site| "#{site} -> #{path}" } }
 
-        expect(requiring.size).to be <= 1, "#{unit} is required from more than one place: #{requiring.inspect}"
-        # `cap.own` as well as `cap.edited`: a unit's own index (`prefill.rb`
-        # requires `prefill/finding`) goes in the same deletion, so that require
-        # site is inside the row rather than beside it.
-        expect(cap.edited + cap.own).to include(*requiring),
-                                        "#{cap.key} deletes #{unit} without recording the `require_relative` " \
-                                        "in #{requiring.inspect} -- a dangling require is a LoadError, not a " \
-                                        "missing feature"
-      end
-
-      lua_requires = cap.own.grep(/\.lua$/).select { |lua| TreeSweep.requiring(lua).any? }
-
-      expect(lua_requires).to be_empty, "the runtime loader globs that directory: #{lua_requires.inspect}"
+      expect(requiring).to be_empty,
+                           "#{cap.key} deletes a file something under lib/ still requires: " \
+                           "#{requiring.inspect}. A dangling require is a LoadError, not a missing " \
+                           "feature -- and the loader needs no require line to find a unit."
     end
   end
 
@@ -655,13 +631,13 @@ RSpec.describe "the deletion map", :seam do
     # body runs -- but neither is ever part of `lib/`, because a pair that
     # exists only to be deleted in a test is exactly the permanently-dead
     # production code this whole plan removes. `BootWithout#install` copies
-    # both into the boot copy and requires only `dependent` -- omitting
-    # `forcer`'s require is how this simulates its row having been executed,
-    # without needing a second capability applied after the fact.
+    # `dependent` alone into the boot copy, leaving the loader no path for
+    # `Forcer` at all -- which is what its row having been executed looks
+    # like, without needing a second capability applied after the fact.
     it "does NOT load when a forced dependent is left behind" do
       fixture = DeletionMap::ROOT.join("spec/fixtures/deletability_control").to_s
       tree = BootWithout.new([])
-      tree.install(fixture, requires: ["dependent"])
+      tree.install(fixture, files: ["dependent"])
       booted = tree.boot
 
       # Two different failure shapes share this one boolean, so the message
@@ -673,6 +649,25 @@ RSpec.describe "the deletion map", :seam do
       # reason.
       expect(booted.ok).to be(false), "installing Dependent without Forcer was expected to break the boot"
       expect(booted.output).to include("Forcer")
+    ensure
+      tree&.remove
+    end
+
+    # The control's OTHER direction, and without it the pair above proves only
+    # half of what it claims. A negative control that has never been shown to
+    # PASS cannot tell "the missing half broke the boot" from "this fixture
+    # never boots" -- a typo in either file, a constant at a path the loader
+    # cannot place, a `lib/` copy that was broken before anything was left out
+    # of it, and the example above stays green for a reason that has nothing to
+    # do with Forcer. Installing BOTH halves is the cheapest thing that can
+    # tell those apart.
+    it "DOES load when the forced half is installed with it" do
+      fixture = DeletionMap::ROOT.join("spec/fixtures/deletability_control").to_s
+      tree = BootWithout.new([])
+      tree.install(fixture, files: %w[dependent forcer])
+      booted = tree.boot
+
+      expect(booted.ok).to be(true), "installing Dependent WITH Forcer was expected to boot:\n#{booted.output}"
     ensure
       tree&.remove
     end

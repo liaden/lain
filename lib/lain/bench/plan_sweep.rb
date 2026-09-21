@@ -66,6 +66,3 @@ end
 # After the class body: the sibling units reopen PlanSweep and nothing above
 # needs them before runtime. Separate FILES, one responsibility each: Fixture
 # loads, Driver measures, Report renders.
-require_relative "plan_sweep/fixture"
-require_relative "plan_sweep/driver"
-require_relative "plan_sweep/report"

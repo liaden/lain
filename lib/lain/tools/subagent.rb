@@ -1179,9 +1179,3 @@ end
 
 # These children reopen Subagent, so they load after the class body. Log leads:
 # Lineage's `log:` default names Log::Null.
-require_relative "subagent/log"
-require_relative "subagent/progress"
-require_relative "subagent/lineage"
-require_relative "subagent/turn_feed"
-require_relative "subagent/actor"
-require_relative "subagent/stagger"

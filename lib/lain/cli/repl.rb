@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "repl/approval_surfaces"
-require_relative "repl/ask"
-require_relative "repl/conversation_scope"
-require_relative "repl/outcome"
-
 module Lain
   module CLI
     # One conversation: reads lines at `you>`, consults the command registry
@@ -193,7 +188,6 @@ module Lain
       # through to the middleware phase unchanged. The rescue covers BOTH paths,
       # so a malformed invocation renders and `converse` loops to the next
       # prompt instead of dying.
-      #
       def dispatch(text)
         settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
       rescue Lain::Error => e

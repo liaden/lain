@@ -2,14 +2,6 @@
 
 require "json"
 
-require_relative "ollama/decoding"
-require_relative "ollama/encoding"
-require_relative "ollama/retry_tap"
-require_relative "ollama/stream_assembler"
-require_relative "ollama/streamed_failure"
-require_relative "ollama/deployment"
-require_relative "ollama/transport"
-
 module Lain
   class Provider
     # Ollama's native `/api/chat`. A free, local, temperature-0 bench arm -- a

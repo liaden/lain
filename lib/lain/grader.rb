@@ -48,15 +48,3 @@ module Lain
     end
   end
 end
-
-require_relative "grader/fixture"
-require_relative "grader/recall"
-require_relative "grader/rubric"
-require_relative "grader/tool_call_index"
-require_relative "grader/tool_steering"
-require_relative "grader/frustration_repair"
-require_relative "grader/refuter"
-require_relative "grader/verified"
-require_relative "grader/test_harness"
-require_relative "grader/lease_harness"
-require_relative "grader/journaling"

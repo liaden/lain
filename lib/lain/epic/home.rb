@@ -286,4 +286,3 @@ end
 
 # This file is the home/ subtree's index. Journaled reopens the class above, so it
 # loads AFTER the class body.
-require_relative "home/journaled"

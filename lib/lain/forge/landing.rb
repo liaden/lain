@@ -120,8 +120,3 @@ end
 # This file is the landing/ subtree's index. Every child reopens `class Landing`
 # and reads its constants in method bodies only, so any order loads -- they are
 # listed in the order the fold uses them (CLAUDE.md, Requires).
-require_relative "landing/running"
-require_relative "landing/stopped"
-require_relative "landing/evidence"
-require_relative "landing/step"
-require_relative "landing/plan"

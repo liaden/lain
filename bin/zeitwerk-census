@@ -8,16 +8,15 @@ require "pathname"
 require "tmpdir"
 
 # What a green boot, a green suite and a clean `rubocop` all agree on, and all
-# three are wrong about: which constants in `lib/` resolve only because
-# `lib/lain.rb`'s manifest and the unit indexes under it still require every
-# file by hand.
+# three are wrong about: which constants in `lib/` resolve only because the
+# loader happens to reach their defining file before anything names them.
 #
-# `spec/zeitwerk_spec.rb` asks the loader whether it can FIND each constant the
-# manifest defines, and the answer is yes for hundreds of them that have no path
+# `spec/zeitwerk_spec.rb` asks the loader whether it can FIND each constant
+# `lib/` defines, and the answer is yes for hundreds of them that have no path
 # of their own -- findable through the file, never through the name. That spec
 # owns the orphan invariant and this script does not restate it. The question
-# here is the next one down, and it is the one a rename answers badly: with the
-# manifest gone, does the tree still boot?
+# here is the next one down, and it is the one a rename answers badly: does the
+# tree still boot when the files arrive in a different order?
 #
 # Four modes:
 #
@@ -30,21 +29,27 @@ require "tmpdir"
 # By asking it, not by reading for it. A static scan cannot tell a load-time
 # constant reference from one inside a method body that will never run at boot,
 # and that distinction IS the finding -- so the tree is really booted, in a
-# child, three times:
+# child, four times:
 #
 #   1. SURVEY. `require "lain"` the normal way and walk {Lain} with
 #      `const_source_location`, which is Ruby's own answer to "what file defines
 #      this constant" rather than a regex's. The same walk copies `lib/` to a
-#      scratch tree with every `require_relative` line removed -- a mechanical
-#      statement of "the manifest is gone", derived from the real files so it
-#      cannot drift from them.
-#   2/3. PROBE, twice, over the scratch tree: register Zeitwerk's autoloads,
-#      then require every managed file in sorted order, then in REVERSE sorted
-#      order. Two orders because Zeitwerk eager loads a directory sorted, so a
-#      reference that resolves today may be resolving by ALPHABETICAL LUCK --
-#      `epic/document.rb` simply sorts before `epic/intake.rb`. Reversing the
-#      order is what turns that luck into a finding; run forward only and
-#      {Lain::Epic::MalformedDocument} is invisible.
+#      scratch tree with every `require_relative` line removed -- nothing to
+#      remove today, and kept because the strip is what makes the claim "the
+#      loader alone did this" true of whatever the tree later becomes.
+#   2/3/4. PROBE, three times, over the scratch tree: register Zeitwerk's
+#      autoloads, then reach every managed constant in sorted order, then in
+#      REVERSE sorted order, then in a SHUFFLED one. Order matters because
+#      Zeitwerk eager loads a directory sorted, so a reference that resolves
+#      today may be resolving by ALPHABETICAL LUCK -- `epic/document.rb` simply
+#      sorts before `epic/intake.rb`. Reversing turns that luck into a finding;
+#      run forward only and {Lain::Epic::MalformedDocument} is invisible.
+#
+#      The third order is there because two are a sample, not a proof: an
+#      `ErrorMiddleware` reference survived both fixed orders and fell over in
+#      5 of 12 shuffles, because something further along in reverse happened to
+#      load its defining file first. The seed is printed on every run, green
+#      included, so any sample can be replayed.
 #
 # The probe installs a `Module#const_missing` that requires the defining file
 # and records the site, so ONE run reports every remaining reference instead of
@@ -63,11 +68,10 @@ require "tmpdir"
 #   * A load-time reference reached only through a branch, an `if defined?`, or
 #     a platform this box is not.
 #   * Anything `spec/`, `exe/` or the nvim plugin names. This boots `lib/`.
-#   * The paths in `Lain::LOADER_IGNORES`. The probe drives the loader's own
-#     `all_expected_cpaths`, which excludes an ignored path by definition, so
-#     those files are never required manifest-free. Emptying that list can only
-#     ADD findings here, never remove one -- but until it is empty, a clean
-#     census is a claim about the managed tree and not about all of `lib/`.
+#   * Anything the loader does not manage. The probe drives its own
+#     `all_expected_cpaths`, so a path the loader was told to ignore is never
+#     probed. That list is empty today, which is what makes a clean census a
+#     claim about all of `lib/` rather than about part of it.
 #
 # Unlike `bin/comment-census` and `bin/spec-census` this is NOT pure stdlib in
 # effect: the children need Bundler, the gems and the compiled extension,
@@ -94,32 +98,17 @@ module ZeitwerkCensus
     # A file the loader expects to define a constant, that defines nothing once
     # its `require_relative` lines are gone: the unit index is the whole file.
     # The fix is to give the file the `module Foo` it already stands for.
-    NAMESPACES = %w[
-      lain/bench.rb
-      lain/forge.rb
-      lain/memory.rb
-      lain/oracle.rb
-      lain/plan.rb
-      lain/provider/http.rb
-      lain/structural.rb
-      lain/survey.rb
-    ].freeze
+    NAMESPACES = [].freeze
 
     # A constant reached while a file LOADS whose own name maps to no file --
     # written in a class body, or in a method default that a load-time constant
     # assignment then calls. The fix is to move it to the path its name
     # implies, or to stop reaching it at load time.
-    REFERENCES = %w[
-      Lain::Epic::MalformedDocument
-      Lain::Epic::MalformedGraph
-      Lain::Epic::STAGES
-      Lain::Mode::LayerSet
-      Lain::Price
-    ].freeze
+    REFERENCES = [].freeze
   end
 
-  # One thing that stops resolving when the manifest goes, in the terms a
-  # reader fixes it in. `name` is the ratchet key and is deliberately NOT a
+  # One thing that stops resolving in some load order, in the terms a reader
+  # fixes it in. `name` is the ratchet key and is deliberately NOT a
   # line number: a site drifts within days, and CLAUDE.md's rule for recording
   # a flaky spec by name rather than by line is the same rule for the same
   # reason. `where` carries the drifting detail, for reading only.
@@ -267,21 +256,45 @@ module ZeitwerkCensus
   # `spawn`/`JSON`; the code the children RUN lives in {Survey} and {Probe} in
   # this same file, reached through the flags {CLI} keeps out of its usage.
   module Boot
+    # Two passes are a SAMPLE of the order space, not a proof over it, and the
+    # tree has already had a finding in the gap between them: `ErrorMiddleware`
+    # named six error classes while its class body ran and resolved in both
+    # sorted orders alike -- forward because `error.rb` sorts first, reverse
+    # because something further along happened to pull it in. A third pass,
+    # shuffled, is what closes that gap, and one more boot costs ~2s.
+    #
+    # It asks the question DIFFERENTLY, and that difference is the point. The
+    # sorted passes `require` each file by PATH, which is stricter than the
+    # loader and partly unfaithful to it -- requiring a nested file before its
+    # namespace file is something Zeitwerk itself never does, and reporting the
+    # re-entrant requires that follow would be reporting the probe. The
+    # shuffled pass resolves each expected constant by NAME instead, which is
+    # exactly what an autoload does, so every failure it reports is one a real
+    # caller could reach.
     ORDERS = %w[forward reverse].freeze
 
+    # Printed with every run and honoured from the environment, because a
+    # sampled guard whose failing sample cannot be replayed is a guard nobody
+    # can act on: `ZEITWERK_CENSUS_SEED=<n> bin/zeitwerk-census` re-runs the
+    # exact shuffle a report names.
+    SEED_ENV = "ZEITWERK_CENSUS_SEED"
+
     module_function
+
+    def seed = Integer(ENV.fetch(SEED_ENV, Random.new_seed % 1_000_000))
 
     # One decoded probe result per load order. The scratch tree is named
     # by `mktmpdir` rather than by a fixed path: CLAUDE.md records a generic
     # filename in a shared scratchpad as shared mutable state between agents,
     # and the failure mode is a confident green from another tree.
     #
+    # @param shuffle_seed [Integer] the seed the third pass shuffles by
     # @return [Array<Hash>]
-    def runs
+    def runs(shuffle_seed = seed)
       Dir.mktmpdir("zeitwerk-census-") do |scratch|
         spec = File.join(scratch, "survey.json")
         child("--survey", spec, File.join(scratch, "lib"))
-        ORDERS.map { |order| JSON.parse(child("--probe", spec, order)) }
+        (ORDERS + ["shuffled:#{shuffle_seed}"]).map { |order| JSON.parse(child("--probe", spec, order)) }
       end
     end
 
@@ -379,8 +392,19 @@ module ZeitwerkCensus
       $LOADED_FEATURES << "#{lib}/lain.rb"
       source = File.readlines("#{lib}/lain.rb").reject { _1.start_with?("loader.eager_load") }.join
       eval(source, TOPLEVEL_BINDING, "#{lib}/lain.rb") # rubocop:disable Security/Eval
-      files(lib, order).each { |file| state.guard(file) { require file } }
+      arrive(state, order)
       state.guard("(eager_load)") { Lain::LOADER.eager_load }
+    end
+
+    # The two ways of making the tree arrive. A sorted pass requires each file
+    # by PATH; the shuffled pass resolves each expected constant by NAME, which
+    # is the autoload a real caller triggers -- see {Boot::ORDERS} for why the
+    # third pass could not simply reuse the first's mechanism.
+    def arrive(state, order)
+      seed = order[/\Ashuffled:(\d+)\z/, 1]
+      return files(state.lib, order).each { |file| state.guard(file) { require file } } unless seed
+
+      cpaths(seed.to_i).each { |cpath| state.guard(cpath) { Object.const_get(cpath) } }
     end
 
     # Every file the loader manages, in the chosen order, minus the entry point
@@ -389,6 +413,13 @@ module ZeitwerkCensus
       managed = Lain::LOADER.all_expected_cpaths.keys
                             .select { _1.end_with?(".rb") && _1 != "#{lib}/lain.rb" }.sort
       order == "reverse" ? managed.reverse : managed
+    end
+
+    # Every constant path the loader expects to be able to find, shuffled --
+    # sorted first so the shuffle is a function of the seed alone and not of
+    # whatever order the filesystem answered in.
+    def cpaths(seed)
+      Lain::LOADER.all_expected_cpaths.values.sort.shuffle(random: Random.new(seed))
     end
 
     # The probe's whole mutable world: what has been seen, what is mid-flight,
@@ -439,9 +470,23 @@ module ZeitwerkCensus
         @inflight.delete(cpath)
       end
 
+      # A `class << self` body is where this most often fires and is the one
+      # place `mod.name` is nil -- a singleton class has no name, so the walk
+      # would start from the empty nesting and place nothing.
+      # `ErrorMiddleware`'s status table was exactly that shape, and reported
+      # as UNCLASSIFIED until the attached object was asked for instead.
       def candidates(mod, name)
-        parts = mod.name&.split("::") || []
+        parts = named_module(mod)&.name&.split("::") || []
         parts.length.downto(0).map { |depth| (parts.take(depth) + [name.to_s]).join("::") }
+      end
+
+      def named_module(mod)
+        return mod if mod.name
+
+        attached = mod.singleton_class? ? mod.attached_object : nil
+        attached.is_a?(Module) && attached.name ? attached : nil
+      rescue TypeError
+        nil
       end
 
       # The innermost `lib/` frame is where the name is WRITTEN. The next frame
@@ -513,15 +558,19 @@ module ZeitwerkCensus
       ZEITWERK CENSUS -- bin/zeitwerk-census
 
       ======================================================================
-      WHAT THIS BOOTED: lib/, three times in child processes, with every
+      WHAT THIS BOOTED: lib/, four times in child processes, with every
       internal `require_relative` removed -- once normally to ask Ruby which
-      file defines which constant, then twice under Zeitwerk alone, in sorted
-      and in REVERSE sorted order.
+      file defines which constant, then three times under Zeitwerk alone: the
+      files required in sorted and in REVERSE sorted order, and every expected
+      constant resolved by NAME in a shuffled order.
 
-      Every entry below boots green today and is a NameError the moment the
-      manifest in lib/lain.rb goes away -- or, for a reference the sorted order
-      happens to satisfy, the moment a file is renamed past it. That is the
-      whole point: the suite, rubocop and a reader are all silent about these.
+      Every entry below boots green today and is a NameError the moment a file
+      is renamed past the one that happens to satisfy it. That is the whole
+      point: the suite, rubocop and a reader are all silent about these.
+
+      The shuffled pass SAMPLES the order space rather than proving anything
+      over it, so a green run is evidence and not a guarantee -- which is why
+      its seed is printed below and honoured from ZEITWERK_CENSUS_SEED.
 
       This is a WORKLIST, not a count. The number of orphan CONSTANTS in the
       tree is a different figure and a poorer gauge -- spec/zeitwerk_spec.rb
@@ -531,8 +580,20 @@ module ZeitwerkCensus
 
     module_function
 
-    def text(censuses)
-      ([BANNER, counts(censuses)] + censuses.map { |census| section(census) }).join("\n")
+    def text(censuses, seed)
+      ([BANNER, seed_line(seed), counts(censuses)] + censuses.map { |census| section(census) }).join("\n")
+    end
+
+    # Printed whether or not the shuffled pass found anything: a reader who
+    # wants to try the same sample again needs it from a GREEN run too.
+    #
+    # It says "one sample" because a green run is not a proof and the seed
+    # alone does not convey that -- the order-dependence this pass was written
+    # to catch reproduced in 5 of 12 seeds, so three clean runs in a row are
+    # perfectly consistent with a live defect.
+    def seed_line(seed)
+      "Shuffled pass seed: #{seed} (ZEITWERK_CENSUS_SEED=#{seed} replays it) -- " \
+        "one sample of the order space; a clean run is not a proof\n"
     end
 
     def counts(censuses)
@@ -566,6 +627,9 @@ module ZeitwerkCensus
         --check     exit non-zero on a finding the allowlist in this script
                     does not already name
 
+      One of the three boots arrives in a SHUFFLED order. Its seed is printed
+      on every run; set ZEITWERK_CENSUS_SEED to replay one.
+
       Boots lib/ in child processes and takes no file arguments. Needs the gems
       and the compiled extension; run it under `bundle exec` or `direnv exec .`.
     TEXT
@@ -586,15 +650,24 @@ module ZeitwerkCensus
       public_send(mode)
     end
 
-    def census(found = censuses) = puts(Report.text(found))
+    def census = run_with { |found, seed| puts(Report.text(found, seed)) }
 
-    def counts(found = censuses) = puts(Report.counts(found))
+    def counts = run_with { |found, seed| puts(Report.seed_line(seed), Report.counts(found)) }
 
     # Reports EVERY census before exiting, so a reader who fixes the first is
     # not met by a second they were never shown.
-    def check(found = censuses)
-      puts(found.map { |census| verdict(census) }.join("\n"))
-      exit 1 if found.any?(&:over?)
+    def check
+      run_with do |found, seed|
+        puts(Report.seed_line(seed), found.map { |census| verdict(census) }.join("\n"))
+        exit 1 if found.any?(&:over?)
+      end
+    end
+
+    # One seed per invocation, chosen here and reported by every mode, so the
+    # number a report prints is the number that reproduces it.
+    def run_with
+      seed = Boot.seed
+      yield(censuses(Boot.runs(seed)), seed)
     end
 
     def verdict(census)

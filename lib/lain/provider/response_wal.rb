@@ -311,4 +311,3 @@ end
 
 # After the class body: Reader references Entry, CorruptFrame, and
 # RECORD_SEPARATOR through the ResponseWal namespace.
-require_relative "response_wal/reader"

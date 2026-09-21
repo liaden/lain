@@ -154,5 +154,3 @@ module Lain
     end
   end
 end
-
-require_relative "channel/drop_oldest"

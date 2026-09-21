@@ -51,5 +51,3 @@ module Lain
 end
 
 # Subclasses reopen Effect::Handler, so they load after the class body above.
-require_relative "handler/live"
-require_relative "handler/mock"

@@ -3,8 +3,6 @@
 # {RpcThread} must exist before the `class Neovim` body below opens, because
 # that body defines {Neovim::FrontendListener} against it. {RuntimeLoader} comes
 # first for the same reason, one level down: {RpcThread}'s body names it.
-require_relative "neovim/runtime_loader"
-require_relative "neovim/rpc_thread"
 
 module Lain
   module Frontend
@@ -33,10 +31,9 @@ module Lain
       # moving. The fifteen entries it replaced say what each bump bought and are
       # kept in docs/neovim-protocol-history.md; git has the diffs.
       #
-      # METHODS rather than a constant, forced: {Lain::Ext} owns blake3 and the
-      # compiled extension loads AFTER `lain/frontend` in lain.rb's manifest, so
-      # there is no moment during this class body at which a digest could be
-      # taken.
+      # METHODS rather than a constant: {Lain::Ext} owns blake3, and a digest
+      # frozen into a constant at class-body time would be one taken before the
+      # caller has the bytes it is actually about to inject.
       #
       # Takes the source rather than reading it, so {RpcThread#attach} can digest
       # the bytes it holds in its hand instead of a second read that could have
@@ -464,22 +461,5 @@ module Lain
   end
 end
 
-require_relative "neovim/fold"
-require_relative "neovim/list_view"
-require_relative "neovim/command_inbox"
-require_relative "neovim/unbridged"
-require_relative "neovim/compose"
-require_relative "neovim/resender"
-require_relative "neovim/inbox_view"
-require_relative "neovim/status_view"
-require_relative "neovim/buffers"
-require_relative "neovim/journal_view"
-require_relative "neovim/request_buffer"
-require_relative "neovim/question_view"
-require_relative "neovim/approval_view"
-require_relative "neovim/changeset_diff"
-require_relative "neovim/review_view"
-require_relative "neovim/thread_view"
 # LAST: it builds the three views above, so every one of them must exist by the
 # time its body is read.
-require_relative "neovim/surfaces"

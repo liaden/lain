@@ -265,5 +265,3 @@ module Lain
     end
   end
 end
-
-require_relative "watch/lineage_filter"

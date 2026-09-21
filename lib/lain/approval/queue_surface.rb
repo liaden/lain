@@ -2,8 +2,6 @@
 
 require "async"
 
-require_relative "queue_surface/pruning"
-
 module Lain
   module Approval
     # The template every meta-agent surface over {Approval::Queue}'s PARKED set

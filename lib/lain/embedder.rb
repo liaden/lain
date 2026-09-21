@@ -32,6 +32,3 @@ module Lain
     end
   end
 end
-
-require_relative "embedder/static"
-require_relative "embedder/ollama"

@@ -5,8 +5,6 @@
 # after it could never register its short name.
 require "securerandom"
 
-require_relative "scope/shadow_git"
-
 module Lain
   class Workspace
     class Snapshot

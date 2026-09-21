@@ -1,24 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "context/combinator"
-require_relative "context/composed"
-require_relative "context/identity"
-require_relative "context/protected_patterns"
-require_relative "context/pinned_messages"
-require_relative "context/cache_breakpoints"
-require_relative "context/message_envelope"
-require_relative "context/conversation"
-require_relative "context/tail_injection"
-require_relative "context/reminder"
-require_relative "context/prune"
-require_relative "context/compact"
-require_relative "context/dedupe_tool_calls"
-require_relative "context/purge_failed_inputs"
-require_relative "context/recall"
-require_relative "context/mailbox"
-require_relative "context/static_model"
-require_relative "context/model_switch"
-
 module Lain
   # The seam: a pure function from (Timeline, Toolset, Workspace) to a Request.
   # A first-class object rather than a method on the Agent, so that swapping it

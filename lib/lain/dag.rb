@@ -17,5 +17,3 @@ module Lain
     end
   end
 end
-
-require_relative "dag/render_ancestry"

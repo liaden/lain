@@ -808,8 +808,4 @@ end
 # AFTER the class body: each of these reopens {Lain::Compaction::Source}, and
 # {Derived} names {Source::DerivationRefused}, so the class they hang off has
 # to exist first.
-require_relative "source/derived"
-require_relative "source/held_cut"
 # After {HeldCut}, whose handoff plan it commits.
-require_relative "source/fallback"
-require_relative "source/plan_steps"

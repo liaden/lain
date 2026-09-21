@@ -3,8 +3,6 @@
 # This file is its subtree's index. Neither child reopens {Admission} nor
 # resolves its constants at load time, so the position here is convention
 # rather than constraint -- probed, not assumed.
-require_relative "admission/endpoint"
-require_relative "admission/journal"
 
 module Lain
   class Provider

@@ -434,5 +434,3 @@ end
 # reached from METHOD bodies only, so they load AFTER the class body -- Recorded
 # also names its Answer, which is {Isolation::Worktree}'s Handback placement and
 # the same reason.
-require_relative "gh/endpoint"
-require_relative "gh/recorded"

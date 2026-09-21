@@ -245,5 +245,3 @@ end
 # nested class's lines count as the enclosing class's own under
 # Metrics/ClassLength -- the split {ArmSweep} already makes for
 # {ArmSweep::Recordings} and its Report.
-require_relative "altitude/subject"
-require_relative "altitude/suite"

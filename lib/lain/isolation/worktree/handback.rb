@@ -576,4 +576,3 @@ end
 
 # Retirement nests inside Handback and names its Outcome, Naming and ANCHOR_ONLY,
 # so it loads after the class body; handback.rb is this subtree's index.
-require_relative "handback/retirement"

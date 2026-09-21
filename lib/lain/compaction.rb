@@ -1,18 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "compaction/boundary"
-require_relative "compaction/head"
-require_relative "compaction/need"
-require_relative "compaction/cold"
-require_relative "compaction/scheduler"
-require_relative "compaction/prepared"
-require_relative "compaction/summary_observer"
-require_relative "compaction/summary_snapshot"
-require_relative "compaction/tool_messages"
-require_relative "compaction/strategy"
-require_relative "compaction/derivation"
-require_relative "compaction/source"
-
 module Lain
   # Whether a compaction is warranted, where it cuts, what collapses the span,
   # and how the collapse is recorded. Ten members, in the order a turn meets

@@ -1,16 +1,12 @@
 # frozen_string_literal: true
 
-# Children reference the Oracle module's error classes and the Definition value
-# object, so definition.rb loads first; the tiers depend on it.
-require_relative "oracle/definition"
-require_relative "oracle/heuristic"
-require_relative "oracle/model"
-require_relative "oracle/recorded"
-require_relative "oracle/prune_scoring"
-require_relative "oracle/memory_save"
-require_relative "oracle/secret_read"
-require_relative "oracle/router"
-require_relative "oracle/summarize"
-require_relative "oracle/handoff"
-require_relative "oracle/routed_summarizer"
-require_relative "oracle/eager"
+module Lain
+  # A question asked of something other than the main loop: an
+  # {Oracle::Definition} is a content-addressed template plus the
+  # {Tool::Input} schema its reply is validated against plus the tier that
+  # answers it, so a caller cannot tell a heuristic answer from a model one by
+  # the answer's shape. The tiers are the swappable thing here --
+  # {Oracle::Heuristic} is free and deterministic, {Oracle::Model} spends a
+  # call, {Oracle::Recorded} replays one.
+  module Oracle; end
+end

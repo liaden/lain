@@ -2,10 +2,6 @@
 
 require "active_support/core_ext/module/delegation"
 
-require_relative "wiring/askers"
-require_relative "wiring/board_build"
-require_relative "wiring/toolset_build"
-
 module Lain
   module CLI
     # The chat-assembly responsibility, lifted out of the Thor class the way Repl

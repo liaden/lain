@@ -60,6 +60,3 @@ end
 
 # The value and the contract first; the evaluator subclasses {Base}, so it loads
 # after it (the children-after-the-class-body order effect/handler.rb uses).
-require_relative "summarizer/result"
-require_relative "summarizer/base"
-require_relative "summarizer/builder"

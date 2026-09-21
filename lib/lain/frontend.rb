@@ -10,15 +10,3 @@ module Lain
   module Frontend
   end
 end
-
-require_relative "frontend/theme"
-require_relative "frontend/prompt_composer"
-require_relative "frontend/decorators"
-require_relative "frontend/approval_policy"
-require_relative "frontend/line_editor"
-require_relative "frontend/completion"
-require_relative "frontend/input_rail"
-require_relative "frontend/stdin_pump"
-require_relative "frontend/tty"
-require_relative "frontend/input_pane"
-require_relative "frontend/neovim"

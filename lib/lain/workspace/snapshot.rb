@@ -4,7 +4,6 @@ require "pathname"
 
 # Snapshot's own subtree index. Scope loads at the TOP because the class body
 # below reads Scope::WriteSet::NOTE while it evaluates.
-require_relative "snapshot/scope"
 
 module Lain
   class Workspace

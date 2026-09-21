@@ -143,3 +143,11 @@ module Lain
     end
   end
 end
+
+# Mixed in HERE rather than from anthropic.rb: this file reopens that class, so
+# an include written over there would wait on a require already in flight
+# whenever the loader reached this file first. Outside the class body, and so
+# fully qualified, to leave that body a pure namespace -- the one shape
+# Style/Documentation exempts without a second docstring on a reopened class,
+# which is a docstring YARD silently discards.
+Lain::Provider::HTTP::Providers::Anthropic.include(Lain::Provider::HTTP::Providers::Anthropic::Tools)

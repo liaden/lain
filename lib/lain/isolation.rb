@@ -24,24 +24,3 @@ module Lain
   module Isolation
   end
 end
-
-require_relative "isolation/worker_id"
-require_relative "isolation/lease"
-require_relative "isolation/null"
-require_relative "isolation/lease_lock"
-require_relative "isolation/worktree"
-require_relative "isolation/scratch"
-require_relative "isolation/checkout"
-require_relative "isolation/working_branch"
-require_relative "isolation/spike"
-require_relative "isolation/merge_strategy"
-require_relative "isolation/parent_lock"
-require_relative "isolation/worker_handoff"
-require_relative "isolation/self_sync"
-require_relative "isolation/leases"
-require_relative "isolation/landing_queue"
-require_relative "isolation/journal"
-require_relative "isolation/services"
-require_relative "isolation/db_index"
-require_relative "isolation/compose"
-require_relative "isolation/gc"

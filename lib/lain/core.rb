@@ -18,7 +18,3 @@ module Lain
     end
   end
 end
-
-require_relative "core/child"
-require_relative "core/transport"
-require_relative "core/client"

@@ -2,8 +2,6 @@
 
 module Lain
   module Epic
-    class MalformedDocument < Error; end
-
     # The epic as the markdown a human edits, and the parse that reads those
     # edits back. {Plan::Document}'s grammar idiom throughout -- module-scope
     # regexes, one status map read both directions -- with one deliberate

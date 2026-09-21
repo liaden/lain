@@ -215,8 +215,3 @@ end
 
 # This file is the worktree/ subtree's index. The nested classes reopen the
 # class above and read its constants, so they load AFTER the class body.
-require_relative "worktree/registry"
-require_relative "worktree/anchorage"
-require_relative "worktree/release"
-require_relative "worktree/leftover"
-require_relative "worktree/handback"

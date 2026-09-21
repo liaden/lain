@@ -29,10 +29,5 @@ end
 
 # The catalog and the invocation parser both reopen Skill, so they load after
 # the value above.
-require_relative "skill/catalog"
-require_relative "skill/invocation"
-require_relative "skill/role_spawn"
-require_relative "skill/renderer"
 # Library pairs the Catalog above with Prompt::Slots and composes the Renderer,
 # so it loads last.
-require_relative "skill/library"
