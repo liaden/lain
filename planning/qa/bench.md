@@ -14,6 +14,16 @@ the scenarios name. Use the `/mnt/nvme` install:
 curl -s localhost:11434/api/tags | command grep -q qwen3-coder:30b || abort
 ```
 
+**Reading the server's own environment can print the key it holds, the same class of leak
+`method.md`'s `.envrc` grep rule warns about.** `OLLAMA_API_KEY` (needed by `ollama-cloud-arm.md`)
+can be exported into the same shell that started `ollama serve`, and `/proc/<pid>/environ` holds
+it NUL-separated with the value attached — `grep '^OLLAMA_' /proc/<pid>/environ` prints the value,
+not just the name, straight into a transcript. Check names only:
+
+```bash
+tr '\0' '\n' < /proc/<pid>/environ | cut -d= -f1 | grep '^OLLAMA_'
+```
+
 That env file sets `OLLAMA_CONTEXT_LENGTH=32768` — the number the occupancy expectations are
 written against — and `OLLAMA_KEEP_ALIVE=5m`, which is what makes "cold" the default state after
 any five-minute pause.

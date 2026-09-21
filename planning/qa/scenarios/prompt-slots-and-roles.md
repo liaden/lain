@@ -140,6 +140,28 @@ read-only role `/critique` spawns per chunk over a held review) joined on 2026-0
 launches clean again before moving on — a refusal that leaves the tree in a state the NEXT launch
 also refuses from is its own small finding.
 
+## 4b — a launch from outside the project still carries its slot
+
+Restore `.lain/slots/system.md` from §1, then leave the project directory entirely and launch with
+only `--root` naming it:
+
+```bash
+cd /tmp
+lain chat --root <the project dir> --provider ollama --model qwen3-coder:30b < /dev/null
+```
+
+The session's `system` field still carries `PROJECT GUIDANCE 42: …` verbatim, exactly as §1 read
+it — `--cwd` defaults to `--root` when only `--root` is given, so the shell never needing to `cd`
+into the project is not a coincidence of a nearby cwd (`shell-terms.md` §2 verifies the same
+default in code). Then, from that same outside directory, a typo'd slot filename refuses by name
+just as §2 does:
+
+```
+unknown slot file ".../.lain/slots/systemm.md"; known slots: system
+```
+
+exit 1, before the chronicle opens. Restore the fixture before §5.
+
 ## 5 — every built-in role ships a template, and none is orphaned (spec-covered, not driven here)
 
 This is the drift guard, and it needs no manual drive: `role_spec.rb`'s "the catalog and the

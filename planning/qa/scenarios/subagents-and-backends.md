@@ -128,6 +128,11 @@ Three things to drive:
 3. **A lease refused before the spawn leaves neither record.** The lease is taken *before* the
    `:spawn` is written, so a refusal there must not leave a spawn with no child — that ordering
    is the fix, and a lone `:spawn` from a refused lease is the old bug.
+4. **A one-shot child whose only output was a prose tool call fails rather than answering.** Ask
+   for a subagent whose model responds with a bare tool-call envelope instead of an answer: the
+   completion carries `lifecycle: failed`, `error: Lain::Tools::Subagent::MalformedAnswer`, and no
+   `result` key — the parent's tool call comes back `error: the child's turn was a tool call
+   written as prose, not an answer`, not delivered as though it were the child's findings.
 
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.

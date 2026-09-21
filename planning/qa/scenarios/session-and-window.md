@@ -185,7 +185,9 @@ renders it, so a driver watching the display will otherwise file a false defect.
 
 ## 6 — The `options` asymmetry on the wire
 
-The contract is that lain sends **only what was asked for**:
+**The contract used to be "lain sends only what was asked for" — since the round-19 chunk that is
+true of the SAMPLER knobs only.** `num_batch`/`temperature`/`seed`/`num_ctx` are still opt-in, and
+`extra={}` still means none of them were asked for:
 
 ```bash
 # with the knob set
@@ -196,6 +198,23 @@ env -u LAIN_NUM_BATCH lain chat ... --prompt hi    # -> extra={}   (NO options k
 
 Read it off both the `session` record and every `request_sent`. The `env -u` is required — the
 flag's default is `EnvDefaults.numeric("LAIN_NUM_BATCH")`, which `bench.md` exports.
+
+**But `(NO options key at all)` is now a claim about `extra`, not about the wire.** The generation
+cap is a different claim from a sampler knob, and it is unconditional:
+`Ollama::Encoding#encode_options` seeds the ollama `options` object with `num_predict`, sourced
+from `request.max_tokens` rather than from `extra`, on **every** request — so the `env -u
+LAIN_NUM_BATCH` run above still shows `extra={}` while its encoded body carries `options={"num_predict"
+=> <max_tokens>}`. Read the two separately, since neither implies the other any more:
+
+```bash
+env -u LAIN_NUM_BATCH lain chat ... --prompt hi
+# -> session / request_sent's extra:    {}
+# -> the encoded wire body's options:  {"num_predict" => <max_tokens>}
+```
+
+`max_tokens` is never the source of a silent zero here: a non-positive `--max_tokens` /
+`$LAIN_MAX_TOKENS` is refused at construction (`max_tokens must be positive, got 0`) before any
+request is built, so `num_predict` on the wire is never zero or absent.
 
 ## 7 — `--compact-strategy` resolves, and refuses, at LAUNCH
 
@@ -259,6 +278,15 @@ Two launch-level checks, both free:
 - **The session header records the arm.** Read `compact_fallback` back out of the header, the way
   §9 reads `context_pipeline`, and confirm an unflagged launch records the default rather than
   nothing — an unrecorded arm cannot be told apart from an older file.
+- **The header also records which STRATEGY ran, as `compact_strategy` — present only when
+  `--compact-strategy` was typed.** Unlike `compact_fallback`, an unflagged launch writes no key at
+  all rather than a default value; a reader normalizes that absence to the eager control arm
+  (`Telemetry::Compaction::EAGER_CONTROL_ARM`, `"eager"`) rather than confusing it with a stated
+  `"summarizing"` or similar — the same absent-versus-default distinction §9 draws for
+  `context_pipeline`. And `lain bench variance` refuses to compare two recordings whose headers
+  name different strategies, ending `cannot compare runs under different compaction arms: elide vs
+  summarizing` (exit 1); a recording with no key compares fine against one explicitly naming the
+  eager arm, because both ran the same arm.
 
 Reaching the fallback itself needs volume and belongs to `rails-blog.md` §1b, which drives the
 handoff end to end and checks it replays byte-identically.

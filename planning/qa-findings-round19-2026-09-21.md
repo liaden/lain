@@ -33,27 +33,27 @@ model's first attempt**, including the load-bearing oracle 4.
 and up to ~15 concurrent `exe/lain` processes; three contexts independently measured multi-minute
 waits against a *resident* model. Only the `bench arms` run at the very end had the box to itself.
 
-| id | sev | what |
-|---|---|---|
-| **Ff-1 / Fv-1** | **HIGH** | the ollama arm sends neither `max_tokens` nor `options.num_predict`, so generation is uncapped; the journal records a 4096 cap that was never sent |
-| **Fs-1** | **HIGH** | an in-root symlink under an ordinary name is auto-approved by `ComposedTerm`, releasing a `gated` file's bytes with no human asked |
-| **Fv-2** | **HIGH** | `lain chat --root PATH` is ignored: `.lain/slots/` never loads and sessions file under the cwd-detected root |
-| **Fp-1** | **HIGH** | a detected `malformed_response` is a silent write-off delivered as a successful result; the record has zero consumers in `lib/` |
-| **Fm-1** | **MED-HIGH** | `lain consolidate` reports a successful pass over a recorder root that provably did not move (F134 half-reproduces) |
-| **Fx-1** | **MED-HIGH** | a `plan`-scope write wedges `/undo` for the rest of the session — lain's own leased spike is classified `outside_root` |
-| **Fk-1** | **MED-HIGH** | a credential typed at `you>` is written verbatim to `lain/history` *after* the user is told "nothing was written" |
-| **Fv-3** | **MED-HIGH** | a running child cannot be stopped: `/stop` answers `no ask is running` beside a fleet row reading `running` |
-| **Fp-3** | **MED-HIGH** | one task hitting the iteration ceiling aborts the whole `bench arms` run — 13 completed grades discarded, no report, 11 locked worktrees left |
-| Ff-2 | MEDIUM | a `message` record missing a required key escapes every door as a raw `KeyError` with 19 frames instead of `Corrupt` |
-| Ff-3 | MEDIUM | when chat *and* input panes both die only the chat corpse is reported, and the advice leads to a keyboard-less cockpit |
-| Fb-1 | MEDIUM | the session header records `compact_fallback` but never `compact_strategy`; `bench variance` has no strategy guard |
-| Fr-1 | MEDIUM | `summary_hits`/`summary_misses` cannot distinguish a healthy under-threshold run from a dead summarizer |
-| Fm-2 | MEDIUM | the consolidate path does not detect a prose tool call the chat path journals for identical bytes |
-| Fp-2 | MEDIUM (UX) | a tmux layout change erases the input pane's HUD row; nothing repaints it until the next ask |
-| Fc-2 | LOW-MED | `/review` with a detached editor prints three gestures against a buffer that cannot exist, then contradicts itself |
-| Fv-4 | LOW-MED | two different path bases on adjacent surfaces |
-| Fr-2 | LOW | a non-zero command exit yields `is_error: false`, so the standard "what failed" reduction misses every failing `bash` |
-| Fk-4, Fv-5, Fv-6, Fx-2, Fx-3, Fm-3…7, Fs-3…5, Ff-4 | LOW | wording, stale doc constants, and instrument drift — itemised in the per-context files |
+| id | sev | what | T18 re-drive, 2026-09-21 (`main` 2bb04749; captures in `~/tmp/lain/T18/captures/`, new findings under "Re-driven against the fixed tree") |
+|---|---|---|---|
+| **Ff-1 / Fv-1** | **HIGH** | the ollama arm sends neither `max_tokens` nor `options.num_predict`, so generation is uncapped; the journal records a 4096 cap that was never sent | **FIXED.** Captured `POST /api/chat` body: `options={"num_predict" => 4096, "num_batch" => 2048}`. Under `--max-tokens 64` it sent `num_predict => 64`, and the server stopped at `output_tokens: 64`, `stop_reason: max_tokens`. All 48 cockpit, child and clerk requests carried the cap. `~/tmp/lain/T18/captures/wire/decoded.txt`, `wire/journal-readback.txt`, `cockpit-wire/options-census.txt` |
+| **Fs-1** | **HIGH** | an in-root symlink under an ordinary name is auto-approved by `ComposedTerm`, releasing a `gated` file's bytes with no human asked | **FIXED at the rule.** In a live cockpit, `cat readme2.txt` (link to `.env.local`) and `cat notes.txt` (link to `id_rsa`) each read `rules` \| `abstain` \| `no rule had an opinion`, then `approval_pending`. In the same session `cat README.md` read `rules` \| `allow` \| `composed_term: every stage is a bare allowlisted reader…`. `~/tmp/lain/T18/captures/symlink-ladder.txt`. **One tool over, `read_file readme2.txt` returned the gated bytes with nobody asked, straight after the human denied the `cat`**: NEW **N1** (report) |
+| **Fv-2** | **HIGH** | `lain chat --root PATH` is ignored: `.lain/slots/` never loads and sessions file under the cwd-detected root | **FIXED.** Launched from outside the project, `lain chat --root P` wrote a header whose `system` ends `PROJECT GUIDANCE 42 -- T18 root slot`. The control run without `--root` lacks it. A typo'd `sytem.md` refuses by name (`unknown slot file …; known slots: system`, exit 1). Sessions still file under the cwd's hash, as scoped by the plan's Open decision 2. `~/tmp/lain/T18/captures/root/summary.txt` |
+| **Fp-1** | **HIGH** | a detected `malformed_response` is a silent write-off delivered as a successful result; the record has zero consumers in `lib/` | **FIXED.** The child completion reads `{"error":"Lain::Tools::Subagent::MalformedAnswer","lifecycle":"failed"}` with no `result`. The fleet row reads `researcher  failed`, and the chat says `error: the child's turn was a tool call written as prose, not an answer`. The envelope was **injected on the wire** (failure injection); the model did not emit it on its own. `~/tmp/lain/T18/captures/malformed/records.txt` |
+| **Fm-1** | **MED-HIGH** | `lain consolidate` reports a successful pass over a recorder root that provably did not move (F134 half-reproduces) | **FIXED.** With a clerk that wrote nothing (injected), the pass reports `ran a court_clerk pass over 1 lineage(s) and stored nothing`, and the store bytes are unchanged. A live writing pass reads `…, writing memories` (store 0 → 3). `~/tmp/lain/T18/captures/consolidate/` |
+| **Fx-1** | **MED-HIGH** | a `plan`-scope write wedges `/undo` for the rest of the session — lain's own leased spike is classified `outside_root` | **FIXED.** A plan-scope write of `alpha.txt`, then a checkout write of `beta.txt`. Three `/undo`s gave: `deleted beta.txt`, then `deleted alpha.txt` (removed from the lease), then `nothing to undo`. No `outside_root`, and round 19's ordering doubt is settled (latest first). `~/tmp/lain/T18/captures/undo/undo.txt` |
+| **Fk-1** | **MED-HIGH** | a credential typed at `you>` is written verbatim to `lain/history` *after* the user is told "nothing was written" | **FIXED.** The same prompt journals `write_refused pattern=aws access key id`, and `lain/history` holds **0** lines carrying the key while ordinary prompts are still recorded. `~/tmp/lain/T18/captures/history/` |
+| **Fv-3** | **MED-HIGH** | a running child cannot be stopped: `/stop` answers `no ask is running` beside a fleet row reading `running` | **NOT FIXED on its filed route.** A docent child was running at `you>`; `/stop` answered `no ask is running -- …` beside `diff_docent  running`. T9 reaches only Supervisor-adopted actors. A docent is a one-shot spawn and never one of those. The actor route (`/implement-epic` only) was not driven, for budget. NEW **N2**. `~/tmp/lain/T18/captures/stop-fleet/` |
+| **Fp-3** | **MED-HIGH** | one task hitting the iteration ceiling aborts the whole `bench arms` run — 13 completed grades discarded, no report, 11 locked worktrees left | not in this plan (Open decision 1): not driven |
+| Ff-2 | MEDIUM | a `message` record missing a required key escapes every door as a raw `KeyError` with 19 frames instead of `Corrupt` | **FIXED.** A `message` missing `kind`/`payload`/`from`, and a `turn` with `role: null`, each refuse at `--fork`, `--resume` and `bench variance`: exit 1, 0 frames, naming the record and the field. Nit: `role: null` is worded `has no role key`. `~/tmp/lain/T18/captures/damaged/summary.txt` |
+| Ff-3 | MEDIUM | when chat *and* input panes both die only the chat corpse is reported, and the advice leads to a keyboard-less cockpit | **FIXED.** Both panes exit 127. `lain up` reports the chat corpse **and** the input corpse, including `so this cockpit has no keyboard`. `~/tmp/lain/T18/captures/corpse/up.out` |
+| Fb-1 | MEDIUM | the session header records `compact_fallback` but never `compact_strategy`; `bench variance` has no strategy guard | **FIXED.** The header carries `compact_strategy` when one is named and omits it when unset. `bench variance` refuses `elide vs summarizing` and `elide vs eager` (exit 1); the same arm compares (exit 0). `~/tmp/lain/T18/captures/compaction-arm/` |
+| Fr-1 | MEDIUM | `summary_hits`/`summary_misses` cannot distinguish a healthy under-threshold run from a dead summarizer | **FIXED, floor half only.** Under-threshold compactions record `summary_hits:0, summary_misses:1-2, misses_all_size_declined:true`. Not driven: the >256 KiB ceiling half, and a genuinely failed summarizer (should read `false`). `~/tmp/lain/T18/captures/compaction-misses/decisions.txt` |
+| Fm-2 | MEDIUM | the consolidate path does not detect a prose tool call the chat path journals for identical bytes | **NOT FIXED.** An envelope injected at the clerk journals **no** `malformed_response` anywhere, and it is printed as the lineage's result. T16's card said this folds into T2; it does not. The execution log defers the printing half. NEW **N3**. `~/tmp/lain/T18/captures/consolidate/run3-injected.out` |
+| Fp-2 | MEDIUM (UX) | a tmux layout change erases the input pane's HUD row; nothing repaints it until the next ask | **FIXED.** Squeezing the window to 12 rows and restoring it brings the HUD row back with no ask and no keypress. An idle pane wrote 0 bytes in 10 s; a geometry edge repaints. `~/tmp/lain/T18/captures/hud/` |
+| Fc-2 | LOW-MED | `/review` with a detached editor prints three gestures against a buffer that cannot exist, then contradicts itself | not in this plan's scope: not driven |
+| Fv-4 | LOW-MED | two different path bases on adjacent surfaces | not in this plan's scope: not driven |
+| Fr-2 | LOW | a non-zero command exit yields `is_error: false`, so the standard "what failed" reduction misses every failing `bash` | not in this plan's scope: not driven |
+| Fk-4, Fv-5, Fv-6, Fx-2, Fx-3, Fm-3…7, Fs-3…5, Ff-4 | LOW | wording, stale doc constants, and instrument drift — itemised in the per-context files | not in this plan's scope: not driven |
 
 Full per-finding detail, with mechanisms and reproductions, is in
 `~/tmp/lain-qa-2026-09-21/records/` (one file per context, 2,868 lines). This file carries the
@@ -317,6 +317,40 @@ Enumerated fresh from `ls planning/qa/scenarios/` at round start: **18 files**.
 **Re-counted, since the docs drift:** `lib/` is now **871 files / 180,987 lines** (the docs say
 ~780/~164,000). The command registry is **24**, not 23. `memory-and-dogfood` §2's stated 256 KiB
 ceiling is really 16,384 bytes. `failure-injection` §8's ceilings are stale.
+
+## Re-driven against the fixed tree, 2026-09-21
+
+After `planning/specs/qa-round-19-fixes.md` landed, the named sections were driven again against
+`main` at `2bb04749` with `qwen3-coder:30b`. The per-finding verdicts are in the summary table's
+"T18 re-drive" column, and the captures are under `~/tmp/lain/T18/captures/`. All four HIGHs are
+fixed, each proved by a capture. Every FIXED verdict is **better**, not just different. Four new
+findings:
+
+- **N1, HIGH: `read_file` releases a gated file through an in-root symlink right after a human
+  denied it.** The `cat` route to that same link now abstains and parks. Then the model went
+  straight to `read_file readme2.txt` (linked to `.env.local`) and `read_file notes.txt` (linked to
+  `id_rsa`). Both returned the file's bytes with nobody asked, one second after the human denied
+  `cat readme2.txt`. `read_file .env.local` and `read_file id_rsa` spelled directly still park.
+  `Sensitivity::Policy` classifies the word lexically by contract, and only `ComposedTerm` resolves
+  where the word lands. This is the open question `secret-boundary.md` §5b already records. What is
+  new is that it now defeats a human denial. The fix belongs to that question: gate `Policy` on the
+  resolved landing (`Confinement#landing_of` exists already), or refuse a read whose landing
+  classifies differently from its word.
+- **N2, MED-HIGH: Fv-3 persists on the route it was filed on.** With a docent running, `/stop` at
+  `you>` still answers "no ask is running". The fix reads `env.supervisor.live`, and a docent (like
+  every one-shot spawn) runs under `Lineage::OneShot`, never `Supervisor#adopt`. The card assumed the
+  child was an adopted actor. The adopted-actor route the fix does reach needs `/implement-epic`,
+  and it was not driven; it is covered by specs only.
+- **N3, MEDIUM: Fm-2 is not fixed.** On the consolidate clerk path, a prose tool call journals no
+  `malformed_response` and is printed as the lineage's result. The pass does now say
+  `stored nothing`.
+- **N4, LOW: a `turn` record whose `role` is null refuses as "has no role key".** It fails in the
+  right way (exit 1, no backtrace), but the sentence is slightly wrong.
+
+Two halves were not driven: Fr-1's >256 KiB case and a summarizer that genuinely fails. No
+wall-clock figure from the re-drive is a measurement. The malformed child was produced by injecting
+the envelope on the wire through a capture proxy. That still exercises the real decoder, loop,
+subagent and lineage. In about 60 model calls, no prose tool call happened naturally.
 
 ## What the round taught the method
 

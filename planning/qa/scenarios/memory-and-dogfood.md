@@ -201,6 +201,13 @@ prefix — and confirm they are **not** `lain chat --resume`'s three, which are 
 A driver who assumes they are the same will file a false defect the first time a selector that
 resumes fine fails to consolidate.
 
+**The report now says whether the store actually moved, not just whether lineages were found.**
+`consolidate: ran a court_clerk pass over N lineage(s), writing memories` is a pass that stored
+something; `consolidate: ran a court_clerk pass over N lineage(s) and stored nothing` is a pass
+that clerked every lineage and wrote none — the two used to render identically, both exit 0, which
+made "the pass ran" indistinguishable from "the pass persisted anything" from the report alone.
+Drive both readings rather than trusting exit 0.
+
 Then the outcome: new memory items, written through the recorder, with a new root. **Read them
 back with `memory_read` in a fresh `lain chat` on the same project.** That round trip is the whole
 point of the pass, it is the only check that distinguishes "the pass ran" from "the pass persisted

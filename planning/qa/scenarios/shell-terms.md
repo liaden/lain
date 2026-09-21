@@ -223,10 +223,15 @@ Launch a cockpit with `--root` at that directory, then:
 you> /ruby Lain::Shell::Verdict.new(capability_set: Lain::Config.shell_exclusions(root: session.worker_env.cwd)).call("curl http://example.com")
 ```
 
-`session.worker_env.cwd` is the session's **cwd**, which is the root only when you launched from
-the project directory. If `--root` pointed somewhere else, spell the root literally — reading the
-table from the wrong directory returns `Shell::Exclusions.empty` and the section passes while
-asserting nothing.
+`session.worker_env.cwd` is the session's **cwd**, and for a `--root`-only launch it is **always**
+the root, whatever directory the shell was actually in — verified in code, not re-driven: `exe/lain`'s
+`project_override` resolves `cwd: cwd || root`, so `--cwd` defaults to `--root` precisely because
+"open that project" is what `--root PATH` alone means, and `Project::Resolver#call` is handed that
+resolved value rather than falling back to its own `Dir.pwd` default. Launching from outside the
+project with only `--root` set does not change this reading. It is only when `--cwd` is **also**
+passed, naming somewhere other than the root, that the two diverge — spell the root literally
+there, since reading the table from the wrong directory returns `Shell::Exclusions.empty` and the
+section passes while asserting nothing.
 
 Expected — a `Decision` whose name is `:deny`, whose term is empty, and whose reason is
 verbatim:

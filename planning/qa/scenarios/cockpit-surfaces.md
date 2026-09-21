@@ -68,6 +68,19 @@ Checks:
    redistribution. `lain up` re-arms it on a session it did not build this time, so an operator
    who upgrades with a cockpit open gets the floor without killing the session — worth checking
    once against a session started by an older binary.
+
+   **The repro is a squeeze AND a restore, not just the squeeze, and the HUD must come back with
+   no ask running and no key pressed.** Shrink the window below 13 rows, then grow it back: the
+   pane returns to its own floor either way, and the HUD row has to be repainted on that geometry
+   settling by itself, with nobody typing and nothing dispatching. And an **idle** pane must
+   repaint nothing at all while sitting still — a poll that redraws on the clock rather than on a
+   real geometry edge is the regression this guards against, so measure bytes, not eyeballing:
+
+   ```bash
+   tmux pipe-pane -t <input> -o "cat >> $QA/records/idle-input-pane-$$.raw"   # ~10s with nothing happening
+   wc -c "$QA/records/idle-input-pane-$$.raw"                                  # must read 0
+   ```
+
 3. **The HUD is in the input pane, above the prompt, and it refreshes with no keypress.** Start
    an ask that runs for a while, type a few characters into the input pane without submitting,
    and watch the header change under your draft. That is the whole reason for the split: the
@@ -149,6 +162,15 @@ Either one must leave the prompt at `you>` **in the same session**: the journal 
 `run_interrupted` with `"reason": "stopped"` and **no** `session_closed`, and the next thing you
 ask runs on the same chain. With nothing running, `/stop` answers *"no ask is running -- /stop at
 the prompt it parks on, or s at a countdown"* and changes nothing.
+
+**That is no longer the whole story once Supervisor-adopted actors are running at `you>`.** An
+adopted actor is a sibling of every ask, not a captive of one, so it keeps running with nothing
+parked at `you>` to answer for it: `/stop` typed there now reads the fleet and, if it finds any
+running, stops each by hand and answers `no ask was running, but stopped <role> (<worker_id>)`
+(joined by commas for more than one). Only that route is reached — a **one-shot** child, a docent
+above all, is not: it runs under `Lineage::OneShot`, never `Supervisor#adopt`, so `/stop` at `you>`
+beside a running docent still answers plain `"no ask is running"` and leaves it running. That is a
+known open finding, not a regression to file again.
 
 **What wrong looks like:** a `session_closed` record beside the stop; the prompt coming back as a
 fresh session; `/stop` answered by the model as prose (the rail did not intercept it, which is

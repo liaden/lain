@@ -603,6 +603,7 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
   | `cat README.md \| tee out.txt` | allowed by the verdict, refused by the runner (§3a) — an approval rule that says yes to a command the runner then refuses is a UX finding at minimum |
   | `cat <a world-readable, ordinary-classified file that holds an `API_KEY=…` line>` | **the content predicate**, new in round 18: the rule opens every word that resolves to a real file (≤ 64 KiB, world-readable, `O_NOFOLLOW`) and refuses to vouch for one `Sensitivity::Regions` finds a region in. Classification alone said this file was ordinary, and it is; the bytes are the thing that disqualifies it |
   | `cat <an `exempt`ed `.env`>` | an exemption lifts the **human read prompt** and nothing else, so an ordinary-by-exemption verdict still fails the rule. Before this, one basename exemption for a fixture `.env` approved `cat` of every `.env` in the tree with nobody asked |
+  | `cat <ordinary-named in-root link to .env.local or id_rsa>` | the rule classifies the LANDING, not the word — an ordinary-classified name that resolves to a gated or denied target must still reach a human (`secret-boundary.md` §5b) |
 
   **Two things must still auto-approve**, and they are the controls that keep the content
   predicate from being a blanket refusal:

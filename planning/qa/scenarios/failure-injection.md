@@ -643,6 +643,12 @@ and check:
 - the decline is counted as a **miss**, not a hit. A refusal string stored as a summary would report
   as a summary that landed, and `summary_hits`/`summary_misses` on `compaction_decision` is the only
   read on whether the fires work at all;
+- **that same `compaction_decision` must also read `misses_all_size_declined: true`.** A miss below
+  `MODEL_THRESHOLD_BYTES` and a miss over the 256 KiB input ceiling both land in `summary_misses`,
+  and the two are not the same failure — one never reaches a model call at all. This field is what
+  tells a size decline from a dead summarizer: it is true only when every miss this decision counted
+  was a size decline, so a `summary_misses` count with the flag `false` means something else is
+  wrong;
 - the result then renders as an **elision line** carrying its type, content address and byte count.
   Silence there — a block that simply vanishes — is the failure.
 

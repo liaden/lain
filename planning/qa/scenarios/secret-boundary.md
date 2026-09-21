@@ -620,6 +620,16 @@ round does not re-file them:**
   2026-09-14; whether the classifier itself should resolve links is the open ruling. `cat link` in
   the table above is the `bash` face of the same thing.
 
+  **The `bash` half is now CLOSED, and the rule that closed it also classifies where each word
+  LANDS, not just what it says.** With an ordinary-named in-root symlink to a gated or denied
+  file, `cat <the link>` now abstains and parks for a human, same as the direct spelling. **The
+  `read_file` half is still open, and it now defeats a human denial rather than merely skipping
+  one.** Re-observed on 2026-09-21 against the fixed tree, with an in-root target: the model was
+  denied `cat` of the link, then went straight to `read_file` on the same link and read the gated
+  bytes with nobody asked — `Sensitivity::Policy` still classifies the word lexically by contract,
+  and only `ComposedTerm` resolves where it lands. See
+  `planning/qa-findings-round19-2026-09-21.md`, "Re-driven against the fixed tree", N1.
+
 **Three near-misses, worth a look while the journal is open.** None was reproducible as a defect;
 each is a place where one small change upstream makes it one.
 

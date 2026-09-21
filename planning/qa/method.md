@@ -1221,6 +1221,12 @@ session, so it wears the exact shape of the construction refusal the step is tes
 pass. Round 9 filed nothing on it only because the message did not match the expected text. Use
 explicit arguments or an array; and when a refusal's WORDING is the assertion, check the wording.
 
+**zsh's `NULLCMD` is `cat`, and that turns an empty redirection into a silent hang.** A bare
+redirection with no command in front of it -- an unset variable expanding to nothing ahead of
+`2>/dev/null`, or a stray `2>&1 | tee` left on its own line -- is a syntax zsh accepts by running
+`NULLCMD` against it. `cat` with no file argument reads stdin, so the shell sits waiting on a
+terminal that never sends EOF, and the recipe that produced it looks merely slow rather than wrong.
+
 ## Instruments worth building
 
 - **A counting TCP listener** — ~12 lines (accept, `SO_LINGER 0`, close, count to a file) — turns

@@ -288,7 +288,13 @@ stays here only while it is still in flight:
   - **Three more HIGH:** an in-root **symlink** under an ordinary name is auto-approved by
     `ComposedTerm` (F131 one route on); `lain chat --root PATH` is ignored, so `.lain/slots/` never
     loads; and a detected `malformed_response` is a **silent write-off delivered as a successful
-    result** — the record has zero consumers in `lib/`.
+    result** — the record has zero consumers in `lib/`. All three are fixed, each proved by a capture
+    on 2026-09-21.
+  - **Re-driven against the fixed tree, four new findings.** The worst is N1, HIGH: one tool past
+    the symlink fix, `read_file` through the same in-root link returns a gated file's bytes with
+    nobody asked, right after a human denied the `cat`. The others: `/stop` still cannot reach a
+    running docent (Fv-3 on its filed route), the consolidate clerk still neither detects nor fails a
+    prose tool call (Fm-2), and a LOW wording nit.
   - **Two long-owed sections reached:** `survey` §7, dropped by three consecutive rounds, and
     `rails-blog` §1b, whose over-window handoff was driven end to end for apparently the first time
     — **F173 is fixed**.
