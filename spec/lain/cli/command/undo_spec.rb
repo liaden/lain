@@ -424,6 +424,89 @@ RSpec.describe Lain::CLI::Command::Undo do
       end
     end
 
+    # A /mode flip into plan scope rebinds the slot at the spike's root, so the
+    # root bound now and the root a snapshot was recorded under differ. Every
+    # key in a snapshot's file map is relative to ITS root, so resolving one
+    # against the root bound now addresses a different file entirely -- and a
+    # path missing there is no obstruction, so nothing refuses.
+    describe "after the slot's root moved under it" do
+      around do |example|
+        Dir.mktmpdir("lain-undo-box") do |box|
+          @spike = File.join(File.realpath(box), "spike")
+          FileUtils.mkdir_p(@spike)
+          example.run
+        end
+      end
+
+      attr_reader :spike
+
+      def in_spike(name) = File.join(spike, name)
+
+      # One turn under whatever root the slot is bound to now, its change
+      # carried by the shadow scope's trees rather than by a write-set.
+      def bound_turn
+        slot.prime
+        yield
+        @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => "a turn" }])
+        slot.write(timeline: @timeline, paths: [])
+      end
+
+      it "reverts under the root its snapshot recorded, never the root bound now" do
+        File.binwrite(in_spike("doomed.txt"), "spike v0\n")
+        slot.rebind(root: spike)
+        bound_turn { File.delete(in_spike("doomed.txt")) }
+        slot.rebind(root:)
+
+        undo
+
+        expect(exist?("doomed.txt")).to be(false)
+        expect(File.binread(in_spike("doomed.txt"))).to eq("spike v0\n")
+      end
+
+      it "refuses naming a recorded root that is gone, and /undo skip gets past it" do
+        turn(shell: { "home.txt" => "home\n" })
+        slot.rebind(root: spike)
+        bound_turn { File.binwrite(in_spike("spiked.txt"), "spiked\n") }
+        FileUtils.remove_entry(spike)
+
+        expect { undo }.to raise_error(described_class::Refusal, /#{Regexp.escape(spike)}/)
+        expect(skip_turn).to include("skipped the latest of 2 undoable file-changing turns")
+        undo
+
+        expect(exist?("home.txt")).to be(false)
+      end
+
+      # A directory nothing may enter answers Dir.exist? true, and planning a
+      # shadow turn's moves shells into the recorded root -- so no predicate
+      # standing in front of the plan can be the whole guard. A chmod away from
+      # working, so the repair is offered before the skip that discards it.
+      it "refuses naming a recorded root it cannot read, offering the repair before the skip" do
+        slot.rebind(root: spike)
+        bound_turn { File.binwrite(in_spike("s.txt"), "s\n") }
+        slot.rebind(root:)
+        File.chmod(0o000, spike)
+
+        expect { undo }
+          .to raise_error(described_class::Refusal,
+                          %r{#{Regexp.escape(spike)}.*readable and /undo again, or /undo skip}m)
+      ensure
+        File.chmod(0o755, spike)
+      end
+
+      # Counted as every other refusal counts, and the path named as what it
+      # PROBABLY was: a tmpdir-shaped directory tells an operator nothing on
+      # its own, and all the code knows is that a directory is missing.
+      it "counts the turn among those still undoable, and guesses the gone path aloud" do
+        slot.rebind(root: spike)
+        bound_turn { File.binwrite(in_spike("s.txt"), "s\n") }
+        FileUtils.remove_entry(spike)
+
+        expect { undo }
+          .to raise_error(described_class::Refusal,
+                          /only undoable file-changing turn: .*#{Regexp.escape(spike)}.*perhaps a plan-scope/m)
+      end
+    end
+
     # A count that included turns already undone read as "2 of 3" with only
     # two left to undo. The reply counts what is still undoable.
     it "names the turn among the turns still undoable, never by a digest" do
