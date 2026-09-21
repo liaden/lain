@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "pathname"
+
 module Lain
   module Approval
     # The one rule in `lib/` that can APPROVE a shell command with no human and
@@ -24,12 +26,16 @@ module Lain
     #    the project root -- as written, and as the filesystem resolves it;
     # 8. THE CONTENT PREDICATE: no word names a file closed to other users, or
     #    one whose first bytes carry a region a masked read would withhold.
+    # 9. THE LANDING PREDICATE: every word classifies ordinary where it LANDS,
+    #    and not by exemption -- predicate 4 judges the name that was written,
+    #    and a name can point at a file with a different one.
     #
     # {#approvable?} is the whole conjunction on one line and every predicate is
     # total over a term on its own, so another is one more `&&` plus one more
     # method. That is not tidiness, and it has been TESTED rather than claimed:
-    # predicates 6, 7 and 8 were each added after the rest shipped, and each
-    # cost one `&&` and one method here -- no existing predicate's logic changed.
+    # predicates 6, 7, 8 and 9 were each added after the rest shipped, and each
+    # cost one `&&` and one method here -- two for 9, which needs a rescue of
+    # its own -- and no existing predicate's logic changed.
     # Predicates 7 and 8 also each cost a message on the injected factory
     # (`#confinement`, `#content`), and 7 the lexical test it shares with
     # {Risk::OutsideRoot}, extracted as {Risk::Root}. The `PATH`-trust rung
@@ -87,6 +93,62 @@ module Lain
     # (64 KiB), and carry no region; {CLI::Wiring::BoardBuild::Classifiers::Content}
     # holds the mechanics. It too lives outside {Sensitivity}, for the same
     # reason.
+    #
+    # == The landing predicate: a name is not what the kernel opens either
+    #
+    # MEASURED before it existed, in a project holding a `.env` and an `id_rsa`:
+    # `cat notes.txt` and `cat changelog.txt`, two ordinary-named symlinks to
+    # them INSIDE the root, were both approved with nobody asked -- the second
+    # from the DENIED tier -- while the direct spelling of each refused.
+    # Predicate 7 asks only WHERE a word lands and both landed inside; predicate
+    # 8 asks what the bytes hold and a config file holds no key-shaped region;
+    # predicate 4 classifies the word `notes.txt`, which is ordinary. Nothing in
+    # the conjunction classified the name the kernel would actually open.
+    #
+    # So this one classifies the LANDING, through the classifier predicate 4
+    # already built and the confinement predicate 7 already resolved: no new
+    # message on the factory and no syscall class this call was not making. It
+    # did cost one reader on the confinement -- `#real_landing`, which is the
+    # resolution predicate 7 performs anyway and used to discard.
+    # The resolving stays HERE for predicate 7's reason, and that reason is now
+    # load-bearing twice: the classifier's whole contract is that it makes no
+    # syscall, so the CALLER that authorizes a link-following exec is what has
+    # to resolve before it asks.
+    #
+    # It classifies TWO spellings of that landing, because a project reached
+    # through a link has two spellings of its own ROOT and a `/`-anchored config
+    # rule is written against the one the session uses. The kernel's absolute
+    # spelling is what catches a link whose target the session's own root names;
+    # the same landing RELATIVE to where the command will run, which the
+    # classifier resolves against the session's root, is what catches the file a
+    # project rule names when the root itself is spelled through a link. Either
+    # spelling being gated, denied, unreadable or exempt is a refusal.
+    #
+    # == What it does not cover, MEASURED rather than reasoned about
+    #
+    # A **hardlink**. `File.link($root/.env, $root/hard.txt)` and then
+    # `cat hard.txt` is APPROVED -- measured, `nlink` 2 and the same inode.
+    # `realpath` sees nothing to resolve, because a hardlink is a second name
+    # for the inode rather than a path to follow, so this predicate reads an
+    # ordinary name landing on an ordinary name. Predicate 8 is what catches the
+    # case that motivated it, a hardlink to a KEY, and it catches it by the
+    # bytes; a hardlink to a file gated only by its NAME survives both. Closing
+    # it means comparing inodes against every gated name a directory holds,
+    # which is a different mechanism from classifying a path.
+    #
+    # A `/`-anchored config rule naming a link INSIDE the root. With
+    # `gated = ["/vault/"]` and `vault -> store`, `cat vault/secret.txt` refuses
+    # at predicate 4 and `cat store/secret.txt` is APPROVED -- measured, and
+    # true before this predicate existed too. Resolution deletes a link from
+    # every landing, so a rule written against one matches no spelling of it: a
+    # config has to name the real directory to bind, and `gated = ["/store/"]`
+    # then refuses both spellings. The two spellings here are the root's, not
+    # one per link on the path -- a path crossing several has a spelling for
+    # each subset of them, which is not a set anything can classify.
+    #
+    # It also cannot save a word whose landing does not exist: a dangling link
+    # has none, so {#ordinary_landing?} answers false rather than raising, which
+    # is the direction predicate 7 already fails in.
     #
     # == Predicate 4 is "is ORDINARY", never "is not denied"
     #
@@ -380,7 +442,8 @@ module Lain
       # goes here plus one method below.
       def approvable?(term, cwd)
         bare_names?(term) && allowlisted?(term) && ordinary_words?(term, cwd) &&
-          unflagged?(term) && unaliased?(term) && confined?(term, cwd) && plain_content?(term, cwd)
+          unflagged?(term) && unaliased?(term) && confined?(term, cwd) &&
+          plain_content?(term, cwd) && resolved_words?(term, cwd)
       end
 
       def judged?(call) = call.tool_name == TOOL
@@ -414,11 +477,37 @@ module Lain
         term.flatten.all? { |word| confinement.contains?(word) }
       end
 
-      # The content predicate. Last because it opens files, and for no other
-      # reason: the factory answers it over its own root answer.
+      # The content predicate. The only one that opens a file, and that is the
+      # only reason for its place: the factory answers it over its own root
+      # answer.
       def plain_content?(term, cwd)
         content = @sensitivity.content(cwd)
         term.flatten.all? { |word| content.admits?(word) }
+      end
+
+      # The landing predicate. Predicate 4 classified the word as written; this
+      # classifies what it resolves to, so a link cannot carry a gated file in
+      # under an ordinary name.
+      def resolved_words?(term, cwd)
+        classifier = @sensitivity.call(cwd)
+        confinement = @sensitivity.confinement(cwd)
+        term.flatten.all? { |word| ordinary_landing?(classifier, confinement, word) }
+      end
+
+      # Both spellings of the landing, for the reason the header gives, and
+      # false for a word that resolves nowhere: `#landing_of` raises where no
+      # prefix is on disk, and a raise here would reach {RuleChain} as a fault
+      # rather than as the refusal it means.
+      #
+      # The base the relative spelling is measured from is the confinement's own
+      # `#real_landing` -- one resolution per decision, which the factory had to
+      # make anyway, rather than one per word.
+      def ordinary_landing?(classifier, confinement, word)
+        landing = confinement.landing_of(word)
+        relative = Pathname.new(landing).relative_path_from(confinement.real_landing).to_s
+        [landing, relative].all? { |spelling| unexempted?(classifier.classify(spelling)) }
+      rescue StandardError
+        false
       end
 
       def programs(term) = term.map(&:first)

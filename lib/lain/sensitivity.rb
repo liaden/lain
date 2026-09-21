@@ -24,13 +24,22 @@ module Lain
   # {Workspace::Restore} about what "outside the root" means, and
   # resolving links here would both disagree with that and put a syscall in a
   # classifier whose whole contract is that it makes none. The hole has a name
-  # and a spec rather than a stat.
+  # and a spec rather than a stat -- and the one caller that cannot afford it
+  # closes it on its own side: {Approval::ComposedTerm} resolves a word and
+  # classifies where it LANDS as well as what it says, because nobody is asked
+  # about what that rule approves.
   #
   # The two halves err in OPPOSITE directions. {Approval::Risk}'s widen-never-
   # sharpen rule (`risk.rb:66-72`) applies to the GATED half only, where a
-  # spurious match costs one prompt. No policy, no `/mode auto` and no
-  # `ApproveAll` lifts a DENIAL, so a false positive there makes a file
-  # permanently unreadable with no move available to anyone -- which is why
+  # spurious match costs one prompt. That price is the READ path's, which was
+  # the only path when it was written: a caller that APPROVES pays the other
+  # error instead, and a gated name this table does not match costs it an
+  # unsupervised read of a credential rather than a prompt. So "one prompt" is
+  # what a spurious match costs HERE, never what a miss costs everywhere.
+  #
+  # No policy, no `/mode auto` and no `ApproveAll` lifts a DENIAL, so a false
+  # positive there makes a file permanently unreadable with no move available
+  # to anyone -- which is why
   # `id_*` carries a `*.pub` exception, and why {DENIED} is split by how
   # AMBIGUOUS a name is rather than by where the secret usually lives.
   class Sensitivity

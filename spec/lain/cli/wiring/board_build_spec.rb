@@ -1005,6 +1005,34 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       expect(described_class.new(home: "/home/u", cwd: "/home/u/work").confinement(nil).contains?("x")).to be(false)
     end
 
+    # The directory the command will really run in, which this factory has to
+    # resolve anyway to answer the root question -- so it says the answer
+    # rather than making a per-word caller resolve the same cwd again. It is
+    # exactly the landing of `.`, and the approving rule reads it once per
+    # decision instead of once per word.
+    it "names the landing of the cwd it already resolved" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "docs"))
+        File.symlink(File.join(root, "docs"), File.join(root, "manual"))
+        factory = described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))
+
+        expect(factory.confinement(nil).real_landing).to eq(root)
+        expect(factory.confinement("manual").real_landing).to eq(File.join(root, "docs"))
+        expect(factory.confinement("manual").real_landing).to eq(factory.confinement("manual").landing_of("."))
+      end
+    end
+
+    # This factory is documented never to raise, so every confinement it hands
+    # back answers every message -- including the one that confines nothing,
+    # which the approving rule short-circuits past and never asks. Totality,
+    # not a live caller: the unresolved spelling is the answer because nobody
+    # is there to need a resolved one.
+    it "answers a landing even where it confines nothing, rather than raising" do
+      factory = described_class.new(home: "/home/u", cwd: "/home/u/work")
+
+      expect(factory.confinement("bad\0dir").real_landing).to eq("/home/u/work")
+    end
+
     describe "#content" do
       def confined_factory(home, root)
         described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))

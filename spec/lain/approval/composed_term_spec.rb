@@ -625,6 +625,136 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
+  # The classifier reads the NAME it was given, by contract, and the root
+  # predicate asks only WHERE a word lands -- so a link whose target is inside
+  # the root satisfies both while pointing at a file the classifier would have
+  # gated under its own name. MEASURED before this predicate existed, with a
+  # `.env` and an `id_rsa` in the project: `cat notes.txt` and
+  # `cat changelog.txt` were both APPROVED with nobody asked, the second one
+  # from the DENIED tier, while the direct spelling of each refused.
+  describe "a word whose name is ordinary and whose landing is not" do
+    # Bytes no region detector would mask, so only the NAME the link points at
+    # is what makes the file sensitive -- the content predicate admits these.
+    let(:dotenv) { "API_BASE=https://example.test\nFEATURE_X=on\n" }
+
+    it "refuses a gated file reached through an in-root link, in either spelling of the target" do
+      in_tree do |root, home|
+        on_disk(root, ".env", dotenv)
+        File.symlink(".env", File.join(root, "notes.txt"))
+        File.symlink(File.join(root, ".env"), File.join(root, "changelog.txt"))
+        through = ["cat notes.txt", "cat changelog.txt", "cat notes.txt | head -20",
+                   "grep -n API_BASE notes.txt"]
+        expect_allowed_by_the_verdict(*through)
+
+        rule = rule_for(home, root)
+        expect(through.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * through.size)
+      end
+    end
+
+    # Predicate 6 refuses `/proc` in a WORD, lexically, and a link's target is
+    # not a word. So a link whose target re-enters the root through the alias
+    # defeats predicate 6 and predicate 4 at once -- the word is `procenv.txt`,
+    # which carries no `proc` segment and no gated name. MEASURED as an approval
+    # before this predicate existed; the landing is what closes it, because
+    # `File.realpath` resolves procfs like any other directory.
+    it "refuses a gated file reached through a link that re-enters the root through /proc" do
+      in_tree do |root, home|
+        on_disk(root, ".env", dotenv)
+        File.symlink("/proc/self/root#{root}/.env", File.join(root, "procenv.txt"))
+        expect_allowed_by_the_verdict("cat procenv.txt")
+
+        expect(rule_for(home, root).decide(call_of("cat procenv.txt", cwd: root))).to be_nil
+      end
+    end
+
+    it "refuses a denied file reached the same way, which no human is asked about either" do
+      in_tree do |root, home|
+        on_disk(root, "id_rsa", "an opaque blob nothing detects\n")
+        File.symlink("id_rsa", File.join(root, "readme.txt"))
+
+        expect(rule_for(home, root).decide(call_of("cat readme.txt", cwd: root))).to be_nil
+      end
+    end
+
+    # A directory link hides every name beneath it, and the word carries none
+    # of them.
+    it "refuses a gated file under an ordinary-named directory link" do
+      in_tree do |root, home|
+        on_disk(root, ".ssh/id_ed25519", "an opaque blob nothing detects\n")
+        File.symlink(File.join(root, ".ssh"), File.join(root, "keys"))
+
+        expect(rule_for(home, root).decide(call_of("cat keys/id_ed25519", cwd: root))).to be_nil
+      end
+    end
+
+    # Resolution only ever REMOVES an approval.
+    it "still approves an ordinary file that is not a link at all" do
+      in_tree do |root, home|
+        on_disk(root, "README.md", "# A project\n\nNothing secret here.\n")
+
+        expect(rule_for(home, root).decide(call_of("cat README.md | head -20", cwd: root))).to be_allow
+      end
+    end
+
+    it "still approves a link whose landing is as ordinary as its name" do
+      in_tree do |root, home|
+        on_disk(root, "docs/intro.md", "# Intro\n")
+        File.symlink(File.join(root, "docs"), File.join(root, "manual"))
+
+        expect(rule_for(home, root).decide(call_of("cat manual/intro.md", cwd: root))).to be_allow
+      end
+    end
+
+    # A dangling link has no landing, so this predicate cannot classify one:
+    # the answer is an abstention, and never a raise that would reach
+    # {Lain::Approval::RuleChain} as a fault.
+    it "abstains rather than raising on a word whose prefix resolves nowhere" do
+      in_tree do |root, home|
+        File.symlink(File.join(home, "absent"), File.join(root, "dangling"))
+        rule = rule_for(home, root)
+
+        nowhere = ["cat dangling", "cat dangling/x", "cat dangling/x/y"]
+        expect(nowhere.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * nowhere.size)
+      end
+    end
+
+    # A project checked out under a link has TWO spellings of every path it
+    # holds, and a `/`-anchored config rule is written against the one the
+    # session uses. An absolute landing matches no such rule, so the landing is
+    # classified under both spellings -- as the kernel names it, and relative to
+    # where the command will run, which the classifier resolves against the
+    # session's own root.
+    it "refuses a project-anchored file through a link when the root itself is spelled through one" do
+      in_tree do |root, home|
+        on_disk(root, "vault/secret.txt", "an ordinary looking line\n")
+        on_disk(root, "README.md", "# A project\n")
+        File.symlink("vault/secret.txt", File.join(root, "notes.txt"))
+        linked = File.join(File.dirname(root), "repo-link")
+        File.symlink(root, linked)
+        rule = rule_for(home, linked, rules: Lain::Sensitivity::Rules.from({ "gated" => ["/vault/"] }),
+                                      confinement: Lain::Approval::Risk::Root.new(linked))
+
+        expect(rule.decide(call_of("cat vault/secret.txt", cwd: linked))).to be_nil
+        expect(rule.decide(call_of("cat notes.txt", cwd: linked))).to be_nil
+        expect(rule.decide(call_of("cat README.md", cwd: linked))).to be_allow
+      end
+    end
+
+    # The other direction of the same two spellings: the cwd is reached through
+    # a link, so the word's own spelling misses the rule and the kernel's
+    # landing matches it.
+    it "refuses a project-anchored file whose gated spelling is the one the kernel resolves" do
+      in_tree do |root, home|
+        on_disk(root, "vault/secret.txt", "an ordinary looking line\n")
+        File.symlink(File.join(root, "vault"), File.join(root, "alias"))
+        rule = rule_for(home, root, rules: Lain::Sensitivity::Rules.from({ "gated" => ["/vault/"] }))
+
+        expect(rule.decide(call_of("cat secret.txt", cwd: "alias"))).to be_nil
+        expect(rule.decide(call_of("cat alias/secret.txt", cwd: root))).to be_nil
+      end
+    end
+  end
+
   describe "a program that is not on the allowlist" do
     it "refuses one that replaces its own input, and one that fetches" do
       in_tree do |root, home|

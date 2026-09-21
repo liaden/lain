@@ -408,17 +408,30 @@ module Lain
           # lands, under the root's own real path. Either answer failing, or
           # failing to resolve, is a no.
           class Confinement
+            # Where the directory the command will run in itself lands.
+            # {Classifiers#confinement} resolves it to answer the root question,
+            # so this says the answer rather than making a caller ask again: a
+            # rule that classifies one word at a time would otherwise resolve
+            # the same cwd once per word, for the same value every time.
+            #
+            # @return [String]
+            attr_reader :real_landing
+
             # @param root [#contains?] the root as the session spells it
             # @param cwd [String] the call's cwd, lexically resolved
             # @param landing [String] the directory the command will really run in:
             #   the call's cwd as {Lain::WorkerEnv#resolve} cleans it, the base a
             #   word's uncleaned path is joined to
             # @param real_root [#contains?] the root's own real path
-            def initialize(root, cwd, landing: cwd, real_root: root)
+            # @param real_landing [String] where `landing` lands, defaulting to
+            #   the unresolved spelling for a confinement that contains nothing
+            #   and will never be asked
+            def initialize(root, cwd, landing: cwd, real_root: root, real_landing: landing)
               @root = root
               @cwd = cwd.dup.freeze
               @landing = landing.dup.freeze
               @real_root = real_root
+              @real_landing = real_landing.dup.freeze
               freeze
             end
 
@@ -573,9 +586,13 @@ module Lain
             # links to, while a word's `..` is resolved by the kernel from there.
             landing = @worker_env.resolve(cwd)
             real_root = Lain::Approval::Risk::Root.new(File.realpath(@confinement))
-            return @nowhere unless real_root.contains?(Landing.of(landing))
+            # The one resolution of the cwd, asked here and CARRIED: the root
+            # question needs it, and so does every word a rule classifies
+            # afterwards.
+            real_landing = Landing.of(landing)
+            return @nowhere unless real_root.contains?(real_landing)
 
-            Confinement.new(@confinement, landing, landing:, real_root:)
+            Confinement.new(@confinement, landing, landing:, real_root:, real_landing:)
           rescue StandardError
             @nowhere
           end
