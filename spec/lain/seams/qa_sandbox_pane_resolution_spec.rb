@@ -105,6 +105,11 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   #                 having ended in `exec`, and with no `lain` in its argv at
   #                 all, which is the degraded launch the resolver must keep.
   #   wrapped    -- a chat that is NOT its pane's foreground process. The defect.
+  #                 It is `lain chat` by argv, because the lain exe alone no
+  #                 longer qualifies: the cockpit's input pane is the lain exe too.
+  #   input      -- that input pane's shape: `lain input`, wrapped the same way.
+  #                 It is not a chat, and counting it made every stock cockpit
+  #                 ambiguous. Wrapped so the only thing excluding it is argv.
   #   editor     -- nvim, which `peek.sh <n> nvim` has to go on reaching.
   #   wrapeditor -- an editor that is not its pane's foreground process either.
   #                 `peek.sh <n> nvim` asks the same question drive.sh does, and
@@ -116,7 +121,8 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   # since resolution alone can only refuse.
   def build_panes(stub, phantom)
     { foreground: spawn("chatfg", %(ruby -e 'puts "#{chat_marker}"; sleep 600')),
-      wrapped: spawn("wrapped", "sh -c 'ruby #{stub}; sleep 600'"),
+      wrapped: spawn("wrapped", "sh -c 'ruby #{stub} chat; sleep 600'"),
+      input: spawn("input", "sh -c 'ruby #{stub} input; sleep 600'"),
       editor: spawn("editor", "nvim -u NONE -n #{marked_document}"),
       wrapeditor: spawn("wrapeditor", "sh -c 'nvim -u NONE -n; sleep 900'"),
       phantom: spawn("phantom", "sh -c 'ruby #{phantom} & sleep 600'") }
@@ -160,6 +166,14 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   # about the empty case has to know the emptiness is the one it arranged.
   def drained(command_name) = poll_panes(command_name, &:empty?)
 
+  # An exclusion is evidence only once the excluded process exists; before it
+  # has execed, a resolver that would count it has nothing to count yet.
+  def await_process(pattern)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+    sleep 0.2 until system("pgrep", "-f", pattern, out: File::NULL) ||
+                    Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+  end
+
   def tooling? = system("command -v tmux >/dev/null 2>&1") && system("command -v nvim >/dev/null 2>&1")
 
   it "counts wrapped chats and editors, keeps the ordinary shapes, and ignores a bare ruby listener" do
@@ -175,6 +189,10 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     # descendant's argv would NOT have excluded it, and every send for the rest
     # of a round would refuse.
     expect(chats).not_to include(panes[:phantom])
+    # The other half of the discriminator: the input pane is the lain exe too,
+    # and a rule that asks only "is it lain" calls every stock cockpit ambiguous.
+    await_process("#{qa}/stub/lain input$")
+    expect(panes_running("ruby")).to contain_exactly(panes[:foreground], panes[:wrapped])
     # Both aims, or the rule has drifted apart on the side nobody watched:
     # `lain up` always execs nvim into the foreground, so an editor rule that
     # matches only the foreground command passes every cockpit test there is and
@@ -277,5 +295,35 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     # candidate is the pane an unpinned `head -1` used to pick.
     expect(tmux("capture-pane", "-p", "-t", panes[:foreground])).to include(text)
     expect(tmux("capture-pane", "-p", "-t", panes[:wrapped])).not_to include(text)
+  end
+
+  it "sends to the pane the cockpit records as its input and reads the one it records as its chat" do
+    skip "needs tmux and nvim" unless tooling?
+    settled("ruby", 2)
+    journal = File.join(qa, "records", "journal.ndjson")
+    File.write(journal, "{}\n")
+    text = "sent-to-the-recorded-input-pane"
+    args = ["drive.sh", text, "3", "15"]
+    vars = { "LAIN_QA_JOURNAL" => journal }
+
+    # Ambiguous to the resolver, so what follows is the options answering.
+    expect(helper(*args, vars:).last.exitstatus).to eq(2)
+    expect(helper("peek.sh", "20").last.exitstatus).to eq(2)
+
+    # What `lain up` records on the session it builds. The input pane is not a
+    # resolver candidate at all, so a send landing there came from the option.
+    tmux("set-option", "-t", "panes", "@lain_input_pane", panes[:input])
+    tmux("set-option", "-t", "panes", "@lain_chat_pane", panes[:foreground])
+
+    out, _err, status = helper(*args, vars:)
+    expect(status).to be_success
+    expect(out).to include("pane #{panes[:input]}")
+    expect(tmux("capture-pane", "-p", "-t", panes[:input])).to include(text)
+    # A send to the chat pane is swallowed in a real cockpit, silently.
+    expect(tmux("capture-pane", "-p", "-t", panes[:foreground])).not_to include(text)
+
+    read, _err, read_status = helper("peek.sh", "20")
+    expect(read_status).to be_success
+    expect(read).to include(chat_marker)
   end
 end
