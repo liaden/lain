@@ -358,3 +358,5 @@ Headlines only. Every one is verified, and the full account of each is in
   `docs/toolchain-traps.md`.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** It gets parsed as Ruby and
   "corrected"; an `Exclude` entry does not save you. A bare `bundle exec rubocop` is safe.
+- **`rubocop -a`'s safe cops can still break parsing.** `Style/BlockDelimiters` rewrites a `{ }`
+  block as `do ... end` inside an ENDLESS method definition, and Ruby cannot parse the result.

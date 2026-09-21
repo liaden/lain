@@ -96,12 +96,45 @@ lesson: keep Homebrew out of the Ruby build.
 
 Use `rubocop -a`. Do **not** reach for `-A` without reading the diff.
 
+**Even `-a` -- the safe form -- can leave a file unparseable.** `Style/BlockDelimiters`
+(`Safe: true`) rewrites a `{ }` block as `do ... end` when that block is the body of an ENDLESS
+method definition (`def foo = Dir.mktmpdir("x") { |d| ... }`); Ruby cannot parse the result, the
+emitted `end`s consume the enclosing block's, and `Layout/BlockAlignment` then "corrects" the
+wreckage on top. The same block under a normal (non-endless) `def` is rewritten harmlessly --
+the endless definition is the trigger. Reproduced independently by two agents: `ruby -c` on the
+result reports `unexpected 'end', ignoring it`, and one run detected 15 offenses and corrected 14
+of them before anyone read the diff. Minimal reproduction:
+
+```ruby
+# before -- valid, ruby -c passes
+def elsewhere(&) = Dir.mktmpdir("lain-slot-elsewhere") { |dir| yield File.join(dir, "escape.txt") }
+```
+
+```ruby
+# after a single `bundle exec rubocop -a` (Safe cops only)
+def elsewhere(&block) = Dir.mktmpdir("lain-slot-elsewhere") do |dir|
+  yield File.join(dir, "escape.txt")
+end
+```
+
+This materially qualifies this section's own heading: `-a`'s "safe" means safe from changing
+behavior, never a guarantee the file still parses afterward. Read the diff, and run `ruby -c` on
+anything `-a` touched that used an endless method definition.
+
 `-a` applies only cops marked `Safe: true`. `-A` also applies unsafe ones, and at least one of
 those is actively dangerous here: `Style/RedundantSelfAssignment` (`Safe: false`) flagged
 `@timeline = @timeline.append(...)` on the assumption that `append` mutates its receiver, as
 `Array#append` does. Ours was pure. The "correction" would have discarded every turn with no
 test failure. The method is now `Timeline#commit`, which both reads correctly and sidesteps
 the cop.
+
+**A second `-A` specimen, for the same reason `-A` stays banned.**
+`Lint/UselessDefaultValueArgument`'s correction deletes the second argument of
+`RequiredKeys.fetch(record, key) { }` -- a project method named `fetch` that takes a block, not
+`Hash#fetch` -- which silently changes which key the call reads. The cop's assumption (a block
+argument to `fetch` is a default-value fallback, so a positional default alongside it is
+redundant) holds for `Hash#fetch` and does not hold for this one. The method was renamed to
+`read`/`read_filled` to stop the cop from ever firing on it, rather than disabled inline.
 
 
 ## Known traps
@@ -278,6 +311,15 @@ the cop.
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
   point moved with the seed. Under `parallel_rspec` that is indistinguishable from the OOM-kill
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
+- **An unbounded blocking `accept` in a spec helper hangs the file instead of reddening it.**
+  `spec/lain/frontend/input_pane_spec.rb`'s `open_pane` called `server.accept` with no timeout: a
+  pane that could not construct never connects, and the call blocks rather than raising, so the
+  whole file hangs on the first example that hits it. Fixed with `server.timeout = 5`, set on the
+  server itself before `accept` -- one step earlier than the existing `chat.timeout = 5` already
+  applied to the socket `accept` returns, which only bounds what happens AFTER a connection lands.
+  It sits beside the rule above on purpose: that rule is about a run that finishes and
+  under-reports, this one about a run that never finishes to report anything at all. Any spec helper that blocks on a real `accept`, `read` or
+  `connect` needs its own bound, not just the one on the socket it hands back.
 - **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
   `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
   `Lain::Frontend::Neovim the review thread pane following the cursor
@@ -299,6 +341,19 @@ the cop.
   settled it, so a reused bufnr inherits nothing`;
   and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
   probing`.
+
+  Added 2026-09-21, from ten hook-verified landings on a box with one core pinned by an unrelated
+  job. Each of these reddened at least one pre-commit suite and then passed 3 of 3 serial runs of
+  its file:
+  `Lain::Frontend::TTY a note rendered while a prompt is drawn loses and repeats nothing typed
+  while notes keep arriving, and prints them all as the prompt closes` (reddened twice);
+  `Lain::Frontend::InputPane a pane with no chat to talk to says what it is waiting for without
+  claiming the screen, and leaves when told to` (twice);
+  `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn
+  gathers every result into ONE user message in tool_use order, however the children finish`.
+  The 62_approval example below reddened twice more in the same run. One timing flake per hook run
+  was the norm that day, so budget a retry per landing, and check a retry's red against this list
+  by name before believing it.
 
   Added 2026-08-28, and it is the one shape this ledger did not yet carry: two examples in
   `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`'s `answering a parked approval in the
@@ -358,6 +413,15 @@ the cop.
   (`bundle exec rubocop lib spec exe`) when the tree holds work you have not committed. This is
   separate from the never-name-a-`.toml` rule above, which is about what gets parsed as Ruby.
 
+  **A second occurrence, 2026-09-21, from a computed file list rather than a bare invocation.** An
+  agent ran `rubocop -a` over `git status | awk '{print $2}'` to lint only what it had touched, and
+  that list included the review panel's own untracked probe scripts sitting in the same worktree.
+  The pass autocorrected 15 offenses across two of them, with no git copy to restore from. The
+  lesson widens: piping `git status` into rubocop does not scope the command to YOUR changes, it
+  scopes it to everything untracked in the tree, including work that belongs to somebody else
+  reviewing alongside you. Vet a computed file list before handing it to `-a`, the same as you
+  would a bare invocation.
+
   Added 2026-09-20, from a chunk running three implementers and three reviewers at once. Both went
   red under that load, in more than one run, and both pass alone on a quiet box. Both assert against
   a **wall clock**, which is the shape that fails first when a box is loaded:
@@ -382,6 +446,26 @@ the cop.
   run alongside `worktree_handback`'s known teardown race, and both passed alone immediately after
   (40 and 94 examples, no code changed between). The commit that surfaced it touched only
   `lib/lain/epic/`, which is the clearest evidence it was the load and not the diff.
+
+  **Added 2026-09-21, and it is the opposite lesson from every entry around it: this one was NOT
+  contention.** `spec/lain/seams/qa_sandbox_pane_resolution_spec.rb` produced 3 failures under a
+  loaded box (`pgrep -cf tmux` reading 10 during one sweep -- it counts live tmux panes box-wide by
+  design), and five separate agents filed it as exactly the family this whole list documents: a
+  spec that reds under load and passes alone. It does neither. **The three failures reproduce
+  SERIALLY, on a box with no tmux server running at all**, which contention cannot explain. Run
+  against `.claude/skills/manual-qa/scripts/qa-sandbox.sh` from before commit `d5d08b87`, the same
+  three examples pass 5/5. `d5d08b87` narrowed the pane resolver so only `lain chat` counts as a
+  chat pane rather than any lain exe -- correctly, since the cockpit's own input pane is the lain
+  exe too, and counting it made every stock cockpit ambiguous -- but the spec's wrapped-chat
+  fixture still launched a bare `lain`, so the fixture went stale under a resolver that had just
+  gotten stricter. That commit staged no Ruby, and the pre-commit `ruby-checks` hook is
+  `types_or: [ruby, rust]`, so the hook's own suite run never executed against it: a shell script a
+  spec drives is invisible to a file-type filter keyed on what was staged, not on what the test
+  exercises. Fixed in `2a39fd73`, which makes the fixture run `lain chat`. Two lessons: a spec's
+  own SHAPE (drives real tmux, counts panes box-wide) is not evidence that a given red IS
+  contention -- that still takes a serial run on a quiet box, which none of the five agents ran
+  before filing it; and a hook's language filter guards the files it inspects, not the behavior a
+  Ruby spec drives through them.
 
   Added 2026-08-24, found by a nine-run `spec:flakes` sweep: `Lain::Tools::ReadFile refusing a read
   that is too large to hand back reads at most a bounded probe of the file it refuses, and never

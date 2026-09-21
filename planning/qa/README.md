@@ -283,7 +283,8 @@ stays here only while it is still in flight:
     the wire.** `max_tokens` is journaled and never sent, `num_predict` is absent from all of `lib/`
     — one task decoded 85,150 tokens against a declared 4,096 and outlived its own client by ~13
     minutes. With `n_slots = 1` it starves the box, and the stall clock cannot catch it because it
-    arms on silence.
+    arms on silence. Fixed 2026-09-21: `max_tokens` now encodes as `num_predict` on the ollama
+    wire, and a non-positive cap is refused rather than sent.
   - **Three more HIGH:** an in-root **symlink** under an ordinary name is auto-approved by
     `ComposedTerm` (F131 one route on); `lain chat --root PATH` is ignored, so `.lain/slots/` never
     loads; and a detected `malformed_response` is a **silent write-off delivered as a successful
