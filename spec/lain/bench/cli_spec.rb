@@ -472,7 +472,8 @@ RSpec.describe Lain::Bench::CLI do
     # The key is never needed: an injected provider short-circuits the backend's
     # own resolution, and anthropic's model default is a constant.
     def backend
-      Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS })
+      Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS },
+                             root: Dir.pwd)
     end
 
     def with_fixture
@@ -551,7 +552,7 @@ RSpec.describe Lain::Bench::CLI do
   # comparison has: the journal its grades and leases land in.
   describe "#arms_report's provider" do
     let(:journal) { Lain::Channel.new }
-    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }) }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
     let(:uncaching) do
       Lain::Provider::Mock.new(capabilities: [], responses: [text_response("FILE lib/widget.rb\nEND",
                                                                            usage: Lain::Usage.new(input_tokens: 8))])
@@ -584,7 +585,7 @@ RSpec.describe Lain::Bench::CLI do
   # have summarized every arm, so an interrupt answers with the table so far.
   describe "#arms_report, interrupted" do
     let(:journal) { Lain::Channel.new }
-    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }) }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
 
     def arms(**)
       cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"), backend:,
@@ -648,7 +649,8 @@ RSpec.describe Lain::Bench::CLI do
     # from, so this is the same number a run gets.
     def backend(**options)
       Lain::CLI::Backend.new(
-        { provider: "anthropic", max_tokens: described_class::RECORD_DEFAULTS.fetch(:max_tokens), **options }
+        { provider: "anthropic", max_tokens: described_class::RECORD_DEFAULTS.fetch(:max_tokens), **options },
+        root: Dir.pwd
       )
     end
 

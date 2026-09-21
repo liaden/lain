@@ -60,8 +60,8 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
   # the reason nothing here touches the network.
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, mock:)
-        super(options)
+      def initialize(options, mock:, root: Dir.pwd)
+        super(options, root:)
         @mock = mock
       end
 

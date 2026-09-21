@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 # Backend is the plain object the CLI's chat and bench-record paths BOTH resolve
 # their provider and context through, extracted out of exe/lain so the
 # provider/model/sampler resolution is unit-testable without a Thor instance and
@@ -8,7 +10,7 @@
 # a Thor::Error, but below the frontend an unknown provider is a plain Lain
 # error (CLAUDE.md output/error discipline -- thor never crosses into lib/).
 RSpec.describe Lain::CLI::Backend do
-  subject(:backend) { described_class.new(options) }
+  subject(:backend) { described_class.new(options, root: Dir.pwd) }
 
   let(:options) { {} }
 
@@ -26,7 +28,10 @@ RSpec.describe Lain::CLI::Backend do
                  body: JSON.generate("models" => []))
   end
 
-  def backend_for(**options) = described_class.new(options)
+  # `root:` is the Backend's own required keyword, not one of the flags, so it
+  # is peeled off the options bag here -- a spec that passed it inside the bag
+  # would be exercising an unread Hash key.
+  def backend_for(root: Dir.pwd, **options) = described_class.new(options, root:)
 
   describe "#provider" do
     it "constructs a Provider::Ollama honoring --api-base" do
@@ -1079,6 +1084,50 @@ RSpec.describe Lain::CLI::Backend do
       allow(wired).to receive(:slots).and_return(instance_double(Lain::Prompt::Slots, render: "SENTINEL-T40"))
 
       expect(wired.context.system).to eq("SENTINEL-T40")
+    end
+  end
+
+  # `lain chat --root PATH` resolves a Project, and the library is the last
+  # collaborator that was not handed its root: the load defaulted to the
+  # working directory, so a chat launched from anywhere but the project's own
+  # directory read somebody else's `.lain/slots` -- or, far more often, nobody's,
+  # and rendered the shipped default while the operator's override sat unread.
+  # The keyword is REQUIRED for that reason; these two pin what it buys.
+  #
+  # Tagged `:seam`, and they are this file's only two: a real {Lain::Skill::Library}
+  # reads a real `.lain/slots` off a real disk and a real {Lain::Prompt::Slots}
+  # renders it, with no double anywhere between the Backend and the bytes. That
+  # is what makes them worth having -- and what makes them the examples a
+  # `--tag '~seam'` inner loop should skip.
+  describe "the root its .lain/ overrides are read from", :seam do
+    # Two directories, and the second one is the whole claim: a project's
+    # override has to reach the prompt from a working directory that is NOT it.
+    def from_elsewhere(slot_name, body)
+      Dir.mktmpdir("lain-rooted-project") do |project|
+        Dir.mkdir(File.join(project, ".lain"))
+        Dir.mkdir(File.join(project, ".lain", "slots"))
+        File.write(File.join(project, ".lain", "slots", slot_name), body)
+        Dir.mktmpdir("lain-elsewhere") { |elsewhere| Dir.chdir(elsewhere) { yield project } }
+      end
+    end
+
+    it "carries a project's system slot into the system prompt from another directory" do
+      rendered = from_elsewhere("system.md", "SENTINEL-ROOTED-SLOT") do |project|
+        backend_for(provider: "ollama", max_tokens: 1024, root: project).context.system
+      end
+
+      expect(rendered).to include("SENTINEL-ROOTED-SLOT")
+    end
+
+    # The refusal half. A slot file nobody reads cannot refuse, so the typo's
+    # loud failure is itself evidence the right tree was opened -- and it is the
+    # failure an operator meets first when they misname the file they just wrote.
+    it "refuses a slot filename no slot name matches, naming the file" do
+      expect do
+        from_elsewhere("sistem.md", "a typo for system.md") do |project|
+          backend_for(provider: "ollama", max_tokens: 1024, root: project).slots
+        end
+      end.to raise_error(Lain::Prompt::UnknownSlot, /sistem\.md/)
     end
   end
 

@@ -497,7 +497,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         mock = Lain::Provider::Mock.new(responses: [])
         Class.new(Lain::CLI::Backend) do
           define_method(:provider) { |**| mock }
-        end.new({ provider: "ollama", model: nil, max_tokens: 64 })
+        end.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
       end
 
       def chat(input)

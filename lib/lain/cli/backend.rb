@@ -125,6 +125,13 @@ module Lain
       # help text.
       #
       # @param options [Hash] Thor's parsed flag set for the invoked command
+      # @param root [String] the PROJECT's root, which is what {#library} reads
+      #   `.lain/skills` and `.lain/slots` from. REQUIRED, and that is the
+      #   point: defaulted to the working directory it read whatever tree the
+      #   shell was standing in, so `lain chat --root` resolved a Project every
+      #   other collaborator honoured and the system prompt ignored. Required
+      #   means every caller states one, which is what makes the next omission
+      #   impossible rather than merely unlikely.
       # @param profile [RunProfile] the provider, model, endpoint and runner
       #   knobs, carrying which of them were typed. Every command hands in the
       #   one it resolved; left out, it is read off `options`, where every field
@@ -147,8 +154,9 @@ module Lain
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
-      def initialize(options, profile: RunProfile.from_options(options))
+      def initialize(options, root:, profile: RunProfile.from_options(options))
         @options = options
+        @root = root
         @run_profile = profile
         summarizer_name
         summarizer_max_tokens
@@ -481,7 +489,12 @@ module Lain
       # middleware, {Tools::RunSkill} and {Skill::RoleSpawn} are all wired from
       # {Wiring}, which is handed a Backend and cannot be handed a library it
       # would then have to load itself.
-      def library = @library ||= Skill::Library.load
+      #
+      # Read from the root this Backend was CONSTRUCTED with, never from the
+      # working directory: that is the whole of what `--root` buys, and the
+      # layering is unchanged -- Wiring still receives a loaded library, and the
+      # root arrives from above rather than being resolved here.
+      def library = @library ||= Skill::Library.load(root: @root)
 
       # The loaded prompt slots -- exposed (not just the rendered String
       # {#context} produces) so a caller can emit ONE Telemetry::SlotFills built

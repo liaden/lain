@@ -305,7 +305,7 @@ RSpec.describe Lain::CLI::Consolidate do
       from_options({}, profile: untyped).report
 
       expect(Lain::CLI::Backend).to have_received(:new)
-        .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"))
+        .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"), root: @project)
     end
 
     it "lets a typed provider win, and says so ahead of the report" do

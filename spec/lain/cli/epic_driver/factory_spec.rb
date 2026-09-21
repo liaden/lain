@@ -108,7 +108,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   let(:layout_mini) { File.expand_path("../../../fixtures/projects/layout_mini", __dir__) }
-  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
   let(:hands_off) { Lain::Epic::STAGES.to_h { |stage| [stage, "hands_off"] } }
   let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: hands_off)) }
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@root, "state"), "HOME" => @root }) }

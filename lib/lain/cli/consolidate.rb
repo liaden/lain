@@ -72,7 +72,10 @@ module Lain
         Backend.validated(resolved.provider)
         new(path:, profile: resolved, project_dir:,
             notices: mismatches.call(profile: resolved, model: resolved.model),
-            consolidation: ->(journal) { clerk_over(Backend.new(options, profile: resolved), journal, project_dir) })
+            consolidation: lambda { |journal|
+              backend = Backend.new(options, profile: resolved, root: project_dir.root)
+              clerk_over(backend, journal, project_dir)
+            })
       end
 
       def self.clerk_over(backend, journal, project_dir)

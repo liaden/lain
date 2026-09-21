@@ -39,7 +39,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
     provider = Lain::Provider::Ollama.new(config: zero_retry_config)
     Class.new(Lain::CLI::Backend) do
       define_method(:provider) { |**| provider }
-    end.new({ provider: "ollama", model:, max_tokens: 64, compact_keep: 2 })
+    end.new({ provider: "ollama", model:, max_tokens: 64, compact_keep: 2 }, root: Dir.pwd)
   end
 
   around do |example|
@@ -112,7 +112,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       provider = Lain::Provider::Ollama.new(config: zero_retry_config)
       Class.new(Lain::CLI::Backend) do
         define_method(:provider) { |**| provider }
-      end.new({ provider: "ollama", model:, max_tokens: 64 })
+      end.new({ provider: "ollama", model:, max_tokens: 64 }, root: Dir.pwd)
     end
 
     it "leads with /rewind, says the prompt was withdrawn, and names no compaction" do
@@ -137,7 +137,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       provider = Lain::Provider::Ollama.new(config: zero_retry_config)
       Class.new(Lain::CLI::Backend) do
         define_method(:provider) { |**| provider }
-      end.new({ provider: "ollama", model:, max_tokens: 64 })
+      end.new({ provider: "ollama", model:, max_tokens: 64 }, root: Dir.pwd)
     end
 
     def answer(body)

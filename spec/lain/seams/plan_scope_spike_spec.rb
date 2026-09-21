@@ -95,7 +95,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
   # The spawn wiring a chat builds over this board, with a child that writes
   # what `provider` scripts.
   def role_spawn(provider)
-    backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 })
+    backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     the_board = board
     build = Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, parent: -> { Lain::Timeline.empty },

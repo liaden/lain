@@ -84,7 +84,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
 
   def summarizing_backend
     Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64,
-                             compact_strategy: "summarizing" }).tap do |backend|
+                             compact_strategy: "summarizing" }, root: Dir.pwd).tap do |backend|
       allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
     end
   end
@@ -150,7 +150,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     # what this example measures is the wiring and nothing about a summarizer.
     it "carries the operator's own word through to the source the run compacts with" do
       backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64,
-                                         compact_strategy: "elide-tools" })
+                                         compact_strategy: "elide-tools" }, root: Dir.pwd)
 
       built = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
 
@@ -158,7 +158,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     end
 
     it "names the eager control arm for a run launched with no flag at all" do
-      backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64 })
+      backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64 }, root: Dir.pwd)
 
       built = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
 
@@ -187,7 +187,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     it "resolves the summarizer flags through the Backend, not a second copy" do
       backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64,
                                          summarizer_model: "qwen3:8b", summarizer_max_tokens: 256,
-                                         compact_strategy: "summarizing" })
+                                         compact_strategy: "summarizing" }, root: Dir.pwd)
       tier = wired_strategy(backend).instance_variable_get(:@oracle).instance_variable_get(:@inner)
 
       expect(tier.model).to eq("qwen3:8b")
@@ -242,7 +242,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     # runner answers, and without the chat's batch size it would reload it.
     it "journals a request carrying the chat's batch size, and not its temperature" do
       backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, num_batch: 2048,
-                                         temperature: 0.2, compact_strategy: "summarizing" })
+                                         temperature: 0.2, compact_strategy: "summarizing" }, root: Dir.pwd)
       allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
 
       in_project_declaring(:nothing) { collapsed(wired_strategy(backend)) }

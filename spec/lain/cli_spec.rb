@@ -74,7 +74,7 @@ RSpec.describe LainCLI do
 
   # The provider/model choice lives in Backend, a plain object over the flags,
   # so it is exercised directly -- no Thor instance, no network.
-  def backend(**options) = LainCLI::Backend.new(options)
+  def backend(**options) = LainCLI::Backend.new(options, root: Dir.pwd)
 
   # The chat-assembly seams (build_toolset/build_agent) moved off the Thor
   # class into Lain::CLI::Wiring, so they are exercised on a Wiring built with a
@@ -126,7 +126,7 @@ RSpec.describe LainCLI do
     # let a caller wire a recorder-bearing toolset to an agent whose manifest
     # can never see that recorder, with no error anywhere.
     it "requires session: on build_agent so memory cannot be silently mis-wired" do
-      backend = LainCLI::Backend.new({ provider: "ollama" })
+      backend = LainCLI::Backend.new({ provider: "ollama" }, root: Dir.pwd)
       expect { wiring.send(:build_agent, toolset:, channel:, backend:) }.to raise_error(ArgumentError, /session/)
     end
 

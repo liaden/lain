@@ -425,7 +425,7 @@ RSpec.describe Lain::CLI::Improve do
 
       expect(from_options({}, profile: untyped).report).to include("nothing to note")
       expect(Lain::CLI::Backend).to have_received(:new)
-        .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"))
+        .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"), root: @project)
     end
 
     it "lets a typed provider win, and says so ahead of the report" do

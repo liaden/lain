@@ -70,7 +70,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
 
   def backend
     @backend ||= priced(Lain::CLI::Backend).new({ provider: "ollama", model:, max_tokens: 1024,
-                                                  num_ctx:, compact_keep: 2 })
+                                                  num_ctx:, compact_keep: 2 }, root: Dir.pwd)
   end
 
   # {Lain::CLI::Backend#context_window} exactly, with the probe clock injected.
@@ -431,7 +431,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
       @backend ||= begin
         provider = Lain::Provider::Ollama.new(config: zero_retry_config)
         Class.new(priced(Lain::CLI::Backend)) { define_method(:provider) { |**| provider } }
-             .new({ provider: "ollama", model:, max_tokens: 64, compact_fallback: "none" })
+             .new({ provider: "ollama", model:, max_tokens: 64, compact_fallback: "none" }, root: Dir.pwd)
       end
     end
 

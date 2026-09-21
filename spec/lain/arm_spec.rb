@@ -298,7 +298,8 @@ RSpec.describe Lain::Arm do
                         text_response("done")]
           )
           seam = Lain::Bench::SpawnSeam.new(backend: Lain::CLI::Backend.new({ provider: "anthropic",
-                                                                              model: "m", max_tokens: 64 }),
+                                                                              model: "m", max_tokens: 64 },
+                                                                            root: Dir.pwd),
                                             provider:)
           grader = Lain::Grader::Fixture.new("any") { |f| f.check("ran") { |timeline| timeline.to_a.any? } }
           isolation = LeasedIsolation.new(Lain::WorkerEnv.new(cwd: leased, env: {}))

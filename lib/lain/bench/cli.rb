@@ -327,7 +327,7 @@ module Lain
       # Provider OBJECT (nil asks the backend for the real, money-gated one),
       # while the backend's own `:provider` OPTION is the `--provider` NAME to
       # resolve. A spec reads
-      # `record(backend: Backend.new({provider: "gemini"}), provider:)` on one
+      # `record(backend: Backend.new({provider: "gemini"}, root:), provider:)` on one
       # line, and both are correct.
       #
       # @param taskfile [String] path to the task file: prompts one per line,

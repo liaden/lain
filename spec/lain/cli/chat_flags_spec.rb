@@ -344,8 +344,9 @@ RSpec.describe "lain chat's flag surface" do
     # the text to describe what they did and to not deny it.
     it "keeps the summarizer-model help text agreeing with what the code resolves" do
       help = LainCLI.commands.fetch("chat").options.fetch(:summarizer_model).description
-      shared = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b"))
-      crossed = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "anthropic"))
+      shared = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b"), root: Dir.pwd)
+      crossed = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "anthropic"),
+                                       root: Dir.pwd)
 
       expect(shared.summarizer_model).to eq(shared.context.model)
       expect(crossed.summarizer_model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
@@ -358,7 +359,8 @@ RSpec.describe "lain chat's flag surface" do
       # Anthropic is env-configured and validates its key at construction
       # (offline, no request), so a placeholder is enough to build the object --
       # the same stub spec/lain/cli_spec.rb's provider examples use.
-      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "anthropic"))
+      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "anthropic"),
+                                       root: Dir.pwd)
       with_env("ANTHROPIC_API_KEY" => "sk-test") do
         expect(backend.provider).to be_a(Lain::Provider::Ollama)
         expect(backend.summarizer_provider).to be_a(Lain::Provider::Anthropic)
@@ -367,8 +369,9 @@ RSpec.describe "lain chat's flag surface" do
 
     it "declares no default model, so the model resolves to the summarizer provider's own" do
       expect(parse[:summarizer_model]).to be_nil
-      expect(Lain::CLI::Backend.new(parse).summarizer_model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
-      expect(Lain::CLI::Backend.new(parse("--summarizer-provider", "anthropic")).summarizer_model)
+      expect(Lain::CLI::Backend.new(parse, root: Dir.pwd).summarizer_model)
+        .to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
+      expect(Lain::CLI::Backend.new(parse("--summarizer-provider", "anthropic"), root: Dir.pwd).summarizer_model)
         .to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
@@ -378,7 +381,7 @@ RSpec.describe "lain chat's flag surface" do
     # provider is what makes the chat's model the cheap answer, so it is the
     # default when the two tiers name the same one.
     it "lets the chat's --model name the summarizer's when both tiers share a provider" do
-      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b"))
+      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b"), root: Dir.pwd)
       expect(backend.context.model).to eq("qwen3-coder:30b")
       expect(backend.summarizer_model).to eq("qwen3-coder:30b")
     end
@@ -389,14 +392,14 @@ RSpec.describe "lain chat's flag surface" do
     # would name a model the summarizer's backend has never heard of.
     it "never lets the chat's --model name a summarizer on a different provider" do
       backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3:8b",
-                                             "--summarizer-provider", "anthropic"))
+                                             "--summarizer-provider", "anthropic"), root: Dir.pwd)
       expect(backend.context.model).to eq("qwen3:8b")
       expect(backend.summarizer_model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
     it "keeps an explicit --summarizer-model above the inherited chat model" do
       backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b",
-                                             "--summarizer-model", "gemma3:12b"))
+                                             "--summarizer-model", "gemma3:12b"), root: Dir.pwd)
       expect(backend.context.model).to eq("qwen3-coder:30b")
       expect(backend.summarizer_model).to eq("gemma3:12b")
     end
@@ -404,16 +407,17 @@ RSpec.describe "lain chat's flag surface" do
     it "coerces the token ceiling to an Integer, and defaults it to the oracle's" do
       expect(parse[:summarizer_max_tokens]).to eq(Lain::Oracle::Model::DEFAULT_MAX_TOKENS)
       expect(parse("--summarizer-max-tokens", "256")[:summarizer_max_tokens]).to eq(256)
-      expect(Lain::CLI::Backend.new(parse("--summarizer-max-tokens", "256")).summarizer_max_tokens).to eq(256)
+      expect(Lain::CLI::Backend.new(parse("--summarizer-max-tokens", "256"), root: Dir.pwd).summarizer_max_tokens)
+        .to eq(256)
     end
 
     it "refuses an unknown summarizer provider by the flag's own name" do
-      expect { Lain::CLI::Backend.new(parse("--summarizer-provider", "notreal")) }
+      expect { Lain::CLI::Backend.new(parse("--summarizer-provider", "notreal"), root: Dir.pwd) }
         .to raise_error(Lain::CLI::UnknownProvider, /unknown summarizer provider "notreal"/)
     end
 
     it "refuses a non-positive ceiling at construction, not at the first summary" do
-      expect { Lain::CLI::Backend.new(parse("--summarizer-max-tokens", "0")) }
+      expect { Lain::CLI::Backend.new(parse("--summarizer-max-tokens", "0"), root: Dir.pwd) }
         .to raise_error(Lain::CLI::Backend::InvalidCeiling, /must be positive/)
     end
   end
@@ -486,7 +490,7 @@ RSpec.describe "lain chat's flag surface" do
     end
 
     def source_from(*argv, **overrides)
-      Lain::CLI::Backend.new(resolved(*argv).merge(overrides))
+      Lain::CLI::Backend.new(resolved(*argv).merge(overrides), root: Dir.pwd)
                         .pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
     end
 
@@ -529,7 +533,7 @@ RSpec.describe "lain chat's flag surface" do
       stub_request(:post, %r{/api/chat}).to_raise(Faraday::ConnectionFailed)
       source = source_from("--compact-strategy", "summarizing", compact_bytes: 100, compact_cap: 100,
                                                                 compact_keep: 2)
-      base = Lain::CLI::Backend.new(resolved).context
+      base = Lain::CLI::Backend.new(resolved, root: Dir.pwd).context
       line = history(6)
 
       expect { source.context_for(base:, timeline: line, usage: nil, session:) }.not_to raise_error

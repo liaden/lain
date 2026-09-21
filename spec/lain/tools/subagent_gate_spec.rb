@@ -419,7 +419,7 @@ RSpec.describe "Subagent gating" do
     # The run's spawn wiring over `board`, built as a chat builds it, with the
     # scripted provider every child it spawns talks to.
     def wired(provider)
-      backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 })
+      backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
       the_board = board
       build = Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),

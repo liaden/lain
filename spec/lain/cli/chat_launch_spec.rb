@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "json"
 require "tmpdir"
 
@@ -504,6 +505,30 @@ RSpec.describe Lain::CLI::ChatLaunch do
       expect(instance.project).to be(project)
     end
 
+    # The Backend is the reader that `--root` used to miss: its {Lain::Skill::Library}
+    # is where `.lain/skills` and `.lain/slots` are read from, and it took no root
+    # at all, so a chat standing in a subdirectory rendered that subdirectory's
+    # slots -- which is to say none -- while `.lain/slots/system.md` at the project
+    # top sat unread. Root and cwd are DIFFERENT directories here, because equal
+    # ones would be satisfied by the `Dir.pwd` this replaced. A spy, for the reason
+    # the wiring's own threading examples use one: the argument IS the threading,
+    # and what is readable afterwards is a rendered String.
+    it "builds the Backend on that project's root, not the subdirectory it stands in" do
+      allow(Lain::CLI::Backend).to receive(:new).and_call_original
+
+      Dir.mktmpdir("lain-launch-root") do |dir|
+        root = File.realpath(dir)
+        cwd = File.join(root, "services", "ingest")
+        FileUtils.mkdir_p(cwd)
+        project = Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag)
+
+        launch({ journal: false, provider: "ollama", model: nil, max_tokens: 16 },
+               project_factory: -> { project }).backend
+
+        expect(Lain::CLI::Backend).to have_received(:new).with(anything, hash_including(root:))
+      end
+    end
+
     # ONE resolution, however many readers ask: the walk touches the disk and,
     # more to the point, two of them could disagree if the tree changed between.
     it "resolves it exactly once" do
@@ -567,7 +592,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     def offline_backend
       Class.new(Lain::CLI::Backend) do
         def provider(**) = Lain::Provider::Mock.new(responses: [])
-      end.new({ provider: "ollama", model: nil, max_tokens: 64 })
+      end.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     end
 
     def launched

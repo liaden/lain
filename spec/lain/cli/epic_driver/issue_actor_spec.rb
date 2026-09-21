@@ -68,7 +68,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
   let(:layout_mini) { File.expand_path("../../../fixtures/projects/layout_mini", __dir__) }
   let(:target) { "spec/unit/models/order_spec.rb" }
-  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
   let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {})) }
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@root, "state"), "HOME" => @root }) }
   let(:home) { Lain::Epic::Home.resolve(config:, paths:, root: repo, slug: "demo") }

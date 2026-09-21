@@ -53,7 +53,7 @@ end
 RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   subject(:toolset_build) { build_with(options) }
 
-  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
   let(:chronicle) { ToolsetBuildChronicle.new }
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:journal) { RecordingChannel.new }
@@ -910,8 +910,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     context "when the chat is built by CLI::Wiring" do
       let(:offline_backend_class) do
         Class.new(Lain::CLI::Backend) do
-          def initialize(options, mock:)
-            super(options)
+          def initialize(options, mock:, root: Dir.pwd)
+            super(options, root:)
             @mock = mock
           end
 

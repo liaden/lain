@@ -23,7 +23,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
     end
   end
 
-  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+  let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }) }
   let(:provider) { Lain::Provider::Mock.new(responses: %w[a b].flat_map { |id| plan_turns(id) }) }

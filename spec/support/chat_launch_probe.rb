@@ -18,7 +18,7 @@ module ChatLaunchProbe
   end
 
   class Launch < Lain::CLI::ChatLaunch
-    def backend = @backend ||= Backend.new(@options)
+    def backend = @backend ||= Backend.new(@options, root: project.root)
   end
 
   class Wiring < Lain::CLI::Wiring

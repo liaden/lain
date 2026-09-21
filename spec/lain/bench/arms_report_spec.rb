@@ -51,7 +51,7 @@ RSpec.describe Lain::Bench::CLI do
   # declared default.
   def backend(**options)
     Lain::CLI::Backend.new(
-      { provider: "anthropic", max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS, **options }
+      { provider: "anthropic", max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS, **options }, root: Dir.pwd
     )
   end
 

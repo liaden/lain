@@ -745,7 +745,10 @@ class LainCLI < Thor
     no_commands do
       # The backend the model flag band resolves: what was typed, then the
       # environment, then the built-in provider.
-      def model_backend = Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options))
+      def model_backend
+        Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options),
+                                        root: Lain::Project::Resolver.default_project.root)
+      end
 
       # The argv door in front of Bench::CLI#arm_isolation's deliberate CRASH.
       # A journal with no isolation name to resolve it against raises a bare

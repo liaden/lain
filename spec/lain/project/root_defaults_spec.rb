@@ -351,6 +351,194 @@ module RootDefaultDiscipline
     def ident_in?(node, names) = node.is_a?(Array) && node[0] == :@ident && names.include?(node[1])
   end
 
+  # == The other half: a CALL that drops the keyword
+  #
+  # The defaults above stay, so the only place left for a forgotten root to hide
+  # is the call site -- and that is where the one this guard was widened for
+  # lived. `Skill::Library.load`, written with no arguments at all inside
+  # {Lain::CLI::Backend}, read the working directory for the whole life of
+  # `lain chat --root`: the flag resolved a Project, every collaborator below
+  # was handed its root, and the project's own `.lain/skills` and `.lain/slots`
+  # were read from wherever the shell happened to be standing. Nothing about the
+  # line looked wrong, which is the property that makes it worth a scan.
+  #
+  # Methods whose call sites are watched, as `<receiver as written>.<method> =>
+  # keyword`. Enumerated rather than derived from {ALLOWED}: deriving them would
+  # mean inflecting a lib path into a constant, and this project has three
+  # irregular inflections, so an inflection bug makes the guard watch nothing
+  # and say so in green.
+  #
+  # Both the qualified and the bare spelling of each, because a file inside the
+  # namespace writes the bare one and it is the same call. A leading `Lain::` is
+  # normalized away rather than enumerated.
+  #
+  # `Catalog` is the one leaf a RECEIVER cannot place on its own: it names three
+  # classes here -- {Lain::Skill::Catalog}, {Lain::Role::Catalog} and
+  # {Lain::Summarizer::Catalog} -- and only the first takes a root, so watching
+  # the bare spelling everywhere would be a false positive on
+  # `Lain::Summarizer::Catalog.load`. The PATH places it, which is why
+  # {WATCHED_UNDER} exists rather than a fourth entry here.
+  WATCHED_CALLS = {
+    "Skill::Library.load" => "root",
+    "Library.load" => "root",
+    "Skill::Catalog.load" => "root",
+    "Prompt::Slots.load" => "root",
+    "Slots.load" => "root"
+  }.freeze
+
+  # Watched only inside a lib-relative path prefix, for a receiver whose bare
+  # spelling is ambiguous across `lib/` and unambiguous there.
+  #
+  # This is not a refinement: it is the entry that makes the `Skill::Catalog`
+  # watch reach anything at all. The ONLY call site of it in `lib/` is
+  # `lib/lain/skill/library.rb`'s bare `Catalog.load(root:)`, so watching the
+  # qualified spelling alone matched nothing -- the guard read as coverage while
+  # its live target was unreachable, and dropping that `root:` while leaving
+  # `Prompt::Slots.load(root:)` intact left the guard GREEN with the skills
+  # catalog reading the working directory. Half of this card's own defect, in the
+  # one file whose `Dir.pwd` default the card deliberately keeps.
+  #
+  # The sibling that forced the bare spelling out of {WATCHED_CALLS} is
+  # `Lain::Summarizer::Catalog.load` in `lain/cli/backend.rb` -- qualified, and
+  # in a different directory -- so the prefix separates them with no guessing.
+  WATCHED_UNDER = {
+    "lain/skill/" => { "Catalog.load" => "root" }.freeze
+  }.freeze
+
+  # Call sites in `lib/` that legitimately omit a watched keyword, in
+  # {ALLOWED}'s shape. Empty, and that is the whole claim: the single omission
+  # this scan was written to find is fixed, so nothing needs a licence. Adding
+  # an entry needs an argument in words, because an omission means the resolved
+  # Project does not reach that call.
+  ALLOWED_OMISSIONS = {}.freeze
+
+  # One watched call site. `given` is whether the keyword was actually passed:
+  # the satisfied ones are kept so {.watched_sites} can witness that the scan
+  # sees real calls, since an omission list that is empty because the scan found
+  # nothing at all reads exactly like a clean tree.
+  WatchedCall = Struct.new(:path, :receiver, :method_name, :keyword, :given) do
+    def label = "#{receiver}.#{method_name}:#{keyword}"
+
+    def to_s = "#{path} -> #{receiver}.#{method_name}(... no #{keyword}:, so it reads the working directory)"
+  end
+
+  # Walks a Ripper s-expression collecting calls on {WATCHED_CALLS} and, for
+  # this file's path, {WATCHED_UNDER}.
+  #
+  # IN, and the list is this long because each entry is a DIFFERENT Ripper node:
+  # a call with parentheses (`:method_add_arg`), one with none at all
+  # (`:call`), one written WITHOUT parentheses -- `Library.load root: r`, which
+  # is `:command_call` and which nothing in this project's RuboCop config
+  # forbids -- and either of the first two carrying a block or a `&.`, which
+  # wrap but do not replace the node underneath.
+  #
+  # OUT, and each is a real hole rather than a thing declared irrelevant:
+  #
+  # * an indirect receiver -- `@library.load`, `loader.load`, `KLASS.load`.
+  #   {Scanner}'s hole, for {Scanner}'s reason: placing it needs to know what a
+  #   name is bound to, which a syntactic scan does not. A receiverless call --
+  #   a bare `load(root:)` inside the class itself -- is the same hole: there is
+  #   no receiver to place.
+  # * a `**options` splat in the argument list, which might be forwarding a
+  #   root. Read as satisfied, because the alternative is a false positive on a
+  #   caller doing exactly the right thing.
+  # * a `root:` nested inside an argument's own call --
+  #   `Library.load(Thing.new(root: x))` would read as satisfied. No such site
+  #   exists; a deeper reading would need the argument list flattened by arity.
+  # * a method reached through `send`/`public_send`, whose name is a Symbol
+  #   argument rather than the call's own. Indirection again, one level over.
+  class CallScanner
+    # How a file outside the namespace spells a constant inside it. It changes
+    # nothing about which class is meant, so it is stripped rather than listed
+    # as a fourth spelling of every entry.
+    QUALIFIER = "Lain::"
+
+    # A call with an argument list is `[:method_add_arg, <call>, <args>]`, so the
+    # inner call node is reachable twice -- once wrapped, once bare. Collecting
+    # both and dropping the wrapped duplicates afterwards is why: filtering
+    # during the walk would depend on visit order.
+    def initialize(path)
+      @path = path
+    end
+
+    # @return [Array<WatchedCall>]
+    def scan(source)
+      sexp = Ripper.sexp(source)
+      raise "could not parse #{@path}" if sexp.nil?
+
+      calls = collect(sexp)
+      wrapped = calls.filter_map { |node, args| node.object_id if args }
+      calls.reject { |node, args| args.nil? && wrapped.include?(node.object_id) }
+           .filter_map { |node, args| watched_call(node, args) }
+    end
+
+    private
+
+    # A paren-less call is `[:command_call, recv, op, ident, args]` -- the same
+    # receiver and ident slots a `:call` uses, which is why it needs a line here
+    # and nothing in {#watched_call}. It is collected WITH its arguments, so it
+    # never doubles as a bare call the way a `:method_add_arg`'s inner node does.
+    def collect(node, calls = [])
+      return calls unless node.is_a?(Array)
+
+      calls << [node[1], node[2]] if node[0] == :method_add_arg
+      calls << [node, node[4]] if node[0] == :command_call
+      calls << [node, nil] if node[0] == :call
+      node.each { |child| collect(child, calls) }
+      calls
+    end
+
+    def watched_call(node, args)
+      receiver = const_path(node[1])
+      method_name = ident_name(node[3])
+      keyword = receiver && method_name && keyword_for(key_for(receiver, method_name))
+      return nil if keyword.nil?
+
+      WatchedCall.new(@path, receiver, method_name, keyword, satisfied?(args, keyword))
+    end
+
+    def keyword_for(key) = WATCHED_CALLS[key] || path_scoped[key]
+
+    # Memoized: {WATCHED_UNDER} is walked once per file, not once per call node.
+    def path_scoped
+      @path_scoped ||= WATCHED_UNDER.select { |prefix, _| @path.start_with?(prefix) }
+                                    .values.inject({}) { |merged, calls| merged.merge(calls) }
+    end
+
+    def key_for(receiver, method_name) = "#{receiver.delete_prefix(QUALIFIER)}.#{method_name}"
+
+    def satisfied?(args, keyword) = labelled?(args, "#{keyword}:") || splatted?(args)
+
+    # The constant path a receiver names, as written, or nil for anything that
+    # is not one -- an ivar, a local, a call. `::Dir` normalizes to `Dir`: the
+    # leading colons are a resolution instruction, not part of the name.
+    def const_path(node)
+      return nil unless node.is_a?(Array)
+
+      case node[0]
+      when :@const then node[1]
+      when :var_ref, :const_ref, :top_const_ref then const_path(node[1])
+      when :const_path_ref then joined(const_path(node[1]), const_path(node[2]))
+      end
+    end
+
+    def joined(left, right) = left && right ? "#{left}::#{right}" : nil
+
+    def ident_name(node) = node.is_a?(Array) && node[0] == :@ident ? node[1] : nil
+
+    def labelled?(node, label)
+      return false unless node.is_a?(Array)
+
+      (node[0] == :@label && node[1] == label) || node.any? { |child| labelled?(child, label) }
+    end
+
+    def splatted?(node)
+      return false unless node.is_a?(Array)
+
+      %i[assoc_splat args_add_star].include?(node[0]) || node.any? { |child| splatted?(child) }
+    end
+  end
+
   module_function
 
   def lib_root = Pathname(__dir__).join("../../../lib").expand_path
@@ -382,6 +570,25 @@ module RootDefaultDiscipline
       spent = budget[label].to_i
       spent.positive? ? budget[label] = spent - 1 : extra << label
     end
+  end
+
+  # @return [Hash{String => Array<WatchedCall>}] every watched call in `lib/`,
+  #   keyword passed or not, per lib-relative path
+  def watched_sites
+    lib_root.glob("**/*.rb").each_with_object({}) do |file, out|
+      relative = file.relative_path_from(lib_root).to_s
+      found = CallScanner.new(relative).scan(file.read)
+      out[relative] = found unless found.empty?
+    end
+  end
+
+  # @return [Hash{String => Array<String>}] the watched calls that dropped the
+  #   keyword, in {.declared}'s shape so {.difference} reads both
+  def omitted
+    watched_sites.filter_map do |path, calls|
+      dropped = calls.reject(&:given)
+      [path, dropped.map(&:label).sort] unless dropped.empty?
+    end.to_h
   end
 end
 
@@ -528,6 +735,140 @@ RSpec.describe "root: Dir.pwd defaults" do
     it "reads real defaults out of lib/" do
       expect(RootDefaultDiscipline.declared).to include("lain/config.rb" => %w[self.load:root])
       expect(RootDefaultDiscipline.declared.size).to be > 20
+    end
+  end
+end
+
+# The call-site half. A parameter default is only one of the two ways a root
+# goes missing; the other is a caller that never states one, and that is the way
+# `lain chat --root` was silently ignored for the life of the flag.
+RSpec.describe "root: omitted at a call site" do
+  def scan(source) = RootDefaultDiscipline::CallScanner.new("fixture.rb").scan(source)
+
+  def omissions(source) = scan(source).reject(&:given).map(&:label)
+
+  # The path-scoped half needs a path, because the path is what places the
+  # receiver.
+  def scan_at(path, source) = RootDefaultDiscipline::CallScanner.new(path).scan(source)
+
+  def omissions_at(path, source) = scan_at(path, source).reject(&:given).map(&:label)
+
+  describe "the tree as it stands" do
+    it "leaves no watched call in lib/ without its root" do
+      dropped = RootDefaultDiscipline.difference(RootDefaultDiscipline.omitted,
+                                                 RootDefaultDiscipline::ALLOWED_OMISSIONS)
+
+      expect(dropped).to be_empty, lambda {
+        listing = dropped.map { |path, labels| "  #{path} -> #{labels.join(", ")}" }.join("\n")
+        "These calls default their root to the working directory, so the project " \
+          "Lain::Project::Resolver resolved does not reach them. Pass the root you were " \
+          "handed:\n#{listing}\n" \
+          "If the working directory really is right, add it to " \
+          "RootDefaultDiscipline::ALLOWED_OMISSIONS with a reason."
+      }
+    end
+
+    # The non-vacuity witness, and a pin on the call this scan was widened for:
+    # an `omitted` that is empty because the walk matched nothing at all reads
+    # exactly like a clean tree, and every fixture below runs on a String.
+    it "sees the Backend's own library load, root and all" do
+      backend = RootDefaultDiscipline.watched_sites.fetch("lain/cli/backend.rb")
+
+      expect(backend.map(&:label)).to include("Skill::Library.load:root")
+      expect(backend.select(&:given).map(&:label)).to include("Skill::Library.load:root")
+    end
+
+    # The same witness for the path-scoped entry, and it is the one that needed
+    # it most: a watch whose only live target is unreachable reports nothing and
+    # reads exactly like coverage.
+    it "sees the skill library's own bare Catalog.load, root and all" do
+      library = RootDefaultDiscipline.watched_sites.fetch("lain/skill/library.rb")
+
+      expect(library.select(&:given).map(&:label))
+        .to include("Catalog.load:root").and include("Prompt::Slots.load:root")
+    end
+  end
+
+  describe "what reddens it" do
+    {
+      "a call with no argument list at all" => "def library = @library ||= Skill::Library.load",
+      "the bare spelling a file inside the namespace writes" => "def library = Library.load",
+      "the Lain-qualified spelling" => "x = Lain::Skill::Library.load",
+      "a top-level constant reference" => "x = ::Skill::Library.load",
+      "empty parentheses" => "x = Prompt::Slots.load()",
+      "a call passing some OTHER keyword" => "x = Skill::Catalog.load(shipped_dir: dir)",
+      "a call passing a positional but no root" => "x = Prompt::Slots.load(dir)",
+      # Written without parentheses, which is a different Ripper node
+      # (`:command_call`) and which no cop in this project forbids. It was
+      # invisible to the first edition of this scan.
+      "a paren-less call with some other keyword" => "x = Skill::Library.load shipped_dir: dir",
+      "a paren-less call with a positional" => "x = Prompt::Slots.load dir"
+    }.each do |spelling, source|
+      it "catches #{spelling}" do
+        expect(omissions(source)).not_to be_empty
+      end
+    end
+
+    # The bare `Catalog.load` in `lib/lain/skill/library.rb` is the ONLY call
+    # site of {Lain::Skill::Catalog.load} in `lib/`, so until the path placed it
+    # the watch on the qualified spelling reached nothing: dropping this root
+    # left the guard green while the skills catalog read the working directory.
+    it "catches the bare Catalog.load that is the real call site, inside lain/skill/" do
+      expect(omissions_at("lain/skill/library.rb", "x = Catalog.load"))
+        .to eq(["Catalog.load:root"])
+    end
+
+    it "catches it paren-less there too" do
+      expect(omissions_at("lain/skill/library.rb", "x = Catalog.load shipped_dir: dir"))
+        .to eq(["Catalog.load:root"])
+    end
+
+    it "names the file, the receiver and the keyword, so the failure is actionable" do
+      found = scan("def library = Skill::Library.load").first
+
+      expect([found.path, found.receiver, found.method_name, found.keyword])
+        .to eq(["fixture.rb", "Skill::Library", "load", "root"])
+      expect(found.to_s).to include("Skill::Library.load").and include("root:")
+    end
+  end
+
+  describe "what it leaves alone" do
+    {
+      "a call that passes the keyword" => "x = Skill::Library.load(root: root)",
+      "the keyword in Ruby's shorthand form" => "x = Skill::Library.load(root:)",
+      "a keyword passed alongside others" => "x = Prompt::Slots.load(skill_shipped_dir: dir, root: root)",
+      "a double-splat that may be forwarding one" => "x = Skill::Library.load(**options)",
+      "the keyword on a paren-less call" => "x = Skill::Library.load root: root",
+      # The receiver is what places a call, and the last segment cannot: three
+      # classes here are called Catalog and only Skill's takes a root.
+      "another namespace's same-named method" => "x = Lain::Summarizer::Catalog.load",
+      "a method that takes no root" => "x = Role::Catalog.fetch(name)",
+      "an indirect receiver, which this scan cannot place" => "x = @library.load",
+      "the words in a comment" => "# Skill::Library.load used to read Dir.pwd\nx = 1",
+      "the words in a string" => 'x = "call Skill::Library.load with a root"'
+    }.each do |spelling, source|
+      it "ignores #{spelling}" do
+        expect(omissions(source)).to be_empty
+      end
+    end
+
+    # A wrapped call is reachable twice in a Ripper tree -- once as
+    # `method_add_arg`, once as the bare `call` inside it -- so a satisfied call
+    # must not also report as a bare omission.
+    it "reports a call with arguments exactly once" do
+      expect(scan("x = Skill::Library.load(root: root)").map(&:label)).to eq(["Skill::Library.load:root"])
+    end
+
+    # The two halves of the path scope, and the second is what the scope buys:
+    # `Lain::Summarizer::Catalog.load` takes no root and lives in
+    # `lain/cli/backend.rb`, so watching the bare leaf project-wide would redden
+    # a correct call. The prefix separates them without guessing.
+    it "ignores a bare Catalog.load outside lain/skill/" do
+      expect(omissions_at("lain/cli/backend.rb", "x = Catalog.load")).to be_empty
+    end
+
+    it "ignores the summarizer's own qualified Catalog.load, even inside lain/skill/" do
+      expect(omissions_at("lain/skill/library.rb", "x = Lain::Summarizer::Catalog.load")).to be_empty
     end
   end
 end

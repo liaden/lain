@@ -29,7 +29,7 @@ module StdinRegularFile
                                                     text.call("ran it"), text.call("three"), text.call("unexpected")])
     backend = Class.new(Lain::CLI::Backend) do
       define_method(:provider) { |**| provider }
-    end.new({ provider: "ollama", model: nil, max_tokens: 64 })
+    end.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     wiring = Lain::CLI::Wiring.new(
       options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),

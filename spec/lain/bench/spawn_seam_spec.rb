@@ -19,7 +19,8 @@ RSpec.describe Lain::Bench::SpawnSeam do
   # backend's now, and DEFAULT_MAX_TOKENS is what the `bench arms` flag declares
   # rather than a second default this seam re-applies.
   def backend(**options)
-    Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: described_class::DEFAULT_MAX_TOKENS, **options })
+    Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: described_class::DEFAULT_MAX_TOKENS, **options },
+                           root: Dir.pwd)
   end
 
   let(:provider) do

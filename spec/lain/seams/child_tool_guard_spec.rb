@@ -19,8 +19,8 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
   let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, mock:)
-        super(options)
+      def initialize(options, mock:, root: Dir.pwd)
+        super(options, root:)
         @mock = mock
       end
 

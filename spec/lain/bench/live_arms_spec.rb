@@ -303,7 +303,7 @@ END", model: "claude-sonnet-4",
     # other Backend spec builds it. Nothing here resolves a live provider.
     let(:backend) do
       Lain::CLI::Backend.new({ provider: "anthropic",
-                               max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS })
+                               max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS }, root: Dir.pwd)
     end
 
     let(:seam) { Lain::Bench::SpawnSeam.new(backend:, provider:, tools: Lain::Bench::Harness::NO_TOOLS) }

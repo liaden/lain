@@ -119,7 +119,7 @@ RSpec.describe Lain::Provider::Journaled do
   # is already journaled by that middleware; the measured gap is the oracle.
   describe "what is deliberately NOT wrapped" do
     it "leaves the chat provider CLI::Backend builds undecorated" do
-      backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64 })
+      backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64 }, root: Dir.pwd)
 
       expect(backend.provider).not_to be_a(described_class)
     end

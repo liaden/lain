@@ -16,7 +16,7 @@ module Lain
     # TWO SEAMS, ONE WORD, ONE NESTING LEVEL APART. `provider:` here is the
     # injected Provider OBJECT a spec passes; the backend's own `:provider`
     # OPTION is the `--provider` NAME to resolve. A spec reads
-    # `new(backend: Backend.new({provider: "haiku", ...}), provider:)` with both
+    # `new(backend: Backend.new({provider: "haiku", ...}, root:), provider:)` with both
     # correct. The split exists because the specs of a money-spending seam must
     # never resolve a real client.
     #

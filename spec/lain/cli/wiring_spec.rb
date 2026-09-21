@@ -132,8 +132,8 @@ WiringSpecResumed = Data.define(:recorder, :session)
 class WiringAgentSpecBackend < Lain::CLI::Backend
   attr_reader :provider_calls
 
-  def initialize(options, mock:)
-    super(options)
+  def initialize(options, mock:, root: Dir.pwd)
+    super(options, root:)
     @mock = mock
     @provider_calls = []
   end
@@ -306,8 +306,8 @@ RSpec.describe Lain::CLI::Wiring do
   # extracted Repl is constructible without the exe).
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, mock:)
-        super(options)
+      def initialize(options, mock:, root: Dir.pwd)
+        super(options, root:)
         @mock = mock
       end
 
@@ -1174,8 +1174,8 @@ RSpec.describe Lain::CLI::Wiring do
     # render are the real wiring under test.
     let(:summarizing_backend_class) do
       Class.new(Lain::CLI::Backend) do
-        def initialize(options, mock:, oracle:)
-          super(options)
+        def initialize(options, mock:, oracle:, root: Dir.pwd)
+          super(options, root:)
           @mock = mock
           @oracle = oracle
         end
@@ -3535,8 +3535,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
     let(:wired_backend) do
       Class.new(Lain::CLI::Backend) do
-        def initialize(options, mock:)
-          super(options)
+        def initialize(options, mock:, root: Dir.pwd)
+          super(options, root:)
           @mock = mock
         end
 
@@ -3670,7 +3670,7 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
   # a real command and NO double anywhere below the assembler. What is asserted
   # is that the record lands in the journal that session was built with.
   describe "the journal a live session's assembler hands the floor" do
-    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
     let(:chronicle) { Lain::CLI::Chronicle::Null.new }
     let(:journal) { RecordingChannel.new }
     let(:parent) { -> { Lain::Timeline.new } }

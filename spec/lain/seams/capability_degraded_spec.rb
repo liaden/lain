@@ -78,8 +78,8 @@ RSpec.describe "capability degradation on the chat path", :seam do
   # ones. wiring_spec.rb's `offline_backend_class`, same shape and same reason.
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, wired:)
-        super(options)
+      def initialize(options, wired:, root: Dir.pwd)
+        super(options, root:)
         @wired = wired
       end
 

@@ -419,7 +419,7 @@ module Lain
       # @return [EpicSubmit]
       def self.from_options(options, input:, output:, profile: RunProfile.from_options(options),
                             root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
-                            backend: -> { Backend.new(options, profile:) })
+                            backend: -> { Backend.new(options, profile:, root:) })
         pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard)
         new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief)
       end

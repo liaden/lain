@@ -48,7 +48,7 @@ RSpec.describe Lain::CLI::CompactionMount do
   end
 
   def backend_for(**overrides)
-    Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, **overrides })
+    Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, **overrides }, root: Dir.pwd)
   end
 
   def mount(backend, **overrides) = described_class.new(backend:, provider:, chronicle:, **overrides)

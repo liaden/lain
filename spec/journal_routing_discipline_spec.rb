@@ -51,8 +51,8 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
   end
   let(:backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, mock:)
-        super(options)
+      def initialize(options, mock:, root: Dir.pwd)
+        super(options, root:)
         @mock = mock
       end
 

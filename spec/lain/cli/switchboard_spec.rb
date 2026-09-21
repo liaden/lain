@@ -801,7 +801,7 @@ RSpec.describe Lain::CLI::Switchboard do
     let(:sensitivity) do
       Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: "#{home}/proj"))
     end
-    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
     let(:provider) { Lain::Provider::Mock.new(responses: [text_response("APPROVE")]) }
     let(:ran) { [] }
     let(:handler) do

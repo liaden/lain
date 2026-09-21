@@ -169,7 +169,8 @@ module Lain
         mismatches = Resume::MismatchNotices.new(path:)
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
-        new(path:, profile: resolved, backend: -> { Backend.new(options, profile: resolved) }, paths:, project_dir:,
+        new(path:, profile: resolved, paths:, project_dir:,
+            backend: -> { Backend.new(options, profile: resolved, root: project_dir.root) },
             notices: mismatches.call(profile: resolved, model: resolved.model))
       end
 

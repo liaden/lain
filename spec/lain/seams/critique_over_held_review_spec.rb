@@ -91,8 +91,8 @@ RSpec.describe "a critique of a held review", :seam do
   # The exe's backend with its provider replaced, for the chats run below.
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, mock:)
-        super(options)
+      def initialize(options, mock:, root: Dir.pwd)
+        super(options, root:)
         @mock = mock
       end
 

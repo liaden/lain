@@ -24,7 +24,7 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
     provider = Lain::Provider::Ollama.new(config: zero_retry_config)
     Class.new(Lain::CLI::Backend) do
       define_method(:provider) { |**| provider }
-    end.new({ provider: "ollama", model:, max_tokens: 64 })
+    end.new({ provider: "ollama", model:, max_tokens: 64 }, root: Dir.pwd)
   end
   let(:warnings) { [] }
   let(:tty) do

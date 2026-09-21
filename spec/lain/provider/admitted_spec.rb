@@ -284,7 +284,7 @@ RSpec.describe Lain::Provider::Admitted do
   describe "a provider built through CLI::Backend" do
     let(:io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io:) }
-    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", api_base: endpoint }) }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", api_base: endpoint }, root: Dir.pwd) }
 
     before do
       # {Backend::Summarizer::RunJournal}'s late binding: the run's journal is
