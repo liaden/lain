@@ -149,6 +149,17 @@ module Lain
       self
     end
 
+    # The rows this fleet is actually running right now, named so a reader of
+    # `state == :running` has an object to call instead of rederiving it.
+    # {CLI::Command::Stop} reads it; {CLI::Command::Undo#quiet!} still spells
+    # the same predicate inline (`lib/lain/cli/command/undo.rb`) -- a second
+    # card owns that file, so folding its copy in here is follow-up, not this
+    # one. `select` over `.each.select`: {Supervisor} already includes
+    # {Enumerable}.
+    #
+    # @return [Array<Registration>]
+    def live = select { |registration| registration.state == :running }
+
     # Children first, so no fiber is torn down by the parent's cancellation while
     # a farewell is still in flight. A crashed worker's lease is SURRENDERED
     # rather than bare-released -- see {#farewell}.
@@ -503,6 +514,10 @@ module Lain
 
         self
       end
+
+      # Nothing running, ever -- the empty answer {CLI::Command::Stop} reads
+      # before it touches anything.
+      def self.live = []
 
       # As loud as adopting before {Supervisor#run}: a silently-current-task
       # launch is the wedge.

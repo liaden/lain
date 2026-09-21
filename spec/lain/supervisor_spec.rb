@@ -207,6 +207,19 @@ RSpec.describe Lain::Supervisor do
       end
     end
 
+    it "#live answers only the rows currently running -- the predicate /stop and /undo both read" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        supervisor.adopt(role: "researcher") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+        doomed = supervisor.adopt(role: "doomed") { actor_tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+        expect { doomed.settle }.to raise_error(Lain::Error)
+
+        expect(supervisor.live.map(&:role)).to eq(["researcher"])
+      ensure
+        supervisor&.stop
+      end
+    end
+
     # The review BLOCKER: the dead-skip alone was check-then-wait -- an
     # actor LIVE at the check that fails DURING the await re-raised out of
     # Shutdown#drain's each(&:settle), killed the coordinator fiber, and
