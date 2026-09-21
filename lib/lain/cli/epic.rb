@@ -50,14 +50,9 @@ module Lain
     # baton into this door is a later card's to make, once something actually
     # opens a review on `epic.md` mid-edit.
     #
-    # == Every constant from the epic tier is reached at CALL time
+    # == Every constant from the epic tier is spelled in full
     #
-    # This unit loads BEFORE `lain/epic` (lib/lain.rb: cli, then plan, then
-    # epic), so a `Lain::Epic::...` reference evaluated while this file loads --
-    # a constant assignment, a default argument -- raises NameError at boot.
-    # Every such reference below therefore sits inside a method body.
-    #
-    # And it is spelled `Lain::Epic`, never `Epic`: the lexical scope here is
+    # It is spelled `Lain::Epic`, never `Epic`: the lexical scope here is
     # `Lain::CLI::Epic`, so a bare `Epic` resolves to THIS class and
     # `Epic::Home` would look for `Lain::CLI::Epic::Home`.
     class Epic
@@ -610,9 +605,6 @@ module Lain
         # Pinned by spec/lain/seams/epic_project_keying_seam_spec.rb.
         def walk = @walk ||= SessionJournals.new(dir: @paths.sessions_dir, types: epic_types)
 
-        # A method rather than a constant: a constant's value is evaluated when
-        # this file LOADS, and the epic unit loads after the CLI unit.
-        #
         # The list bounds WHAT GETS MATERIALIZED, not what gets believed.
         # Ordering has to sort, so without this filter every record of every
         # session this project ever ran lands in one Array for the sake of a

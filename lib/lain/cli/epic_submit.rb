@@ -30,11 +30,10 @@ module Lain
     # {Approval::GateDecision}; a deferral is that record plus a park the next
     # fold rebuilds; what an approval advances is {Epic::Advance}'s to write.
     #
-    # == Every constant from the epic tier is reached at CALL time
+    # == Every constant from the epic tier is spelled in full
     #
-    # This unit loads BEFORE `lain/epic` (see {CLI::Epic}'s header), so every
-    # `Lain::Epic::...` reference below sits inside a method body -- and is
-    # spelled in full, because a bare `Epic` resolves to the sibling {CLI::Epic}.
+    # A bare `Epic` resolves to the sibling {CLI::Epic}, so every
+    # `Lain::Epic::...` reference below is spelled out (see {CLI::Epic}'s header).
     class EpicSubmit
       # An implementation is built to an approved plan, so its gate refuses to
       # open until the issue's plan AS IT STANDS -- criteria included -- carries

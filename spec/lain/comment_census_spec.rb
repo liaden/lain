@@ -272,6 +272,77 @@ RSpec.describe CommentCensus do
     end
   end
 
+  # The manifest is gone and the comments that explained it were not swept with
+  # it -- three hand sweeps each missed a different subset, which is why this
+  # classifier exists at all. What it must get right is the boundary: a retired
+  # claim is caught, a live order is not deleted for looking like one, and a
+  # shape nobody has taught it stops the gate rather than being guessed at.
+  describe "the load-order classifier" do
+    def verdict(sentence) = described_class::LoadOrder.verdict(sentence)
+
+    it "catches a claim that orders two units by the manifest that no longer does it" do
+      expect(verdict("`lain.rb` loads `lain/cli` before `lain/shell`.")).to eq(:retired)
+    end
+
+    it "catches the CONSEQUENCE on its own, which is the shape a vocabulary sweep walks past" do
+      expect(verdict("this unit loads before `lain/forge`, so the class body is a NameError at boot."))
+        .to eq(:retired)
+    end
+
+    it "leaves an order that still exists alone" do
+      expect(verdict("`vcr_configuration.rb` loads first because the support glob is `Dir[]`'s sorted order."))
+        .to eq(:live)
+    end
+
+    # What keeps the UNCLASSIFIED tier small enough to be a worklist rather
+    # than a wall: an ordering claim naming no unit of this library is not a
+    # claim about this library, whatever verbs it uses.
+    it "ignores an ordering claim that names no unit of this library" do
+      expect(verdict("The gate runs LAST, after every rung above it has answered.")).to be_nil
+    end
+
+    it "reports a load-order claim it cannot place rather than calling it either way" do
+      expect(verdict("{Widget} loads after {Gadget}, so naming it first is a NameError at boot."))
+        .to eq(:unknown)
+    end
+
+    it "says nothing about a sentence making no ordering claim at all" do
+      expect(verdict("`lain.rb` holds the loader and three inflections.")).to be_nil
+    end
+
+    # Sentence-scoped, not block-scoped: an ordering claim in one paragraph and
+    # a `lain/foo` path three sentences later are not one claim, and pairing
+    # them turned ten findings into twenty-three on this tree.
+    it "does not pair an ordering claim with a unit named in a different sentence" do
+      source = <<~RUBY
+        # The rungs run in order, lowest first. A path under `lain/arm` is one.
+        x = 1
+      RUBY
+
+      expect(described_class.load_order_claims(source, language: :ruby)).to be_empty
+    end
+
+    it "joins the comment lines a claim wraps across, so an eighty-column sentence is still one" do
+      source = <<~RUBY
+        # Resolved at CALL time, because `lain.rb` loads
+        # `lain/cli` before `lain/shell`.
+        x = 1
+      RUBY
+
+      expect(described_class.load_order_claims(source, language: :ruby).map(&:verdict)).to eq([:retired])
+    end
+
+    it "fails the check on a retired claim, through the CLI" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "sample.rb"), "# `lain.rb` loads `lain/cli` before `lain/shell`.\nx = 1\n")
+        stdout, _stderr, status = run_cli("--check-load-order", File.join(dir, "sample.rb"))
+
+        expect(stdout).to include("RETIRED MANIFEST")
+        expect(status).not_to be_success
+      end
+    end
+  end
+
   describe "the checker's scope" do
     # Not decoration. A rule whose stated scope and enforced scope differ is the
     # defect this whole sweep exists to remove, so the two are compared

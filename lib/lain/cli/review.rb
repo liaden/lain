@@ -24,12 +24,11 @@ module Lain
     # == `Lain::Review` is spelled out, everywhere
     #
     # A bare `Review` inside `Lain::CLI` resolves to THIS class, so
-    # `Review::Bounds` would be a NameError rather than the guard. Worse, every
-    # such name is read from a METHOD body and never from the class body:
-    # `lain.rb` loads `lain/cli` BEFORE `lain/review` and `lain/forge`, so a
-    # constant here naming either would be a load-time NameError. That is why
-    # {#default_scope} and {Target#default_base} are methods rather than the
-    # constants they would otherwise obviously be.
+    # `Review::Bounds` would be a NameError rather than the guard. Every name
+    # from the review and forge tiers is therefore qualified from `Lain`.
+    # {#default_scope} and {Target#default_base} stay METHODS: each answers one
+    # caller once, so neither has ever had a reader a constant would serve
+    # better -- the load-order rule that used to force them is gone.
     #
     # == Where the size guard is called, and what moving it cost
     #
@@ -254,8 +253,7 @@ module Lain
 
         # {Source::LocalBranch#git}'s shape, and its scrub: an ambient GIT_DIR
         # (a pre-commit hook sets one) would otherwise point this at the hook's
-        # repository. Read from a method body for the class doc's load-order
-        # reason.
+        # repository.
         def git(*)
           shell = @shell_out_factory.call("git", "-C", @repo_root, *,
                                           environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)

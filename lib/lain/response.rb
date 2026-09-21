@@ -61,5 +61,3 @@ module Lain
     alias_method :inspect, :to_s
   end
 end
-
-# After the Data.define: the lens reopens `Response`, which has to exist first.

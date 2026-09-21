@@ -31,13 +31,11 @@ module Lain
       # strategy is never required to subclass anything: {Whole} is nine lines
       # and would inherit machinery it does not need just to prove it belongs.
       #
-      # The normalization below is Surface's, restated rather than called, for
-      # two reasons that both hold: `review/partition` loads BEFORE
-      # `review/surface` (a changeset partitions, so the value has to exist
-      # first), and a partition strategy is not a surface -- borrowing a class
-      # method across those two would couple the axes to make three lines
-      # common. {MESSAGES} is the single place THIS port's shape is stated, and
-      # that is the property that actually matters.
+      # The normalization below is Surface's, restated rather than called: a
+      # partition strategy is not a surface, and borrowing a class method across
+      # those two would couple the axes to make three lines common. {MESSAGES}
+      # is the single place THIS port's shape is stated, and that is the
+      # property that actually matters.
       module Strategy
         # A candidate strategy does not fully, publicly, and correctly answer
         # the port.

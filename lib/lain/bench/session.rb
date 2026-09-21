@@ -228,6 +228,3 @@ module Lain
     end
   end
 end
-
-# Loader last: it is the class that sends the others messages, so it reads as
-# the dependent unit even though all six resolve at runtime.

@@ -727,7 +727,3 @@ module Lain
     end
   end
 end
-
-# Policy, Regions and Ledger all reopen Sensitivity, so the class body must load
-# first.
-# Masking renders what Regions detects, so it reads PLACEHOLDER off it.

@@ -8,11 +8,10 @@ module Lain
     # HELD HERE, not on a CLI class, because three layers ask the same
     # question: the chat's worktree backend, `lain worktrees gc`, and
     # `--isolation none` answering for a handback that still has to merge
-    # somewhere. Two of those sit BELOW the CLI in the load manifest, so
-    # publishing the search from there inverted the layering --
-    # `lib/lain/isolation/` reached up into `lib/lain/cli/` for it, which was
-    # the lesser of two evils only because the alternative was a second walk
-    # that could disagree with the first.
+    # somewhere. Two of those sit BELOW the CLI, so publishing the search from
+    # there inverted the layering -- `lib/lain/isolation/` reached up into
+    # `lib/lain/cli/` for it, which was the lesser of two evils only because the
+    # alternative was a second walk that could disagree with the first.
     #
     # THE STOP RULE IS NOT DECORATION. This walk once had no ceiling, so on a
     # box whose `$HOME` is itself a git work-tree -- the `~/.cfg` dotfiles

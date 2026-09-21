@@ -48,8 +48,7 @@ module Lain
     #   actor's checkout is given up by {#retire}, and the environment every
     #   adopted actor is handed so that giving it up can ask it to rebase. The
     #   retirement itself lives under the handback, not here: what this class
-    #   owns is the decision to retire a row. Isolation loads after this file, so
-    #   the default is named in the signature, at call time.
+    #   owns is the decision to retire a row.
     def initialize(journal: Channel::Null.instance, isolation: Isolation::Null.new, handoff: Retain,
                    retirement: Isolation::Worktree::Handback::Retirement::Null)
       @journal = journal
@@ -582,6 +581,3 @@ module Lain
     end
   end
 end
-
-# Restart reopens Supervisor and its records mix in Telemetry::Journalable, so it
-# loads after the class body; supervisor.rb is this subtree's index.

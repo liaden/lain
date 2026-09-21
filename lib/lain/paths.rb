@@ -3,12 +3,6 @@
 require "digest"
 require "fileutils"
 
-# {Paths::Shipped} first: {Paths}'s own class body below composes
-# {Paths::NVIM_PLUGIN_ROOT} from it, so the child must be loaded before the
-# parent's body runs rather than after, which is where a sibling-subtree
-# require usually goes (see {Prompt}'s own index for that usual shape) --
-# here load order runs the other way.
-
 module Lain
   # Paths come off a subprocess's stdout, `Dir.children` and `File.realpath` as
   # bytes; the filesystem's own encoding is what they have to be tagged with to

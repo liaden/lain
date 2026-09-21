@@ -14,9 +14,8 @@ module Lain
     # address the gate holds. Nothing re-hashes a working tree, and a commit
     # nobody approved has no address the registry has seen.
     #
-    # Every constant from the epic, forge and isolation tiers is reached at
-    # call time and spelled in full: this unit loads before them, and a bare
-    # `Epic` resolves to the sibling {CLI::Epic}.
+    # Every constant from the epic, forge and isolation tiers is spelled in
+    # full: a bare `Epic` resolves to the sibling {CLI::Epic}.
     class EpicLand
       USAGE = "lain epic land ISSUE_ID [SLUG]"
 

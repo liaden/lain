@@ -53,10 +53,10 @@ module Lain
         # with, and `/survey` and `/review` both declare it as a switch -- so a
         # rename that missed one of the three would leave a refusal pointing at
         # a flag nothing reads, which is the defect that wording change exists
-        # to end. It cannot be read from either command's CLASS BODY (`lain.rb`
-        # loads `lain/cli` before `lain/review`, so a constant there naming this
-        # one is a load-time NameError), which is why those two declare the word
-        # and this file owns what it MEANS.
+        # to end. Both commands still spell the word into their own `SWITCHES`
+        # list rather than reading this constant -- which the manifest once
+        # forced and nothing forces now, and which no spec holds equal, so the
+        # three spellings are kept honest by reading them and nothing else.
         FLAG = "--permissive"
 
         # @return [Policy] the policy a session takes when nobody names one

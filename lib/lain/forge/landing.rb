@@ -116,7 +116,3 @@ module Lain
     end
   end
 end
-
-# This file is the landing/ subtree's index. Every child reopens `class Landing`
-# and reads its constants in method bodies only, so any order loads -- they are
-# listed in the order the fold uses them (CLAUDE.md, Requires).

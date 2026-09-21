@@ -284,6 +284,3 @@ module Lain
     end
   end
 end
-
-# A plain sibling class, not a reopen, but it depends on Criteria/Scenario
-# existing first, so it loads after the module body above.

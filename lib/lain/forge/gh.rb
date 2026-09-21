@@ -429,8 +429,3 @@ module Lain
     end
   end
 end
-
-# This file is the gh/ subtree's index. Both nest inside the class above and are
-# reached from METHOD bodies only, so they load AFTER the class body -- Recorded
-# also names its Answer, which is {Isolation::Worktree}'s Handback placement and
-# the same reason.

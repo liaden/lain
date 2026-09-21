@@ -5,16 +5,14 @@ module Lain
     # Pure folds over one epic run's own journal: what walking the ladder
     # actually cost, read back after the fact rather than measured live.
     #
-    # `bench` loads before `epic`, `arm` and `grader` (`lib.rb`'s manifest), so
-    # this file names no constant from any of the three at class-body time --
-    # every fold below reads a raw journal Hash by its string `type` tag, the
-    # same seam {Journal.records} exists for, rather than the Data class that
-    # produced it.
+    # Every fold below reads a raw journal Hash by its string `type` tag -- the
+    # same seam {Journal.records} exists for -- rather than the Data class that
+    # produced it, so a fold survives a record type it was never handed.
     class EpicMetrics
       ISSUE_TRANSITION = "issue_transition"
       SUPERSESSION_RECORD = "supersession_record"
-      # `approval` loads ahead of `bench`, so the one place this tag is declared
-      # is nameable here -- unlike the two above it.
+      # Named from its one declaration rather than spelled again, unlike the two
+      # above it, which are declared in the epic tier this file does not reach.
       GATE_DECISION = Approval::SignoffQueue::JOURNAL_TYPE
 
       # The one status a transition must have LEFT for it to count as rework:

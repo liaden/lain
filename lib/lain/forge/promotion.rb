@@ -157,8 +157,10 @@ module Lain
 
         private
 
-        # The scrub set is READ here rather than pinned to a constant in this
-        # file: `lain.rb` loads isolation AFTER forge.
+        # {Isolation::Worktree}'s pinned scrub set, not a parallel copy: an
+        # ambient GIT_DIR (a pre-commit hook sets one) would otherwise point
+        # every call at the hook's repository -- {Review::Source::LocalBranch#git}
+        # states the same rule at its own door.
         def run(*)
           shell = @shell_out_factory.call("git", "-C", @repo_root, *,
                                           environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)

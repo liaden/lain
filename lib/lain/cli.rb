@@ -11,6 +11,3 @@ module Lain
     class UnknownProvider < Error; end
   end
 end
-
-# Loaded first because exe/lain reads these in `method_option` defaults, which
-# evaluate while the Thor class body loads -- before any command runs.

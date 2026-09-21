@@ -100,8 +100,8 @@ module Lain
         # @return [String, nil] its record type, or nil when the prefix is gone
         def self.sniff(text) = text.to_s.scrub[LEADING, 1]
 
-        # The records a gate or a stage rests on. A method, not a constant:
-        # {Epic::StageTransition} loads after this unit.
+        # The records a gate or a stage rests on, each named from the unit that
+        # declares it, so neither can drift out from under this set.
         def self.decisive_types = [Approval::SignoffQueue::JOURNAL_TYPE, Lain::Epic::StageTransition::JOURNAL_TYPE]
 
         # A torn line whose type cannot be read could have been anything, so it

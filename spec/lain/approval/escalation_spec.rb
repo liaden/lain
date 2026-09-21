@@ -588,10 +588,10 @@ RSpec.describe Lain::Approval::Escalation do
     # {Frontend::ApprovalPolicy#answered} writes when the prompt itself raised,
     # so nobody answered it. Its true home is `Surfaces::AUTOMATIC`, beside
     # {Queue::TIMEOUT_SURFACE} and {Queue::ABANDONED_SURFACE} -- the other two
-    # decisions nobody made -- and it cannot go there: `AUTOMATIC` is evaluated
-    # while `lain/approval` loads, and `Frontend::ApprovalPolicy` is not defined
-    # until the frontend does, so naming the constant there is a load-time
-    # NameError. DO NOT MOVE IT without making `AUTOMATIC` late-bound, which
+    # decisions nobody made -- and it is still not there. What kept it out was
+    # the require manifest, and that is gone: the loader resolves the name from
+    # either side now, so this is a known misclassification rather than a
+    # forced one. DO NOT MOVE IT in passing, which
     # changes how {Approval::Escalation} classifies every surface and is owed to
     # a card of its own.
     #

@@ -561,6 +561,3 @@ module Lain
     end
   end
 end
-
-# All five are reached from method bodies only, so this placement is free; it
-# reads in the order a reader meets them.

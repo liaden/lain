@@ -374,10 +374,8 @@ module Lain
           answer.bytes
         end
 
-        # {LocalBranch}'s pins and {Isolation::Worktree}'s scrub, read from a
-        # METHOD body rather than the class body because `lain.rb` loads
-        # isolation after review -- the same shape, and the same reason, as
-        # {LocalBranch#git}.
+        # {LocalBranch}'s pins and {Isolation::Worktree}'s scrub -- the same
+        # shape, and the same reason, as {LocalBranch#git}.
         def git(*, env: {})
           shell = @shell_out_factory.call("git", "-C", @repo_root, *LocalBranch::CONFIG_PINS, *,
                                           environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))

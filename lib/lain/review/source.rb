@@ -489,9 +489,3 @@ module Lain
     end
   end
 end
-
-# This file is the source/ subtree's index. LocalBranch reads UnknownRef, Commit
-# and FileStat from the module above, so it loads AFTER the module body, and
-# GithubPr reads LocalBranch's constants. Corpus reads Survey, LazyFile and
-# Bounds -- all of which load LATER than this file -- so every one of those names
-# is read from a method body or a default argument.

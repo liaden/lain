@@ -30,11 +30,11 @@ export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; 
 ```
 
 ```bash
-bundle exec rake pspec         # THE suite command: ~101s at 12 workers, 20,499 examples, 2026-09-20.
+bundle exec rake pspec         # THE suite command: ~101s at 12 workers, 20,511 examples, 2026-09-20.
                                # Bare `rspec` is the same examples SERIALLY, ~22m, 2026-09-20 -- 13x
                                # the wall, and NOT "no extra signal": it is how you tell a real
                                # failure from a contention flake. The tmux/nvim/wall-clock specs
-                               # that red under 12 workers ran 20,499/0 serially.
+                               # that red under 12 workers ran green serially.
 bundle exec rspec path/to/one_spec.rb   # one file or one example: use this, not a bare `rspec`
 bundle exec rubocop -a         # safe autocorrect only; never -A
 bundle exec rake compile       # builds the Rust extension into lib/lain/lain.so (needs clang)
@@ -144,6 +144,17 @@ one is allowed to cite. `bin/comment-census` measures all three and is the workl
     buffer. `C1` is a plan ticket in twelve comments here and Unicode's C1 control block in a
     thirteenth. So the classifier is **enumerated, not heuristic**, and a shape it cannot
     place is reported UNCLASSIFIED rather than swept — teach it before you sweep.
+
+- **No comment may cite the retired require manifest as a live constraint.** `lib/` had 790
+  `require_relative` lines and one hand-kept order; the lines went in one commit and the comments
+  explaining them did not. `bin/comment-census --check-load-order` is the guard, over the same
+  scope as `--check-tickets`, and **nothing gates on it** — same as its sibling. It does NOT ban
+  discussing load order: the nvim runtime's numeric prefixes, the spec-support `Dir[]` glob,
+  `active_support` before its own core_ext and a subclass after its superclass are all still real,
+  and are allowed **by name**. A claim is an ordering sentence that also names `lain.rb`, the
+  manifest, or a `lain/<unit>` path; an ordering claim about a lib unit the classifier cannot place
+  is **UNCLASSIFIED and fails**, never swept — the ticket rule's discipline, because a deleted
+  reason cannot be read back out of a sweep that looked right.
 
 ## Output discipline
 

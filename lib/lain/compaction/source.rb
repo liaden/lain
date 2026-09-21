@@ -804,8 +804,3 @@ module Lain
     end
   end
 end
-
-# AFTER the class body: each of these reopens {Lain::Compaction::Source}, and
-# {Derived} names {Source::DerivationRefused}, so the class they hang off has
-# to exist first.
-# After {HeldCut}, whose handoff plan it commits.

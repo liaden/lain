@@ -50,10 +50,6 @@ module Lain
       # scrubs its own line whatever server it lands on, including one
       # poisoned before `lain up` ran.
       #
-      # A method rather than a constant on load order, not taste: `lain.rb`
-      # requires this subtree ahead of {ChatLaunch}, so a constant body would
-      # resolve the name at load time and die.
-      #
       # @return [Array<String>] the variables, in unset order
       def self.scrubbed = [ChatLaunch::PREFLIGHT_ENV].freeze
 

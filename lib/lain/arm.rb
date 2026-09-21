@@ -158,6 +158,3 @@ module Lain
     end
   end
 end
-
-# After the class body: the concrete arms and the driver reference Arm and
-# Arm::Run, so they load once the class exists.

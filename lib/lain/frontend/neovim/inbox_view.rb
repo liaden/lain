@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-# {Row} must exist before this file's body runs `private_constant` on it, so it
-# loads FIRST. It reads no constant of this file's at LOAD time, which is what
-# keeps that order legal.
-
 module Lain
   module Frontend
     class Neovim
@@ -78,9 +74,7 @@ module Lain
 
         # The ONE spelling the runtime tests for (`05_records.lua`'s
         # CONTINUATION), read off {Fold::INDENT} rather than spelled a second
-        # time: naming the constant is what loads the file that defines it, so
-        # the load-order reason the two spellings used to be independent no
-        # longer holds.
+        # time.
         INDENT = Fold::INDENT
 
         # What says a summary was cut. ASCII, {ApprovalView::ELISION}'s
@@ -449,7 +443,3 @@ module Lain
     end
   end
 end
-
-# LAST, and the twin of the require at the top: {Gestures} names {InboxView}'s
-# own NAME and {Opened} in its body, so it can only be read once that body has
-# run -- where {Row} had to be read BEFORE it, to be made private there.

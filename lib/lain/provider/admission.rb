@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-# This file is its subtree's index. Neither child reopens {Admission} nor
-# resolves its constants at load time, so the position here is convention
-# rather than constraint -- probed, not assumed.
-
 module Lain
   class Provider
     # A provider's CAPACITY, as one object: at most `width` callers inside one

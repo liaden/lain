@@ -190,9 +190,6 @@ module Lain
             )
           end
 
-          # Spelled in a method body rather than as a constant: this unit loads
-          # before `lain/forge`, so naming it in the class body is a NameError
-          # at boot.
           def landed_records = records(Lain::Forge::LocalLanding::LANDED).to_a
 
           def queue

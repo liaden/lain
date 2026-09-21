@@ -202,10 +202,3 @@ module Lain
     end
   end
 end
-
-# Payload references Event::KINDS and Event.normalize_kind, so the class body
-# must load first.
-# ChainWriter reopens Event to nest itself and references Payload (the
-# payload-then-envelope write), so it loads after Payload.
-# Projection reopens Event to nest itself; its Usage/Timeline references resolve
-# at call time, so those units may load after this one.

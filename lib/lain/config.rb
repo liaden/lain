@@ -2,13 +2,6 @@
 
 require "tomlrb"
 
-# The tables load before this file's body, which builds {Config::EMPTY} -- and so an
-# {Epics} -- while it loads. `config/epics/gates` REOPENS `Epics` to hang the sub-table
-# on it, so it follows the file that defines it. {Config::Refusal} is first: every
-# table raises it, so it has to exist before any of them is read.
-# Last: {Config::Resolved} builds all four tables above, and the two that live
-# outside this subtree, on demand.
-
 module Lain
   # Reads `<root>/.lain/config.toml`. Absence is not an error -- {.load} on a
   # root with no file returns the same value {.empty} does, so a caller never

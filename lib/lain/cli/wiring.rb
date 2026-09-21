@@ -78,8 +78,7 @@ module Lain
         end
 
         # The sync defaults to nothing, which is what a handoff with no
-        # working branch needs. Resolved in the signature, at call time,
-        # because `lain/cli` loads before `lain/isolation`.
+        # working branch needs.
         def initialize(handoff:, sync: Isolation::SelfSync::Null) = super
 
         def self.none = new(handoff: Isolation::WorkerHandoff::Null)
@@ -116,9 +115,8 @@ module Lain
         #   {Lain::Tools::Subagent} runs an ungated handler -- is unchanged.
         #   Sharing the instance is an INJECTION and never a dependency: the
         #   tool must stay correct with nobody above it. The default is written
-        #   here rather than in a constant because `lain.rb` loads `lain/cli`
-        #   before `lain/shell`, so it can only be resolved at CALL time --
-        #   the same debt `escalation.rb` records at the other seam.
+        #   in the signature rather than in a constant, so a caller that brings
+        #   none still gets its own.
         #
         #   == A DENY MOVES THE COMMAND ONTO THE LESS CONSTRAINED ARM
         #

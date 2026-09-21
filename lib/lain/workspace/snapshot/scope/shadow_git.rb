@@ -187,6 +187,3 @@ module Lain
     end
   end
 end
-
-# ShadowGit's own subtree index: its children reopen the class, so they load
-# after it.

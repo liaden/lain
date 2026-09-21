@@ -5,8 +5,7 @@ module Lain
     module Carriers
       # A layout refusal names the file it refused and the rule that refused
       # it, so a reader can set policy per rule without parsing the prose. The
-      # rules are the guard's own published list, {TestLayout::Guard::REFUSING};
-      # `lain/test_layout` loads before this unit.
+      # rules are the guard's own published list, {TestLayout::Guard::REFUSING}.
       class TestLayoutRefused < Declarative::Carrier
         attribute :path
         attribute :rule

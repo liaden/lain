@@ -232,9 +232,7 @@ module Lain
 
         # {Isolation::Worktree}'s pinned scrub set, not a parallel copy: an
         # ambient GIT_DIR (a pre-commit hook sets one) would otherwise point every
-        # call below at the hook's repository instead of `repo_root`. Read from a
-        # METHOD body because `lain.rb` loads isolation after review, so a
-        # class-body reference would be a load-time NameError.
+        # call below at the hook's repository instead of `repo_root`.
         def git(*, env: {})
           shell = @shell_out_factory.call("git", "-C", @repo_root, *CONFIG_PINS, *,
                                           environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))

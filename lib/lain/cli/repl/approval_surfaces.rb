@@ -124,8 +124,8 @@ module Lain
           # `inspect`ed, so a newline or an escape in a model-written command
           # cannot break the line or forge another; the preamble is the
           # sentence every human surface leads with. The buffer is a format
-          # argument rather than interpolated here because `lain/frontend`
-          # loads after `lain/cli`.
+          # argument rather than interpolated here, so the caller that knows
+          # which buffer it is fills it in.
           NOTE = "! %<preamble>s%<requester>s asks to run %<tool>s(%<input>s)  -- answer in %<buffer>s, or /approve"
           UNANNOUNCED = "the chat could not announce a parked call (%<failure>s) -- lain://approval still lists it"
 

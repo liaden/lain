@@ -231,11 +231,7 @@ module Lain
       end
 
       # A fresh {Provider::Anthropic::StreamAssembler} for exactly one
-      # frame -- the same lifetime a live round trip gives it. Referenced
-      # lazily, inside a method body rather than at load time: `session_record.rb`
-      # loads before `provider.rb` in `lain.rb`'s topological order, the same
-      # lazy cross-unit reach {Replay#memory} already documents for
-      # `Bench::Session::MemoryReplay`.
+      # frame -- the same lifetime a live round trip gives it.
       def reassemble(frame)
         assembler = Provider::Anthropic::StreamAssembler.new
         sse_events(frame.bytes).each { |event| assembler.add(event) }
@@ -259,11 +255,10 @@ module Lain
       end
 
       # deliberately absent: {Provider::AnthropicWire}, whose #build_response
-      # this shadows. It cannot be INCLUDED here -- `session_record.rb` loads
-      # before `provider.rb` in `lain.rb`'s topological order, the same reason
-      # {Provider::Anthropic::StreamAssembler} is reached lazily above. What
-      # would differ: the shared version runs `normalize_tool_inputs`, redundant
-      # here because the assembler has already parsed every tool input.
+      # this shadows rather than includes. What would differ: the shared version
+      # runs `normalize_tool_inputs`, redundant here because the assembler has
+      # already parsed every tool input. Nothing now stops the include; the
+      # spec below is what holds the two decoders in agreement meanwhile.
       #
       # The usage decode is NOT shadowed -- that one is a class method, so it is
       # the single {Usage.from_anthropic_wire} the two live providers use. A

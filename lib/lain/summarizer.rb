@@ -34,8 +34,6 @@ module Lain
       # The project-scoped DSL file, on the `.lain/` convention (like `.git/`).
       DSL_PATH = ProjectDir.summarizers
 
-      # Resolved at CALL time: {Builder} loads after this class body (see the
-      # note at the foot of this file), so a constant read here would NameError.
       def self.builder = Builder
 
       # The summarizer that handles `result`, or nil when none does.
@@ -57,6 +55,3 @@ module Lain
     end
   end
 end
-
-# The value and the contract first; the evaluator subclasses {Base}, so it loads
-# after it (the children-after-the-class-body order effect/handler.rb uses).

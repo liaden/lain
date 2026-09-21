@@ -78,10 +78,9 @@ module Lain
     #
     # {Document::HEADING} is the same shape with capture groups. This is a
     # second, deliberate statement of it, for {ID_RESERVED}'s reason and with a
-    # stronger remedy: Document loads AFTER this file and a value must not reach
-    # forward to its own renderer, so the two copies are held to each other by a
-    # spec matching every heading the writer emits against BOTH patterns
-    # (spec/lain/question/document_spec.rb).
+    # stronger remedy: a value must not reach forward to its own renderer, so
+    # the two copies are held to each other by a spec matching every heading the
+    # writer emits against BOTH patterns (spec/lain/question/document_spec.rb).
     #
     # Why the VALUE refuses it, rather than the renderer: the editor's `x` keymap
     # finds a question by scanning UP from an option line to the nearest heading,

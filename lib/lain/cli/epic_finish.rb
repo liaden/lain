@@ -12,8 +12,8 @@ module Lain
     # stopped continues from what the journal and the remote agree on, and a
     # finished one changes nothing.
     #
-    # Every constant from the epic, forge and isolation tiers is reached at
-    # call time and spelled in full: this unit loads before them.
+    # Every constant from the epic, forge and isolation tiers is spelled in
+    # full: a bare `Epic` here resolves to the sibling {CLI::Epic}.
     class EpicFinish
       # An epic with an issue that has not landed. Refused before anything
       # reaches the remote.

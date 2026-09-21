@@ -168,9 +168,9 @@ module Lain
   class StatusFeed
     # Anthropic's default 5-minute sliding window, used when no caller injects a
     # provider's own `#cache_profile`. Kept here rather than reaching into
-    # `Provider::AnthropicReference::CACHE_PROFILE` because `lib/lain.rb` loads
-    # this file BEFORE `lib/lain/provider.rb`, and depending forward on a
-    # not-yet-loaded unit would invert that order.
+    # `Provider::AnthropicReference::CACHE_PROFILE` because this struct depends
+    # on the Provider tree for nothing, and one constant is not a reason to
+    # start.
     DEFAULT_CACHE_PROFILE = { ttl: 300 }.freeze
 
     # {Journal#encode}'s self-describing failure record, which is also what
@@ -179,9 +179,8 @@ module Lain
     JOURNAL_ERROR = "journal_error"
 
     # Spelled again rather than imported from {Tools::AskHuman::HUMAN}: reaching
-    # into the Tools tree from this early-loading struct would invert the
-    # dependency this class actually has, which is none. Both spellings are
-    # pinned by spec.
+    # into the Tools tree from this struct would invert the dependency this
+    # class actually has, which is none. Both spellings are pinned by spec.
     INBOX_RECIPIENT = "human"
 
     # {SessionRecord::REWOUND_TYPE}, spelled again for {INBOX_RECIPIENT}'s
@@ -625,7 +624,3 @@ module Lain
     def default_path = ProjectDir.new.state_path
   end
 end
-
-# This file is `status_feed/`'s index. Every child reopens the class above, so
-# they load AFTER the class body -- `effect/handler.rb`'s ordering, for the
-# same reason (CLAUDE.md, Requires).

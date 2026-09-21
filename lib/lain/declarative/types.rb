@@ -129,14 +129,9 @@ module Lain
       # the documented mitigation, but a name that never collides in the first place removes the
       # hazard rather than requiring a reader to notice and preserve the qualification.
       #
-      # The `::Lain::Canonical` reference lives in `#cast`'s body, not this class's, because
-      # `lib/lain.rb` loads `canonical.rb` at `:22`, after where this subtree sits (`declarative`
-      # inherits `guard`'s required position ahead of `config`, per `lain.rb:14-16`). A class-body
-      # reference would resolve at THIS file's load time, before `Lain::Canonical` exists -- a
-      # load-time `NameError`. A method body defers the lookup to call time, by which point
-      # `lib/lain.rb` has finished requiring everything (verified by loading this file in a bare
-      # process with no `Lain::Canonical` defined: it loads cleanly, and only `#cast` -- not
-      # load -- raises `NameError` until `Lain::Canonical` is defined).
+      # The `::Lain::Canonical` reference lives in `#cast`'s body rather than this class's, which
+      # is where a cast belongs anyway: the type is registered once and asked per value, so the
+      # lookup has no reason to happen earlier than the first value.
       #
       # `Canonical.normalize` raises its own taxonomy for input it cannot canonicalize
       # (`UnsupportedType`, `AmbiguousKey`, `NonFiniteFloat` -- all already `Lain::Error`

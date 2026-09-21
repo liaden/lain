@@ -4,12 +4,9 @@ module Lain
   module Frontend
     class Neovim
       # The one hard-wrap value {ApprovalView} and {InboxView} both render by,
-      # and the reason it is its own file rather than a constant read off
-      # either of them: `neovim.rb`'s manifest loads views in the order they
-      # are required, and a sibling loaded first cannot reference a constant on
-      # a sibling loaded after it. A LEAF loaded before both is the fix -- see
-      # `neovim.rb`'s require block, which places this file ahead of
-      # `inbox_view` and `approval_view`.
+      # in its own file rather than on either of them: it belongs to neither
+      # view, and a constant read off a sibling makes one view the other's
+      # dependency for a measurement that is really the pane's.
       #
       # `INDENT` is the runtime's own boundary test: `05_records.lua`'s
       # `CONTINUATION` pattern is this string anchored, so "does this line

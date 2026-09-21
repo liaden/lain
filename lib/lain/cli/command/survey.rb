@@ -26,10 +26,9 @@ module Lain
       # and {Lain::Review::Submit::Outbox::Nowhere} already models "a perfectly
       # good review with nowhere to post".
       #
-      # This class is named `Survey`, so a bare `Survey::Walk` resolves HERE,
-      # and `lain.rb` loads `lain/cli` BEFORE `lain/review` and `lain/survey`:
-      # a constant in this class body naming either is a load-time NameError,
-      # so every such name is read from a method body instead.
+      # This class is named `Survey`, so a bare `Survey::Walk` resolves HERE and
+      # dies -- every name from the review and survey tiers is therefore
+      # qualified from `Lain`, in the class body and in a method body alike.
       class Survey
         # The flags that take the word after them. Anything else beginning with
         # `--` is refused rather than read as a path: a directory named
@@ -39,14 +38,14 @@ module Lain
         # The flags that take nothing. Held apart from {FLAGS} because the parse
         # drops TWO words for one and ONE for the other, and reading
         # `--scope --unbounded` as "scope is --unbounded" would refuse a flag
-        # spelled correctly. `--permissive` is spelled rather than read from
-        # {Lain::Review::Verdict::Policy::FLAG} for the class doc's load-order
-        # reason; {#policy_for} asks that constant what the word MEANS.
+        # spelled correctly. `--permissive` is spelled here rather than read
+        # from {Lain::Review::Verdict::Policy::FLAG}, which {#policy_for} asks
+        # what the word MEANS.
         SWITCHES = %w[--unbounded --permissive].freeze
 
         # A FORMAT rather than the sentence: the scopes come off
-        # {Lain::Review::Partition::STRATEGIES}, which this class body cannot
-        # name. {#usage} fills it in from a method body.
+        # {Lain::Review::Partition::STRATEGIES}, and {#usage} fills them in, so a
+        # strategy registered there cannot leave this line advertising a stale set.
         USAGE = "/survey <path> [--scope %<scopes>s] [--unbounded] [--permissive] -- " \
                 "open a survey of a directory in the attached editor"
 

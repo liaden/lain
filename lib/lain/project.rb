@@ -103,12 +103,3 @@ module Lain
     def to_s = "#{kind}:#{root} cwd=#{cwd} via=#{detected_by}"
   end
 end
-
-# Reopens the class, so it loads after the whole body -- {KINDS},
-# {Project::DETECTED_BY} and {Project::Unresolvable} resolve by name inside it.
-
-# Reads the config path off {ProjectDir} and builds an {Approval::Remembered}, both from
-# method bodies only -- `lain/approval` loads well after this file.
-
-# Dotfiles nests inside Project, so it loads after the class body -- this file
-# is the project subtree's index (see CLAUDE.md, Requires).

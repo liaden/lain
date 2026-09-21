@@ -105,6 +105,3 @@ module Lain
     end
   end
 end
-
-# The built-in catalog reopens nothing but references Role.new, so it loads after
-# the value above -- role.rb is this subtree's index (the effect/handler pattern).

@@ -169,6 +169,123 @@ module CommentCensus
     def self.citations(text) = text.scan(TOKEN).map { |token| [token, classify(token)] }
   end
 
+  # Does this comment cite the RETIRED require manifest as a live constraint?
+  #
+  # `lib/` had 790 `require_relative` lines and one hand-kept topological order
+  # until the loader replaced them. The lines went in one commit; the comments
+  # that explained them did not, and three hand sweeps each missed a different
+  # subset -- which is why this is a checker and not a fourth list.
+  #
+  # IT DOES NOT BAN TALKING ABOUT LOAD ORDER. Plenty of it is still real: the
+  # nvim runtime's numeric module prefixes, the spec-support glob's `Dir[]`
+  # order, `active_support` before its own core_ext, a subclass after its
+  # superclass, the compiled extension before `eager_load`. The rule is
+  # narrower and is the whole of what the loader retired: NO COMMENT MAY CITE
+  # `lain.rb`'s REQUIRE ORDER AS A CONSTRAINT THAT STILL BINDS.
+  #
+  # So a claim is the CONJUNCTION of two enumerated halves inside ONE SENTENCE
+  # -- an ordering claim, and the thing it is a claim about:
+  #
+  #   1. {CLAIM} and {MANIFEST} together are :retired. The sentence orders one
+  #      unit against another and names the mechanism that used to do the
+  #      ordering, which is the shape every one of the sweep's misses wore.
+  #   2. {CLAIM} against a lib-internal {UNIT}, with no manifest named, is the
+  #      shape no regex can settle: `loads after` is as true of an nvim Lua
+  #      module as it was false of `lain/arm`. An enumerated {LIVE} subject
+  #      passes; anything else is :unknown.
+  #   3. :unknown is REPORTED AND FAILS, never swept -- the ticket classifier's
+  #      discipline, for the same reason. A comment naming a real order that
+  #      nobody has taught this file about must stop the check rather than be
+  #      deleted by it, because a deleted reason cannot be recovered by reading
+  #      the diff of a sweep that looked right.
+  #
+  # Sentence-scoped on purpose. Block-scoped, an ordering claim in one
+  # paragraph pairs with a `lain/foo` path three sentences away, which on this
+  # tree turned 10 findings into 23.
+  module LoadOrder
+    # An ordering claim. Every entry was read in place in this tree; the last
+    # four are consequences rather than claims, and are here because a comment
+    # that states only the consequence ("a NameError at boot") is exactly what
+    # a vocabulary-only sweep walks past.
+    CLAIM = Regexp.union(
+      /\b(?:loads?|loaded|loading|requires?|required)\b[^,;]{0,70}?\b(?:before|after|first|last|ahead of)\b/i,
+      /\bload[-\s]order\b/i,
+      /NameError at (?:boot|load)|load-time\s+`?NameError/i,
+      /\bcannot be (?:INCLUDED|done here)\b/i,
+      /class body cannot name/i,
+      /\bat class-body time\b/i
+    )
+
+    # The retired mechanism, named. `lain/[a-z_]+` wants the negative lookbehind
+    # because `.lain/summarizers.rb` is a project's own DSL file and not a unit
+    # of this library at all.
+    MANIFEST = Regexp.union(
+      /\blain\.rb\b/, %r{\blib/lain\.rb\b}, %r{(?<![.\w])lain/[a-z_]+\b},
+      /\brequire_relative\b/, /\b(?:require|load) manifest\b/i,
+      /\brequire (?:block|line)\b/i, /\bthe manifest\b/i, /\btopological order\b/i,
+      /`?[a-z_]+\.rb`?'s manifest/i
+    )
+
+    # A unit of this library, however a comment spells one: a YARD reference, a
+    # qualified constant, a path, or a bare filename.
+    UNIT = Regexp.union(
+      /\{[A-Z][\w:]*[#.]?\w*\}/, /\bLain::[A-Z]\w*/,
+      %r{\blib/lain/[a-z_/]+\.rb\b}, /`[a-z_]+\.rb`/
+    )
+
+    # Orders that survive the loader. Enumerated by SUBJECT, one entry per kind
+    # rather than one per site, and every one read in place:
+    #
+    #   journal records   a run writes its `memory_loaded` before its first root
+    #   nvim runtime      `runtime_loader` sorts Lua modules by numeric prefix
+    #   support glob      RSpec support files load in `Dir[]` order
+    #   one worker        two spec files sharing a process, not a load order
+    #   fresh subclass    `class_eval` builds a new class on every load
+    #   rubygems          the gem prelude's own boot, not ours
+    #   a live class body a sibling's constant read while a class body runs --
+    #                     still true, and what `bin/zeitwerk-census` guards
+    #   user DSL          `.lain/summarizers.rb`, a project's file and not a unit
+    #   late digest       a blake3 taken before its caller holds the bytes
+    #   negative control  a fixture whose whole job is a real require dependency
+    #   spec file order   a support file placed so no spec waits on another
+    LIVE = Regexp.union(
+      /writes its load ahead of/i, /memory_loaded/,
+      /runtime loader|load order\)|in load order/i, /\b\d\d_[a-z_]+\.lua\b/,
+      /Dir\[\]|support glob/i,
+      /into one worker|into one process/i,
+      /class_eval|anonymous subclass/i,
+      /gem_prelude|BUNDLER_SETUP|Bootsnap/i,
+      /while its class body runs/i,
+      %r{\.lain/[a-z_]+\.rb}, /declaration is data for/i,
+      /blake3/i,
+      /negative control|boot copy/i,
+      /another spec file|spec file having been loaded/i
+    )
+
+    # @param text [String] one comment block, markers and all
+    # @return [Array<String>] its sentences, unwrapped across comment lines
+    def self.sentences(text)
+      text.lines.map { |line| line.sub(/\A\s*(?:#+|-{2,})\s*/, "") }
+                .join(" ").gsub(/\s+/, " ").split(/(?<=[.:?!])\s+|\s--\s/)
+    end
+
+    # @param sentence [String]
+    # @return [Symbol, nil] :retired, :live, :unknown, or nil for no claim
+    def self.verdict(sentence)
+      return nil unless sentence.match?(CLAIM)
+      return :retired if sentence.match?(MANIFEST)
+      return nil unless sentence.match?(UNIT)
+
+      sentence.match?(LIVE) ? :live : :unknown
+    end
+
+    # @param text [String] one comment block
+    # @return [Array<Array(String, Symbol)>] each claiming sentence and its verdict
+    def self.claims(text)
+      sentences(text).filter_map { |one| [one.strip, verdict(one)] if verdict(one) }
+    end
+  end
+
   # Ruby comments, found by the real parser.
   #
   # Prism answers both questions the stripper needs, and nothing short of a
@@ -508,6 +625,24 @@ module CommentCensus
   # @return [Array<Site>] every project-scheme citation in the source
   def tickets(source, language:, path: "-") = sites(source, language:, path:).select { |s| s.verdict == :project }
 
+  # Contiguous comment lines, joined. A claim is a SENTENCE and a sentence
+  # wraps, so a checker that read one `#` line at a time would miss every
+  # statement that did not fit in eighty columns -- which, in this tree, is most
+  # of them.
+  #
+  # @return [Array<Array(Integer, String)>] each block's first line and its text
+  def comment_blocks(source, language:)
+    comments(source, language:).chunk_while { |one, nxt| nxt.first_line <= one.last_line + 1 }
+                               .map { |run| [run.first.first_line, run.map(&:text).join("\n")] }
+  end
+
+  # @return [Array<Site>] every load-order claim in the source, classified
+  def load_order_claims(source, language:, path: "-")
+    comment_blocks(source, language:).flat_map do |line, text|
+      LoadOrder.claims(text).map { |sentence, verdict| Site.new(path, line, verdict, verdict, sentence) }
+    end
+  end
+
   # Shapes the classifier will not place. They are reported rather than swept,
   # and they fail `--check-tickets`, so a scheme nobody has classified stops
   # the gate instead of being guessed at in either direction.
@@ -553,22 +688,27 @@ module CommentCensus
   # paths of its own.
   module CLI
     USAGE = <<~TEXT
-      usage: bin/comment-census [--strip | --tickets | --check-tickets | --verify] [FILE...]
+      usage: bin/comment-census [--strip | --tickets | --check-tickets |
+                                --load-order | --check-load-order | --verify] [FILE...]
 
-        (no flag)        code, YARD tag and prose comment lines, counted separately
-        --strip          each file with its comments removed, one banner per file.
-                         `--strip > before.txt`, sweep, `--strip > after.txt`, diff:
-                         an empty diff is the proof that the sweep changed no code.
-        --tickets        every project-scheme citation, plus the sites the
-                         classifier will not place
-        --check-tickets  as --tickets, exiting non-zero if anything is found
-        --verify         prove the stripper on each file, against Prism (Ruby)
-                         or luac (Lua)
+        (no flag)            code, YARD tag and prose comment lines, counted separately
+        --strip              each file with its comments removed, one banner per file.
+                             `--strip > before.txt`, sweep, `--strip > after.txt`, diff:
+                             an empty diff is the proof that the sweep changed no code.
+        --tickets            every project-scheme citation, plus the sites the
+                             classifier will not place
+        --check-tickets      as --tickets, exiting non-zero if anything is found
+        --load-order         every comment citing the retired require manifest as a
+                             live constraint, plus the orders it cannot place
+        --check-load-order   as --load-order, exiting non-zero if anything is found
+        --verify             prove the stripper on each file, against Prism (Ruby)
+                             or luac (Lua)
     TEXT
 
     MODES = {
       nil => :census, "--strip" => :strip, "--tickets" => :tickets,
-      "--check-tickets" => :check_tickets, "--verify" => :verify
+      "--check-tickets" => :check_tickets, "--load-order" => :load_order,
+      "--check-load-order" => :check_load_order, "--verify" => :verify
     }.freeze
 
     def self.run(argv)
@@ -661,6 +801,29 @@ module CommentCensus
     def self.print_sites(heading, sites)
       puts "\n#{heading} (#{sites.size})"
       sites.each { |site| puts "  #{site}" }
+    end
+
+    def self.load_order(paths) = report_load_order(paths, exit_on_findings: false)
+
+    def self.check_load_order(paths) = report_load_order(paths, exit_on_findings: true)
+
+    # `live` is printed rather than swallowed: a reader auditing this checker
+    # needs to see what it decided to let through, or the allowlist is a claim
+    # nobody can check.
+    def self.report_load_order(paths, exit_on_findings:)
+      found = collect_claims(paths)
+      print_sites("RETIRED MANIFEST -- cites a require order the loader removed", found[:retired])
+      print_sites("UNCLASSIFIED -- teach the classifier before sweeping these", found[:unknown])
+      print_sites("LIVE -- an order that still exists, allowed by name", found[:live])
+      exit 1 if exit_on_findings && !(found[:retired] + found[:unknown]).empty?
+    end
+
+    def self.collect_claims(paths)
+      found = { retired: [], unknown: [], live: [] }
+      each_file(paths) do |path, source, language|
+        CommentCensus.load_order_claims(source, language:, path:).each { |site| found[site.verdict] << site }
+      end
+      found
     end
 
     def self.verify(paths)

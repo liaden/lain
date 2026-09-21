@@ -3,11 +3,10 @@
 module Lain
   module Telemetry
     module Carriers
-      # The three names held VERBATIM rather than referenced: this carrier's
-      # class body evaluates at telemetry load time, and the shell/ unit loads
-      # some sixty entries further down the manifest. {Shell::Verdict::Decision}
-      # is the authority; a fourth name added there and not here refuses the
-      # record loudly rather than journalling a name no decision answers to.
+      # The three names held VERBATIM rather than referenced, so telemetry
+      # depends on the shell tier for nothing. {Shell::Verdict::Decision} is the
+      # authority; a fourth name added there and not here refuses the record
+      # loudly rather than journalling a name no decision answers to.
       #
       # `term` is checked for SHAPE and for agreement with the verdict, which is
       # the record's whole content: a stage list is an argv list, and only an

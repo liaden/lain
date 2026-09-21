@@ -26,8 +26,3 @@ module Lain
     end
   end
 end
-
-# The catalog and the invocation parser both reopen Skill, so they load after
-# the value above.
-# Library pairs the Catalog above with Prompt::Slots and composes the Renderer,
-# so it loads last.

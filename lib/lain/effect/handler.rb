@@ -49,5 +49,3 @@ module Lain
     end
   end
 end
-
-# Subclasses reopen Effect::Handler, so they load after the class body above.

@@ -292,8 +292,3 @@ module Lain
     end
   end
 end
-
-# The constraint that binds is in lain.rb, not here: `lain/compare` must load
-# before `lain/bench`, because Bench::Sweep resolves Compare::ArmFold::HEADERS
-# while evaluating its own COLUMNS constant. Swap those two lines and the suite
-# dies with `sweep.rb: uninitialized constant Lain::Bench::Sweep::Compare`.

@@ -10,8 +10,7 @@ module Lain
       #
       # The allowed VALUES are not spelled here: {Approval::Gate::Policies.known?}
       # answers, so widening the policy family is one edit in the factory rather
-      # than two that can disagree. That reference is resolved at CALL time,
-      # which is why it does not invert lain.rb's load order.
+      # than two that can disagree.
       #
       # Absence means interactive everywhere, so {#policy_for} is total and no
       # caller writes a nil guard.

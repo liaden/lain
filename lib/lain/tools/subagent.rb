@@ -425,10 +425,9 @@ module Lain
       # A chat seam getting it by default is the case {Seam#initialize} says is
       # still open.
       #
-      # It duplicates what {CLI::Wiring::Askers} would enrol because `lain.rb`
-      # loads `lain/cli` before `lain/tools`, so this file cannot name that
-      # class -- and neither should it: a spawn asks for an enrolment, not for
-      # the CLI's way of making one.
+      # It duplicates what {CLI::Wiring::Askers} would enrol rather than naming
+      # that class: a spawn asks for an enrolment, not for the CLI's way of
+      # making one.
       #
       # A module rather than an instance, for {NO_OBSERVER}'s equality reason.
       module NoAskers
@@ -1176,6 +1175,3 @@ module Lain
     end
   end
 end
-
-# These children reopen Subagent, so they load after the class body. Log leads:
-# Lineage's `log:` default names Log::Null.

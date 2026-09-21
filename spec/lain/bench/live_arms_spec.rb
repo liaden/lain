@@ -62,6 +62,37 @@ RSpec.describe Lain::Bench::LiveArms do
 
       expect(instrument.price_book).to be(book)
     end
+
+    # A seam built with no grading and no layout carries the objects those
+    # names stand for, never an absence `.altitude` has to decide the meaning
+    # of. `.altitude` used to coalesce a nil to the arm's own default, so what
+    # these pin is the EQUIVALENCE and not the literal: a seam that names
+    # neither gives each arm exactly what the arm would have chosen for itself.
+    # Move an arm's default and these fail, which is the point -- a seam that
+    # silently disagreed with its arm is the defect the coalesce was hiding.
+    #
+    # Both halves are driven through {.altitude} and not read off the seam
+    # alone, because an absence only becomes a fault downstream: a nil `layout`
+    # reaches {Arm::PlanOnly} and NoMethodErrors inside a run that spends real
+    # money, where a nil `grading` merely fails to judge.
+    def default_arm_grading = Lain::Arm::OneShot.new.instance_variable_get(:@grading)
+
+    def default_arm_layout
+      Lain::Arm::PlanOnly.new(planner: seams.planner, actors: seams.actors, supervisor: seams.supervisor)
+                         .instance_variable_get(:@layout)
+    end
+
+    it "gives the one-shot arm the grading that arm would have defaulted to itself" do
+      expect(altitude.first.instance_variable_get(:@grading)).to be(default_arm_grading)
+    end
+
+    it "gives the plan-only arm the layout that arm would have defaulted to itself" do
+      expect(altitude[1].instance_variable_get(:@layout)).to be(default_arm_layout)
+    end
+
+    it "carries those objects on the seam itself, so nothing downstream reads an absence" do
+      expect([seams.grading, seams.layout]).to eq([default_arm_grading, default_arm_layout])
+    end
   end
 
   # The orchestration roster is a DIFFERENT question, and `lain bench arms` and

@@ -64,9 +64,10 @@ module Lain
       # both load-bearing: `blake3:a` and an uppercased digest satisfy a looser
       # `\h+` pattern yet can never equal a key {SummaryObserver} fired.
       #
-      # Measured on FIRST USE, not in the class body: `Canonical.digest` reaches
-      # into the Rust extension, which `lain.rb` requires AFTER this unit, so
-      # taking a digest at load time is a `NameError` on `Lain::Ext`.
+      # Measured on FIRST USE, not in the class body, so the pattern is taken
+      # once and only by a caller that actually reads one: a digest computed
+      # while this file loads would be work every boot does for a snapshot most
+      # never take.
       def self.digest_format
         @digest_format ||= begin
           hex_length = Canonical.digest("").delete_prefix(DIGEST_PREFIX).length

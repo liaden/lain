@@ -517,9 +517,8 @@ module Lain
         #
         # The SENTENCE is PASSED rather than tabled, for two reasons that agree.
         # Three of them belong to the view object that speaks them
-        # ({Compose::DETACHED} and its two siblings), and this file is required
-        # ahead of all three in `neovim.rb`'s manifest, so a table could not name
-        # them at class-body time anyway. And naming each at its own door is what
+        # ({Compose::DETACHED} and its two siblings), so a table here would be a
+        # second home for somebody else's words. And naming each at its own door is what
         # keeps a human answering a question from being told that composing needs
         # an attached editor -- which is the defect the parameter was added for.
         def post(rail, *args, refusal: nil)

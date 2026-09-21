@@ -102,10 +102,9 @@ module Lain
                          by_directory: "(no directories in this changeset)" }.freeze
 
         # A LITERAL table rather than derived from `Review::FILE_STATES`, which
-        # is what {Surface::Text} does one layer down and is the better shape. It
-        # cannot be done here: `lain.rb` loads `lain/frontend` BEFORE
-        # `lain/review`, so the constant is not resolvable while this class body
-        # runs. The spec pins these keys against it instead.
+        # is what {Surface::Text} does one layer down and is the better shape.
+        # Nothing forces the literal any more; until it is derived, the spec
+        # pins these keys against that constant.
         #
         # `#file_row` looks up `state.to_s`, so a Symbol reads as readily as the
         # canonical String: a `Marks#states` Hash answers Symbols and every

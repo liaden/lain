@@ -108,6 +108,3 @@ module Lain
     end
   end
 end
-
-# The floor FIRST: it is the default collaborator of every chunker below, named
-# in their default arguments, as is `granularity`.

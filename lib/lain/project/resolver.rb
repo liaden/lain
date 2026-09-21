@@ -75,9 +75,10 @@ module Lain
       # directory on the machine a project. {Paths} uses home as a JOIN BASE for
       # the XDG directories, where `/` is a real answer -- it is what root gets in
       # a container -- so it accepts what this refuses. Two classes rather than
-      # one because load order forces it; the bare `rescue UnusableHome` in
-      # {.default_project} resolves lexically to THIS one and deliberately does
-      # not catch the other, which reaches the CLI boundary on its own.
+      # one because those two answers are the whole difference between them; the
+      # bare `rescue UnusableHome` in {.default_project} resolves lexically to
+      # THIS one and deliberately does not catch the other, which reaches the
+      # CLI boundary on its own.
       class UnusableHome < Error
         def initialize(home)
           super("home must be an absolute path other than \"/\", got #{home.inspect}")

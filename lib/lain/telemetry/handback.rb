@@ -7,9 +7,8 @@ module Lain
       # land on one of the outcomes the operation can reach. The kinds are
       # {Isolation::Worktree::Handback::Outcome::KINDS}, and the sync outcomes
       # {Isolation::SelfSync::Result::OUTCOMES}, held verbatim here rather than
-      # referenced: this carrier's class body evaluates at telemetry load time,
-      # before the isolation/ unit loads (the same load-order reason
-      # {SeamDecision} holds {Plan::SIZES} verbatim).
+      # referenced, so telemetry depends on the isolation tier for nothing (the
+      # same reason {SeamDecision} holds {Plan::SIZES} verbatim).
       class Handback < Declarative::Carrier
         attribute :worker_key
         attribute :outcome

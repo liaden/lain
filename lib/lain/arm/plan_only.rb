@@ -132,8 +132,6 @@ module Lain
                     text: @planner.call(task, worker_env: lease.worker_env, journal:, spawn_seam:))
       end
 
-      # Spelled in a method body rather than as a constant: this unit loads after
-      # `lain/cli`, but naming it here keeps the rule every arm follows.
       def subject_of(plan) = Lain::CLI::EpicDriver::PlanSubject.read(plan, layout: @layout)
 
       def row_of(launch) = @supervisor.find { |row| row.actor.equal?(launch.actor) }

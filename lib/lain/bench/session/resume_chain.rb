@@ -75,7 +75,7 @@ module Lain
         # @param resolve [#call] `basename -> entries`, consulted only when
         #   `resumed_from` is present
         # @param loader_factory [#new] builds the prior file's Loader;
-        #   injectable only so this file need not load after {Loader}
+        #   injectable so a spec can rebuild a chain without one
         def initialize(resumed_from:, context_factory:, resolve:, loader_factory: Loader)
           @resumed_from = resumed_from
           @context_factory = context_factory

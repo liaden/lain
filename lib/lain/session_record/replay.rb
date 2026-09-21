@@ -26,10 +26,7 @@ module Lain
     # turns recorded after it, and the `rewound` records that decide which of
     # them the chain still carries -- all of which
     # {Bench::Session::MemoryReplay} reconstructs a {Memory::Index} from, and
-    # that index is what {Session}'s `memory:` wants. That constant is reached
-    # inside a method body, resolved at CALL time -- the same lazy cross-unit
-    # reach {Session}'s own `memory:` default already makes from #21 in
-    # `lain.rb`'s load order to Memory at #40.
+    # that index is what {Session}'s `memory:` wants.
     #
     # A record type with zero occurrences replays to that type's neutral state
     # (no reads, no todo reminder, an empty manifest) -- the tolerant

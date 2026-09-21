@@ -150,8 +150,8 @@ module Lain
         #   TOOLSET, while which programs a project has ruled out is a fact
         #   about the PROJECT -- and the approval ladder consults the same
         #   object. So {Wiring} builds it above both branches and hands the one
-        #   instance down each. The default restricts nothing and is resolved
-        #   at CALL time, on {BaseTools.build}'s load-order note.
+        #   instance down each. The default restricts nothing, on
+        #   {BaseTools.build}'s note.
         # @param usage [#call, nil] a thunk resolving to the live Agent's
         #   cumulative {Lain::Usage}, for the main-agent-only
         #   {Lain::Tools::SessionUsage}. Late-bound for `parent:`'s exact reason:

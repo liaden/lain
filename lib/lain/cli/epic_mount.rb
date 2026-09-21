@@ -26,9 +26,7 @@ module Lain
     # == Two constants named Epic, and they are different classes
     #
     # The lexical scope here is `Lain::CLI`, so a bare `Epic` is {CLI::Epic} and
-    # the artifact tier must be spelled `Lain::Epic::...` in full. Every such
-    # reference sits INSIDE a method body: this unit loads before `lain/epic`
-    # and `lain/tools`, so a constant evaluated at load would raise at boot.
+    # the artifact tier must be spelled `Lain::Epic::...` in full.
     class EpicMount
       # What a chat is told when the tool it might have had is not there. The
       # lost capability comes first: "there are 2 epics here" on its own reads as

@@ -112,8 +112,10 @@ module Lain
       end
 
       # The identity of a store nothing was ever loaded from. A method rather
-      # than a constant: addressing the empty list reaches the compiled
-      # extension, which loads after this file.
+      # than a constant because a caller holding one is holding a VIEW, and two
+      # callers must not share one; the compiled extension `Loaded.of` reaches
+      # is already required by the time any class body here runs, so nothing
+      # about load order forces it.
       def self.empty = Loaded.of([])
 
       # No durable store behind the view: a bench run taking the default, a

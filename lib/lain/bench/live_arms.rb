@@ -7,9 +7,13 @@ module Lain
     # them sends each child to -- always against the {Arm::SingleThread}
     # control, since a comparison is only a comparison against one.
     #
-    # A MODULE with a builder rather than a frozen constant map because
-    # `lain/bench` loads BEFORE `lain/arm` (see lain.rb) -- these classes exist
-    # at call time, not at this file's load time.
+    # A MODULE with a builder rather than a frozen constant map because a roster
+    # is a FUNCTION of the run and not a value: the price book, the
+    # decomposition, the model and the router all arrive as arguments, and
+    # {.build} REFUSES a model with no cheaper sibling to route to. A constant
+    # would also build four arms and the {Arm::Instrument} they share while this
+    # file loads -- a cost the eager load charges every boot, for a roster only
+    # `bench arms` asks for.
     #
     # Each arm keeps its own DEFAULT (real, monotonic) clock. {ArmSweep} zeroes
     # its clock because a replayed mock has no parallelism to time; a live run
@@ -194,12 +198,13 @@ module Lain
       # could never show a four-arm comparison at all.
       Seams = Data.define(:planner, :actors, :supervisor, :progressive, :hands_off, :slug, :records,
                           :grading, :layout, :grades) do
-        # `grading` and `layout` default to nil rather than to the objects they
-        # stand for: `bench` loads BEFORE `arm` and `grader`, so a default naming
-        # either here would be a boot-time NameError. {.altitude} resolves them
-        # in a method body, where those units exist.
+        # `grading` and `layout` name the objects they stand for, which are the
+        # arms' OWN defaults ({Arm::OneShot}'s `grading:` and {Arm::PlanOnly}'s
+        # `layout:`) said once more here so that a seam is never carrying an
+        # absence {.altitude} has to decide the meaning of.
         def initialize(planner:, actors:, supervisor:, progressive:, hands_off:, slug:,
-                       records: -> { [] }, grading: nil, layout: nil, grades: -> { {} })
+                       records: -> { [] }, grading: Arm::OneShot::PASS_THROUGH,
+                       layout: TestLayout::None, grades: -> { {} })
           super
         end
       end
@@ -217,9 +222,9 @@ module Lain
       # @return [Array<Lain::Arm>] one-shot, plan-only, then the two epic entries
       def self.altitude(seams:, price_book: PriceBook.default)
         instrument = Arm::Instrument.new(price_book:)
-        [Arm::OneShot.new(instrument:, grading: seams.grading || Arm::OneShot::PASS_THROUGH),
+        [Arm::OneShot.new(instrument:, grading: seams.grading),
          Arm::PlanOnly.new(instrument:, planner: seams.planner, actors: seams.actors,
-                           supervisor: seams.supervisor, layout: seams.layout || TestLayout::None),
+                           supervisor: seams.supervisor, layout: seams.layout),
          *epic_entries(seams, instrument)]
       end
 

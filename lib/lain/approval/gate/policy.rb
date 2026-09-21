@@ -222,9 +222,10 @@ module Lain
         # Nothing in `lib/` re-decides today, so the cost is named here rather
         # than discovered on a bill.
         class Adjudicated < Policy
-          # The same string as {Adjudicator::TERMINAL_POLICY}, pinned equal by a
-          # spec. Written out rather than referenced because {Adjudicator} loads
-          # AFTER this file, so a forward reference is a load-time NameError.
+          # The same string as {Adjudicator::TERMINAL_POLICY}, written out
+          # rather than referenced so a policy does not depend on the
+          # adjudicator that happens to end in it, and held equal to it by
+          # `spec/lain/approval/gate/policy_spec.rb`.
           NAME = "adjudicated"
 
           # A {Lain::Error} rather than an ArgumentError because this is the

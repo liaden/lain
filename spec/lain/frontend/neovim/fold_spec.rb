@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 # {ApprovalView} and {InboxView} each folded a long row the same way, in their
-# own words, because `neovim.rb`'s manifest loaded whichever came first before
-# the other's constants existed. This spec pins the ONE shared definition
-# both now read, and the one place it has to agree with the runtime.
+# own words, because the value belongs to neither of them and each wrote its
+# own. This spec pins the ONE shared definition both now read, and the one
+# place it has to agree with the runtime.
 RSpec.describe Lain::Frontend::Neovim::Fold do
   describe ".lines" do
     it "elides a line longer than the fold width and indents its remainder" do

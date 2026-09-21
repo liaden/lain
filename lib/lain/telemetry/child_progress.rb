@@ -55,8 +55,7 @@ module Lain
       # {Tools::AskHuman::InboxRow}'s scrub rather than a second copy: that
       # object's whole job is one row of somebody else's text drawn on a
       # terminal, which is what these become. A role is config and not model
-      # output, but it joins the same line, so it takes the same rule. The
-      # constant resolves at call time, so load order does not matter.
+      # output, but it joins the same line, so it takes the same rule.
       def self.line(text) = Tools::AskHuman::InboxRow.one_line(text)
 
       def initialize(spawn:, turns:, role: nil, task_line: nil, worker: nil, head: nil)

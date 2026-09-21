@@ -308,6 +308,3 @@ module Lain
     end
   end
 end
-
-# After the class body: Reader references Entry, CorruptFrame, and
-# RECORD_SEPARATOR through the ResponseWal namespace.

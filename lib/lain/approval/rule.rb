@@ -136,11 +136,9 @@ module Lain
         # arrived, and a rule keyed on one must not fire. A second object would
         # differ only in its name.
         #
-        # `NO_TERM` is named inside the method rather than assigned to a
-        # constant here: `lain.rb` loads `lain/approval` before `lain/shell`,
-        # so a Shell constant in this class body is a NameError at load. Naming
-        # the shipped one rather than a second empty Array keeps absence a
-        # single object -- which {#term?} then has something to test against.
+        # `NO_TERM` is named inside the method rather than copied into a second
+        # empty Array: naming the shipped one keeps absence a single object --
+        # which {#term?} then has something to test against.
         class Termless
           def term = Shell::Verdict::NO_TERM
         end

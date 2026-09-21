@@ -90,38 +90,3 @@ module Lain
     # reads `strategy.name` off the port.
   end
 end
-
-# The vocabulary above binds the class-body reads: `Anchor::SIDES` derives from
-# `Review::SIDES`, `verdict/policy` reads `Marks::REVIEWED`, and `session` names
-# every record type in `Replay::TYPES`, so the aggregate stays LAST.
-
-# The journal records: a round opened, widened, marked, annotated, and judged or
-# closed. Each is a {Telemetry::Journalable} value whose guards cite {Wire}
-# refusals and the vocabulary above while its class body runs, which is their
-# lower bound; `Replay::TYPES` names all six at class-body time, which is their
-# upper one. Nothing orders them among themselves, so they read alphabetically.
-
-# AFTER the records: it builds an {AnnotationPlaced} out of an {Anchor}, so both
-# have to exist by the time anything calls it.
-# AFTER the aggregate it holds. Its two nulls are named from METHOD bodies only,
-# so neither binds load order the way `annotations` above does.
-# AFTER `source`: `OpenedBanner::FILE_SIDE` selects the file's side out of
-# `Source::HEAD_SIDE_ONLY` while its CLASS body runs.
-
-# The tail is two independently deletable units, each one file plus its one
-# require line.
-
-# The whole of the GitHub write path. After the aggregate it reads; nothing else
-# requires it and nothing reads it.
-
-# The docent is a ROLE, so removing it also takes the `:diff_docent` catalog
-# entry, its role template, and `CLI::Wiring::ToolsetBuild`'s one `#docent` line.
-# Catalog and shipped templates are pinned equal in BOTH directions, so deleting
-# either alone is a red spec rather than a silent gap.
-#
-# After `changeset`, whose hunks and revisions it reads, and after the records,
-# whose {Wire} refusals its own guards use while their class bodies run.
-
-# `/critique` over a held round. After `bounds`, whose chunking it sizes, and
-# after the records, whose {Wire} refusals its record uses while its class body
-# runs. Nothing else in `Review` names it.

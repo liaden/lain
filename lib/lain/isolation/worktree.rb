@@ -212,6 +212,3 @@ module Lain
     end
   end
 end
-
-# This file is the worktree/ subtree's index. The nested classes reopen the
-# class above and read its constants, so they load AFTER the class body.

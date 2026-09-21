@@ -173,9 +173,7 @@ module Lain
       #   which refuses without asking this rung anything.
       #
       #   Defaults to a verdict restricting no program, so a board built
-      #   without a project behaves as it did before the table existed --
-      #   resolved at CALL time, because `lain.rb` loads `lain/cli` before
-      #   `lain/shell`.
+      #   without a project behaves as it did before the table existed.
       # @param attended [Boolean] whether a human is at this session's terminal
       #   at all. `--non-interactive` says no, which answers "who decides a
       #   gated call" with "nobody can, so refuse" -- see {#seed} for why

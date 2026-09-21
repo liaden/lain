@@ -38,8 +38,8 @@ module Lain
         # Two operands claiming the same index. A kind of {NotAPartition} --
         # their union is not one -- so every existing rescue site catches it
         # while the name still says which of the seven conditions was met and
-        # by whom. Written out in full because this file loads BEFORE
-        # `strategy.rb`'s own `NotAPartition` alias is assigned.
+        # by whom. Written out in full rather than through `strategy.rb`'s own
+        # `NotAPartition` alias, so the superclass is named where it is defined.
         class Overlap < IntervalPartition::NotAPartition; end
 
         # A range that remembers which strategy proposed it. Frozen at

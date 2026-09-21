@@ -733,6 +733,3 @@ module Lain
     end
   end
 end
-
-# After the class body: RunRecorder reopens CLI (and raises CLI::Refusal), and
-# nothing above needs it before runtime.

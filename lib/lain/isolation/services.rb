@@ -18,12 +18,7 @@ module Lain
       # names it back to the user.
       DSL_PATH = ProjectDir.services
 
-      # Resolved at CALL time: {Builder} loads after this class body, so a
-      # constant read here would NameError.
       def self.builder = Builder
     end
   end
 end
-
-# All three are nested INSIDE the class above, so they load after its body --
-# which is why {Services.builder} names {Builder} in a method, not a constant.

@@ -527,11 +527,6 @@ module Lain
           def for(_worker_env) = self
         end
 
-        # `verdict:` defaults at CALL time, not in a constant: `lain.rb` loads
-        # `lain/approval` before `lain/shell`, so a `Shell::Verdict.new` in this
-        # class body is a hard NameError at load. {Sensitivity} loads BEFORE
-        # approval, so {AnyPath} may be built here.
-        #
         # @param verdict [#call] `String -> Shell::Verdict::Decision`
         # @param tools [Enumerable<String>] the tools whose input is a command
         # @param field [String] the input field carrying that command

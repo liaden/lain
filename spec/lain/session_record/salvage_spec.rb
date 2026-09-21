@@ -331,9 +331,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
   end
 
   # This class SHADOWS {Provider::AnthropicWire#build_response} rather than
-  # including it -- `session_record.rb` loads before `provider.rb`, so the module
-  # does not exist at class-body time (and `lain/agent`, which needs
-  # SessionRecord, sits between them, so the order cannot simply swap). Nothing
+  # including it, and nothing forces that any more. Nothing
   # else pins the two in agreement: a field added to the shared decoder would be
   # silently absent here, on the crash-recovery path, where the whole point is
   # that a recovered Response equals what the live call would have produced.

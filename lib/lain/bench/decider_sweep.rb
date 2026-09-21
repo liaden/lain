@@ -142,7 +142,3 @@ module Lain
     end
   end
 end
-
-# After the class body: {Fixture} and {Arms} reopen DeciderSweep and raise its
-# own MalformedCase, defined above, or a bare {Lain::Error} for a fixture that
-# is not on disk.

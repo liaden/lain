@@ -15,5 +15,3 @@ module Lain
     end
   end
 end
-
-# Subclasses reopen Toolset::Disclosure, so they load after the class body above.

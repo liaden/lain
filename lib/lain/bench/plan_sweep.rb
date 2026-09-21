@@ -17,6 +17,9 @@ module Lain
     # cache-writes as DISTRIBUTIONS over the scripted runs; wall-clock reads
     # ABSENT under mock replay. Fixtures in, real renders, zero network, so the
     # report is byte-identical across runs.
+    #
+    # The siblings are separate FILES, one responsibility each: {Fixture} loads,
+    # {Driver} measures, {Report} renders.
     class PlanSweep
       # One (arm, run) measured cell. `arm` is the arm's label; the three numbers
       # are what the {Report} folds into per-arm distributions.
@@ -46,8 +49,8 @@ module Lain
         @measurements ||= arms.flat_map { |arm| @fixture.runs.map { |run| measure(arm, run) } }.freeze
       end
 
-      # A method rather than a load-time constant, because {Fixture::DENSITIES}
-      # loads after this class body.
+      # Memoized rather than named: six {Arm} values {#measurements} alone
+      # reads, and a constant would publish a shape no caller asks for.
       def arms
         @arms ||= %i[linear fork].flat_map { |shape| Fixture::DENSITIES.map { |density| Arm.new(shape:, density:) } }
                                  .freeze
@@ -62,7 +65,3 @@ module Lain
     end
   end
 end
-
-# After the class body: the sibling units reopen PlanSweep and nothing above
-# needs them before runtime. Separate FILES, one responsibility each: Fixture
-# loads, Driver measures, Report renders.

@@ -176,10 +176,9 @@ module Lain
 
         def refold?(event) = refold_types.any? { |type| event.is_a?(type) }
 
-        # Matched by class, as {StatusFeed}'s own arms are. Reached at call time
-        # because the epic tier loads after the frontend; the approval tier
-        # loads before it -- and memoized, so the late binding costs one list
-        # per view rather than a fresh four-element Array per event.
+        # Matched by class, as {StatusFeed}'s own arms are. Memoized, so the
+        # list costs one Array per view rather than a fresh four-element one per
+        # event.
         def refold_types
           @refold_types ||= [Telemetry::TurnUsage, Lain::Epic::IssueTransition,
                              Lain::Epic::StageTransition, Lain::Approval::GateDecision].freeze

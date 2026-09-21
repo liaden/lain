@@ -24,11 +24,9 @@ module Lain
       # refusal, not a default, and the question is asked once: everything below
       # it holds a live surface.
       #
-      # Spelling, between two load-order traps: a bare `Review` inside
-      # `Lain::CLI::Command` resolves to THIS class, so every reference below is
-      # spelled out; and `lain.rb` loads `lain/cli` BEFORE `lain/review`, so
-      # every `Lain::Review::*` name is read from a METHOD body -- a constant in
-      # the class body would be a load-time NameError.
+      # Spelling, against a shadow: a bare `Review` inside `Lain::CLI::Command`
+      # resolves to THIS class, so every `Lain::Review::*` reference below is
+      # spelled out in full.
       class Review
         # The flags this command carries, each taking the word after it.
         # Anything else beginning with `--` is refused rather than read as a
@@ -41,9 +39,9 @@ module Lain
         # partial-review refusal is honest from a `/review` round too: that
         # sentence offers `--permissive` as the way past a changeset nobody
         # finished reading, and a command that could not read it would name a
-        # remedy unreachable from the very review that refused. Spelled rather
-        # than read from {Review::Verdict::Policy::FLAG} for the class doc's
-        # load-order reason; {#policy_for} asks that constant what it MEANS.
+        # remedy unreachable from the very review that refused. Spelled here
+        # rather than read from {Review::Verdict::Policy::FLAG}, which
+        # {#policy_for} asks what it MEANS.
         SWITCHES = %w[--permissive].freeze
 
         # What each of {FLAGS} takes, in the word a refusal names it by --
@@ -53,8 +51,8 @@ module Lain
         NEEDS_VALUE = { "base" => "a ref", "scope" => "a scope" }.freeze
 
         # A FORMAT rather than the sentence: the scopes come off
-        # {Review::Partition::STRATEGIES}, which this class body cannot name
-        # (see the class doc). {#usage} fills it in from a method body.
+        # {Review::Partition::STRATEGIES}, and {#usage} fills them in, so a
+        # strategy registered there cannot leave this line advertising a stale set.
         USAGE = "/review <pull-request|branch> [--base <ref>] [--scope %<scopes>s] [--permissive] -- " \
                 "open a changeset review in the attached editor; /review close lets the open round go " \
                 "without a verdict (a branch named close is refs/heads/close)"
@@ -150,10 +148,6 @@ module Lain
                       "survey's marks cannot reach. Run `/review close` to let it go without a verdict, " \
                       "or `lain review open <target>` for a text rendering outside this chat."
 
-        # A default argument is evaluated in the METHOD body at call time, which
-        # is why naming `Lain::Review::Bounds` below is safe where a constant in
-        # the class body would be a load-time NameError.
-        #
         # @param outbox [Review::Submit::Outbox] the run's ONE open review, so
         #   the round this opens is reachable from `/review-submit`. Required
         #   rather than defaulted: an outbox nothing else holds is a review that

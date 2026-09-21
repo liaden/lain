@@ -21,9 +21,13 @@ module Lain
       const_get(:DSL_PATH)
     end
 
-    # A class METHOD rather than an argument to some `dsl ...` declaration
-    # because each Builder loads AFTER its catalog's class body, so the constant
-    # can only resolve at call time.
+    # A METHOD where {.dsl_path} above demands a CONSTANT, and the asymmetry is
+    # the two readers: `DSL_PATH` is public surface a refusal prints
+    # ({CLI::IsolationBackend}'s missing-compose-file sentence), so it has to be
+    # a constant anyway and a forwarding method would be indirection. A builder
+    # has no reader outside {.load}, so the subclass declares it by OVERRIDING,
+    # which is also what makes the un-overridden case a named NotImplementedError
+    # rather than a `const_defined?` check restated per subclass.
     def self.builder = raise NotImplementedError, "#{name} must name its DSL Builder"
 
     # An absent file is an EMPTY catalog, never an error: a project that

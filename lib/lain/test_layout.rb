@@ -217,5 +217,3 @@ module Lain
                source_roots: [], level_roots: {}, exempt: [])
   end
 end
-
-# The parts reopen the class, so they load once `Data.define` has made it.

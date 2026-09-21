@@ -25,5 +25,3 @@ module Lain
     class NonStringSlot < Error; end
   end
 end
-
-# Children reference the error classes above, so the module body loads first.

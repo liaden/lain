@@ -35,11 +35,15 @@ module Lain
       # machine's.
       #
       # It BELONGS in {Approval::Escalation::Surfaces::AUTOMATIC}, beside
-      # {Approval::Queue::TIMEOUT_SURFACE} and ABANDONED_SURFACE, and cannot go
-      # there: that constant is evaluated while `lain/approval` loads, before
-      # this class exists, so naming it there is a load-time NameError. Until
-      # `AUTOMATIC` is late-bound the ladder reads this as `:human`, harmless
-      # only because this surface can only ever deny.
+      # {Approval::Queue::TIMEOUT_SURFACE} and ABANDONED_SURFACE, and it is
+      # still not there. What kept it out was load order -- `AUTOMATIC` was
+      # evaluated while `lain/approval` loaded, before this class existed -- and
+      # that constraint is gone: the loader resolves the name from either side
+      # now. THE MISCLASSIFICATION REMAINS, as a known defect rather than a
+      # forced one: the ladder reads this as `:human`, which weighs a broken
+      # terminal's denial as a person's, and is harmless only because this
+      # surface can only ever deny. Moving the constant changes an approval
+      # path, so it is its own change and not a comment's to make.
       FAULT_SURFACE = "tty_fault"
 
       # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving

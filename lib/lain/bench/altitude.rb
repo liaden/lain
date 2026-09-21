@@ -21,11 +21,10 @@ module Lain
     # and {Compare::Table} -- so the cell order every bench report shares is
     # still owned in one place.
     #
-    # == Load order
-    #
-    # `bench` loads BEFORE `arm`, `grader` and `epic`, so no constant from any of
-    # them may be named at class-body time. {METRICS} reads every value off the
-    # run it is handed, and the one {Arm} reference lives in a method body.
+    # {Suite} and {Subject} are separate FILES rather than nested classes,
+    # because a nested class's lines count as the enclosing class's own under
+    # Metrics/ClassLength -- the split {ArmSweep} already makes for
+    # {ArmSweep::Recordings} and its Report.
     class Altitude
       # A checkout or packaging mistake, never user input to refuse.
       class MissingFixture < Lain::Error; end
@@ -51,6 +50,14 @@ module Lain
       COST_WARNING = "lain bench altitude spends real API money: %<arms>d arms over %<tasks>d tasks, " \
                      "each arm asking a real provider for every task, and the epic arms driving a whole " \
                      "epic per task. Budget accordingly."
+
+      # Every refusal an ARM can raise that means "this one cannot be measured",
+      # as against one that means the report is broken. A lease holding no
+      # checkout is a wiring mistake in the isolation a caller injected, so it
+      # costs that arm its row and nothing else.
+      UNMEASURABLE = [Arm::Epic::NeverRan,
+                      Grader::LeaseHarness::NothingGraded, Grader::LeaseHarness::NoCheckout].freeze
+      private_constant :UNMEASURABLE
 
       # What an arm's cell reads for a metric that topology does not have. Mark
       # absent, never fabricate: a 0 here would read as "measured, and it was
@@ -166,20 +173,8 @@ module Lain
       def run(arm, task)
         arm.run(task.prompt, spawn_seam: @spawn_seam, grader: @grader,
                              isolation: isolation_for(task), grading: grading_for(task))
-      rescue *unmeasurable => e
+      rescue *UNMEASURABLE => e
         Unrun.new(reason: e.message)
-      end
-
-      # Every refusal an ARM can raise that means "this one cannot be measured",
-      # as against one that means the report is broken. A lease holding no
-      # checkout is a wiring mistake in the isolation a caller injected, so it
-      # costs that arm its row and nothing else.
-      #
-      # Spelled in a method body: this unit loads before `lain/arm` and
-      # `lain/grader`, so naming either in a class body would be a boot-time
-      # NameError.
-      def unmeasurable
-        [Arm::Epic::NeverRan, Grader::LeaseHarness::NothingGraded, Grader::LeaseHarness::NoCheckout]
       end
 
       # An injected backend WINS, for a caller that wants real worktree
@@ -239,9 +234,3 @@ module Lain
     end
   end
 end
-
-# After the class body: both reopen Altitude, which has to exist first, and both
-# raise its error classes. Separate FILES rather than nested classes, because a
-# nested class's lines count as the enclosing class's own under
-# Metrics/ClassLength -- the split {ArmSweep} already makes for
-# {ArmSweep::Recordings} and its Report.

@@ -55,9 +55,6 @@ module Lain
     class LazyFile
       # The vocabulary itself, not a copy -- {Source::ChangedFile} declares it and
       # this is the same object, so a member dropped there raises here too.
-      # Resolvable at class-body time because `review.rb` requires `source` before
-      # this file, and {Source::ChangedFile} is defined in `source.rb`'s own
-      # module body rather than in one of its children.
       STATUSES = Source::ChangedFile::STATUSES
 
       attr_reader :old_path, :new_path, :binary, :chunker, :rendered_lines

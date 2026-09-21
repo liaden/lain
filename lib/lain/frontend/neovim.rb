@@ -460,6 +460,3 @@ module Lain
     end
   end
 end
-
-# LAST: it builds the three views above, so every one of them must exist by the
-# time its body is read.

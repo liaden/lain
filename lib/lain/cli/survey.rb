@@ -21,11 +21,9 @@ module Lain
     #
     # This class is named `Survey`, so a bare `Survey::Walk` inside `Lain::CLI`
     # resolves HERE and dies, the same trap `Review::Bounds` falls into. Both
-    # names are therefore qualified from `Lain`, and both are read from a
-    # METHOD body and never from the class body: `lain.rb` loads `lain/cli`
-    # BEFORE `lain/review` and `lain/survey`, so a constant here naming either
-    # would be a load-time NameError. That is why {#default_scope} is a method
-    # rather than the constant it would otherwise obviously be.
+    # names are therefore qualified from `Lain`. {#default_scope} stays a
+    # METHOD for {CLI::Review}'s reason: one caller, once -- the load-order rule
+    # that used to force it is gone.
     #
     # == What a survey discloses that a review does not
     #

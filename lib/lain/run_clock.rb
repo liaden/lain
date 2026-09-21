@@ -38,8 +38,6 @@ module Lain
     # different ways on purpose -- an ISO8601 String, a utc `Time`, a local
     # `Time.now` -- so a single constant would misname two of the three.
     #
-    # Units that load BEFORE run_clock in `lain.rb` may still name it: a
-    # keyword's default is evaluated per call, not at definition.
     MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
 
     def initialize(clock: MONOTONIC)

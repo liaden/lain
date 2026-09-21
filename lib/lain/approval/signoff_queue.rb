@@ -64,8 +64,10 @@ module Lain
       # {Approval::GateDecision}).
       JOURNAL_TYPE = "gate_decision"
 
-      # The closed set a journaled `policy` is read against. A method, not a
-      # constant: {Gate::Policies} loads after this file.
+      # The closed set a journaled `policy` is read against: every configurable
+      # gate policy, plus the human sign-off this queue is the queue for.
+      # DERIVED from {Gate::Policies}, never restated, so a policy added there
+      # is in this set without a second edit that could be missed.
       #
       # @return [Array<String>] every configurable policy, and the human sign-off
       def self.policies = [*Gate::Policies.names, SIGNOFF_POLICY]

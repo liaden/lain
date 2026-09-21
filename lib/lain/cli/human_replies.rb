@@ -1161,9 +1161,8 @@ module Lain
         # which is what makes this a Null Object rather than a string literal.
         #
         # A class holding one instance rather than a module holding none: an
-        # ivar set in `#initialize` is neither the class state `ThreadSafety`
-        # objects to nor a constant pinning this leaf's load order against
-        # `cli/command.rb`, and it builds the registry once per session.
+        # ivar set in `#initialize` is not the class state `ThreadSafety`
+        # objects to, and it builds the registry once per session.
         class NoSessionCommands
           def initialize
             @registry = Command::Registry.new([Command::Inbox.new])

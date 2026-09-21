@@ -220,8 +220,3 @@ module Lain
     end
   end
 end
-
-# The port's own value, ahead of every adapter: it belongs to none of them.
-# LAST, and the one entry here with a load-order reason: this adapter names
-# `Frontend::Neovim::ReviewView` as its default collaborator, which resolves
-# only because `lain.rb` loads `lain/frontend` before `lain/review`.

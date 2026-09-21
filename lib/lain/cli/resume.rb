@@ -395,7 +395,3 @@ module Lain
     end
   end
 end
-
-# All six reopen Resume to nest themselves, and Resume sends each of them
-# messages, so they are required here as the dependent units even though all six
-# resolve at runtime -- the ordering note {Bench::Session}'s require block makes.
