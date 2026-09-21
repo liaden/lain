@@ -122,6 +122,45 @@ RSpec.describe Lain::CLI::Consolidate do
     it "keeps no per-class SessionNotFound of its own" do
       expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
     end
+
+    # A pass that CLERKED lineages but wrote no memory used to read as a plain
+    # success, indistinguishable from one that stored something -- the same
+    # words for a store that moved and one that did not.
+    it "says the pass stored nothing when no clerk wrote a memory" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            text_response("A: nothing worth keeping"),
+                                            text_response("B: nothing worth keeping")
+                                          ])
+
+      report = cli(provider).report
+
+      expect(report).to include("2 lineage", "stored nothing")
+    end
+
+    it "names how many lineages were clerked and that memories were written when at least one clerk wrote" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(memory_write("lineage-a", "a")), text_response("A done"),
+                                            text_response("B: nothing worth keeping")
+                                          ])
+
+      report = cli(provider).report
+
+      expect(report).to include("2 lineage", "memories")
+      expect(report).not_to include("stored nothing")
+    end
+
+    # AC scenario 3: a session with no completed subagent lineages at all is a
+    # THIRD, unchanged outcome, distinct from both "clerked and stored nothing"
+    # and "clerked and wrote" -- no clerk ever spawns, so there is nothing to
+    # ask the recorder about.
+    it "reports no completed subagent lineages found, unchanged, when the session spawned none" do
+      quiet = RecordedSpawnSession.new(parent_responses: [text_response("no spawn")], child_responses: []).run
+      quiet.write(session_path("quiet"))
+
+      report = cli(Lain::Provider::Mock.new, session: "quiet").report
+
+      expect(report).to eq("consolidate: no completed subagent lineages found.")
+    end
   end
 
   # The pass is not a chat, so its record is not a session: it lands in its own

@@ -102,6 +102,18 @@ RSpec.describe Lain::Consolidation do
       expect(consolidation(Lain::Provider::Mock.new)
                .call(Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(quiet.lines)))).to eq([])
     end
+
+    it "carries whether each lineage's clerk moved the recorder, not just its own words" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(memory_write("lineage-a", "spawn #{spawn_a}: login bug")),
+                                            text_response("clerked A"),
+                                            text_response("nothing here was worth keeping")
+                                          ])
+
+      outcomes = consolidation(provider).call(lineages)
+
+      expect(outcomes.map(&:wrote)).to eq([true, false])
+    end
   end
 
   # A release put real bytes on the record for THAT session's model. This pass

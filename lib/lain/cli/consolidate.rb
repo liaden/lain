@@ -131,8 +131,17 @@ module Lain
       def rendered(outcomes)
         return "consolidate: no completed subagent lineages found." if outcomes.empty?
 
-        ["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
-         *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n")
+        [summary(outcomes), *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n")
+      end
+
+      # A pass that clerked lineages and a pass that clerked lineages AND wrote
+      # memories are different outcomes, and the words must say so: `outcomes`
+      # not being empty only means the clerks ran, never that the store moved.
+      def summary(outcomes)
+        return "consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s) and stored nothing" \
+          unless outcomes.any?(&:wrote)
+
+        "consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s), writing memories"
       end
 
       def said(*report) = [*@notices, *report].join("\n")

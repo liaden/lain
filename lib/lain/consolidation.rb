@@ -27,7 +27,18 @@ module Lain
     # `spawn` is the evidence a memory cites: the digest of the lineage's
     # `:spawn`, the address `lain watch` and the fleet already know it by. Twin
     # spawns of one prompt from one head share it even when they answer apart.
-    Outcome = Data.define(:spawn, :result)
+    #
+    # `wrote` is whether THIS lineage's clerk moved the recorder's index -- read
+    # off the recorder itself, never off `result`, because a clerk that explored
+    # and reported its findings in prose still leaves the store untouched.
+    #
+    # It answers "did what project memory RESOLVES TO change", not "did a
+    # `memory_write` call happen". A clerk that writes an id to B and then, in
+    # the same lineage, writes it back to the content it held before this
+    # lineage ran resolves to what it started at -- `wrote: false` -- even
+    # though the append-only store durably gained both writes: nothing a later
+    # reader of project memory can observe moved.
+    Outcome = Data.define(:spawn, :result, :wrote)
 
     # Every spawn collaborator is REQUIRED, so a forgotten one is a loud
     # ArgumentError at the wiring site rather than a nil checked one spawn later.
@@ -90,7 +101,9 @@ module Lain
     attr_reader :recorder
 
     def spawn_clerk(scaffold)
-      Outcome.new(spawn: scaffold.spawn, result: build_clerk.ask(scaffold.render).text)
+      root_before = recorder.index.root
+      result = build_clerk.ask(scaffold.render).text
+      Outcome.new(spawn: scaffold.spawn, result:, wrote: recorder.index.root != root_before)
     end
 
     # The point of this class is the last argument: a tool-phase guard stack the
