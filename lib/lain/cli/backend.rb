@@ -473,14 +473,28 @@ module Lain
         name
       end
 
-      # The compaction section of the session header: which fallback arm this
-      # run takes. It is NOT on {RunProfile} -- a profile says which model
-      # server answers, and a resumed chat defaults its backend to it, while
-      # this is an arm of the experiment, recorded so a bench can group runs by
-      # it and read nothing else back.
+      # The compaction section of the session header: which fallback arm and
+      # which span-collapse strategy this run takes. Neither is on {RunProfile}
+      # -- a profile says which model server answers, and a resumed chat
+      # defaults its backend to it, while these are arms of the experiment,
+      # recorded so a bench can group runs by them and read nothing else back.
+      #
+      # `compact_strategy` merges in only when `--compact-strategy` was given,
+      # {SessionRecord.context_pipeline}'s own only-when-named idiom: an unset
+      # flag is not "no strategy", it is the run's own eager tool-result tier,
+      # the comparability axis's CONTROL arm, and a reader normalizes that
+      # absence to it rather than this method writing the name itself. The
+      # value travels VERBATIM and UNVALIDATED -- {SpanSummarizer} is the
+      # object that refuses a name {CLI::CompactionStrategy} rejects, and
+      # duplicating that refusal here would mean building a second resolver
+      # just to check a string this one already checks for real.
       #
       # @return [Hash{String=>Object}]
-      def compaction_header = { "compact_fallback" => compact_fallback }
+      def compaction_header
+        strategy = @options[:compact_strategy]
+        header = { "compact_fallback" => compact_fallback }
+        strategy.nil? ? header : header.merge("compact_strategy" => strategy)
+      end
 
       # The run's ONE {Skill::Library} -- the project's skills and the prompt
       # slots they render through, read once. Owned HERE because {#context}

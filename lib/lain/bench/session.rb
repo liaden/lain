@@ -208,14 +208,24 @@ module Lain
       # it would let a future rebuild forget the axis and ship a comparison that
       # silently agrees with everything -- which is the vacuous-pass shape
       # {Compare}'s own docstring warns a caller about.
+      #
+      # `compaction` is the header's recorded `compact_strategy`, another
+      # comparability axis on {Compare}'s own argument and so required on the
+      # same no-default rule. Unlike `mode` its Null value is a plain `nil` --
+      # an unset flag ran the eager tool-result tier, and {Variance} is where
+      # that absence is normalized to the named control arm, not here, because
+      # this member is what the header actually recorded, nothing folded in.
+      # Frozen the same way `context_class` is when present: {Loader} hands it
+      # a plain `String` straight off `JSON.parse`, unfrozen until this class
+      # says otherwise, and `Ractor.shareable?(recording)` demands it does.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
-                              :open, :messages) do
+                              :open, :messages, :compaction) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, mode:, memory:, open:, messages:)
+                       degraded:, mode:, memory:, open:, messages:, compaction:)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
                 timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
-                open:, messages: messages.freeze)
+                open:, messages: messages.freeze, compaction: compaction && -compaction)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
@@ -245,9 +255,15 @@ module Lain
         #   through, recorded as pure data beside the model and never
         #   constantized. Optional so an existing caller that has not threaded
         #   one through yet still writes a valid header.
+        # @param compact_strategy [String, nil] the `--compact-strategy` name
+        #   the run collapsed spans under, byte-compatible with
+        #   {CLI::Backend#compaction_header}'s own key. Optional on the same
+        #   rule as `provider`: an unset flag means the eager control arm, not
+        #   "no strategy", so an existing caller writes no key at all.
         # @return [#<<] the journal
-        def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty, provider: nil)
-          journal << header_record(timeline, context, toolset, workspace, provider)
+        def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty, provider: nil,
+                  compact_strategy: nil)
+          journal << header_record(timeline, context, toolset, workspace, optional_fields(provider, compact_strategy))
           timeline.to_a.each { |turn| journal << turn_record(turn) }
           journal
         end
@@ -271,26 +287,37 @@ module Lain
           source.is_a?(String) ? File.foreach(source) : source
         end
 
-        # `head` anchors the whole turn chain. `provider` rides beside `model`
-        # rather than inside `context` because it genuinely is not one of
-        # {Context}'s constructor inputs: the choice of backend and the render
-        # pipeline are separate concerns that only happen to be pinned by the
-        # same header.
+        # `head` anchors the whole turn chain. `provider` and `compact_strategy`
+        # ride beside `model` rather than inside `context` because neither is
+        # genuinely one of {Context}'s constructor inputs: the choice of
+        # backend, the compaction arm and the render pipeline are separate
+        # concerns that only happen to be pinned by the same header.
         #
-        # It merges in only when given, {SessionRecord.header}'s `resumed_from`
-        # idiom: an existing caller that has not threaded a provider name
-        # through must keep writing byte-identical headers, so absence is NO
-        # KEY, never a nil value -- proven by the committed variance fixtures'
-        # own byte-identity regeneration spec.
-        def header_record(timeline, context, toolset, workspace, provider)
-          record = {
+        # Bundled into ONE trailing Hash, not two more positional parameters:
+        # `header_record` sits at the class's `Metrics/ParameterLists` cap with
+        # five, and {#optional_fields} is where "merges in only when given"
+        # lives for both, so a third such field costs this method nothing.
+        def header_record(timeline, context, toolset, workspace, optional)
+          {
             "type" => HEADER_TYPE, "context_class" => context.class.name,
             "model" => context.model, "max_tokens" => context.max_tokens,
             "system" => context.system, "stream" => context.stream, "extra" => context.extra,
             "head" => timeline.head_digest,
             "tools" => toolset.to_schema, "reminders" => workspace.reminders
-          }.merge(SessionRecord.context_pipeline(context))
-          provider.nil? ? record : record.merge("provider" => provider)
+          }.merge(SessionRecord.context_pipeline(context)).merge(optional)
+        end
+
+        # {SessionRecord.header}'s `resumed_from` idiom, generalized past
+        # `provider` alone: an existing caller that has not threaded a
+        # provider or a compact_strategy through must keep writing
+        # byte-identical headers, so either's absence is NO KEY, never a nil
+        # value -- proven by the committed variance fixtures' own
+        # byte-identity regeneration spec.
+        def optional_fields(provider, compact_strategy)
+          fields = {}
+          fields["provider"] = provider unless provider.nil?
+          fields["compact_strategy"] = compact_strategy unless compact_strategy.nil?
+          fields
         end
 
         # Delegated rather than duplicated. This WAS a byte-compatible twin of

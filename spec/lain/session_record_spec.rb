@@ -117,6 +117,23 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).not_to have_key("compact_fallback")
   end
 
+  # The compaction section's OTHER key, from {CLI::Backend#compaction_header}:
+  # `compact_strategy` merges the same as `compact_fallback` does, and stays
+  # absent the same way, so a resumed chat and `bench variance` read the
+  # same word for the same arm regardless of which scribe wrote the header.
+  it "writes a named compact_strategy into that same section" do
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        compaction: { "compact_fallback" => "handoff", "compact_strategy" => "elide" })
+
+    expect(of_type("session").first).to include("compact_fallback" => "handoff", "compact_strategy" => "elide")
+  end
+
+  it "writes no compact_strategy key when the run recorded no strategy" do
+    described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_fallback" => "handoff" })
+
+    expect(of_type("session").first).not_to have_key("compact_strategy")
+  end
+
   describe "a chat turn is on disk before the reply renders" do
     it "holds the header, the user turn, the assistant turn, and the tool_result turns, each re-commit-verifiable" do
       scribe.catch_up(timeline)

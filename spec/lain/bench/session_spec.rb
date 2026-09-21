@@ -76,9 +76,10 @@ RSpec.describe Lain::Bench::Session do
                                                              toolset:, workspace:)
       header = named_io.string.each_line.map { |line| JSON.parse(line) }.find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
-      # `provider` is deliberately NOT a Context constructor input -- the
-      # provider choice lives beside the context, never inside it.
-      recorded = (header.keys - %w[type context_class head tools reminders ts provider])
+      # `provider` and `compact_strategy` are deliberately NOT Context
+      # constructor inputs -- the provider choice and the compaction arm both
+      # live beside the context, never inside it.
+      recorded = (header.keys - %w[type context_class head tools reminders ts provider compact_strategy])
                  .map { |key| key == "context_pipeline" ? "pipeline_name" : key }
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
       # provider), not serializable data -- like a `self.pipeline`-
@@ -110,6 +111,23 @@ RSpec.describe Lain::Bench::Session do
     it "writes no provider key at all when the caller does not supply one (old-caller compatibility)" do
       header = parsed_records.find { |record| record["type"] == "session" }
       expect(header).not_to have_key("provider")
+    end
+
+    # `compact_strategy` is byte-compatible with {CLI::Backend#compaction_header}'s
+    # own key, on {SessionRecord.header}'s `resumed_from` rule: an unset flag is
+    # the run's own eager control arm, not "no strategy", so absence is no key.
+    it "records the given compact_strategy name as data alongside the model" do
+      journal_io2 = StringIO.new
+      other_journal = Lain::Journal.new(io: journal_io2)
+      described_class.write(other_journal, timeline: agent.timeline, context:, toolset:, workspace:,
+                                           compact_strategy: "elide")
+      header = journal_io2.string.each_line.map { |line| JSON.parse(line) }.find { |r| r["type"] == "session" }
+      expect(header.fetch("compact_strategy")).to eq("elide")
+    end
+
+    it "writes no compact_strategy key at all when the caller does not supply one (old-caller compatibility)" do
+      header = parsed_records.find { |record| record["type"] == "session" }
+      expect(header).not_to have_key("compact_strategy")
     end
 
     it "appends one turn record per turn, root to head, payload plus digest" do
@@ -204,15 +222,28 @@ RSpec.describe Lain::Bench::Session do
       lines = ["not json at all\n", "[1, 2, 3]\n"] + journal_io.string.each_line.to_a
       expect(described_class.load(lines).timeline.head_digest).to eq(agent.timeline.head_digest)
     end
+  end
 
-    # A Recording holds a Store (via its Timeline), so like Timeline itself it
-    # cannot clear the Ractor.shareable? bar whole; the frozen shell plus
-    # shareable members is the same guarantee Timeline gives.
+  # A Recording holds a Store (via its Timeline), so like Timeline itself it
+  # cannot clear the Ractor.shareable? bar whole; the frozen shell plus
+  # shareable members is the same guarantee Timeline gives.
+  #
+  # Written under a NAMED --compact-strategy, deliberately NOT the shared
+  # "round trip" before-hook's own strategy-less session: a nil `compaction`
+  # is trivially frozen and would leave this example blind to exactly the
+  # member it exists to catch -- {Loader#recording} hands it a plain String
+  # off `JSON.parse`, which is unfrozen until this class says otherwise.
+  describe "Ractor-shareability" do
+    before do
+      described_class.write(journal, timeline: agent.timeline, context:, toolset:, workspace:,
+                                     compact_strategy: "elide")
+    end
+
     it "is a frozen Recording whose non-Timeline members are Ractor-shareable" do
       recording = load_session
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages]
+      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages compaction]
         .each do |member|
         expect(recording.public_send(member)).to be_deeply_frozen
       end

@@ -39,15 +39,15 @@ RSpec.describe Lain::Bench::Variance do
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what the driver will hold.
-  def record(responses, degrade: nil, flips: [], under: context)
-    Lain::Bench::Session.load(session_bytes(responses, degrade:, flips:, under:).each_line)
+  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil)
+    Lain::Bench::Session.load(session_bytes(responses, degrade:, flips:, under:, compact_strategy:).each_line)
   end
 
-  def session_bytes(responses, degrade: nil, flips: [], under: context)
+  def session_bytes(responses, degrade: nil, flips: [], under: context, compact_strategy: nil)
     io = StringIO.new
     journal = Lain::Journal.new(io:)
     flip!(journal, flips)
-    run_and_write(journal, responses, under)
+    run_and_write(journal, responses, under, compact_strategy:)
     degrade!(journal, degrade)
     io.string
   end
@@ -62,11 +62,11 @@ RSpec.describe Lain::Bench::Variance do
     end
   end
 
-  def run_and_write(journal, responses, context)
+  def run_and_write(journal, responses, context, compact_strategy: nil)
     agent, = record_journaled_run(responses, journal:, toolset:,
                                              context:, workspace:)
     Lain::Bench::Session.write(journal, timeline: agent.timeline, context:,
-                                        toolset:, workspace:)
+                                        toolset:, workspace:, compact_strategy:)
   end
 
   def named(pipeline)
@@ -246,6 +246,25 @@ RSpec.describe Lain::Bench::Variance do
     # the report names it rather than implying the axis was controlled for.
     it "reports an unrecorded mode for recordings whose journals hold no mode switch" do
       expect(described_class.new(recordings: [reference, diverging]).report).to include("mode: not recorded")
+    end
+
+    # Two recordings under different compaction arms would report the arm
+    # difference as the model's variance, exactly the reasoning the pipeline
+    # guard above states for pipelines -- but this is a DIFFERENT axis and not
+    # judged by that guard's stages-not-names rule: an unset strategy and
+    # `summarizing` are not the same policy.
+    it "raises when the recordings declared different compaction arms" do
+      elided = record([tool_response("tu_1", "hi"), text_response("done")], compact_strategy: "elide")
+      expect { described_class.new(recordings: [reference, elided]) }
+        .to raise_error(Lain::Error, /cannot compare runs under different compaction arms: eager vs elide/)
+    end
+
+    # An unset flag is the run's own eager control arm, not "no arm" -- so a
+    # recording naming it EXPLICITLY compares equal to one that named nothing
+    # at all, both being the same arm under two spellings.
+    it "compares an unset arm and an explicit eager arm, because both ran the same arm" do
+      eager = record([tool_response("tu_1", "hi"), text_response("done")], compact_strategy: "eager")
+      expect(described_class.new(recordings: [reference, eager]).report).to include("2: byte-identical")
     end
   end
 

@@ -1459,6 +1459,20 @@ RSpec.describe Lain::CLI::Backend do
           .to eq("compact_fallback" => "none")
       end
 
+      # `--compact-strategy` is the OTHER comparability axis on the same
+      # header -- `bench variance` groups recordings by it, so its name has to
+      # travel onto the record, and its absence has to stay tellable from
+      # "summarizing" rather than collapsing into it.
+      it "also records a named --compact-strategy, verbatim, beside the fallback" do
+        expect(compacting_backend(compact_strategy: "elide").compaction_header)
+          .to eq("compact_fallback" => "handoff", "compact_strategy" => "elide")
+      end
+
+      it "writes no compact_strategy key when the flag is unset" do
+        expect(compacting_backend.compaction_header).not_to have_key("compact_strategy")
+        expect(compacting_backend(compact_fallback: "none").compaction_header).not_to have_key("compact_strategy")
+      end
+
       # Built on FIRST USE. A chat that never hands off must not open a second
       # provider for a tier nothing asks. `no_args` is the signature: the
       # handoff tier waits for capacity, where the eager tier alone asks with

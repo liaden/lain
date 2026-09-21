@@ -41,6 +41,8 @@ module Lain
       # @raise [Lain::Error] when the recordings walked different modes
       # @raise [Lain::Error] when the recordings rendered through different
       #   context pipeline stages
+      # @raise [Lain::Error] when the recordings declared different compaction
+      #   arms
       def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
@@ -49,6 +51,7 @@ module Lain
         @price_book = price_book
         @set_aside = set_aside.dup.freeze
         guard_pipelines!
+        guard_compaction!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -139,6 +142,21 @@ module Lain
       end
 
       def stages(name) = ::Lain::CLI::ContextPipeline.named(name).stages
+
+      # The compaction arm is a different axis from the pipeline, and NOT
+      # judged by the pipeline's stages-not-names rule: an unset strategy and
+      # `summarizing` are genuinely different span-collapse policies, unlike an
+      # unset pipeline and `default`, which send identical bytes. So the names
+      # compare VERBATIM once absence is normalized to the run's own eager
+      # control arm -- {Telemetry::Compaction::EAGER_CONTROL_ARM}, the same
+      # name a reader everywhere else in `lib/` normalizes an unset flag to.
+      def guard_compaction!
+        names = @recordings.map { |recording| recording.compaction || Telemetry::Compaction::EAGER_CONTROL_ARM }
+        mismatch = names.combination(2).find { |(one, other)| one != other }
+        return if mismatch.nil?
+
+        raise ::Lain::Error, "cannot compare runs under different compaction arms: #{mismatch.join(" vs ")}"
+      end
 
       # One candidate baseline held against the reference's: the first model
       # call whose request digest differs, the fields that changed there, and

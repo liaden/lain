@@ -27,8 +27,8 @@ RSpec.describe Lain::Bench::Session::Loader do
 
   # The Loader's own input duck: the Journal.parse entries, here the raw NDJSON
   # lines Session.load hands it from a file.
-  def entries
-    Lain::Bench::Session.write(journal, timeline: agent.timeline, context:, toolset:, workspace:)
+  def entries(compact_strategy: nil)
+    Lain::Bench::Session.write(journal, timeline: agent.timeline, context:, toolset:, workspace:, compact_strategy:)
     journal_io.string.each_line
   end
 
@@ -69,6 +69,17 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     it "answers an unrecorded mode for a journal holding no mode_switch record" do
       expect(recording.mode).to eq(Lain::Compare::Mode::UNRECORDED)
+    end
+
+    # The header's own `compact_strategy` key, not folded off any journal
+    # record: unlike `degraded` and `mode` it is written once, on the header
+    # itself, so the Loader has nothing to fold -- only a key to read back.
+    it "rebuilds the recorded compact_strategy from the header" do
+      expect(described_class.new(entries(compact_strategy: "elide")).recording.compaction).to eq("elide")
+    end
+
+    it "answers nil compaction for a header carrying no compact_strategy key" do
+      expect(recording.compaction).to be_nil
     end
 
     def flip(from, to, **over)
