@@ -254,7 +254,7 @@ module Lain
 
       # A line the human typed in the chat that was neither a command nor an
       # answer, waiting to be dispatched at `you>`. The input rail holds it
-      # ({Frontend::InputRail#hold}), through the conductor that reads from it,
+      # ({Frontend::Intake#hold}), through the conductor that reads from it,
       # because a line typed ahead of an answer's prompt is held there too, and
       # ONE queue is what keeps the lines in the order they were typed.
       def hold(line) = @conductor.hold(line)

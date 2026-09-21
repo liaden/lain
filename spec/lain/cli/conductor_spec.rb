@@ -60,7 +60,7 @@ RSpec.describe Lain::CLI::Conductor do
   end
 
   # Where the conductor's reads take their lines from.
-  let(:rail) { Lain::Frontend::InputRail.new }
+  let(:rail) { Lain::Frontend::Intake.new }
 
   around do |example|
     saved = Lain::CLI::Signals::MAP.keys.to_h { |name| [name, Signal.trap(name, "DEFAULT")] }
@@ -115,15 +115,15 @@ RSpec.describe Lain::CLI::Conductor do
   end
 
   def typed(text, prompt)
-    return Lain::Frontend::InputRail::Eof.new if text.nil?
+    return Lain::Frontend::Intake::Eof.new if text.nil?
 
-    Lain::Frontend::InputRail::Line.new(text:, generation: prompt.generation)
+    Lain::Frontend::Intake::Line.new(text:, generation: prompt.generation)
   end
 
   # Waits, on the reactor, for a prompt of `kind` and types `text` at it.
   def typed_at(task, kind, text)
     pumped_until(task, reason: "a #{kind} prompt published") { rail.published.kind == kind }
-    rail << Lain::Frontend::InputRail::Line.new(text:, generation: rail.published.generation)
+    rail << Lain::Frontend::Intake::Line.new(text:, generation: rail.published.generation)
   end
 
   # Delivers `os_name` once the run is provably parked, then lets the supervised
@@ -222,16 +222,16 @@ RSpec.describe Lain::CLI::Conductor do
       Sync do |task|
         driver = task.async do
           entered.dequeue
-          rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+          rail << Lain::Frontend::Intake::Signal.new(name: :sigint)
           pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
           armed = true
-          rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+          rail << Lain::Frontend::Intake::Signal.new(name: :cancel)
           release.enqueue(true)
         end
         conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
         driver.wait
       end
-      rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+      rail << Lain::Frontend::Intake::Signal.new(name: :sigint)
 
       expect([armed, conductor.closed?]).to eq([true, false])
     end
@@ -252,10 +252,10 @@ RSpec.describe Lain::CLI::Conductor do
       Sync do |task|
         driver = task.async do
           entered.dequeue
-          rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+          rail << Lain::Frontend::Intake::Signal.new(name: :sigint)
           pumped_until(task, reason: "the countdown published") { rail.published.kind == :countdown }
           offered = rail.published
-          rail << Lain::Frontend::InputRail::Signal.new(name: offered.keys.fetch("c"))
+          rail << Lain::Frontend::Intake::Signal.new(name: offered.keys.fetch("c"))
           release.enqueue(true)
         end
         conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
@@ -284,7 +284,7 @@ RSpec.describe Lain::CLI::Conductor do
       Sync do |task|
         driver = task.async do
           entered.dequeue
-          rail << Lain::Frontend::InputRail::Signal.new(name: :stop)
+          rail << Lain::Frontend::Intake::Signal.new(name: :stop)
         end
         outcome = conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
         driver.wait
@@ -303,7 +303,7 @@ RSpec.describe Lain::CLI::Conductor do
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
       typist = Thread.new do
         sleep(0.002) until rail.published.generation.positive?
-        rail << Lain::Frontend::InputRail::Signal.new(name: :stop)
+        rail << Lain::Frontend::Intake::Signal.new(name: :stop)
         sleep(0.002) until tty.warnings.any?
         rail << typed("still here", rail.published)
       end
@@ -881,7 +881,7 @@ RSpec.describe Lain::CLI::Conductor do
           task.with_timeout(2) { tty.rendered.dequeue }
           pumped_until(task, reason: "the read stepped aside") { rail.published.kind.nil? }
           withdrawn = rail.published.kind
-          rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+          rail << Lain::Frontend::Intake::Signal.new(name: :cancel)
           typed_at(task, :human, "postgres")
           answer = question.wait
           release.enqueue(true)
@@ -912,7 +912,7 @@ RSpec.describe Lain::CLI::Conductor do
           task.with_timeout(2) { tty.rendered.dequeue }
           pumped_until(task, reason: "the read stepped aside") { rail.published.kind.nil? }
           withdrawn = rail.published.kind
-          rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+          rail << Lain::Frontend::Intake::Signal.new(name: :cancel)
           typed_at(task, :command, "/approve")
           line = command.wait
           release.enqueue(true)
@@ -951,7 +951,7 @@ RSpec.describe Lain::CLI::Conductor do
         pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
         task.with_timeout(2) { tty.rendered.dequeue }
         pumped_until(task, reason: "the [y/N] stepped aside") { rail.published.kind.nil? }
-        rail << Lain::Frontend::InputRail::Signal.new(name: :cancel)
+        rail << Lain::Frontend::Intake::Signal.new(name: :cancel)
         typed_at(task, :approval, "n")
         approval.wait
         typed_at(task, :you, "hello")
@@ -984,7 +984,7 @@ RSpec.describe Lain::CLI::Conductor do
       Sync do |task|
         you = task.async { conductor.read_prompt("you> ") }
         pumped_until(task, reason: "you> published") { rail.published.kind == :you }
-        rail << Lain::Frontend::InputRail::Signal.new(name: :sigint)
+        rail << Lain::Frontend::Intake::Signal.new(name: :sigint)
         pumped_until(task, reason: "the countdown armed", timeout: 10) { conductor.counting_down? }
 
         expect(absorbed).to eq([:sigint])

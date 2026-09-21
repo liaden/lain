@@ -1353,7 +1353,7 @@ RSpec.describe Lain::Frontend::TTY do
   #
   # Driven in a child on a private tmux server, because what is asserted is what
   # a terminal SHOWS -- rows, a wrapped line, vi's cursor -- and only a terminal
-  # emulator can say that. The child runs the real TTY, InputRail and StdinPump.
+  # emulator can say that. The child runs the real TTY, Intake and StdinPump.
   describe "a note rendered while a prompt is drawn", :seam do
     before { skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL) }
 
@@ -1369,7 +1369,7 @@ RSpec.describe Lain::Frontend::TTY do
       tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
                                     state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false),
                                     layers: -> { Lain::Mode::LayerSet.new(layers) }, **renderer)
-      rail = Lain::Frontend::InputRail.new(screen: tty)
+      rail = Lain::Frontend::Intake.new(screen: tty)
       Sync do |task|
         pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
         task.async do

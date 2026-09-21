@@ -282,10 +282,12 @@ one round trip, never a loop — Lain owns the loop, because the loop is the obj
   `lain watch`'s `LineageFilter` follows the same records as they arrive.
 - **`Project` splits root from cwd**: **root** is the authority boundary (what `.lain/` governs),
   **cwd** is where a relative path resolves. `$HOME` is never *inferred* as a root.
-- **Every human line arrives on one `Frontend::InputRail`** — the `lain input` pane's socket, the
-  in-process line editor, and nvim's gesture rail all feed it, `Frontend::StdinPump` is the only
-  reader of stdin, and the rail owns both the prompt queue and the one generation rule that
-  replaced the typeahead special cases.
+- **Every human line arrives at one `Frontend::Intake`** — the `lain input` pane's socket and the
+  in-process line editor feed it, `Frontend::StdinPump` is the only reader of stdin, and the Intake
+  owns the prompt queue, the one generation rule that replaced the typeahead special cases, and the
+  history (kept at `you>`, whole, credentials withheld). nvim's replies and approvals resolve
+  directly and are not lines; a C-g compose's text is the one line that bypasses it, and its history
+  entry is the compose marker.
 - **A mode is scope × approval**: scope (`checkout`/`plan`) decides *where* a named write or
   command may land, approval (`ask`/`auto`) decides *who* answers a gated call, and `auto` keeps
   the triage and rule denies rather than replacing the ladder.

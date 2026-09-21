@@ -8,7 +8,7 @@ module Lain
       # That reads like a joke and is the whole design: the repl dispatches a
       # line and the ask it starts completes inside that dispatch, so `you>` is
       # only ever read BETWEEN asks. A stop that can reach a run is typed at
-      # the prompt the run parked on, where {Frontend::InputRail} lifts it off
+      # the prompt the run parked on, where {Frontend::Intake} lifts it off
       # the rail as a signal before any command sees it, or pressed as `s` at
       # the shutdown countdown.
       #

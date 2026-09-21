@@ -114,7 +114,7 @@ class ReplGoalTerminal
     queue = Lain::Approval::Queue.new(journal:, timeout: 30)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
-    rail = Lain::Frontend::InputRail.new(screen: tty)
+    rail = Lain::Frontend::Intake.new(screen: tty)
     conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
                                          signals: Lain::CLI::Signals.new, rail:, grace: 5)
     askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
@@ -237,7 +237,7 @@ end
 RSpec.describe Lain::CLI::Repl do
   # A conductor double whose held lines wait on a real rail, as the real one's
   # do, and whose gather asks that rail's producers.
-  def holding(conductor, rail = Lain::Frontend::InputRail.new)
+  def holding(conductor, rail = Lain::Frontend::Intake.new)
     allow(conductor).to receive(:hold) { |line| rail.hold(line) }
     allow(conductor).to receive(:take_held) { rail.take_held }
     allow(conductor).to receive(:gather_typed_ahead) { rail.gather }
@@ -731,7 +731,7 @@ RSpec.describe Lain::CLI::Repl do
       lines = dispatched
       after = stop_after
       typed = -> { lines.count { |line| line.start_with?("Standing goal") } == after && !lines.include?("/goal off") }
-      Lain::Frontend::InputRail.new(screen: tty).tap do |rail|
+      Lain::Frontend::Intake.new(screen: tty).tap do |rail|
         rail.attach(Struct.new(:rail) { define_method(:sweep) { typed.call && rail.hold("/goal off") } }.new(rail))
       end
     end
@@ -1294,7 +1294,7 @@ RSpec.describe Lain::CLI::Repl do
   # fleet actor asks while the human sits at `you>` -- and the fiber that parks
   # on such a question is never the one answering it. The prompts cannot race
   # for stdin over that longer life: the input rail publishes them one at a
-  # time (input_rail_spec, and the plain chat seam over a real terminal).
+  # time (intake_spec, and the plain chat seam over a real terminal).
   #
   # Every example drives the REAL {Repl#run} over the REAL {HumanReplies} and
   # its real fibers -- the queue is a live Async::Queue and the reply comes off
@@ -1505,7 +1505,7 @@ RSpec.describe Lain::CLI::Repl do
 
     # Answers each line once, then EOF, so the conversation is exactly as long
     # as the lines given. `supervisions` counts the real #supervise calls.
-    def conductor_over(lines, clock: -> { 1000.0 }, rail: Lain::Frontend::InputRail.new)
+    def conductor_over(lines, clock: -> { 1000.0 }, rail: Lain::Frontend::Intake.new)
       @signals = Lain::CLI::Signals.new.install
       Lain::CLI::Conductor.new(tty:, chronicle:, signals: @signals, grace: 60, clock:, tick: 0.01,
                                rail:).tap do |conductor|
@@ -1577,7 +1577,7 @@ RSpec.describe Lain::CLI::Repl do
         define_method(:call) do |env, &_app|
           log << :entered
           Async::Task.current.sleep(0.05)
-          rail << Lain::Frontend::InputRail::Signal.new(name: :stop)
+          rail << Lain::Frontend::Intake::Signal.new(name: :stop)
           Async::Task.current.sleep(3)
           log << :finished
           env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "late" }],
@@ -1695,7 +1695,7 @@ RSpec.describe Lain::CLI::Repl do
     # one line an ask's refusal gets, the record holds it with no session_closed
     # behind it, and the next line is read as though nothing had happened.
     it "says a stopped ask in one line, records only the stop, and reads on" do
-      rail = Lain::Frontend::InputRail.new
+      rail = Lain::Frontend::Intake.new
       conductor = conductor_over(["/park", "quit"], rail:)
 
       converse(stopped_from_the_rail(rail), conductor)

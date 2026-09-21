@@ -292,7 +292,7 @@ module Lain
         resumed&.notices&.each(&notice)
         memory_notices(recorder, resumed).each(&notice)
         tty = open_terminal(agent, notice)
-        rail = Lain::Frontend::InputRail.new(screen: tty)
+        rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty))
         @conductor = open_conductor(tty, rail)
         @conductor.guard do
           build_repl(tty:, agent:, backend:, input: input_for(rail, tty))
@@ -441,6 +441,14 @@ module Lain
       end
 
       def input_socket_name = Lain::CLI::InputSocket.named(options[:input])
+
+      # History is a line editor's: the pane's, over a socket, or this
+      # terminal's. What a pipe feeds a chat is a script, not what a human
+      # would reach for at `you>`.
+      def history_for(tty)
+        typed = attended? && (input_socket_name || Lain::Frontend::StdinPump.terminal?(@stdin))
+        typed ? Lain::Frontend::Intake::Discretion.new(writer: tty) : Lain::Frontend::Intake::Unrecorded
+      end
 
       # Bound BEFORE the conversation starts, so a second chat on one socket is
       # refused while the first is still the only one reading the human.

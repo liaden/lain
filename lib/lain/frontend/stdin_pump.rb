@@ -5,7 +5,7 @@ require "async"
 
 module Lain
   module Frontend
-    # The in-process producer on the {InputRail}, and the one object on the chat
+    # The in-process producer on the {Intake}, and the one object on the chat
     # path that reads stdin. For each prompt the chat publishes it takes a line
     # from the human and puts it on the rail, stamped with the generation it was
     # typed at.
@@ -60,7 +60,7 @@ module Lain
       HOLD_POLL = 0.01
 
       # No read open at a prompt that answers nothing, so nothing is untouched.
-      NOT_EDITING = Draw.new(InputRail::Unpublished, nil).freeze
+      NOT_EDITING = Draw.new(Intake::Unpublished, nil).freeze
       private_constant :Draw, :NOT_EDITING
 
       def self.keys(input) = Keys.new(input)
@@ -70,9 +70,9 @@ module Lain
 
       def self.terminal?(input) = input.respond_to?(:tty?) && input.tty?
 
-      # @param rail [InputRail] where lines go and prompts come from
-      # @param screen [Frontend::TTY] composes and draws the prompt, keeps the
-      #   history, and says what was held or discarded
+      # @param rail [Intake] where lines go and prompts come from
+      # @param screen [Frontend::TTY] composes and draws the prompt, and says
+      #   what was held or discarded
       # @param input [IO] the process's stdin
       def initialize(rail:, screen:, input: $stdin)
         @rail = rail
@@ -104,7 +104,7 @@ module Lain
       end
 
       # What the human typed while no prompt was drawn, asked for by
-      # {InputRail#gather}: each whole line is held, and a line still being typed
+      # {Intake#gather}: each whole line is held, and a line still being typed
       # is kept for the next read, which starts from it.
       def sweep
         @terminal.synchronize do
@@ -200,7 +200,7 @@ module Lain
       end
 
       def serve(prompt)
-        return @rail << InputRail::Eof.new if @ended
+        return @rail << Intake::Eof.new if @ended
 
         draw = Draw.new(prompt, Typeahead::NOTHING)
         delivered(draw, raced(draw))
@@ -231,7 +231,7 @@ module Lain
         return unless StdinPump.terminal?(@input)
 
         Async::Task.current.sleep(INTERRUPT_CLAIM)
-        Signal.trap("INT") { @rail << InputRail::Signal.new(name: :sigint) }
+        Signal.trap("INT") { @rail << Intake::Signal.new(name: :sigint) }
       end
 
       def withdrawn_under(prompt, reading)
@@ -245,7 +245,7 @@ module Lain
       def delivered(draw, value)
         return @rail << value if @rail.open?(draw.prompt) && value
 
-        @rail.hold(value.text) if value.is_a?(InputRail::Line)
+        @rail.hold(value.text) if value.is_a?(Intake::Line)
       end
 
       def read(draw)
@@ -257,12 +257,12 @@ module Lain
       def streamed(draw)
         @screen.print_prompt(draw.prompt.text)
         text = @lines.gets
-        text ? InputRail::Line.new(text:, generation: draw.prompt.generation) : ended
+        text ? Intake::Line.new(text:, generation: draw.prompt.generation) : ended
       end
 
       def ended
         @ended = true
-        InputRail::Eof.new
+        Intake::Eof.new
       end
 
       # An answer's prompt sweeps what was typed before it drew -- and again
@@ -275,7 +275,7 @@ module Lain
           typed_back = draw.prompt.answer? ? swept_ahead(draw) : take_unfinished.partial
           LineEditor.before_first_draw(-> { opened(draw, typed_back) }) { editor_read(draw, typed_back) }
         end
-        line.nil? ? InputRail::Eof.new : typed(draw, line)
+        line.nil? ? Intake::Eof.new : typed(draw, line)
       ensure
         @editing = NOT_EDITING
       end
@@ -305,11 +305,7 @@ module Lain
         end
       end
 
-      # An answer to a `[y/N]` or a question is not a line to recall at `you>`.
-      def typed(draw, line)
-        @screen.remember(line) unless draw.prompt.answer?
-        InputRail::Line.new(text: "#{draw.carried.partial}#{line}", generation: draw.generation)
-      end
+      def typed(draw, line) = Intake::Line.new(text: "#{draw.carried.partial}#{line}", generation: draw.generation)
 
       # `noted` is the sweep already said, whose unfinished line is not said twice.
       def put_aside(typed, noted: Typeahead::NOTHING)

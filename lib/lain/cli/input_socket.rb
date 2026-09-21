@@ -140,7 +140,7 @@ module Lain
         end
       end
 
-      # @param rail [Frontend::InputRail] where the pane's lines and signals go
+      # @param rail [Frontend::Intake] where the pane's lines and signals go
       # @param path [String] the socket, from {.path}
       # @param header [#call] the line a pane draws above its editor, recomposed
       #   whenever it is asked -- {StatusFeed::Reading#hud} in a live chat
@@ -204,7 +204,7 @@ module Lain
       def sweep = nil
 
       # Whether nothing has been typed at `prompt` in ANY pane drawing it, which
-      # is what {Frontend::InputRail#untouched?}'s `all?` means for an
+      # is what {Frontend::Intake#untouched?}'s `all?` means for an
       # in-process producer. One pane mid-edit is enough to keep an answer's
       # prompt from taking the terminal, even beside a pane sitting idle. A pane
       # that has said nothing has said nothing was typed.
@@ -348,10 +348,10 @@ module Lain
       # down.
       def receive(client, frame)
         case frame&.fetch("v", nil)
-        when "line" then @rail << Frontend::InputRail::Line.new(text: frame["text"].to_s,
-                                                                generation: frame["generation"].to_i)
-        when "signal" then @rail << Frontend::InputRail::Signal.new(name: frame["name"].to_s.to_sym)
-        when "eof" then @rail << Frontend::InputRail::Eof.new
+        when "line" then @rail << Frontend::Intake::Line.new(text: frame["text"].to_s,
+                                                             generation: frame["generation"].to_i)
+        when "signal" then @rail << Frontend::Intake::Signal.new(name: frame["name"].to_s.to_sym)
+        when "eof" then @rail << Frontend::Intake::Eof.new
         when "touch" then client.touched(frame["generation"].to_i, frame["untouched"] == true)
         end
       end

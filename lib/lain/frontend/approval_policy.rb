@@ -108,10 +108,10 @@ module Lain
         # typed at the drawn prompt it was meant for the chat -- `/goal off` while
         # a goal's iteration waits on this call -- and read as a verdict it was
         # both a denial nobody gave and a command lost. The rail holds it for
-        # `you>` and asks again ({InputRail#read}), so it still decides nothing.
+        # `you>` and asks again ({Intake#read}), so it still decides nothing.
         def takes?(line) = !line.lstrip.start_with?(COMMAND)
 
-        # What the {InputRail} publishes this prompt as: an answer a run waits on.
+        # What the {Intake} publishes this prompt as: an answer a run waits on.
         def kind = :approval
 
         # The parked call this prompt asks about, so the rail announces one call

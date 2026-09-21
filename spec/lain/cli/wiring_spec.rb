@@ -1812,6 +1812,52 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # History is a line editor's, and a chat reading a pipe has none: what a
+    # script feeds it is not what a human would reach for at `you>`.
+    it "keeps no history for a chat reading a stream that is not a terminal" do
+      kept = Dir.mktmpdir do |dir|
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+        File.exist?(File.join(dir, "history"))
+      end
+
+      expect(kept).to be(false)
+    end
+
+    # The pane is a line editor in another process, and its lines reach the
+    # chat's Intake over the socket -- which is where they are kept, so a
+    # cockpit's history is the chat's and not the pane's.
+    it "keeps the line a pane sent over the input socket in the chat's history" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        path = Lain::CLI::InputSocket.path(name: "wiring-history", paths:, cwd: Dir.pwd)
+        allow(status_feed).to receive(:state).and_return({})
+        wiring = described_class.new(options: { grace: 5, input: "socket:wiring-history" }, chronicle:, status_feed:,
+                                     paths:, stdin: StringIO.new, tty_factory: tty_factory(dir), conductor_opener:)
+        pane = Thread.new { type_at_you_from_a_pane(path, "quit") }
+
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+        pane.join
+
+        expect(File.read(File.join(dir, "history"))).to eq("quit\n")
+      end
+    end
+
+    # Answers the first `you>` a pane is shown with `text`, as a human typing
+    # there would, then goes away.
+    def type_at_you_from_a_pane(path, text)
+      client = Enumerator.produce { connect_to(path) }.lazy.grep(UNIXSocket).first
+      prompt = Enumerator.produce { JSON.parse(client.gets) }.find { |frame| frame["kind"] == "you" }
+      client.write("#{JSON.generate({ "v" => "line", "text" => text, "generation" => prompt["generation"] })}\n")
+      client.flush
+      client.read
+    ensure
+      client&.close
+    end
+
     # Connects as a `lain input` pane would, waits for a frame, and ends the
     # stream. Answers the path it reached, so the assertion names the socket
     # that was there rather than a bare true.

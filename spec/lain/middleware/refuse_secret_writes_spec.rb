@@ -285,14 +285,23 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       expect(improvement_refusal.pattern).to eq(memory_refusal.pattern)
     end
 
-    it "leaves memory_write refusals unchanged: same message text, same pattern" do
+    # The session records the refused call, input and all, so "nothing was
+    # written" is true only of the store the tool writes to -- and the sentence
+    # says which one.
+    it "names the store a memory_write refusal wrote nothing to" do
       secret = "AKIA#{"A" * 16}"
       env, called = run(tool_call(name: "memory_write", input: { "id" => "x", "description" => "y", "body" => secret }))
 
       expect(called).to be(false)
       expect(env.fetch(:result).content).to eq(
-        "memory_write refused: input matches a aws access key id pattern; nothing was written."
+        "memory_write refused: input matches a aws access key id pattern; nothing was written to memory."
       )
+    end
+
+    it "names the store an improvement_write refusal wrote nothing to" do
+      env, = run(tool_call(name: "improvement_write", input: { "note" => "AKIA#{"A" * 16}", "kind" => "bug" }))
+
+      expect(env.fetch(:result).content).to end_with("; nothing was written to the improvement notes.")
     end
 
     it "lets a benign improvement_write proceed, with nothing journaled" do

@@ -2,7 +2,7 @@
 
 require "async"
 
-RSpec.describe Lain::Frontend::InputRail do
+RSpec.describe Lain::Frontend::Intake do
   # What the rail tells the human, recorded rather than drawn.
   let(:screen) do
     Class.new do
@@ -38,6 +38,22 @@ RSpec.describe Lain::Frontend::InputRail do
       pumped_until(task, reason: "a prompt published") { rail.published.generation.positive? }
       prompt = rail.published
       rail << line(yield(prompt), generation || prompt.generation)
+    end
+  end
+
+  describe "its name" do
+    # Case-blind and with an optional underscore, so the one pattern finds the
+    # constant, its file and a symbol spelled after either.
+    let(:former) { /input_?rail/i }
+
+    it "is the constant its path names, and nothing in lib/ still answers to the former one" do
+      lib = Lain::LOADER.dirs.first
+      named = Lain::LOADER.all_expected_cpaths.fetch(File.join(lib, "lain/frontend/intake.rb"))
+      stale = Dir[File.join(lib, "**/*.{rb,lua}")].select { |path| File.read(path).match?(former) }
+
+      expect([named, described_class.name]).to eq(%w[Lain::Frontend::Intake Lain::Frontend::Intake])
+      expect(stale.map { |path| path.delete_prefix("#{lib}/") }).to be_empty
+      expect(Lain::Frontend.constants.grep(former)).to be_empty
     end
   end
 
@@ -638,6 +654,106 @@ RSpec.describe Lain::Frontend::InputRail do
       end
 
       expect([answer, received]).to eq(["/stop", []])
+    end
+  end
+
+  # History is what `you>` was answered with -- the line a recall at that
+  # prompt would put back. An answer is not one, and a line read anywhere else
+  # is held and reaches `you>` in its own time, so it is kept once, there.
+  describe "the history it keeps" do
+    let(:history) { Struct.new(:kept) { def remember(line) = kept << line }.new([]) }
+    let(:rail) { described_class.new(screen:, history:) }
+
+    def untouched_producer
+      Struct.new(:untouched) do
+        def sweep = nil
+        def untouched?(_prompt) = true
+      end.new(true)
+    end
+
+    it "keeps the line that answered you>, and nothing before it answered" do
+      kept_before = nil
+      Sync do |task|
+        answered_when_published(task) { (kept_before = history.kept.dup) && "hello there" }
+        rail.read(:you, "you> ")
+      end
+
+      expect([kept_before, history.kept]).to eq([[], ["hello there"]])
+    end
+
+    it "keeps no answer a run waited on" do
+      Sync do |task|
+        %i[approval human].each do |kind|
+          answered_when_published(task) { "y" }
+          rail.read(kind, "[y/N] ")
+        end
+      end
+
+      expect(history.kept).to be_empty
+    end
+
+    it "keeps nothing read at command> or a countdown, whose lines reach you> held if they reach it at all" do
+      Sync do |task|
+        answered_when_published(task) { "/approve" }
+        rail.read(:command, "command> ")
+        answered_when_published(task) { "go on" }
+        rail.read(:countdown, "closing in 30s")
+      end
+
+      expect(history.kept).to be_empty
+    end
+
+    it "keeps a line held at an answer's prompt once, when you> takes it" do
+      Sync do |task|
+        task.async do
+          pumped_until(task) { rail.published.generation == 1 }
+          rail << line("yes please", 0)
+          pumped_until(task) { rail.published.generation == 2 }
+          rail << line("n", 2)
+        end
+        rail.read(:approval, "[y/N] ")
+      end
+      kept_while_held = history.kept.dup
+
+      expect([kept_while_held, rail.read(:you, "you> "), history.kept]).to eq([[], "yes please", ["yes please"]])
+    end
+
+    it "keeps a held line taken for you> between reads, once" do
+      rail.hold("typed ahead")
+
+      expect([rail.take_held, rail.take_held, history.kept]).to eq(["typed ahead", nil, ["typed ahead"]])
+    end
+
+    it "keeps the line a you> that stood aside comes back to exactly once" do
+      rail.attach(untouched_producer)
+
+      Sync do |task|
+        you = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        commandless = Class.new(String) { def takes?(line) = !line.start_with?("/") }.new("[y/N] ")
+        approval = task.async { rail.read(:approval, commandless) }
+        pumped_until(task) { rail.published.kind == :approval }
+        asked = rail.published.generation
+        rail << line("/goal off", asked)
+        pumped_until(task) { rail.published.generation > asked }
+        rail << line("n", rail.published.generation)
+        approval.wait
+        you.wait
+      end
+
+      expect(history.kept).to eq(["/goal off"])
+    end
+
+    it "keeps nothing when the stream ends under you>" do
+      Sync do |task|
+        task.async do
+          pumped_until(task) { rail.published.generation.positive? }
+          rail << described_class::Eof.new
+        end
+        rail.read(:you, "you> ")
+      end
+
+      expect(history.kept).to be_empty
     end
   end
 

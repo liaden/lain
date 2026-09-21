@@ -144,7 +144,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
   # watchers, and the command registry both of them answer through, all open
   # for the conversation.
   def cockpit(terminal, editor: true)
-    terminal.rail = Lain::Frontend::InputRail.new(screen: tty)
+    terminal.rail = Lain::Frontend::Intake.new(screen: tty)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor: terminal, ask_human: askers.directory,
                                           questions: askers.questions)
     surfaces = Lain::CLI::Repl::ApprovalSurfaces.new(approvals: queue, auto_surface: nil, secret_surface: nil,

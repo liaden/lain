@@ -378,7 +378,7 @@ RSpec.describe "one reader of stdin on the chat path" do
   it "finds no route to the process's stdin outside Frontend::StdinPump and the line editor it runs" do
     expect(StdinReaders.offenders).to be_empty, lambda {
       "Only Frontend::StdinPump reads stdin in a chat; everything else takes lines from the " \
-        "InputRail it feeds. Found:\n#{StdinReaders.offenders.map { |route| "  #{route}" }.join("\n")}"
+        "Intake it feeds. Found:\n#{StdinReaders.offenders.map { |route| "  #{route}" }.join("\n")}"
     }
   end
 

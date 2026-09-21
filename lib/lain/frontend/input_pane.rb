@@ -7,17 +7,18 @@ require "socket"
 module Lain
   module Frontend
     # `lain input`: the pane the human types in while the chat scrolls its
-    # transcript somewhere else. It is a {InputRail} PRODUCER at the far end of
+    # transcript somewhere else. It is an {Intake} PRODUCER at the far end of
     # a Unix socket, and it holds nothing of the chat -- no registry, no agent,
     # no session. What it draws, it was told.
     #
-    # IT RUNS THE SAME RAIL IT FEEDS. A local {InputRail} mirrors the chat's
+    # IT RUNS THE SAME RAIL IT FEEDS. A local {Intake} mirrors the chat's
     # publications and a local {StdinPump} serves them, so the line editor, the
-    # history, the completion menu and the typeahead rule are the ones a plain
-    # chat has rather than a second implementation of them. The generation on
-    # the wire is the CHAT's: a line only ever leaves here as the answer to the
-    # prompt it was read at, because the local rail has already held anything
-    # typed before that prompt drew.
+    # completion menu and the typeahead rule are the ones a plain chat has
+    # rather than a second implementation of them. The generation on the wire
+    # is the CHAT's: a line only ever leaves here as the answer to the prompt it
+    # was read at, because the local rail has already held anything typed
+    # before that prompt drew. The mirror keeps no history: the chat's own
+    # {Intake} keeps what reaches its `you>`, so a line is written once.
     #
     # THE HEADER IS THE CHAT'S TOO, and it arrives with the prompt. A header
     # that changes while nothing has been typed republishes the prompt, so an
@@ -71,7 +72,7 @@ module Lain
         @layers = layers
         @tick = tick
         @geometry = geometry
-        @rail = InputRail.new(screen: tty)
+        @rail = Intake.new(screen: tty)
         @drawn = NOTHING_DRAWN
         @reported = nil
         @client = nil

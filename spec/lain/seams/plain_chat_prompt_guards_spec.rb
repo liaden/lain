@@ -19,7 +19,7 @@ module PlainChatPromptGuards
   LIB = File.expand_path("../../../lib", __dir__)
   APPROVAL = %r{\[y/N\] }
 
-  # The chat under test: a real Repl, Conductor, TTY, InputRail and the StdinPump
+  # The chat under test: a real Repl, Conductor, TTY, Intake and the StdinPump
   # feeding it, HumanReplies, approval surfaces and Approval::Queue, all open for
   # the conversation. The one fake is the command registry's fallthrough, which
   # claims every line so no model is involved: the first line parks one gated
@@ -47,7 +47,7 @@ module PlainChatPromptGuards
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
                                   input: Lain::Frontend::StdinPump.keys($stdin),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
-    rail = Lain::Frontend::InputRail.new(screen: tty)
+    rail = Lain::Frontend::Intake.new(screen: tty)
     supervisor = Lain::Supervisor.new
     # A real record only where a shape asserts one, so every other shape keeps
     # the Null it had and writes no file.
@@ -888,7 +888,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       output = StringIO.new
       tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, history_path: File::NULL,
                                     pastel: Pastel.new(enabled: false))
-      rail = Lain::Frontend::InputRail.new(screen: tty)
+      rail = Lain::Frontend::Intake.new(screen: tty)
       journal_io = StringIO.new
       queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 0.3)
       policy = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new,

@@ -19,7 +19,7 @@ module InputPaneSocket
   LIB = File.expand_path("../../../lib", __dir__)
   EXE = File.expand_path("../../../exe/lain", __dir__)
 
-  # The chat: a real InputRail, InputSocket, Conductor and TTY, with its stdin
+  # The chat: a real Intake, InputSocket, Conductor and TTY, with its stdin
   # closed so nothing on this side can read a line at all. `lines` reads `you>`
   # until the stream ends; `approval` parks one gated call through a real
   # Approval::Queue and answers it through the real terminal surface;
@@ -37,7 +37,7 @@ module InputPaneSocket
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: out, pastel: Pastel.new(enabled: false),
                                   history_path: File.join(dir, "history"),
                                   state_path: File.join(dir, "state.json"))
-    rail = Lain::Frontend::InputRail.new(screen: tty)
+    rail = Lain::Frontend::Intake.new(screen: tty)
     # The real composition, not a canned line: the chat's own `hud_line` is
     # `Reading#header` over the published struct, so the file holds the STRUCT
     # and the header is derived here exactly as `CLI::Wiring` derives it.

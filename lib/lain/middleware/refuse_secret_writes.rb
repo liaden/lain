@@ -21,9 +21,12 @@ module Lain
     # `bash` or `read_file` effect whose input independently looks secret-ish
     # passes through untouched: this is a write-refusal control, not a general
     # secret scanner. A tool that persists content under some other name is
-    # unguarded by design until it earns a place in the Set.
+    # unguarded by design until it earns a place in {GUARDED_TOOLS}.
     class RefuseSecretWrites < Base
-      GUARDED_TOOLS = Set["memory_write", "improvement_write"].freeze
+      # tool => the store it writes to, named in the refusal. "Nothing was
+      # written" is true of that store and false of the session, which records
+      # the refused call, input and all.
+      GUARDED_TOOLS = { "memory_write" => "memory", "improvement_write" => "the improvement notes" }.freeze
 
       # name => pattern. The NAME is what gets journaled and put in the
       # model-facing error; the bytes that matched never are -- see
@@ -91,7 +94,7 @@ module Lain
 
       def call(env, &app)
         effect = env.fetch(:effect)
-        return downstream(env, &app) unless GUARDED_TOOLS.include?(effect.name)
+        return downstream(env, &app) unless GUARDED_TOOLS.key?(effect.name)
 
         pattern = matched_pattern(effect.input)
         return refuse(env, effect, pattern, "input matches a #{pattern} pattern") if pattern
@@ -132,7 +135,8 @@ module Lain
       # message is prose, but both must agree on WHICH kind of refusal happened.
       def refuse(env, effect, reason, why)
         @journal << Telemetry::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern: reason)
-        env.merge(result: Tool::Result.error("#{effect.name} refused: #{why}; nothing was written."))
+        env.merge(result: Tool::Result.error("#{effect.name} refused: #{why}; " \
+                                             "nothing was written to #{GUARDED_TOOLS.fetch(effect.name)}."))
       end
     end
   end

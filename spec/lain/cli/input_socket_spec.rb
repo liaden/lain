@@ -14,7 +14,7 @@ RSpec.describe Lain::CLI::InputSocket do
   let(:runtime) { Dir.mktmpdir("lain-input-socket") }
   let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime }) }
   let(:path) { described_class.path(name: "s1", paths:, cwd: Dir.pwd) }
-  let(:rail) { Lain::Frontend::InputRail.new }
+  let(:rail) { Lain::Frontend::Intake.new }
   let(:header) { -> { hud } }
   let(:hud) { +"fleet:0 inbox:0" }
 
@@ -61,7 +61,7 @@ RSpec.describe Lain::CLI::InputSocket do
   end
 
   def contend(gate, outcomes)
-    contender = described_class.new(rail: Lain::Frontend::InputRail.new, path:)
+    contender = described_class.new(rail: Lain::Frontend::Intake.new, path:)
     gate.pop
     outcomes.push(contender.bind)
   rescue described_class::InUse
@@ -78,7 +78,7 @@ RSpec.describe Lain::CLI::InputSocket do
   # A second chat that tried for `candidate` and was sent away, so an example
   # can ask what it did with the lock and the path on its way out.
   def turned_away_at(candidate)
-    chat = described_class.new(rail: Lain::Frontend::InputRail.new, path: candidate)
+    chat = described_class.new(rail: Lain::Frontend::Intake.new, path: candidate)
     @turned_away = chat
     chat.bind
   end
@@ -140,7 +140,7 @@ RSpec.describe Lain::CLI::InputSocket do
 
     it "refuses a path another live chat is listening on, naming it" do
       socket.bind
-      second = described_class.new(rail: Lain::Frontend::InputRail.new, path:)
+      second = described_class.new(rail: Lain::Frontend::Intake.new, path:)
       expect { second.bind }.to raise_error(described_class::InUse, /#{Regexp.escape(path)}/)
     end
 

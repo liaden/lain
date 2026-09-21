@@ -982,10 +982,13 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
 
 ### One input rail, and one reader of stdin
 
-Every line a human types reaches the chat through `Frontend::InputRail`
-(`lib/lain/frontend/input_rail.rb`), whatever produced it: `Frontend::StdinPump`
-(`lib/lain/frontend/stdin_pump.rb`) for a plain `lain chat`, `CLI::InputSocket` for the `lain
-input` pane, and the editor's gesture consumer for nvim. `StdinPump` is **the one reader of
+Every line a human types reaches the chat through `Frontend::Intake`
+(`lib/lain/frontend/intake.rb`), whatever produced it: `Frontend::StdinPump`
+(`lib/lain/frontend/stdin_pump.rb`) for a plain `lain chat`, and `CLI::InputSocket` for the `lain
+input` pane. nvim's replies, answers and approvals resolve what they answer directly and are not
+lines. The one line that bypasses the Intake is a C-g compose: `you>` reads only the compose
+marker, which is what history records, and `Compose#settle` dispatches the text written in nvim.
+`StdinPump` is **the one reader of
 stdin**: on a tty it drives the line editor, and off a tty it reads a private `dup` of fd 0 with
 `$stdin` reseated onto `/dev/null`, so a shelled-out child cannot move a shared file offset under
 it. The stdin-arbitration machinery this replaced — `Repl::LineScope`, `LineEditor::READS`,
@@ -998,6 +1001,14 @@ cases. **Order**: the rail is also the prompt *queue*, so an answer-kind prompt 
 `human>`) is inserted ahead of a still-waiting `you>` and everything else joins the tail, with
 `#about` deduplicating the announcement when two readers ask about the same parked call. A prompt
 that has to wait says so, and one decided elsewhere before it ever drew says how it was decided.
+
+**History** is kept here too, because only the Intake sees which prompt a line finally answered
+and the whole of it: a line is kept as it reaches `you>`, an answer never is, and a line read at
+`command>` or a countdown is kept once, when it is held and reaches `you>`. The writing is the
+injected `Intake::Discretion`'s, which withholds a line matching a write-tier credential pattern
+and hands the rest to `TTY#remember`. A cockpit's lines are kept by the chat when they reach its
+`you>`, never by the pane; a chat reading a pipe keeps none. A command run at `command>` is not
+kept, since the prose typed there is kept when `you>` takes it.
 
 `/stop` rides the same rail. A line reading exactly `/stop` is lifted off it as a stop signal
 **only** when an ask is in flight and the prompt is not an idle `you>`; otherwise it stays an

@@ -214,7 +214,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   let(:parent) { chain("hi") }
   # Where a held line waits for `you>`: the conductor's rail, told through the
   # terminal it draws on.
-  let(:rail) { Lain::Frontend::InputRail.new(screen: tty) }
+  let(:rail) { Lain::Frontend::Intake.new(screen: tty) }
   # No interrupt countdown runs, and a cockpit's command> reads nothing, unless
   # an example says otherwise. A line it holds goes to the rail, as the real one's does.
   let(:conductor) do

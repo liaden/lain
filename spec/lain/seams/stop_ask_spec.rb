@@ -20,7 +20,7 @@ module StopAsk
   LIB = File.expand_path("../../../lib", __dir__)
   EXE = File.expand_path("../../../exe/lain", __dir__)
 
-  # The chat: a real Chronicle over a real session file, a real InputRail,
+  # The chat: a real Chronicle over a real session file, a real Intake,
   # InputSocket and Conductor, and stdin closed so nothing on this side can
   # answer a prompt.
   #
@@ -42,7 +42,7 @@ module StopAsk
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: out, pastel: Pastel.new(enabled: false),
                                   history_path: File.join(dir, "history"),
                                   state_path: File.join(dir, "state.json"))
-    rail = Lain::Frontend::InputRail.new(screen: tty)
+    rail = Lain::Frontend::Intake.new(screen: tty)
     socket = Lain::CLI::InputSocket.new(rail:, path:)
     socket.bind
     chronicle = Lain::CLI::Chronicle.new(

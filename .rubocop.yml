@@ -344,7 +344,7 @@ ThreadSafety/ClassInstanceVariable:
 # exists to interrupt. Two of the loops start in `#start` and the readers start on the accept
 # thread as panes connect; every one of them is REGISTERED under the instance's mutex as it
 # begins and removed as it ends, so `#stop` owns each one it started. Each touches only that
-# mutex-guarded client list and a Frontend::InputRail, whose class comment states that it is
+# mutex-guarded client list and a Frontend::Intake, whose class comment states that it is
 # shared across threads and fibers alike, and no write to a pane can block -- see the class
 # comment on why a blocking one would park the chat's own exit.
 #

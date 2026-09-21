@@ -18,7 +18,7 @@ module Lain
     # For the ask's duration OS signals are {Signals#route}d to the coordinator;
     # between asks they route back to {Signals::NULL}, because a signal with no
     # run in flight has nothing to interrupt. A signal a producer puts on the
-    # {Frontend::InputRail} goes wherever an OS signal would.
+    # {Frontend::Intake} goes wherever an OS signal would.
     #
     # It is also the chat's door to that rail: every line the human types
     # reaches the chat through one of its three reads, and each takes the line
@@ -147,7 +147,7 @@ module Lain
       #
       # `rail:` is where the human's lines come from; a fresh one with nothing
       # feeding it by default, for a conductor that supervises and never reads.
-      def initialize(tty:, chronicle:, signals:, rail: Frontend::InputRail.new, grace: Shutdown::GRACE_DEFAULT,
+      def initialize(tty:, chronicle:, signals:, rail: Frontend::Intake.new, grace: Shutdown::GRACE_DEFAULT,
                      budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
                      clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered)
         @tty = tty
@@ -246,7 +246,7 @@ module Lain
       def prompting? = @prompting
 
       # A line the human typed that was neither a command nor an answer, kept for
-      # `you>` and said to be ({Frontend::InputRail#hold}).
+      # `you>` and said to be ({Frontend::Intake#hold}).
       def hold(line) = @rail.hold(line)
 
       # The oldest held line, or nil.
@@ -548,12 +548,12 @@ module Lain
       # Reopened rather than nested, the shutdown.rb idiom: the split keeps each
       # body within Metrics/ClassLength instead of loosening it.
 
-      # The grace window as a PROMPT on the {Frontend::InputRail}, for a chat
+      # The grace window as a PROMPT on the {Frontend::Intake}, for a chat
       # whose human is not at its terminal. {Frontend::TTY::Countdown} owns the
       # bottom line of the chat's own screen and reads its keys off the chat's
       # stdin; neither is any use when the human is in another pane, so the same
       # window is published as a `countdown` prompt and answered with a
-      # {Frontend::InputRail::Signal} -- which lands exactly where an OS signal
+      # {Frontend::Intake::Signal} -- which lands exactly where an OS signal
       # would, so {Shutdown} needs no second door.
       #
       # A prompt rather than a status line also makes the window OBEY the rail:

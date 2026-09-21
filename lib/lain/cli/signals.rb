@@ -60,7 +60,7 @@ module Lain
       end
 
       # This object is itself a sink, which is how a producer that is not an OS
-      # trap reaches the same place the traps do: {Frontend::InputRail} routes
+      # trap reaches the same place the traps do: {Frontend::Intake} routes
       # here once and never again, and every later {#route} redirects the rail
       # WITH the traps rather than beside them, so the two cannot drift.
       def signal(name)
@@ -68,7 +68,7 @@ module Lain
         self
       end
 
-      # The sink's other answer, asked by {Frontend::InputRail} before it lifts
+      # The sink's other answer, asked by {Frontend::Intake} before it lifts
       # a `/stop` line off the rail as a signal: a line lifted while nothing is
       # routed would be dropped here and never seen again, which is worse than
       # any prompt's refusal of it. Read without a lock, like the sink itself,

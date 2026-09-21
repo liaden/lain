@@ -55,7 +55,9 @@ RSpec.describe Lain::Frontend::StdinPump do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, pastel: Pastel.new(enabled: false), history_path:,
                             layers: -> { Lain::Mode::LayerSet.new(layers) })
   end
-  let(:rail) { Lain::Frontend::InputRail.new(screen:) }
+  # History is the Intake's to keep, not the pump's: the rail here keeps it
+  # through the same discretion a chat's does, into the real file.
+  let(:rail) { Lain::Frontend::Intake.new(screen:, history: Lain::Frontend::Intake::Discretion.new(writer: screen)) }
 
   # Reline's history and config are process-global; see tty_spec for why every
   # example that reaches the line editor puts them back.
@@ -110,12 +112,6 @@ RSpec.describe Lain::Frontend::StdinPump do
       answers = pumped(StringIO.new("only\n")) { Array.new(3) { rail.read(:human, "human> ") } }
 
       expect(answers).to eq(["only", nil, nil])
-    end
-
-    it "never writes a history file" do
-      pumped(StringIO.new("plain line\n")) { rail.read(:you, "you> ") }
-
-      expect(File.exist?(history_path)).to be(false)
     end
 
     # A forked child's `STDIN.reopen` puts back whatever its copy of the parent's
@@ -177,6 +173,25 @@ RSpec.describe Lain::Frontend::StdinPump do
       expect(File.read(history_path)).to eq("remember me\n")
     end
 
+    it "keeps a credential typed at you> out of the history, and still answers with it" do
+      credential = "use sk-#{"a" * 24} for the staging deploy"
+      allow(Reline).to receive(:readmultiline).and_return(credential)
+
+      expect(pumped(terminal) { rail.read(:you, "you> ") }).to eq(credential)
+      expect(File.exist?(history_path)).to be(false)
+    end
+
+    # The fragment typed ahead of a `[y/N]` and the rest typed at it are one
+    # line to the human, and the history is where they would look for it.
+    it "keeps a line begun before an answer's prompt whole, once it reaches you>" do
+      allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("Say ", "", "", "")
+      allow(Reline).to receive(:readmultiline).and_return("yes", "n")
+
+      pumped(terminal) { [rail.read(:approval, "[y/N] "), rail.read(:you, "you> ")] }
+
+      expect(File.read(history_path)).to eq("Say yes\n")
+    end
+
     it "answers the end of the terminal's stream with nil, and still reads the next prompt" do
       allow(Reline).to receive(:readmultiline).and_return(nil, "again")
 
@@ -224,7 +239,7 @@ RSpec.describe Lain::Frontend::StdinPump do
   end
 
   # What was typed while nothing drew at all -- a standing goal drives turns with
-  # no prompt open -- asked for between asks through {InputRail#gather}.
+  # no prompt open -- asked for between asks through {Intake#gather}.
   describe "#sweep" do
     def typed(*sweeps) = allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return(*sweeps)
 
@@ -322,7 +337,7 @@ RSpec.describe Lain::Frontend::StdinPump do
         pumped_until(Async::Task.current, reason: "the read drawn") { reads == 1 }
         reading.stop
         Async::Task.current.sleep(0.1)
-        rail << Lain::Frontend::InputRail::Eof.new
+        rail << Lain::Frontend::Intake::Eof.new
       end
 
       expect(reads).to eq(1)
@@ -371,7 +386,7 @@ RSpec.describe Lain::Frontend::StdinPump do
         dir = ARGV.fetch(0)
         tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
                                       state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false))
-        rail = Lain::Frontend::InputRail.new(screen: tty)
+        rail = Lain::Frontend::Intake.new(screen: tty)
         Sync do |task|
           pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
           3.times do
@@ -501,7 +516,7 @@ RSpec.describe Lain::Frontend::StdinPump do
   # weight, against a real PTY.
   describe "#exclusively" do
     let(:pump) do
-      described_class.new(rail: Lain::Frontend::InputRail.new(screen: Lain::Sink::Null.new),
+      described_class.new(rail: Lain::Frontend::Intake.new(screen: Lain::Sink::Null.new),
                           screen: Lain::Sink::Null.new, input: StringIO.new)
     end
 

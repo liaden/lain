@@ -116,7 +116,7 @@ module Lain
       end
 
       # Whether a stop would reach an ask here, which is what
-      # {Frontend::InputRail} asks its sink before it lifts a `/stop` line off
+      # {Frontend::Intake} asks its sink before it lifts a `/stop` line off
       # the rail. Both halves matter: the closer knows whether what this
       # coordinator holds is an ask at all, and a run that has already answered
       # must not be recorded as stopped over the answer it committed. Two

@@ -196,15 +196,17 @@ module Lain
         @completion.clear
       end
 
-      # `reline(…, true)` already feeds an accepted line into the in-memory
-      # `Reline::HISTORY`; {History#append} durably appends it too.
+      # {History#append}, for the chat's {Intake}, which decides what is kept:
+      # the line that reached `you>`, whole, unless it looks like a credential
+      # ({Intake::Discretion}). The line editor's in-memory `Reline::HISTORY`
+      # is fed by `reline(…, true)` and is not this.
       def remember(line) = @history.append(line)
 
       # Whether the `vi` layer is up at this read.
       def vi? = @layers.call.include?(:vi)
 
       # A line the human typed that was neither a command nor an answer, kept
-      # for `you>` ({InputRail#hold}) -- said, since a line nobody was told about
+      # for `you>` ({Intake#hold}) -- said, since a line nobody was told about
       # reads as swallowed.
       def render_held(line) = render_warning(format(HELD, legible(line)))
 
@@ -222,7 +224,7 @@ module Lain
         nil
       end
 
-      # A prompt waiting its turn behind another ({InputRail#read}) is announced
+      # A prompt waiting its turn behind another ({Intake#read}) is announced
       # as a summons, when it has words for it ({ApprovalPolicy::Asked}).
       def queue_prompt(text)
         text.queued { |note| render_summons(note) } if text.respond_to?(:queued)
@@ -474,7 +476,7 @@ module Lain
         @history = History.new(path: history_path, notify: method(:render_warning))
       end
 
-      # Durable reline history: write-through on each accepted line rather
+      # Durable history: write-through on each kept line rather
       # than dump-at-exit, so a SIGKILL between prompts loses at most nothing.
       # Durable means close()-durable (the process dying), not fsync-durable --
       # shell history does not warrant an fsync per line.
@@ -492,7 +494,11 @@ module Lain
       #
       # It keeps being written because the write is what a project-scoped recall
       # would later read: {Paths#sessions_dir} already partitions by project, so
-      # scoping the RECALL is a path argument at one call site.
+      # scoping the RECALL is a path argument at one call site. A cockpit's
+      # lines are written by the chat, as they reach its `you>`, and not by the
+      # pane they were typed in. A command run at `command>` is not kept: prose
+      # typed there is held and kept when `you>` takes it, so keeping the
+      # `command>` line too would write that prose twice.
       class History
         # @param path [String] the durable history file
         # @param notify [#call] renders a degraded-path warning line

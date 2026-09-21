@@ -2,11 +2,13 @@
 
 module Lain
   module Frontend
-    # The one way human input reaches a chat. The chat PUBLISHES a prompt when
-    # it wants a line and waits here; a producer -- the in-process
-    # {StdinPump}, or anything else that can see what was published -- answers
-    # with a line stamped with the generation it was typed at. Signals skip the
-    # queue and reach the routed sink at once, as an OS signal would.
+    # The way a typed human line reaches a chat, and so the one place its record
+    # is kept; an nvim C-g compose is the exception, settled by the compose
+    # buffer and recorded as its marker. The chat PUBLISHES a prompt when it wants a line and waits here;
+    # a producer -- the in-process {StdinPump}, the input pane's socket, or
+    # anything else that can see what was published -- answers with a line
+    # stamped with the generation it was typed at. Signals skip the queue and
+    # reach the routed sink at once, as an OS signal would.
     #
     # ONE RULE replaces the typeahead guards that grew around a shared stdin: a
     # line whose generation predates the prompt it arrives at was begun before
@@ -27,7 +29,14 @@ module Lain
     # published or withdrawn, and waits rather than asks. Shared across threads
     # and fibers alike: the state sits under a mutex that is never held across a
     # wait.
-    class InputRail
+    #
+    # HISTORY IS KEPT HERE, as a line leaves for `you>`, because no producer
+    # sees what this object does: which prompt a line finally answered, and the
+    # whole of it. An answer a run waited on is never kept; a line read at
+    # `command>` or a countdown is kept only if it is held and reaches `you>`,
+    # so it is kept once. The writing is the injected `history:`'s, which is why
+    # nothing here opens a file.
+    class Intake
       # `countdown` is the shutdown window drawn as a prompt, for a producer
       # that is not at the chat's own terminal: it answers with one of the
       # prompt's `keys` as a {Signal}, never with a line.
@@ -35,6 +44,9 @@ module Lain
 
       # The kinds a run is parked on.
       ANSWERS = %i[human approval].freeze
+
+      # The one kind whose lines are history: what a recall at `you>` puts back.
+      RECALLED = :you
 
       # {CLI::Shutdown}'s inputs a producer may send.
       SIGNALS = %i[sigint sigterm sigquit cancel extend wait_responses stop].freeze
@@ -75,6 +87,12 @@ module Lain
         def self.drop_prompt(_text) = nil
       end
 
+      # The rail that keeps no history: a pane's local mirror, whose lines are
+      # kept by the chat they are sent on to, and a chat nobody types into.
+      module Unrecorded
+        def self.remember(_line) = nil
+      end
+
       # An answer, including the answer nobody gave -- a `nil` text -- which is
       # why "not yet" needs a value of its own, and why a line that ended the
       # drawing it came from is told apart from one that did not.
@@ -98,8 +116,11 @@ module Lain
       #   where the human is told a line was held, where a withdrawn prompt's
       #   line is ended, and where a prompt waiting its turn is announced and,
       #   leaving unpublished, said to have gone
-      def initialize(screen: Unseen)
+      # @param history [#remember] takes each line that reaches `you>`, whole --
+      #   {Discretion} in a chat someone types into
+      def initialize(screen: Unseen, history: Unrecorded)
         @screen = screen
+        @history = history
         @inbound = Thread::Queue.new
         @lock = Thread::Mutex.new
         @turns = []
@@ -161,8 +182,8 @@ module Lain
         @screen.render_held(text)
       end
 
-      # The oldest held line, or nil.
-      def take_held = @lock.synchronize { @held.shift }
+      # The oldest held line, taken for `you>`, or nil.
+      def take_held = recalled(held_line)
 
       # A producer's word that its read at `prompt` has opened. Until then it
       # cannot say nothing was typed there, so an answer that arrived as `you>`
@@ -189,13 +210,21 @@ module Lain
       def read(kind, text, header: "", keys: {})
         turn = Turn.new(Thread::Queue.new, kind, text, false, false)
         enter(turn)
-        (take_held if kind == :you) || answered(turn, Prompt.new(kind:, text:, header:, keys:, generation: 0), text)
+        asked = Prompt.new(kind:, text:, header:, keys:, generation: 0)
+        kind == RECALLED ? recalled(held_line || answered(turn, asked, text)) : answered(turn, asked, text)
       ensure
         leave(turn)
         @screen.drop_prompt(text) if turn.waited && !turn.published
       end
 
       private
+
+      def held_line = @lock.synchronize { @held.shift }
+
+      def recalled(line)
+        @history.remember(line) unless line.nil?
+        line
+      end
 
       # Read off what is published rather than off the line's own generation:
       # the question is what the human is looking at, and a `/stop` typed
@@ -332,7 +361,7 @@ module Lain
           @turns.first.gate.push(true)
         end
         turn.gate.pop
-        held = take_held
+        held = held_line
         held ? Heard.new(text: held) : REDRAWN
       end
 
@@ -345,7 +374,7 @@ module Lain
       end
     end
 
-    class InputRail
+    class Intake
       # Reopened for the values' validation, since a constant defined inside a
       # `Data.define` block belongs to the enclosing class instead.
       class Prompt
