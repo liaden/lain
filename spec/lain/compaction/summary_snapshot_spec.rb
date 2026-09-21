@@ -463,6 +463,66 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
     end
   end
 
+  # ---- The size gate is a WINDOW, not a floor -------------------------------
+  #
+  # Oracle::RoutedSummarizer declines a result on EITHER edge of its window:
+  # too small to be worth a model call (MODEL_THRESHOLD_BYTES), or too large
+  # for one to serve (INPUT_BOUND). Both declines are symmetric -- no model
+  # asked, no catalog entry gated by size at all -- so a miss on either edge
+  # is equally "explained", and only a miss strictly INSIDE the window (a real
+  # ask that came back empty) is not.
+
+  describe "size-declined misses" do
+    it "does not count a miss as size-declined when the block clears the threshold" do
+      eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "unused"))
+      # 11,200 bytes: over MODEL_THRESHOLD_BYTES, comfortably under INPUT_BOUND.
+      message = tool_result_message(source)
+
+      snapshot = described_class.take(messages: [message], eager:)
+
+      expect(snapshot.misses).to eq(1)
+      expect(snapshot.size_declined_misses).to eq(0)
+    end
+
+    it "counts a miss as size-declined when the block is too small for the threshold" do
+      eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "unused"))
+
+      snapshot = described_class.take(messages: [tool_result_message("tiny")], eager:)
+
+      expect(snapshot.misses).to eq(1)
+      expect(snapshot.size_declined_misses).to eq(1)
+    end
+
+    # The gate's OTHER edge: a block over the input ceiling is declined too,
+    # exactly as though it were tiny -- no model is asked either way. A
+    # threshold-only check reads this routine case (well under
+    # Tools::WebFetch::DEFAULT_BYTE_CAP's 5 MiB) as an unexplained real miss.
+    it "counts a miss as size-declined when the block is over the input ceiling" do
+      eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "unused"))
+      huge = "x" * (Lain::Oracle::RoutedSummarizer::INPUT_BOUND.limit + 1)
+
+      snapshot = described_class.take(messages: [tool_result_message(huge)], eager:)
+
+      expect(snapshot.misses).to eq(1)
+      expect(snapshot.size_declined_misses).to eq(1)
+    end
+
+    it "counts zero size-declined misses when there is nothing to look up" do
+      eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "unused"))
+
+      snapshot = described_class.take(messages: [], eager:)
+
+      expect(snapshot.size_declined_misses).to eq(0)
+    end
+
+    # Coerced the same way `hits`/`misses` already are: a caller cannot hand
+    # `.new` a mutable value that would cost the snapshot its shareability, or
+    # a value that silently reads as a number it never was.
+    it "raises rather than storing a size_declined_misses that cannot become an Integer" do
+      expect { described_class.new(size_declined_misses: "mutable") }.to raise_error(ArgumentError)
+    end
+  end
+
   # ---- Review fix 5: a missing role fails loudly ---------------------------
 
   describe "a message with no role" do

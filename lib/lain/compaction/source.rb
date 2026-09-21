@@ -70,6 +70,26 @@ module Lain
       # a compacting one, so the field says what it always could have said
       # rather than only on the turns a reader happens to suspect.
       #
+      # `misses_all_size_declined` names the one thing `summary_hits`/
+      # `summary_misses` cannot: a healthy run can journal `hits: 0, misses: 8`
+      # because every dropped tool result sat outside
+      # {Oracle::RoutedSummarizer}'s size window and so was never sent to a
+      # model at all, and that reads exactly like a summarizer that is simply
+      # down. The name is scoped to `misses` on purpose and not to the turn as
+      # a whole: `summary_hits: 1, misses_all_size_declined: true` is a
+      # reachable record (one hit, plus one size-declined miss elsewhere in the
+      # same span), and a name claiming "nothing was eligible" would
+      # contradict the hit sitting right beside it. `false` when there were no
+      # misses to explain, matching {Compaction::SummarySnapshot}'s own rule.
+      #
+      # {Compaction::SummarySnapshot#size_declined_misses} is where the count
+      # is actually measured -- see {Strategy::Base#size_declined_misses} for
+      # why it travels here as a POLICY total (summed the way `summary_hits`/
+      # `summary_misses` already are, composing correctly through
+      # {Strategy::Composed}) rather than being read off the snapshot
+      # directly: a span-level, model-backed strategy has no size gate to
+      # report on, and its own misses must not be claimed as size declines.
+      #
       # `window_tokens`/`used_tokens` are the denominator and the numerator
       # `:approaching_window` fired (or did not) on; without them a journal
       # from an ollama run reading `approaching_window` every turn was
@@ -86,8 +106,9 @@ module Lain
       # disagrees with the record: the HUD clamps and shows `ctx:92%` on that
       # same turn while compaction can never fire.
       CompactionDecision = Data.define(:compacted, :signals, :head_bytes,
-                                       :summary_hits, :summary_misses, :cold, :would_not_shrink,
-                                       :window_tokens, :used_tokens, :provenance, :nothing_droppable) do
+                                       :summary_hits, :summary_misses, :misses_all_size_declined, :cold,
+                                       :would_not_shrink, :window_tokens, :used_tokens, :provenance,
+                                       :nothing_droppable) do
         include Telemetry::Journalable
       end
 
@@ -756,15 +777,26 @@ module Lain
       # `summary_hits`/`summary_misses` are the collapse POLICY's, not a
       # snapshot's: a model-backed strategy reports its OWN content-address hit
       # rate, which is the only count a mis-keyed address shows up in -- as a
-      # number that never rises.
+      # number that never rises. `misses_all_size_declined` is derived off the
+      # same `outcome` for the same reason -- a NEW keyword here would have
+      # tripped this method's own `Metrics/ParameterLists`, and the two counts
+      # it compares already arrive on the value that carries `hits`/`misses`.
       def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, would_not_shrink: false)
         decision = CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
                                           summary_hits: outcome.hits, summary_misses: outcome.misses,
+                                          misses_all_size_declined: misses_all_size_declined?(outcome),
                                           cold: @cold.cold?, would_not_shrink:,
                                           window_tokens: occupancy.window_tokens,
                                           used_tokens: occupancy.used_tokens, provenance:,
                                           nothing_droppable: head.empty?)
         @reporting.record(Diagnosis.of(decision:, head:))
+      end
+
+      # Every miss this turn had was one the size gate declined outright --
+      # false, not a vacuous true, when there were no misses to explain, the
+      # same rule {Compaction::SummarySnapshot} applies to its own count.
+      def misses_all_size_declined?(outcome)
+        outcome.misses.positive? && outcome.misses == outcome.size_declined_misses
       end
 
       # A fresh Scheduler per turn, because the combinator it is frozen around

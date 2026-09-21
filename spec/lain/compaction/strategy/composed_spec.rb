@@ -225,6 +225,33 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
       expect([composed.hits, composed.misses]).to eq([0, 0])
     end
 
+    # A single declining operand beside a plain (Base-default) one would pass
+    # whether size_declined_misses is SUMMED, taken as the max, or read off
+    # whichever operand is on the left -- it pins "not dropped" but not
+    # "summed". Both operands here decline, by DIFFERENT counts over disjoint
+    # ranges, so only a true sum (7) rather than a max (4) or either side
+    # alone (3 or 4) satisfies the expectation.
+    it "sums both operands' size-declined-miss counts, not just one side's, when both decline" do
+      declining_strategy = Class.new(Lain::Compaction::Strategy::Base) do
+        def initialize(range, declined)
+          super()
+          @range = range
+          @declined = declined
+          freeze
+        end
+
+        define_method(:name) { "Declining" }
+        define_method(:misses) { @declined }
+        define_method(:size_declined_misses) { @declined }
+        define_method(:propose_ranges) { |_messages, **| [@range] }
+        define_method(:blocks) { |_messages| [{ "type" => "text", "text" => "x" }] }
+      end
+
+      composed = declining_strategy.new(0..1, 3) | declining_strategy.new(3..4, 4)
+
+      expect(composed.size_declined_misses).to eq(7)
+    end
+
     it "answers every leaf under it, and never itself" do
       third = ComposedFixtures.marking("Third", [7..7])
 

@@ -227,15 +227,21 @@ RSpec.describe Lain::Compaction::Source do
   # off it and the examples stay about the summary rather than about the cut.
   def tool_body(index) = "the quick brown fox jumped over the lazy dog, result number #{index}. " * 15
 
-  def tool_timeline
+  # Parameterized on the tool result's OWN content, so an example can put it
+  # on either edge of {Lain::Oracle::RoutedSummarizer}'s size window -- too
+  # small to be worth a model call, comfortably inside the window, or too
+  # large for {Lain::Oracle::RoutedSummarizer::INPUT_BOUND} to admit.
+  def tool_timeline_with(content)
     [["user", [block(1)]],
      ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => "read", "input" => { "n" => 2 } }]],
-     ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]],
+     ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => content }]],
      ["assistant", [block(4)]], ["user", [block(5)]], ["user", [block(6)]]]
       .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
         line.commit(role:, content:)
       end
   end
+
+  def tool_timeline = tool_timeline_with(tool_body(2))
 
   # The floor's crossover, found by walking ONE dropped body a character at a
   # time (the re-review's `probe_a6_floor_cost.rb`): at 361 Z's the canonical
@@ -902,6 +908,63 @@ RSpec.describe Lain::Compaction::Source do
       context_for(built, line)
 
       expect(decisions.first).to include("summary_hits" => 1, "summary_misses" => 0, "compacted" => true)
+    end
+
+    # A miss alone cannot tell "too small to be worth a model call" from a
+    # summarizer that is simply down. {#tool_body}'s 945 bytes sits well under
+    # {Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}'s 4096, so the
+    # run's default (empty) eager never holding one here is the HEALTHY
+    # explanation, and the record has to say so rather than read exactly like
+    # the dead-tier case.
+    it "says every miss was size-declined when the candidate block is under the summarizer threshold" do
+      line = tool_timeline
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+      context_for(built, line)
+
+      expect(decisions.first)
+        .to include("summary_hits" => 0, "summary_misses" => 1, "misses_all_size_declined" => true)
+    end
+
+    # The mirror case: once the summarizer actually answered, the record must
+    # not also claim a size-decline that never happened. `misses_all_size_declined`
+    # is scoped to MISSES, not to the turn, so it stays readable beside a hit.
+    it "reports the hit and no size decline once the summarizer answered" do
+      line = tool_timeline
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager: held_summaries("a held summary"))
+
+      context_for(built, line)
+
+      expect(decisions.first).to include("summary_hits" => 1, "misses_all_size_declined" => false)
+    end
+
+    # The gate is a WINDOW, not a floor: a miss big enough to have been worth
+    # asking a model about (over 4096 bytes, still under the 256 KiB ceiling)
+    # is a genuine attempt-and-failure, not a size decline -- pinning the
+    # threshold's UPPER side of "explained", not just the flip from a hit.
+    it "does not call a miss size-declined once it clears the threshold" do
+      line = tool_timeline_with("x" * (Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES + 1))
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+      context_for(built, line)
+
+      expect(decisions.first)
+        .to include("summary_misses" => 1, "misses_all_size_declined" => false)
+    end
+
+    # The gate's OTHER edge: a tool result over the paid tier's input ceiling
+    # is declined exactly as symmetrically as one under the threshold -- no
+    # model asked either way -- so it must read as size-declined too, not as
+    # an unexplained miss. A routine oversized `web_fetch` body is exactly
+    # this case, not an exotic one.
+    it "calls a miss size-declined when it is over the input ceiling, not only when it is under the threshold" do
+      line = tool_timeline_with("x" * (Lain::Oracle::RoutedSummarizer::INPUT_BOUND.limit + 1))
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+      context_for(built, line)
+
+      expect(decisions.first)
+        .to include("summary_misses" => 1, "misses_all_size_declined" => true)
     end
   end
 
@@ -2369,7 +2432,7 @@ RSpec.describe Lain::Compaction::Source do
   describe Lain::Compaction::Source::Diagnosis do
     def decision(signals:, nothing_droppable: true, used: 7_500, window: 8_192, compacted: false)
       Lain::Compaction::Source::CompactionDecision.new(
-        compacted:, signals:, head_bytes: 2, summary_hits: 0, summary_misses: 0,
+        compacted:, signals:, head_bytes: 2, summary_hits: 0, summary_misses: 0, misses_all_size_declined: false,
         cold: false, would_not_shrink: false, window_tokens: window, used_tokens: used,
         provenance: :published, nothing_droppable:
       )

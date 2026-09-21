@@ -81,7 +81,7 @@ module Lain
         UNJOURNALED = Object.new.freeze
         private_constant :UNJOURNALED
 
-        Outcome = Data.define(:replay, :seam, :hits, :misses) do
+        Outcome = Data.define(:replay, :seam, :hits, :misses, :size_declined_misses) do
           # The derivation refused this turn's chain; the caller renders
           # uncompacted.
           def refused? = replay.nil?
@@ -97,6 +97,12 @@ module Lain
         # the address that matters is the one the strategy keys its answers
         # under.
         #
+        # `size_declined_misses` rides beside them for the same reason: it
+        # answers for the same POLICY, not for the snapshot underneath it, so a
+        # span-level strategy that has no size gate at all ({Strategy::Base}'s
+        # `0`) is never made to answer a question about bytes it never
+        # measured -- see {Strategy::Base#size_declined_misses}.
+        #
         # Reopened rather than bodied inside the `Data.define(...) do ... end`
         # block: a constant declared there binds to the enclosing module, not
         # to the Data class.
@@ -105,7 +111,7 @@ module Lain
           # are honest zeros rather than the last derivation's, which is what
           # keeps a bench reading `summary_hits` from folding warm defers into
           # the hit rate.
-          NOTHING = new(replay: nil, seam: Derivation::UNCUT, hits: 0, misses: 0)
+          NOTHING = new(replay: nil, seam: Derivation::UNCUT, hits: 0, misses: 0, size_declined_misses: 0)
         end
 
         # @param keep_last [Integer] the trailing messages the derivation
@@ -166,7 +172,8 @@ module Lain
           seam = stretch.recollapsed(policy, pins)
           return Outcome::NOTHING if seam.equal?(stretch.cut)
 
-          held(stretch.timeline, walk: stretch.walk, cut: seam).with(hits: policy.hits, misses: policy.misses)
+          held(stretch.timeline, walk: stretch.walk, cut: seam)
+            .with(hits: policy.hits, misses: policy.misses, size_declined_misses: policy.size_declined_misses)
         end
 
         # This turn's chain with `cut` held and NOTHING new collapsed: what a
@@ -207,7 +214,8 @@ module Lain
         def replayed(policy, timeline, walk, cut)
           outcome = derivation(policy).derive(timeline, walk:, cut:) do |derived, seam|
             Outcome.new(replay: Replay.new(Derivation.projected(derived.to_a)), seam:,
-                        hits: policy.hits, misses: policy.misses)
+                        hits: policy.hits, misses: policy.misses,
+                        size_declined_misses: policy.size_declined_misses)
           end
           @consecutive = 0
           # The seam the edge COLLAPSED to, not the cut it held: a commit edge
@@ -217,7 +225,8 @@ module Lain
           outcome
         rescue Derivation::Invalid => e
           refused(policy, e)
-          Outcome.new(replay: nil, seam: cut, hits: policy.hits, misses: policy.misses)
+          Outcome.new(replay: nil, seam: cut, hits: policy.hits, misses: policy.misses,
+                      size_declined_misses: policy.size_declined_misses)
         end
 
         # A fresh {Derivation} per turn, because the policy it is frozen around
@@ -305,6 +314,11 @@ module Lain
 
           def misses = @snapshot.misses
 
+          # The one strategy that can answer this for real: it is the one that
+          # actually reads {SummarySnapshot}, the object that measured the
+          # bytes {Oracle::RoutedSummarizer}'s size gate turns on.
+          def size_declined_misses = @snapshot.size_declined_misses
+
           def propose_ranges(_messages, span:) = [span]
 
           def blocks(messages) = [{ "type" => "text", "text" => @snapshot.call(messages) }]
@@ -337,6 +351,8 @@ module Lain
           def hits = @inner.hits
 
           def misses = @inner.misses
+
+          def size_declined_misses = @inner.size_declined_misses
 
           # `#ranges` and not `#propose_ranges` on the inner: the inner's
           # answer is validated against the run it was asked about, and this

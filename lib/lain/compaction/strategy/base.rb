@@ -85,6 +85,20 @@ module Lain
 
         def misses = 0
 
+        # How many of `misses` above were a block
+        # {Compaction::SummarySnapshot}'s size gate would have declined
+        # outright, from either edge of its window -- see
+        # {SummarySnapshot#size_declined_misses}. Zero for every strategy but
+        # the one that actually reads that snapshot
+        # ({Compaction::Source::Derived::Held}): a span-level, model-backed
+        # policy has no size gate at all, so its own misses are all genuine
+        # asks that came back empty, never a size decline -- answering
+        # anything else here would be a claim about a gate this policy never
+        # consults. Summed rather than answered as a yes-or-no so
+        # {Composed} can add two operands' counts instead of having to settle
+        # which operand's answer wins.
+        def size_declined_misses = 0
+
         # @param messages [Array<Hash>] the rendered messages
         # @param span [Range] the droppable span, as message indices
         # @return [Array<Range>] the sub-spans to collapse: ascending,

@@ -41,6 +41,19 @@ module Lain
     # this object does not try to tell those apart. What it does instead is
     # COUNT -- {#hits} and {#misses}, the bench's read on whether the fires are
     # landing at all.
+    #
+    # {#size_declined_misses} narrows one corner of that same nil, the one
+    # corner this object CAN name without asking the oracle anything: how many
+    # misses were a block {Oracle::RoutedSummarizer} would have declined on
+    # SIZE alone and so never asked a model about at all. The gate is a
+    # WINDOW, not a floor -- `bytes > MODEL_THRESHOLD_BYTES && input_bound
+    # admits it` -- so a block can be declined from either edge: too small to
+    # be worth a call, or too large for one to serve (`INPUT_BOUND`'s 256 KiB,
+    # which a routine 5 MiB `web_fetch` body clears every day). Both edges
+    # decline identically -- no model asked, no catalog entry gated by size at
+    # all -- so both count. That needs no oracle state -- only the byte count
+    # {.take} already read off the block it is attesting -- so it is legible
+    # even when a miss on its own reads exactly like a summarizer that is down.
     class SummarySnapshot
       # A key that is not a content address would be a permanent, total,
       # silent miss. Loud instead, per CLAUDE.md's unknown-values premise.
@@ -98,6 +111,14 @@ module Lain
           Canonical.digest(part["content"]) if summarizable?(part)
         end
 
+        # The tool's own bytes, measured the same way
+        # {Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES} measures them --
+        # `#bytesize` on the content String directly, never a `Canonical.dump`,
+        # which would count a wire wrapper the gate was never compared against.
+        def source_bytes(part)
+          part["content"].bytesize if summarizable?(part)
+        end
+
         # Only a Hash is a wire content block. Anything else is still content
         # being dropped, so it is named by its class and attested like the rest.
         def type_of(part) = part.is_a?(Hash) ? part["type"] : part.class.name
@@ -113,7 +134,14 @@ module Lain
       # given, since the snapshot is frozen and cannot tally during `#call`.
       # `hits.zero?` with `misses` high is the signature of a key regression,
       # which is otherwise invisible in the experiment record.
-      attr_reader :hits, :misses
+      #
+      # `size_declined_misses` counts, of `misses` above, how many were a
+      # block {Oracle::RoutedSummarizer}'s size gate would have declined
+      # outright -- see the class doc for why that gate is a window and not a
+      # floor. Summed rather than a Boolean so it composes the way `hits` and
+      # `misses` already do: {Strategy::Composed} adds two operands' counts
+      # rather than having to decide which operand's yes-or-no wins.
+      attr_reader :hits, :misses, :size_declined_misses
 
       # Read the Eager once, over the messages this turn might drop, and keep
       # only the answers -- never the Eager itself.
@@ -122,16 +150,47 @@ module Lain
       # @param eager [#held] the live summary store, read here and released
       # @return [SummarySnapshot]
       def self.take(messages:, eager:)
-        digests = messages.flat_map { |message| source_digests(message) }
+        candidates = summarizable_candidates(messages)
+        digests = candidates.map(&:digest)
         found = digests.uniq.to_h { |digest| [digest, eager.held(digest)] }.compact.transform_values(&:summary)
         hits = digests.count { |digest| found.key?(digest) }
-        new(summaries: found, hits:, misses: digests.size - hits)
+        missed = candidates.reject { |candidate| found.key?(candidate.digest) }
+        new(summaries: found, hits:, misses: digests.size - hits, size_declined_misses: declined_misses(missed))
       end
 
-      def self.source_digests(message)
-        Blocks.of(message).filter_map { |block| Blocks.source_digest(block) }
+      # One lookupable block, paired with the digest it is keyed under -- the
+      # thing {.take} actually reasons about once a summary search has run,
+      # named so a MISSED one (see {.declined_misses}) is a filter over real
+      # values rather than a re-zip of two parallel arrays.
+      Candidate = Struct.new(:part, :digest)
+      private_constant :Candidate
+
+      def self.summarizable_candidates(messages)
+        messages.flat_map { |message| Blocks.of(message) }
+                .select { |part| Blocks.summarizable?(part) }
+                .map { |part| Candidate.new(part, Blocks.source_digest(part)) }
       end
-      private_class_method :source_digests
+      private_class_method :summarizable_candidates
+
+      # How many MISSED candidates {Oracle::RoutedSummarizer}'s size gate would
+      # have declined outright, from either edge of its window -- see the class
+      # doc and {#size_declined_misses}.
+      def self.declined_misses(missed)
+        missed.count { |candidate| !gate_admits?(Blocks.source_bytes(candidate.part)) }
+      end
+      private_class_method :declined_misses
+
+      # The window {Oracle::RoutedSummarizer#worth_a_model_call?} gates the
+      # PAID tier on, read back the same way: strictly over the threshold
+      # (worth asking) AND small enough for the ceiling to admit (small enough
+      # to serve). Outside either edge the gate declines and no model is ever
+      # asked -- checking only the threshold, as an earlier draft did, read a
+      # routine over-ceiling decline (256 KiB, well under
+      # `Tools::WebFetch::DEFAULT_BYTE_CAP`'s 5 MiB) as an unexplained miss.
+      def self.gate_admits?(bytes)
+        bytes > Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES && Oracle::RoutedSummarizer::INPUT_BOUND.admits?(bytes)
+      end
+      private_class_method :gate_admits?
 
       # @param summaries [Hash{String=>String}] SOURCE digest => summary text.
       #   The empty default is meaningful, not a placeholder: it is the
@@ -141,7 +200,8 @@ module Lain
       #   messages at all: a snapshot claiming `summaries.size` hits it never
       #   verified is precisely how a mis-keyed map could hide.
       # @param misses [Integer] see {#misses}
-      def initialize(summaries: {}, hits: 0, misses: 0)
+      # @param size_declined_misses [Integer] see {#size_declined_misses}
+      def initialize(summaries: {}, hits: 0, misses: 0, size_declined_misses: 0)
         # `-string` both freezes and dedups. An oracle answer's String arrives
         # MUTABLE, and one mutable String reachable from here costs this object
         # the shareability it exists to have.
@@ -154,6 +214,7 @@ module Lain
                               .freeze
         @hits = Integer(hits)
         @misses = Integer(misses)
+        @size_declined_misses = Integer(size_declined_misses)
         freeze
       end
 

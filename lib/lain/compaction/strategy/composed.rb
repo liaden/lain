@@ -83,6 +83,12 @@ module Lain
 
         def misses = @left.misses + @right.misses
 
+        # Summed for the same reason `hits`/`misses` are: an operand's answer
+        # is real regardless of which side of the composition proposed the
+        # range it came from, so there is no "which operand wins" question to
+        # answer here, only a total to carry forward.
+        def size_declined_misses = @left.size_declined_misses + @right.size_declined_misses
+
         # Both operands' proposals, tagged and merged, when they are disjoint.
         # Ascending because {Base#ranges} would refuse them otherwise, and
         # ascending is also what makes the fold's output independent of which
