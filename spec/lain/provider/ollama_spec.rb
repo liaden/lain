@@ -295,23 +295,26 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # MODEL-2: `qwen3-coder:30b` writes its tool call as assistant TEXT on roughly
-  # half of first turns (3 of 6, identical prompts, fresh sessions). With no
-  # `tool_calls` on the message, #decode_stop_reason returns :end_turn and the
-  # turn lands on Agent::LoopMachine's HEALTHY arm -- nothing notices, nothing is
-  # journaled, and the ask is a silent write-off.
+  # `qwen3-coder:30b` writes its tool call as assistant TEXT on roughly half of
+  # first turns (3 of 6, identical prompts, fresh sessions). With no
+  # `tool_calls` on the message, an honest decode reads :end_turn, and the turn
+  # used to land on Agent::LoopMachine's HEALTHY arm: a child delivered the
+  # envelope to its parent as a finished answer, and an ask was a silent
+  # write-off. So the provider that knows this model family reads the turn as
+  # :malformed, and the loop FAILS it by name.
   #
-  # Journal-only, deliberately (Open decision 3): this REPORTS, it does not
-  # repair and it does not render. A mis-parse would execute a call the model
-  # never properly expressed, and tier-3 gating does not help when the parse
-  # itself is wrong.
+  # It still REPORTS and does not repair: nothing is reconstructed, nothing is
+  # executed, and the text reaches the Timeline as the model wrote it. A
+  # mis-parse would run a call the model never properly expressed, and the
+  # approval gate does not help when the parse itself is what is wrong.
   #
   # PRECISION IS A GOAL, NOT A CONTRACT. A model explaining `<function=bash>`
   # and a model emitting it produce byte-identical text with no `tool_calls`, so
   # the degenerate case is undecidable and the narrowing is structural: a named
   # opening envelope, a well-formed `</function>` close, and nothing but the
-  # model's own stray `</tool_call>` after it. The last three examples are that
-  # narrowing, and they are what keeps a mention from reading as an emission.
+  # model's own stray `</tool_call>` after it. The narrowing examples below are
+  # what keeps a mention from reading as an emission -- and, now that a fire
+  # fails the turn, what keeps an answer ABOUT a tool call from being refused.
   describe "#complete on a tool call the model wrote as prose" do
     def prose_body(text, done_reason: "stop")
       { "model" => "qwen3-coder:30b",
@@ -337,6 +340,8 @@ RSpec.describe Lain::Provider::Ollama do
       io
     end
 
+    def decoded(body) = described_class.new(transport: transport_sync(body)).complete(request)
+
     it "journals a malformed_response naming the tool the envelope named" do
       expect(journaled(prose_body(prose_call)))
         .to include_journal_record("malformed_response", kind: "prose_tool_call", tool_name: "bash",
@@ -350,51 +355,119 @@ RSpec.describe Lain::Provider::Ollama do
       expect(record["excerpt"]).to include("rails new . --minimal --force")
     end
 
-    # The turn is otherwise unchanged: this is a side channel onto the journal,
-    # not a decode. The text still reaches the Timeline exactly as before, and
-    # the stop reason is still the (honest, if unhelpful) :end_turn.
-    it "leaves the turn otherwise unchanged -- same text, same stop reason, no tool_uses" do
+    # Refused, not rewritten: the text and the absence of tool_uses are exactly
+    # what the model sent; only the reading of the stop changes.
+    it "reads the turn as malformed while leaving its text and its missing tool_uses as the model sent them" do
       provider = described_class.new(transport: transport_sync(prose_body(prose_call)))
 
       response = provider.complete(request)
 
       expect(response.text).to eq(prose_call)
-      expect(response).to stop_with(:end_turn)
+      expect(response).to stop_with(Lain::StopReason::MALFORMED)
       expect(response.tool_uses).to be_empty
     end
 
-    it "journals nothing for an ordinary prose answer carrying no envelope" do
-      expect(journaled(prose_body("Sure -- I'd start by reading the Gemfile.")).string).to be_empty
+    it "keeps an honest :end_turn for an ordinary prose answer" do
+      provider = described_class.new(transport: transport_sync(prose_body("Sure -- I'd start with the Gemfile.")))
+
+      expect(provider.complete(request)).to stop_with(:end_turn)
     end
 
-    it "journals nothing for a well-formed tool call" do
-      expect(journaled(tool_call_body(["echo", { "text" => "hi" }])).string).to be_empty
+    # The whole road: decode -> Response -> Agent#transition -> LoopMachine ->
+    # the failure diagnostic, with nothing doubled but the socket.
+    describe "when an agent transitions on it" do
+      def agent_over(body, journal)
+        provider = described_class.new(transport: transport_sync(body), journal:)
+        Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
+                        context: Lain::Context.new(model: "qwen3-coder:30b", max_tokens: 64, stream: false),
+                        timeline: Lain::Timeline.empty)
+      end
+
+      # The second expectation is the one that matters: a reason the Response
+      # silently rewrote to :unknown would still fail the turn, under the
+      # diagnostic for a wire value nobody recognized.
+      it "fails the run under a reason naming the malformed response, and still journals the record" do
+        io = StringIO.new
+        agent = agent_over(prose_body(prose_call), Lain::Journal.new(io:))
+
+        agent.ask("build the blog")
+
+        expect(agent.state).to eq(:failed)
+        expect(agent.failure_reason).to include("malformed")
+        expect(agent.failure_reason).not_to include("unrecognized")
+        expect(io).to include_journal_record("malformed_response", kind: "prose_tool_call", tool_name: "bash")
+      end
+
+      it "settles an ordinary answer normally and journals no malformed_response" do
+        io = StringIO.new
+        agent = agent_over(prose_body("Sure -- I'd start by reading the Gemfile."), Lain::Journal.new(io:))
+
+        agent.ask("build the blog")
+
+        expect(agent.state).to eq(:done)
+        expect(io.string).not_to include("malformed_response")
+      end
+    end
+
+    # Each narrowing below asserts the STOP REASON as well as the empty journal:
+    # the stop reason is what fails a turn, so a narrowing that kept the journal
+    # quiet while still reading :malformed would refuse the answer in silence.
+    it "journals nothing and stops normally for an ordinary prose answer carrying no envelope" do
+      body = prose_body("Sure -- I'd start by reading the Gemfile.")
+
+      expect(journaled(body).string).to be_empty
+      expect(decoded(body)).to stop_with(:end_turn)
+    end
+
+    it "journals nothing for a well-formed tool call, which stops as one" do
+      body = tool_call_body(["echo", { "text" => "hi" }])
+
+      expect(journaled(body).string).to be_empty
+      expect(decoded(body)).to stop_with(:tool_use)
     end
 
     # Structural narrowing 1: a well-formed CLOSE. An envelope the model merely
     # started -- or a `<function=` a human quoted mid-sentence -- is not a call
     # it finished expressing, and reads as prose.
-    it "journals nothing when the envelope never closes" do
-      expect(journaled(prose_body("Now I will call <function=bash> with the command you gave.")).string)
-        .to be_empty
+    it "journals nothing and stops normally when the envelope never closes" do
+      body = prose_body("Now I will call <function=bash> with the command you gave.")
+
+      expect(journaled(body).string).to be_empty
+      expect(decoded(body)).to stop_with(:end_turn)
     end
 
     # Structural narrowing 2: the envelope occupies the TRAILING content. A
     # model that closes the envelope and then goes on talking was writing
     # about a tool call, not making one -- which is precisely the false
     # positive this card must not manufacture.
-    it "journals nothing when the model talks past the envelope it closed" do
-      talked_past = "For example you would write <function=bash>\n<parameter=command>\nls\n" \
-                    "</parameter>\n</function>\n and lain would run it. Shall I?"
+    it "journals nothing and stops normally when the model talks past the envelope it closed" do
+      talked_past = prose_body("For example you would write <function=bash>\n<parameter=command>\nls\n" \
+                               "</parameter>\n</function>\n and lain would run it. Shall I?")
 
-      expect(journaled(prose_body(talked_past)).string).to be_empty
+      expect(journaled(talked_past).string).to be_empty
+      expect(decoded(talked_past)).to stop_with(:end_turn)
     end
 
     # Structural narrowing 3: a plausible tool IDENTIFIER. Lain's tools are all
     # lowercase snake_case, so a `<function=Foo::Bar>` in quoted source is not a
     # tool this harness could ever have been asked to run.
-    it "journals nothing when the envelope names something no tool could be called" do
-      expect(journaled(prose_body("<function=Enumerable#each>\n</function>")).string).to be_empty
+    it "journals nothing and stops normally when the envelope names something no tool could be called" do
+      body = prose_body("<function=Enumerable#each>\n</function>")
+
+      expect(journaled(body).string).to be_empty
+      expect(decoded(body)).to stop_with(:end_turn)
+    end
+
+    # The price the narrowings leave, pinned as a KNOWN TRADE rather than a
+    # defect: text explaining an envelope and text emitting one are the same
+    # bytes, so an UNFENCED illustration that ends the turn is read as the call
+    # and fails the turn. A fenced one, or one the model talks past, does not.
+    it "deliberately over-refuses an unfenced illustration of an envelope that ends the turn" do
+      illustration = prose_body("Its broken call looks like this:\n\n" \
+                                "<function=bash>\n<parameter=command>\nls\n</parameter>\n</function>")
+
+      expect(decoded(illustration)).to stop_with(Lain::StopReason::MALFORMED)
+      expect(journaled(illustration)).to include_journal_record("malformed_response", tool_name: "bash")
     end
 
     # The Null journal is the default, so nothing above the Provider ever writes

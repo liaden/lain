@@ -314,9 +314,17 @@ module Lain
       # checkout with nobody to ask before surrendering it.
       def run_child(child, prompt, sync, on_stream_started: nil)
         child.answered do |agent, tools|
-          @answer.bounded(agent, agent.ask(prompt, on_stream_started:), journal:)
+          @answer.bounded(agent, refusing_malformed(agent.ask(prompt, on_stream_started:)), journal:)
                  .tap { sync.call(Isolation::SelfSync.worker(agent, tools:)) }
         end
+      end
+
+      # Checked before the bounding, so an envelope too large to deliver is not
+      # first handed back to the child to summarize.
+      def refusing_malformed(response)
+        return response unless response.stop_reason == StopReason::MALFORMED
+
+        raise MalformedAnswer, "the child's turn was a tool call written as prose, not an answer"
       end
 
       def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null)
@@ -406,6 +414,14 @@ module Lain
       # value is a stack or a lone middleware, and both answer `call`, so
       # unrefused they would fail only at the first spawn, deep inside it.
       class NotABuilder < ArgumentError; end
+
+      # A one-shot child whose turn its provider read as malformed -- a tool
+      # call written as prose -- has not answered, whatever its text says. It is
+      # raised rather than returned so the spawn ends the way every other child
+      # that did not answer ends: a `failed` completion naming this class and
+      # carrying no "result", which is what keeps it out of every reader of
+      # finished work, and an error result for the parent.
+      class MalformedAnswer < Error; end
 
       # The ask-the-human seam a spawn was never taught about: there is no
       # queue and no desktop for a question to reach, at ANY depth an
@@ -561,19 +577,22 @@ module Lain
         # lands in both a model-facing sentence and a journal line.
         def failure(error) = "#{error.class}: #{error.message.to_s[0, MAX_FAILURE_REASON]}"
 
-        # Why this summary cannot be delivered, or nil when it can. Four ways a
+        # Why this summary cannot be delivered, or nil when it can. Five ways a
         # second ask succeeds and still has nothing to deliver, each of which
         # would otherwise be published UNDER A NOTE PROMISING A SUMMARY: an
-        # empty answer, a `:max_tokens` stop, a `:refusal`, and a summary still
-        # over the ceiling. Two of them are the reason `stop_reason` is read at
-        # all -- a sentence cut off mid-word is precisely the silent truncation
-        # this whole path exists to avoid, and "I decline." labelled as a
-        # summary tells the parent the decline IS the answer it asked for.
+        # empty answer, a `:max_tokens` stop, a `:refusal`, a `:malformed` one,
+        # and a summary still over the ceiling. Three of them are the reason
+        # `stop_reason` is read at all -- a sentence cut off mid-word is
+        # precisely the silent truncation this whole path exists to avoid, "I
+        # decline." labelled as a summary tells the parent the decline IS the
+        # answer it asked for, and a prose tool call so labelled hands the
+        # parent an envelope as though it were the child's findings.
         def undeliverable(summary)
           text = summary.text
           return "it answered nothing when asked" if text.empty?
           return "the summary stopped at the model's own token ceiling" if summary.stop_reason == StopReason::MAX_TOKENS
           return "the child declined to summarize it" if summary.stop_reason == StopReason::REFUSAL
+          return "the summary was a tool call written as prose" if summary.stop_reason == StopReason::MALFORMED
           return if bounds.admits?(text.bytesize)
 
           "the summary was #{text.bytesize} #{bounds.unit}, over the ceiling too"
@@ -605,9 +624,9 @@ module Lain
         # answer's own bytes out. It is not what keeps this sentence bounded:
         # `subject:` is prose {Tool::Bounds} states it deliberately does not
         # police, and `reason` is the one part of it that is not a fixed string.
-        # So every reason reaching here is bounded before it arrives -- three
-        # are literals plus a byte count, and the fourth is clamped by
-        # {#failure}. A floor that blew through the ceiling it enforces would be
+        # So every reason reaching here is bounded before it arrives -- four
+        # are literals, a fifth is a literal plus a byte count, and the sixth
+        # is clamped by {#failure}. A floor that blew through the ceiling it enforces would be
         # the exact hazard {Tool::Bounds.ceiling} names: a message that echoes
         # its argument hands the model the bytes a refusal exists to withhold.
         def floor(response, size, reason, journal)

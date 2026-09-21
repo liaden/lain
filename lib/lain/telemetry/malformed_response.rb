@@ -21,10 +21,16 @@ module Lain
 
     # One response whose tool call arrived as assistant TEXT rather than as a
     # tool call. `qwen3-coder:30b` emits `<function=NAME>...</function>` as prose
-    # on roughly half of first turns, and a message with no `tool_calls` decodes
-    # to `:end_turn` -- so the turn lands on {Agent::LoopMachine}'s HEALTHY arm
-    # and the ask is a silent write-off. The presence of this record is the whole
-    # signal; a turn that decoded normally emits nothing.
+    # on roughly half of first turns, and the wire calls that an ordinary end of
+    # turn. The provider that notices writes this record AND reads the turn's
+    # stop reason as `:malformed`, so the loop fails it by name instead of
+    # settling it as an answer. The two travel together because they serve
+    # different readers: the stop reason routes the turn, and this record is
+    # the evidence a human checks the finding against. A turn that decoded
+    # normally emits neither.
+    #
+    # This is the one consumer point a second producer plugs into -- a new
+    # `kind` here, the same stop reason there.
     #
     # == It reports; it does not repair
     #
@@ -38,6 +44,13 @@ module Lain
     # the wrong shape" has more than one form, and a second belongs here rather
     # than in a record type a reader has to know to grep for. `model` is
     # nil-tolerant because a replayed or hand-assembled body may omit it.
+    #
+    # == No request_digest, unlike its siblings
+    #
+    # Deliberate, and not an omission to "fix": the detector runs in the
+    # provider's decode, which is handed the response body and never the
+    # Request, and reaching for one there would put this decision above the
+    # provider that owns its model family's failure modes.
     MalformedResponse = Data.define(:kind, :model, :tool_name, :excerpt) do
       include Journalable
 

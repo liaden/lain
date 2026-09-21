@@ -49,7 +49,8 @@ RSpec.describe Lain::Agent::LoopMachine do
       # transition table. Asserted here directly so a regression is loud in the
       # loop-machine spec, not only in the Agent's own totality spec.
       moves = { tool_use: :awaiting_tools, pause_turn: :awaiting_model, end_turn: :done,
-                stop_sequence: :done, max_tokens: :failed, refusal: :failed, unknown: :failed }
+                stop_sequence: :done, max_tokens: :failed, refusal: :failed, unknown: :failed,
+                malformed: :failed }
       moves.each do |event, target|
         m = includer_class.new(listener)
         m.__send__(:dispatch!) # awaiting_user -> awaiting_model
@@ -67,7 +68,7 @@ RSpec.describe Lain::Agent::LoopMachine do
              .flat_map { |branch| branch.state_requirements.map { |req| req[:to].values } }
              .flatten.include?(:failed)
       end
-      expect(failing.map(&:name)).to match_array(%i[max_tokens refusal unknown])
+      expect(failing.map(&:name)).to match_array(%i[max_tokens refusal unknown malformed])
     end
   end
 

@@ -13,10 +13,10 @@ module Lain
     # :nonsense` sailed through. And the wire-facing events are named for the
     # normalized {::Lain::StopReason} vocabulary itself, so {Agent#transition} fires the
     # reason directly (`send("#{stop_reason}!")`) with no `case` to re-parse it
-    # -- safe because `::Lain::StopReason.normalize` closes the wire's open enum to a
-    # fixed set before the machine sees it, and a totality spec pins one
-    # declared event per member, so adding a wire stop reason without an event fails a
-    # test rather than a run.
+    # -- safe because a {Response} admits only a member of `StopReason::ALL`,
+    # closing the wire's open enum to a fixed set before the machine sees it,
+    # and a totality spec pins one declared event per member, so adding a stop
+    # reason without an event fails a test rather than a run.
     #
     # `:awaiting_approval` has no incoming event yet; it is where
     # `Middleware::Gate` will land, declared now so the state set is
@@ -39,7 +39,10 @@ module Lain
         event(:dispatch) { transition %i[awaiting_user awaiting_model awaiting_tools] => :awaiting_model }
         event(:reopen) { transition any => :awaiting_user }
 
-        # One event per normalized wire stop reason -- fired by name from Agent#transition.
+        # One event per stop reason in StopReason::ALL -- fired by name from
+        # Agent#transition. `:malformed` is the one no wire sends: a provider's
+        # reading that a cleanly decoded turn is unusable, which fails it by
+        # name rather than letting it settle as an ordinary answer.
         event(:tool_use) { transition awaiting_model: :awaiting_tools }
         event(:pause_turn) { transition awaiting_model: :awaiting_model }
         event(:end_turn) { transition awaiting_model: :done }
@@ -47,6 +50,7 @@ module Lain
         event(:max_tokens) { transition awaiting_model: :failed }
         event(:refusal) { transition awaiting_model: :failed }
         event(:unknown) { transition awaiting_model: :failed }
+        event(:malformed) { transition awaiting_model: :failed }
 
         # The dual-ledger outer loop's stall->replan pair, purely ADDITIVE: both
         # move to or from the new `:stalled` state, so no previously legal move

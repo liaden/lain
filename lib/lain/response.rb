@@ -17,7 +17,7 @@ module Lain
         id: id&.to_s&.freeze,
         model: model&.to_s&.freeze,
         content: Canonical.normalize(content),
-        stop_reason: StopReason.normalize(stop_reason),
+        stop_reason: StopReason.admit(stop_reason),
         usage:,
         raw:
       )

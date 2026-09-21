@@ -141,7 +141,7 @@ flowchart TB
   P -->|"text · thinking · tool_use"| TL
 
   SR -->|"end_turn · stop_sequence"| DONE([done])
-  SR -->|"max_tokens · refusal"| FAIL([failed])
+  SR -->|"max_tokens · refusal · unknown · malformed"| FAIL([failed])
   SR -->|tool_use| GATE{"tier-3?"}
   GATE -->|yes| APR["Approval::Queue<br/>you&gt; · nvim · auto_approver"] --> EXEC
   GATE -->|no| EXEC["ToolRunner → tool middleware → Effect::Handler<br/>parallel_safe? tools gather, everything else is a barrier"]

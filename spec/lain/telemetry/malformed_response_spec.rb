@@ -2,12 +2,12 @@
 
 require "json"
 
-# The local model emits its tool call as assistant TEXT on
-# roughly half of first turns, and the turn then lands on the HEALTHY
-# `end_turn` arm with nothing journaled at all. This record is the witness.
+# The local model emits its tool call as assistant TEXT on roughly half of first
+# turns, which the wire calls an ordinary end of turn. The provider fails that
+# turn as :malformed, and this record is the witness a reader checks it against.
 #
-# It reports and never repairs -- the chunk's Open decision 3 refuses salvage,
-# because a mis-parse would execute a call the model never properly expressed.
+# It reports and never repairs -- salvage is refused because a mis-parse would
+# execute a call the model never properly expressed.
 # So every field here is evidence a reader can check by hand against the turn,
 # and none of it is a reconstructed call.
 RSpec.describe Lain::Telemetry::MalformedResponse do

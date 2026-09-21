@@ -33,6 +33,7 @@ stateDiagram-v2
   awaiting_model --> failed : max_tokens
   awaiting_model --> failed : refusal
   awaiting_model --> failed : unknown
+  awaiting_model --> failed : malformed
   awaiting_model --> stalled : stall
   stalled --> awaiting_model : replan
 ```

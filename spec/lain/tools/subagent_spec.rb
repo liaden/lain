@@ -475,6 +475,39 @@ RSpec.describe Lain::Tools::Subagent do
       expect(published_fleet).to eq([])
     end
 
+    # A child whose only output was a tool call written as prose. Its provider
+    # is the real ollama decode over a scripted socket, so the reading travels
+    # the production road: decode -> the child's own loop -> this tool.
+    context "when its only output was a tool call the model wrote as prose" do
+      let(:envelope) { "<function=bash>\n<parameter=command>\nls\n</parameter>\n</function>" }
+
+      def prose_child = Lain::Provider::Ollama.new(transport: OllamaWire.queue_transport([text_response(envelope)]))
+
+      def fleet_rows
+        Dir.mktmpdir do |dir|
+          feed = Lain::StatusFeed.new(path: File.join(dir, "state.json"))
+          record.events.each { |event| feed << event }
+          feed.state.fetch("fleet_tree")
+        end
+      end
+
+      it "does not answer its parent: the completion carries failed and no result" do
+        result = dispatched_by_parent(provider: prose_child)
+
+        expect(result["is_error"]).to be(true)
+        expect(result["content"].to_s).not_to include("<function=bash>")
+        expect(record.message.body).to include("lifecycle" => failed,
+                                               "error" => "Lain::Tools::Subagent::MalformedAnswer")
+        expect(record.message.body).not_to have_key("result")
+      end
+
+      it "is rendered failed on the fleet surface" do
+        dispatched_by_parent(provider: prose_child)
+
+        expect(fleet_rows.map { |row| row["state"] }).to eq(["failed"])
+      end
+    end
+
     # A request refused before the child's first answer leaves a head no
     # iteration returned to write, and the completion cites it.
     it "settles the head of a child that failed before its first answer into the record ahead of the completion" do
@@ -764,6 +797,20 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result.content).not_to include("summarized by the subagent itself")
       expect(result.content).to include("declined")
       expect(result.content).to include(ceiling.to_s)
+    end
+
+    # The same reason, for a summary the child wrote as a prose tool call: its
+    # provider reads it as malformed, and an envelope labelled a summary hands
+    # the parent a call as though it were the child's findings.
+    it "floors a summary the child wrote as a prose tool call" do
+      envelope = "<function=bash>\n<parameter=command>\nls\n</parameter>\n</function>"
+      transport = OllamaWire.queue_transport([text_response(oversized), text_response(envelope)])
+
+      result = build_subagent(provider: Lain::Provider::Ollama.new(transport:)).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).not_to include("summarized by the subagent itself")
+      expect(result.content).not_to include("<function=bash>")
+      expect(result.content).to include("a tool call written as prose")
     end
 
     # An exception message is unbounded, and it rides into BOTH the model-facing

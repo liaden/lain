@@ -48,12 +48,18 @@ module Lain
     private_constant :NO_FOLD
 
     # The diagnostic each failing stop_reason records. A lookup table, not control
-    # flow: every wire stop reason whose event transitions to :failed has an
-    # entry. Root-qualified because {Agent::StopReason} shadows the wire enum
+    # flow: every stop reason whose event transitions to :failed has an entry.
+    # Root-qualified because {Agent::StopReason} shadows the wire enum
     # everywhere inside this class.
+    #
+    # The malformed diagnostic names the journal record rather than one shape of
+    # failure, because `Telemetry::MalformedResponse#kind` is where a second
+    # shape would go, and the record is what carries the evidence.
     FAILURE_REASONS = { ::Lain::StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
                         ::Lain::StopReason::REFUSAL => "model refused to continue",
-                        ::Lain::StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
+                        ::Lain::StopReason::UNKNOWN => "unrecognized stop_reason from provider",
+                        ::Lain::StopReason::MALFORMED =>
+                          "malformed response from model: see its malformed_response journal record" }.freeze
     private_constant :FAILURE_REASONS
 
     # Each of the three objects the loop drives, paired with the legacy
@@ -579,15 +585,15 @@ module Lain
       nil
     end
 
-    # Fire the machine event named for the (already-normalized) stop_reason and
+    # Fire the machine event named for the (already-admitted) stop_reason and
     # let the machine, not a `case`, decide the resulting state.
-    # `::Lain::StopReason.normalize` has closed the wire's open enum before we get here
-    # and {LoopMachine} declares one event per member, so the send always names
-    # a real event -- an unrecognized wire value arrives as `:unknown`, which
-    # fails to `:failed`. The only loud arm left is structural: firing from an
+    # {Response} has closed the wire's open enum to `StopReason::ALL` before we
+    # get here and {LoopMachine} declares one event per member, so the send
+    # always names a real event -- an unrecognized wire value arrives as
+    # `:unknown`, which fails to `:failed`. The only loud arm left is structural: firing from an
     # illegal state raises `StateMachines::InvalidTransition`. Coupling the
-    # event names to the wire enum's vocabulary is deliberate; a totality spec pins
-    # it.
+    # event names to `StopReason::ALL`, the machine vocabulary rather than the
+    # wire enum, is deliberate; a totality spec pins it.
     #
     # The side effects that follow are keyed off the state the machine just
     # reached: the machine owns the state, the Agent owns the run context. A

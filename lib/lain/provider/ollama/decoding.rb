@@ -59,8 +59,17 @@ module Lain
         # `<function=` and a turn merely DISCUSSING one is essentially never
         # recorded.
         #
-        # The residual false positive is affordable only because this record is
-        # JOURNAL-ONLY: it costs a reader one NDJSON line to dismiss.
+        # The residual false positive now costs more than one NDJSON line. A
+        # direct turn still renders its text in chat exactly as before; what
+        # changes is that the run lands in `:failed`, so `--non-interactive`
+        # exits 1, and a one-shot child's answer is replaced by an error result
+        # for its parent. That is the price accepted for the other direction: a
+        # missed prose call settled as a finished answer and was handed to a
+        # parent as one, which nothing downstream could tell from success.
+        #
+        # Because the anchor needs the LAST closer, the lazy `.*?` spans from the
+        # FIRST opener to it, so a turn holding two envelopes reports the first
+        # one's tool name and quotes the excerpt from there.
         #
         # A fourth narrowing -- the name being live in the request's own toolset
         # -- is deliberately NOT here: `#build_response` is handed the body and
@@ -78,26 +87,26 @@ module Lain
 
         def build_response(body)
           message = body["message"] || {}
+          envelope = prose_tool_call(message)
           response = Response.new(id: nil, model: body["model"], content: decode_content(message),
-                                  stop_reason: decode_stop_reason(body, message), usage: build_usage(body), raw: body)
-          note_prose_tool_call(body, message)
+                                  stop_reason: decode_stop_reason(body, message, envelope),
+                                  usage: build_usage(body), raw: body)
+          note_prose_tool_call(body, envelope) unless envelope.nil?
           response
         end
 
         # The witness for a turn that decoded perfectly and asked for nothing. A
-        # prose tool call carries no `tool_calls`, so #decode_stop_reason answers
-        # :end_turn and the turn lands on {Agent::LoopMachine}'s HEALTHY arm --
-        # nothing above here can tell it from a model that simply finished
-        # talking, which is why the reading is made in the provider that knows
-        # this model family.
+        # prose tool call carries no `tool_calls`, so the wire alone reads
+        # :end_turn and nothing above here can tell it from a model that simply
+        # finished talking -- which is why the reading is made in the provider
+        # that knows this model family, and why it becomes the turn's stop
+        # reason as well as this record: the record carries the evidence, the
+        # stop reason is what fails the turn.
         #
         # It REPORTS and does not repair: salvaging the envelope would execute a
         # call the model never properly expressed, and the approval gate is no
         # help when the parse itself is what is wrong.
-        def note_prose_tool_call(body, message)
-          envelope = prose_tool_call(message)
-          return if envelope.nil?
-
+        def note_prose_tool_call(body, envelope)
           @journal << Telemetry::MalformedResponse.new(kind: :prose_tool_call, model: body["model"],
                                                        tool_name: envelope[:tool_name], excerpt: envelope[0])
         end
@@ -147,11 +156,14 @@ module Lain
         end
 
         # Presence of tool_calls forces :tool_use -- done_reason stays "stop" on
-        # a tool turn. Otherwise map the two enum values Ollama can express and
-        # let StopReason.normalize close the open enum ("" -> :unknown, and any
-        # load/unload edge string likewise), so the mapping stays total.
-        def decode_stop_reason(body, message)
+        # a tool turn. A prose envelope reads :malformed whatever done_reason
+        # says, since "stop" is exactly the lie it tells. Otherwise map the two
+        # enum values Ollama can express and let StopReason.normalize close the
+        # open enum ("" -> :unknown, and any load/unload edge string likewise),
+        # so the mapping stays total.
+        def decode_stop_reason(body, message, envelope)
           return StopReason::TOOL_USE unless Array(message["tool_calls"]).empty?
+          return StopReason::MALFORMED unless envelope.nil?
 
           case body["done_reason"]
           when "stop" then StopReason::END_TURN

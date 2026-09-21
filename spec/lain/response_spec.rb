@@ -80,4 +80,18 @@ RSpec.describe Lain::Response do
       expect(response).not_to have_same_digest_as(other)
     end
   end
+
+  # The reading lain makes of a wire reply has to survive construction: a
+  # Response that rewrote it to :unknown would still fail the turn, under the
+  # wrong diagnostic.
+  describe "stop_reason admission" do
+    it "keeps a malformed reading the provider already typed" do
+      expect(described_class.new(content: [], stop_reason: Lain::StopReason::MALFORMED).stop_reason)
+        .to eq(:malformed)
+    end
+
+    it "reads a wire String spelling malformed as unrecognized, not as lain's own reading" do
+      expect(described_class.new(content: [], stop_reason: "malformed").stop_reason).to eq(:unknown)
+    end
+  end
 end
