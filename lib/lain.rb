@@ -8,9 +8,13 @@ require "zeitwerk"
 # in topological order of the real require graph: a unit may reference, at load
 # time, only constants from lines above it. New files join their unit's index;
 # new units join this list where their dependencies place them.
+#
+# `Lain`'s OWN members are the exception, and they sit BELOW this list rather
+# than in it -- `SILENT` and `.live` are the module's, not any unit's, and the
+# module body is where they belong. Nothing here may read one at load time; a
+# unit that tried would raise a `NameError` at boot, loudly and immediately.
 require_relative "lain/version"
 require_relative "lain/error"
-require_relative "lain/silent"
 require_relative "lain/paths"
 require_relative "lain/project_dir"
 require_relative "lain/dsl_catalog"
@@ -50,7 +54,6 @@ require_relative "lain/worker_env"
 require_relative "lain/exec"
 require_relative "lain/project"
 require_relative "lain/session"
-require_relative "lain/live"
 require_relative "lain/tool"
 require_relative "lain/effect"
 require_relative "lain/journal"
@@ -117,34 +120,51 @@ module Lain
   # is the question that survives the window.
   module Ext; end
 
+  # The startup-notice seam's null: a `notice:`/`notify:` keyword default
+  # wherever a caller may not want to hear a component's non-fatal findings.
+  # The protocol is one message, `#call(message)`, which is exactly what a
+  # lambda already is -- so this stays a frozen Proc rather than a class
+  # alongside {Sink::Null} and {Channel::Null}, whose protocols span several
+  # methods standing in for a real collaborator (an I/O stream, an event
+  # channel). One no-op, shared, so seven byte-identical definitions do not
+  # drift out from under each other.
+  #
+  # It was the manifest's third entry before it was {Lain}'s own member, and it
+  # can sit below the whole list instead because every reader in lib/ is a
+  # `notice:`/`notify:` keyword default or a `|| SILENT` inside a method --
+  # resolved when a caller calls, never while the file naming it loads.
+  SILENT = ->(_message) {}
+
+  # The toolset -- and often the tool that is a member of it -- is built
+  # before every collaborator it will eventually need exists yet. Rather than
+  # forcing construction order, the wiring hands the not-yet-live one a thunk
+  # that reads the real value at CALL time; this is {Tools::AskHuman}'s
+  # `parent:` idiom, and the reason it exists: the toolset is built before the
+  # Agent.
+  #
+  # `.live` is the one place that distinction is resolved: anything `#call`-able
+  # is called, anything else passes through unchanged. Not memoized -- called
+  # again on every read, because "the value may be different by the time it is
+  # next needed" is the same reason it was read lazily instead of once at
+  # construction; a thunk that raises or returns nil is not rescued or
+  # defaulted here either, for the same reason -- this is resolution, not
+  # policy, and a caller that wants a Null Object still writes `Lain.live(x) ||
+  # Something::Null` itself.
+  #
+  # Single-level, not recursive: `Lain.live(-> { -> { 7 } })` answers with the
+  # inner Proc, still uncalled -- a second layer of laziness is a caller's own
+  # decision to unwrap, not one this method makes for them by resolving until
+  # the result stops responding to `#call`. And the callable it resolves takes
+  # NO arguments -- one that requires any raises `ArgumentError` here, exactly
+  # as it would have at any of the four sites this generalizes. That exposure
+  # was already true of each of them; it is worth saying now that it is a
+  # public, discoverable method rather than four narrow private call sites.
+  def self.live(value) = value.respond_to?(:call) ? value.call : value
+
   # The three spellings the loader's inflector cannot derive from a path. The
   # `version.rb` -> VERSION rule is not here because a gem loader already
   # carries it.
   LOADER_INFLECTIONS = { "cli" => "CLI", "http" => "HTTP", "tty" => "TTY" }.freeze
-
-  # Paths under lib/lain, relative to it, that the loader may not manage,
-  # because a loader resolves ONE constant per path and each of these answers
-  # to something else: several constants in one file (the telemetry record
-  # groups, `cli/command/small.rb`), one constant beside the one the path names
-  # (`frontend/reline.rb` is {Frontend::LineEditor}), or no constant at all
-  # (`live.rb` defines only `Lain.live`). Every entry is a permanent pairing:
-  # an ignored path is invisible to the loader, so something must require it by
-  # hand -- today the manifest below, and spec/zeitwerk_spec.rb fails if any
-  # entry is left unrequired or stops needing to be here.
-  LOADER_IGNORES = %w[
-    cli/command/small.rb
-    forge/landing/run.rb
-    frontend/reline.rb
-    live.rb
-    silent.rb
-    telemetry/secret_boundary.rb
-    telemetry/session_lifecycle.rb
-    telemetry/session_state.rb
-    telemetry/stream_signals.rb
-    telemetry/switches.rb
-    telemetry/test_layout.rb
-    telemetry/turn_stream.rb
-  ].freeze
 
   # The loader is kept rather than dropped on the floor: spec/zeitwerk_spec.rb
   # asks IT which constant each path is expected to yield, so the equivalence
@@ -163,10 +183,6 @@ end
 # only the frontend may do that.
 loader = Lain::LOADER
 loader.inflector.inflect(Lain::LOADER_INFLECTIONS)
-# Against the loader's own root rather than `__dir__`: a lib/ reached through a
-# symlink (spec/lain_spec.rb mirrors one to hide the compiled artifact) gives
-# those two different answers, and ignores keyed to the wrong one match nothing.
-loader.ignore(Lain::LOADER_IGNORES.map { File.join(loader.dirs.first, "lain", _1) })
 loader.setup
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.

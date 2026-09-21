@@ -177,10 +177,9 @@ module ReplySurfaceDiscipline
   # it answers `serves_replies?` itself, as the object commands are asked
   # THROUGH.
   #
-  # Asked of the MODULE's own constants, not of one filename per file: nine of
-  # these classes share one file (`command/small.rb`), and a naming
-  # convention that expects `small.rb` to define `Small` would see none of
-  # them. A class is a class regardless of which file loaded it.
+  # Asked of the MODULE's own constants, not of one filename per file: a class
+  # is a class regardless of which file loaded it, so a command that does not
+  # sit at the path its name implies is still seen.
   def command_classes
     Lain::CLI::Command.constants.filter_map do |name|
       klass = Lain::CLI::Command.const_get(name)
@@ -197,8 +196,8 @@ module ReplySurfaceDiscipline
   # Every command CLASS that reads the terminal, paired with its reads. Scans
   # per FILE (Ripper needs real source text) but groups the file's reads by
   # the enclosing class the Scanner recorded on each one, so a file holding
-  # several commands (a fold, `command/small.rb`) attributes each read to the
-  # command that makes it, not to whichever class the filename would guess.
+  # more than one command attributes each read to the command that makes it,
+  # not to whichever class the filename would guess.
   # A read with no enclosing class (module-level code) has no shipped example
   # and is dropped rather than misattributed to a `nil` command.
   def terminal_readers
@@ -319,7 +318,7 @@ module StdinReaders
   LIB = Pathname(__dir__).join("..", "lib", "lain").expand_path
 
   # The producer, and the line editor it alone runs.
-  READERS = %w[frontend/stdin_pump.rb frontend/reline.rb].freeze
+  READERS = %w[frontend/stdin_pump.rb frontend/line_editor.rb].freeze
 
   # `lain epic submit` asks its own question at its own terminal, with no chat
   # and no rail behind it.

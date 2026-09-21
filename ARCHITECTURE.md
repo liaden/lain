@@ -1687,14 +1687,14 @@ Subsystems without a section above, each self-documented in its own index file:
 | Structural search | `lib/lain/structural/` | the Ruby side of `ext/lain`'s AST/tree-sitter search |
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |
-| Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Carriers` namespace, and `Telemetry.fixed_point`; one file per record group holds 41 of the kinds that answer the duck, 30 of those with a construction contract — 28 named `Telemetry::Carriers` entries plus 2 anonymous `declare` blocks. **This subtree is not the whole vocabulary** — see below |
+| Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Carriers` namespace, and `Telemetry.fixed_point`; one file per record holds 41 of the kinds that answer the duck, 30 of those with a construction contract — 28 named `Telemetry::Carriers` entries, each beside the record that checks it, plus 2 anonymous `declare` blocks. **This subtree is not the whole vocabulary** — see below |
 
 **How many journal record types there are, and how to re-derive it.** Two mechanisms produce
 NDJSON records, so any single number needs its criterion stated.
 
 *Classes answering `#to_journal` through `Telemetry::Journalable`* — the criterion is
 `klass < Lain::Telemetry::Journalable`, which counts inheritance and not just `include`
-(`Telemetry::RequestResent` subclasses the `RequestSent` **event** in `telemetry/turn_stream.rb`
+(`Telemetry::RequestResent` subclasses the `RequestSent` **event** in `telemetry/request_sent.rb`
 and is the one a grep for `include` misses). That is **53** classes, each with a distinct
 `journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Approval::GateDecision`,
 `Approval::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,

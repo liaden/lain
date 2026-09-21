@@ -27,11 +27,7 @@ module ZeitwerkMapping
   EXPECTED = Lain::LOADER.all_expected_cpaths.freeze
   MANAGED = EXPECTED.keys.select { _1.end_with?(".rb") }.freeze
 
-  IGNORED = Lain::LOADER_IGNORES.map { File.join(LIB, "lain", _1) }.freeze
-
   module_function
-
-  def ignored_files = IGNORED.flat_map { File.directory?(_1) ? Dir.glob("#{_1}/**/*.rb") : [_1] }
 
   # The loader is not asked about an ignored path -- that is what ignoring one
   # means -- so its inflector is asked instead, which is still the loader's
@@ -39,18 +35,6 @@ module ZeitwerkMapping
   def expected_for(path)
     segments = path.delete_prefix("#{LIB}/").delete_suffix(".rb").split("/")
     (["Lain"] + segments.drop(1).map { Lain::LOADER.inflector.camelize(_1, path) }).join("::")
-  end
-
-  # Stepwise and without inherited lookup, because that is how Zeitwerk resolves
-  # one: a `Foo::Bar` inherited from a superclass would answer a question about
-  # `Foo` the loader never asked.
-  def resolvable?(cpath)
-    cpath.split("::").inject(Object) do |mod, cname|
-      return false unless mod.is_a?(Module) && mod.const_defined?(cname, false)
-
-      mod.const_get(cname, false)
-    end
-    true
   end
 
   def rel(path) = path.delete_prefix("#{LIB}/")
@@ -81,7 +65,7 @@ module ZeitwerkMapping
   # something has required by hand, plus the extension. A constant is findable
   # if and only if the file that defines it is in here.
   def loadable
-    (MANAGED + ignored_files.select { $LOADED_FEATURES.include?(_1) } + compiled).to_set
+    (MANAGED + compiled).to_set
   end
 
   # A constant the loader has no path for: no prefix of its own name is the
@@ -89,14 +73,11 @@ module ZeitwerkMapping
   # anyway -- through the file, not through the name -- which is why the ones
   # that matter are references made at class-body time.
   def orphans
-    CONSTANTS.reject { |_, file| ignored?(File.join(LIB, file)) }
-             .reject do |cpath, file|
+    CONSTANTS.reject do |cpath, file|
       expected = EXPECTED[File.join(LIB, file)] || expected_for(File.join(LIB, file))
       cpath == expected || cpath.start_with?("#{expected}::")
     end
   end
-
-  def ignored?(path) = IGNORED.any? { path == _1 || path.start_with?("#{_1}/") }
 end
 
 RSpec.describe "the Zeitwerk loader" do
@@ -129,22 +110,5 @@ RSpec.describe "the Zeitwerk loader" do
   it "finds a constant no path names, through the file that does define it" do
     expect(Lain::LOADER.all_expected_cpaths.values).not_to include("Lain::Agent::STATES")
     expect(ZeitwerkMapping.orphans).to include("Lain::Agent::STATES" => "lain/agent/loop_machine.rb")
-  end
-
-  describe "the ignore list" do
-    let(:files) { ZeitwerkMapping.ignored_files }
-
-    it "names files that are really there" do
-      expect(ZeitwerkMapping::IGNORED.reject { File.exist?(_1) }).to be_empty
-    end
-
-    # The converse of the sweep above, and what keeps the list from growing by
-    # habit: an entry whose constant the loader could have found on its own is
-    # one the loader should be finding.
-    it "carries no entry the loader did not need" do
-      needless = files.select { ZeitwerkMapping.resolvable?(ZeitwerkMapping.expected_for(_1)) }
-
-      expect(needless).to be_empty
-    end
   end
 end

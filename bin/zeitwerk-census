@@ -115,7 +115,6 @@ module ZeitwerkCensus
       Lain::Epic::STAGES
       Lain::Mode::LayerSet
       Lain::Price
-      Lain::Telemetry::SessionRead
     ].freeze
   end
 

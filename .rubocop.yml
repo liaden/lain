@@ -68,17 +68,15 @@ YARD/MismatchName:
 # moving the documentation back above the first half would publish the directive text as the
 # class's documentation. If you move it, delete the directive in the same edit.
 #
-# A fourth same-line disable exists, not listed above: `lib/lain/live.rb`'s `module Lain #
-# rubocop:disable Style/Documentation`. `Lain` cannot go in AllowedConstants itself -- it is the
-# single most-recurring bare name in lib/, exactly the case two paragraphs up rules out ("would
-# blind the cop repo-wide"). Its shape differs from the three above, too: those three carry the
-# real doc on a LATER reopen in the SAME file, so the cop's own node-at-a-time view eventually
-# sees it. `Lain`'s one canonical docstring lives in `lib/lain.rb`, a DIFFERENT file, on the
-# reopen this codebase treats as THE module's documentation (the compiled-extension mount lives
-# there, after it). `live.rb`'s reopen carries no docstring of its own for the same "exactly
-# one, and it goes on the reopen" reason CLAUDE.md gives elsewhere --
-# it is simply never going to be the file that reopen is in, so there was never a later-half to
-# wait for.
+# `Lain` itself is deliberately absent from the list below and needs no disable, which is not
+# the same as saying it is opened once: 761 files under lib/ open `module Lain`. Every one of
+# them opens it purely to nest something, and a body of nothing but constants, modules and
+# classes is a namespace the cop exempts -- so `lib/lain.rb`, whose body also defines a
+# method, is the only `Lain` the cop judges at all, and it carries the docstring. Adding the
+# name here would blind the cop repo-wide -- it is the single most-recurring bare name in lib/,
+# exactly the case the paragraph above rules out -- and a SECOND file giving `Lain` a
+# non-namespace body would need the disable back, which is reason enough to keep those members
+# in the one file.
 Style/Documentation:
   AllowedConstants:
     - CacheProfile
@@ -316,7 +314,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/compaction/summary_snapshot.rb"
     - "lib/lain/declarative/carrier.rb"
     - "lib/lain/frontend/completion.rb"
-    - "lib/lain/frontend/reline.rb"
+    - "lib/lain/frontend/line_editor.rb"
     - "lib/lain/guard.rb"
     - "lib/lain/prompt/slots.rb"
     - "lib/lain/provider/http/configuration.rb"

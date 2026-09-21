@@ -448,7 +448,7 @@ RSpec.describe Lain::Friction::CacheWaste do
   # ROADMAP.md:221-225's scheduler asks "is the cache cold right now" of the
   # `turn_usage` it just saw. Reaching it through `from_journal` would re-fold
   # the whole journal every turn, over `request_sent` payloads that
-  # `turn_stream.rb` itself calls O(n^2) in bytes.
+  # `Telemetry::RequestSent` itself calls O(n^2) in bytes.
   describe "the cache fact, reachable from one usage record alone" do
     it "answers cold? without a request, a chain or a journal fold" do
       fact = described_class.cache_fact(turn_usage(creation: 5_000, read: 0))

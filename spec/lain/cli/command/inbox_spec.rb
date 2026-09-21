@@ -1,0 +1,158 @@
+# frozen_string_literal: true
+
+require "async"
+require "stringio"
+require "tmpdir"
+
+# /inbox at `you>` delegates ENTIRELY to Command::Env's `replies` reader
+# (the SAME HumanReplies#drain_at_prompt human_replies_spec.rb covers) -- this
+# command owns only the argument-free call, never a second listing/answer
+# path or a second rendering of what the drain already showed through @tty.
+#
+# The last example documents the escalation instead of asserting a fix:
+# StatusFeed's inbox_count is Projection-parity-pinned (see
+# status_feed_spec.rb and Frontend::Neovim::InboxView's parity spec) to
+# retire ONLY on a committed :turn's causal_parents, and that :turn Event
+# never reaches the live tee in production (status_feed.rb's class doc says
+# so) -- so answering here, exactly like answering at `human>`, does NOT
+# retire the count by itself. Hand-back flags this as the known constraint
+# rather than forking a second counter or breaking the parity spec.
+RSpec.describe Lain::CLI::Command::Inbox do
+  around do |example|
+    Dir.mktmpdir do |dir|
+      @dir = dir
+      example.run
+    end
+  end
+
+  let(:tty_output) { StringIO.new }
+  let(:tty) do
+    Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: tty_output, input: StringIO.new,
+                            history_path: File.join(@dir, "history"))
+  end
+  let(:status_feed) { Lain::StatusFeed.new(path: File.join(@dir, "state.json")) }
+  let(:store) { Lain::Store.new }
+  let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
+  let(:ask_human) { Lain::Tools::AskHuman.new(parent:, observer: ->(event) { status_feed << event }) }
+  let(:questions) { Async::Queue.new }
+  let(:conductor) { instance_double(Lain::CLI::Conductor) }
+  let(:replies) { Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human:, questions:) }
+  let(:command) { described_class.new }
+
+  def env_with(replies:, status: instance_double(Lain::StatusFeed))
+    build_command_env(replies:, status:)
+  end
+
+  # What rides the arrival queue is the inbox item, not the question's
+  # bytes -- it carries the digest an answer names its set by, and the asker
+  # that asked ({Lain::CLI::Wiring::Askers#announce} is what does this in a
+  # run). The reply seam here is the lone asker rather than the run's
+  # directory, which is the single-agent case: it answers the same
+  # `#reply(answer, digest)`, and this command's job is the same either way.
+  def announced(question)
+    ask_human.ask(question)
+    questions.enqueue(Lain::CLI::HumanReplies::InboxItem.asked(question, ask_human.last_question))
+  end
+
+  it "runs the same drain UX HumanReplies exposes for human> -- TTY renders it, the command adds nothing" do
+    Sync do
+      announced("two pending?")
+      allow(conductor).to receive(:read_reply).and_return("yes")
+
+      text = command.call("", env_with(replies:))
+
+      # nil: the drain already delivered the listing + read through @tty
+      # (asserted below); a returned String here would render a second,
+      # redundant confirmation over the one the drain just printed.
+      expect(text).to be_nil
+      expect(tty_output.string).to include("two pending?")
+      expect(ask_human.last_answer.body["answer"]).to eq("yes")
+    end
+  end
+
+  it "answers honestly (via the TTY drain's own empty-state render) when nothing is pending" do
+    text = command.call("", env_with(replies:))
+
+    expect(text).to be_nil
+    expect(tty_output.string).to include("no questions pending")
+  end
+
+  # AC ("answered items retire from StatusFeed's count"), as delivered: the
+  # A message DOES reach the live StatusFeed (same ChainWriter observer the
+  # Q rode), but per Projection/InboxView parity it is lineage, not
+  # consumption, so the count is UNCHANGED right after the reply -- matching
+  # exactly what typing the same answer at `human>` would do. Retiring in
+  # real time needs a live :turn signal StatusFeed cannot see at its
+  # construction point (see the class doc's note on this); escalated in the
+  # hand-back, not solved here by diverging from the parity spec.
+  it "does not retire on the reply alone -- the pre-existing, escalated gap, unchanged by this card" do
+    Sync do
+      announced("q1?")
+      expect(status_feed.state["inbox_count"]).to eq(1)
+      allow(conductor).to receive(:read_reply).and_return("42")
+
+      command.call("", env_with(replies:, status: status_feed))
+
+      expect(status_feed.state["inbox_count"]).to eq(1)
+    end
+  end
+
+  # This command opens its OWN `human> ` read through the drain, and says so,
+  # which is how a reply prompt recognises it as the detour into that drain.
+  it "declares that it serves replies itself" do
+    expect(command.serves_replies?).to be(true)
+  end
+
+  # Round 11. The drain resolves its answer through {HumanReplies#resolve_reply},
+  # which SETTLES on a refusal -- deliberately, so a dead question does not list
+  # forever and refuse every time it is offered. What was not deliberate is that
+  # it settled a NIL digest too: an answer naming nothing marked nothing
+  # answered and retired nothing, and asking the views and the list to do so
+  # anyway put nil into both.
+  describe "a refusal's settle" do
+    let(:views) { instance_double(Lain::Frontend::Neovim::Buffers, answered: nil) }
+
+    # An item listed for a set the asker does not hold: the inbox line that
+    # outlived its question, which is what a stopped run leaves behind.
+    def listing(digest)
+      questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "which db?", from: "orchestrator",
+                                                               digest:, asked_at: Time.now))
+    end
+
+    before { replies.bind_editor(nil, views:) }
+
+    it "retires a refusal that DOES name a dead question, exactly as before" do
+      Sync do
+        dead = parent.commit(role: :assistant, content: [{ "type" => "text", "text" => "gone" }]).head_digest
+        listing(dead)
+        allow(conductor).to receive(:read_reply).and_return("42")
+
+        command.call("", env_with(replies:))
+
+        expect(tty_output.string).to include(dead)
+        expect(views).to have_received(:answered).with(dead)
+        expect(replies.pending?).to be(false)
+      end
+    end
+
+    it "retires nothing, and marks no view answered, when the reply names no question at all" do
+      Sync do
+        listing(nil)
+        allow(conductor).to receive(:read_reply).and_return("42")
+
+        command.call("", env_with(replies:))
+
+        expect(tty_output.string).to include("stale")
+        expect(views).not_to have_received(:answered)
+        expect(replies.pending?).to be(true)
+      end
+    end
+  end
+
+  it "answers a one-line usage, and the command file itself never prints (only TTY, the exempted frontend, does)" do
+    text = :unset
+    expect { text = command.call("", env_with(replies:)) }.not_to output.to_stdout
+    expect(text).to be_nil
+    expect(command.usage).to start_with("/inbox")
+  end
+end

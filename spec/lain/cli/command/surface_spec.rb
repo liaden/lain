@@ -161,11 +161,10 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  # `command/small.rb` folds nine of the smallest built-ins into one file;
-  # /help's listing is read off the LIVE registry, so a command's usage line
-  # surviving the fold is what would break first if the merge lost a
-  # `register` call.
-  it "still shows a merged command's usage line through /help, unchanged by the fold" do
+  # /help's listing is read off the LIVE registry rather than from anything
+  # keyed to a file, so a command's usage line is what breaks first if moving
+  # its class between files ever loses a `register` call.
+  it "still shows a command's usage line through /help, wherever its class lives" do
     with_project do |root|
       surface = build_surface(root)
 

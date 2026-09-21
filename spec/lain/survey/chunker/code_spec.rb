@@ -261,16 +261,12 @@ RSpec.describe Lain::Survey::Chunker::Code do
     # where the identity loses 1 of 11; `finding.rb` 2 of 14 against 1 of 32;
     # `session.rb` 1 of 21 against 1 of 29.
     #
-    # `cli/command/goal.rb` replaces the file this pinned in originally,
-    # `cli/command/sessions.rb`: a simplify round folded nine small REPL
-    # commands, `sessions.rb` among them, into one `command/small.rb`, and a
-    # file with several OTHER commands' units in it is no longer a clean small
-    # example of this property (some of those commands share identical
-    # one-line bodies, e.g. `def initialize = freeze`, and the `&` this helper
-    # uses to compare key sets collapses duplicate keys, which inflates the
-    # apparent loss for reasons that have nothing to do with the insertion).
-    # `goal.rb` is still a small, single-command, real file with no such
-    # collision, so it demonstrates the same property cleanly.
+    # `cli/command/goal.rb` is the subject because a file has to be small,
+    # real, and free of duplicate units for the figure to mean anything: the
+    # `&` this helper compares key sets with collapses duplicate keys, so a
+    # file holding several commands with identical one-line bodies (`def
+    # initialize = freeze`) would read as a larger loss for reasons that have
+    # nothing to do with the insertion.
     def keys_lost(chunker, path, source)
       before = chunker.call(path:, source:)
       after = chunker.call(path:, source: "# a new line\n#{source}")
@@ -378,12 +374,14 @@ RSpec.describe Lain::Survey::Chunker::Code do
   # of that sweep, 108 lines and 32 units, fourteen of them one line -- since
   # deleted along with the rest of `DerivationAudit`, which is why it no
   # longer names an entry below. `cli/command/sessions.rb` and
-  # `cli/command/quit.rb` are gone from here for the same reason, one round
-  # later: a fold merged both (and seven other small REPL commands) into
-  # `cli/command/small.rb`, which is not one of the sweep's offenders in its
-  # own right. `tools/ask_human/notifying.rb` went the same way in the same
-  # round, folded into the class it subclassed. Pinning offenders by name is what stops a future reader
-  # concluding from one comfortable file that the whole tree is comfortable.
+  # `cli/command/quit.rb` left the same way, when a fold merged nine small REPL
+  # commands into one file; both are files again since the loader migration
+  # split them back, and neither has been re-added because no sweep has
+  # re-measured them. That is the rule the absences follow: this is the dated
+  # sweep's sample rather than a live measurement, so a name leaves when its
+  # file does and none joins without a sweep behind it. Pinning offenders by
+  # name is what stops a future reader concluding from one comfortable file
+  # that the whole tree is comfortable.
   #
   # The cap is `max(1, lines/5)`: under plain integer division a four-line file
   # has a cap of zero, and one unit is the least any chunking can emit.
