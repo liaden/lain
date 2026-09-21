@@ -363,7 +363,10 @@ the cop.
   a **wall clock**, which is the shape that fails first when a box is loaded:
   `Lain::Frontend::HeadlessEditor #reap escalates to KILL when the editor ignores TERM, instead of
   waiting on it forever` (it read `expected 0.32 to be between 2 and 5` — the grace window elapsed
-  while the box was busy, so the assertion measured the load rather than the reap); and
+  while the box was busy, so the assertion measured the load rather than the reap); **its sibling**
+  `HeadlessEditor.start gives the editor back when the socket never appears and the editor ignores
+  TERM`, seen later the same day and green 6/6 alone — **two of the six examples in that one file
+  wait on a wall clock, so treat the whole file as load-sensitive rather than these two names**; and
   `a prompt the approval window decides ends its line with who decided it and how, and a y typed
   afterwards decides nothing` in `plain_chat_prompt_guards_spec`, whose
   `terminal.await(/decided by timeout: denied/)` never drew.
