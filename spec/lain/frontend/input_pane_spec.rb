@@ -15,7 +15,7 @@ require "tmpdir"
 # terminal's, and belongs to the seam spec.
 RSpec.describe Lain::Frontend::InputPane do
   subject(:pane) do
-    described_class.new(path:, tty:, input: reader, commands:, layers:, tick: 0.01)
+    described_class.new(path:, tty:, input: reader, commands:, layers:, tick: 0.01, geometry:)
   end
 
   let(:dir) { Dir.mktmpdir("lain-input-pane") }
@@ -28,6 +28,31 @@ RSpec.describe Lain::Frontend::InputPane do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: screen, pastel: Pastel.new(enabled: false),
                             history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
   end
+
+  # The pane measures its geometry by ioctl off its terminal and a pipe has none,
+  # so a window an example drives by hand stands in. SCRIPTED rather than simply
+  # assignable, because what separates this poller from a naive one is what it
+  # does with a RUN of sizes: each look takes the next, the last one stands, and
+  # a scripted exception is the terminal going away. A window nobody scripts
+  # never moves -- which is what the pane's own default over a pipe already is.
+  let(:window) do
+    Class.new do
+      def initialize
+        @current = [24, 80]
+        @queue = []
+      end
+
+      def script(*sizes) = @queue.concat(sizes)
+
+      def winsize
+        @current = @queue.shift unless @queue.empty?
+        raise @current if @current.is_a?(Class)
+
+        @current
+      end
+    end.new
+  end
+  let(:geometry) { Lain::Frontend::InputPane::Geometry.new(window) }
 
   # The keyboard, as a pipe: what a spec writes to `keyboard` the pane reads.
   let(:pipe) { IO.pipe }
@@ -43,9 +68,13 @@ RSpec.describe Lain::Frontend::InputPane do
     FileUtils.remove_entry(dir)
   end
 
-  # The pane in a thread of its own, and the chat's end of its connection.
+  # The pane in a thread of its own, and the chat's end of its connection. The
+  # accept is BOUNDED: a pane that cannot construct dies in its thread and never
+  # connects, and an unbounded accept turns that into a spec file that hangs
+  # rather than one that fails -- which is neither a red nor a pass.
   def open_pane
     @running = Thread.new { pane.run }
+    server.timeout = 5
     server.accept.tap { |chat| chat.timeout = 5 }
   end
 
@@ -126,6 +155,92 @@ RSpec.describe Lain::Frontend::InputPane do
     settles { screen.string.include?("fleet:1 inbox:0") || nil }
 
     expect(screen.string).to include("#{described_class::CLEAR_ROW}\u2744 fleet:1 inbox:0\n")
+  end
+
+  # A squeezed cockpit window is put back to the pane's row floor by tmux's own
+  # `window-layout-changed` hook, and that hook is a bare `resize-pane`: it
+  # tells nothing to draw again. The frame the chat would republish is
+  # byte-identical, so the chat's latch drops it and the pane's own dedupe would
+  # drop it too -- which leaves the pane's geometry as the only witness that
+  # anything happened.
+  describe "a pane whose own geometry moved" do
+    let(:hud) { "❄ fleet:1 inbox:0" }
+
+    # Counted through the row-clearing bytes, so a repaint that bypassed the one
+    # writer would not be counted as a repaint at all.
+    def hud_prints = screen.string.scan("#{described_class::CLEAR_ROW}#{hud}\n").size
+
+    def showing_hud(chat)
+      publish(chat, { "header" => hud })
+      settles { hud_prints.positive? || nil }
+    end
+
+    it "draws the HUD again once the geometry settles, with nothing typed" do
+      chat = open_pane
+      showing_hud(chat)
+
+      window.script([6, 80])
+
+      expect(settles { hud_prints > 1 || nil }).to be(true)
+    end
+
+    # THE GESTURE THE WHOLE THING EXISTS FOR, and the one a poller is likeliest
+    # to miss: squeeze the cockpit window past the pane's floor and the hook puts
+    # it back, so the pane ENDS AT THE SIZE IT STARTED FROM with its header
+    # scrolled off. Comparing against the last size repainted at makes that round
+    # trip invisible; remembering that something moved does not.
+    it "draws the HUD again after a squeeze and restore that ends where it started" do
+      chat = open_pane
+      showing_hud(chat)
+
+      window.script([6, 80], [24, 80])
+
+      expect(settles { hud_prints > 1 || nil }).to be(true)
+    end
+
+    # The settle half of the rule, which nothing else pins: a drag arrives as a
+    # RUN of sizes and each repaint costs a six-row pane a row, so the run is
+    # worth exactly one repaint, at its end. A poller that acted on the first
+    # look that differed would draw four times here.
+    it "repaints once at the end of a drag, not once per size it passes through" do
+      chat = open_pane
+      showing_hud(chat)
+      drawn = hud_prints
+
+      window.script([20, 80], [16, 80], [12, 80], [6, 80])
+      settles { hud_prints > drawn || nil }
+      sleep(0.2)
+
+      expect(hud_prints).to eq(drawn + 1)
+    end
+
+    # The clock moving under a running fleet is what this pane spends its life
+    # doing, and a poller that repainted on the tick rather than on the edge
+    # cost a six-row pane a row per second.
+    it "repaints nothing while the geometry holds still" do
+      chat = open_pane
+      showing_hud(chat)
+      drawn = hud_prints
+
+      sleep(0.3)
+
+      expect(hud_prints).to eq(drawn)
+    end
+
+    # A look that cannot answer is no information, not a new size. Read as one,
+    # a terminal going away is two same-sized looks after a differing one, which
+    # is the settle rule's own shape -- so a dying tty earned itself exactly one
+    # repaint, into a write on the descriptor that had just gone.
+    it "repaints nothing when its terminal goes away under it" do
+      chat = open_pane
+      showing_hud(chat)
+      drawn = hud_prints
+
+      window.script(Errno::ENOTTY)
+      sleep(0.3)
+
+      expect(hud_prints).to eq(drawn)
+    end
   end
 
   it "takes commands it completes against from the chat, holding no registry" do

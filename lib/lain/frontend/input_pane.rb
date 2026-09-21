@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "io/console"
 require "socket"
 
 module Lain
@@ -24,6 +25,10 @@ module Lain
     # half-typed line waits for the next prompt, because redrawing Reline's
     # prompt mid-line needs a private API and would cost the human their words.
     #
+    # ITS OWN GEOMETRY IS THE ONE THING IT WATCHES RATHER THAN IS TOLD. A pane
+    # resized under itself loses the header off the top and nothing upstream can
+    # see that happen, so it polls {Geometry} and repaints what it last drew.
+    #
     # A stream that simply ends is the chat restarting, and the pane reconnects
     # to the same path. Only the chat's `closed` goodbye ends the pane.
     class InputPane
@@ -33,8 +38,9 @@ module Lain
       # of what a pane can do with one.
       LAYERS = %i[vi notify].freeze
 
-      # How long between connection attempts, and how often the pane says
-      # whether anything has been typed at the prompt it draws.
+      # How long between connection attempts, how often the pane says whether
+      # anything has been typed at the prompt it draws, and how often it looks
+      # at its own geometry.
       TICK = 0.1
 
       # The pane that has said nothing yet about what it is drawing.
@@ -52,14 +58,19 @@ module Lain
       # @param commands [Array] filled from the chat's `context` frame, and
       #   BORROWED by the completion sources the terminal was built with
       # @param layers [Array] the same, for the layers in force
-      # @param tick [Numeric] the reconnect and touch-report cadence, in seconds
-      def initialize(path:, tty:, input: StdinPump.process_input, commands: [], layers: [], tick: TICK)
+      # @param tick [Numeric] the reconnect, touch-report and repaint cadence,
+      #   in seconds
+      # @param geometry [#moved!] the pane's own window, measured off the
+      #   terminal it was handed; {Geometry::Blind} where there is none
+      def initialize(path:, tty:, input: StdinPump.process_input, commands: [], layers: [], tick: TICK,
+                     geometry: Geometry.for(input))
         @path = path
         @tty = tty
         @input = input
         @commands = commands
         @layers = layers
         @tick = tick
+        @geometry = geometry
         @rail = InputRail.new(screen: tty)
         @drawn = NOTHING_DRAWN
         @reported = nil
@@ -175,7 +186,7 @@ module Lain
       end
 
       def serving(task, client)
-        reporting = task.async { report_touch(task, client) }
+        reporting = task.async { ticking(task, client) }
         frames(client).find { |frame| received(task, client, frame) == :closed }
       rescue IOError, SystemCallError
         nil
@@ -204,6 +215,32 @@ module Lain
         @layers.replace(Array(frame["layers"]).map(&:to_sym))
         return if drawing_already?(frame)
 
+        redraw(task, client, frame)
+      end
+
+      # The THIRD thing that can call for a draw, and neither of the other two
+      # can stand in for it: the frame the chat would republish is byte-identical,
+      # so the chat's own latch suppresses it and {#drawing_already?} would drop
+      # it here. Measured before this existed -- the header stayed gone from a
+      # restored pane until the next ask completed, while the status feed carried
+      # the right string throughout.
+      #
+      # Mid-edit the repaint is declined for the reason a changed header is -- a
+      # repaint is a fresh read, and a fresh read starts from nothing -- but not
+      # lost, which is what {Geometry}'s latch buys: a human who discards the
+      # half-typed line gets the header back on the next tick.
+      def repainted(task, client)
+        moved = @geometry.moved!
+        frame = @drawn
+        redraw(task, client, frame) if moved && !frame.equal?(NOTHING_DRAWN) && !editing?
+      end
+
+      # Whatever called for it, a draw replaces the read that was open: the
+      # header goes out through {#over_the_prompt}, the one writer, and the
+      # editor reopens under it. ANY draw settles a pending geometry change, so
+      # the latch is cleared here rather than where it is read.
+      def redraw(task, client, frame)
+        @geometry.painted
         stop_drawing
         @drawn = frame
         @reported = nil
@@ -263,17 +300,21 @@ module Lain
         @drawn = NOTHING_DRAWN
       end
 
-      # The rail asks its producers whether anything has been typed at a drawn
-      # prompt before it takes the terminal for an answer. The chat's rail
-      # cannot see this keyboard, so the pane says. The `loop` needs no break:
-      # the fiber is stopped with the connection.
-      def report_touch(task, client)
+      # The two things the pane has to notice on its own clock, neither of which
+      # anything upstream can see: whether the human has typed at the prompt it
+      # drew, and whether its own window has moved under it. The `loop` needs no
+      # break -- the fiber is stopped with the connection.
+      def ticking(task, client)
         loop do
           touch(client)
+          repainted(task, client)
           task.sleep(@tick)
         end
       end
 
+      # The rail asks its producers whether anything has been typed at a drawn
+      # prompt before it takes the terminal for an answer. The chat's rail
+      # cannot see this keyboard, so the pane says.
       def touch(client)
         untouched = !editing?
         return if @drawn.equal?(NOTHING_DRAWN) || untouched == @reported
@@ -326,6 +367,80 @@ module Lain
         end
 
         def dispose = @ingress.dispose
+      end
+
+      # The pane's own window, as an ioctl on its own terminal answers for it.
+      # tmux resizes a pane by changing exactly this and saying nothing else --
+      # its `window-layout-changed` hook is a bare `resize-pane` -- so this is
+      # the only witness the pane has that its rows moved.
+      #
+      # NOT a SIGWINCH trap and NOT `TTY::Screen`, both foreclosed before this
+      # existed: `Signal.trap` REPLACES rather than chains, so trapping WINCH
+      # would take the line editor's own resize redraw away, and `TTY::Screen`
+      # shells out `tput` whenever no ioctl answer is set -- two subprocess
+      # spawns per read, measured. An ioctl on a held descriptor costs neither.
+      #
+      # A LATCH rather than a diff against the last size painted at, because the
+      # gesture this exists for ENDS WHERE IT STARTED: a poller comparing sizes
+      # across a squeeze and a restore reads the size it read before and finds
+      # nothing to do. Remembering that something moved survives that, and the
+      # pane clears the latch when it paints.
+      class Geometry
+        # A pane with nothing to measure: `lain input` over a pipe, a spec's
+        # StringIO. Nothing can resize it, so nothing ever repaints and no caller
+        # has to ask whether it has a window. `nil` rather than `false` for one
+        # reason only -- `Naming/PredicateMethod` fires on a bare `false` body
+        # under a name without a `?` -- and nothing can tell: the one call site
+        # reads truthiness.
+        module Blind
+          def self.moved! = nil
+          def self.painted = nil
+        end
+
+        # @param io [IO] the pane's terminal
+        # @return [Geometry, Blind] whichever can answer for this one
+        def self.for(io) = StdinPump.terminal?(io) && io.respond_to?(:winsize) ? new(io) : Blind
+
+        def initialize(io)
+          @io = io
+          @seen = size
+          @moved = false
+        end
+
+        # Whether the window has moved since the pane last painted AND has since
+        # stopped moving. Bang, not a plain predicate: LOOKING advances the
+        # "since", so two looks in one tick are two questions.
+        #
+        # `now == @seen` is the settle half, and the whole difference between this
+        # and a naive poller -- a drag arrives as a RUN of sizes, each repaint
+        # costs a six-row pane a row, so a run is worth one repaint at its end.
+        def moved!
+          now = size
+          return false if now.nil?
+
+          @moved ||= !@seen.nil? && now != @seen
+          settled = @moved && now == @seen
+          @seen = now
+          settled
+        end
+
+        # The pane painted, so whatever the window did is on the screen now.
+        def painted = @moved = false
+
+        private
+
+        # A look that cannot answer is NO INFORMATION, not a new size, and the
+        # difference is not cosmetic: read as a size, a terminal going away is a
+        # differing look followed by two matching ones -- the settle rule's own
+        # shape -- so a dying tty earned itself one repaint, into a write on the
+        # descriptor that had just gone. `[0, 0]` IS an answer: `PTY.spawn` opens
+        # at it, and the real size arriving after is a genuine change, harmlessly
+        # so because nothing is drawn that early.
+        def size
+          @io.winsize
+        rescue IOError, SystemCallError
+          nil
+        end
       end
 
       # Single keys off the pane's own terminal, for the one prompt that is

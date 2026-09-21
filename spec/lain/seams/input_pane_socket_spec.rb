@@ -143,6 +143,10 @@ module InputPaneSocket
 
     def type(text) = @writer.write(text)
 
+    # What tmux's `resize-pane` does to a pane, as the pane can see it: the
+    # master's winsize, which the slave reads back by ioctl.
+    def resize(rows, cols = 80) = @reader.winsize = [rows, cols]
+
     def screen = @lock.synchronize { @screen.dup }
 
     def heard
@@ -271,6 +275,67 @@ RSpec.describe "a chat fed by an input pane", :seam do
     sleep(3)
 
     expect(cockpit.screen.scan("you> ").size).to eq(settled)
+  end
+
+  # Squeeze a cockpit window below the pane's row floor and tmux's
+  # `window-layout-changed` hook resizes it back -- a bare `resize-pane`, which
+  # tells nothing to repaint. Measured in a real cockpit: the HUD header was
+  # gone from the restored pane until the next ask completed, while the status
+  # feed carried the right string throughout. Nothing on the wire saw it, so
+  # the pane's own tty is what has to.
+  it "draws the HUD again after its own pane is resized, with no keypress" do
+    cockpit_at("lines")
+    publish(fleet: %w[a], fleet_tree: [fleet_row])
+    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    # One publish tick past the redraw that carried the row, so the count is
+    # taken over a quiet window rather than across the change itself.
+    sleep(1)
+    shown = cockpit.screen.scan("fleet:1 inbox:0").size
+
+    cockpit.resize(6)
+
+    expect(cockpit.settles { cockpit.screen.scan("fleet:1 inbox:0").size > shown || nil }).to be(true)
+  end
+
+  # A repaint is a fresh read and a fresh read starts from nothing, which is why
+  # a changed header waits for the next prompt under a half-typed line. A resize
+  # is held to the same rule: the human's words outrank the HUD, and the next
+  # prompt draws the header anyway.
+  it "leaves a half-typed line alone when the pane is resized" do
+    cockpit_at("lines")
+    publish(fleet: %w[a], fleet_tree: [fleet_row])
+    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    cockpit.type("half a line")
+    cockpit.settles { cockpit.screen.include?("half a line") || nil }
+    sleep(1)
+    shown = cockpit.screen.scan("fleet:1 inbox:0").size
+
+    cockpit.resize(6)
+    sleep(2)
+
+    expect(cockpit.screen.scan("fleet:1 inbox:0").size).to eq(shown)
+  end
+
+  # And the suppression above is BOUNDED. A human who resizes mid-line and then
+  # throws the line away has nothing left to protect, so waiting for an ask to
+  # end would cost them the HUD for no one's benefit -- which is the defect this
+  # whole path exists to kill, merely postponed. Nothing republishes on a
+  # discard: the chat's frame does not carry whether a pane is mid-edit, so its
+  # own latch suppresses an identical one either way. Ctrl-U, and no Enter.
+  it "draws the HUD again once a half-typed line is discarded, with no submit" do
+    cockpit_at("lines")
+    publish(fleet: %w[a], fleet_tree: [fleet_row])
+    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    cockpit.type("half a line")
+    cockpit.settles { cockpit.screen.include?("half a line") || nil }
+    sleep(1)
+    shown = cockpit.screen.scan("fleet:1 inbox:0").size
+    cockpit.resize(6)
+    sleep(1)
+
+    cockpit.type("\x15")
+
+    expect(cockpit.settles { cockpit.screen.scan("fleet:1 inbox:0").size > shown || nil }).to be(true)
   end
 
   # The pane prints its header raw, so a model-written task line reaches a
