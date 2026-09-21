@@ -1167,11 +1167,18 @@ RSpec.describe Lain::CLI::Up do
     # else-branch as the ordinary tmux calls, which is what it wants (present,
     # exit 0). The pre-flight is stubbed out entirely -- the construction-refusal
     # group above is where it is exercised, and the real one would spawn rspec.
+    # `input_dead` is nil rather than a status, on purpose: it keeps the
+    # input pane's own health independent of the chat's `dead:`/`probe_exit:`
+    # pair, so a test asking only after the chat never has to say what the
+    # input pane was doing. Left nil, the input pane answers "exited nonzero
+    # but still LISTED" -- {PaneCorpse#probe} reads that as tmux declining to
+    # say rather than as a death, which is instant (no grace to wait out) and
+    # writes nothing into any message, exactly like a pane nobody killed.
     def launch(calls, dead: "1 1", captured: "boom", probe_exit: 0, session_exists: false, raises: nil,
-               listed: nil, **keywords)
+               listed: nil, input_dead: nil, **keywords)
       spy = lambda do |*a|
-        calls << a and answer(a[1], dead:, captured:, probe_exit:, session_exists:, raises:,
-                                    listed: listed || [chat_pane, input_pane])
+        calls << a and answer(a, dead:, captured:, probe_exit:, session_exists:, raises:,
+                                 listed: listed || [chat_pane, input_pane], input_dead:)
       end
       described_class.new(session: "lain", state_path:, shell_out_factory: spy,
                           chat_preflight: ->(_args) { [] }, **keywords).launch_plan(nested: false)
@@ -1181,12 +1188,13 @@ RSpec.describe Lain::CLI::Up do
     # made, which is how the chat pane is told from the input pane below it --
     # and the input pane is the ACTIVE one, so a probe that still named the
     # window would read the wrong screen.
-    def answer(verb, dead:, captured:, probe_exit:, session_exists:, raises:, listed:)
+    def answer(args, dead:, captured:, probe_exit:, session_exists:, raises:, listed:, input_dead:)
+      verb = args[1]
       raise Errno::EACCES, "tmux" if verb == raises
 
       case verb
       when "has-session" then FakeShellOut.new(session_exists ? 0 : 1, "")
-      when "display-message" then FakeShellOut.new(probe_exit, "", dead)
+      when "display-message" then display_message(args, dead:, probe_exit:, input_dead:)
       when "capture-pane" then FakeShellOut.new(0, "", captured)
       when "new-session" then FakeShellOut.new(0, "", chat_pane)
       when "split-window" then FakeShellOut.new(0, "", input_pane)
@@ -1195,6 +1203,16 @@ RSpec.describe Lain::CLI::Up do
       when "list-panes" then FakeShellOut.new(0, "", "#{listed.join("\n")}\n")
       else FakeShellOut.new(0, "")
       end
+    end
+
+    # The target, not the verb, is what tells the two probes apart: both ask
+    # `display-message` with the same format string, so only the id in `-t`
+    # says which pane's health this particular call is about.
+    def display_message(args, dead:, probe_exit:, input_dead:)
+      return FakeShellOut.new(probe_exit, "", dead) unless args.include?(input_pane)
+      return FakeShellOut.new(1, "", "") if input_dead.nil?
+
+      FakeShellOut.new(0, "", input_dead)
     end
 
     # A plain `lain up` puts the chat in the window's own pane and splits the
@@ -1419,6 +1437,52 @@ RSpec.describe Lain::CLI::Up do
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       yield
       Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    end
+
+    # `raise ChatDied, died if died` used to run before the input pane was
+    # ever asked, so the two deaths could never be reported together: an
+    # operator who lost both panes at once heard only "so this did not
+    # attach", with no word that the keyboard was gone too and every reason
+    # left in the refusal to go looking for one.
+    describe "when the input pane dies alongside the chat pane" do
+      it "names the input pane's death too, so the operator hears about the keyboard as well" do
+        error = corpse_error(input_dead: "1 1")
+
+        expect(error.message).to include("the chat pane exited 1 moments after")
+          .and include("no keyboard")
+      end
+
+      # Read literally: refusing to attach is exactly what "so this did not
+      # attach" already covers, so the second sentence is additive, not a
+      # replacement -- both consequences survive on the one raised error.
+      it "keeps naming the chat's own death alongside the input pane's" do
+        error = corpse_error(input_dead: "1 1")
+
+        expect(error.message).to include("so this did not attach")
+      end
+    end
+
+    # The mirror of the section above: an input pane that dies ALONE still
+    # warns rather than refuses, unchanged from the single-corpse behaviour --
+    # proven here against the fake factory rather than only against a real
+    # tmux, now that probing the input pane no longer depends on the chat
+    # pane being alive to reach it.
+    it "still only warns, and still attaches, when the input pane alone dies" do
+      calls = []
+      plan = launch(calls, dead: "0 ", input_dead: "1 1")
+
+      expect(plan.messages.first).to include("no keyboard")
+      expect(plan.argv).to eq(%w[tmux attach -t lain])
+    end
+
+    # The clean end of the spectrum: neither pane died, so neither corpse has
+    # anything to say, and the plan's messages are exactly what a launch with
+    # no corpse in it has always produced.
+    it "carries no corpse sentence at all when both panes live" do
+      calls = []
+      plan = launch(calls, dead: "0 ", input_dead: "0 ")
+
+      expect(plan.messages).to eq(["HUD state: #{state_path}", "created tmux session 'lain'"])
     end
 
     # The two bounds above prove `Up` wires the REAL clock and that the whole

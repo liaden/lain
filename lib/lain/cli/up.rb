@@ -1022,18 +1022,27 @@ module Lain
       # and a corpse the operator came back to is evidence they are entitled to
       # attach to and read rather than something to lock them out of.
       #
+      # The chat is probed BEFORE the input pane, always, whether or not the
+      # chat turns out to be dead: raising the moment the chat's death was
+      # known used to skip the input pane entirely, so an operator who lost
+      # both panes at once was refused in the chat's words alone and sent
+      # straight back into a session the refusal never mentioned had no
+      # keyboard either. {PaneCorpse#call} is idempotent and bounded by its
+      # own grace, so asking it here costs the failing path nothing new.
+      #
       # @param nested [Boolean] forwarded to {#attach_command} unchanged
       # @return [LaunchPlan]
       # @raise [ChatDied] the chat pane died before anyone could attach to it
       def launch_plan(nested:)
         report = call
         died = @corpse&.call
-        raise ChatDied, died if died
+        input_died = @input_corpse&.call
+        raise ChatDied, [died, input_died].compact.join("\n\n") if died
 
         # A dead INPUT pane is not a reason to withhold the transcript, so it
         # is said rather than raised -- first, on {Report}'s warnings-first
         # rule.
-        LaunchPlan.new(messages: [*@input_corpse&.call, *report.messages], argv: attach_command(nested:))
+        LaunchPlan.new(messages: [*input_died, *report.messages], argv: attach_command(nested:))
       end
 
       # `switch-client` when the CALLING shell is itself an attached tmux
