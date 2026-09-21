@@ -30,7 +30,7 @@ export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; 
 ```
 
 ```bash
-bundle exec rake pspec         # THE suite command: 51s at 12 workers, 17,837 examples, 2026-09-13.
+bundle exec rake pspec         # THE suite command: ~101s at 12 workers, 20,499 examples, 2026-09-20.
                                # Bare `rspec` is the same examples SERIALLY, ~3m17s, no extra signal.
 bundle exec rspec path/to/one_spec.rb   # one file or one example: use this, not a bare `rspec`
 bundle exec rubocop -a         # safe autocorrect only; never -A
@@ -157,31 +157,50 @@ scribbles into the chat pane the frontend is painting.
 
 ## Requires
 
-Internal requires are centralized, never scattered. `lib/lain.rb` is the load-order manifest, in
-topological dependency order — that one ordered list is where a circular dependency has to show
-itself, because scattered `require` hides cycles behind idempotent early returns. A `foo.rb` with
-a sibling `foo/` is that subtree's index and requires `foo/*` itself, WHERE load order dictates.
-**Leaf files carry no internal requires at all**; external gem/stdlib requires stay in the leaf
-files that use them, documenting real dependencies.
+**A file's path is what names its constant, and that is the only rule.** `lib/lain/foo/bar.rb`
+defines `Lain::Foo::Bar`; Zeitwerk finds it for that reason and no other. A new unit is a file at
+its mirrored path — nothing else to do, no index entry, no manifest line, nowhere to register it.
+External gem/stdlib requires stay in the leaf files that use them, documenting real dependencies.
 
-So: never add an internal `require_relative` to a leaf file. Add the new file to its unit's index,
-and a new unit to `lain.rb` where its dependencies place it (a load-time `NameError` means the
-entry is too early).
+**A `require_relative` anywhere under `lib/` is never correct.** `grep -rn require_relative lib/`
+returns 0 and stays 0 — a convention, not a gate: neither the suite nor `rubocop` nor pre-commit
+fails on one, so writing one is silent. `lib/lain.rb` is no longer a manifest; it holds the loader,
+its three inflections (`cli` → `CLI`, `http` → `HTTP`, `tty` → `TTY`), the compiled extension's
+require with its `LoadError` re-raise, and `Lain`'s own five members — `spec/lain_spec.rb` pins
+that membership by source location, so a sixth is a deliberate edit. There is no ignore list.
 
-`bin/zeitwerk-census` is the worklist for getting OUT of that regime, the third sibling of
-`bin/comment-census` and `bin/spec-census`. It boots `lib/` in child processes with every internal
-`require_relative` stripped — Zeitwerk alone, in sorted order and again in REVERSE sorted order —
-and reports what stops resolving: a namespace file that is nothing but its index, and a constant
-reached while a file loads that no path maps to. Everything it finds boots green today, so neither
-the suite nor `rubocop` can see any of it. Most of them are broken the moment the manifest goes
-whatever the order; **2 of the 6 references today resolve only because their defining file happens
-to sort first**, and a rename is enough to turn one of those into a boot failure — which is what
-the reverse pass is for. It reads only what the loader manages, so the paths in `LOADER_IGNORES`
-are unprobed and a clean census is a claim about the managed tree. `spec/zeitwerk_spec.rb` owns the *other* question,
-whether the loader can find every constant the manifest defines, and the census does not restate
-it. `--check` is a ratchet against a **named allowlist** rather than a count, because at this size
-identity is the stronger gate: a count lets a new orphan in free the moment an old one is fixed.
-Nothing gates on it, deliberately — one pass is three boots and ~4s, which is not a per-commit price.
+Index files are KEPT and are no longer require lists. A `foo.rb` beside a `foo/` is the namespace's
+docstring and the namespace's own constants; `epic.rb`, `review.rb` and `telemetry.rb` are the
+exemplars. A unit-level constant several children read at class-body time belongs there.
+
+`eager_load` is load-bearing, not a performance choice. 296 constants under `Lain` have no path of
+their own and are reachable only through the file that defines them; loaded lazily each becomes a
+load-order dependency that boots clean and raises from a method body later, which is why
+`lib/lain/provider/http/providers/anthropic.rb` names the guarantee in writing.
+
+A cycle still has to be able to show itself — but the manifest was never where it did, and the old
+claim that it was did not survive its removal: the one "irrecoverable cycle" found on the way out
+was a misplaced file, and the genuine cycle (anthropic's three mixins reopening the class they are
+mixed into) sat undetected under the manifest for as long as the manifest existed. What surfaces
+one now is `bin/zeitwerk-census`.
+
+`bin/zeitwerk-census` is the third sibling of `bin/comment-census` and `bin/spec-census`, and a
+standing guard rather than a worklist: every tier reports 0 today. It boots `lib/` in child
+processes four times — a survey that asks Ruby which file defines which constant, then Zeitwerk
+alone in sorted order, in REVERSE sorted order, and in a SHUFFLED one — in about 6s, and reports
+what stops resolving: a namespace file that is nothing but its index, and a constant reached while
+a file loads that no path maps to. Either shape boots green wherever it survives, which is why
+neither the suite nor `rubocop` is the thing that finds one.
+
+What it proves is narrower than a green run looks. The shuffled pass SAMPLES the order space; the
+defect that motivated it reproduced in 5 of 12 seeds, so three clean runs in a row are consistent
+with a live one. The seed is printed on every run, green included, and `ZEITWERK_CENSUS_SEED=<n>`
+replays it. It probes only what the loader manages, and nothing is ignored, so a clean census is a
+claim about all of `lib/`. `spec/zeitwerk_spec.rb` owns the *other* question, whether the loader
+can find every constant `lib/` defines, and the census does not restate it. `--check` is a ratchet
+against a **named allowlist** rather than a count, because at this size identity is the stronger
+gate: a count lets a new orphan in free the moment an old one is fixed. Both allowlists are empty.
+Nothing gates on it, deliberately — one pass is four boots, which is not a per-commit price.
 Removing a fixed entry is the mechanism; adding one goes in its own commit, saying why.
 
 ## Testing
@@ -218,9 +237,11 @@ against the staged tree, so a commit whose staged files reference not-yet-commit
 fail. Commit the leaf first. If a hook fails the files stay staged — `git reset` before the next
 `git add`, or they get swept into the wrong commit.
 
-**A new lib file, its index/manifest line, and its spec land in the SAME commit.** Specs load
-through `lain.rb`, so an unstaged manifest edit gets stashed to `HEAD` while untracked specs
-still run, and the spec's constant won't resolve.
+**A new lib file and its spec land in the SAME commit**, and the hook cannot tell you otherwise.
+Specs load through `require "lain"` and the loader reads the tree off DISK, while pre-commit
+stashes unstaged changes to TRACKED files and leaves untracked ones alone — so a staged spec whose
+subject is still untracked passes the hook and lands a `HEAD` that cannot load. (The manifest edit
+this rule used to be about is gone; the disk-versus-`HEAD` gap is not.)
 
 ## Architecture, in one breath
 
