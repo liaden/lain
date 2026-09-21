@@ -169,22 +169,30 @@ only what is removed. Zeitwerk **adds back** an `ignore` entry and an explicit r
 file — the "manifest in miniature" its own escalation trigger names — so the honest figure is the net,
 and the honest risk metric is the `ignore` list's size. Baseline measured 2026-09-20 at `76d872ed`.
 
-| | baseline | after T1 | A1+A2 | **A1–A3** | after A4–A6 | after B |
-|---|---|---|---|---|---|---|
-| `lib/**/*.rb` files | 746 | 746 | 759 | **762** | | |
-| `lib/` code lines | 54,997 | 55,025 | 55,090 | 55,102 | | |
-| `require_relative` in `lib/` | 746 | 746 | 759 | **762** | | |
-| external `require "…"` in `lib/` | 302 | 303 | 304 | 304 | | |
-| `lib/lain.rb` code lines | 101 | 129 | 127 | 124 | | |
-| pure index files | 21 | 21 | 21 | 21 | | |
-| `CLAUDE.md` lines | 304 | 304 | 307 | 307 | | |
-| **`ignore` entries (files)** | 0 | 17 | 14 | **12** | | |
-| **`ignore` entries (dirs)** | 0 | 1 | 1 | **0** | | |
-| explicit requires kept | 0 | 18 | 15 | 12 | | |
-| orphan constants *(see below)* | — | 294 | 278 | 278 | | |
-| `require "lain"` boot | 835 ms | 848 ms | | | | |
-| `pspec` wall @ 12 workers | 95 s | 95 s | ~100 s | ~99 s | | |
-| example count | 20,470 | 20,475 | 20,475 | **20,475** | | |
+| | baseline | after T1 | A1–A3 | **Card A done** | after B |
+|---|---|---|---|---|---|
+| `lib/**/*.rb` files | 746 | 746 | 762 | **791** | |
+| `lib/` code lines | 54,997 | 55,025 | 55,102 | 55,272 | |
+| `require_relative` in `lib/` | 746 | 746 | 762 | **790** | |
+| external `require "…"` in `lib/` | 302 | 303 | 304 | 304 | |
+| `lib/lain.rb` code lines | 101 | 129 | 124 | **109** | |
+| `CLAUDE.md` lines | 304 | 304 | 307 | 323 | |
+| **`ignore` entries (files)** | 0 | 17 | 12 | **0** | |
+| **`ignore` entries (dirs)** | 0 | 1 | 0 | **0** | |
+| explicit requires kept | 0 | 18 | 12 | **0** | |
+| orphan constants *(see below)* | — | 294 | 278 | **296** | |
+| `require "lain"` boot | 835 ms | 848 ms | | | |
+| `pspec` wall @ 12 workers | 95 s | 95 s | ~99 s | ~105 s | |
+| example count | 20,470 | 20,475 | 20,475 | **20,495** | |
+
+**Card A is done, and the table says what it cost.** The `ignore` list is empty — the hidden manifest
+is gone — and `lib/lain.rb` is down to 109 code lines from a peak of 129. Everything else moved the
+wrong way, by design: **+45 files and +44 `require_relative` lines**, because splitting a file so it
+names its constant creates files and each needs a manifest line while the manifest still stands.
+
+**The orphan count rose, 278 → 296, exactly as predicted.** That is the row behaving as the note below
+says it must: removing an `ignore` entry *adds* that file to the sweep. A fall here would have meant
+something was wrong with the measurement, not with the tree.
 
 **The directory ignore is gone**, which matters more than the count suggests: a directory entry hid a
 whole subtree from the loader, so `review/records/` could have grown new unmapped files indefinitely
