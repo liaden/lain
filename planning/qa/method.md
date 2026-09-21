@@ -357,6 +357,40 @@ only worth having if it is read rather than skimmed:
   rendered text and the journal, **never by `$?`**. A launch-level refusal is the opposite case and
   does exit 1 — the split is construction (exits nonzero) versus a turn that failed (exits 0).
 
+### WHICH PANE a typed line goes to, since round 18 — the cockpit is three panes
+
+**The `you>` prompt is not in the chat pane.** `lain up` builds nvim, a chat pane holding the
+scrolling transcript, and an **input pane** beneath it that owns every prompt — `you>`, `command>`,
+`human>`, the countdown, the HUD. A round that reads the cockpit as two panes looks for the prompt
+in the wrong place, and the wrong place fails *silently*: a `send-keys` into the chat pane is
+swallowed with no error, the journal never moves, and `drive.sh` returns its ordinary
+`[journal N -> N lines in 60s]` quiet-window success. That reads exactly like a model that ignored
+the prompt.
+
+**Do not infer which pane is which — `lain up` records all three as tmux session options**
+(`cli/up.rb:348`), and that is the authority:
+
+```bash
+for o in @lain_editor_pane @lain_chat_pane @lain_input_pane; do
+  printf '%s=%s\n' "$o" "$(tmux -L "$QA_SOCK" show-options -v -t <session> "$o")"
+done
+```
+
+**Sends go to `@lain_input_pane`; reads go to `@lain_chat_pane`.** `drive.sh` and `peek.sh` now
+consult those options themselves and need no pin against a stock cockpit — but know the rule, because
+the failure they used to produce is the one a driver diagnoses as a lain defect. Until round 19 both
+helpers classified the two ruby panes identically (each is the `lain` exe, each reads `ruby` as its
+foreground command) and refused every send with *"2 chat panes … ambiguous"*; **five of that round's
+ten contexts hit it independently**, and the obvious workaround — pinning the chat pane — is the
+swallowing case above. `@lain_editor_pane` is the empty string under `--no-nvim`, and absent
+entirely on a server no cockpit built, which is what both helpers fall back to the process-tree
+resolver for.
+
+**A dead nvim makes `drive.sh` refuse for an unrelated reason**, and it looks like a parked call:
+`nv.sh buf lain://approval` returns nvim's `E247` on a dead socket, which is neither empty nor
+`no approvals pending`, so the guard reads it as *"an approval is pending -- answer it first"*.
+Check the pane before believing it (`Pane is dead (signal 9, …)`).
+
 ### Where a typed line goes, since 2026-09-14
 
 The human ruled **nvim-first** for the cockpit, and it changes what every send below can do. Know
@@ -1129,8 +1163,33 @@ clear cockpit nvims: the pattern matched the issuing shell's own command line an
 form that worked first try, and the one to copy:
 
 ```bash
-for p in $(ps -eo pid,args | command grep '[l]ain-cockpit://start' | awk '{print $1}'); do kill -9 $p; done
+for p in $(ps -eo pid,args | command grep '[l]ain-cockpit://start' \
+           | command grep -F "$XDG_RUNTIME_DIR" | awk '{print $1}'); do kill -9 $p; done
 ```
+
+**That `grep -F "$XDG_RUNTIME_DIR"` is not decoration, and round 19 is why it is there.** The form
+above shipped without it and is **box-wide**: every cockpit nvim on the machine carries
+`lain-cockpit://start` on its command line, so the loop matches every *other* agent's live cockpit
+as readily as your own stale one. In round 19 one context ran the unscoped form at 07:13:59 and
+**killed six sandboxes' cockpits at once**, mid-round, in a round where nine forks were driving in
+parallel. The signature is worth knowing, because it is how the victims diagnosed it: six of seven
+sandboxes lost *only* their nvim (9-15 MB) while every `lain chat` ruby and the 310 MB
+`llama-server` survived -- a pattern the OOM killer cannot produce. The socket path is what makes a
+cockpit yours, so match on it.
+
+Two consequences beyond the kill itself, both measured in round 19:
+
+- **A dead nvim makes `drive.sh` refuse.** `nv.sh buf lain://approval` returns nvim's `E247` on a
+  dead socket, which is neither empty nor `no approvals pending`, so `drive.sh` and `waitq.sh` read
+  it as *an approval is pending -- answer it first* and refuse every send. A driver who does not
+  know the cockpit died will read that as a wedged session.
+- **Since two cockpits at once is now the ORDINARY state** (the swapfile fix, above), any
+  "nvim RPC refused" or "cockpit wedged" finding from a round that ran forks is suspect until the
+  pane is captured: a dead pane prints `Pane is dead (signal 9, ...)`, and signal 9 is not something
+  lain does to itself.
+
+**Prefer the non-destructive probe first, and only remove what nothing answers on** -- the loop
+already in this file, one section up. Kill by pid only when that is not enough.
 
 **Round 9 hit it a SIXTH time, having read this section**, reaching for `pkill -f` reflexively to
 clear a hung `ollama run`: the pattern matched the agent shell's own command line and killed the
@@ -1214,7 +1273,7 @@ The capability checks are seconds each, and they are:
 
 ```bash
 command grep -n 'Needs:' planning/qa/scenarios/<scenario>.md    # the scenario states its own preconditions
-command grep -nE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc   # names only -- NEVER print a value
+command grep -cE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc   # a COUNT; see below
 command -v <the binary the scenario names>                      # rails, docker, cargo
 curl -s localhost:11434/api/tags                                # is the local arm actually up?
 ```
@@ -1226,6 +1285,22 @@ ANTHROPIC_API_KEY anywhere" -- so the check written to prevent a false *unreacha
 false *reachable*, in a round that then had to disprove it three ways. A name in a file is not a key;
 an `export` of it, or the variable being set, is. When it matters, test the variable rather than the
 file: `[ -n "${ANTHROPIC_API_KEY:-}" ]`.
+
+**And grep for a COUNT, not for the lines, because the `-n` form PRINTS THE KEY** — round 19, three
+times in one round. The recipe carried the comment "names only -- NEVER print a value" while being
+`grep -nE`, which emits the whole matching line, value and all; `OLLAMA_API_KEY`'s secret went into
+three contexts' transcripts before anyone noticed the instruction and the command disagreed. A
+comment cannot make a command print less. Use `-cE` for the count, and when you need the names,
+take the names:
+
+```bash
+command grep -cE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc          # how many
+command grep -oE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc \
+  | awk '{print $NF}'                                                                 # which names
+```
+
+**The same rule binds a findings file and a summary to the operator**, which is the half that
+actually leaks: a value pasted into evidence outlives the transcript it came from.
 
 **A local model call is a budget cost, not a capability gap.** It spends patience and GPU seconds and
 nothing else — no quota, no key, no network. Writing "needs a model" as though it were a wall is the

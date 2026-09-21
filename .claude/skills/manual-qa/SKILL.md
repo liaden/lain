@@ -210,7 +210,7 @@ So before "not reached — needs X" goes in the table, do these three, and they 
 ```bash
 ls planning/qa/scenarios/<the one you are about to drop>.md   # what does it SAY it needs?
 command grep -n 'Needs:' planning/qa/scenarios/*.md           # every scenario states its own preconditions
-command grep -nE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc   # names only -- never print a value
+command grep -cE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc   # a COUNT -- see below
 ```
 
 **Grep for an `export`, not for the NAME.** The loose form (`grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*'`)
@@ -218,6 +218,19 @@ matches **comments**: round 15 got `ANTHROPIC_API_KEY` back out of a comment rea
 has no ANTHROPIC_API_KEY anywhere", so the check written to prevent a false *unreachable* produced a
 false *reachable*. A name in a file is not a key. When it matters, test the variable:
 `[ -n "${ANTHROPIC_API_KEY:-}" ]`.
+
+**And take a COUNT, because `grep -n` prints the key.** This line carried the comment "names only --
+never print a value" while being `grep -nE`, which emits the whole matching line, secret and all;
+round 19 put `OLLAMA_API_KEY`'s value into three contexts' transcripts before anyone noticed the
+instruction and the command disagreed. A comment cannot make a command print less. `-cE` answers
+"is there one"; when you need the names, take the names and drop the values:
+
+```bash
+command grep -oE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc | awk '{print $NF}'
+```
+
+The same rule binds the findings file and the summary you hand back — a value pasted into evidence
+outlives the transcript it came from.
 
 **The default answer is the bench you already brought up.** Most scenarios in this directory say so
 in their own `Needs:` line — README's own words are that the six added 2026-08-23 are "all driveable

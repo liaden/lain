@@ -109,9 +109,30 @@ qa_is_lain() {
   command grep -qzaE '^(.*/)?lain$' "/proc/$1/cmdline" 2>/dev/null
 }
 
+# ...and is it the CHAT, rather than the input pane beside it?
+#
+# `lain up` has built THREE panes since round 18 -- nvim, the chat, and an input
+# pane under the chat -- and both ruby panes are the lain exe, so `qa_is_lain`
+# alone calls a stock cockpit ambiguous and both helpers refuse every send and
+# every read. Five of round 19's ten contexts hit this independently. Worse than
+# the refusal: a driver who works around it by pinning the CHAT pane gets its
+# sends SWALLOWED, because the `you>` prompt lives in the input pane -- the text
+# never reaches the rail, the journal never moves, and drive.sh reports an
+# ordinary "[journal N -> N lines in 60s]" quiet-window success.
+#
+# So the subcommand is the discriminator, and it is read off argv rather than
+# guessed: the first word after the exe. `lain chat` is a chat; `lain input` is
+# not. Anything else (a `lain sessions` probe, say) is not a chat either.
+qa_is_lain_chat() {
+  qa_is_lain "$1" || return 1
+  tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null \
+    | awk 'seen { print; exit } /^(.*\/)?lain$/ { seen = 1 }' \
+    | command grep -qx 'chat'
+}
+
 # Only the interpreter query has to prove itself; see the header.
 qa_descendant_qualifies() {
-  [ "$2" != ruby ] || qa_is_lain "$1"
+  [ "$2" != ruby ] || qa_is_lain_chat "$1"
 }
 
 # Is a matching <command-name> anywhere in the process tree rooted at <pid>?
@@ -146,6 +167,30 @@ qa_panes_running() {
   while IFS=' ' read -r id pid cmd; do
     if [ "$cmd" = "$1" ] || qa_tree_has "$pid" "$1"; then printf '%s\n' "$id"; fi
   done < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_pid} #{pane_current_command}')
+}
+
+# WHERE A TYPED LINE GOES, which since round 18 is not where the transcript is.
+#
+# `lain up` records each pane it built as a tmux SESSION option -- @lain_chat_pane,
+# @lain_input_pane, @lain_editor_pane (`cli/up.rb:348`) -- so the cockpit already
+# answers "which pane is which" authoritatively and neither helper has to infer
+# it. Sends belong in the input pane (it owns the `you>`/`command>` reader);
+# reads belong in the chat pane (it owns the transcript). Getting that backwards
+# is silent in the direction that matters: a send to the chat pane is swallowed
+# with no error at all.
+#
+# Empty when no cockpit built this server -- a bare `lain chat` probe in a plain
+# tmux window has no input pane and no option -- so every caller falls back to
+# the process-tree resolver, which is still right for that case.
+qa_pane_option() {
+  qa_panes_require_sock
+  local sess
+  for sess in $(tmux -L "$QA_SOCK" list-sessions -F '#{session_name}' 2>/dev/null); do
+    local v
+    v=$(tmux -L "$QA_SOCK" show-options -v -t "$sess" "$1" 2>/dev/null)
+    [ -n "$v" ] && { printf '%s\n' "$v"; return 0; }
+  done
+  return 1
 }
 
 # Is <pane id> one of the <candidate>s? Three sites ask it -- both helpers'
@@ -239,6 +284,14 @@ if [ -n "${LAIN_QA_PANE:-}" ]; then
   # the send side away too. peek.sh can afford to be strict because a read has
   # a raw fallback; a send has none.
   CHAT="$LAIN_QA_PANE"
+elif INPUT_PANE=$(qa_pane_option @lain_input_pane); then
+  # A cockpit says where its keyboard is, so ask it rather than inferring. This
+  # branch is what makes a stock `lain up` drivable at all: before it, the input
+  # pane and the chat pane were two indistinguishable `lain` ruby panes and the
+  # resolver below refused every send -- while a driver who pinned the chat pane
+  # to get past the refusal had the send swallowed silently, journal unmoved and
+  # a normal-looking quiet window returned.
+  CHAT="$INPUT_PANE"
 else
   mapfile -t CHAT_CANDIDATES < <(qa_panes_running ruby)
   case "${#CHAT_CANDIDATES[@]}" in
@@ -363,6 +416,14 @@ if [ -n "${LAIN_QA_PANE:-}" ]; then
     exit 2
   fi
   P="$LAIN_QA_PANE"
+elif [ "$WHICH" = chat ] && CHAT_PANE=$(qa_pane_option @lain_chat_pane); then
+  # Ask the cockpit which pane holds the TRANSCRIPT, for the same reason
+  # drive.sh asks it which holds the keyboard. Both ruby panes are the lain exe
+  # and both read `ruby` as their foreground command, so the resolver below
+  # cannot separate them -- and unlike the send side, where aiming wrong is
+  # silent, aiming a READ wrong returns plausible text about the wrong surface
+  # at exit 0. The session option is authoritative; use it when there is one.
+  P="$CHAT_PANE"
 else
   # Candidates come from panes.sh, which counts a chat or an editor running
   # under a shell wrapper too -- a pane's foreground command alone misses one,
@@ -510,6 +571,20 @@ cat > "$QA/answer.sh" <<'EOF'
 #!/usr/bin/env bash
 # answer.sh approve|deny [row] -- print every parked call whole, then answer one in lain://approval
 . "$(dirname "$0")/env.sh"
+# FAIL CLOSED, and do it FIRST -- before the "nothing parked" exit, so a bad
+# argument is refused whether or not anything happens to be parked right now.
+# This used to be `cmd=LainApprove; [ "$1" = deny ] && cmd=LainDeny` further
+# down, which made every argument that was not the literal word `deny` an
+# APPROVE -- so `n`, `N` and `no`, the three spellings a driver reaches for at a
+# gate, all RELEASED the call. Round 19 lost a refused private key to it and came
+# one step from filing a false HIGH against the secret boundary. A helper that
+# answers an approval gate must never default to the permissive arm.
+case "${1:-}" in
+  approve|y|Y|yes) ANSWER_CMD=LainApprove ;;
+  deny|n|N|no)     ANSWER_CMD=LainDeny ;;
+  *) echo "refusing: answer.sh needs approve|y|yes or deny|n|no as its first argument, got '${1:-}'" >&2
+     exit 2 ;;
+esac
 calls=$("$QA/nv.sh" expr "join(getbufvar(bufnr('lain://approval'), 'lain_approval_calls', []), \"\n\")")
 [ -n "$calls" ] || { echo "nothing parked"; exit 1; }
 echo "CALLS: $calls"
@@ -517,7 +592,7 @@ W=$("$QA/nv.sh" expr "bufwinid(bufnr('lain://approval'))")
 [ "$W" != "-1" ] || { echo "lain://approval has no window in this tab -- map getwininfo() first"; exit 1; }
 "$QA/nv.sh" send "<Esc>:call win_gotoid($W)<CR>"; sleep 0.3
 [ "$("$QA/nv.sh" expr 'bufname()')" = "lain://approval" ] || { echo "focus failed"; exit 1; }
-cmd=LainApprove; [ "$1" = deny ] && cmd=LainDeny
+cmd="$ANSWER_CMD"   # decided at the top of this script, before anything can exit early
 "$QA/nv.sh" send ":${2:-1}<CR>:$cmd<CR>"; sleep 1.5
 "$QA/nv.sh" buf lain://approval 2
 EOF
