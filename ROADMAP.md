@@ -1914,6 +1914,42 @@ XDG path relative, which put machine state back inside the user's repository)
      refusal-class follow-up. Round 19 is scheduled as a **full** round over every scenario, since
      this chunk moved the input surface, the modes and memory together.
 
+49. **Planned (2026-09-21, panel-reviewed)** — `planning/specs/qa-round-19-fixes.md`: the QA
+   round-19 discharge (`planning/qa-findings-round19-2026-09-21.md`), scoped to every HIGH, MED-HIGH
+   and MEDIUM reachable from a `/` command, `lain up` or configuration. No production users, so
+   nothing is aliased and the fixes go at the owner.
+   - **The wire.** The ollama arm puts a generation cap on the wire at last — `max_tokens` has been
+     journaled and never sent, so `--max_tokens`/`$LAIN_MAX_TOKENS` did nothing on the default
+     provider while the two flags declared beside it worked. A cross-arm law pins that every arm
+     sends it.
+   - **The loop.** A prose tool call stops being a silent write-off: a new `StopReason::MALFORMED`
+     fails the turn by name instead of landing on the healthy arm and handing the raw envelope back
+     as a child's answer. `KNOWN` becomes the wire vocabulary and `ALL` the machine's.
+   - **The gate.** An in-root symlink under an ordinary name no longer auto-approves — the rule
+     classifies what a word *resolves to*, at the caller, leaving the classifier's no-syscall
+     contract intact.
+   - **The root.** `lain chat --root` governs what `.lain/` governs; every `Backend.new` states its
+     root, and the guard widens to call sites that drop the keyword. Session *storage* keying is
+     explicitly not in scope.
+   - **The human.** `InputRail` becomes `Frontend::Intake` and takes history with it, so a credential
+     typed at `you>` stops being written verbatim after the user is told nothing was; `/stop` reaches
+     a running fleet; `/undo` stops being wedged by a plan-scope write, and an undo addresses the
+     root its snapshot recorded rather than the slot's current one; a cockpit that loses both panes
+     says it has no keyboard; the input pane repaints its HUD after a resize.
+   - **The record.** Damaged `message` and turn records refuse as `Corrupt` rather than escaping as a
+     raw `KeyError`; the session header records the compaction arm and `bench variance` refuses to
+     compare across arms; a compaction says why it held no summaries; `lain consolidate` stops
+     reporting success over a pass that stored nothing.
+   - **Size:** 15 cards in 3 waves. Critical path T1 → T2 → T18.
+   - **Panel verdict: RE-PLAN (scoped), with every blocker applied.** The review caught a card that
+     would have shipped green over a dormant feature — `Response#initialize` normalizes an unknown
+     stop reason to `:unknown`, so the new one would have been discarded while its own ACs passed —
+     plus a journaling AC with no production writer, three undeclared `Backend.new` call sites, a
+     fabricated dependency, and a rename card that manufactured the collisions it was serialized to
+     avoid.
+   - Deliberately deferred, each with its reason recorded: `bench arms`' ceiling abort,
+     a consumer for `Telemetry::TruncatedStream`, and scoping the session write-set across a rebind.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
