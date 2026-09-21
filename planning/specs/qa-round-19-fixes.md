@@ -1522,6 +1522,73 @@ runs `pspec`, this red blocks every card's landing. It is fixed as an out-of-pla
 (`card/pane-fix`) landed ahead of T8. The lesson: a red that five agents independently call
 contention is still only a hypothesis until it has been run serially on a quiet box.
 
+**Wave 1 landed 2026-09-21**, one hook-verified commit per card, cherry-picked from its snapshot
+branch (`git cherry` reads `-` for all ten, so each patch landed intact): T8 `8c23ebff`, T9
+`94270677`, T19 `6fb7df79`, T10 `06e1d573`, T14 `b6642fdb`, T13 `b654a01b`, T3 `2bd0af93`, T17
+`4e653ce9`, T1 `1f538302`, T6 `6b6ba5fc`. Counted `pspec` after T10: 20,566 examples. After T6:
+**20,682 examples, 0 failures**. Four hook runs reddened on a single timing example each (T9 twice,
+T13 twice, T3 once). Each was settled by 3 of 3 serial passes of its file, and each is now recorded
+by name in `docs/toolchain-traps.md`. Honestly stated: the landing script retried a red hook
+automatically, and the serial runs came after it, not before. Every retried example was in the end
+settled serially, and the final count run was clean. Worktrees and branches retired. Every untracked artefact, including T19's and T10's
+deliberately red follow-up probes, was copied first to `~/tmp/lain/r19-rescued/<card>/`.
+
+**Wave 2 started at `6b6ba5fc`**: T2, T7, T11 and T16 in parallel, file-disjoint by re-measurement.
+`InputRail` still names 13 `lib/` and 12 spec files, and none belongs to T2, T11 or T16.
+
+**Wave-2 rulings.**
+- **T2's card said "nothing new is needed on the subagent side", and that was wrong.** `Agent#run_loop`
+  returns a `:failed` Response without raising, so the one-shot path delivered it as `Tool::Result.ok`
+  with a `"result"`. The scope was expanded to `lib/lain/tools/subagent.rb`, which raises
+  `Subagent::MalformedAnswer` so `Lineage#ended(FAILED)` runs.
+- **Only `MALFORMED` fails a child.** The other `:failed` reasons keep today's delivery.
+- **`MALFORMED` stays out of `KNOWN` through `StopReason.admit`.** A Symbol that is a member of `ALL`
+  passes through. Everything else, every wire String included, is still `normalize`d. That keeps the
+  Anthropic path's coercion instead of moving it into the providers.
+- **T16's `wrote` means "this lineage changed what project memory resolves to".** A lineage that
+  writes and then reverts to the same content reads `false` by definition. It is stated on the
+  docstring so nobody "fixes" it into a count of store appends.
+- **T11's panel caught an unfrozen `Recording#compaction`.** The guarding spec's fixture had never
+  named a strategy, so it passed without checking anything. The fixture was fixed red first.
+
+**Deferred findings (wave 2), each a follow-up rather than a card defect:**
+- **A malformed ACTOR child is delivered as a settled reply.** `Actor#process` has no malformed check,
+  so the envelope goes to the parent's mailbox and the actor stays alive. Production reaches it
+  through the epic issue-orchestrator (`toolset_build.rb`, `mode: :actor`). The actor's failure
+  lifecycle has to be decided before the fix can be written. A probe proves it:
+  `~/tmp/lain/r19-rescued/T2/probe-T2-actor.rb`.
+- **`lain consolidate`'s clerk ignores agent state.** `Consolidation#spawn_clerk` prints a malformed
+  envelope as a lineage's result.
+- **`:max_tokens`, `:refusal` and `:unknown` one-shot children still reach the parent as `ok`.**
+- **No surface renders `failure_reason`, for any reason.** This predates the card.
+- **T16's report does not say which lineage wrote in a mixed pass.** This is an operator-ergonomics
+  follow-up.
+- **C-g compose from nvim bypasses the Intake.** `ComposedPrompt#read` → `Compose#settle` dispatches
+  the composed text as the `you>` line, so history records the compose marker, not the message. This
+  predates T7. T7's docs now name it as the one exception. Routing it through the Intake is a new
+  code path and would need its own card. Probe: `~/tmp/lain/r19-rescued/T7/probe-T7-compose.rb`.
+- **A `lain input` pane fed by a pipe now has its lines recorded by the chat.** That contradicts
+  `history_for`'s own rule that "a pipe is a script", and `history_for` repeats the decision
+  `input_for` already makes.
+
+- **The error-taxonomy scanner misnames every class declared in a body whose opener carries a
+  trailing comment.** `spec/error_taxonomy_discipline_spec.rb`'s `opens` regex is anchored at
+  line end, so `class Subagent < Tool # rubocop:disable ...` is never pushed onto its stack. T2's
+  `Subagent::MalformedAnswer` was read as `Lain::Tools::MalformedAnswer` and reported stranded,
+  even though a spec asserts on its real name. That redded T2's landing three times. The fix
+  moved the class into the file's clean reopen and left the scanner untouched. Every other class
+  in that first body is misnamed too.
+
+**T7 rulings.**
+- **Commands typed at `command>` are no longer recorded.** Kept, and documented on `TTY::History`.
+  Prose held at `command>` is recorded when `you>` takes it, so recording the command line as well
+  would record the prose twice. Up-arrow uses the in-process Reline ring, which still has the
+  command.
+- **A credential in the in-memory Reline ring is accepted.** It never leaves the process, and the
+  card's criterion is the file.
+- **nvim replies, answers and approvals resolve directly and never reach the Intake.** CLAUDE.md and
+  ARCHITECTURE.md had claimed otherwise, and both are corrected.
+
 ## Integration checks
 
 After the last wave:

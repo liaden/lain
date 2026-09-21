@@ -350,7 +350,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   `Lain::Frontend::InputPane a pane with no chat to talk to says what it is waiting for without
   claiming the screen, and leaves when told to` (twice);
   `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn
-  gathers every result into ONE user message in tool_use order, however the children finish`.
+  gathers every result into ONE user message in tool_use order, however the children finish`
+  (twice); and two in `plain_chat_prompt_guards_spec.rb`, `a plain chat's inline prompts over a
+  real terminal a prompt the approval window decides ends its line with who decided it and how,
+  and a y typed afterwards decides nothing` and `... Ctrl-C at human> offers stop, and s ends the
+  ask while the session carries on`, the second on the final count run.
   The 62_approval example below reddened twice more in the same run. One timing flake per hook run
   was the norm that day, so budget a retry per landing, and check a retry's red against this list
   by name before believing it.
