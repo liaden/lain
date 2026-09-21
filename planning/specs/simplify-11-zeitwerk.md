@@ -1,8 +1,31 @@
 # Simplify 11 — retire the manifest that every new unit has to edit
 
-status: in-progress — the 2026-09-13 ruling ("runs after simplify-08 and simplify-10 land, alone")
-was **re-decided by the human on 2026-09-20** once the gate's premise was measured false. See the
-Execution log.
+status: done — 2026-09-20. The 2026-09-13 ruling ("runs after simplify-08 and simplify-10 land,
+alone") was re-decided by the human once the gate's premise was measured false; see the Execution
+log. **T3 was struck** (index files are kept, not deleted) and **T2 was replaced** by Card A (every
+file names its own constant) and Card B (delete the manifest), on the T2a spike's findings.
+
+Follow-ups this plan opened and did NOT close, all out of its scope:
+
+1. **`FAULT_SURFACE` is misclassified** (`frontend/approval_policy.rb`). Its comment said it belongs
+   in `Escalation::Surfaces::AUTOMATIC` and could not go there on a load-order premise. **That
+   premise is now false and the misclassification remains**: the escalation ladder weighs a broken
+   terminal's denial as a person's. Moving the constant is a behaviour change on an approval path
+   and needs its own card. The comment records this at both the lib and spec sites.
+2. **Nothing holds the three `--permissive` spellings equal.** With the manifest gone both commands
+   *could* read `Review::Verdict::Policy::FLAG`; no spec pins them.
+3. **`Lain::Ext.blake3_hex` is Ractor-unsafe and reached from a spawned thread** via
+   `review/hunk.rb`. Seen as a `Ractor::UnsafeError` killing a thread mid-suite — reported, not
+   failing, so invisible to a green run.
+4. **The pre-commit suite is a coin flip on a large change.** Five specs — `62_approval_spec`,
+   `input_pane_spec`, `support_headless_editor_spec`, `tty_spec`, `worktree_handback_spec` — are
+   real-terminal or wall-clock seams that red under 12 workers and pass alone. A **serial** run of
+   the whole suite was **20,499/0**. This chunk lost roughly a dozen suite runs to them. Either tag
+   that family out of the hook while keeping it in `pspec`, or give the wall-clock assertions an
+   injected clock.
+5. **One pre-existing yard-lint offence**, `review/critique.rb:241` (`Tags/RedundantParamDescription`),
+   found by the whole-tree run this plan's integration checks require. The hook lints `--staged` only,
+   so it has been invisible.
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -169,21 +192,41 @@ only what is removed. Zeitwerk **adds back** an `ignore` entry and an explicit r
 file — the "manifest in miniature" its own escalation trigger names — so the honest figure is the net,
 and the honest risk metric is the `ignore` list's size. Baseline measured 2026-09-20 at `76d872ed`.
 
-| | baseline | after T1 | A1–A3 | **Card A done** | after B |
+| | baseline | after T1 | A1–A3 | Card A done | **B + T4/T5: FINAL** |
 |---|---|---|---|---|---|
-| `lib/**/*.rb` files | 746 | 746 | 762 | **791** | |
-| `lib/` code lines | 54,997 | 55,025 | 55,102 | 55,272 | |
-| `require_relative` in `lib/` | 746 | 746 | 762 | **790** | |
-| external `require "…"` in `lib/` | 302 | 303 | 304 | 304 | |
-| `lib/lain.rb` code lines | 101 | 129 | 124 | **109** | |
-| `CLAUDE.md` lines | 304 | 304 | 307 | 323 | |
-| **`ignore` entries (files)** | 0 | 17 | 12 | **0** | |
-| **`ignore` entries (dirs)** | 0 | 1 | 0 | **0** | |
-| explicit requires kept | 0 | 18 | 12 | **0** | |
-| orphan constants *(see below)* | — | 294 | 278 | **296** | |
-| `require "lain"` boot | 835 ms | 848 ms | | | |
-| `pspec` wall @ 12 workers | 95 s | 95 s | ~99 s | ~105 s | |
-| example count | 20,470 | 20,475 | 20,475 | **20,495** | |
+| `lib/**/*.rb` files | 746 | 746 | 762 | 791 | **804** |
+| `lib/` code lines | 54,997 | 55,025 | 55,102 | 55,272 | **54,579** |
+| `require_relative` in `lib/` | 746 | 746 | 762 | 790 | **0** |
+| external `require "…"` in `lib/` | 302 | 303 | 304 | 304 | 304 |
+| `lib/lain.rb` code lines | 101 | 129 | 124 | 109 | **24** |
+| **`ignore` entries** | 0 | 18 | 12 | **0** | **0** |
+| orphan constants *(see below)* | — | 294 | 278 | 296 | 296 |
+| `require "lain"` boot | 835 ms | 848 ms | | | **924 ms (+2.2%)** |
+| `pspec` wall @ 12 workers | 95 s | 95 s | ~99 s | ~105 s | ~101 s |
+| example count | 20,470 | 20,475 | 20,475 | 20,495 | **20,511** |
+
+**The net, stated without flattery.** 790 `require_relative` lines gone, `lib/lain.rb` from 101 code
+lines to **24**, and `lib/` **418 code lines lighter** despite gaining 58 files — the manifest was
+bigger than the module declarations that replaced it. Against that: **boot is 2.2% slower**, the suite
+wall did not move, and the spike's apparent per-worker spec-load win **did not reproduce** (1.69 s
+either way). **There is no speed case and this plan should never be cited as one.** What it bought is
+that adding a unit is now writing a file, and that the file naming a constant is checkable.
+
+**What the migration actually found is worth more than the line count**, and none of it was visible
+before:
+
+- **A live shadowing bug.** `arm/ladder.rb` read `Epic::STAGES` off `Arm::Epic`, correct only because
+  `arm.rb` required `ladder` ten lines before `epic`. Reordered or lazily loaded, it raises.
+- **A real load cycle.** `anthropic.rb` included three modules whose files reopen its own class, so
+  reaching a child first deadlocked the require. It had sat under the manifest for as long as the
+  manifest existed — which refutes the rule's own claim that the ordered list was where a cycle had to
+  show itself.
+- **A hollow negative control.** `review/deletability_spec`'s `requires:` list controlled nothing once
+  eager loading reads whatever is on disk. Green, and proving nothing.
+- **Eleven error classes resolving by alphabetical luck**, invisible in both fixed directory orders and
+  caught only by a shuffled pass, in 5 seeds of 12.
+- **`const_defined?` answers true for a registered autoload**, so any spec asserting "X is not defined"
+  weakens silently under a loader.
 
 **Card A is done, and the table says what it cost.** The `ignore` list is empty — the hidden manifest
 is gone — and `lib/lain.rb` is down to 109 code lines from a peak of 129. Everything else moved the
