@@ -123,8 +123,8 @@ module Lain
         def forced_put(record, index)
           verified(record, index)
         rescue Store::MissingObject => e
-          raise Corrupt, "message record #{index} (#{labelled(record)}) cites a causal parent this " \
-                         "replay never landed: #{e.message}"
+          raise Corrupt, "#{labelled(record, index)} cites a causal parent this replay never " \
+                         "landed: #{e.message}"
         end
 
         # The `compact` is for an ABSENT `render_parent` -- a `message` record
@@ -178,12 +178,23 @@ module Lain
         end
 
         def verified(record, index)
-          event = rebuilt(record, cited_parents(record, index))
-          recorded = record.fetch("digest")
+          recorded = required(record, index, "digest")
+          event = rebuilt(record, index, cited_parents(record, index))
           return event if event.digest == recorded
 
-          raise Corrupt, "message record #{index} (#{labelled(record)}) recorded as #{recorded} " \
-                         "re-commits to #{event.digest}; its content no longer matches its content address"
+          raise Corrupt, "#{labelled(record, index)} recorded as #{RequiredKeys.shown(recorded)} " \
+                         "re-commits to #{RequiredKeys.shown(event.digest)}; its content no longer " \
+                         "matches its content address"
+        end
+
+        def required(record, index, key)
+          RequiredKeys.read(record, key) { labelled(record, index) }
+        end
+
+        # `kind` is this replay's field that {RequiredKeys.read_filled} exists
+        # for, and its docstring is the argument.
+        def event_kind(record, index)
+          RequiredKeys.read_filled(record, "kind") { labelled(record, index) }
         end
 
         # The checked edge set, handed to {#rebuilt} so the value that lands IS
@@ -197,10 +208,12 @@ module Lain
         def cited_parents(record, index)
           return cited(record) if cited_parents?(record)
 
-          raise Corrupt, "message record #{index} (#{labelled(record)}) records causal_parents as " \
-                         "#{cited(record).inspect}; the field is a set of digest strings, " \
+          raise Corrupt, "#{labelled(record, index)} records causal_parents as " \
+                         "#{RequiredKeys.shown(cited(record))}; the field is a set of digest strings, " \
                          "and only an array of them lands"
         end
+
+        def labelled(record, index) = RequiredKeys.labelled("message", index, typed(record))
 
         # The JOURNAL's record type, never the event's `kind`. Two record types
         # share this index space and a {Telemetry::ChildTurn} carries kind
@@ -208,17 +221,26 @@ module Lain
         # "(turn)" -- a record type the file does not contain, in exactly the
         # spawned session this fold exists to re-open. The noun stays "message
         # record", naming the INDEX SPACE rather than {ChainFold}'s.
-        def labelled(record) = record["type"] || record.fetch("kind")
+        #
+        # TOTAL, both reads `[]`: this is what a refusal names the record BY,
+        # so a record damaged far enough to have lost both fields must still
+        # get a name rather than raise from inside the naming. Nil is the
+        # honest answer there, and {RequiredKeys.labelled} drops the
+        # parenthetical for it rather than inventing a word.
+        def typed(record) = record["type"] || record["kind"]
 
         # Takes the checked edge set rather than re-reading the field, so the
         # gate in {#cited_parents} cannot be routed around from here.
-        def rebuilt(record, cited)
-          payload = Event::Payload.new(kind: record.fetch("kind"), body: record.fetch("payload"))
+        # `render_parent` is read straight off the record, the way
+        # {#resolvable?} reads it: a `message` record legitimately carries none.
+        def rebuilt(record, index, cited)
+          kind = event_kind(record, index)
+          payload = Event::Payload.new(kind:, body: required(record, index, "payload"))
           @store.put(payload)
-          event = Event.new(kind: record.fetch("kind"), carried_payload: payload,
-                            from: record.fetch("from"), to: record.fetch("to"),
+          event = Event.new(kind:, carried_payload: payload,
+                            from: required(record, index, "from"), to: required(record, index, "to"),
                             render_parent: record["render_parent"],
-                            causal_parents: cited, correlation: record.fetch("correlation"))
+                            causal_parents: cited, correlation: required(record, index, "correlation"))
           @store.put(event)
           event
         end

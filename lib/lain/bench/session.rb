@@ -67,6 +67,84 @@ module Lain
       HEADER_TYPE = "session"
       TURN_TYPE = "turn"
 
+      # How a record damaged in a key it is rebuilt from refuses, and how the
+      # refusal names and quotes it. A journal is bytes, so a key can simply be
+      # GONE -- torn mid-write, or hand-edited -- and a bare `fetch` then
+      # raises KeyError, which is no {Lain::Error}: `exe/lain`'s rescue misses
+      # it and the three doors that read a session file rescue {Corrupt}, so an
+      # operator got a raw backtrace where every other kind of rot names
+      # itself. {MessageReplay} and {ChainFold} had each written that argument
+      # longhand for one field of their own before it was one place.
+      module RequiredKeys
+        # Two bounds, and they cannot be one number. Both exist because the
+        # field a refusal quotes is usually the damage itself -- a 20,000-char
+        # `role` made a 20KB refusal -- and a flood of bytes costs the cockpit,
+        # scribbling through the chat pane the frontend is painting. The label
+        # is a name, so it clips short; a quoted VALUE may be a digest, which
+        # is what a reader takes back to the file and must never be the thing
+        # that got clipped, so that bound sits above one.
+        FIELD_LIMIT = 60
+        VALUE_LIMIT = 160
+
+        module_function
+
+        # The label arrives as a BLOCK, called only when refusing: a fold reads
+        # two required keys per turn record and a replay six per message, so a
+        # label built up front is a string per read that a healthy file never
+        # looks at -- 23,983 objects on a clean 4,000-turn fold, 6.7% of its
+        # whole allocation, for refusals that never happen.
+        #
+        # @param record [Hash] one parsed journal record
+        # @param key [String] the field the rebuild cannot do without
+        # @yieldreturn [String] the label the refusal names the record by
+        # @raise [Corrupt] naming the record and the key it does not carry
+        def read(record, key)
+          record.fetch(key) { raise Corrupt, missing(yield, key) }
+        end
+
+        # The other half of "required", for `role` and `kind` alone -- the only
+        # fields a VALIDATOR reads before any digest exists. A falsey value
+        # there refuses out of {Event} as a bare {Lain::Error}, honest about
+        # the names it allows but in a currency no door rescues and with
+        # neither the file nor the record index on it, while a falsey value in
+        # any other field announces itself as the content-address mismatch it
+        # really is. Both hold a name from a closed enum, so absent, null and
+        # `false` are one damage here and get one sentence.
+        #
+        # @raise [Corrupt] for a key that is absent, or carries null or false
+        def read_filled(record, key)
+          value = record[key]
+          return value if value
+
+          raise Corrupt, missing(yield, key)
+        end
+
+        # No parenthetical for a field the record cannot name: "turn record 0
+        # (unnamed role) has no role key" reads as the tool arguing with
+        # itself, and the index alone already says which record.
+        def labelled(noun, index, field = nil)
+          return "#{noun} record #{index}" unless field
+
+          "#{noun} record #{index} (#{clipped(field, FIELD_LIMIT)})"
+        end
+
+        # A value a refusal quotes, bounded and inspected -- so a null reads
+        # `nil` rather than leaving a hole in the sentence where it was.
+        def shown(value) = clipped(value.inspect, VALUE_LIMIT)
+
+        def missing(label, key)
+          "#{label} has no #{key} key; the field is part of what the record is rebuilt from, " \
+            "so this record has been truncated or edited"
+        end
+
+        def clipped(field, limit)
+          text = field.to_s
+          text.length <= limit ? text : "#{text[0, limit]}..."
+        end
+
+        private_class_method :missing, :clipped
+      end
+
       # The recorded tool schema, wearing the one duck {Context#render} consumes
       # from a toolset. The live {Lain::Toolset} cannot be rebuilt from a
       # journal -- tools are capabilities, code included -- but the render seam

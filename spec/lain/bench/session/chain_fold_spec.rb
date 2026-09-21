@@ -141,4 +141,123 @@ RSpec.describe Lain::Bench::Session::ChainFold do
       end
     end
   end
+
+  # The same argument as causal_parents above, for a field that is GONE rather
+  # than malformed: `role`, `content` and `digest` were bare-fetched, so a torn
+  # record escaped as a KeyError -- no Lain::Error, so exe/lain's rescue misses
+  # it and the three doors that read this format rescue Corrupt and not
+  # KeyError. Worse for `role`: the rescue that names the record re-read the
+  # field INSIDE its own handler, so a role-less record raised from the code
+  # written to name it.
+  describe "a record damaged in a key the fold needs" do
+    def folded(records) = described_class.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new)).timeline
+
+    def turn_record
+      base = Lain::Timeline.empty(store: Lain::Store.new)
+      Lain::SessionRecord.turn(base.commit(role: :user, content: text("dose?")).head)
+    end
+
+    %w[role content digest].each do |key|
+      it "raises Corrupt naming the turn record and its missing #{key} key" do
+        expect { folded([turn_record.except(key)]) }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error).to be_a(Lain::Error)
+            expect(error.message).to include("turn record 0", key)
+          }
+      end
+    end
+
+    # A rewound record's own two anchors, on the same argument: `from` is what
+    # the fold's head is checked against and `to` is what it then checks out,
+    # so a fold that cannot read either cannot say where the chain stands.
+    { "from" => { "type" => "rewound", "to" => nil },
+      "to" => { "type" => "rewound", "from" => nil } }.each do |key, record|
+      it "raises Corrupt naming the rewound record and its missing #{key} key" do
+        expect { folded([record]) }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("rewound record 0", key)
+          }
+      end
+    end
+
+    # A NULL is the sibling shape of a missing key, and for `role` alone it
+    # refused in the wrong currency: the field reaches Event.normalize_role
+    # before any digest exists, so it came out as a bare Lain::Error ("role
+    # must be one of user, assistant, got \"\"") -- honest, but no Corrupt, so
+    # all three doors that read this format miss it and none names the file or
+    # the record. Every other field's null announces itself as the
+    # content-address mismatch it really is, which is why only this one needed
+    # closing.
+    # `false` is the same damage one value over, and a role holds a name out of
+    # a closed enum, so no falsey value is a role at all.
+    [nil, false].each do |value|
+      it "raises Corrupt for a role present as #{value.inspect}, as it does for an absent one" do
+        expect { folded([turn_record.merge("role" => value)]) }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("turn record 0", "role")
+          }
+      end
+    end
+
+    it "leaves content's null to the content address, which names it honestly" do
+      expect { folded([turn_record.merge("content" => nil)]) }
+        .to raise_error(Lain::Bench::Session::Corrupt, /content address/)
+    end
+
+    # The refusal is an operator's whole view of the damage, so it must not
+    # argue with itself, must name a null as `nil` rather than as a gap in the
+    # sentence, and must stay readable when the field it interpolates is
+    # itself the damage.
+    describe "the sentence it refuses in" do
+      it "names the record by its index alone when the role is unreadable" do
+        expect { folded([turn_record.except("role")]) }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to start_with("turn record 0 has no role key")
+            expect(error.message).not_to include("unnamed")
+          }
+      end
+
+      it "reads a null digest as nil rather than leaving a hole where it was" do
+        expect { folded([turn_record.merge("digest" => nil)]) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /recorded as nil re-commits to "blake3:/)
+      end
+
+      it "clips a label built from a field the damage filled with 20,000 characters" do
+        record = turn_record.merge("role" => "z" * 20_000, "causal_parents" => "not-an-array")
+
+        expect { folded([record]) }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("turn record 0", "causal_parents")
+            expect(error.message.length).to be < 400
+          }
+      end
+
+      # The label was bounded first and the rest of the sentence was not,
+      # which is half a fix: the field a refusal QUOTES is usually the damage
+      # itself. What an unbounded refusal costs is the cockpit -- it scribbles
+      # through the chat pane the frontend is painting, with a plausible cause
+      # on it.
+      {
+        "the causal_parents it quotes" => { "causal_parents" => "z" * 20_000 },
+        "the digest it quotes" => { "digest" => "z" * 20_000 }
+      }.each do |quoted, damage|
+        it "bounds the whole refusal, not only its label, for #{quoted}" do
+          expect { folded([turn_record.merge(damage)]) }
+            .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+              expect(error.message.length).to be < 400
+            }
+        end
+      end
+
+      # The clip must never cost a DIGEST: it is the token a reader takes back
+      # to the file, and one is longer than the label's own cap, so the two
+      # bounds cannot be the same number.
+      it "carries both digests whole through a content-address refusal" do
+        expect { folded([turn_record.merge("content" => text("edited under its digest"))]) }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to match(/"blake3:[0-9a-f]{64}" re-commits to "blake3:[0-9a-f]{64}"/)
+          }
+      end
+    end
+  end
 end

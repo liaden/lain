@@ -360,4 +360,144 @@ RSpec.describe Lain::Bench::Session do
       expect { described_class.load([]) }.to raise_error(described_class::Corrupt, /header/)
     end
   end
+
+  # The door `bench variance` and a resume both come through, on a real
+  # journal: a record damaged in a key the rebuild needs must refuse as
+  # Corrupt, which is what these callers rescue, rather than as the KeyError
+  # (absent key) or the bare Lain::Error out of Event (null role) that reach an
+  # operator as a backtrace with neither the file nor the record on it.
+  describe "a turn record damaged in a key the rebuild needs" do
+    def turn_records
+      write_session
+      parsed_records.map { |record| record["type"] == "turn" ? yield(record) : record }
+    end
+
+    it "refuses as Corrupt naming the record and an absent role" do
+      records = turn_records { |record| record.except("role") }
+
+      expect { described_class.load(records) }
+        .to raise_error(described_class::Corrupt, /turn record 0 has no role key/)
+    end
+
+    it "refuses as Corrupt naming the record and a null role" do
+      records = turn_records { |record| record.merge("role" => nil) }
+
+      expect { described_class.load(records) }
+        .to raise_error(described_class::Corrupt) { |error|
+          expect(error.message).to include("turn record 0", "role")
+        }
+    end
+  end
+
+  # The one place both replays read a record they cannot trust. Exercised
+  # directly because the two behaviours that matter are invisible from the
+  # happy path: what it refuses, and that it builds no label unless it does.
+  describe described_class::RequiredKeys do
+    let(:record) { { "digest" => "blake3:abc", "role" => nil } }
+
+    # The refusal's sentence, for comparing two damage shapes that must read
+    # alike. nil when nothing refused, which is what keeps the comparison from
+    # passing on two silences.
+    def refusal(from, key)
+      described_class.read_filled(from, key) { "turn record 0" }
+      nil
+    rescue Lain::Bench::Session::Corrupt => e
+      e.message
+    end
+
+    describe ".read" do
+      it "hands back the value for a key the record carries" do
+        expect(described_class.read(record, "digest") { "turn record 0" }).to eq("blake3:abc")
+      end
+
+      it "never builds the label for a key the record carries" do
+        built = []
+
+        described_class.read(record, "digest") { built << :label }
+
+        expect(built).to be_empty
+      end
+
+      # Hash semantics, kept deliberately: a key that is there IS there. The
+      # fields whose null nothing downstream can catch go through
+      # {.read_filled} instead, and every other field's null announces itself
+      # as a content-address mismatch.
+      it "treats a key present with a null value as present" do
+        expect(described_class.read(record, "role") { "turn record 0" }).to be_nil
+      end
+
+      it "refuses an absent key as Corrupt, naming the record and the key" do
+        expect { described_class.read(record, "content") { "turn record 0 (user)" } }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error).to be_a(Lain::Error)
+            expect(error.message).to start_with("turn record 0 (user) has no content key")
+          }
+      end
+    end
+
+    describe ".read_filled" do
+      it "hands back the value for a key the record carries" do
+        expect(described_class.read_filled(record, "digest") { "turn record 0" }).to eq("blake3:abc")
+      end
+
+      it "refuses a null value in the same sentence an absent key gets" do
+        expect(refusal(record, "role"))
+          .to eq(refusal({}, "role")).and(start_with("turn record 0 has no role key"))
+      end
+
+      # Its two callers read `role` and `kind`, each a name out of a closed
+      # enum, so a `false` there is damage exactly as a null is -- and it
+      # reaches the same validator, in the same currency no door rescues.
+      it "refuses false in that same sentence too" do
+        expect(refusal({ "role" => false }, "role")).to eq(refusal({}, "role"))
+      end
+    end
+
+    describe ".labelled" do
+      it "names the record by noun and index" do
+        expect(described_class.labelled("turn", 3, "assistant")).to eq("turn record 3 (assistant)")
+      end
+
+      # A record whose naming field is itself damaged gets no parenthetical:
+      # "turn record 0 (unnamed role) has no role key" reads as the tool
+      # arguing with itself, and the index alone already says which record.
+      it "drops the parenthetical for a field the record cannot name" do
+        expect(described_class.labelled("rewound", 0)).to eq("rewound record 0")
+      end
+
+      it "drops it for a field damaged into a falsey value too, rather than reading '(false)'" do
+        expect(described_class.labelled("turn", 0, false)).to eq("turn record 0")
+      end
+
+      it "clips a field long enough to bury the sentence that carries it" do
+        labelled = described_class.labelled("message", 0, "z" * 20_000)
+
+        expect(labelled.length).to be < 120
+        expect(labelled).to start_with("message record 0 (zzz")
+      end
+    end
+
+    # What a refusal QUOTES, as against what it names the record by. The two
+    # bounds cannot be one number: a digest is longer than the label's cap and
+    # is the token a reader takes back to the file, so it must never be the
+    # thing that got clipped.
+    describe ".shown" do
+      it "carries a digest through whole" do
+        digest = "blake3:#{"ab" * 32}"
+
+        expect(described_class.shown(digest)).to eq(digest.inspect)
+      end
+
+      it "clips a value the damage filled with 20,000 characters, marking that it did" do
+        shown = described_class.shown("z" * 20_000)
+
+        expect(shown.length).to be < 200
+        expect(shown).to end_with("...")
+      end
+
+      it "clips a collection no reader could scan, rather than quoting all of it" do
+        expect(described_class.shown(Array.new(2_000) { |index| index }).length).to be < 200
+      end
+    end
+  end
 end

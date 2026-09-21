@@ -103,9 +103,33 @@ module Lain
         end
 
         def folded(chain, record, index)
-          return rewound_checkout(chain, record, index) if record["type"].to_s == SessionRecord::REWOUND_TYPE
+          return rewound_checkout(chain, record, index) if rewound?(record)
 
           verified_turn(recommitted(chain, record, index), record, index)
+        end
+
+        def rewound?(record) = record["type"].to_s == SessionRecord::REWOUND_TYPE
+
+        # What every refusal about a record names it by, and TOTAL: a bad
+        # `role` is the damage a fold is most likely to meet, and this label
+        # used to re-read the field with a `fetch` INSIDE the handler that
+        # exists to name the record, so a role-less record raised KeyError from
+        # the naming itself. A rewound record has no role and needs none.
+        def labelled(record, index)
+          return RequiredKeys.labelled("rewound", index) if rewound?(record)
+
+          RequiredKeys.labelled("turn", index, record["role"])
+        end
+
+        def required(record, index, key)
+          RequiredKeys.read(record, key) { labelled(record, index) }
+        end
+
+        # `role` is this fold's field that {RequiredKeys.read_filled} exists
+        # for, and its docstring is the argument. A role Event refuses BY NAME
+        # is left to Event, whose message names the offending value.
+        def role_of(record, index)
+          RequiredKeys.read_filled(record, "role") { labelled(record, index) }
         end
 
         # The causal edge is part of the content address, so a fold that dropped
@@ -127,11 +151,11 @@ module Lain
         # named refusal. {MessageReplay#forced_put} translates the same edge for
         # flat events, in the same currency.
         def recommitted(chain, record, index)
-          chain.commit(role: record.fetch("role"), content: record.fetch("content"),
+          chain.commit(role: role_of(record, index), content: required(record, index, "content"),
                        meta: record.fetch("meta", {}), causal_parents: cited_parents(record, index))
         rescue Store::MissingObject => e
-          raise Corrupt, "turn record #{index} (#{record.fetch("role")}) cites a causal parent this fold " \
-                         "never landed: #{e.message}"
+          raise Corrupt, "#{labelled(record, index)} cites a causal parent this fold never " \
+                         "landed: #{e.message}"
         end
 
         # `content` and `meta` announce their corruption through the digest they
@@ -144,15 +168,17 @@ module Lain
           cited = record.fetch("causal_parents", [])
           return cited if cited.is_a?(Array) && cited.all?(String)
 
-          raise Corrupt, "turn record #{index} (#{record.fetch("role")}) records causal_parents as " \
-                         "#{cited.inspect}; the field is a set of digest strings, and only an array of them folds"
+          raise Corrupt, "#{labelled(record, index)} records causal_parents as " \
+                         "#{RequiredKeys.shown(cited)}; " \
+                         "the field is a set of digest strings, and only an array of them folds"
         end
 
         def verified_turn(chain, record, index)
-          recorded = record.fetch("digest")
+          recorded = required(record, index, "digest")
           unless chain.head_digest == recorded
-            raise Corrupt, "turn record #{index} (#{record.fetch("role")}) recorded as #{recorded} " \
-                           "re-commits to #{chain.head_digest}; its content no longer matches its content address"
+            raise Corrupt, "#{labelled(record, index)} recorded as #{RequiredKeys.shown(recorded)} " \
+                           "re-commits to #{RequiredKeys.shown(chain.head_digest)}; its content no longer " \
+                           "matches its content address"
           end
 
           members.add(chain.head_digest)
@@ -164,10 +190,11 @@ module Lain
         # may name only a digest this fold already verified (or nil, the
         # empty session), so the checkout never vouches for unproven bytes.
         def rewound_checkout(chain, record, index)
-          from = record.fetch("from")
+          from = required(record, index, "from")
           unless chain.head_digest == from
-            raise Corrupt, "rewound record #{index} claims to rewind from #{from.inspect} but the chain " \
-                           "stands at #{chain.head_digest.inspect}; the file's fold order has been disturbed"
+            raise Corrupt, "rewound record #{index} claims to rewind from #{RequiredKeys.shown(from)} " \
+                           "but the chain stands at #{RequiredKeys.shown(chain.head_digest)}; the file's " \
+                           "fold order has been disturbed"
           end
 
           chain.checkout(verified_target(record, index))
@@ -179,10 +206,11 @@ module Lain
         # the Scribe refuses to WRITE that move, its skip-set having pruned the
         # target. Verification stays sound either way -- the target was proven.
         def verified_target(record, index)
-          to = record.fetch("to")
+          to = required(record, index, "to")
           return to if to.nil? || members.include?(to)
 
-          raise Corrupt, "rewound record #{index} names target #{to.inspect}, which this fold never " \
+          raise Corrupt, "rewound record #{index} names target #{RequiredKeys.shown(to)}, which this " \
+                         "fold never " \
                          "verified; a rewind can only check out a turn the chain already proved"
         end
       end

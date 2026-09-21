@@ -258,6 +258,122 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
           .to raise_error(Lain::Bench::Session::Corrupt, /causal_parents/)
       end
     end
+
+    # The causal_parents argument above, one shape further out. Every other
+    # field announces its rot through a check it then fails; a field that is
+    # GONE reached none -- the rebuild bare-fetched five keys and the digest
+    # comparison a sixth, so a torn record escaped as a raw KeyError from
+    # nineteen frames down. KeyError is no Lain::Error, so exe/lain's rescue
+    # misses it and all three doors that read this format rescue Corrupt and
+    # not KeyError: an operator got a backtrace instead of a refusal. No
+    # writer emits a record missing a key; a hand-edited or truncated journal
+    # can.
+    describe "a record missing a key its rebuild needs" do
+      %w[digest kind payload from to correlation].each do |key|
+        it "refuses as Corrupt, naming the record and the missing #{key} key" do
+          records = linked_messages(1)
+          records.last.delete(key)
+
+          expect { replay(records).messages }
+            .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+              expect(error).to be_a(Lain::Error)
+              expect(error.message).to include("message record 0", key)
+            }
+        end
+      end
+
+      # The label is read out of the record too, so a record damaged far enough
+      # to lose BOTH its journal type and its event kind must still be namable.
+      # A fallback that FETCHED would put the KeyError back, raised from inside
+      # the very handler that exists to name the record.
+      it "names a record carrying neither a type nor a kind" do
+        records = linked_messages(1)
+        %w[type kind].each { |key| records.last.delete(key) }
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("message record 0", "kind")
+            expect(error.message).not_to include("unnamed")
+          }
+      end
+
+      # A NULL is the sibling shape, and `kind` is the one field where it
+      # refused in the wrong currency: it reaches Event::Payload and Event
+      # before any digest exists, so it came out as a bare Lain::Error ("kind
+      # must be one of turn, spawn, message, snapshot, got nil") that no door
+      # rescues. Every other field's null is caught by the content-address
+      # comparison, which is the honest place for it.
+      # `false` is the same damage one value over, and a kind holds a name out
+      # of a closed enum, so no falsey value is a kind at all.
+      [nil, false].each do |value|
+        it "refuses a kind present as #{value.inspect} as Corrupt, not as Event's own bare refusal" do
+          records = linked_messages(1)
+          records.last["kind"] = value
+
+          expect { replay(records).messages }
+            .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+              expect(error.message).to include("message record 0", "kind")
+            }
+        end
+      end
+
+      it "leaves a null correlation to the content address, which names it honestly" do
+        records = linked_messages(1)
+        records.last["correlation"] = nil
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt, /content address/)
+      end
+
+      it "reads a null digest as nil rather than leaving a hole where it was" do
+        records = linked_messages(1)
+        records.last["digest"] = nil
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt, /recorded as nil re-commits to "blake3:/)
+      end
+
+      # The refusal is an operator's whole view of the damage, and the label
+      # interpolates a raw field -- so a record whose `type` IS the damage used
+      # to yield a twenty-thousand-character sentence.
+      it "clips a label built from a type the damage filled with 20,000 characters" do
+        records = linked_messages(1)
+        records.last["type"] = "z" * 20_000
+        records.last.delete("digest")
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("message record 0", "digest")
+            expect(error.message.length).to be < 400
+          }
+      end
+
+      # Bounding the label was half a fix: the field a refusal QUOTES is
+      # usually the damage itself, and a flood of bytes costs the cockpit --
+      # the chat pane the frontend is painting.
+      it "bounds the whole refusal, not only its label, for a causal_parents of 2,000 entries" do
+        records = linked_messages(1)
+        records.last["causal_parents"] = Array.new(2_000) { |index| index }
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("causal_parents")
+            expect(error.message.length).to be < 400
+          }
+      end
+
+      # The clip must never cost a DIGEST: it is the token a reader takes back
+      # to the file, and one is longer than the label's own cap.
+      it "carries both digests whole through a content-address refusal" do
+        records = linked_messages(1)
+        records.last["payload"] = { "n" => 99 }
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to match(/"blake3:[0-9a-f]{64}" re-commits to "blake3:[0-9a-f]{64}"/)
+          }
+      end
+    end
   end
 
   # The property that was traded away, pinned as a DECISION rather than left as
