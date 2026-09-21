@@ -78,7 +78,8 @@ module Lain
                  "gitignored path is captured only if a structured tool wrote it, and a bash write " \
                  "inside a submodule is not captured at all. A write by another process during a " \
                  "turn's tool window counts as that turn's change, and undoing the turn removes it. " \
-                 "The project's own repository is never read or written."
+                 "A recorded path outside the root this snapshot names is dropped rather than keyed " \
+                 "by a ../ form no undo could act on. The project's own repository is never read or written."
 
           # The git-context env that redirects where git finds its repository,
           # index and objects. Mapping each to `nil` DELETES it in the forked
@@ -151,12 +152,19 @@ module Lain
             !pair(root).moved? && files.all? { |key, digest| (last || {})[key] == digest }
           end
 
+          # The split runs over the WHOLE union, not the write-set half alone:
+          # {#detect}'s paths are joined onto the root, so only a recorded write
+          # can fall outside it -- and a detector whose paths ever escaped its
+          # own root would be the same defect, caught here rather than keyed by
+          # a `../` form the undo can only refuse.
+          #
           # @param write_set [Enumerable<String>] the session's recorded writes
           # @param root [String, Pathname] the workspace root {Snapshot} names
-          # @return [Array<String>] absolute paths, each once
+          # @return [Selection] the paths to capture, and those outside the root
           # @raise [Failed] when any git invocation does not deliver an answer
           def paths(write_set:, root:)
-            (detect(expand(root)) + write_set.to_a).uniq
+            expanded = expand(root)
+            Selection.within(detect(expanded) + write_set.to_a, expanded)
           end
 
           def note = NOTE

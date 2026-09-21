@@ -18,6 +18,11 @@ module Lain
     # scope records one, and the next prime tries the store again. Raising
     # instead would leave every tool call of the turn unanswered.
     #
+    # This is also the only object on the snapshot path that can say anything
+    # out loud, so the two ways a turn's changes end up irreversible are both
+    # announced from here: a store that failed, and a write the snapshot's root
+    # does not reach. {Workspace::Snapshot} cannot -- nothing there journals.
+    #
     # The writer is built on the first {#prime}, not at construction, so a
     # chat that never calls a tool never pays for a shadow baseline or touches
     # the state home.
@@ -28,6 +33,15 @@ module Lain
 
       # One turn whose shadow store failed, and why.
       SnapshotDegraded = Data.define(:phase, :scope, :reason) do
+        include ::Lain::Telemetry::Journalable
+      end
+
+      # One turn whose scope refused paths for falling outside the snapshot's
+      # root: how many, under which scope and root. The count, not the paths,
+      # because the session's write set is cumulative and repeats the same ones
+      # every turn after a scope flip -- what a reader needs is that this turn's
+      # undo reaches less than the session wrote.
+      SnapshotNarrowed = Data.define(:scope, :root, :dropped) do
         include ::Lain::Telemetry::Journalable
       end
 
@@ -54,12 +68,12 @@ module Lain
       # @param log [Workspace::SnapshotLog] records every writer's snapshots,
       #   across rebinds
       # @param paths [Paths] the state home a shadow scope keeps its store in
-      # @param journal [#<<] where a degraded turn is recorded
+      # @param journal [#<<] where a degraded or narrowed turn is recorded
       # @param channel [#<<] where the human is told of one: the chat's live
       #   Channel, since the journal is the experiment's record, not a screen
       def initialize(root: Dir.pwd, scope: :write_set, log: Workspace::SnapshotLog.new, paths: Paths.new,
                      journal: Channel::Null.instance, channel: Channel::Null.instance)
-        @root = File.expand_path(root)
+        @root = File.expand_path(root).freeze
         @log = log
         @paths = paths
         @journal = journal
@@ -120,7 +134,7 @@ module Lain
       # @return [self]
       def rebind(scope = @scope, root: @root)
         candidate = resolve(scope)
-        expanded = File.expand_path(root)
+        expanded = File.expand_path(root).freeze
         return self if candidate.label == label && expanded == @root
 
         @scope = candidate
@@ -135,7 +149,29 @@ module Lain
       def land(writer, timeline:, paths:, pre_images:)
         event = writer.write(timeline:, paths:) || rewritten(writer, timeline:, paths:, pre_images:)
         @log.record(event, pair: writer.pair, pre_images:) if event
+        narrowed(writer)
         event
+      end
+
+      # The journal takes every turn's record; the human hears each distinct
+      # narrowing once. A turn that dropped nothing says nothing.
+      def narrowed(writer)
+        dropped = writer.outside
+        told(SnapshotNarrowed.new(scope: label, root: @root, dropped: dropped.size)) unless dropped.empty?
+      end
+
+      # The session's write set is cumulative, so the same paths are dropped
+      # again every turn after; a line per turn would scribble the pane it is
+      # meant to inform, and silence let `/undo` report "no file needed putting
+      # back" over a file that is still changed. So the record repeats in the
+      # journal, which is the experiment's, and the channel hears it when the
+      # scope, the root or the count changes -- the record's own equality.
+      def told(record)
+        @journal << record
+        return if @told == record
+
+        @told = record
+        @channel << record
       end
 
       # A writer matches its map against its memory, and a turn that wrote a

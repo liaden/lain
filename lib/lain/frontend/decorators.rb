@@ -31,6 +31,7 @@ module Lain
         return ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
         return ProviderRetry.new(event) if event.is_a?(Telemetry::ProviderRetry)
         return SnapshotDegraded.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotDegraded)
+        return SnapshotNarrowed.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotNarrowed)
 
         nil
       end

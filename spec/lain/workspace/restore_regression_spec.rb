@@ -140,7 +140,7 @@ RSpec.describe Lain::Workspace::Restore do
     it "force: true does NOT waive EscapesRoot" do
       outside = write_file(dir, "outside.txt", "v1")
       project = File.join(dir, "project").tap { |p| Dir.mkdir(p) }
-      writer = Lain::Workspace::Snapshot.new(root: project)
+      writer = Lain::Workspace::Snapshot.new(root: project, scope: UncontainedSnapshotScope.new)
       timeline = commit(Lain::Timeline.empty(store:), 1)
       log << writer.write(timeline:, paths: [outside])
 

@@ -404,7 +404,10 @@ RSpec.describe Lain::CLI::Command::Undo do
 
       it "refuses a tool write outside the project root, by name" do
         project = in_root("project").tap { |dir| FileUtils.mkdir_p(dir) }
-        inner = Lain::Agent::SnapshotSlot.new(root: project, scope: :shadow_git, paths:)
+        # The shadow scope drops an out-of-root path before it can be keyed, so
+        # the key this refusal answers about comes from a scope that keeps it.
+        scope = UncontainedSnapshotScope.new(Lain::Workspace::Snapshot::Scope::ShadowGit.new(paths:))
+        inner = Lain::Agent::SnapshotSlot.new(root: project, scope:, paths:)
         inner.prime
         write("escape.txt", "x\n")
         @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => "escape" }])

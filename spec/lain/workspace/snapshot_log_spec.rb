@@ -295,11 +295,15 @@ RSpec.describe Lain::Workspace::SnapshotLog do
         expect(log.undo(store:).blocked).to eq([blocker("app.log", :ignored)])
       end
 
-      it "blocks a write-set path outside the root" do
+      # The classification, not the capture: a path outside the root no longer
+      # reaches a snapshot through any shipped scope, so the scope here is one
+      # that keys it anyway. The log still refuses to plan the key.
+      it "blocks a keyed path outside the root, whatever scope keyed it" do
         project = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
         escape = File.join(dir, "escape.txt").tap { |path| File.binwrite(path, "x") }
         write_set << escape
-        turn(start, pair: SnapshotLogSpecSupport::Pair.new, by: Lain::Workspace::Snapshot.new(root: project))
+        turn(start, pair: SnapshotLogSpecSupport::Pair.new,
+                    by: Lain::Workspace::Snapshot.new(root: project, scope: UncontainedSnapshotScope.new))
 
         expect(log.undo(store:).blocked).to eq([blocker("../escape.txt", :outside_root)])
       end

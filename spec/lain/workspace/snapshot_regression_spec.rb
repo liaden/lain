@@ -244,10 +244,12 @@ RSpec.describe Lain::Workspace::Snapshot do
 
     it "pins that the default Agent wiring observes snapshots with Null -- no journal, no scribe" do
       # The default writer's observer is ChainWriter::Null; the only evidence a
-      # snapshot leaves is the in-memory Store entry.
+      # snapshot leaves is the in-memory Store entry. The root is named because
+      # the default one is the process's cwd, and a write outside the root is
+      # dropped rather than captured -- the observer is what this pins.
       path = write_file(dir, "a.txt", "alpha")
       timeline = committed_timeline
-      default_writer = described_class.new
+      default_writer = described_class.new(root: dir)
 
       event = default_writer.write(timeline:, paths: [path])
 

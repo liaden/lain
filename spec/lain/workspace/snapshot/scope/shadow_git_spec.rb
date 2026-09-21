@@ -30,7 +30,9 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
     described_class.new(paths:, **).tap { |scope| scope.baseline(root) unless root.nil? }
   end
 
-  def changed(scope, write_set: [], root: project) = scope.paths(write_set:, root:)
+  # The kept half of the scope's answer -- what a snapshot would capture. The
+  # dropped half has its own examples, below.
+  def changed(scope, write_set: [], root: project) = scope.paths(write_set:, root:).to_a
 
   def in_project(*names) = File.join(project, *names)
 
@@ -174,6 +176,33 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
       bash("echo both > shared.txt")
 
       expect(changed(scope, write_set: [in_project("shared.txt")])).to eq([in_project("shared.txt")])
+    end
+
+    # The write-set is cumulative across a scope flip while the root moves with
+    # it, so a path recorded under another root arrives here every turn after.
+    # Keying it would only wedge the undo that met the key, so it is dropped --
+    # and the drop is reported, because the slot journals it.
+    it "drops a recorded path outside the root, and says which" do
+      scope = shadow
+      bash("echo made > made.txt")
+      escape = File.join(File.dirname(project), "escape.txt")
+
+      selection = scope.paths(write_set: [escape, in_project("recorded.txt")], root: project)
+
+      expect(selection.to_a).to contain_exactly(in_project("made.txt"), in_project("recorded.txt"))
+      expect(selection.outside).to eq([escape])
+    end
+
+    # The detector joins every path it reports onto the root it was handed, so
+    # only the recorded half can fall outside -- the split still runs over both.
+    it "drops nothing it detected itself" do
+      scope = shadow
+      bash("mkdir -p deep && echo made > deep/made.txt")
+
+      selection = scope.paths(write_set: [], root: project)
+
+      expect(selection.to_a).to eq([in_project("deep", "made.txt")])
+      expect(selection.outside).to eq([])
     end
   end
 

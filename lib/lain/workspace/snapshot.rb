@@ -24,8 +24,19 @@ module Lain
     # content-addressed file map, so the same content at two roots would hash
     # differently -- breaking the cross-machine replay and relocated restore this
     # format is frozen for. Relativization is LEXICAL (Pathname, no symlink
-    # resolution), matching the expand_path identity the write-set uses; a path
-    # outside the root keys by its honest ../ form rather than being hidden.
+    # resolution), matching the expand_path identity the write-set uses.
+    #
+    # Every key is therefore INSIDE the root. A path outside it used to key by
+    # its honest ../ form rather than being hidden -- this reverses that: the
+    # honesty only reached a reader who could act on the key, and `/undo`
+    # cannot. It addresses the newest turn alone and never pops a turn it
+    # refused, so one such key wedges every later undo, over a path the human
+    # never chose to write. The {Scope} drops it instead and says so in its
+    # note, and {#outside} reports it to {Agent::SnapshotSlot}, which journals
+    # the omission. The cut goes both ways, which is the price: while a plan
+    # spike is the root, paths the session wrote in the checkout EARLIER are
+    # dropped too, so a plan-scope snapshot covers less than the session's
+    # cumulative write set.
     #
     # Snapshots are additive to the DAG and invisible to render chains --
     # ask_human's idiom: causal edges only, no render_parent, so no Timeline
@@ -65,6 +76,13 @@ module Lain
         alias inspect to_s
       end
 
+      # What the last write's scope refused for falling outside the root. Empty
+      # before a write, and empty on the usual turn; reported rather than
+      # recorded because nothing here journals.
+      #
+      # @return [Array<String>] absolute paths
+      attr_reader :outside
+
       # @param observer [#call] sees every :snapshot event written, the same
       #   study-bench seam {Event::ChainWriter} gives ask_human's Q/A events
       # @param root [String] the workspace root file keys are made relative to;
@@ -76,6 +94,7 @@ module Lain
         @root = Pathname.new(File.expand_path(root)).freeze
         @scope = Scope.resolve(scope)
         @last_files = nil
+        @outside = [].freeze
         # A difference-detecting scope needs a state to differ FROM, and this is
         # the only place knowing both the root and the moment the session began
         # -- so a posture may name `:shadow_git`, stay inert, and still cover
@@ -96,8 +115,10 @@ module Lain
       # @param paths [Enumerable<String>] the session write-set
       # @return [Event, nil] the :snapshot event, or nil when nothing changed
       def write(timeline:, paths:)
-        files = manifest(timeline.store, @scope.paths(write_set: paths, root: @root))
-        return nil if skip?(files)
+        selection = @scope.paths(write_set: paths, root: @root)
+        @outside = selection.outside
+        files = manifest(timeline.store, selection)
+        return nil if wholly_dropped?(selection) || skip?(files)
 
         @last_files = files
         @chain_writer.put(timeline, kind: :snapshot,
@@ -133,6 +154,18 @@ module Lain
       end
 
       private
+
+      # An empty map is the record for TOTAL DELETION, and dropping out-of-root
+      # paths gave "empty" a second cause that is not one: a turn selecting
+      # nothing but refused paths deleted nothing. A {Restore} rewinding to such
+      # a record dooms every path the map omits, so it would delete files no turn
+      # deleted -- the loud refusal a `../` key used to earn, turned into silent
+      # loss. A turn that kept nothing lands nothing instead, and the omission
+      # still reaches the record through the scope's note and the human through
+      # {Agent::SnapshotSlot}. A map emptied by real deletion has a non-empty
+      # kept set, which is what tells the two apart (an empty kept set cannot
+      # manifest a file, so the map's own emptiness adds nothing to the test).
+      def wholly_dropped?(selection) = selection.kept.empty? && @outside.any?
 
       # What counts as unchanged is the scope's question, because only the
       # scope knows whether its map is a whole state or one turn's delta.

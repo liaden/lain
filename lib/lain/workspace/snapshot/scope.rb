@@ -17,9 +17,10 @@ module Lain
       # The note is the scope's own, never {Snapshot}'s: a payload declaring a
       # blind spot the writer no longer has would be a lie in the record.
       #
-      # The duck. `#paths(write_set:, root:)` -> absolute paths to capture, in
-      # any order ({Snapshot} sorts); its root is {Snapshot}'s own frozen
-      # Pathname, handed over rather than re-derived so the scope and the
+      # The duck. `#paths(write_set:, root:)` -> a {Selection}: the absolute
+      # paths to capture, in any order ({Snapshot} sorts), and the ones the
+      # scope refused for falling outside the root. Its root is {Snapshot}'s own
+      # frozen Pathname, handed over rather than re-derived so the scope and the
       # payload's "root" key cannot disagree. `#note` -> String, verbatim into
       # the payload's "snapshot_scope". `#label` -> short name, for journals and
       # bench arms. `#baseline(root)` -> stages what a turn is measured FROM,
@@ -52,13 +53,20 @@ module Lain
         # {Snapshot#write} hashes current bytes rather than trusting who wrote.
         class WriteSet
           NOTE = "write-set only: paths recorded via Session#record_write; " \
-                 "out-of-band mutations (e.g. bash) outside that set are not captured"
+                 "out-of-band mutations (e.g. bash) outside that set are not captured; " \
+                 "nor is a recorded path outside the root this snapshot names, which is " \
+                 "dropped rather than keyed by a ../ form no undo could act on"
 
           # Keeps no store, so it reads no state home.
           def self.for(**) = new
 
-          # `root` is unused -- this scope keys nothing -- but is part of the duck.
-          def paths(write_set:, **) = write_set
+          # The root is the boundary this scope answers about, and the reason it
+          # is handed one at all: a recorded path outside it is dropped. The
+          # write set is cumulative across a scope flip while the snapshot's
+          # root moves with the flip, so a path the human wrote in another root
+          # arrives here every turn after -- and keying it relative to this root
+          # only wedges the undo that meets the key.
+          def paths(write_set:, root:) = Selection.within(write_set, root)
 
           def note = NOTE
 

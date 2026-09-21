@@ -52,15 +52,27 @@ RSpec.describe Lain::Workspace::Snapshot do
     end
   end
 
-  # The byte-identity proof. Every literal below was captured by running a
+  # The byte-identity proof. Every FILE digest below was captured by running a
   # scripted session against the tree as it stood BEFORE the scope object
   # existed (`git show main:lib/lain/workspace/snapshot.rb`), so it is evidence
-  # that the default arm is a refactor, not a transcription of this card's own
-  # output. Only the root is substituted -- the real one is a tmpdir, and the
-  # payload records it verbatim -- so each pinned digest is the digest that
-  # snapshot really has when rooted at NORMALIZED_ROOT. The dumped bytes are
-  # pinned alongside the digests because {Lain::Canonical} sorts keys before
-  # hashing, so a digest alone could not catch a renamed or reordered key.
+  # that the default arm still records the same bytes under the same keys. Only
+  # the root is substituted -- the real one is a tmpdir, and the payload records
+  # it verbatim. The dumped bytes are pinned alongside the digests because
+  # {Lain::Canonical} sorts keys before hashing, so a digest alone could not
+  # catch a renamed or reordered key.
+  #
+  # The payload and event digests moved once, deliberately: the note IS the
+  # declared policy, and the policy narrowed to paths inside the root, so the
+  # note text and every digest taken over it changed with it. The file map did
+  # not, which is the part these literals are evidence of.
+  #
+  # So the two halves of each literal fail for different reasons, and a reader
+  # can tell them apart. A FILE digest or a key moving means the captured
+  # content or its naming changed -- a regression, and no note edit can explain
+  # it. The payload and event digests moving while the file map holds means the
+  # snapshot_scope text changed, which is a policy edit and has to be declared
+  # as one. Re-capturing the second pair to get green is only honest when the
+  # first pair is untouched.
   describe "the default scope, against digests captured before this card" do
     normalized_root = "/w"
 
@@ -93,9 +105,11 @@ RSpec.describe Lain::Workspace::Snapshot do
         bytes: '{"files":{"a.txt":"blake3:0d8c5eaed5d24af0b26b4982c89e17e7df51ecfa1a7655365a9a58c3883aaa69",' \
                '"b.txt":"blake3:a08ddaf158de8b9b7affcea15de583d36f59f22f2f42a785410b2c30bfa740bb"},' \
                '"root":"/w","snapshot_scope":"write-set only: paths recorded via Session#record_write; ' \
-               'out-of-band mutations (e.g. bash) outside that set are not captured"}',
-        payload_digest: "blake3:e8ad505710020e34fb3a91ec646b0f87ee3e9a662333d8fc1fd575981d6dcd2b",
-        event_digest: "blake3:5c4b1e2fed263f52811587052440b6c9383fb405cdcb124a3b7b56b7542b72d0"
+               "out-of-band mutations (e.g. bash) outside that set are not captured; nor is a recorded " \
+               "path outside the root this snapshot names, which is dropped rather than keyed by a " \
+               '../ form no undo could act on"}',
+        payload_digest: "blake3:3482da90de251a1dc9b8244f9d9b1589ad8e75194ed20fcbea2f19b05016882e",
+        event_digest: "blake3:fd64647756fd0a4d203bf515fc6a83d823e6404c81d04a479c19463ddadf84ff"
       )
     end
 
@@ -107,9 +121,11 @@ RSpec.describe Lain::Workspace::Snapshot do
         bytes: '{"files":{"a.txt":"blake3:c3a726c4c817c9b5e3a47b1655ad857d2f08f1051873a696df1797bc2d0f18d1",' \
                '"b.txt":"blake3:a08ddaf158de8b9b7affcea15de583d36f59f22f2f42a785410b2c30bfa740bb"},' \
                '"root":"/w","snapshot_scope":"write-set only: paths recorded via Session#record_write; ' \
-               'out-of-band mutations (e.g. bash) outside that set are not captured"}',
-        payload_digest: "blake3:3f54cc7b6fc7083987c546d1c55cb847e636a5c837bd3f8cda35e05c148b0947",
-        event_digest: "blake3:b09b075ef5eca2fa71dc567d39e32697589387f8a1b05eedd26ea01ae52156db"
+               "out-of-band mutations (e.g. bash) outside that set are not captured; nor is a recorded " \
+               "path outside the root this snapshot names, which is dropped rather than keyed by a " \
+               '../ form no undo could act on"}',
+        payload_digest: "blake3:12a5a982b603cbc396d93357ec7c8c0612d87e4da04becb1540dbd81318331f3",
+        event_digest: "blake3:467f826332ed6cf6ec402970913aa1fa5f12cb1f1e92d36af38c9dc6bfc43374"
       )
     end
 
@@ -117,9 +133,11 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(sequence.fetch(:total_deletion)).to eq(
         keys: %w[files root snapshot_scope],
         bytes: '{"files":{},"root":"/w","snapshot_scope":"write-set only: paths recorded via ' \
-               'Session#record_write; out-of-band mutations (e.g. bash) outside that set are not captured"}',
-        payload_digest: "blake3:ee64e418694d858213ecde12c8ee6da66a9014713e072f225caff009ffeed693",
-        event_digest: "blake3:edd9cf62a3fc9d36931ba71514f09b591f1d77af778cb2b514d33e339bb976dc"
+               "Session#record_write; out-of-band mutations (e.g. bash) outside that set are not " \
+               "captured; nor is a recorded path outside the root this snapshot names, which is " \
+               'dropped rather than keyed by a ../ form no undo could act on"}',
+        payload_digest: "blake3:fe60d202c2b1b6fc5ab3a3a43ef18ef9c5df4bb1ac7b0c0e21e7ca44a4140262",
+        event_digest: "blake3:64f001b3d25212d7b490145498ef855faf7f2265544ec5879bd483df64199f46"
       )
     end
 
@@ -147,10 +165,16 @@ RSpec.describe Lain::Workspace::Snapshot do
         .to raise_error(Lain::Error, /everything.*write_set/m)
     end
 
-    it "hands the write-set straight back, ignoring the root" do
+    # The root is the boundary this scope answers about, not decoration it
+    # ignores: a recorded path outside the root is dropped, and the selection
+    # carries both halves so whoever can journal the drop has it. Which paths
+    # are inside is {Selection}'s own question, and its own spec's.
+    it "answers with a selection split at the root it was handed" do
       scope = Lain::Workspace::Snapshot::Scope::WriteSet.new
 
-      expect(scope.paths(write_set: %w[a b], root: Pathname.new("/w"))).to eq(%w[a b])
+      selection = scope.paths(write_set: %w[/w/a /elsewhere/c], root: Pathname.new("/w"))
+
+      expect([selection.to_a, selection.outside]).to eq([%w[/w/a], %w[/elsewhere/c]])
     end
 
     # The Null Object arm of the duck: a scope with no earlier state to differ
@@ -160,13 +184,14 @@ RSpec.describe Lain::Workspace::Snapshot do
       scope = Lain::Workspace::Snapshot::Scope::WriteSet.new
 
       expect(scope.baseline(Pathname.new("/w"))).to be_nil
-      expect(scope.paths(write_set: %w[a b], root: Pathname.new("/w"))).to eq(%w[a b])
+      expect(scope.paths(write_set: %w[/w/a /w/b], root: Pathname.new("/w")).to_a).to eq(%w[/w/a /w/b])
     end
   end
 
   describe "an injected scope" do
     # A real scope's shape in miniature: a scope that widens the set beyond the
-    # write-set, records the root it was handed, and names its own policy.
+    # write-set, records the root it was handed, names its own policy, and
+    # splits its answer at the root as every arm of the duck must.
     let(:scope_class) do
       Class.new do
         attr_reader :roots, :primed
@@ -181,7 +206,7 @@ RSpec.describe Lain::Workspace::Snapshot do
 
         def paths(write_set:, root:)
           @roots << root
-          write_set + @extra
+          Lain::Workspace::Snapshot::Scope::Selection.within(write_set + @extra, root)
         end
 
         def note = "everything the scope could find"
@@ -261,7 +286,8 @@ RSpec.describe Lain::Workspace::Snapshot do
   describe "the scope's turn trees" do
     let(:scope) do
       instance_spy(Lain::Workspace::Snapshot::Scope::WriteSet,
-                   note: "a note", pair: :the_pair, paths: [], unchanged?: false)
+                   note: "a note", pair: :the_pair, unchanged?: false,
+                   paths: Lain::Workspace::Snapshot::Scope::Selection.new(kept: [], outside: []))
     end
 
     it "restages its scope's before-tree at every prime, the first at construction" do
@@ -341,17 +367,32 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(Lain::Canonical.digest(maps.first)).to eq(Lain::Canonical.digest(maps.last))
     end
 
-    # A write-set path outside the root cannot be hidden and cannot be invented
-    # a home: it keys by its honest lexical ../ path. (Restore-side policy for
-    # such keys is the restorer's; the payload just tells the truth.)
-    it "keys a write-set file outside the root by its lexical ../ path" do
+    # This reverses the earlier decision to key such a path by its honest
+    # lexical ../ form. The honesty only reached a reader who could act on it,
+    # and /undo cannot: it refuses over that key for as long as the session
+    # lives, over a path the human never chose to write.
+    it "drops a write-set file outside the root rather than keying it ../" do
       outside = write_file(dir, "outside.txt", "escapee")
       root = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
+      inside = write_file(root, "inside.txt", "kept")
       timeline = committed_timeline
 
-      event = described_class.new(observer:, root:).write(timeline:, paths: [outside])
+      event = described_class.new(observer:, root:).write(timeline:, paths: [outside, inside])
 
-      expect(event.body.fetch("files").keys).to eq(["../outside.txt"])
+      expect(event.body.fetch("files").keys).to eq(["inside.txt"])
+    end
+
+    # Nothing here journals, so the drop is reported rather than recorded: the
+    # slot that owns the journal reads it after every write, including a write
+    # that landed no event at all.
+    it "reports the dropped paths for the slot to journal, even when it lands nothing" do
+      outside = write_file(dir, "outside.txt", "escapee")
+      root = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
+      snapshot = described_class.new(observer:, root:)
+
+      expect(snapshot.outside).to eq([])
+      expect(snapshot.write(timeline: committed_timeline, paths: [outside])).to be_nil
+      expect(snapshot.outside).to eq([outside])
     end
 
     # The escalation trigger's invariant, pinned: snapshots are additive to the
@@ -472,6 +513,43 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(event).not_to be_nil
       expect(event.body.fetch("files")).to eq({})
       expect(events.size).to eq(2)
+    end
+
+    # An empty map is the record for TOTAL DELETION, and narrowing gave "empty"
+    # a second cause that is not one: a turn whose whole selection fell outside
+    # the root deleted nothing. A {Restore} rewinding to such a record dooms
+    # every path the map omits, so the turn must land NOTHING rather than a
+    # record claiming the workspace is empty. The omission still reaches the
+    # scope's note and the slot's journal.
+    it "lands nothing for a turn whose whole selection fell outside the root" do
+      root = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
+      inside = write_file(root, "a.rb", "precious")
+      outside = write_file(dir, "escape.txt", "changed")
+      snapshot = described_class.new(observer:, root:)
+      timeline = committed_timeline
+      first = snapshot.write(timeline:, paths: [inside])
+
+      expect(snapshot.write(timeline:, paths: [outside])).to be_nil
+      expect(events).to eq([first])
+      expect(snapshot.outside).to eq([outside])
+    end
+
+    # The other side of that guard: what makes the map empty is what matters, so
+    # a real deletion of everything inside the root still records, dropped paths
+    # alongside it or not.
+    it "still records total deletion inside the root when a dropped path rides along" do
+      root = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
+      doomed = write_file(root, "only.txt", "soon gone")
+      outside = write_file(dir, "escape.txt", "changed")
+      snapshot = described_class.new(observer:, root:)
+      timeline = committed_timeline
+      snapshot.write(timeline:, paths: [doomed, outside])
+
+      File.delete(doomed)
+      event = snapshot.write(timeline:, paths: [doomed, outside])
+
+      expect(event).not_to be_nil
+      expect(event.body.fetch("files")).to eq({})
     end
 
     it "records a file recreated after total deletion -- the resurrection is new content" do

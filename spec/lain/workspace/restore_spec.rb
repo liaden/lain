@@ -307,8 +307,10 @@ RSpec.describe Lain::Workspace::Restore do
                                     store:, root: project)]
     end
 
+    # The scope that still keys an escaping path: a shipped one drops it before
+    # the record exists, and this refusal answers about a record that has one.
     def escaping_log(project, outside)
-      writer = Lain::Workspace::Snapshot.new(root: project)
+      writer = Lain::Workspace::Snapshot.new(root: project, scope: UncontainedSnapshotScope.new)
       timeline = Lain::Timeline.empty(store:).commit(role: :user, content: block("t1"))
       [store.fetch(timeline.head_digest), writer.write(timeline:, paths: [outside])]
     end

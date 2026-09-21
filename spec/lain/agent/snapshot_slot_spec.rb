@@ -53,6 +53,93 @@ RSpec.describe Lain::Agent::SnapshotSlot do
     expect(log.count).to eq(1)
   end
 
+  # The containment itself belongs to the scope, which cannot journal; this
+  # slot owns the journal, so a dropped path is recorded here or nowhere.
+  describe "a write-set path outside the slot's root" do
+    let(:journal) { [] }
+    let(:channel) { [] }
+
+    def journaling_slot = described_class.new(root:, scope: :write_set, log:, paths:, journal:, channel:)
+
+    def narrowed(stream = journal) = stream.grep(described_class::SnapshotNarrowed)
+
+    # A written file the slot's root does not reach, for the length of an example.
+    def elsewhere
+      Dir.mktmpdir("lain-slot-elsewhere") do |dir|
+        escape = File.join(dir, "escape.txt")
+        File.binwrite(escape, "escapee")
+        yield escape
+      end
+    end
+
+    it "contributes no entry, and tells the journal and the human what was dropped" do
+      elsewhere do |escape|
+        event = journaling_slot.write(timeline: turn, paths: [put("a.rb", "one"), escape])
+
+        expect(event.body.fetch("files").keys).to eq(["a.rb"])
+        expect(narrowed.map { |record| [record.scope, record.root, record.dropped] })
+          .to eq([["write_set", File.expand_path(root), 1]])
+        expect(narrowed(channel)).to eq(narrowed)
+      end
+    end
+
+    # The journal keeps every turn; the human hears it once. The session's write
+    # set is cumulative, so the same path is dropped again every turn after --
+    # a line per turn would scribble the pane it is meant to inform.
+    it "tells the human once while the same narrowing repeats, journalling each turn" do
+      elsewhere do |escape|
+        filled = journaling_slot
+        inside = put("a.rb", "one")
+        3.times { |index| filled.write(timeline: turn("turn #{index}"), paths: [inside, escape]) }
+
+        expect(narrowed.size).to eq(3)
+        expect(narrowed(channel).size).to eq(1)
+      end
+    end
+
+    it "tells the human again when the narrowing itself changes" do
+      elsewhere do |escape|
+        filled = journaling_slot
+        inside = put("a.rb", "one")
+        filled.write(timeline: turn("one"), paths: [inside, escape])
+        filled.write(timeline: turn("two"), paths: [inside, escape, "#{escape}.2"])
+
+        expect(narrowed(channel).map(&:dropped)).to eq([1, 2])
+      end
+    end
+
+    it "says nothing at all for a turn whose every path is inside the root" do
+      journaling_slot.write(timeline: turn, paths: [put("a.rb", "one")])
+
+      expect([narrowed, narrowed(channel)]).to eq([[], []])
+    end
+  end
+
+  # The wedge this containment removes: under plan scope the session's write
+  # set keeps growing while the slot's root moves into the spike and back, so
+  # a spike path used to reach the checkout's snapshot as a ../ key that
+  # /undo can only refuse -- and it refuses the newest turn forever, since a
+  # blocked entry is never popped.
+  describe "a plan-scope spike the slot later leaves", :seam do
+    it "leaves /undo addressing the newest reversible turn" do
+      Dir.mktmpdir("lain-slot-spike") do |spike|
+        put("kept.txt", "the human's own\n")
+        filled = slot(scope: :shadow_git)
+        filled.rebind(root: spike).prime
+        spiked = File.join(spike, "note.md").tap { |path| File.binwrite(path, "spiked\n") }
+        filled.write(timeline: turn("in the spike"), paths: [spiked])
+        filled.rebind(root:).prime
+        made = put("made.rb", "back in the checkout\n")
+        filled.write(timeline: turn("after the spike"), paths: [spiked, made])
+
+        undo = log.undo(store:)
+
+        expect(undo.blocked).to eq([])
+        expect(undo.moves.map(&:key)).to eq(["made.rb"])
+      end
+    end
+  end
+
   describe "a shadow turn's trees", :seam do
     # Each prime restages the before-tree, so what a human did between two
     # turns lands there and never in the second turn's undo.
