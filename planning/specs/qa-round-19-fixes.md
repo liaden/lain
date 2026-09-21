@@ -1,6 +1,6 @@
 # QA round 19 fixes — the cap, the gate, the root, and two silent write-offs
 
-status: ready
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1150,6 +1150,377 @@ Scenario: every other finding this plan claims to fix carries a verdict
   4-8 minute waits against a resident model. Say so rather than quoting a number.
 - If a fixed defect reappears one route past the fix — the shape round 18 and 19 both saw — that is
   a new finding for the next round, not a failure of this card.
+
+## Execution log
+
+**Base ref: `main` at `ef4c1d6b`.** Every worktree is cut from that, explicitly, by the
+orchestrator. **`origin/main` is 468 commits behind** (`b1927ce7`), so `isolation: "worktree"`
+would have opened trees missing the entire history this plan is grounded in — the exact trap
+`references/git-protocol.md` names. Re-resolve `HEAD` at the top of every wave; it moves as cards
+land.
+
+Two pre-existing worktrees under `.claude/worktrees/` sit on that stale `b1927ce7` and hold
+**uncommitted third-party work** (an in-flight `Lain::Algebra` extraction, 63 changed files in one
+and a new `ext/lain/src/algebra.rs` in the other). They are not this plan's and are **not swept at
+close-out.** Likewise `sites` (untracked) and the `references/repos/smolagents` submodule bump
+predate this run.
+
+**Worktree preparation, per card** — `.envrc` and `lib/lain/lain.so` are both gitignored, so a
+fresh worktree gets neither:
+
+- `lib/lain/lain.so` (47MB) is **copied in** rather than rebuilt. No card touches Rust, so ten
+  `rake compile` runs would buy nothing; the integration checks recompile once at the end.
+- Each card exports its **own `TMPDIR=$HOME/tmp/lain/<card>`**. CLAUDE.md names the shared
+  `$TMPDIR` as mutable state between concurrent agents, and this wave runs ten of them.
+- No card runs `rake pspec`. Ten concurrent 12-worker suites would produce nothing but contention
+  flakes, which is precisely the signal CLAUDE.md says a red `pspec` cannot carry while something
+  else is running. Cards run their own spec files; the full suite is the orchestrator's, serialized.
+
+**Staleness check (2026-09-21).** Re-verified every wave-1 card's grounding against `ef4c1d6b`.
+Line references drift by at most ±3 and every cited *behavior* is present as described:
+`SAMPLER_KEYS` still carries no `num_predict` and `num_predict` still occurs **0** times in `lib/`;
+`Stop#call(_args, _env) = NOTHING_RUNNING` reads no state; `Backend.new` has exactly the four
+`lib/` call sites T6 names; `snapshot.rb`'s three cited docstrings ("WHICH paths are captured is the
+injected `Scope`'s to say", "Nothing here journals", "Relativization is LEXICAL … its honest `../`
+form rather than being hidden") are verbatim at :10-15, :18-19 and :26-28.
+
+**One divergence, absorbed — T10's Files list names the wrong file for the `Scope` classes.**
+They are not in `lib/lain/workspace/snapshot.rb`; that file's own header says "Scope loads at the
+TOP". The card's subject lives at:
+
+- `lib/lain/workspace/snapshot/scope.rb` — `Scope::WriteSet#paths(write_set:, **)` at `:60`, which
+  **discards `root` entirely**, under the comment the card's third escalation trigger already
+  quotes ("`root` is unused -- this scope keys nothing -- but is part of the duck"). Accepting
+  `root:` here is the card's change. The module docstring (`:10-30`) states the duck.
+- `lib/lain/workspace/snapshot/scope/shadow_git.rb` — `#paths(write_set:, root:)` at `:158`
+  **already takes the root**, so the second implementation of the duck needs the same containment
+  or a stated reason it does not.
+
+`lib/lain/workspace/snapshot.rb` stays in the list: its three docstrings are what the card must
+rewrite. **There is no `spec/lain/workspace/snapshot/scope_spec.rb`** — Scope behavior is specced
+today through `snapshot_spec.rb`. One at the mirrored path is welcome; `scope.rb` is already
+tracked, so CLAUDE.md's same-commit rule is not triggered either way.
+
+No card was invalidated; nothing was escalated to the user at this phase.
+
+**Wave-2 grounding, verified in the same pass** (so wave 2 spawns without re-reading): T7's rename
+surface is **exactly** the 13 `lib/` files and 12 spec files the card measured. T7's history claim is
+verbatim true — `stdin_pump.rb:309-311` is `@screen.remember(line) unless draw.prompt.answer?`
+with `InputRail::Line.new(text: "#{draw.carried.partial}#{line}", …)` on the very next line, so the
+fragment is persisted while the assembled line is passed on. T11's `compaction_header`
+(`backend.rb:475`) is literally `{ "compact_fallback" => compact_fallback }` and `Recording.new(` has
+its single `lib/` site at `loader.rb:75`. T16's `Outcome = Data.define(:spawn, :result)` is at
+`consolidation.rb:30` and the `outcomes.empty?` branch at `consolidate.rb:129`.
+
+**T2's "Open decision 3" citations are already gone from `lib/`, and the rule that bans them does
+not reach what remains.** `grep -rn 'Open decision' lib/` returns **0**: `decoding.rb:86-96` and
+`malformed_response.rb:22-40` now state the report-does-not-repair rationale in words, with no
+citation — the sweep in `b2aa1f1e` got there first. The citation survives only in `spec/`, at
+`ollama_spec.rb:304`, beside **eight unrelated pre-existing ones** (`admission_spec.rb:597,1021`,
+`arm/driver_spec.rb:305`, `ask_human_spec.rb:1356`, `model_spec.rb:111`,
+`marked_changeset_spec.rb:267`, `auto_surface_spec.rb:369`, `tmux_plugin_spec.rb:250`). Those eight
+are a pre-existing backlog and **not T2's**; T2 rewrites only the one in a file it already owns.
+`FAILURE_REASONS` is `private_constant` (`agent.rb:57`), so a spec reading it needs `const_get`.
+
+**Census baseline, before any card landed** — so a card's regression is distinguishable from a
+pre-existing condition at integration time:
+
+- `bin/comment-census --check-tickets --check-load-order` → **exit 0**. PROJECT SCHEMES 0,
+  UNCLASSIFIED 0, and **one** AMBIGUOUS: `frontend/completion.rb:26`'s `C1`, which is Unicode's C1
+  control block and is the exact case CLAUDE.md names as third-party-not-a-ticket. Expected to stay
+  at 1. Confirms "Open decision N" is not the `<LETTER><NUMBER>` shape the checker hunts, so
+  integration check 4 was never going to catch those citations.
+
+### Card status
+
+| Card | Implemented | Panel verdict | Landed |
+|---|---|---|---|
+| T1 | yes + fix round (**15 files** vs 5 declared) | **APPROVE** | ready, awaiting quiet tree |
+| T3 | yes + fix round + final pass | **APPROVE, cleared** (5 files) | ready, awaiting quiet tree |
+| T6 | yes (**51 files**) + `exe/lain` wiring applied | full-treatment review running | — |
+| T8 | yes | **APPROVE** (2 files) | ready, awaiting quiet tree |
+| T9 | yes + fix round | **APPROVE** (4 files) | ready, awaiting quiet tree |
+| T10 | yes (13 files vs 4 declared) | full-treatment review running | — |
+| T13 | yes + fix round + final pass | **APPROVE-WITH-FIXES, cleared** (6 files) | ready, awaiting quiet tree |
+| T14 | yes (5 files vs 2) | REQUEST-CHANGES → fix round | — |
+| T17 | yes + fix round + approval pass | **APPROVE** (3 files) | ready, awaiting quiet tree |
+| T19 | yes + fix round + last pass | **APPROVE** (2 files) | ready, awaiting quiet tree |
+| T2, T7, T11, T16 | wave 2, not started | — | — |
+| T18 | wave 3, not started | — | — |
+
+**Every wave-1 card exceeded its declared file list**, none by concealment — each disclosed the
+widening and gave a per-file reason. The pattern is worth carrying into the next plan: a card that
+changes a *contract* (a required keyword, a containment rule, an always-present wire field)
+invalidates every fixture built on its absence, and the plan's Files list consistently counted only
+the subject, never the fixtures. T6 is the extreme case at **50 files** for a required-keyword
+thread; T10's 4 → 13 and T1's 5 → 13 are the same shape.
+
+**What the panel caught that the green suites did not** — the record of why this step is not
+optional:
+
+- **`/stop` killed the reactor rather than the children.** `Supervisor#stop` does
+  `@task.stop; @task.wait`, so the command did not stop the fleet: it ended the chat's capacity to
+  *have* one, permanently, while answering as though it had worked. Green because the seam asserted
+  a **plain** `agent.ask`; the ask that dies is the next one dispatching `mode: :actor`, and no spec
+  reached it. The two precedents the implementer cited are both session *close*, where killing the
+  reactor is correct — which is exactly why they read as precedent.
+- **The HUD-repaint card's own repro gesture still failed.** The edge test diffed against the last
+  *acted-on* size, so a squeeze **and restore** — the card's literal repro — ends where it started,
+  yields no edge, and leaves the HUD gone. Worse, the settle rule causing it was **unpinned**:
+  deleting `now == @seen &&` left all 31 examples green.
+- **The required-key card's own subject escaped one input shape over.** `"role": null` refuses as
+  `Lain::Error: role must be one of user, assistant, got ""` rather than `Corrupt`, so all three
+  doors that rescue `Corrupt` miss it. Absent key handled; nil-valued key not.
+- **The symlink hole was worse than the plan recorded** — in-root symlinks under ordinary names were
+  auto-approved for a **denied** `id_rsa`, not only a gated `.env`, while the direct spelling of
+  each correctly refused.
+- **The snapshot-containment fix turned a loud refusal into silent data loss.** Narrowing happens
+  *before* `skip?`, so `WriteSet#unchanged?`'s "empty-after-non-empty records total deletion" gained
+  a second way to be empty that is not a deletion. A turn whose whole selection is dropped lands
+  `files: {}` — a record asserting the workspace is empty — and `Restore` then dooms every key of
+  the in-force map, so **a rewind to that turn deletes files no turn deleted.** Pre-card that record
+  held `../dotfile` and `Restore` refused loudly. Production masks it only because `ToolDelivery`
+  passes the cumulative write set, which **nothing pins and the public contract does not require.**
+- **The compaction-eligibility field modelled one edge of a two-sided gate.**
+  `RoutedSummarizer#worth_a_model_call?` is `bytes > 4096 && @input_bound.admits?(bytes)` with a
+  256 KiB ceiling; the new field checked only the floor. A tool result over 256 KiB — routine, since
+  `WebFetch`'s cap is 5 MiB — is declined with **no model call ever made**, yet was journalled as
+  "summaries were attempted and missed". Confidently wrong, in the exact direction the card existed
+  to prevent.
+- **That same card's specs proved the flip, not the mechanism.** Deleting the
+  `MODEL_THRESHOLD_BYTES` comparison outright left `spec/lain/compaction/` at **653 examples, 0
+  failures**: both new examples rode on hit-versus-no-hit and **no spec anywhere held an
+  over-threshold miss**. The mutation is the only reason anyone knows.
+- **Three implementer claims were falsified by their own panels**, each corrected in the record
+  rather than deleted: that `env.snapshots.root` had become unread in `lib/` (`switchboard.rb:600`
+  still reads it, so no integration check moves); that `PTY.spawn`'s `[0,0]` was not a real geometry
+  edge (it is, benignly); and that a field cap bounded *every* refusal naming a record (it bounds the
+  label, while three `.inspect` interpolations still produce 20KB refusals).
+- **A new guard's only live target was the one spelling it refused to watch.** The `--root` card
+  added a call-site guard watching `Skill::Catalog.load`, but `skill/library.rb:36` writes it
+  **bare** (`Catalog.load(root:)`) and is the sole call site in `lib/` — so the watched entry matched
+  **nothing**. Dropping `root:` there would leave the guard green *while skills read `Dir.pwd`*:
+  half the card's own defect, in the file whose default the card deliberately preserves. The
+  collision that justified not watching the bare spelling turned out to be qualified and in another
+  file. **A guard whose sole live target is unreachable is worse than no guard, because it reads as
+  coverage.**
+- **Extracting the containment algorithm to its own path found a defect the inline version hid:** a
+  root of `/` matched nothing, because `"#{base}/"` spelled `"//"`. Writing the shape matrix is what
+  surfaced it. Doing the same card's freeze properly separately revealed that `include Enumerable`
+  sat above `Data`, so `Enumerable#to_h` was **shadowing `Data#to_h`**.
+- **Two panels corrected themselves against their own implementers.** One withdrew a `NotRunning`
+  characterisation as an artifact of its own probe calling `adopt` directly — the real path returned
+  a **tool error** that fed back into the turn with no exception anywhere, quieter than first
+  written. Another withdrew a performance rationale after measuring that the hoist it demanded was
+  worth ~0.09 ms, inside noise, and then **advised against** the optimisation it had implied. A
+  third admitted its round-1 generalisation was contradicted by its own round-1 probe output.
+
+**One orchestrator ruling was itself overturned, with evidence.** Told that `Dir.exist?` should
+survive only for its better sentence, the undo card's implementer demonstrated the predicate is
+**load-bearing for the write-set arm**, which plans without shelling to git, so the rescue never
+fires there — and `OnDisk#place` does `FileUtils.mkdir_p` (`on_disk.rb:59-61`), so without it a
+torn-down spike is silently **recreated** and the turn's files written into a resurrected tree. Two
+arms, two guards. Recorded because the process is meant to survive the orchestrator being wrong.
+
+**T1's blast radius exceeded its declared file list, disclosed rather than hidden.** 13 files
+against 5: five spec files it did not name (`cli_spec.rb`, `cli/backend_spec.rb`,
+`cli/chat_launch_spec.rb`, `cli/epic_submit_spec.rb`, `seams/over_window_request_spec.rb`), two
+extra rationale comments beyond the card's two, and `references/ollama/cloud.md` — whose recorded
+finding is the very defect this card fixes, so the measurement is kept and only the conclusion
+updated. The panel's central task is deciding whether each rewritten example still asserts
+something **true**, rather than merely agreeing with the new code.
+
+**A contention artifact to re-check on the serialized pass, not a defect.**
+`spec/lain/seams/qa_sandbox_pane_resolution_spec.rb` produced 3 failures during a card's sweep with
+`pgrep -cf tmux` reading **10** — it drives real tmux panes. This is exactly the family CLAUDE.md
+says reds under parallelism and passes serially, and exactly why no card was allowed to run
+`pspec`. Integration check 1 is the only verdict that counts.
+
+### Findings surfaced during execution, deferred deliberately
+
+Each is real, verified by a panel probe, and **outside the file list of the card that found it**.
+Recorded here so they survive the chunk rather than living in a worktree that gets retired.
+
+**A residual wrong-root read one entry further back — `snapshot_log.rb`, the same defect class the
+undo card fixes.** `Undo.uncaptured`'s `prior(key, earlier)` matches by **key string** across
+entries whose keys are relative to *different* roots. A panel probe shows an undo of a plan-scope
+turn silently restoring the **checkout** entry's bytes into the spike's same-named file.
+`Undo.changed` compares across roots the same way, so a changed path can read as unchanged and
+escape the `:ignored`/`:outside_root` blockers entirely. Not a regression from this plan — the fix
+narrowed the hole it was aimed at and this one sits one layer over. **Wants its own card.**
+
+**The missing object under the undo fix is `SnapshotLog::Entry`, not a reader.** `Entry` is already
+built from the very `event.body.fetch("root")` the command now re-derives, so `Undo` should carry
+`root` and `Revert.new` should read it. The shipped fix walks
+`env.timeline.store.fetch(...).body.fetch(...)` — a three-hop chain to a second source of truth
+that adds a `Store::MissingObject` escape. Accepting that **inside the card's file list was right**;
+the follow-up deletes `latest`, `recorded_root` and the store hop together.
+
+**The `/stop` signal and the `/stop` command still disagree.** The stop *key* at `you>` routes to
+`Conductor#no_ask_running` (`conductor.rb:476`) and leaves the fleet up, so the key says "no ask is
+running" while `/stop` one line later stops the fleet. The card scoped this out; writing it down is
+the minimum owed.
+
+**Duplication left standing in `undo.rb:128,131`.** The running-worker predicate and the
+`role (worker_id)` join are extracted to `Supervisor#live` for the command, but `undo.rb`'s call
+site is deliberately **not** converted: a sibling card owns that file and was in review when the
+extraction landed, and editing it would have invalidated that review. One call site of a
+two-call-site duplication, owed a follow-up.
+
+**The content predicate refuses this repo's own `README.md`** — it documents a `.env` assignment and
+three token-shaped strings, so the region detector finds four regions. Pre-existing and independent
+of the approval card, but it is evidence the content predicate's false-positive rate on ordinary
+documentation is high, which bears on how much weight the new landing predicate should carry.
+
+**A spec file that hangs instead of reddening.** `input_pane_spec.rb`'s `open_pane` helper calls
+`server.accept` with no timeout, so when `InputPane` cannot construct the file **hangs** rather than
+failing. Pre-existing. It is the shape CLAUDE.md warns about under "check the example COUNT, not
+just the failure count" — a hang is not a pass, but it does not read as a failure either. Worth a
+line in `docs/toolchain-traps.md`.
+
+**A third rubocop specimen, and this one is worse than the documented rule — `-a` was not safe.**
+The snapshot card reports that **`rubocop -a`, the *safe* autocorrect, reflowed a spec helper into a
+syntax error**, repaired by hand; it also declined `-a`'s `map(&:-@)` suggestion in favour of
+`path.dup.freeze`. CLAUDE.md's rule bans `-A` and names one past incident, on the premise that `-a`
+applies only `Safe: true` cops. **A `-a` producing invalid syntax is a different and stronger
+claim**, and if it holds it means the standing advice ("`rubocop -a` — safe autocorrect only") needs
+a caveat rather than just a contrast with `-A`. Sent to the card's panel for verification before
+being treated as established; recorded here either way so the claim is not lost.
+
+**A second specimen of the `rubocop -A` hazard CLAUDE.md warns about, found live.**
+`RequiredKeys.fetch(record, key) { }` trips `Lint/UselessDefaultValueArgument`, **whose `-A`
+correction deletes the second argument** — silently changing which key is read. The method was
+renamed to `read`/`read_filled` to avoid the cop rather than disabled inline. CLAUDE.md's rule is
+justified by one past incident where an unsafe cop proposed discarding every turn with no test
+failure; this is the second, and it argues for keeping the specimen list in
+`docs/toolchain-traps.md` rather than only the rule.
+
+**`--root` cannot do what its name suggests, and two independent limits say so.**
+`Lain::Project` refuses a cwd not under root, so `--root` can only ever name an **ancestor** of the
+cwd — it cannot point a chat at an unrelated project. That sits beside the already-recorded fact
+that `Paths#project_hash` keys sessions off `Dir.pwd`, so the flag does not move a session's
+storage either. Together these bound the flag to "which `.lain/` governs an ancestor directory",
+which is narrower than the round-19 finding implies and deserves stating in the flag's own help.
+
+**Completion under `--root` is its own card, and the obvious fix is worse than the defect.**
+The root was deliberately **not** threaded to `Completion::Sources`: its `#paths` strips the walked
+directory's prefix while the agent resolves paths against `project.cwd`, so root-walking a chat
+started in a subdirectory would name files from the repo top that then fail to resolve — the exact
+defect the existing `survey.rb` ALLOWED entry was written to keep out. Under `--root` both values
+are wrong anyway, so the card's third clause would have **broken a working case without fixing the
+one it targeted.** The card was wrong on that clause; its acceptance criteria never depended on it.
+
+**A live cockpit defect found incidentally, in no round-19 finding: `Wiring#open_terminal` never
+passes `completion_sources:` at all**, so a running chat's `/command` completion offers **no
+commands and no skills**. Found while declining the clause above. Wants its own card.
+
+**The same error class was the right call in one card and the wrong one in another, and the
+difference is the rescue rather than the class.** Both the generation-cap card and the `--root` card
+ended up raising `ArgumentError` on a path an operator can reach. In the cap's case it is correct:
+`CLI::ResendBridge#dispatch` (`resend_bridge.rb:86-90`) does not merely `rescue StandardError`, it
+**interpolates `e.message`** into "resend refused: the edited buffer does not rebuild into a
+Request (…)", so the nvim request-buffer path renders "max_tokens must be positive, got -1" as a
+clean cockpit sentence, with `request_buffer_spec.rb:179` already pinning that shape. In the
+`--root` case it is wrong: `ArgumentError: cwd must lie under root` is **not** a `Lain::Error`, and
+`exe/lain` rescues `Lain::Error`, so `lain chat --root /elsewhere` reaches the operator as a raw
+backtrace. **The lesson for the next card is to check the rescue at the reachable call site rather
+than reason from the error's class**, which is what settled it here.
+
+**Two unrescued gates for a bad ceiling on disk, and the fix belongs in the loader rather than in
+the error class.** The generation-cap card guards `Request`, **not `Context`** — and
+`Context.new(max_tokens: -1)` is still accepted. So `lain chat --resume <session>` over a
+hand-edited header **succeeds**, and the `ArgumentError` fires at the first `#render`: **mid-turn
+rather than at the door**, past a rescue that only sees `Lain::Error`. `Resume` has named arms for
+`Corrupt` and `CorruptFrame` and none for this. Separately, `RequestReplay` raises `ArgumentError`
+rather than its own `Corrupt`, because `Request.new` runs **before** the digest check that would
+have called the record corrupt.
+
+Neither blocks that card: both need a hand-edited or corrupted file, so they are operator-supplied
+**data** rather than an operator-typed **flag**, and the raise is strictly better than the old silent
+pass-through. **The fix is one line in `Loader#context`, in the loader's own currency** —
+`Bench::Session::Corrupt` *is* a `Lain::Error`, and that method already wraps
+`ContextPipeline::Unknown` into it, so an `ArgumentError` arm would present clean **and name the
+offending file**, which a class change in `Request` could not. The tighter variant is to give
+`Context#initialize` the same positivity invariant so a bad header refuses at the door. This is the
+required-key card's own principle — a refusal must arrive in the currency its reader rescues —
+unmet one subsystem over.
+
+**`Supervisor::Null` is missing `retire` and `retired?`** — both called on a real supervisor
+(`arm/plan_only.rb:127`, `epic_driver/factory.rb:983`). It is **unreachable by construction**: both
+take a `Registration`, obtainable only through `#adopt`, which `Null` refuses — the same argument
+the file already makes for omitting `Retain#reclaim`. Recorded rather than fixed, because the
+Null Object's duck having one documented hole invites a reader to assume the others are accidental.
+`#live` was a genuine gap and was added.
+
+**A sanitized label still passes ANSI and C0 escapes through to the chat pane.** `/stop`'s answer
+flattens nil and newlines, but `\e[31m` reaches the pane intact and `\e[2K\r` defeats the stated
+rationale for flattening in the first place. Roles are developer-supplied today, so this is a NIT
+rather than a gate — but the sanitiser's own reason is what it fails to deliver.
+
+**Eight further raw-`KeyError` sites the required-key helper now makes cheap to fix:**
+`loader.rb:237,241,285`, `anchor.rb:57`, `resume_chain.rb:106,131`, `lineages.rb:36,192` — all still
+escaping the same three doors that rescue `Corrupt` and not `KeyError`. Left unfixed deliberately;
+the helper they need now exists.
+
+### Orchestration errors and course corrections
+
+**An inherited working directory put every wave-1 agent's shell in the wrong worktree, and only an
+implementer's scepticism surfaced it.** The orchestrator smoke-tested the environment by running a
+spec inside `tmp/worktrees/T14`; that `cd` persisted, so all ten agents spawned afterwards
+inherited `T14` as their starting directory. T13's implementer noticed the mismatch between its
+announced cwd and its own card and **asked rather than proceeding**. A full sweep of all ten
+worktrees confirmed **no cross-contamination** — every tree holds only its own card's files —
+because each brief ordered an explicit `cd` at the start of every shell. That instruction is what
+saved it, not the setup. Two corrections stand: the orchestrator's own shell calls now always name
+`/home/tara/dev/lain` explicitly, and every review brief tells the agent not to trust its inherited
+cwd. **The generic lesson is CLAUDE.md's own** — a shared scratch location is shared mutable state
+between agents, and a worktree is the largest such location there is.
+
+**T1's spec fallout is wider than its card declared, and it collides with T6 — benignly.** T1's
+Files list named five files; it changed eleven, the extra five being spec files its encoder change
+reds (`cli_spec.rb`, `chat_launch_spec.rb`, `epic_submit_spec.rb`, `cli/backend_spec.rb`,
+`integration/provider/ollama_cloud_spec.rb`). `spec/lain/cli/backend_spec.rb` is **also** T6's, so
+this is precisely the in-flight file collision the ready-queue rule exists to prevent. Measured
+rather than assumed: T1's hunks in that file sit at **1823-1974** and T6's at **11, 29 and
+1084-1088** — disjoint, so the two apply cleanly in sequence. They are landed **serialized**, T1
+first, with the later commit carrying any integration touch-up. T1's edit to the contended
+`lib/lain/cli/backend.rb` is exactly **one hunk at 689-692**, the comment block the orchestrator
+authorized and nothing else.
+
+**A known hole is recorded in prose, never pinned as an expectation.** The approval card's
+implementer asked whether to add a spec expecting `cat hard.txt` to be **approved**, to pin the
+measured hardlink limit. Ruled no, on a stronger version of its own reason: such an expectation
+would red the moment a future card *closes* the hole, so it would penalise the fix and read as a
+regression — an anti-spec that defends the defect it documents. The tree's precedent for pinning a
+trade is all over-**refusals**, which fail closed. Prose records a limit; an expectation entrenches
+it. The obligation that comes with the ruling is that the prose must be exact where a spec would
+have been, which is what the re-review was asked to check.
+
+**Staging is BY NAME, never `git add -A` — a panel caught this before it bit.** Cards leave probe
+scripts, red captures and review documents at their worktree root, and **three of the undo card's
+six leftovers hold deliberately failing examples** kept as a follow-up card's starting red
+(`probe-T19-review_spec.rb` carries the residual cross-root finding; `probe-T19-review-ensure_spec.rb`
+carries two). None sits under `spec/`, so RSpec's default path never collects them — but `git add -A`
+would have committed them, and the suite would then have had a permanent red with a plausible-looking
+provenance. Every card is asked for its untracked inventory at hand-back for this reason, and each
+commit stages the modified files explicitly.
+
+**Commits are held while agents are in flight, and this is not a scheduling preference.** CLAUDE.md
+records that the pre-commit hook **autostashes repo-wide**, so a commit made while ten agents hold
+worktrees would move the tree under them mid-run. Landing therefore waits for a quiet tree
+(`pgrep` both patterns at 0), which is what the skill's "as soon as it is approved *and the tree is
+quiet*" is protecting. The plan-doc commit is held on the same rule.
+
+**Resumed 2026-09-21 — the "contention" reds were a real regression on `main`.** Base re-verified:
+`main` at `ef4c1d6b`, `origin/main` 468 behind; all ten `card/<id>` branches one snapshot commit
+each, worktrees clean, tree quiet. Baseline `rake pspec` on `main`: **20,511 examples** (full count),
+3 failures, all in `qa_sandbox_pane_resolution_spec.rb`. Five cards had filed them as tmux
+contention. **They fail serially on a box with no tmux server**, and pass 5/5 against
+`qa-sandbox.sh` from `d5d08b87^` — so `d5d08b87` regressed them. It staged no Ruby, and the
+`ruby-checks` hook is `types_or: [ruby, rust]`, so the suite never ran on it. Because the hook
+runs `pspec`, this red blocks every card's landing. It is fixed as an out-of-plan leaf
+(`card/pane-fix`) landed ahead of T8. The lesson: a red that five agents independently call
+contention is still only a hypothesis until it has been run serially on a quiet box.
 
 ## Integration checks
 
