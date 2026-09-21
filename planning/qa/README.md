@@ -276,6 +276,27 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round19-2026-09-21.md`](../qa-findings-round19-2026-09-21.md) — round 19, a full
+  round over all eighteen scenarios in ten contexts (the spine plus nine parallel forks with their
+  own sandboxes). **Every scenario driven; none dropped.**
+  - **The headline, found independently by four contexts: the ollama arm puts no generation cap on
+    the wire.** `max_tokens` is journaled and never sent, `num_predict` is absent from all of `lib/`
+    — one task decoded 85,150 tokens against a declared 4,096 and outlived its own client by ~13
+    minutes. With `n_slots = 1` it starves the box, and the stall clock cannot catch it because it
+    arms on silence.
+  - **Three more HIGH:** an in-root **symlink** under an ordinary name is auto-approved by
+    `ComposedTerm` (F131 one route on); `lain chat --root PATH` is ignored, so `.lain/slots/` never
+    loads; and a detected `malformed_response` is a **silent write-off delivered as a successful
+    result** — the record has zero consumers in `lib/`.
+  - **Two long-owed sections reached:** `survey` §7, dropped by three consecutive rounds, and
+    `rails-blog` §1b, whose over-window handoff was driven end to end for apparently the first time
+    — **F173 is fixed**.
+  - **`bench arms` cannot report:** one task hitting the iteration ceiling aborts the whole run,
+    discarding 13 completed grades (Fp-3), so the grade table and cost column are undriven.
+  - **Process:** method.md's cockpit-nvim kill was box-wide and **killed six sandboxes' cockpits
+    mid-round**; `answer.sh` treated every non-`deny` argument as approve and released a refused
+    private key; the "names only" key recipe printed the key. All three are fixed in this commit.
+
 - [`../qa-findings-round18-2026-09-15.md`](../qa-findings-round18-2026-09-15.md) — round 18, the
   discharge chunk's integration check 9: a full round over all eighteen scenarios, nine of them in
   parallel fork contexts with their own sandboxes.
