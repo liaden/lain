@@ -77,7 +77,9 @@ module Lain
         def optional_fields(request)
           tools = encode_tools(request.tools)
           fields = tools.empty? ? {} : { tools: }
-          fields.merge(options: encode_options(request)).merge(extra_flag_fields(request.extra))
+          flags = extra_flag_fields(request.extra)
+          refuse_format_with_tools!(fields, flags)
+          fields.merge(options: encode_options(request)).merge(flags)
         end
 
         def extra_flag_fields(extra)
@@ -86,6 +88,18 @@ module Lain
           format = structured_format(extra)
           fields[:format] = format unless format.nil?
           fields
+        end
+
+        # 0.32.12 accepts both fields and answers without an error: probed on
+        # qwen3:4b, `format` won silently -- no tool call, a confident JSON
+        # answer fabricated in its place. Research saw the pair work with
+        # thinking on, but one rule has not held across models, so the pair is
+        # refused by name rather than trusted to a flag.
+        def refuse_format_with_tools!(fields, flags)
+          return unless fields.key?(:tools) && flags.key?(:format)
+
+          raise Error, "a structured_output format and tools in one Ollama request: the " \
+                       "constrained decoder silently suppresses the tool call -- send one or the other"
         end
 
         # Ollama's `format` wants the raw JSON schema, not a tool wrapper. A

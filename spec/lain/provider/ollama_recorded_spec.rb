@@ -121,11 +121,17 @@ module T13RecordedOllama
   # tokens, deterministic, and the capability gets a recorded round trip it did
   # not have before. The first turn stays unconstrained, because a constrained
   # one does not call a tool.
+  #
+  # That is also why the constrained turn sends no tools: `Ollama::Encoding`
+  # refuses the pair, since `format` silently suppresses any tool call. The
+  # cassette was recorded before the refusal and its request body still carries
+  # them; replay matches on method and URI alone, so the bytes it hands back are
+  # the same either way.
   def ask(messages, think: nil, schema: nil)
     extra = { "temperature" => 0, "seed" => 1 }
     extra["think"] = think unless think.nil?
     extra["structured_output"] = { "schema" => schema } unless schema.nil?
-    Lain::Request.new(model: MODEL, max_tokens: 512, stream: true, tools:, messages:,
+    Lain::Request.new(model: MODEL, max_tokens: 512, stream: true, tools: schema.nil? ? tools : [], messages:,
                       system: "You are a terse assistant. Use the read_file tool when asked to read a file.",
                       extra:)
   end

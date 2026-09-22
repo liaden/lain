@@ -95,6 +95,25 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
 
       expect(encoded.key?(:format)).to be(false)
     end
+
+    describe "alongside tools" do
+      let(:tools) { [{ "name" => "echo", "description" => "echoes", "input_schema" => { "type" => "object" } }] }
+
+      # Ollama answers this pair without an error and drops the tool call.
+      it "refuses a format and tools in the same request" do
+        marker = { "structured_output" => { "schema" => schema } }
+
+        expect { encoder.encode(request(tools:, extra: marker)) }
+          .to raise_error(Lain::Error, /structured_output format and tools/)
+      end
+
+      it "still sends tools when the marker carries no schema, since no format reaches the wire" do
+        encoded = encoder.encode(request(tools:, extra: { "structured_output" => { "tool" => "answer" } }))
+
+        expect(encoded.keys).to include(:tools)
+        expect(encoded.key?(:format)).to be(false)
+      end
+    end
   end
 
   # The two throughput knobs. `num_batch` is the one with a measured cost
