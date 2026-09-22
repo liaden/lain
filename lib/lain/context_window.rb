@@ -115,6 +115,9 @@ module Lain
       "deepseek-v4-pro:cloud" => 1_000_000,
       "deepseek-v4-pro:0813-cloud" => 1_000_000,
       "kimi-k3:cloud" => 1_000_000,
+      "deepseek-v4.1-flash:cloud" => 1_000_000,
+      "glm-5.3:cloud" => 1_000_000,
+      "glm-5.3-flash:cloud" => 1_000_000,
 
       # Ollama publishes "976K". Its own page's prose says "1M" in the next
       # breath; the spec field is the narrower of the two and so is the one
