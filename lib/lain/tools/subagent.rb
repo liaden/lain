@@ -87,12 +87,13 @@ module Lain
       # schema bytes.
       def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
                      max_depth: 1, name: NAME, announces_as: name, mode: :one_shot,
-                     log: Log::Null, persona: Role::Persona::Null, answer: ANSWER, **spawn_over)
+                     log: Log::Null, persona: Role::Persona::Null, model: ModelChoice::Null,
+                     answer: ANSWER, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
         @announces_as = announces_as
         @answer = answer
-        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, name: announces_as)
+        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:, name: announces_as)
         seed_config(max_depth, name, mode, log)
       end
 
@@ -769,6 +770,98 @@ module Lain
         def self.current = Session::Unconfined
       end
 
+      ModelChoice = Data.define(:model, :declared_by) do
+        # Interned HERE and not in {.of}, because `.new` and `#with` go nowhere
+        # near that factory: a member left as the caller's String is reachable
+        # mutable state, and a later `<<` on it would follow the value into the
+        # bound Context. Deep freezing belongs on the path every construction
+        # takes.
+        def initialize(model:, declared_by:)
+          super(model: -model.to_s, declared_by: -declared_by.to_s)
+        end
+
+        # `context` bound to this model, refused FIRST: a provider that says it
+        # has not got the model answers before the child's first ask, so nothing
+        # is spent on a model nobody can serve. TOKENS, not records -- the
+        # `:spawn` is already written by then ({Subagent#spawn_one_shot} records
+        # it before it builds the child), so a refusal leaves that spawn and a
+        # failed completion on the Store.
+        #
+        # THE REFUSAL IS NARROWER THAN IT READS. Only a flat denial refuses, and
+        # {Provider#serves?} answers UNKNOWN wherever there is no endpoint to
+        # ask -- today every provider but ollama with model metadata. So an
+        # anthropic run invoking a skill that names an ollama tag is NOT caught
+        # here: the name goes out and comes back as a vendor error naming
+        # neither the skill nor the declaration. Widening that means giving the
+        # other providers something to answer from, which is theirs, not this
+        # value's.
+        #
+        # AND THE RUNNER KNOBS ARE NOT REBOUND. `--num-ctx` rides
+        # {Context#extra} verbatim, cleared at launch against the RUN model's
+        # trained maximum ({CLI::Backend::NumCtx#refuse_above_trained}), so a
+        # child bound to a smaller model carries a number validated for a larger
+        # one. Binding a model here changes the model and nothing else.
+        def bind(context, provider:)
+          raise ModelChoice::Unserved, unserved(provider) if provider.serves?(model).not_served?
+
+          context.with_model(model)
+        end
+
+        private
+
+        def unserved(provider)
+          "#{declared_by} names model #{model.inspect}, and #{provider.class} says it does not serve it. " \
+            "One run holds one provider, so a model outside that provider's namespace can never be spawned " \
+            "against here: name a model this provider serves, or run the arm under the provider that has it"
+        end
+      end
+
+      # WHICH model this one child runs under, when somebody other than the run
+      # itself named it: a skill's front-matter, or a caller that picked one for
+      # a spawn it is making. It binds the child's Context and nothing else, so
+      # the parent's own model, and every sibling's, is untouched.
+      #
+      # A DECLARED preference is not a ROUTED decision, which is why this is not
+      # {Oracle::Router}: the router reads a task at spawn time to answer "which
+      # model suits THIS work", while a declaration was written down before any
+      # task existed and has no question left to ask. Routing one through the
+      # other would spend a call re-deriving an answer already on disk.
+      class ModelChoice
+        # Reopened for the trap a constant inside the `Data.define` block hits:
+        # it would land on {Subagent} rather than here, and the one docstring
+        # YARD keeps is the reopen's.
+
+        # A declared model the run's provider says it has not got.
+        class Unserved < Error; end
+
+        # Nobody named a model, so the child keeps whatever the run's Context
+        # factory hands it. Frozen and shared -- it holds no state, and a spawn
+        # site asking it `bind` is what keeps `if model` out of all three.
+        # `**` swallows the `provider:` a real choice refuses against: there is
+        # nothing to refuse, so there is nothing to name it.
+        #
+        # It answers the two READERS as well as `bind`, blank for both: a caller
+        # logging which model a spawn got is the next thing to want, and a Null
+        # that answered only `bind` would send the first such reader to write
+        # the type test this object exists to prevent.
+        Null = Class.new do
+          def bind(context, **) = context
+          def model = ""
+          def declared_by = ""
+        end.new.freeze
+
+        # The choice, or {Null} when no name was given. Blank is unset for
+        # {Bench::SpawnSeam}'s reason: a blank model has not been chosen, and
+        # binding it would render a Request naming the empty string.
+        #
+        # @param model [String] the model name, as declared
+        # @param declared_by [String] who named it, for the refusal to cite
+        # @return [#bind] this choice, or {Null} when the name was blank
+        def self.of(model, declared_by:)
+          Blankness.blank?(model) ? Null : new(model:, declared_by:)
+        end
+      end
+
       # What a child spawn is built OVER: the collaborators every spawn needs
       # and no single spawn chooses. Three adopters ({Subagent},
       # {ChildBuilder}, {Skill::RoleSpawn}) took them as loose keywords, so a
@@ -975,12 +1068,14 @@ module Lain
         # `name` is what a human is TOLD is asking when this child puts a
         # question to them, so a role spawn announces as "researcher" rather
         # than as a 71-character correlation.
-        def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null, name: "subagent")
+        def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null,
+                       model: ModelChoice::Null, name: "subagent")
           @seam = seam
           @toolset = toolset
           @policy = policy
           @budget = budget
           @persona = persona
+          @model = model
           @name = name
         end
 
@@ -997,6 +1092,11 @@ module Lain
         # -- the road as it looked one hop further out. Passing the unchanged
         # value here would let a grandchild's question skip straight past its
         # own parent to wherever ITS grandparent's mailbox is.
+        #
+        # `model` is not copied either, and for a reason of its own rather than
+        # `parent`'s: a bound model is ONE child's property, not a subtree's.
+        # The copy this builds is the run's own `subagent` tool descending into
+        # a child's union, and what binds a grandchild is whoever spawns it.
         def config(parent:, escalation:)
           { seam: @seam.with(parent:, escalation:), toolset: @toolset, policy: @policy,
             budget: @budget, persona: @persona }
@@ -1196,11 +1296,18 @@ module Lain
           Middleware::Stack.new([Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 
-        # Two composed reshapes over the factory's Context: PERSONA first, then
-        # the PREFIX strategy. Persona is the inner reshape so the role's marked
-        # bulk is what a fresh child renders, and a strategy that rewrites
-        # system sees the persona'd context rather than the bare factory one.
+        # Three composed reshapes over the factory's Context: PERSONA first, then
+        # the PREFIX strategy, then the model. Persona is the inner reshape so
+        # the role's marked bulk is what a fresh child renders, and a strategy
+        # that rewrites system sees the persona'd context rather than the bare
+        # factory one. The model binds LAST and outermost: it touches nothing the
+        # other two read, and a Context is built before the child's first ask,
+        # so a model the provider has not got is refused with no token spent.
         def child_context
+          @model.bind(reshaped_context, provider: @seam.provider)
+        end
+
+        def reshaped_context
           @policy.prefix.child_context(@persona.child_context(@seam.context_factory.call), journal: @seam.journal)
         end
       end

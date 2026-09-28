@@ -13,8 +13,11 @@ class ReplMiddlewareStubRoleSpawn
     @calls = []
   end
 
-  def call(role, context, prompt)
-    @calls << [role, context, prompt]
+  # Mirrors {Lain::Skill::RoleSpawn#call}, whose `model:` carries a skill's
+  # declared model to the spawn -- defaulted here so a caller that names none
+  # reads the same as one that cannot.
+  def call(role, context, prompt, model: Lain::Tools::Subagent::ModelChoice::Null)
+    @calls << [role, context, prompt, model]
     Lain::Tool::Result.ok("child said hi")
   end
 end
@@ -123,7 +126,11 @@ RSpec.describe Lain::CLI::ReplMiddleware do
           env.merge(response: "ran")
         end
 
-        expect(fake.calls).to eq([["researcher", :inherit, "# Greet\nSay hello.\n\n\nwarmly"]])
+        # The fourth member is the seam's `model:`: a role-bound line whose skill
+        # declares none reaches the spawn as the Null choice, not as nil.
+        expect(fake.calls)
+          .to eq([["researcher", :inherit, "# Greet\nSay hello.\n\n\nwarmly",
+                   Lain::Tools::Subagent::ModelChoice::Null]])
         expect(result.fetch(:response).text).to eq("child said hi")
       end
     end

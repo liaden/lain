@@ -28,8 +28,11 @@ module Lain
       # Every front-matter key `.build` reads. A key outside this set is
       # refused rather than ignored -- the same posture as `Config::Epics::KEYS`
       # -- so a typo (`slot:` for `slots:`) fails loudly instead of silently
-      # leaving the skill un-slotted.
-      KEYS = %w[description slots includes].freeze
+      # leaving the skill un-slotted. `model:` is the key that makes the refusal
+      # pay for itself twice over: a misspelled one would leave a skill running
+      # on the run's model while its front-matter said otherwise, and nothing
+      # downstream can tell an unnamed model from an unread one.
+      KEYS = %w[description slots includes model].freeze
 
       class << self
         # Read the shipped skills, then overlay the project's user skills (a user
@@ -57,8 +60,28 @@ module Lain
             description: meta.fetch("description", ""),
             scaffold:,
             slots: meta.fetch("slots", []),
-            includes: meta.fetch("includes", [])
+            includes: meta.fetch("includes", []),
+            model: model_name(name, meta)
           )
+        end
+
+        # `model:` is a NAME, so a sequence, a mapping or a number under that key
+        # is refused rather than coerced. {Skill}'s own `to_s` would turn
+        # `model: []` into the non-blank `"[]"` and send it to a provider as a
+        # model id; KEYS argues a key nobody meant to write must not survive, and
+        # a value nobody meant to write is the same argument one level down.
+        #
+        # A key written with nothing after it reads back as nil, which is a
+        # declaration left blank rather than a wrong one, so it passes and lands
+        # as the empty String every other unset member uses.
+        def model_name(name, meta)
+          model = meta["model"]
+          unless model.nil? || model.is_a?(String)
+            raise Malformed, "skill #{name.inspect} front-matter `model:` must be a model name, got " \
+                             "#{model.class}"
+          end
+
+          model.to_s
         end
 
         # Front-matter is a leading `---`-fenced YAML block; everything after the

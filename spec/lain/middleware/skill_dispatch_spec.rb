@@ -8,16 +8,20 @@ require "tmpdir"
 # path -- the real seam raises Role::Catalog::Unknown BEFORE any spawn, and the
 # dispatch lets that Lain::Error propagate exactly as Malformed.
 class SkillDispatchFakeRoleSpawn
-  attr_reader :calls
+  attr_reader :calls, :models
 
   def initialize(answer: "the child's final answer", raises: nil)
     @answer = answer
     @raises = raises
     @calls = []
+    @models = []
   end
 
-  def call(role, context, prompt)
+  # The model choice rides its own list rather than the tuple, so what a skill
+  # declared is asserted without restating the routing every other example pins.
+  def call(role, context, prompt, model: Lain::Tools::Subagent::ModelChoice::Null)
     @calls << [role, context, prompt]
+    @models << model
     raise @raises if @raises
 
     Lain::Tool::Result.ok(@answer)
@@ -201,6 +205,63 @@ RSpec.describe Lain::Middleware::SkillDispatch do
         expect { run(dispatch, "@nope/create-plan go") }
           .to raise_error(Lain::Role::Catalog::Unknown)
       end
+    end
+  end
+
+  # The fourth front-matter key, read off a real catalog built from a real
+  # skill.md rather than from a hand-made Skill value.
+  describe "a skill that names its own model" do
+    def triaged(model) = { "triage/skill.md" => "---\nmodel: #{model}\n---\n# Triage\nSort it.\n" }
+
+    it "hands the declared model to the spawn, naming the skill that declared it" do
+      fake = SkillDispatchFakeRoleSpawn.new
+      with_dispatch(shipped: triaged("claude-haiku-4"), role_spawn: fake) do |dispatch|
+        run(dispatch, "@dev/triage go")
+
+        expect(fake.models.map(&:model)).to eq(["claude-haiku-4"])
+        expect(fake.models.first.declared_by).to eq("skill :triage")
+      end
+    end
+
+    it "hands the spawn no choice at all when the front-matter names no model" do
+      fake = SkillDispatchFakeRoleSpawn.new
+      with_dispatch(shipped: create_plan, role_spawn: fake) do |dispatch|
+        run(dispatch, "@dev/create-plan go")
+
+        expect(fake.models).to eq([Lain::Tools::Subagent::ModelChoice::Null])
+      end
+    end
+
+    # An in-line invocation spawns nothing, so there is no child to give a
+    # declared model to. Refused where the skill is read, not ignored.
+    it "refuses an in-line invocation of it, naming the skill and the model, with no downstream turn" do
+      with_dispatch(shipped: triaged("claude-haiku-4")) do |dispatch|
+        seen = nil
+        expect { dispatch.call({ text: "/triage go" }) { |env| seen = env } }
+          .to raise_error(Lain::Middleware::SkillDispatch::ModelWithoutSpawn,
+                          /triage.*claude-haiku-4/m)
+        expect(seen).to be_nil
+      end
+    end
+
+    # A `model:` key that is PRESENT and blank has declared nothing, so the
+    # in-line refusal must read the value rather than the key.
+    it "still expands an in-line invocation whose model key is present and blank" do
+      with_dispatch(shipped: triaged("")) do |dispatch|
+        _result, seen = run(dispatch, "/triage go")
+
+        expect(seen.fetch(:text)).to eq("# Triage\nSort it.\n\n\ngo")
+      end
+    end
+
+    # `to_s` would coerce a sequence into the non-blank "[]" and send it on as a
+    # model id, so the catalog refuses it where it refuses an unknown key.
+    it "refuses front-matter whose model is not a name at all, at load" do
+      expect do
+        with_dispatch(shipped: { "triage/skill.md" => "---\nmodel:\n  - a\n  - b\n---\n# Triage\n" }) do
+          raise "the catalog loaded a skill whose model is a sequence"
+        end
+      end.to raise_error(Lain::Skill::Catalog::Malformed, /triage.*model.*Array/m)
     end
   end
 

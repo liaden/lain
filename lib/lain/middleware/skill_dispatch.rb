@@ -9,7 +9,10 @@ module Lain
     #
     #   not an invocation  (parse -> nil)  -> pass through unchanged
     #   in-line  (`/skill args`)           -> render the scaffold, append args,
-    #                                         REWRITE env[:text], run the turn
+    #                                         REWRITE env[:text], run the turn --
+    #                                         unless the skill declares a model,
+    #                                         which an in-line turn cannot honor
+    #                                         ({ModelWithoutSpawn})
     #   unknown  (`/nope`)                 -> short-circuit: a loud env[:response]
     #                                         naming the known set, NO model turn
     #   role-bound (`@role/skill`)         -> fold a persona'd one-shot subagent's
@@ -31,6 +34,15 @@ module Lain
     # chunk, reading git objects -- and not a turn over the working tree the
     # human is still editing. With nothing held it is the skill like any other.
     class SkillDispatch < Base
+      # An in-line invocation of a skill whose front-matter declares a model.
+      # There is no child to give it to -- an in-line skill expands into the
+      # parent's own turn -- so honouring the declaration is impossible and
+      # running the line on the parent's model would be the declaration ignored
+      # in silence. Refused where the skill is READ, ahead of the turn it would
+      # have expanded into, so nothing is spent answering on a model nobody
+      # chose. A {Lain::Error}, so the dispatch boundary renders it.
+      class ModelWithoutSpawn < Error; end
+
       # The skill a held review round answers itself.
       CRITIQUE = :critique
 
@@ -54,6 +66,8 @@ module Lain
         return downstream(env, &app) if invocation.nil?
         return report_role_bound(env, invocation) unless invocation.inline?
         return report_unknown(env, invocation) unless known?(invocation)
+
+        refuse_unspawned_model!(invocation)
         return report_critique(env, invocation) if held_critique?(invocation)
 
         downstream(env.merge(text: expand(invocation)), &app)
@@ -64,6 +78,20 @@ module Lain
       def known?(invocation) = @catalog.names.include?(invocation.skill.to_sym)
 
       def held_critique?(invocation) = invocation.skill.to_sym == CRITIQUE && @outbox.open?
+
+      # Ahead of the held-review branch as well as the expansion: a critique
+      # round spawns its own children on the run's model, so letting a declared
+      # one through there would be the same silence by a longer road.
+      def refuse_unspawned_model!(invocation)
+        skill = @catalog.fetch(invocation.skill)
+        return if Blankness.blank?(skill.model)
+
+        raise ModelWithoutSpawn,
+              "skill #{skill.name.inspect} declares model #{skill.model.inspect}, and an in-line " \
+              "/#{skill.name} has no child to run it on: invoke it role-bound (@role/#{skill.name} or " \
+              "@role[/#{skill.name}]) so the declared model reaches a spawn, or drop `model:` from its " \
+              "front-matter"
+      end
 
       # A refusal raises {Review::Critique::Refused}, a {Lain::Error}, so it
       # reaches the dispatch boundary exactly as an unknown role does.
@@ -95,8 +123,17 @@ module Lain
       # spent; being a {Lain::Error} it propagates to the dispatch boundary like
       # {Malformed} does.
       def report_role_bound(env, invocation)
-        result = @role_spawn.call(invocation.role, invocation.context, expand(invocation))
+        result = @role_spawn.call(invocation.role, invocation.context, expand(invocation),
+                                  model: declared_model(invocation))
         short_circuit(env, result.content)
+      end
+
+      # The skill's front-matter model, carrying the skill's OWN name so a
+      # refusal at the spawn cites the declaration a reader has to go and edit
+      # rather than the role that happened to be asked for.
+      def declared_model(invocation)
+        skill = @catalog.fetch(invocation.skill)
+        Tools::Subagent::ModelChoice.of(skill.model, declared_by: "skill #{skill.name.inspect}")
       end
 
       def short_circuit(env, message)

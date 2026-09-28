@@ -2,6 +2,14 @@
 
 require "tmpdir"
 
+# A provider whose endpoint says, flatly, that it has not got the model asked
+# about -- the one Serving answer that is a no. A named class and not an
+# anonymous one, because the refusal names `provider.class` and a reader of the
+# message has to be able to find it.
+class RoleSpawnUnservingProvider < Lain::Provider::Mock
+  def serves?(_model) = Lain::Provider::Serving::NOT_SERVED
+end
+
 # The call-time role-selecting spawn seam: (role_name, context_mode,
 # prompt) -> subagent result. It fetches the role (loud on unknown, BEFORE any
 # spawn), builds a one-shot Subagent under that role's policy and persona with
@@ -113,6 +121,78 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
     expect(result).to be_ok
     expect(result.content).to eq("the final answer")
+  end
+
+  # ---- The model a spawn is bound to, per call -------------------------------
+
+  describe "a model bound at the spawn" do
+    def choice(model, declared_by: "skill :triage")
+      Lain::Tools::Subagent::ModelChoice.of(model, declared_by:)
+    end
+
+    it "runs the child on the bound model, leaving the factory Context on the run's" do
+      provider = mock(text_response("done"), text_response("done again"))
+      spawn = seam(provider:)
+
+      spawn.call(:dev, :fresh, "go", model: choice("claude-haiku-4"))
+      bound = provider.last_request.model
+      spawn.call(:dev, :fresh, "go again")
+
+      expect(bound).to eq("claude-haiku-4")
+      expect(provider.last_request.model).to eq("child-model")
+      expect(child_context.model).to eq("child-model")
+    end
+
+    # A blank declaration has not chosen a model, so it must reach the spawn as
+    # the Null and never as `with_model("")` -- a Request naming the empty
+    # string is what an interning-but-not-refusing `.of` would render.
+    it "keeps the run's model when nothing named one, blank included" do
+      provider = mock(text_response("done"), text_response("done again"))
+      spawn = seam(provider:)
+
+      spawn.call(:dev, :fresh, "go")
+      unbound = provider.last_request.model
+      spawn.call(:dev, :fresh, "go again", model: choice(""))
+
+      expect(unbound).to eq("child-model")
+      expect(provider.last_request.model).to eq("child-model")
+      expect(Lain::Tools::Subagent::ModelChoice.of("", declared_by: "skill :triage"))
+        .to be(Lain::Tools::Subagent::ModelChoice::Null)
+    end
+
+    # `.of` is not the only door: `.new` and `#with` bypass it, so the interning
+    # has to sit in the constructor or a caller's String stays reachable and a
+    # later mutation follows the value into the bound Context.
+    it "is deeply frozen however it was built, so a caller's String cannot follow it" do
+      built = Lain::Tools::Subagent::ModelChoice.new(model: +"claude-haiku-4", declared_by: +"skill :triage")
+
+      expect(built).to be_deeply_frozen
+      expect(built.with(declared_by: +"the fleet")).to be_deeply_frozen
+    end
+
+    # The Null answers the readers as well as `bind`: the first caller logging
+    # which model a rung got must not have to ask what type it is holding.
+    it "answers a blank model and declarer from the Null, rather than refusing the readers" do
+      null = Lain::Tools::Subagent::ModelChoice::Null
+
+      expect([null.model, null.declared_by]).to eq(["", ""])
+    end
+
+    it "serves a caller's own choice through the same seam a skill's goes through" do
+      provider = mock(text_response("done"))
+      seam(provider:).call(:dev, :fresh, "go", model: choice("claude-haiku-4", declared_by: "the fleet"))
+
+      expect(provider.last_request.model).to eq("claude-haiku-4")
+    end
+
+    it "refuses a model the run's provider says it has not got, naming all three, before any spawn" do
+      provider = RoleSpawnUnservingProvider.new(responses: [text_response("never asked")])
+
+      expect { seam(provider:).call(:dev, :fresh, "go", model: choice("gpt-5")) }
+        .to raise_error(Lain::Tools::Subagent::ModelChoice::Unserved,
+                        /skill :triage.*"gpt-5".*RoleSpawnUnservingProvider/m)
+      expect(provider.call_count).to eq(0)
+    end
   end
 
   # ---- SHOULD-FIX: the injected observer reaches the spawned child's Lineage -

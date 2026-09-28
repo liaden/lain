@@ -97,6 +97,17 @@ RSpec.describe "shipped skills" do
     it "has at least one extensible skill, so the slot machinery is genuinely exercised" do
       expect(shipped_catalog.all.select { |skill| skill.slots.any? }).not_to be_empty
     end
+
+    # A shipped skill naming a model would pin this tree to one provider's
+    # namespace: a run under another provider would meet
+    # Tools::Subagent::ModelChoice::Unserved -- correctly, and uselessly -- on
+    # every role-bound invocation. Naming a model is a project's business, and
+    # `.lain/skills/<name>/` already overrides a shipped skill wholesale.
+    it "declares no model in any shipped skill, so the tree stays provider-neutral" do
+      named = shipped_catalog.all.reject { |skill| skill.model.empty? }
+
+      expect(named.map(&:name)).to be_empty
+    end
   end
 
   describe "create-plan's scaffold drives a plan, not code" do

@@ -33,6 +33,16 @@ RSpec.describe Lain::Skill do
       expect(bare.slots).to eq([])
       expect(bare.includes).to eq([])
     end
+
+    it "keeps a declared model verbatim, as a frozen String" do
+      declared = described_class.new(name: "triage", description: "d", scaffold: "s", model: "claude-haiku-4")
+      expect(declared.model).to eq("claude-haiku-4")
+      expect(declared.model).to be_frozen
+    end
+
+    it "declares no model by default, so a spawn keeps the run's" do
+      expect(skill.model).to eq("")
+    end
   end
 
   describe "config, not behavior (the explicit boundary)" do

@@ -26,10 +26,15 @@ invalidates the card (escalate to the user with the diff and 2–3 options). Mar
 ## Phase 2 — Wave loop
 
 For each wave, spawn one implementing sub-agent per ready card, in parallel, each with
-`isolation: "worktree"` and a model matched to the card's risk (cheap for low, strong for
-high). Bind a card to its role with `@role/skill` when it inherits the session or
-`@role[/skill]` for a fresh context; the implementer is usually `dev`, the spec author
-`test_engineer`, both drawn from `Role::Catalog`.
+`isolation: "worktree"`. Bind a card to its role with `@role/skill` when it inherits the
+session or `@role[/skill]` for a fresh context; the implementer is usually `dev`, the spec
+author `test_engineer`, both drawn from `Role::Catalog`.
+
+A model matched to the card's risk (cheap for low, strong for high) is a **skill's own
+declaration**, not something you pass at the call: a skill whose front-matter carries
+`model:` runs its child on that model, and only when it is invoked role-bound — in-line
+`/skill` has no child to give a model to and is refused. So reach for the risk tier by
+picking the skill that declares it.
 
 The implementer's brief, assembled from the card verbatim where possible:
 

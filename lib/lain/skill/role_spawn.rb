@@ -46,8 +46,15 @@ module Lain
       # the parent conversation, `:fresh` -> a new root over the shared Store);
       # an unknown mode fails loudly through {Tool::SpawnPolicy::PrefixStrategy},
       # the same posture the catalog takes toward an unknown role.
-      def call(role_name, context_mode, prompt)
-        build_subagent(Role::Catalog.fetch(role_name), context_mode).run(prompt)
+      #
+      # The model rides as a PER-CALL argument beside the role, not as a member
+      # of the held seam: one instance answers a skill that declared a model, a
+      # caller that picked one, and the run's own default, and only the seam is
+      # the same for all three. A caller that names none passes nothing --
+      # {Tools::Subagent::ModelChoice::Null} is the default, so no branch here
+      # or below asks whether a model was chosen.
+      def call(role_name, context_mode, prompt, model: Tools::Subagent::ModelChoice::Null)
+        build_subagent(Role::Catalog.fetch(role_name), context_mode, model).run(prompt)
       end
 
       # This spawn, lending its children an environment the caller already
@@ -80,12 +87,13 @@ module Lain
         Isolation::Leases::InPlace.new(worker_env:, lane: @seam.isolation.lane)
       end
 
-      # Everything role-derived, and nothing else: the policy, the persona, and
-      # the child's name. The seam, union and ceiling this instance already held.
-      def build_subagent(role, context_mode)
+      # Everything the CALL decides: the role's policy, persona and child name,
+      # plus the model this one child was bound to. The seam, union and ceiling
+      # this instance already held.
+      def build_subagent(role, context_mode, model)
         Tools::Subagent.new(
           seam: @seam, toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
-          persona: Role::Persona.new(role:, slots: @slots),
+          persona: Role::Persona.new(role:, slots: @slots), model:,
           max_depth: @max_depth, name: role.name.to_s
         )
       end
