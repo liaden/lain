@@ -225,25 +225,37 @@ RSpec.describe Lain::Oracle::SecretRead do
   # takes no api_base, which is the security property, so a developer pointing
   # the other :ollama specs elsewhere correctly does not move this one.
   #
-  # SKIPS rather than fails when the model is merely slow, which is the same
-  # skip-not-fail rule `spec/support/ollama_tag.rb` already applies to a server
-  # that is down: measured judgement latency on this model is 13.4-49.3s across
-  # two independent runs, and the suite watchdog's budget is 30s, so an
-  # unguarded example here would be red about half the time for an environment
-  # fact rather than a regression. The bound is deliberately under that budget
+  # SKIPS rather than fails when the model is merely SLOW -- the same
+  # skip-not-fail rule `spec/support/ollama_tag.rb` applies to a server that is
+  # down, since a cold runner has to be loaded before it can answer and that is
+  # an environment fact. The bound stays under the suite watchdog's 30s budget
   # so the skip wins the race.
   #
-  # DO NOT read this example as the thing keeping the JSON sentence honest. At
-  # that latency spread against a 25s bound it actually RUNS about one time in
-  # five even with LAIN_OLLAMA=1, so the offline pin above is doing the real
-  # work; this one is what proved the claim once, and re-proves it occasionally.
+  # THE COUNT IS WHAT SEPARATES SLOW FROM SILENT, and it has to, because the
+  # regression this example exists to catch now costs two round trips: with
+  # thinking left on the pair runs 22-24s on a quiet box, close enough to the
+  # bound that a loaded one would time out and SKIP -- and a skip reads as "not
+  # a known failure", which is the silence this arm exists to abolish. A model
+  # that is merely slow is still on ask 1; one that went quiet has already
+  # started ask 2, and that is a failure however long it takes.
+  #
+  # It was slow-by-design while the tier left thinking on: 13.4-49.3s a
+  # judgement, most of the ceiling spent reasoning, latterly an empty reply
+  # every time. Asked not to think, the judgement is 1.5-1.8s over four runs,
+  # so this RUNS whenever LAIN_OLLAMA=1 rather than about one time in five. The
+  # offline pin above still keeps the JSON sentence honest between runs; this
+  # proves it end to end.
   it "gets a decodable, schema-valid answer out of the real default model", :ollama, :seam do
     bound = SecretReadSpecSupport::WATCHDOG_SAFE_SECONDS
-    typed = Timeout.timeout(bound) { described_class.tier.ask(**inputs).await }
+    journal = []
+    typed = Timeout.timeout(bound) { described_class.tier(journal:).ask(**inputs).await }
 
     expect(typed.verdict.to_s.strip.downcase).to match(/\A(approve|deny|defer)\z/)
     expect(typed.confidence).to be_between(0.0, 1.0)
   rescue Timeout::Error
+    asks = journal.grep(Lain::Telemetry::RequestSent).size
+    raise "the judge said nothing on ask 1 and was still going on ask #{asks} at #{bound}s" if asks > 1
+
     skip "#{Lain::Provider::Ollama::DEFAULT_MODEL} did not answer within #{bound}s; that is a slow box, " \
          "not a decode failure -- run the file alone with LAIN_SPEC_BUDGET raised"
   end

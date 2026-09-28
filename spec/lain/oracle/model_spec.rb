@@ -79,7 +79,8 @@ RSpec.describe Lain::Oracle::Model do
       Sync { tier_over(provider, extra: { "num_batch" => 2048 }).ask(subject: "x").await }
 
       expect(provider.last_request.extra)
-        .to eq("num_batch" => 2048, "structured_output" => { "schema" => schema.to_json_schema })
+        .to eq("num_batch" => 2048, "think" => false,
+               "structured_output" => { "schema" => schema.to_json_schema })
     end
 
     it "lets the schema win a collision, so no option can unset the answer's format" do
@@ -87,6 +88,159 @@ RSpec.describe Lain::Oracle::Model do
       Sync { tier_over(provider, extra: { "structured_output" => { "schema" => {} } }).ask(subject: "x").await }
 
       expect(provider.last_request.extra["structured_output"]).to eq("schema" => schema.to_json_schema)
+    end
+  end
+
+  # ---- Scenario: an oracle over a thinking model does not spend its ceiling --
+  #                                                                 on thinking
+  #
+  # Measured, not theoretical: qwen3:4b spends 3.9k-8k characters reasoning
+  # before it answers, so a 1024-token ceiling is gone before the first field of
+  # the JSON object. The live secret-read example failed on exactly this.
+  describe "thinking" do
+    def tier_over(provider)
+      Lain::Oracle::Model.new(definition:, provider:, model: "qwen3:4b")
+    end
+
+    def provider_with(capabilities)
+      Lain::Provider::Mock.new(responses: [response_with(%({"label":"yes"}))], capabilities:)
+    end
+
+    it "turns thinking off where the wire has the field, so the ceiling buys an answer" do
+      provider = provider_with(Lain::Provider::Ollama::CAPABILITIES)
+      Sync { tier_over(provider).ask(subject: "x").await }
+
+      expect(provider.last_request.extra["think"]).to be(false)
+    end
+
+    # The anthropic arm negotiates reasoning its own way and its encoder
+    # forwards an `extra` key it does not know, so a `think` reaching it would
+    # be both a bogus wire field and a moved prompt-cache prefix. The
+    # byte-identical example further down is what proves the second half.
+    it "sends no thinking field to an arm whose wire has none" do
+      provider = provider_with(Lain::Provider::Anthropic::CAPABILITIES)
+      Sync { tier_over(provider).ask(subject: "x").await }
+
+      expect(provider.last_request.extra).not_to have_key("think")
+    end
+  end
+
+  # ---- Scenario: an empty answer is retried once with room, then reported ----
+  #
+  # The narrow case only: the model said NOTHING AT ALL, so there is nothing to
+  # decode and no evidence it would say the same twice. A reply that hit its cap
+  # is a different finding and is not retried here.
+  describe "a reply that says nothing" do
+    def tier_over(provider, max_tokens: 512)
+      Lain::Oracle::Model.new(definition:, provider:, model: "qwen3:4b", max_tokens:)
+    end
+
+    def provider_returning(*responses)
+      Lain::Provider::Mock.new(responses:, capabilities: Lain::Provider::Ollama::CAPABILITIES)
+    end
+
+    def blank = response_with("")
+
+    # The shape the ceiling produces on a thinking model: the whole budget went
+    # into `message.thinking`, and the answer never started.
+    def thinking_only
+      Lain::Response.new(content: [{ "type" => "thinking", "thinking" => "let me see" }], stop_reason: :end_turn)
+    end
+
+    # At the SAME ceiling, because more room is not what a silence was about:
+    # asked again with twice the budget the same model went quiet twice. What
+    # the second ask buys is the nondeterminism.
+    it "asks again under the same ceiling, and answers from the second reply" do
+      provider = provider_returning(blank, response_with(%({"label":"yes"})))
+
+      answer = Sync { tier_over(provider).ask(subject: "x").await }
+
+      expect(provider.requests.map(&:max_tokens)).to eq([512, 512])
+      expect(answer.label).to eq("yes")
+    end
+
+    it "reads a reply that is all reasoning and no answer as saying nothing" do
+      provider = provider_returning(thinking_only, response_with(%({"label":"no"})))
+
+      answer = Sync { tier_over(provider).ask(subject: "x").await }
+
+      expect([provider.call_count, answer.label]).to eq([2, "no"])
+    end
+
+    it "asks exactly once when the first reply carries an answer" do
+      provider = provider_returning(response_with(%({"label":"yes"})))
+
+      Sync { tier_over(provider).ask(subject: "x").await }
+
+      expect(provider.call_count).to eq(1)
+    end
+
+    it "names emptiness as the cause when the retry says nothing either" do
+      provider = provider_returning(blank, blank)
+
+      expect { Sync { tier_over(provider).ask(subject: "x").await } }
+        .to raise_error(Lain::Oracle::UndecodableAnswer, /empty/i)
+    end
+  end
+
+  # ---- Scenario: what an ask reports having spent ---------------------------
+  #
+  # {Lain::Oracle::Recorded::Journaling} reads this off the tier the moment the
+  # ask returns and puts it on the record the bench's accounting reads, so an
+  # ask reporting anything but its own round trips corrupts that record.
+  describe "the spend it reports" do
+    def costing(usage, text)
+      Lain::Response.new(content: [{ "type" => "text", "text" => text }],
+                         stop_reason: :end_turn, usage:)
+    end
+
+    def ollama_mock(responses)
+      Lain::Provider::Mock.new(responses:,
+                               capabilities: Lain::Provider::Ollama::CAPABILITIES)
+    end
+
+    # Parks mid-round-trip so a second ask starts before the first has a
+    # response to account for. `sleep(0)` yields to the reactor rather than
+    # waiting on a clock, which is what makes the interleaving deterministic.
+    def parking_provider(responses)
+      Class.new(Lain::Provider::Mock) do
+        def complete(request, **)
+          Async::Task.current.sleep(0)
+          super
+        end
+      end.new(responses:, capabilities: Lain::Provider::Ollama::CAPABILITIES)
+    end
+
+    it "adds up BOTH round trips, so a retried answer is not a free one" do
+      spent = Lain::Usage.new(input_tokens: 10, output_tokens: 4)
+      provider = ollama_mock([costing(spent, ""), costing(spent, %({"label":"yes"}))])
+      model = described_class.new(definition:, provider:, model: "qwen3:4b")
+
+      Sync { model.ask(subject: "x").await }
+
+      expect(model.usage).to include(input_tokens: 20, output_tokens: 8)
+    end
+
+    # One {Lain::Oracle::Eager} holds ONE tier and fires a task per tool-result
+    # digest, so a turn with parallel tool calls overlaps two asks by
+    # construction. A spend accumulated on the INSTANCE across the round trip's
+    # suspension point puts the first ask's tokens on the second ask's record:
+    # 100/10 spent, 200/20 reported.
+    it "reports only its OWN round trips when two asks overlap" do
+      spent = Lain::Usage.new(input_tokens: 100, output_tokens: 10)
+      model = described_class.new(definition:, model: "qwen3:4b",
+                                  provider: parking_provider([costing(spent, %({"label":"yes"}))]))
+
+      spends = Sync do
+        %w[a b].map do |subject|
+          Async do
+            model.ask(subject:).await
+            model.usage
+          end
+        end.map(&:wait)
+      end
+
+      expect(spends.map { |spend| spend[:input_tokens] }).to eq([100, 100])
     end
   end
 
@@ -129,6 +283,19 @@ RSpec.describe Lain::Oracle::Model do
       Sync { oracle.ask(source:).await }
 
       expect(transport.calls.last[:format]).to eq(Lain::Oracle::Summarize::SCHEMA.to_json_schema)
+    end
+
+    # The thinking switch is the TIER's, so it rides every oracle on this arm
+    # and not only the secret-read judge: this is the summarizer's own
+    # construction path, and the handoff tier is built the same way.
+    # `--summarizer-provider ollama` with a thinking model is a changed wire.
+    it "asks the summarizer's own tier not to think, at the wire" do
+      transport = OllamaWire.queue_transport([summary_reply(%({"summary":"three files"}))])
+      oracle = summarizer_oracle(Lain::Provider::Ollama.new(transport:), model: "qwen3-coder:30b")
+
+      Sync { oracle.ask(source:).await }
+
+      expect(transport.calls.last[:think]).to be(false)
     end
 
     # The assertion is on the REQUEST, not the encoded body, and deliberately:

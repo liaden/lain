@@ -18,11 +18,13 @@ module Lain
     class Model
       DEFAULT_MAX_TOKENS = 1024
 
+      # How many times one #ask puts the same question, at the SAME ceiling:
+      # asked again with twice the room the same model went quiet twice, so a
+      # second ask buys the nondeterminism and nothing else.
+      ANSWER_ATTEMPTS = 2
+
       # Exposed so a journaling wrapper ({Oracle::Recorded::Journaling}) records
-      # WHICH model answered without being told twice. `usage` retains the LAST
-      # call's cost, journalled by the same wrapper so an oracle call's spend is
-      # visible in the Journal -- the bench's accounting reads there, never off
-      # the tier.
+      # WHICH model answered without being told twice.
       attr_reader :model
 
       # The question this tier answers under, exposed for {Heuristic#definition}'s
@@ -33,19 +35,23 @@ module Lain
       # @param definition [Oracle::Definition] renders the question and validates
       #   the decoded reply -- both ends of the round trip, so this tier owns
       #   neither the prompt nor the schema
-      # @param provider [Provider] the one round trip #ask spends; synchronous, so
-      #   the Promise it returns is already resolved. Also asked whether it
-      #   supports `:structured_output` -- see #structured_answer_format
+      # @param provider [Provider] the round trips #ask spends, {ANSWER_ATTEMPTS}
+      #   at most; synchronous, so the Promise it returns is already resolved.
+      #   Also asked whether it supports `:structured_output` -- see
+      #   #structured_answer_format
       # @param model [String] which model answers, and the identity a journaling
       #   wrapper records off {#model}
-      # @param max_tokens [Integer] the reply ceiling on every Request built here
+      # @param max_tokens [Integer] the reply ceiling on every Request built
+      #   here, the retry included -- it asks again under the same one
       # @param decoder [#call] `Response -> answer attributes Hash`; the default
       #   parses the reply as JSON, and a structured-output decoder swaps in
       #   behind the same message
       # @param extra [Hash{String=>Object}] sampler options for every Request
       #   built here, already scoped by the caller to what this tier's provider
       #   and model may carry -- this object cannot tell a runner knob that keeps
-      #   a shared runner loaded from one that reloads it
+      #   a shared runner loaded from one that reloads it. The answer's format
+      #   and, on the native arm, `think` are merged OVER it and cannot be set
+      #   from here
       def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new,
                      extra: {})
         @definition = definition
@@ -58,21 +64,41 @@ module Lain
       end
 
       def ask(inputs = {})
-        response = @provider.complete(request_for(inputs))
-        @usage = response.usage
-        @definition.answer(@decoder.call(response))
+        @definition.answer(@decoder.call(answered(inputs)))
       end
 
-      # @return [Hash] the last call's token usage in wire form ({} of zeros
-      #   before the first #ask)
+      # What the LAST #ask spent, every round trip of it -- the figure
+      # {Oracle::Recorded::Journaling} puts on the bench's record.
+      #
+      # @return [Hash] wire form; {} of zeros before the first ask
       def usage
         @usage.to_h
       end
 
       private
 
+      # The spend accumulates in a LOCAL, assigned once: one {Oracle::Eager}
+      # fires a task per tool result over ONE of these, and an accumulator on the
+      # instance would put an overlapping ask's tokens on this ask's record.
+      def answered(inputs)
+        spend = Usage.zero
+        replies = (1..ANSWER_ATTEMPTS).lazy.map do
+          @provider.complete(request_for(inputs)).tap { |reply| spend += reply.usage }
+        end
+        answer = replies.reject { |reply| said_nothing?(reply) }.first
+        @usage = spend
+        answer || raise(UndecodableAnswer, "oracle reply was empty: nothing came back in #{ANSWER_ATTEMPTS} asks")
+      end
+
+      # Where a thinking model goes quiet: all reasoning and no answer is a
+      # finished turn on the wire, not an empty one. Truncation needs no arm of
+      # its own -- cut off having said nothing it is retried like any silence,
+      # cut off mid-answer it carries text and reaches the decoder's raise.
+      def said_nothing?(reply) = Blankness.blank?(reply.text)
+
       def request_for(inputs)
-        Request.new(model: @model, max_tokens: @max_tokens, extra: @extra.merge(structured_answer_format),
+        Request.new(model: @model, max_tokens: @max_tokens,
+                    extra: @extra.merge(structured_answer_format, thinking_off),
                     messages: [{ "role" => "user", "content" => @definition.render(inputs) }])
       end
 
@@ -93,6 +119,20 @@ module Lain
 
         { Provider::Ollama::Encoding::STRUCTURED_OUTPUT_KEY =>
             { "schema" => @definition.schema.to_json_schema } }
+      end
+
+      # An oracle wants an ANSWER, never a monologue: the default local model
+      # spends 3.9k-8k characters reasoning, the whole of a 1024-token ceiling
+      # before the JSON starts -- an empty reply every call, on two builds.
+      #
+      # The gate STANDS IN for "this wire has a `think` field", which no provider
+      # message asks; {Provider::ModelCapabilities} answers the narrower "does
+      # THIS model think" and is deliberately not asked, its UNKNOWN being a fact
+      # about the probe rather than about the model.
+      def thinking_off
+        return {} unless @provider.supports?(:structured_output)
+
+        { Provider::Ollama::Encoding::THINK_KEY => false }
       end
 
       # The default decoder: the reply is a JSON object of the answer's fields.
