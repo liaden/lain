@@ -23,10 +23,11 @@ module Lain
         # `options` object.
         #
         # `num_batch` is the one with a measured cost behind it: ollama starts
-        # llama-server with `-b 512`, overriding llama.cpp's own default of
-        # 2048, and exposes no server-side setting to undo it -- the request is
-        # the ONLY place it can be corrected. Measured on this box at 1.31x
-        # prefill (docs/providers/ollama.md, "Serving performance").
+        # llama-server with `-b 1024` -- probed off the launch line on 0.32.12
+        # and 0.34.4 -- undercutting llama.cpp's own default of 2048, and it
+        # exposes no server-side setting to raise it, so the request is the ONLY
+        # place it can be corrected. Measured on this box at 1.31x prefill
+        # (docs/providers/ollama.md, "Serving performance").
         #
         # `temperature`, `seed` and `num_ctx` are strictly opt-in: defaulting
         # one on would be a wire change for a caller that asked for nothing,
@@ -74,9 +75,10 @@ module Lain
         # `num_ctx/2 + 2` tokens), and by dropping whole older messages
         # otherwise, reporting a count that looks honest. Either way the system
         # prompt and the tool schemas can be what went, and nothing in the reply
-        # says so. Asked not to, 0.32.12 refuses with HTTP 400 naming the exact
+        # says so. Asked not to, ollama refuses with HTTP 400 naming the exact
         # prompt count and the context it loaded, on the streaming and the
-        # non-streaming path alike -- see {Ollama#window_exceeded}.
+        # non-streaming path alike -- probed on 0.32.12, re-verified byte-identical
+        # on 0.34.4 -- see {Ollama#window_exceeded}.
         def encode(request)
           { model: request.model, messages: encode_messages(request), stream: request.stream, truncate: false }
             .merge(optional_fields(request))
@@ -103,11 +105,11 @@ module Lain
           fields
         end
 
-        # 0.32.12 accepts both fields and answers without an error: probed on
-        # qwen3:4b, `format` won silently -- no tool call, a confident JSON
-        # answer fabricated in its place. Research saw the pair work with
-        # thinking on, but one rule has not held across models, so the pair is
-        # refused by name rather than trusted to a flag.
+        # Ollama accepts both fields and answers without an error: probed on
+        # qwen3:4b on 0.32.12 and re-verified on 0.34.4, `format` won silently --
+        # no tool call, a confident JSON answer fabricated in its place. Research
+        # saw the pair work with thinking on, but one rule has not held across
+        # models, so the pair is refused by name rather than trusted to a flag.
         def refuse_format_with_tools!(fields, flags)
           return unless fields.key?(:tools) && flags.key?(:format)
 

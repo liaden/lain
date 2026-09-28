@@ -98,7 +98,13 @@ is waiting for the next person.
 ### The headline: ollama's `num_batch` default costs up to 3x decode and 8x prefill
 
 Ollama passes `-b 512` to llama-server explicitly, **overriding llama.cpp's own default of 2048**.
-Raising it is not tuning past upstream; it is undoing an override. On Vulkan it is the single
+Raising it is not tuning past upstream; it is undoing an override.
+
+> **Corrected 2026-09-26 — the number here is wrong, the conclusion is not.** The launch line
+> reads `-b 1024`, probed directly on 0.32.12 and 0.34.4; see the 2026-09-26 entry. The override
+> is real and still undercuts llama.cpp's 2048, so every measurement below stands (they compare
+> request values, not the launch default) — only the figure `512` was never right. Left in place
+> rather than rewritten, because this is a dated log of what was believed and measured then. On Vulkan it is the single
 biggest setting on this box, and it moves *both* phases:
 
 | model | arch | decode @512 | decode @2048 | prefill @512 | prefill @2048 |
@@ -400,3 +406,53 @@ cause for a remote behaviour:
 `/api/ps` has no meaning on this host (there is no resident runner to report), and `/api/show`
 answers but returns the weights' **trained maximum**, not a served window — so it is the right
 source for a `--num-ctx` refusal and must never become an occupancy denominator.
+
+## 2026-09-26 — upgrade to 0.34.4: mostly faster, two dense models regress hard, and the documented `num_batch` default was never right
+
+**Context.** `/mnt/nvme/opt/ollama-0.34.4` (Vulkan + CUDA, no ROCm) is now the default build;
+`ollama-env.sh` on `PATH` selects it. `/mnt/nvme/opt/ollama-0.32.12` (keeps `rocm_v7_2`) stays
+installed side by side, sharing the model store, and is the rollback: source
+`ollama-env-0.32.12.sh` and restart `ollama serve`. There is no systemd unit on this box, so
+`sudo systemctl start ollama` is not the way in, and `~/.local/opt/ollama/bin/ollama` is the
+stale 0.32.1 client from the 2026-07-16 entry above — not on `PATH` any more. Full comparison,
+harness and raw tables:
+`planning/specs/local-models-multimodal-qa/UPGRADE-ollama-0.34.4.md`.
+
+**The `-b 512` default this file and `docs/providers/ollama.md` stated was never right.**
+Sending no `num_batch` launches llama-server at `-b 1024` on both 0.32.12 and 0.34.4 — probed
+directly off the launch line, not inferred from throughput. The § *headline* measurements above
+(340 → 2,222 tok/s at `num_batch=512` vs `2048`) are unaffected: that sweep set
+`options.num_batch` explicitly on every request, so it measured 512-vs-2048, not the default.
+Only the framing sentence claiming a flagless request gets 512 was wrong.
+
+**GPU contention can look exactly like a build regression.** The first side-by-side prefill runs
+showed 0.34.4 roughly halving — reported as a regression — until a re-run on an idle GPU (nothing
+else drawing the card) showed 0.34.4 **faster**: `qwen3:4b` prefill 3,169/3,173 → 3,958/3,983
+tok/s (+25%), decode level. The contended numbers survived two repeat runs because whatever was
+drawing the GPU (a game, on this box) persisted across both — repetition proved stability, not
+validity. The probe harness has no guard for this: it only flags *another ollama model* as
+contention, so nothing here notices a game, a compositor or a browser on the card.
+
+**Two large dense models regressed for real, and it is architecture-shaped.** `qwen3.8:27b`
+prefill 702 → 196 tok/s (-72%) and `muse-glimmer:30b` 813 → 158 tok/s (-81%), both reproduced
+alone on an idle GPU. Every MoE model in the sweep gained instead (`qwen3-coder:30b` +36%,
+`north-mini-code-1.0` +38%), and so did the small dense `qwen3:4b`. Only the two *large* dense
+models lost — consistent with a llama.cpp/Vulkan change in the dense matmul path, not a general
+regression, and worth re-checking before recommending either model on 0.34.4.
+
+**`lfm2.5` stopped separating its reasoning.** On 0.34.4 the `<think>` trace arrives inside
+`content` instead of the `thinking` field, so nothing that parses `content` as an answer gets
+one — QA accuracy 78% → 0%, code reviews 4/4 → 0/4 parsed. The model did not get worse; its
+output stopped being separated. `lfm2.5` is unusable here until its template or parser is fixed,
+and no upstream issue names this yet.
+
+**What the upgrade fixes.** The `eval_count` anomaly from a `format` + thinking request (it used
+to report `eval_count 40` against ~1.5k characters of thinking, undercounting cost 10-100x) is
+gone — 0.34.4 counts thinking tokens. `/api/show` now advertises a per-model `thinking`
+capability.
+
+**What it does not fix.** `format` + `tools` still silently drops the tool call with no error
+(ollama issue #13750, still open) — lain's refusal guard (`Encoding#refuse_format_with_tools!`)
+is still required. `qwen3-coder:30b` still emits about half its tool calls as literal
+`<function=...>` text rather than a native `tool_calls` entry; that is the model's template in
+the ollama library, not the server version.

@@ -643,12 +643,13 @@ RSpec.describe Lain::Provider::Ollama do
 
   # The sync path echoes request.stream onto the wire (Ollama's wire default is
   # true, so the flag is always sent explicitly); complete routes to sync_post.
-  # What ollama 0.32.12 answers a prompt that does not fit its context once it is
+  # What ollama answers a prompt that does not fit its context once it is
   # asked not to truncate (the encoder always asks). The body is the REAL one,
   # taken off localhost:11434 for a 12,011-token prompt against `num_ctx` 2048:
   # the `error` string is itself JSON, carrying the exact prompt count and the
   # context the runner was loaded with. Measured on both paths, and never
-  # retried -- one round trip, 0.25s.
+  # retried -- one round trip, 0.25s -- on 0.32.12, and the shape re-verified
+  # byte-identical on 0.34.4.
   describe "a prompt refused for not fitting the context", :webmock do
     let(:refusal_body) do
       JSON.generate(

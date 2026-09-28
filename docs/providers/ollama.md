@@ -84,22 +84,27 @@ is a convenience for the specs, nothing more.
 ## Serving performance
 
 The variables above configure *lain*; they say nothing about how fast the server answers.
-That is measured in `DEBUGGING_OLLAMA.md` (2026-08-14 entry) and it matters more than it
-looks, because **ollama's own defaults are wrong for this workload**:
+That is measured in `DEBUGGING_OLLAMA.md` (2026-08-14 entry, on **0.32.12**) and it matters
+more than it looks, because **ollama's own defaults are wrong for this workload**. The box now
+runs **0.34.4**; 0.32.12 stays installed as a rollback (`DEBUGGING_OLLAMA.md`'s 2026-09-26
+entry), which also re-measured prefill and decode on 0.34.4 rather than re-running the KV-cache
+and ROCm-vs-Vulkan sweeps below, so those two remain 0.32.12 figures:
 
-- **`num_batch` needs no flag any more.** Ollama passes `-b 512` to llama-server, overriding
-  llama.cpp's own default of 2048; there is no server-side setting for it, so
-  `Lain::CLI::Backend` sends 2048 on every ollama chat whether or not `--num-batch`
-  (`$LAIN_NUM_BATCH`) was typed — the flag and the env var now override that default rather
-  than opt into sending anything. `--num-ctx` (`$LAIN_NUM_CTX`) for context length is the
-  one still strictly opt-in: leave it unset and it never reaches the request, while
-  `num_batch` and the generation cap (`num_predict`) always do. Both runner knobs belong to
-  the **run profile**, so they are declared by the one `ModelFlags` band on every
+- **`num_batch` needs no flag any more.** With no `num_batch` in the request, ollama launches
+  llama-server at `-b 1024` — probed directly off the launch line on both 0.32.12 and 0.34.4,
+  2026-09-26; this file previously said `-b 512`, which was wrong on both builds, not stale on
+  one. Either way it undercuts llama.cpp's own default of 2048, and there is no server-side
+  setting to raise it, so `Lain::CLI::Backend` sends 2048 on every ollama chat whether or not
+  `--num-batch` (`$LAIN_NUM_BATCH`) was typed — the flag and the env var now override that
+  default rather than opt into sending anything. `--num-ctx` (`$LAIN_NUM_CTX`) for context
+  length is the one still strictly opt-in: leave it unset and it never reaches the request,
+  while `num_batch` and the generation cap (`num_predict`) always do. Both runner knobs belong
+  to the **run profile**, so they are declared by the one `ModelFlags` band on every
   model-calling command — `chat`, `epic submit`, `bench record`, `bench arms`, `consolidate`
   and `improve` — recorded in the session header beside the provider and the api base, and
   re-used by `--resume`, `--fork`, `/fork` and `/btw`. A command that could not carry them
-  was how a bench arm ended up reloading the runner at `-b 512` while the chat beside it ran
-  at 2048; the default now closes that gap for a flagless run too. On the RX 7900
+  was how a bench arm ended up reloading the runner at the ollama default while the chat
+  beside it ran at 2048; the default now closes that gap for a flagless run too. On the RX 7900
   XTX, `DEBUGGING_OLLAMA.md`'s 2026-08-14 entry measured this costing up to **3x decode and 8x
   prefill** (`qwen3-coder:30b` prefill: 340 → 2,222 tok/s, 6.5x, going from `num_batch=512` to
   `2048`), strongly model-dependent (1.1x–2.7x on decode across four models). The 2026-08-15
