@@ -624,17 +624,25 @@ module Lain
 
           built = backend.call
           spawner = new(provider: built.provider, context_factory: -> { built.context }, slots: built.slots,
-                        tool_middleware:)
+                        tool_middleware:, attachments: Lain::Attachment::Store.for(root:, paths:))
           Pair.new(role_spawn: spawner.role_spawn, brief: Brief.new(config:, paths:, root:))
         end
 
-        def initialize(provider:, context_factory:, slots:, tool_middleware:)
+        # `attachments` is REQUIRED for `tool_middleware`'s reason: out of chat no
+        # attachment store reaches a child unless it is handed in here, and the
+        # Null the seam would otherwise default to raises from inside a child's
+        # model phase -- where {Effect::Handler::Live#run} flattens it into a
+        # `Tool::Result.error`, losing the class and journalling nothing. It is
+        # the PROJECT's own directory, the one a chat in the same tree addresses,
+        # so a picture a spike made is still there for a later session.
+        def initialize(provider:, context_factory:, slots:, tool_middleware:, attachments:)
           # {Tools::Subagent::NoAskers} is NAMED here, not inherited from a
           # default: this command runs out of chat, so there is no queue a
           # child's escalation could reach and no directory an answer could
           # come back through. The refusal its asker gives says exactly that.
           @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, parent: Lain::Timeline.empty,
-                                                  tool_middleware:, askers: Lain::Tools::Subagent::NoAskers)
+                                                  tool_middleware:, attachments:,
+                                                  askers: Lain::Tools::Subagent::NoAskers)
           @slots = slots
         end
 

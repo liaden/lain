@@ -70,11 +70,19 @@ module Lain
         attr_reader :role_spawn, :auto_surface, :docent
 
         # The run's ONE {Lain::Attachment::Store}, readable from construction
-        # rather than from {#build}: it is a place, not a discovery. Built here
-        # because two consumers reach for it from opposite ends -- the tool that
-        # puts an attachment's bytes there, and the request stage that reads
-        # them back on the way to the wire -- and a second construction site is
-        # how those two come to address two directories while every spec passes.
+        # rather than from {#build}: it is a place, not a discovery.
+        #
+        # Its home is {Lain::CLI::Wiring#attachments}, which INJECTS it here and
+        # composes the same object into the model phase. It is not built here,
+        # and the reason is ordering: the model stack is assembled through
+        # `build_agent`, a seam three specs drive before any toolset exists, so a
+        # phase that reached through this build for the store could only be
+        # assembled after one. What matters either way is that there is ONE
+        # object -- the tool that puts an attachment's bytes there and the
+        # request stage that reads them back must address one directory, and a
+        # second construction site is how those two come to address two while
+        # every spec passes. The default below is for a caller constructing this
+        # build directly, a spec in practice.
         #
         # @return [Lain::Attachment::Store]
         attr_reader :attachments
@@ -156,9 +164,9 @@ module Lain
         # @param attachments [Lain::Attachment::Store] where bytes a turn must not
         #   carry are kept, keyed by the PROJECT rather than the session so a
         #   resumed chat and a fork resolve the digests the first one wrote.
-        #   Resolved here for `exec:`'s reason -- where a capability's bulk lands
-        #   is a fact about the toolset -- and injectable all the same, which is
-        #   what lets a spec drive it against a tmpdir.
+        #   Handed over by {Lain::CLI::Wiring#attachments} on every production
+        #   path, which is the one that also composes it into the model phase;
+        #   defaulted so a spec can drive this build against a tmpdir of its own.
         # @param verdict [#call] `String -> Shell::Verdict::Decision`, the
         #   session's ONE shell verdict, threaded to {BaseTools} and no
         #   further. NOT resolved here, where `exec:` is, and the difference is
@@ -301,12 +309,17 @@ module Lain
         # and nothing here wraps it again. The same Leases is where the run's
         # handoff reaches a child, so every lease on the spawn lane ends in it.
         #
-        # `tool_middleware:` is the parent's own stack, over the same thunk.
+        # `tool_middleware:` is the parent's own stack, over the same thunk, and
+        # `attachments:` the run's ONE store -- the seam carries it so a
+        # grandchild inherits the same directory verbatim, and so a child's model
+        # stack resolves a picture the parent's tool wrote rather than sending its
+        # address as if it were one.
         def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:, isolation:,
                        handback:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           tool_middleware: guard(chronicle, switchboard),
                                           journal:, telemetry: chronicle.instrumentation.journal,
+                                          attachments: @attachments,
                                           supervisor:, observer: chronicle.observer, askers:,
                                           scope: CLI::ToolGuard::BoardScope.new(board: switchboard),
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,

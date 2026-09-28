@@ -13,20 +13,23 @@ module Lain
   # CPU; it was bytes at rest, multiplying the growth `Telemetry::RequestSent`
   # already accepts.
   #
-  # {Store} is the whole of the subsystem today, and it is deliberately NOT
-  # {Lain::Store}: that one is an in-memory Hash of DAG nodes that dies with the
-  # process, and these bytes have to outlive it and be found again by a resumed
-  # chat, a fork or a child agent. So this is a directory, keyed by the PROJECT
-  # under {Paths#container} beside `sessions/`, addressing bytes rather than
-  # objects. `Store::KIND` names that directory and `Store::TAG` the keyspace its
-  # digests belong to; both are read from outside.
+  # Two objects: {Store}, the place, and {Reference}, the address that rides the
+  # Timeline in the payload's stead.
+  #
+  # {Store} is deliberately NOT {Lain::Store}: that one is an in-memory Hash of
+  # DAG nodes that dies with the process, and these bytes have to outlive it and
+  # be found again by a resumed chat, a fork or a child agent. So this is a
+  # directory, keyed by the PROJECT under {Paths#container} beside `sessions/`,
+  # addressing bytes rather than objects. `Store::KIND` names that directory and
+  # `Store::TAG` the keyspace its digests belong to; both are read from outside.
   #
   # What is NOT here, and is load-bearing: nothing substitutes an address back
-  # for its bytes. That has to happen downstream of the Request, in the
-  # provider's encoding stage -- base64 is valid UTF-8, so an encoded payload
-  # reaching {Canonical.normalize} would be interned silently and without bound,
-  # and doing the substitution in {Context#render} would cost that AND the purity
-  # the prompt cache rests on.
+  # for its bytes. {Reference#inline} is what can, and its one caller is
+  # {Middleware::ResolveAttachments}, downstream of the Request in the model
+  # phase -- base64 is valid UTF-8, so an encoded payload reaching
+  # {Canonical.normalize} would be interned silently and without bound, and doing
+  # the substitution in {Context#render} would cost that AND the purity the
+  # prompt cache rests on.
   module Attachment
   end
 end

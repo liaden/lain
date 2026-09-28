@@ -127,6 +127,7 @@ module Lain
         end
 
         def encode_messages(request)
+          Attachment::Reference.refuse_unresolved!(request.messages)
           system = encode_system(request.system)
           # A running id -> tool_name map. A tool_use turn precedes its
           # tool_result turn, so walking in order means the name is known by the
@@ -159,14 +160,31 @@ module Lain
         # documented Ollama gap, not a bug here; Lain's own tool_use_id keeps the
         # loop unambiguous regardless.
         def tool_message(block, names)
-          { role: "tool", tool_name: names[block["tool_use_id"]], content: text_of(block["content"]) }
+          with_images({ role: "tool", tool_name: names[block["tool_use_id"]], content: text_of(block["content"]) },
+                      block["content"])
         end
 
         def assistant_or_user(message, blocks)
           rebuilt = { role: message["role"], content: text_of(blocks) }
           calls = blocks.select { |block| block_type(block) == TOOL_USE }.map { |block| tool_call(block) }
           rebuilt[:tool_calls] = calls unless calls.empty?
-          rebuilt
+          with_images(rebuilt, blocks)
+        end
+
+        # Ollama takes a picture as base64 in the message's own `images` array
+        # and never as a content block -- on a `role: "tool"` message as readily
+        # as on a user one, probed live against gemma4: the model read back a
+        # codeword only the picture carried, where the same exchange without
+        # `images` invented a different one. So a tool result's picture rides the
+        # tool message that answers the call, and no user turn is invented to
+        # hold it: hoisting works too, at 27 more prompt tokens and with words
+        # put in the human's mouth.
+        #
+        # An ABSENT key when the message carries none, so a text-only payload is
+        # byte-identical to what this encoder sent before pictures existed.
+        def with_images(message, blocks)
+          images = Attachment::Reference.data_in(blocks)
+          images.empty? ? message : message.merge(images:)
         end
 
         def tool_call(block)

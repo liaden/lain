@@ -88,8 +88,37 @@ RSpec.describe Lain::Bench::Harness do
       expect(ledger.call(wiring)).not_to be(ledger.call(other))
     end
 
-    it "records every outbound request, innermost" do
-      expect(wiring.model_middleware.to_a).to include(an_instance_of(Lain::Middleware::JournalRequests))
+    # "Innermost" is now a claim about a PAIR, so the order is asserted rather
+    # than membership: the request is recorded carrying the address, and the
+    # attachment is resolved one hop from the provider. Without the second
+    # member, an arm whose toolset makes a picture dies at the encoder with
+    # {Lain::Attachment::Reference::Unresolved} -- and a bench arm is exactly
+    # where a screenshot tool gets driven first.
+    it "records every outbound request, then resolves its attachments innermost" do
+      expect(wiring.model_middleware.to_a.map(&:class))
+        .to eq([Lain::Middleware::JournalRequests, Lain::Middleware::ResolveAttachments])
+    end
+
+    # Keyed to the arm's OWN leased directory, for the reason the board above is
+    # fresh per agent: one store across arms is the cross-arm contamination the
+    # per-spawn recorder exists to prevent.
+    #
+    # Driven over TWO made directories rather than the default env, because
+    # `WorkerEnv.default`'s cwd IS `Dir.pwd`: keying on the process directory
+    # would satisfy a one-env assertion while being the very sharing this
+    # example is named against.
+    it "resolves against the arm's own directory, not one shared across arms" do
+      keyed = Array.new(2) do
+        Dir.mktmpdir do |made|
+          env = Lain::WorkerEnv.new(cwd: made, env: {})
+          resolved = described_class::INSTRUMENTATION.call(journal:, recorder:, worker_env: env)
+                                                     .model_middleware.to_a.last.attachments.root
+          [resolved, Lain::Attachment::Store.for(root: made).root]
+        end
+      end
+
+      expect(keyed.map(&:first)).to eq(keyed.map(&:last))
+      expect(keyed.first.first).not_to eq(keyed.last.first)
     end
 
     it "pairs each turn with the memory root in force when it rendered" do

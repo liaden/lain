@@ -158,4 +158,60 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
         .to raise_error(Lain::Error, /5 cache breakpoints/)
     end
   end
+
+  # The neutral image block wears Anthropic's own shape, so this encoder has
+  # nothing to translate -- and that is the claim, not an absence of one. The
+  # other half is the refusal: the ADDRESS is not a wire shape anywhere, and
+  # Anthropic answers a `source.type` it does not know with a 400 that names
+  # neither the picture nor what failed to resolve it.
+  describe "images" do
+    let(:png) { (+"\x89PNG\r\n\x1a\n\x00\xff\x80pixels").force_encoding(Encoding::BINARY) }
+    let(:reference) { Lain::Attachment::Reference.new(digest: "blake3:#{"9f" * 32}", media_type: "image/png") }
+    let(:image) { reference.inline(png) }
+
+    it "passes an inline picture to the wire unchanged, source and all" do
+      encoded = encoder.encode(request(messages: [{ role: "user", content: [image] }]))
+
+      expect(encoded[:messages].first["content"]).to eq([image])
+    end
+
+    # Ollama's `images` array is that encoder's business and must not appear
+    # here, and the neutral block must not have grown a field for it: what
+    # arrives on this wire is `source.data` and nothing else.
+    it "sends the payload on the block's own source, with no images array anywhere" do
+      encoded = encoder.encode(request(messages: [{ role: "user", content: [image] }]))
+
+      expect(encoded[:messages].first["content"].first["source"]["data"]).to eq([png].pack("m0"))
+      expect(encoded[:messages].first).not_to have_key(:images)
+      expect(encoded[:messages].first).not_to have_key("images")
+    end
+
+    it "passes one nested inside a tool_result unchanged too" do
+      result = { "type" => "tool_result", "tool_use_id" => "call_1",
+                 "content" => [{ "type" => "text", "text" => "the page" }, image] }
+      encoded = encoder.encode(request(messages: [{ role: "user", content: [result] }]))
+
+      expect(encoded[:messages].first["content"].first["content"].last).to eq(image)
+    end
+
+    it "translates a neutral cache marker on a picture as it does on any block" do
+      marked = image.merge("cache" => true)
+      encoded = encoder.encode(request(messages: [{ role: "user", content: [marked] }]))
+
+      expect(encoded[:messages].first["content"].first).to include("cache_control" => { "type" => "ephemeral" })
+      expect(encoded[:messages].first["content"].first).not_to have_key("cache")
+    end
+
+    it "refuses an address nobody resolved, naming it" do
+      expect { encoder.encode(request(messages: [{ role: "user", content: [reference.block] }])) }
+        .to raise_error(Lain::Attachment::Reference::Unresolved, /#{reference.digest}/)
+    end
+
+    it "refuses one hidden inside a tool_result, which #translate_block never descends into" do
+      result = { "type" => "tool_result", "tool_use_id" => "call_1", "content" => [reference.block] }
+
+      expect { encoder.encode(request(messages: [{ role: "user", content: [result] }])) }
+        .to raise_error(Lain::Attachment::Reference::Unresolved)
+    end
+  end
 end

@@ -574,6 +574,21 @@ module Lain
                                                            notice: @notice || SILENT)
       end
 
+      # The run's ONE {Lain::Attachment::Store}, keyed to the PROJECT for
+      # {#project_memory}'s reason and memoized for the same one: two consumers
+      # reach for it from opposite ends -- the tool that puts a screenshot's
+      # bytes there, and the model stage that reads them back on the way to the
+      # wire -- and a second construction site is how those two come to address
+      # two directories while every spec passes.
+      #
+      # Born here rather than inside {ToolsetBuild}, which is where it began: the
+      # model phase needs it too, and a phase that reached through the toolset
+      # build for it could only be assembled after one, which is an ordering the
+      # assembly seams do not otherwise have.
+      def attachments
+        @attachments ||= Lain::Attachment::Store.for(root:, paths: @paths)
+      end
+
       # Assembled HERE because this is the only object holding the live Agent,
       # the run's RunClock and the StatusFeed at once -- the three things a
       # prompt format writes against. A malformed config reports through the same
@@ -689,9 +704,20 @@ module Lain
       # refused for going unrecorded. Its record goes to the record journal --
       # the tee in a cockpit -- because the {StatusFeed} takes its reading. It
       # asks the run's compaction source whether compaction is a move to offer.
+      #
+      # The attachment resolver is INNERMOST, one hop from the provider and
+      # downstream of the chronicle's own `request_sent`: the record keeps the
+      # address, which is the whole saving, and the wire gets the bytes, which is
+      # what the model needs. Composed here for the budget's own reason -- under
+      # --no-journal there is no model stack in the instrumentation for an
+      # `insert_after` to anchor on, and a picture is no less needed for going
+      # unrecorded. Over the run's ONE store (#attachments), the same object the
+      # toolset's tools write into: the tool that writes the bytes and the stage
+      # that reads them back must address one directory.
       def model_phase(telemetry)
         budget = Middleware::RequestBudget.new(journal: chronicle.record_journal, compaction: telemetry.pipeline_source)
-        Middleware::Stack.new([budget, *telemetry.model_middleware.to_a])
+        Middleware::Stack.new([budget, *telemetry.model_middleware.to_a,
+                               Middleware::ResolveAttachments.new(attachments:)])
       end
 
       # The turn stack, with the window refresh OUTERMOST -- ahead of the
@@ -796,7 +822,8 @@ module Lain
                                           supervisor: @supervisor, parent:, library: backend.library,
                                           switchboard: -> { @switchboard }, journal: durable_journal,
                                           verdict: verdict(notice), isolation: fleet_isolation,
-                                          handback: handback(notice), epic: epic_mount(notice))
+                                          handback: handback(notice), epic: epic_mount(notice),
+                                          attachments:)
         @toolset_build.build(recorder, ask_human:)
       end
 

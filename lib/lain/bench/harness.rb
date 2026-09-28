@@ -88,10 +88,25 @@ module Lain
       # summaries. Injectable, so a caller holding an honest per-agent source
       # can supply one; not defaulted, because nothing here can build one
       # without becoming a second authority over how a run compacts.
-      INSTRUMENTATION = lambda { |journal:, recorder:, worker_env:|
+      # `attachments:` closes the model phase the same way `tool_middleware:`
+      # closes the tool phase, and for the reason a chat composes its resolver in
+      # {Lain::CLI::Wiring#model_phase} rather than in the chronicle: a picture is
+      # no less needed for going unrecorded, and without the resolver an arm whose
+      # toolset makes one dies at the encoder with
+      # {Lain::Attachment::Reference::Unresolved}. It is INNERMOST, one hop from
+      # the provider and downstream of the recorded request, so the record keeps
+      # the address and the wire gets the bytes.
+      #
+      # Keyed to the ARM's own leased directory, for the reason the board is fresh
+      # per agent: a store shared across arms is the cross-arm contamination the
+      # per-spawn recorder exists to prevent. Injectable, so a caller holding the
+      # run's one store can hand it over instead.
+      INSTRUMENTATION = lambda { |journal:, recorder:, worker_env:,
+                                  attachments: Attachment::Store.for(root: worker_env.cwd)|
         Agent::Instrumentation.new(
           journal: Memory::JournalMemoryRoot.new(journal:, recorder:),
-          model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:)]),
+          model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:),
+                                                   Middleware::ResolveAttachments.new(attachments:)]),
           tool_middleware: ::Lain::CLI::ToolGuard.detached(journal:).call(worker_env)
         )
       }

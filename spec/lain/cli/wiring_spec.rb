@@ -3275,6 +3275,79 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
   end
+
+  # An image a turn REFERS to rather than carries: the address rides the
+  # Timeline and the journal, and the bytes are put back on the last hop out.
+  # The route in is {Lain::Agent::RequestOverride}, the same one-shot slot a
+  # frontend resend uses, because it is the only production seam that gets a
+  # hand-built Request onto the wire without a tool to make one.
+  describe "an image carried as an address" do
+    let(:png) { (+"\x89PNG\r\n\x1a\n\x00\xff\x80pixels").force_encoding(Encoding::BINARY) }
+
+    def dispatch(over: chronicle)
+      wired = described_class.new(options: { grace: 5 }, chronicle: over, status_feed:)
+      recorder, session = wired.run_state(nil)
+      agent = wired.wire_agent(channel:, recorder:, session:, backend:)
+      reference = Lain::Attachment::Reference.new(digest: wired.send(:toolset_build).attachments.put(png),
+                                                  media_type: "image/png")
+      agent.request_override.queue(
+        Lain::Request.new(model: "qwen3:4b", max_tokens: 64,
+                          messages: [{ "role" => "user",
+                                       "content" => [{ "type" => "text", "text" => "what is on it" },
+                                                     reference.block] }])
+      )
+      agent.ask("what is on it")
+      [wired, agent, reference]
+    end
+
+    def sent_data = mock_provider.last_request.messages.dig(0, "content", 1, "source", "data")
+
+    # --no-journal: the model stack is composed in #model_phase and not in the
+    # chronicle's instrumentation, which has no model stack at all here, so a
+    # chat that records nothing still sends its pictures.
+    it "sends the bytes on a chat started with no journal" do
+      dispatch
+
+      expect(sent_data.unpack1("m0")).to eq(png)
+    end
+
+    # `be`, never `eq` on `.root`: {Lain::Attachment::Store} has no `==`, so an
+    # equality read would compare object identity anyway while LOOKING like it
+    # compared directories -- and two stores that merely compute the same path
+    # is exactly what one store exists to make unrepresentable.
+    it "hands a spawned child the same store, so a subagent writes into no second directory" do
+      wired, agent, = dispatch
+
+      expect(agent.toolset.fetch("subagent").seam.attachments).to be(wired.send(:attachments))
+      expect(wired.role_spawn.seam.attachments).to be(wired.send(:attachments))
+    end
+
+    it "resolves against the run's ONE store, the same object the toolset's tools write into" do
+      wired, agent, = dispatch
+
+      resolver = agent.send(:model_caller).middleware.to_a.last
+      expect(resolver).to be_a(Lain::Middleware::ResolveAttachments)
+      expect(resolver.attachments).to be(wired.send(:toolset_build).attachments)
+    end
+
+    context "when the chat is journaling" do
+      let(:journal_io) { StringIO.new }
+      let(:recording) do
+        Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "image-spec.ndjson")
+      end
+
+      it "records the address and sends the bytes" do
+        _, _, reference = dispatch(over: recording)
+
+        sent = journal_io.string.each_line.map { |line| JSON.parse(line) }
+                                          .find { |record| record["type"] == "request_sent" }
+        expect(sent["payload"]["messages"].dig(0, "content", 1, "source"))
+          .to include("type" => "attachment", "digest" => reference.digest)
+        expect(journal_io.string).not_to include([png].pack("m0"))
+        expect(sent_data.unpack1("m0")).to eq(png)
+      end
+    end
+  end
 end
 
 # What the Agent is built FROM, driven at the seam that takes the board as an

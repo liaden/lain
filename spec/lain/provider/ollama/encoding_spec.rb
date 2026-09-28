@@ -203,4 +203,85 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       expect(encoder.encode(request)).to include(options: { num_predict: 64 })
     end
   end
+
+  # Ollama takes an image as base64 in the message's own `images` array, never
+  # as a content block -- and a `role: "tool"` message may carry one, probed
+  # live: the model read back a codeword only the picture carried, where the
+  # same exchange without `images` invented a different one. So a tool result's
+  # picture rides the tool message that answers the call, and no user turn is
+  # invented to hold it.
+  describe "images" do
+    let(:png) { (+"\x89PNG\r\n\x1a\n\x00\xff\x80pixels").force_encoding(Encoding::BINARY) }
+    let(:base64) { [png].pack("m0") }
+    # The address is a datum here, not a measurement: `Canonical.digest` refuses
+    # raw image bytes outright (they are not UTF-8), which is the guard that made
+    # the store the only place that hashes them.
+    let(:reference) { Lain::Attachment::Reference.new(digest: "blake3:#{"9f" * 32}", media_type: "image/png") }
+    let(:image) { reference.inline(png) }
+    let(:tool_use) { { "type" => "tool_use", "id" => "call_1", "name" => "screenshot", "input" => {} } }
+
+    # The real shape a picture arrives in: ask, the assistant's call, then the
+    # result carrying a caption and the image beside it.
+    def tool_exchange
+      [{ role: "user", content: [{ "type" => "text", "text" => "shoot it" }] },
+       { role: "assistant", content: [tool_use] },
+       { role: "user", content: [{ "type" => "tool_result", "tool_use_id" => "call_1",
+                                   "content" => [{ "type" => "text", "text" => "the page" }, image] }] }]
+    end
+
+    it "carries a user turn's picture in that message's images array, and its text in content" do
+      encoded = encoder.encode(request(messages: [{ role: "user",
+                                                    content: [{ "type" => "text", "text" => "what is on it" },
+                                                              image] }]))
+
+      expect(encoded[:messages]).to eq([{ role: "user", content: "what is on it", images: [base64] }])
+    end
+
+    it "carries a tool result's picture on the tool message that answers the call" do
+      encoded = encoder.encode(request(messages: tool_exchange))
+
+      expect(encoded[:messages].last).to eq(role: "tool", tool_name: "screenshot", content: "the page",
+                                            images: [base64])
+    end
+
+    it "invents no user turn to hold a tool result's picture" do
+      encoded = encoder.encode(request(messages: tool_exchange))
+
+      expect(encoded[:messages].map { |message| message[:role] }).to eq(%w[user assistant tool])
+    end
+
+    # The comment on #with_images promises a text-only payload byte-identical to
+    # what this encoder sent before pictures existed, and an unconditional merge
+    # keeps every other example in this file green -- so the promise needs its own
+    # reading. Both spellings, because a Symbol key and a String key are two ways
+    # to send the same field and only one of them is this encoder's.
+    it "sends no images key at all on a message carrying none, in either spelling" do
+      encoded = encoder.encode(request(messages: [{ role: "user", content: [{ "type" => "text", "text" => "hi" }] },
+                                                  { role: "assistant", content: [tool_use] },
+                                                  { role: "user",
+                                                    content: [{ "type" => "tool_result", "tool_use_id" => "call_1",
+                                                                "content" => "plain text" }] }]))
+
+      expect(encoded[:messages]).to all(satisfy { |message| !message.key?(:images) && !message.key?("images") })
+    end
+
+    # A reference reaching an encoder means nobody put the bytes back, and a turn
+    # sent without its picture answers a question about something the model never
+    # saw. Loud, and naming the address, because the digest is what a reader has
+    # to go looking with.
+    it "refuses a turn whose picture nobody resolved, naming the address" do
+      expect { encoder.encode(request(messages: [{ role: "user", content: [reference.block] }])) }
+        .to raise_error(Lain::Attachment::Reference::Unresolved, /#{reference.digest}/)
+    end
+
+    it "refuses one hidden inside a tool result's own content" do
+      addressed = [{ role: "user", content: [{ "type" => "text", "text" => "shoot it" }] },
+                   { role: "assistant", content: [tool_use] },
+                   { role: "user", content: [{ "type" => "tool_result", "tool_use_id" => "call_1",
+                                               "content" => [reference.block] }] }]
+
+      expect { encoder.encode(request(messages: addressed)) }
+        .to raise_error(Lain::Attachment::Reference::Unresolved)
+    end
+  end
 end

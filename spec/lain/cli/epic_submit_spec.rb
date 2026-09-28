@@ -1343,6 +1343,23 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
         expect(pair(tool_middleware: guard).role_spawn.seam.tool_middleware).to be(guard)
       end
+
+      # Same argument as the guard, one seam member over: out of chat no
+      # attachment store reaches a child unless this command hands one in, and
+      # the seam's Null raises from inside the child's model phase -- where
+      # {Lain::Effect::Handler::Live#run} flattens it into a tool_result, losing
+      # the class and journalling nothing.
+      #
+      # The DIRECTORY is what is asserted, not the object: this command is not a
+      # chat and has no run to share one object with, so addressing the project's
+      # own container is the whole of the claim. (Where there IS one object -- a
+      # chat's -- identity is asserted with `be`, in `cli/wiring_spec.rb`.)
+      it "hands its spawned children the project's own attachment store, never the unwired Null" do
+        store = pair.role_spawn.seam.attachments
+
+        expect(store).not_to be(Lain::Middleware::ResolveAttachments::Unwired)
+        expect(store.root).to eq(Lain::Attachment::Store.for(root:, paths:).root)
+      end
     end
 
     # The guard is the one seam member the pair takes, and it takes it by name,

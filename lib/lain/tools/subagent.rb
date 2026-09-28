@@ -883,7 +883,7 @@ module Lain
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :supervisor,
-                         :observer, :askers, :isolation, :escalation, :scope) do
+                         :observer, :askers, :isolation, :escalation, :scope, :attachments) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -924,10 +924,22 @@ module Lain
         # `scope` answers `#current`, the session scope children are spawned
         # into; a chat reads its board's. Unscoped by default, since only a
         # board can enter plan scope.
+        #
+        # `attachments` is the run's ONE {Lain::Attachment::Store}, and it rides
+        # HERE rather than on {ChildBuilder} for the reason `parent` does: a
+        # grandchild inherits the seam verbatim ({ChildBuilder#config}), and a
+        # subtree resolving a picture out of a second directory is the failure
+        # this member exists to make unrepresentable. Its Null is loud, so a
+        # spawn seam nobody wired a store into refuses the picture it cannot find
+        # instead of sending the address as if it were one. It moves the
+        # shareability claim above nowhere: a {Lain::Attachment::Store} freezes
+        # itself at construction and its Null is a module, so both are shareable
+        # already.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
-                       escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED)
+                       escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
+                       attachments: Middleware::ResolveAttachments::Unwired)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -1258,9 +1270,18 @@ module Lain
         # would move the parent's HUD onto a context the human cannot act on.
         # The record names the spawn so a reader can tell whose it is wherever
         # it is read back.
+        #
+        # The attachment resolver is the second member and the INNERMOST one, for
+        # the reason it is innermost in a chat ({CLI::Wiring#model_phase}). A
+        # child that did not resolve would send its parent's screenshot as the
+        # address string and ask the model about a picture nothing put in front
+        # of it -- reachable today through the `inherit` prefix, whose child
+        # renders the parent's whole history, and through any image-bearing tool
+        # the child is granted.
         def child_budget
           voice = Middleware::RequestBudget::Child.new(name: @name)
-          Middleware::Stack.new([Middleware::RequestBudget.new(journal: @seam.journal, voice:)])
+          Middleware::Stack.new([Middleware::RequestBudget.new(journal: @seam.journal, voice:),
+                                 Middleware::ResolveAttachments.new(attachments: @seam.attachments)])
         end
 
         # `schema` renders the attenuated set, so the stack as built suffices;

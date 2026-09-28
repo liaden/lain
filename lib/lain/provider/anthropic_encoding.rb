@@ -162,7 +162,16 @@ module Lain
       # Pure translation: a block's neutral marker becomes cache_control
       # wherever the Context layer placed it. This module adds no placement of
       # its own.
+      #
+      # An image block needs no translation at all -- the neutral block wears
+      # Anthropic's own shape, which is why that shape was chosen -- but an
+      # ADDRESS is refused here rather than passed through. Anthropic would
+      # answer a `source.type` it does not know with a 400 naming neither the
+      # picture nor what failed to resolve it; {Attachment::Reference} names
+      # both. The check is recursive because {#translate_block} is not: a
+      # tool_result's content nests, and that is where a tool's picture arrives.
       def encode_messages(messages)
+        Attachment::Reference.refuse_unresolved!(messages)
         messages.map do |message|
           { "role" => message["role"], "content" => encode_content(message["content"]) }
         end
