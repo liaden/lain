@@ -793,12 +793,21 @@ module Lain
       # so {#model} is read last: it refuses an option hash naming no provider.
       def shares_chat_runner?(provider, model, base)
         ollama_chat? && provider == run_profile.provider &&
-          endpoint(provider, base) == endpoint(provider, api_base) && model == self.model
+          ollama_endpoint(provider, base) == ollama_endpoint(provider, api_base) &&
+          model == self.model
       end
 
-      def endpoint(provider, base) = (base || default_base(provider)).chomp("/")
+      # NAMED for the arm it answers for, because it answers for one: every
+      # provider that is not ollama-cloud gets ollama's loopback, anthropic
+      # included, and the only thing keeping that honest is the `ollama_chat?`
+      # guard its one caller opens with. Published under a general name it reads
+      # as "the chat's endpoint" and silently gives a hosted run ollama's
+      # address -- which is exactly what was nearly wired into the epic driver's
+      # width derivation, where it would have halved every hosted run. The
+      # honest general answer is {Lain::Provider::Admitted#admission_endpoint}.
+      def ollama_endpoint(provider, base) = (base || ollama_default_base(provider)).chomp("/")
 
-      def default_base(provider)
+      def ollama_default_base(provider)
         return Provider::Ollama::Deployment::CLOUD_API_BASE if provider == OllamaTier::CLOUD
 
         Provider::Ollama::Transport::DEFAULT_API_BASE
