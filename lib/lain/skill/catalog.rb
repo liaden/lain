@@ -25,6 +25,12 @@ module Lain
       SHIPPED_DIR = Paths::Shipped::SKILL_SHIPPED_DIR
       private_constant :SHIPPED_DIR
 
+      # Every front-matter key `.build` reads. A key outside this set is
+      # refused rather than ignored -- the same posture as `Config::Epics::KEYS`
+      # -- so a typo (`slot:` for `slots:`) fails loudly instead of silently
+      # leaving the skill un-slotted.
+      KEYS = %w[description slots includes].freeze
+
       class << self
         # Read the shipped skills, then overlay the project's user skills (a user
         # `<name>` REPLACES the shipped one of that name). The one disk read;
@@ -79,6 +85,12 @@ module Lain
           meta = YAML.safe_load(front.to_s) || {}
           raise Malformed, "skill #{name.inspect} front-matter must be a mapping, got #{meta.class}" \
             unless meta.is_a?(Hash)
+
+          unknown = meta.keys - KEYS
+          unless unknown.empty?
+            raise Malformed, "skill #{name.inspect} front-matter has unknown key(s) " \
+                             "#{unknown.map(&:inspect).join(", ")}; known keys: #{KEYS.join(", ")}"
+          end
 
           meta
         rescue Psych::SyntaxError => e

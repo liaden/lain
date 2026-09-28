@@ -128,6 +128,15 @@ RSpec.describe Lain::Skill::Catalog do
         }
     end
 
+    it "raises Malformed naming the unknown key, the skill, and the known keys" do
+      expect { load_raw("typo", "---\ndescription: hi\nslot: system\n---\nbody\n") }
+        .to raise_error(Lain::Skill::Catalog::Malformed) { |e|
+          expect(e.message).to include("typo")
+          expect(e.message).to include("slot")
+          expect(e.message).to include("description").and include("slots").and include("includes")
+        }
+    end
+
     it "wraps a YAML syntax error in Malformed naming the file" do
       expect { load_raw("bad", "---\ndescription: \"unterminated\n---\nbody\n") }
         .to raise_error(Lain::Skill::Catalog::Malformed) { |e|
@@ -139,6 +148,20 @@ RSpec.describe Lain::Skill::Catalog do
       catalog = load_raw("empty", "---\n---\n## Scaffold only\n")
       expect(catalog.fetch("empty").scaffold).to eq("## Scaffold only\n")
       expect(catalog.fetch("empty").slots).to eq([])
+    end
+  end
+
+  describe "the eight shipped skills still load" do
+    it "presents every real shipped skill with a description, against the real templates tree" do
+      Dir.mktmpdir do |root|
+        catalog = described_class.load(root:)
+
+        expect(catalog.names).to match_array(
+          %i[research-epic plan-epic iterate-epic create-epic-issues create-plan execute-plan critique
+             gherkin-tests]
+        )
+        catalog.all.each { |skill| expect(skill.description).not_to be_empty }
+      end
     end
   end
 
