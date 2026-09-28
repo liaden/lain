@@ -506,6 +506,33 @@ RSpec.describe Lain::Tools::Subagent do
 
         expect(fleet_rows.map { |row| row["state"] }).to eq(["failed"])
       end
+
+      it "tells the parent WHICH reading it was, so the diagnostic can be checked against the turn" do
+        result = dispatched_by_parent(provider: prose_child)
+
+        expect(result["content"].to_s).to include("tool call written as prose")
+      end
+    end
+
+    # The provider reads a turn that said NOTHING as malformed too, and it
+    # reaches this tool by the same road. The refusal is right; naming it a
+    # prose tool call would not be, and on a bench whose deliverable is
+    # observability a diagnostic pointing at the wrong failure is worse than
+    # none.
+    context "when it answered nothing at all" do
+      def silent_child
+        Lain::Provider::Ollama.new(transport: OllamaWire.queue_transport([text_response("")]))
+      end
+
+      it "does not answer its parent, and says the child said nothing rather than naming a prose call" do
+        result = dispatched_by_parent(provider: silent_child)
+
+        expect(result["is_error"]).to be(true)
+        expect(result["content"].to_s).to include("said nothing at all")
+        expect(result["content"].to_s).not_to include("written as prose")
+        expect(record.message.body).to include("lifecycle" => failed,
+                                               "error" => "Lain::Tools::Subagent::MalformedAnswer")
+      end
     end
 
     # A request refused before the child's first answer leaves a head no

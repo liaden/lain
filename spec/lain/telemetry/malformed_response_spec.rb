@@ -65,6 +65,10 @@ RSpec.describe Lain::Telemetry::MalformedResponse do
   # Loud failure, the same validate-then-freeze contract every sibling record
   # has. A record with no kind, no tool and no evidence would journal
   # `{"tool_name":""}` and read as a finding.
+  #
+  # The first line is now refused for its KIND alone -- the quote guards are
+  # scoped to `:prose_tool_call` and a nil kind is neither kind -- so the three
+  # lines below it are what still hold each guard down, one at a time.
   it "refuses a record that names no reading, no tool, or no evidence" do
     expect(Lain::Telemetry::Carriers::MalformedResponse.new(kind: nil, tool_name: nil, excerpt: nil))
       .to be_invalid
@@ -74,6 +78,43 @@ RSpec.describe Lain::Telemetry::MalformedResponse do
       .to raise_error(ArgumentError, /tool_name must name the tool the envelope named/)
     expect { described_class.new(kind: :prose_tool_call, model: "m", tool_name: "bash", excerpt: "") }
       .to raise_error(ArgumentError, /excerpt must carry the text the reading was made from/)
+  end
+
+  # The second kind, and the reason `kind` was an open place rather than a
+  # decoration. Here the finding IS an absence: there is no tool the turn named
+  # and no text to quote it from, so demanding either would make the record
+  # unconstructible for the failure it exists to name.
+  describe "an empty answer" do
+    subject(:silence) { described_class.new(kind: :empty_answer, model: "qwen3:4b") }
+
+    it "names the model and quotes nothing, because nothing is what it found" do
+      expect(silence).to have_attributes(kind: :empty_answer, model: "qwen3:4b", tool_name: nil, excerpt: nil)
+      expect(silence).to be_deeply_frozen
+    end
+
+    it "journals under the same type a reader already discriminates on" do
+      expect(JSON.parse(JSON.generate(silence.to_journal)))
+        .to eq("type" => "malformed_response", "kind" => "empty_answer", "model" => "qwen3:4b",
+               "tool_name" => nil, "excerpt" => nil)
+    end
+
+    # The record is built from inside a provider's decode of an HTTP 200, so a
+    # guard demanding the model would abort the decode it exists to describe --
+    # a body carrying no `model` at all is ordinary. Evidence is not worth a
+    # raise on the one path that must survive anything the wire sends.
+    it "tolerates a body that named no model, rather than refusing to report the silence" do
+      expect(described_class.new(kind: :empty_answer)).to have_attributes(kind: :empty_answer, model: nil)
+    end
+
+    # The relaxation is scoped to the kind that cannot carry evidence. A
+    # prose_tool_call still owes both, or the record claims a finding it cannot
+    # be checked against.
+    it "leaves a prose_tool_call owing both its tool and its quote" do
+      expect { described_class.new(kind: :prose_tool_call, model: "m", excerpt: "x") }
+        .to raise_error(ArgumentError, /tool_name must name the tool the envelope named/)
+      expect { described_class.new(kind: :prose_tool_call, model: "m", tool_name: "bash") }
+        .to raise_error(ArgumentError, /excerpt must carry the text the reading was made from/)
+    end
   end
 
   # `model` is the one field the wire may genuinely omit: `/api/chat`'s body

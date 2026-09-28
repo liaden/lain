@@ -321,10 +321,22 @@ module Lain
 
       # Checked before the bounding, so an envelope too large to deliver is not
       # first handed back to the child to summarize.
+      #
+      # `:malformed` names a reading, not a shape, and the parent is told WHICH
+      # one: a provider fires it for a tool call written as prose AND for a turn
+      # that said nothing at all. `#text` is what tells them apart here, the
+      # same discriminator {Answer#undeliverable} already uses one call further
+      # on, and it is enough because an envelope is never empty.
       def refusing_malformed(response)
         return response unless response.stop_reason == StopReason::MALFORMED
 
-        raise MalformedAnswer, "the child's turn was a tool call written as prose, not an answer"
+        raise MalformedAnswer, malformed_reading(response)
+      end
+
+      def malformed_reading(response)
+        return "the child's turn said nothing at all, not an answer" if response.text.empty?
+
+        "the child's turn was a tool call written as prose, not an answer"
       end
 
       def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null)
@@ -416,11 +428,12 @@ module Lain
       class NotABuilder < ArgumentError; end
 
       # A one-shot child whose turn its provider read as malformed -- a tool
-      # call written as prose -- has not answered, whatever its text says. It is
-      # raised rather than returned so the spawn ends the way every other child
-      # that did not answer ends: a `failed` completion naming this class and
-      # carrying no "result", which is what keeps it out of every reader of
-      # finished work, and an error result for the parent.
+      # call written as prose, or a reply that said nothing at all -- has not
+      # answered, whatever its text says. It is raised rather than returned so
+      # the spawn ends the way every other child that did not answer ends: a
+      # `failed` completion naming this class and carrying no "result", which is
+      # what keeps it out of every reader of finished work, and an error result
+      # for the parent. Which reading it was travels in the message.
       class MalformedAnswer < Error; end
 
       # The ask-the-human seam a spawn was never taught about: there is no

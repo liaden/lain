@@ -17,15 +17,17 @@ module Lain
       # Both legs converge on {#build_response}, which is what makes path parity
       # structural rather than asserted: {StreamAssembler} reassembles the NDJSON
       # lines into the very Hash the non-streaming endpoint returns, and this
-      # decodes that one shape once. There is no `decoding_spec.rb` for the same
-      # reason -- these are exercised through the class, where the path-parity
-      # assertions have to live.
+      # decodes that one shape once. The path-parity assertions therefore live
+      # in the CLASS's spec and cannot move here; `decoding_spec.rb` holds only
+      # the readings this file makes of one already-assembled body.
       #
-      # ONE COLLABORATOR, AND IT IS NOT DECLARED HERE: `#note_prose_tool_call`
-      # reads `@journal`, which {Ollama} owns. A mixin cannot declare an ivar, so
-      # an includer other than {Ollama} gets a `NoMethodError` on nil -- if a
-      # second one ever appears, this reaches for a collaborator it must instead
-      # be handed.
+      # ONE COLLABORATOR, AND IT IS NOT DECLARED HERE: the two `#note_*` methods
+      # read `@journal`, which {Ollama} owns. A mixin cannot declare an ivar, so
+      # an includer that sets none gets a `NoMethodError` on nil. That is no
+      # longer hypothetical -- `decoding_spec.rb` includes this module into a
+      # throwaway class and assigns the ivar itself -- so the note stands as the
+      # cost it names: a second PRODUCTION includer means this reaches for a
+      # collaborator it must instead be handed.
       module Decoding
         # The shape `qwen3-coder:30b` writes when it expresses a tool call as
         # assistant TEXT instead of as a tool call.
@@ -75,23 +77,40 @@ module Lain
         # -- is deliberately NOT here: `#build_response` is handed the body and
         # not the Request, and reaching for one would put this decision above the
         # provider that owns its model family's failure modes.
+        # {Lain::Blankness}'s set as a regex fragment. The anchor below and
+        # `#said_nothing?` both decide what counts as nothing, on the same text,
+        # one line apart -- `\s` would have left a zero-width character ending a
+        # turn for one of them and not the other. Blankness answers over a WHOLE
+        # string and this needs a fragment, which is why the set is spelled
+        # twice; `decoding_spec.rb` pins the behaviour they must share.
+        NOTHING_AFTER_IT = /[[:space:]\u{200B}-\u{200D}\u{2060}\u{FEFF}]*/
+
         PROSE_TOOL_CALL = %r{
           <function=(?<tool_name>[a-z][a-z0-9_]*)>   # the envelope, naming a tool
           .*?                                        # whatever it wrote for arguments
           </function>                                # closed, not merely opened
-          (?:\s*</tool_call>)?                       # the stray closer, with no opener
-          \s*\z                                      # and nothing said after it
+          (?:#{NOTHING_AFTER_IT}</tool_call>)?       # the stray closer, with no opener
+          #{NOTHING_AFTER_IT}\z                      # and nothing said after it
         }mx
+
+        # The reasons {Agent::LoopMachine} settles a run on as an ANSWER. A turn
+        # that said nothing may not reach one, whatever the wire spelled: the
+        # test is the reason the decode arrives at, because `StopReason.normalize`
+        # admits the whole of `KNOWN` and an ollama-compatible server is free to
+        # answer `"end_turn"` where ollama itself says `"stop"`.
+        SETTLES_AS_ANSWER = [StopReason::END_TURN, StopReason::STOP_SEQUENCE].freeze
 
         private
 
         def build_response(body)
           message = body["message"] || {}
           envelope = prose_tool_call(message)
+          silent = said_nothing?(message)
           response = Response.new(id: nil, model: body["model"], content: decode_content(message),
-                                  stop_reason: decode_stop_reason(body, message, envelope),
+                                  stop_reason: decode_stop_reason(body, message, envelope, silent),
                                   usage: build_usage(body), raw: body)
           note_prose_tool_call(body, envelope) unless envelope.nil?
+          note_empty_answer(body) if silent
           response
         end
 
@@ -111,6 +130,21 @@ module Lain
                                                        tool_name: envelope[:tool_name], excerpt: envelope[0])
         end
 
+        # The witness for a turn that decoded perfectly and SAID nothing --
+        # every field a model can speak through left blank under an HTTP 200.
+        # It carries no quote and names no tool because there was nothing to
+        # quote: the absence is the whole finding, and the model is what a
+        # reader needs to know which one went quiet.
+        def note_empty_answer(body)
+          @journal << Telemetry::MalformedResponse.new(kind: :empty_answer, model: body["model"])
+        end
+
+        # Every field a model can speak through, blank at once.
+        def said_nothing?(message)
+          Array(message["tool_calls"]).empty? &&
+            Blankness.blank?(message["content"]) && Blankness.blank?(message["thinking"])
+        end
+
         # nil unless the message asked for nothing AND ends in a closed
         # envelope. The tool_calls test comes first because it is the cheap,
         # total one: a message that made a real call is not malformed however
@@ -127,8 +161,9 @@ module Lain
         # fields, tool_calls its own array.
         def decode_content(message)
           blocks = []
-          blocks << { "type" => "thinking", "thinking" => message["thinking"] } unless blank?(message["thinking"])
-          blocks << { "type" => "text", "text" => message["content"] } unless blank?(message["content"])
+          blocks << { "type" => "thinking", "thinking" => message["thinking"] } unless
+            Blankness.blank?(message["thinking"])
+          blocks << { "type" => "text", "text" => message["content"] } unless Blankness.blank?(message["content"])
           Array(message["tool_calls"]).each_with_index { |call, index| blocks << tool_use_block(call, index) }
           blocks
         end
@@ -157,14 +192,22 @@ module Lain
 
         # Presence of tool_calls forces :tool_use -- done_reason stays "stop" on
         # a tool turn. A prose envelope reads :malformed whatever done_reason
-        # says, since "stop" is exactly the lie it tells. Otherwise map the two
-        # enum values Ollama can express and let StopReason.normalize close the
-        # open enum ("" -> :unknown, and any load/unload edge string likewise),
-        # so the mapping stays total.
-        def decode_stop_reason(body, message, envelope)
+        # says, since "stop" is exactly the lie it tells. Silence may not settle
+        # as an answer; every other reason is left saying what it said, because
+        # a spent ceiling and a connection that closed already name a cause a
+        # caller can act on.
+        def decode_stop_reason(body, message, envelope, silent)
           return StopReason::TOOL_USE unless Array(message["tool_calls"]).empty?
           return StopReason::MALFORMED unless envelope.nil?
 
+          reason = wire_stop_reason(body)
+          silent && SETTLES_AS_ANSWER.include?(reason) ? StopReason::MALFORMED : reason
+        end
+
+        # The two enum values Ollama can express, with StopReason.normalize
+        # closing the open enum ("" -> :unknown, and any load/unload edge string
+        # likewise) so the mapping stays total.
+        def wire_stop_reason(body)
           case body["done_reason"]
           when "stop" then StopReason::END_TURN
           when "length" then StopReason::MAX_TOKENS
@@ -174,10 +217,6 @@ module Lain
 
         def build_usage(body)
           Usage.new(input_tokens: body["prompt_eval_count"], output_tokens: body["eval_count"])
-        end
-
-        def blank?(value)
-          value.nil? || value == ""
         end
       end
     end

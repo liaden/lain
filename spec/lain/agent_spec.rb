@@ -658,6 +658,18 @@ RSpec.describe Lain::Agent do
       expect(a.failure_reason).to include("unrecognized")
     end
 
+    # The one failing reason no wire ever sends: a provider's reading that a
+    # cleanly decoded turn is unusable -- a tool call written as prose, or a
+    # reply that said nothing at all. The loop must fail it rather than settle
+    # it as an answer, and the diagnostic points at the journal record because
+    # that is where the evidence for which reading it was lives.
+    it "fails on malformed, pointing at the journal record that holds the evidence" do
+      a = agent(Lain::Response.new(content: [], stop_reason: :malformed))
+      a.ask("hi")
+      expect(a).to be_failed
+      expect(a.failure_reason).to include("malformed_response journal record")
+    end
+
     # A server-side tool is mid-flight; resend and let it continue.
     it "re-requests on pause_turn rather than settling" do
       provider = CoreGraph.provider(text_response("", stop_reason: :pause_turn), text_response("finished"))

@@ -480,6 +480,75 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # The same silence in its other form, and the one every local model can
+  # produce: HTTP 200 with every field a turn could speak through left blank.
+  # The wire calls that an ordinary end of turn, so the reading is made here and
+  # travels as BOTH a record and a stop reason -- and these examples drive the
+  # real provider, the real Journal and the real loop, because a decode proved
+  # only against an Array and a Mock proves nothing about the road it travels.
+  describe "#complete on a reply that said nothing at all" do
+    def silent_body(done_reason: "stop")
+      { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "" },
+        "done" => true, "done_reason" => done_reason, "prompt_eval_count" => 11, "eval_count" => 0 }
+    end
+
+    def silently_journaled(body)
+      io = StringIO.new
+      described_class.new(transport: transport_sync(body), journal: Lain::Journal.new(io:)).complete(request)
+      io
+    end
+
+    it "reads the turn as malformed and journals an empty_answer record naming the model that went quiet" do
+      expect(described_class.new(transport: transport_sync(silent_body)).complete(request))
+        .to stop_with(Lain::StopReason::MALFORMED)
+      expect(silently_journaled(silent_body))
+        .to include_journal_record("malformed_response", kind: "empty_answer", model: "qwen3:4b")
+    end
+
+    # The sibling kind quotes what it read; this one has nothing to quote, and
+    # the line says so rather than journalling an empty String that would read
+    # as a finding with its evidence lost.
+    it "writes one NDJSON line carrying no tool and no quote" do
+      record = JSON.parse(silently_journaled(silent_body).string.lines.first)
+
+      expect(record).to include("type" => "malformed_response", "kind" => "empty_answer",
+                                "tool_name" => nil, "excerpt" => nil)
+    end
+
+    # A spent ceiling and a model that chose to stop want different answers from
+    # a caller, so the wire's reason survives -- and the silence is still filed.
+    it "leaves a truncated reply its :max_tokens while still recording the silence" do
+      truncated = silent_body(done_reason: "length")
+
+      expect(described_class.new(transport: transport_sync(truncated)).complete(request))
+        .to stop_with(Lain::StopReason::MAX_TOKENS)
+      expect(silently_journaled(truncated)).to include_journal_record("malformed_response", kind: "empty_answer")
+    end
+
+    it "decodes over the default Null journal with no guard" do
+      provider = described_class.new(transport: transport_sync(silent_body))
+
+      expect(provider.complete(request)).to stop_with(Lain::StopReason::MALFORMED)
+    end
+
+    # The whole road, nothing doubled but the socket: decode -> Response ->
+    # Agent#transition -> LoopMachine -> the failure diagnostic, with the record
+    # the diagnostic names actually on the file it points at.
+    it "fails an agent's run under a reason naming the malformed record, and journals that record" do
+      io = StringIO.new
+      provider = described_class.new(transport: transport_sync(silent_body), journal: Lain::Journal.new(io:))
+      agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
+                              context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64, stream: false),
+                              timeline: Lain::Timeline.empty)
+
+      agent.ask("summarize the Gemfile")
+
+      expect(agent.state).to eq(:failed)
+      expect(agent.failure_reason).to include("malformed_response journal record")
+      expect(io).to include_journal_record("malformed_response", kind: "empty_answer", model: "qwen3:4b")
+    end
+  end
+
   # Cache markers never reach the wire, and encode is pure.
   describe "#encode" do
     let(:cached_request) do
