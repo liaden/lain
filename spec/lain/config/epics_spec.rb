@@ -72,6 +72,37 @@ RSpec.describe Lain::Config::Epics do
     expect { described_class.new(home: :bogus) }.to raise_error(Lain::Config::Refusal, /bogus/)
   end
 
+  # A width absent from the table is not a zero: it means the project said
+  # nothing, and the driver derives its own from where the models run.
+  it "leaves width unsaid for an empty table" do
+    expect(described_class.from({}, path: "/irrelevant").width).to be_nil
+  end
+
+  it "reads a width the table declares" do
+    expect(described_class.from({ "width" => 4 }, path: "/irrelevant").width).to eq(4)
+  end
+
+  # A width counts the issues carried at once, so everything outside the whole
+  # numbers above zero means nothing -- and a zero in particular would drive an
+  # epic that launches nothing while reporting nothing wrong.
+  [0, -1, "two", 1.5, true].each do |literal|
+    it "refuses a width of #{literal.inspect}" do
+      expect { described_class.from({ "width" => literal }, path: "/irrelevant") }
+        .to raise_error(Lain::Config::Refusal, /width .* is not a whole number of issues above zero/)
+    end
+  end
+
+  # The guard belongs to the VALUE, as `home`'s and `gates`' do: a hand-built
+  # width of zero must refuse here rather than three frames into a run.
+  it "refuses a hand-built width outside the whole numbers above zero" do
+    expect { described_class.new(home: :xdg, width: 0) }
+      .to raise_error(Lain::Config::Refusal, "[epics] width 0 is not a whole number of issues above zero")
+  end
+
+  it "re-checks width through #with" do
+    expect { described_class.new(home: :xdg).with(width: -2) }.to raise_error(Lain::Config::Refusal, /width/)
+  end
+
   # Pinned literally, not by a regex that would survive a rewording. Each of
   # these messages is computed from the OFFENDING VALUE -- the symbol, the set
   # difference -- and not from the name of the attribute that carried it, so a
@@ -152,6 +183,18 @@ RSpec.describe Lain::Config do
       end
     end
 
+    # `width`'s own near miss. An unknown key is refused rather than ignored,
+    # so a project that meant to slow a run down learns that it did not, rather
+    # than watching the old width and wondering.
+    it "refuses widht, naming it and the keys it does know" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nwidht = 2\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /widht.*known keys: home, gates, width/)
+      end
+    end
+
     # Panel probe: `[epics.sub]` parses to a nested Hash under the "sub" key --
     # still an unrecognized key, not a different code path.
     it "refuses a nested [epics.sub] table as an unknown key" do
@@ -170,6 +213,26 @@ RSpec.describe Lain::Config do
         write_config(root, "[epics]\n")
 
         expect(described_class.load(root:).epics_home).to eq(:xdg)
+      end
+    end
+  end
+
+  describe "[epics] width" do
+    it "reads the width a project declares" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nwidth = 4\n")
+
+        expect(described_class.load(root:).epics.width).to eq(4)
+      end
+    end
+
+    it "names the file and the offending width" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nwidth = 0\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal,
+                          "#{config_path(root)}: [epics] width 0 is not a whole number of issues above zero")
       end
     end
   end
@@ -266,7 +329,7 @@ RSpec.describe Lain::Config do
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal,
-                          "#{config_path(root)}: [epics] has no keys \"hoem\"; known keys: home, gates")
+                          "#{config_path(root)}: [epics] has no keys \"hoem\"; known keys: home, gates, width")
       end
     end
 

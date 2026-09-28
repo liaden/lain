@@ -19,8 +19,12 @@ module Lain
 
         # `--width` is the one knob worth typing: a human watching a run may
         # want the issues taken one at a time, and editing a config file to say
-        # so is not something anybody does mid-chat. The budget stays a
-        # construction seam -- it is a bench's question, not a prompt's.
+        # so is not something anybody does mid-chat. Typed, it outranks both
+        # `[epics] width` and the width the driver derives from where its models
+        # run; UNTYPED it is not spelled here at all, so that order stays stated
+        # in one place ({EpicDriver::Run.width_for}) instead of being pre-empted
+        # by a default this command invented. The budget stays a construction
+        # seam -- it is a bench's question, not a prompt's.
         FLAGS = %w[--width].freeze
 
         def name = "implement-epic"

@@ -21,8 +21,16 @@ module Lain
       # grader bound per issue has to ride here or it cannot be bound at all. It
       # DEFAULTS, because an ordinary chat lends none and must construct exactly
       # as it did.
-      Seams = Data.define(:mount, :paths, :journal, :toolset_build, :asker, :conductor, :grading) do
-        def initialize(mount:, paths:, journal:, toolset_build:, asker:, conductor:, grading: nil)
+      #
+      # `endpoint` is the run's own edge onto WHERE ITS MODELS RUN, named here
+      # rather than reached for through `toolset_build`: that seam is how the
+      # epic spawns its children, and asking it a question about servers would
+      # make the driver's default depend on the subagent wiring. It is a plain
+      # string and the driver only ever asks {Run.width_for} about it, so
+      # nothing here holds a provider. It DEFAULTS to nil -- nobody said -- and
+      # a run that says nothing carries exactly what it carried before.
+      Seams = Data.define(:mount, :paths, :journal, :toolset_build, :asker, :conductor, :grading, :endpoint) do
+        def initialize(mount:, paths:, journal:, toolset_build:, asker:, conductor:, grading: nil, endpoint: nil)
           super
         end
 
@@ -33,7 +41,7 @@ module Lain
         # @return [Factory, Factory::Unmounted]
         def driver(root:, library:, chronicle:)
           Factory.for(mount:, chronicle:, paths:, root:, library:, journal:, toolset_build:, asker:,
-                      grading:, interrupt: stopping)
+                      grading:, endpoint:, interrupt: stopping)
         end
 
         private
@@ -398,8 +406,13 @@ module Lain
         #   between an actor settling and its retirement, while its lease still
         #   holds the checkout; nil grades nothing. A bench binds its own
         #   per-issue grader here.
+        # @param endpoint [String, nil] where this run's models are dialled,
+        #   which is all the driver ever needs to know about them -- see
+        #   {Seams}. nil means nobody said, and {Run.width_for} reads that as
+        #   hosted.
         def initialize(mount:, chronicle:, paths:, root:, library:, journal:, toolset_build:,
-                       asker: nil, config: nil, interrupt: -> { false }, actors: nil, grading: nil)
+                       asker: nil, config: nil, interrupt: -> { false }, actors: nil, grading: nil,
+                       endpoint: nil)
           @mount = mount
           @chronicle = chronicle
           @paths = paths
@@ -407,12 +420,13 @@ module Lain
           @library = library
           @journal = journal
           @toolset_build = toolset_build
-          # The five a caller may leave to this object: who answers a gate, the
-          # project's config, when to stop, what launches an issue, and what
-          # grades one. ONE slot because what they have in common is that a
-          # chat supplies none of them -- the required seven above are the
-          # object's shape, and these are the seams a bench or a spec lends.
-          @optional = { asker:, config:, interrupt:, actors:, grading: }
+          # The six a caller may leave to this object: who answers a gate, the
+          # project's config, when to stop, what launches an issue, what grades
+          # one, and where its models run. ONE slot because what they have in
+          # common is that a chat supplies none of them -- the required seven
+          # above are the object's shape, and these are the seams a bench or a
+          # spec lends.
+          @optional = { asker:, config:, interrupt:, actors:, grading:, endpoint: }
         end
 
         def mounted? = true
@@ -469,12 +483,16 @@ module Lain
         # Issue branches an earlier run left are settled before anything is
         # leased, so no issue is cut while its branch is still in question.
         #
-        # @param width [Integer] how many issues are carried at once
+        # @param width [Integer, nil] how many issues are carried at once; nil
+        #   leaves it to {Run.width_for}, which is where the order of the three
+        #   answers is stated
         # @param budget [Integer, nil] how many issues the whole run may land
         # @param resumed [Boolean] whether the chat carrying the run was
         #   resumed, which keeps an earlier run's branches without asking
         # @return [Run::Result]
-        def run(width: Run::WIDTH, budget: nil, resumed: false)
+        def run(width: nil, budget: nil, resumed: false)
+          width = Run.width_for(typed: width, configured: config.epics.width,
+                                endpoint: @optional.fetch(:endpoint))
           holding(landing_checkout) do |checkout|
             Sync do |task|
               discarded = earlier.call(resumed:)
@@ -635,8 +653,28 @@ module Lain
         # many issues are carried at once; two is enough to keep a second issue
         # moving while the first waits on a human at its gate, and small enough
         # that a conflict at the landing queue is between two commits rather
-        # than five.
+        # than five. That is a HOSTED number: both halves of it assume the
+        # second issue can make progress while the first is mid-turn.
         WIDTH = 2
+
+        # What a run carries when its models are served from THIS machine, and a
+        # second constant rather than a smaller {WIDTH} because the argument is a
+        # different one -- which is why the two cannot be stated in one sentence.
+        # {Provider::Admission} already holds a local endpoint to one request in
+        # flight, so the spare time {WIDTH} spends a second issue in does not
+        # exist here: a sibling on the same model waits, and a sibling on a
+        # DIFFERENT model makes the server swap, which the probes measured at
+        # 16-20s on a 30B and which throws away the prefix cache it had warmed.
+        # Nothing here re-decides admission -- this only stops the driver
+        # offering a one-at-a-time server more issues than it can serve, so the
+        # number is REUSED from the gate rather than restated beside it.
+        #
+        # It defers to the gate's DEFAULT, and only to that.
+        # {Provider::Admission::ENV_KEY} widens or disables the gate at runtime
+        # and nothing here reads it, so an operator who sets it to 4 locally
+        # gets a gate of 4 and a driver of 1 -- conservative, and never {Busy},
+        # but not the same number.
+        LOCAL_WIDTH = Provider::Admission::DEFAULT_WIDTH
 
         # The ONE status an issue is launched from. Approving an issue's plan is
         # what writes `pending -> in_flight` ({Epic::InFlight}), and it is the
@@ -687,6 +725,45 @@ module Lain
         # its own remedy already.
         REFUSED = "its landing was refused before anything merged, so its work is still anchored and the issue " \
                   "is untouched: %<why>s"
+
+        # How many issues to carry, stated in ONE place because the order is the
+        # rule: a human who typed `--width N` meant it, a project that declared
+        # `[epics] width` meant it for every run of theirs, and only when neither
+        # spoke does where the models run get to decide.
+        #
+        # Both spoken answers are held to {Config::Epics.width!} rather than to
+        # a third refusal written here. Being the single decision point is what
+        # obliges this method to refuse at all: a zero reaches {Bounds}, which
+        # guards nothing, and `room?` then compares the live count against it,
+        # so the loop launches nothing and reports nothing wrong. The refusal
+        # names `[epics]` even for a typed width, because one wording is the
+        # point of borrowing the check.
+        #
+        # @param typed [Integer, nil] `--width N`
+        # @param configured [Integer, nil] `[epics] width`
+        # @param endpoint [String, nil] where this run's models are dialled
+        # @return [Integer]
+        # @raise [Config::Refusal] when either spoken width is not a whole
+        #   number of issues above zero
+        def self.width_for(typed: nil, configured: nil, endpoint: nil)
+          Lain::Config::Epics.width!(typed) || Lain::Config::Epics.width!(configured) || derived_width(endpoint)
+        end
+
+        # An endpoint NOBODY NAMED is hosted, and that guard lives here rather
+        # than in {Provider::Admission::Endpoint.local?}: the predicate reads an
+        # empty base as a filesystem path and answers true, which is right for
+        # it (a unix socket IS local) and wrong for silence. A false local here
+        # would quietly serialise a hosted run at one issue.
+        #
+        # The predicate itself is reused rather than restated. Locality is asked
+        # in one place in lain, and a second spelling of it is how the two come
+        # to disagree about `0.0.0.0` or a trailing dot.
+        def self.derived_width(endpoint)
+          return WIDTH if endpoint.to_s.empty?
+
+          Provider::Admission::Endpoint.local?(endpoint) ? LOCAL_WIDTH : WIDTH
+        end
+        private_class_method :derived_width
 
         # The red-step judge by identity alone, for callers whose retired tips
         # are never rebased. Blind to a rebase, so never a default: the Factory
@@ -821,7 +898,10 @@ module Lain
         # @param landing [#call] `call(issue_id, sha:, ref:)`, the landing queue
         #   -- the only thing that merges. Its answer is believed: an entry that
         #   is not `done` did not land.
-        # @param width [Integer] how many issues are carried at once
+        # @param width [Integer] how many issues are carried at once. REQUIRED,
+        #   and the only one of these with no default: {.width_for} is where
+        #   how-many is decided, and a default here would be a second answer
+        #   sitting inside the object whose comment says there is one.
         # @param budget [Integer, nil] how many issues the whole run may land
         # @param interrupt [#call] answers whether the run should stop
         # @param attempts [#call] `issue_id ->` which attempt to launch under,
@@ -831,7 +911,7 @@ module Lain
         #   grades nothing, so an ordinary run is unchanged.
         # @param red_only [#call] `call(red_sha, tip_sha)`, answering whether the
         #   tip retirement anchored carries nothing past the red step's commit
-        def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width: WIDTH, budget: nil,
+        def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width:, budget: nil,
                        interrupt: -> { false }, attempts: nil, grading: Ungraded)
           @progress = progress
           @plans = plans

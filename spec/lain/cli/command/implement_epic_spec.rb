@@ -53,6 +53,18 @@ RSpec.describe Lain::CLI::Command::ImplementEpic do
     expect(driver.width).to eq(3)
   end
 
+  # Untyped, the width is left UNSAID rather than defaulted here: what a run
+  # carries when nobody typed one is the driver's to resolve, from the project's
+  # `[epics] width` and from where its models run. A default spelled here would
+  # be a second answer to that, and the one a human never sees.
+  it "leaves the width unsaid when the human typed none" do
+    driver = ImplementEpicSpecDriver.new("done")
+
+    command.call("", build_command_env(epic_driver: driver))
+
+    expect(driver.width).to be_nil
+  end
+
   it "refuses a width that is not a positive number, rather than driving with a default" do
     env = build_command_env(epic_driver: ImplementEpicSpecDriver.new("done"))
 

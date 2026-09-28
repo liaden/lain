@@ -228,6 +228,74 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(actors.concurrency.max).to eq(2)
       expect(actors.launched.map(&:first)).to contain_exactly("a", "b", "c")
     end
+
+    # THE THREE ANSWERS, in the one order that makes sense: what a human typed
+    # wins, then what the project configured, and only when neither spoke does
+    # where the models run decide.
+    describe ".width_for" do
+      it "carries fewer issues against a local endpoint than against a hosted one" do
+        local = described_class.width_for(endpoint: "http://localhost:11434")
+        hosted = described_class.width_for(endpoint: "https://api.anthropic.com")
+
+        expect(local).to be < hosted
+      end
+
+      it "takes a typed width over a configured one" do
+        expect(described_class.width_for(typed: 3, configured: 1)).to eq(3)
+      end
+
+      it "takes a typed width over what a local endpoint would derive" do
+        expect(described_class.width_for(typed: 3, endpoint: "http://localhost:11434")).to eq(3)
+      end
+
+      it "takes a configured width over what a local endpoint would derive" do
+        expect(described_class.width_for(configured: 4, endpoint: "http://localhost:11434")).to eq(4)
+      end
+
+      # An endpoint NOBODY NAMED reads as hosted. The locality predicate answers
+      # otherwise -- an empty base is a filesystem path to it, which is right for
+      # a unix socket -- and a false local here would serialise a hosted run at
+      # one issue for a reason no reader could find.
+      it "derives the hosted width when nobody said where the models run" do
+        expect(described_class.width_for).to eq(described_class::WIDTH)
+      end
+
+      %w[http://127.0.0.1:11434 http://[::1]:11434 http://LocalHost:11434/ unix:///var/run/ollama.sock]
+        .each do |endpoint|
+        it "derives the local width for #{endpoint}" do
+          expect(described_class.width_for(endpoint:)).to eq(described_class::LOCAL_WIDTH)
+        end
+      end
+
+      it "derives the hosted width for a hostname that merely looks nearby" do
+        expect(described_class.width_for(endpoint: "http://myollama:11434")).to eq(described_class::WIDTH)
+      end
+
+      # THE SINGLE DECISION POINT HAS TO REFUSE. Both other answers to "is that
+      # a width" already do -- {Config::Epics.width!} and
+      # {Provider::Admission.declared_width} -- and a zero arriving here is the
+      # failure `width!`'s own comment describes: {Bounds} guards nothing and
+      # `room?` compares the live count against it, so the loop launches nothing
+      # and reports nothing wrong.
+      [0, -1, "2", 2.5, true, [], Float::INFINITY].each do |bad|
+        it "refuses a configured width of #{bad.inspect}" do
+          expect { described_class.width_for(configured: bad) }
+            .to raise_error(Lain::Config::Refusal, /is not a whole number of issues above zero/)
+        end
+
+        it "refuses a typed width of #{bad.inspect}" do
+          expect { described_class.width_for(typed: bad) }
+            .to raise_error(Lain::Config::Refusal, /is not a whole number of issues above zero/)
+        end
+      end
+
+      # The refusal is the config's own, so a width is one rule with one
+      # wording wherever it arrives from.
+      it "refuses through the check the config table uses, not one of its own" do
+        expect { described_class.width_for(typed: 0) }
+          .to raise_error(Lain::Config::Refusal, /\[epics\] width 0 /)
+      end
+    end
   end
 
   # ONE WRITER FOR pending -> in_flight, and it is the plan approval

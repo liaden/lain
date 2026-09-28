@@ -10,7 +10,7 @@ module Lain
     #
     # The TOML key is `home` (`[epics]` / `home = "repo"`); the Ruby reader stays
     # `#epics_home`. `[epics] epics_home` would stutter (`epics.epics_home`).
-    Epics = Data.define(:home, :gates)
+    Epics = Data.define(:home, :gates, :width)
 
     class Epics
       # Reopened (not a body inside the `Data.define do ... end` block) because
@@ -24,7 +24,7 @@ module Lain
 
       # An unknown key is refused rather than ignored, so this list is also the
       # correction the refusal offers back.
-      KEYS = %w[home gates].freeze
+      KEYS = %w[home gates width].freeze
 
       # The table as `config.toml` spells it, which is how every refusal here
       # names it.
@@ -43,7 +43,8 @@ module Lain
         unknown = table.keys - KEYS
         raise Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
 
-        new(home: home_from(table, path:), gates: Gates.from(table["gates"], path:))
+        new(home: home_from(table, path:), gates: Gates.from(table["gates"], path:),
+            width: width!(table["width"], path:))
       end
 
       # `home`'s own closed-set check, split out so `.from` reads as one line per
@@ -66,6 +67,41 @@ module Lain
       end
       private_class_method :home_from
 
+      # How many issues a driven epic carries at once, when the project has an
+      # opinion. ABSENT IS NOT ZERO: nil means the project said nothing and the
+      # driver derives its own, so it passes through rather than being defaulted
+      # to a number here -- a number here would be a second answer to the
+      # question {CLI::EpicDriver::Run.width_for} exists to hold.
+      #
+      # The closed set is the whole numbers above zero, checked for BOTH the
+      # parsed and the hand-built value the way `home` is: a zero constructs
+      # fine and then drives an epic that launches nothing while reporting
+      # nothing wrong, which is the failure this whole class is shaped against.
+      #
+      # `is_a?(Integer)` rather than a coercion, so `"2"` and `2.0` refuse
+      # instead of being read as a number the file did not say.
+      #
+      # @param value [Object] whatever the table held, or nil for an absent key
+      # @param path [String, nil] the config file, named when there is one
+      # @return [Integer, nil]
+      # @raise [Refusal]
+      def self.width!(value, path: nil)
+        return nil if value.nil?
+        raise invalid_width(value, path:) unless value.is_a?(Integer) && value.positive?
+
+        value
+      end
+
+      # Named `[epics] width` rather than a Ruby reader, because the TOML
+      # spelling and the reader are the same word -- so the refusal can send a
+      # reader to the line of TOML, which {Refusal} says is the point of it.
+      #
+      # @return [Refusal]
+      def self.invalid_width(value, path: nil)
+        Refusal.new("width #{value.inspect} is not a whole number of issues above zero",
+                    path:, table: TABLE, key: "width", value:)
+      end
+
       # Closed-set validation belongs to the VALUE, not only to the TOML-parsing
       # path that usually builds it (`Epic::Issue` does the same):
       # `Epics.new(home: :bogus)` must refuse as loudly as a bad `config.toml`.
@@ -74,11 +110,12 @@ module Lain
       #
       # `gates` earns the SAME guarantee through {Gates.coerce}: a hand-built
       # `gates: {"research" => "yolo"}` used to construct here and fail later as
-      # an unnamed NoMethodError from {Config#gate_policy_for}.
-      def initialize(home:, gates: Gates.empty)
+      # an unnamed NoMethodError from {Config#gate_policy_for}. `width` earns it
+      # through {.width!}, the one check both paths run.
+      def initialize(home:, gates: Gates.empty, width: nil)
         raise self.class.invalid_home(home) unless HOME_VALUES.map(&:to_sym).include?(home)
 
-        super(home:, gates: Gates.coerce(gates))
+        super(home:, gates: Gates.coerce(gates), width: self.class.width!(width))
       end
     end
   end
