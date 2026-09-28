@@ -69,9 +69,13 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     end
 
     # The case the example above was misread as covering: an extra key this
-    # encoder claims nothing about reaches no wire field at all.
+    # encoder claims nothing about reaches no wire field at all. `repeat_penalty`
+    # is a real ollama option and still an unknown key HERE, which is the point:
+    # the drop is of what this encoder claims nothing about, not of what ollama
+    # would refuse. It reads `keep_alive` because that key is now claimed --
+    # see the residency field below.
     it "drops an extra key that is neither a sampler key nor a structured_output marker" do
-      encoded = encoder.encode(request(extra: { "keep_alive" => "5m" }))
+      encoded = encoder.encode(request(extra: { "repeat_penalty" => 1.1 }))
 
       expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
                             truncate: false, options: { num_predict: 64 })
@@ -143,6 +147,35 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       encoded = encoder.encode(request)
 
       expect(encoded[:options].keys).to eq([:num_predict])
+    end
+  end
+
+  # Residency: how long ollama keeps the runner loaded after answering, which
+  # says nothing about the answer. Ollama keeps it a top-level sibling of
+  # `stream`/`tools`, the way it keeps `think`, so it is deliberately NOT a
+  # SAMPLER_KEY -- inside `options` it is a field ollama does not define.
+  # What pinning is worth, and the probe behind the type rule below, are in
+  # docs/providers/ollama.md, "Serving performance".
+  describe "the residency field" do
+    it "carries keep_alive from Request#extra as a top-level field, not into options" do
+      encoded = encoder.encode(request(extra: { "keep_alive" => -1 }))
+
+      expect(encoded[:keep_alive]).to eq(-1)
+      expect(encoded[:options]).to eq(num_predict: 64)
+    end
+
+    # The TYPE is the payload here, not an implementation detail of it: 0.34.4
+    # reads a String through Go's time.ParseDuration and a number as seconds,
+    # so -1 and "-1" are a pin and an HTTP 400 respectively. This encoder is a
+    # forwarder and must not convert either way -- {Lain::CLI::Backend} is the
+    # one place that decides which type a flag becomes.
+    it "forwards the value with its JSON type intact, converting neither way" do
+      expect(JSON.generate(encoder.encode(request(extra: { "keep_alive" => -1 })))).to include(%("keep_alive":-1))
+      expect(JSON.generate(encoder.encode(request(extra: { "keep_alive" => "5m" })))).to include(%("keep_alive":"5m"))
+    end
+
+    it "sends no keep_alive key at all for a request that asked for none" do
+      expect(encoder.encode(request).key?(:keep_alive)).to be(false)
     end
   end
 

@@ -389,8 +389,8 @@ class LainCLI < Thor
     # The same rule for a pass over a recorded session.
     REVIEWED = "defaults to what the session under review recorded"
 
-    # WHICH endpoint answers, HOW it samples, and the runner it keys: one
-    # question per method.
+    # WHICH endpoint answers, HOW it samples, the runner it keys, and how long
+    # that runner stays loaded: one question per method.
     #
     # @param thor [Class] the Thor class the flags accumulate onto
     # @param max_tokens [Integer] this command's ceiling when LAIN_MAX_TOKENS is unset
@@ -401,9 +401,10 @@ class LainCLI < Thor
       endpoint(thor, recorded)
       sampling(thor, max_tokens, ceiling)
       throughput(thor, recorded)
+      residency(thor)
     end
 
-    # The five {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
+    # The six {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
     # makes a typed `--provider anthropic` and silence the same parse, and a
     # resumed or forked chat must know which fields the human typed before it
     # lets the recorded profile answer the rest. {profile} supplies the
@@ -436,7 +437,8 @@ class LainCLI < Thor
         api_base: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
         model: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
         num_ctx: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
-        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH")
+        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH"),
+        keep_alive: Lain::CLI::EnvDefaults.string("LAIN_KEEP_ALIVE")
       )
     end
 
@@ -474,6 +476,30 @@ class LainCLI < Thor
                                          "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
                                          "is unmeasured and nothing refuses a value above the model's trained " \
                                          "maximum #{help("$LAIN_NUM_CTX", recorded)}"
+    end
+
+    # Residency rather than throughput: how long ollama keeps the runner loaded
+    # once it has answered, which changes nothing about the answer. A profile
+    # flag on {endpoint}'s rule, so no Thor `default:` -- and the only RUNNER
+    # knob whose value is not a number, since `-1`, `0` and `5m` are one knob
+    # with two JSON types ({Lain::CLI::Backend} sorts out which).
+    #
+    # It takes no `recorded`: it is the one profile flag a resumed or forked
+    # chat does NOT inherit, because a pin is server state that outlives the
+    # process and re-pinning with no flag typed is not a default anyone chose.
+    # {Lain::CLI::RunProfile::HEADER_FIELDS} excludes it for that reason, and
+    # `cli_spec` fails if this help line claims otherwise.
+    def self.residency(thor)
+      thor.method_option :keep_alive, type: :string,
+                                      desc: "How long ollama keeps the model loaded after a turn: -1 pins it " \
+                                            "resident, 0 releases it as soon as the turn is answered, otherwise " \
+                                            "a duration such as 5m or 90s. Unset leaves ollama's own 5m timer " \
+                                            "alone. A 30B reload costs 16-20s and discards the prefix cache with " \
+                                            "it. The pin OUTLIVES this process -- the model stays resident after " \
+                                            "lain exits until `ollama stop` releases it -- and a resumed or " \
+                                            "forked chat does not inherit it. A local-SERVER knob: it is sent on " \
+                                            "ollama-cloud too, where its effect is unmeasured " \
+                                            "#{help("$LAIN_KEEP_ALIVE", nil)}"
     end
 
     # A flag's defaults, in the order they answer.

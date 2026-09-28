@@ -109,6 +109,29 @@ looks, because **ollama's own defaults are wrong for this workload**:
   `DEBUGGING_OLLAMA.md`'s 2026-08-17 entry before quoting either figure as *the* number. Prefill
   is what a turn carrying a large `tool_result` pays, so it is the number the harness feels
   either way.
+- **`keep_alive` is residency, and it is the one knob whose wire TYPE matters.** Ollama unloads a
+  model five minutes after its last request. `--keep-alive` (`$LAIN_KEEP_ALIVE`) overrides that:
+  `-1` pins it resident, `0` releases it the moment the turn is answered, `5m` or `90s` is a
+  duration. What pinning buys is a reload avoided, and a reload costs twice — **16–20 s** to load a
+  30B model on this box, and it discards the prefix cache on the way, worth about as much again
+  (**20.4 s cold against 0.5 s warm** on an 11k prompt). With ~21.2 GiB usable no two ≥16 GiB models
+  are co-resident, so pinning one is also a decision not to run another.
+
+  Three facts that are not guessable from the field, all probed against **0.34.4** on this box:
+  1. **A string is parsed by Go's `time.ParseDuration`, which demands a unit.** `"-1"` is
+     `HTTP 400 {"error":"time: missing unit in duration \"-1\""}` — the *number* `-1` is what means
+     forever, and `"-1s"` is the string that works. `"0"` is the one unitless string Go accepts.
+     So `Lain::CLI::Backend` **coerces**: an integer spelling reaches the wire as a JSON number, a
+     duration travels as the String it was, and anything else is refused by name before the request
+     is built rather than 400ing mid-turn.
+  2. **A request that carries no `keep_alive` does not disturb an existing pin.** The runner keeps
+     its stored duration and merely re-stamps the expiry from it; only a request that carries the
+     field changes it. So a summarizer or secret-read tier sharing the chat's runner does **not**
+     need to repeat the chat's `keep_alive`, unlike `num_batch`/`num_ctx`, which key the runner by
+     identity and reload it when they differ.
+  3. **The pin outlives the lain process.** It is server state: after lain exits, `/api/ps` still
+     reports the model resident until something releases it. For a 30B that is ~18 GiB of VRAM held
+     indefinitely — `ollama stop <model>`, or any request with `keep_alive: 0`, is the release.
 - **KV cache type trades context for speed.** `q8_0` gives ~64k usable context, `f16` ~32k —
   but at 32k `f16` is 13% *faster*. Pick by the context the task needs, not by habit.
 - **Vulkan, not ROCm**, on this box: ~30% faster decode and it starts reliably, where ROCm

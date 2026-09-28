@@ -30,7 +30,7 @@ module Lain
       # different rule needs a list of its own; the desktop consent was one,
       # and went with the surface that read it.
       PANE_ENV = %w[
-        LAIN_API_BASE LAIN_MAX_TOKENS LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX
+        LAIN_API_BASE LAIN_KEEP_ALIVE LAIN_MAX_TOKENS LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX
         LAIN_PROVIDER LAIN_SEED
         LAIN_SUMMARIZER_MAX_TOKENS LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER
         LAIN_TEMPERATURE

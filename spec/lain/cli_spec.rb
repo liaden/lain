@@ -165,14 +165,30 @@ RSpec.describe LainCLI do
       expect(description).not_to include("ahead of the human")
     end
 
-    # All five follow the same rule, so each help line says it: a forked or
-    # resumed chat takes what its header recorded for a flag nobody typed.
-    it "says on every run-profile flag that a resumed or forked chat defaults to its recorded value" do
+    # Every RECORDED profile flag follows the same rule, so each help line says
+    # it: a forked or resumed chat takes what its header recorded for a flag
+    # nobody typed. Derived from {RunProfile::HEADER_FIELDS} rather than listed,
+    # plus `model`, which the header carries as the context's own field.
+    it "says on every recorded run-profile flag that a resumed or forked chat defaults to its recorded value" do
       options = described_class.commands.fetch("chat").options
 
-      Lain::CLI::RunProfile::FIELDS.each do |field|
+      (Lain::CLI::RunProfile::HEADER_FIELDS + %i[model]).each do |field|
         expect(options.fetch(field).description).to include("resumed or forked chat defaults to")
       end
+    end
+
+    # `--keep-alive` is the one profile flag a resume does NOT inherit, because
+    # a pin is server state that outlives the process and re-pinning ~18 GiB
+    # with no flag typed is not a default anyone chose. The help line therefore
+    # must not make the claim its siblings make -- the rule and the sentence
+    # describing it have to move together, or the help is simply false.
+    it "does not promise a recorded default on the one profile flag that has none" do
+      description = described_class.commands.fetch("chat").options.fetch(:keep_alive).description
+
+      expect(Lain::CLI::RunProfile::FIELDS).to include(:keep_alive)
+      expect(Lain::CLI::RunProfile::HEADER_FIELDS).not_to include(:keep_alive)
+      expect(description).not_to include("resumed or forked chat defaults to")
+      expect(description).to include("$LAIN_KEEP_ALIVE")
     end
 
     it "still scopes the --api-base description to ollama" do

@@ -1965,6 +1965,139 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # `--keep-alive` is not a sampler key (ollama keeps it a top-level sibling of
+  # `stream`, not a member of `options`) and is not defaulted the way num_batch
+  # is: silence has to leave ollama's own timer alone rather than pick a
+  # residency nobody asked for. What pinning buys, and the probes behind these
+  # examples, are in docs/providers/ollama.md, "Serving performance".
+  #
+  # The subject of this describe is the wire TYPE: one knob, two JSON types,
+  # decided once in {Lain::CLI::Backend} and forwarded unconverted from there.
+  describe "the residency knob" do
+    let(:store) { Lain::Store.new }
+    let(:timeline) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    end
+
+    def payload_for(**options)
+      request = backend_for(max_tokens: 1024, provider: "ollama", model: nil, **options)
+                .context.render(timeline:, toolset: Lain::Toolset.new)
+      Lain::Provider::Ollama.new.encode(request)
+    end
+
+    # The spelling the flag exists for, and the one that was a hard 400 on
+    # every turn: ollama parses a STRING keep_alive with Go's
+    # time.ParseDuration, which demands a unit, so `"-1"` comes back
+    # `HTTP 400 {"error":"time: missing unit in duration \"-1\""}` (probed on
+    # 0.34.4). The number -1 is what means forever.
+    #
+    # `eq(-1)` is what catches a regression here -- it distinguishes the two
+    # types on its own. The generated JSON is asserted as well because it is
+    # the artifact the server actually rejected, so a reader can compare the
+    # example against the probe in the doc without reconstructing it.
+    it "puts an operator's keep_alive on the wire as a top-level field, never inside options" do
+      payload = payload_for(keep_alive: "-1")
+
+      expect(payload[:keep_alive]).to eq(-1)
+      expect(JSON.generate(payload)).to include(%("keep_alive":-1))
+      expect(JSON.generate(payload)).not_to include(%("keep_alive":"-1"))
+      expect(payload[:options]).to eq(num_predict: 1024, num_batch: 2048)
+    end
+
+    # The other two documented spellings, on the same rule: an integer is the
+    # number wire type, anything else travels as the String Go will parse.
+    it "sends an integer spelling as a JSON number and a duration as a JSON string" do
+      expect(JSON.generate(payload_for(keep_alive: "0"))).to include(%("keep_alive":0))
+      expect(JSON.generate(payload_for(keep_alive: "5m"))).to include(%("keep_alive":"5m"))
+      expect(JSON.generate(payload_for(keep_alive: "-1s"))).to include(%("keep_alive":"-1s"))
+      expect(JSON.generate(payload_for(keep_alive: "1h30m"))).to include(%("keep_alive":"1h30m"))
+    end
+
+    # `Integer()` guesses a base from the prefix, so a leading zero is OCTAL:
+    # `060` -- a plausible way to write one minute -- silently became 48
+    # seconds, and `017` became 15. On a flag whose whole job is refusing what
+    # it cannot mean, a silent misreading is worse than either accepting or
+    # refusing, so the base is pinned to 10. The other literal forms then fall
+    # through to the duration check and are refused by name rather than read as
+    # a number nobody wrote.
+    it "reads a leading zero as decimal, not octal, and refuses the other literal bases" do
+      expect(JSON.generate(payload_for(keep_alive: "060"))).to include(%("keep_alive":60))
+      expect(JSON.generate(payload_for(keep_alive: "017"))).to include(%("keep_alive":17))
+
+      %w[0x10 0b101 0o17].each do |literal|
+        expect { backend_for(provider: "ollama", keep_alive: literal) }
+          .to raise_error(Lain::CLI::Backend::InvalidKeepAlive)
+      end
+    end
+
+    # Thor fills a `type: :string` option whose value was forgotten with the
+    # option's own NAME, so `--keep-alive --model qwen3:4b` yields
+    # `{"keep_alive" => "keep_alive"}`. Unrefused that reaches ollama and 400s
+    # with `time: invalid duration "keep_alive"` (probed on 0.34.4) -- every
+    # numeric sibling is protected by `type: :numeric` and this one is not.
+    it "refuses a value that names no residency, rather than letting the server 400 mid-turn" do
+      expect { backend_for(provider: "ollama", keep_alive: "keep_alive") }
+        .to raise_error(Lain::CLI::Backend::InvalidKeepAlive, /-1 keeps the model resident, 0 releases it, 5m/)
+      expect { backend_for(provider: "ollama", keep_alive: "5 minutes") }
+        .to raise_error(Lain::CLI::Backend::InvalidKeepAlive)
+    end
+
+    # {#api_base}'s rule: a value the environment supplied has to refuse
+    # wherever it was set, not only on the arm that would have sent it, or a
+    # stray LAIN_KEEP_ALIVE is a refusal that appears on a provider switch.
+    it "refuses at construction whatever --provider says" do
+      expect { backend_for(provider: "anthropic", keep_alive: "nope") }
+        .to raise_error(Lain::CLI::Backend::InvalidKeepAlive)
+    end
+
+    it "sends no keep_alive key at all when no flag and no environment set one" do
+      expect(payload_for.key?(:keep_alive)).to be(false)
+    end
+
+    # The same claim from argv: the exe's flag band resolves the flag to nil
+    # when neither `--keep-alive` nor LAIN_KEEP_ALIVE says anything, and the
+    # launch's profile carries that absence all the way to the payload.
+    it "sends none for a flagless chat through the exe's profile band" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
+      profile = with_env("LAIN_PROVIDER" => "ollama", "LAIN_KEEP_ALIVE" => nil) do
+        LainCLI::ModelFlags.profile(options)
+      end
+      request = Lain::CLI::ChatLaunch.new(options, profile:).backend
+                                     .context.render(timeline:, toolset: Lain::Toolset.new)
+
+      expect(Lain::Provider::Ollama.new.encode(request).key?(:keep_alive)).to be(false)
+    end
+
+    # Residency is the local runner's question, and {Provider::AnthropicEncoding}
+    # forwards any `extra` key it does not know straight onto a wire that
+    # defines none -- so a LAIN_KEEP_ALIVE left exported in an `.envrc` must not
+    # follow a hosted chat.
+    it "keeps keep_alive off an Anthropic chat's extra and wire body" do
+      request = backend_for(max_tokens: 1024, provider: "anthropic", model: nil, temperature: 0.2,
+                            keep_alive: "-1")
+                .context.render(timeline:, toolset: Lain::Toolset.new)
+      body = Lain::Provider::Anthropic.new(api_key: "test").encode(request)
+
+      expect(request.extra).to eq("temperature" => 0.2)
+      expect(JSON.generate(body)).not_to include("keep_alive")
+    end
+
+    # How long a runner stays loaded says nothing about what it answers, so it
+    # is not a prompt: the cache-identity claim temperature and the runner knobs
+    # already carry, restated for the one knob that is a String.
+    it "renders a Request whose cache_payload is identical to the flagless render" do
+      pinned = backend_for(max_tokens: 1024, provider: "ollama", model: nil, keep_alive: "-1")
+               .context.render(timeline:, toolset: Lain::Toolset.new)
+      plain = backend_for(max_tokens: 1024, provider: "ollama", model: nil)
+              .context.render(timeline:, toolset: Lain::Toolset.new)
+
+      expect(pinned.cache_payload).to eq(plain.cache_payload)
+      expect(pinned).to have_same_digest_as(plain)
+    end
+  end
+
   # A secondary model request -- a summary, a span collapse, a secret-read
   # judgement -- is not a turn, but on ONE ollama runner it is still a request
   # that runner answers. Sent without the chat's `num_batch`, it no longer
@@ -2063,6 +2196,17 @@ RSpec.describe Lain::CLI::Backend do
                               num_batch: 2048, num_ctx: 32_768)
 
         expect(backend.tier_options(**local_judge)).to eq("num_batch" => 2048, "num_ctx" => 32_768)
+      end
+
+      # Probed on 0.34.4: a request carrying NO keep_alive leaves an existing
+      # pin alone, re-stamping the expiry from the duration the runner already
+      # holds. So a tier repeating the chat's residency could only change it,
+      # never preserve it -- and repeating it would put the value on two more
+      # surfaces for nothing.
+      it "does not carry the chat's keep_alive onto a tier sharing its runner" do
+        backend = backend_for(provider: "ollama", model: "qwen3:4b", seed: 7, num_batch: 2048, keep_alive: "-1")
+
+        expect(backend.tier_options(**local_judge)).to eq("num_batch" => 2048)
       end
 
       # A missing base IS the arm's default, and a trailing slash names the

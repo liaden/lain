@@ -35,7 +35,9 @@ module Lain
         # sends it on every ollama chat, flag or not, because the cost above is
         # paid whether or not anyone asked for it. The generation cap is a third
         # case again and deliberately NOT one of these -- see {#encode_options}
-        # -- so `options` itself is no longer opt-in either.
+        # -- so `options` itself is no longer opt-in either. {KEEP_ALIVE_KEY} is
+        # opt-in like the first group but lives outside `options` on the wire,
+        # so membership here would send it where ollama defines no such field.
         SAMPLER_KEYS = %w[temperature seed num_batch num_ctx].freeze
 
         # `think` requests the reasoning trace onto `message.thinking` (qwen3
@@ -43,6 +45,16 @@ module Lain
         # is deliberately NOT a SAMPLER_KEY: Ollama's schema keeps `think` a
         # top-level sibling of `stream`/`tools`, not a member of `options`.
         THINK_KEY = "think"
+
+        # How long ollama keeps the runner loaded. {THINK_KEY}'s shape, for
+        # {THINK_KEY}'s reason. Forwarded with its JSON TYPE intact and
+        # converted NEITHER way: `-1` and `"-1"` are a pin and an HTTP 400, and
+        # {Lain::CLI::Backend} is the one place that decides which a flag
+        # becomes (docs/providers/ollama.md, "Serving performance").
+        KEEP_ALIVE_KEY = "keep_alive"
+
+        # extra key => wire key, for the fields that ride #extra verbatim.
+        FLAG_FIELDS = { THINK_KEY => :think, KEEP_ALIVE_KEY => :keep_alive }.freeze
 
         # The neutral key a Request uses to carry a forced typed-answer format
         # on #extra, so a Request without it stays byte-identical to before the
@@ -85,8 +97,7 @@ module Lain
         end
 
         def extra_flag_fields(extra)
-          fields = {}
-          fields[:think] = extra[THINK_KEY] if extra.key?(THINK_KEY)
+          fields = FLAG_FIELDS.select { |key, _| extra.key?(key) }.to_h { |key, field| [field, extra[key]] }
           format = structured_format(extra)
           fields[:format] = format unless format.nil?
           fields

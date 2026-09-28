@@ -16,7 +16,15 @@ module Lain
       # reader of the notice most needs.
       class MismatchNotices
         # How a notice names each field the recording can disagree about.
-        LABELS = { provider: "provider", api_base: "api base", num_ctx: "num_ctx", num_batch: "num_batch" }.freeze
+        # DERIVED from the fields a header records, so a seventh is noticed by
+        # existing: hand-kept, a drifted entry would buy SILENCE about a
+        # disagreement, which is what this class exists to prevent. Only
+        # `api_base` reads as anything but its field name.
+        # `Symbol#name` rather than `to_s`: `to_s` hands back an UNFROZEN String,
+        # which would leave this constant holding mutable values and quietly
+        # drop the deep-freeze the literal it replaced had.
+        LABELS = RunProfile::HEADER_FIELDS.to_h { |field| [field, field.name] }
+                                          .merge(api_base: "api base").freeze
 
         # @param path [String] the session file's own path, whose header holds
         #   both the recorded model and the recorded profile

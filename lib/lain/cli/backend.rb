@@ -35,7 +35,13 @@ module Lain
       # the operator cleanly only if the exe's `rescue Lain::Error` can see it.
       class InvalidCeiling < Error; end
 
-      # This class's fourth error, {InvalidEndpoint}, lives beside the
+      # Loud for {InvalidCeiling}'s reason plus one peculiar to this flag: Thor
+      # fills a `type: :string` option whose value was forgotten with the
+      # option's own NAME, so `--keep-alive --model x` would send the literal
+      # `"keep_alive"`. Numeric siblings inherit a check from `type: :numeric`.
+      class InvalidKeepAlive < Error; end
+
+      # This class's fifth error, {InvalidEndpoint}, lives beside the
       # {Endpoint} that raises it.
 
       # The sampler keys only an ollama arm reads. A chat on any other arm
@@ -47,6 +53,10 @@ module Lain
       # request whose value differs from the loaded runner's reloads the model.
       # This set, and not the one above, is what a secondary tier may carry --
       # `seed` would move its answers.
+      #
+      # `keep_alive` is not here either: a request carrying none leaves an
+      # existing pin alone (probed -- docs/providers/ollama.md), so a tier
+      # repeating it could only CHANGE the residency, never preserve it.
       RUNNER_KEYS = %w[num_batch num_ctx].freeze
 
       # ollama's own server default (512) undercorrects llama.cpp's actual
@@ -57,6 +67,9 @@ module Lain
       # temperature or seed it changes nothing about the answer, only how fast
       # it arrives.
       DEFAULT_NUM_BATCH = 2048
+
+      # Go's duration grammar, which ollama parses a STRING `keep_alive` with.
+      KEEP_ALIVE_DURATION = /\A[-+]?(0|((\d+(\.\d+)?|\.\d+)(ns|us|µs|μs|ms|s|m|h))+)\z/
 
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
@@ -154,6 +167,7 @@ module Lain
       # @option options [Integer] :seed sampler seed, paired with temperature 0
       # @option options [Integer] :num_batch prompt batch size, ollama only
       # @option options [Integer] :num_ctx context length for the request, ollama only
+      # @option options [String] :keep_alive how long the runner stays loaded, ollama only
       # @option options [Boolean] :compact whether history compaction runs at all
       # @option options [String] :compact_strategy which strategy collapses a span
       # @option options [Integer] :compact_bytes head size that triggers a compaction
@@ -182,6 +196,7 @@ module Lain
         # Still AFTER {#api_base}, unchanged: a base URL the probe will talk to
         # has to be a usable one before a window is judged against it.
         num_ctx_request.requested
+        keep_alive
       end
 
       # `flag` names WHICH flag was wrong: `--provider` and
@@ -319,7 +334,7 @@ module Lain
         (shared ? sampler_extra.slice(*RUNNER_KEYS) : {}).freeze
       end
 
-      # The provider, model, endpoint and runner knobs this run was handed, as
+      # The provider, model, endpoint, runner knobs and residency this run was handed, as
       # the one value a session header records. Every model-access read below
       # goes through it, so what is recorded is what was used.
       #
@@ -383,6 +398,25 @@ module Lain
       # MEMOIZED, and so is the probe inside {NumCtx}: this memo holds an
       # ACCEPTED window, that one the figure a REFUSED one is measured against.
       def num_ctx = @num_ctx ||= num_ctx_request.tokens
+
+      # `--keep-alive`, COERCED here because its two legal spellings are two
+      # JSON types: an integer becomes an Integer (seconds, -1 forever), a
+      # duration stays the String Go will parse. Sending `"-1"` instead is an
+      # HTTP 400 on every turn -- docs/providers/ollama.md has the probe.
+      #
+      # Base 10 is PINNED: `Integer()` guesses one from the prefix, so `060` --
+      # a plausible minute -- read as octal 48. The other literal forms fall to
+      # the duration check and are refused, since a flag that exists to reject
+      # what it cannot mean must not silently read a number nobody wrote.
+      #
+      # Refused at CONSTRUCTION for {#api_base}'s two reasons: a mistake should
+      # arrive as a named refusal rather than the server's parse error mid-turn,
+      # and a stray `LAIN_KEEP_ALIVE` must refuse whatever `--provider` says.
+      #
+      # @return [Integer, String, nil] nil when nobody asked for a residency,
+      #   which leaves ollama's own five-minute timer alone
+      # @raise [InvalidKeepAlive]
+      def keep_alive = run_profile.keep_alive&.then { |raw| Integer(raw, 10, exception: false) || duration(raw) }
 
       # `--api-base`, through {Endpoint}, and OPTIONAL the way `--num-ctx` is:
       # unset means "ollama's own default". {Endpoint} owns what an unusable one
@@ -731,13 +765,25 @@ module Lain
       # is on every ollama payload rather than waiting for a flag. Only an
       # ollama chat gets {OLLAMA_ONLY_KEYS}. The runner knobs come off the
       # {#run_profile} and the sampling pair off the flags.
+      #
+      # `keep_alive` joins outside the loop, being no SAMPLER_KEY: it lives
+      # outside `options` on the wire, follows `num_ctx`'s opt-in rule rather
+      # than `num_batch`'s default, and reaches only an ollama chat.
       def sampler_extra
         keys = Provider::Ollama::Encoding::SAMPLER_KEYS
         keys -= OLLAMA_ONLY_KEYS unless ollama_chat?
         runner = run_profile.to_options
         extra = keys.to_h { |key| [key, runner.fetch(key.to_sym) { @options[key.to_sym] }] }
         extra["num_batch"] = DEFAULT_NUM_BATCH if ollama_chat? && extra["num_batch"].nil?
+        extra[Provider::Ollama::Encoding::KEEP_ALIVE_KEY] = keep_alive if ollama_chat?
         extra.compact
+      end
+
+      def duration(raw)
+        return raw if KEEP_ALIVE_DURATION.match?(raw)
+
+        raise InvalidKeepAlive, "--keep-alive #{raw.inspect} is neither a number of seconds nor a duration: " \
+                                "-1 keeps the model resident, 0 releases it, 5m unloads it after five minutes"
       end
 
       def ollama_chat? = OllamaTier::NAMES.include?(run_profile.provider)

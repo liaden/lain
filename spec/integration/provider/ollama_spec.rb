@@ -57,6 +57,38 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
     end
   end
 
+  # The one contract a stub cannot check about `keep_alive`: its wire TYPE.
+  # Every other example in the unit suite asserts lain's own Hash against
+  # lain's own expectation, which is exactly how a payload that 400s on every
+  # turn passed them all -- ollama parses a STRING keep_alive with Go's
+  # time.ParseDuration, which demands a unit, so `"-1"` is
+  # `HTTP 400 {"error":"time: missing unit in duration "-1""}` while the NUMBER
+  # -1 means forever. {Lain::CLI::Backend} coerces on that rule; this is the
+  # example that tells us the rule is still ollama's.
+  #
+  # Released immediately afterwards rather than left pinned: a pin is SERVER
+  # state that outlives the process, so a spec that pinned a model and exited
+  # would hold its VRAM until a human noticed.
+  describe "the keep_alive contract" do
+    # Guarded on the same reachability probe the tag skips with. RSpec runs an
+    # `after` hook even for an example skipped from a `before`, so an
+    # unguarded release request raises against a dead server and prints a
+    # backtrace per example -- noise on exactly the path the tag exists to keep
+    # quiet, since a missing local server is an environment gap.
+    after { chat("hi", extra: { "keep_alive" => 0 }) }
+
+    it "accepts the numeric spelling lain coerces to, and refuses the string one" do
+      expect { chat("Reply with exactly the word: pong", extra: { "keep_alive" => -1 }) }.not_to raise_error
+
+      expect { chat("Reply with exactly the word: pong", extra: { "keep_alive" => "-1" }) }
+        .to raise_error(Lain::Error, /missing unit in duration/)
+    end
+
+    it "accepts a duration string, which is why lain passes that spelling through unconverted" do
+      expect { chat("Reply with exactly the word: pong", extra: { "keep_alive" => "30s" }) }.not_to raise_error
+    end
+  end
+
   # ---- layer 2: determinism probe -- MEASURED, not assumed --------------------
   #
   # temperature: 0 makes the sampler greedy (always the top logit); the seed is
