@@ -945,7 +945,8 @@ module Lain
       # collaborator are one object.
       def build_repl(tty:, agent:, backend:, input:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:, goal: goal_driver)
-        @command_surface = assemble_surface(agent:, library: backend.library, window: backend.context_window)
+        @command_surface = assemble_surface(agent:, library: backend.library, window: backend.context_window,
+                                            endpoint: chat_endpoint(backend))
         # Bound rather than injected: the registry is built FROM this object, so
         # no constructor ordering exists in which HumanReplies could take one.
         # Both prompts then dispatch through the one bound registry, which is
@@ -968,14 +969,34 @@ module Lain
       # planning/archive/chunk-review-missing-objects.md carry it. Hoisting the
       # duplicate reads into locals would hide the tell without naming the
       # object.
-      def assemble_surface(agent:, library:, window:)
+      def assemble_surface(agent:, library:, window:, endpoint:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              window:, chronicle: @chronicle, status_feed: @status_feed, root: project.root,
                              cwd: project.cwd,
                              epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
-                                                         toolset_build:, asker: @ask_human, conductor: @conductor),
+                                                         toolset_build:, asker: @ask_human, conductor: @conductor,
+                                                         endpoint:),
                              **@switchboard.surface_kwargs(conductor: @conductor))
       end
+
+      # WHERE THIS CHAT'S MODELS RUN, which is all the epic driver needs of
+      # them. What it derives from this is LOOPBACK-ONLY, because
+      # {Provider::Admission::Endpoint.local?} is what reads it and that answers
+      # for this machine rather than for one server: a chat aimed at another box
+      # on the LAN carries the hosted width and thrashes exactly as the
+      # predicate's own header says it will.
+      #
+      # THE PROVIDER IS WHO IS ASKED, never the Backend. {Backend}'s own default
+      # base answers ollama's loopback for an anthropic run too -- honest only
+      # under the `ollama_chat?` guard its one caller keeps -- so a wiring that
+      # read it would have every hosted epic run carrying half as many issues
+      # for a reason nothing in the output names. A provider answers for itself.
+      #
+      # The provider built here is a THROWAWAY, deliberately, for the reason
+      # {Backend::WindowBook} gives at its own: the run's one provider is built
+      # inside #backing and is not this object's to hold, and what is wanted
+      # back is a String.
+      def chat_endpoint(backend) = backend.provider.admission_endpoint
 
       # Memoized, so the surface, the Repl and the editor's `:LainGoalOff` reach
       # ONE instance. Its layer reads the board's switch late, since the board is

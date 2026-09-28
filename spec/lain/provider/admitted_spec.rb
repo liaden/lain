@@ -36,6 +36,32 @@ RSpec.describe Lain::Provider::Admitted do
     expect(Sync { caller_for(endpoint:).run { :answered } }).to eq(:answered)
   end
 
+  # The includer's own private hook, published: a caller deciding how much work
+  # to put through a server reads the very string {Provider::Admission.for} is
+  # keyed on, so the two cannot come to hold different addresses for one run.
+  it "publishes the endpoint the includer resolved, which is the key the gate holds" do
+    admitted = caller_for(endpoint:)
+
+    expect(admitted.admission_endpoint).to eq(endpoint)
+    expect(Sync { admitted.run { Lain::Provider::Admission.for(endpoint: admitted.admission_endpoint).in_flight } })
+      .to eq(1)
+  end
+
+  # Both real arms are {Provider} subclasses, and {Provider#admission_endpoint}
+  # answers nil -- "nobody said", which a caller reads as hosted. So the whole
+  # design rests on the INCLUDED module beating the superclass in the lookup,
+  # and a bare includer cannot show that because it has no superclass to beat.
+  it "beats the Provider default a real arm inherits" do
+    arm = Class.new(Lain::Provider) do
+      include Lain::Provider::Admitted
+
+      def resolved_endpoint = "https://api.anthropic.com"
+    end.new
+
+    expect([Lain::Provider.new.admission_endpoint, arm.admission_endpoint])
+      .to eq([nil, "https://api.anthropic.com"])
+  end
+
   it "reports the callers inside while the block runs" do
     inside = nil
 

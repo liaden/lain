@@ -1770,7 +1770,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    def run_wiring(input: "quit\n", options: { grace: 5 })
+    def run_wiring(input: "quit\n", options: { grace: 5 }, backend: self.backend)
       Dir.mktmpdir do |dir|
         wiring = described_class.new(options:, chronicle:, status_feed:, stdin: StringIO.new(input),
                                      tty_factory: tty_factory(dir), conductor_opener:)
@@ -1790,6 +1790,45 @@ RSpec.describe Lain::CLI::Wiring do
 
       expect(Lain::CLI::EpicDriver::Seams).to have_received(:new)
         .with(hash_including(journal: be(chronicle.durable_journal)))
+    end
+
+    # The REAL Backend, never the offline double: what these two are about is
+    # the endpoint the chat's own provider resolves, and a stand-in answering
+    # one would be answering the question under test. Nothing dials out --
+    # `quit` ends the chat before a turn is taken.
+    def backend_on(provider) = Lain::CLI::Backend.new({ provider:, model: nil, max_tokens: 64 }, root: Dir.pwd)
+
+    # The seams wiring really built, caught as they are handed to the surface.
+    def epic_seams_over(backend)
+      built = []
+      allow(Lain::CLI::EpicDriver::Seams).to receive(:new).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap { |seams| built << seams }
+      end
+      run_wiring(backend:)
+      built.fetch(0)
+    end
+
+    # How many issues the driver those seams build carries when the human typed
+    # no width and the project declared none. Production's own join, asked of
+    # the endpoint wiring handed over rather than of one an example made up.
+    def carried_width(seams) = Lain::CLI::EpicDriver::Run.width_for(endpoint: seams.endpoint)
+
+    # The stall the derived width exists to stop the driver manufacturing: one
+    # local server serves one request at a time, so a second issue either waits
+    # or makes the server swap models and throw away the prefix cache.
+    it "carries one issue at a time when the chat's provider dials a local server" do
+      expect(carried_width(epic_seams_over(backend_on("ollama")))).to eq(1)
+    end
+
+    # The other direction, and nowhere but here can catch it: `Backend` answers
+    # localhost as the default base for anthropic too, so a wiring that asked
+    # IT would halve every hosted run for a reason nothing in the output names.
+    it "carries the hosted default when the chat's provider dials anthropic" do
+      width = with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        carried_width(epic_seams_over(backend_on("anthropic")))
+      end
+
+      expect(width).to eq(2)
     end
 
     # `--input socket:<name>` puts the human in another pane. The chat then has
@@ -3613,7 +3652,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "is assigned by the time the command surface is assembled" do
       wire
 
-      expect { wiring.send(:assemble_surface, agent: nil, library: nil, window: nil) }
+      expect { wiring.send(:assemble_surface, agent: nil, library: nil, window: nil, endpoint: nil) }
         .to raise_error(ArgumentError, /\[:replies, :agent\]/)
     end
 

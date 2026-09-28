@@ -24,6 +24,15 @@ module Lain
     # first own every later caller's records, so the decorator is applied per
     # call, here, where both halves are in scope.
     module Admitted
+      # {Provider#admission_endpoint}, answered from the includer's own
+      # `resolved_endpoint` -- "the endpoint THIS provider will really talk to,
+      # which is the only honest key". Published rather than that hook, because
+      # the hook is how an includer resolves one and this is what the resolution
+      # is FOR: {#admitted} keys the gate on this very reading, so a caller
+      # deriving anything from where a run's models are served is holding the
+      # string the gate holds, by construction rather than by coincidence.
+      def admission_endpoint = resolved_endpoint
+
       private
 
       # What this provider knows its server's concurrent capacity to be, when
@@ -58,14 +67,14 @@ module Lain
       # @raise [Admission::Busy] when the endpoint is busy -- at the deadline for
       #   a caller that queues, immediately for one that does not
       def admitted(&block)
-        gate = Admission::Journal.new(admission: Admission.for(endpoint: resolved_endpoint, width: admission_width),
+        gate = Admission::Journal.new(admission: Admission.for(endpoint: admission_endpoint, width: admission_width),
                                       journal: wait_journal)
         return gate.enter(&block) if queue_for_capacity?
 
         answer = gate.try_enter(&block)
         return answer unless answer.equal?(Admission::REFUSED)
 
-        raise Admission::Busy, "#{resolved_endpoint} is busy: this caller does not queue for capacity"
+        raise Admission::Busy, "#{admission_endpoint} is busy: this caller does not queue for capacity"
       end
     end
   end

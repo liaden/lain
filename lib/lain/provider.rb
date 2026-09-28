@@ -92,6 +92,28 @@ module Lain
       nil
     end
 
+    # WHERE THIS PROVIDER REALLY DIALS, and the string its {Admission} gate is
+    # keyed on -- so a caller reading it and the gate holding capacity cannot
+    # come to disagree about which server a run is talking to.
+    #
+    # nil like {#context_window_tokens}, because a provider with no server to
+    # name is not a defect and "nobody said" is an answer callers already
+    # handle. {Admitted} is what overrides it.
+    #
+    # THE TWO NILS ARE NOT EQUALLY SAFE, and this one is the worse direction.
+    # An under-reported window makes compaction fire early, which is the
+    # conservative side that method argues for; an under-reported locality makes
+    # the admission gate do nothing. So a provider that dials a local server
+    # without including {Admitted} is read as hosted, and pays the model-swap
+    # thrash {Admission::Endpoint.local?}'s header calls the silent direction.
+    # nil is still right -- an empty String would be worse, since that predicate
+    # reads an empty base as a filesystem path and answers true.
+    #
+    # @return [String, nil]
+    def admission_endpoint
+      nil
+    end
+
     # {#context_window_tokens} as one of three typed answers, because its nil
     # covers two situations that cost differently to ask about again: a server
     # that answered with nothing resident answers again in well under a

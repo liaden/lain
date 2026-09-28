@@ -206,16 +206,27 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
                              told: ->(_text) {}, root: repo, paths:, config:)
   end
 
-  def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil, asker: nil)
+  def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil, asker: nil,
+                   endpoint: nil)
     described_class.for(mount: mounted, chronicle: record, paths:, root: repo, library: backend.library,
-                        journal: Lain::Channel::Null.instance, toolset_build:, asker:, config:, actors:,
+                        journal: Lain::Channel::Null.instance, toolset_build:, asker:, config:, actors:, endpoint:,
                         **(grading ? { grading: } : {}))
+  end
+
+  # Where a local model is served, taken from the deployment rather than spelt
+  # again here: what the derivation reads is the endpoint a real ollama run
+  # resolves, so a spec naming its own string would stop testing that.
+  def local_endpoint = Lain::Provider::Ollama::Transport::DEFAULT_API_BASE
+
+  # Actors that lease a real checkout each and commit in it -- the loop's own
+  # collaborator, so a run driven over these is driven over real git.
+  def scripted(files: {}, idle: [], slug: "demo")
+    ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub, files:, idle:, slug:) }
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
   def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo")
-    actors = ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub, files:, idle:, slug:) }
-    factory_over(mount(slug), actors:, record: chronicle, grading:).run(width:)
+    factory_over(mount(slug), actors: scripted(files:, idle:, slug:), record: chronicle, grading:).run(width:)
   end
 
   def worktree_root = Lain::CLI::IsolationBackend.worktree_root(repo, paths:)
@@ -276,6 +287,20 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       factory = driver_from(seams_with)
 
       expect(factory.instance_variable_get(:@optional).fetch(:grading)).to be_nil
+    end
+
+    it "carries the endpoint its seams name through to the factory it builds" do
+      factory = driver_from(seams_with(endpoint: local_endpoint))
+
+      expect(factory.instance_variable_get(:@optional).fetch(:endpoint)).to eq(local_endpoint)
+    end
+
+    # Nobody said, which {Run.derived_width} reads as hosted: a caller holding
+    # these seams and lending no endpoint carries what it carried before.
+    it "names no endpoint by default" do
+      factory = driver_from(seams_with)
+
+      expect(factory.instance_variable_get(:@optional).fetch(:endpoint)).to be_nil
     end
   end
 
@@ -361,6 +386,22 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   # stands wherever they left it -- so lain cuts a worktree of its own rather
   # than switching the branch under somebody's feet.
   describe "the whole loop over real git" do
+    # The three answers joined on the real path: nothing typed at #run, a
+    # project declaring no `[epics] width`, and a seam naming a local server.
+    # What is pinned is the number the LOOP was built with, because a
+    # derivation asserted on its own passes just as well while nothing carries
+    # its answer this far.
+    it "builds the loop at the width its endpoint derives, with no width given" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      allow(Lain::CLI::EpicDriver::Run).to receive(:new).and_call_original
+
+      factory_over(mount, actors: scripted, record: chronicle, endpoint: local_endpoint).run
+
+      expect(config.epics.width).to be_nil
+      expect(Lain::CLI::EpicDriver::Run).to have_received(:new).with(hash_including(width: 1))
+    end
+
     it "lands a two-issue chain in order, from a chat standing on main" do
       write_epic([issue("a", blocks: ["b"]), issue("b")])
       %w[a b].each { |id| approve_plan(id) }

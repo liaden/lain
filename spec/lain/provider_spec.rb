@@ -61,6 +61,20 @@ RSpec.describe Lain::Provider do
     end
   end
 
+  # Where a run's models are served, which a caller deciding how much work to
+  # put through one has to be able to ask of anything answering the Provider
+  # duck. "Nobody said" is an answer that already has a reading -- hosted --
+  # rather than a hole a caller has to guard.
+  describe "#admission_endpoint" do
+    it "names no endpoint from the abstract surface" do
+      expect(described_class.new.admission_endpoint).to be_nil
+    end
+
+    it "names no endpoint for a provider that dials nothing" do
+      expect(Lain::Provider::Mock.new.admission_endpoint).to be_nil
+    end
+  end
+
   # The typed form of the same question, which a window book needs because
   # "nothing is resident" and "nobody answered" cost differently to ask again.
   # A provider with no server to ask can never be unreachable, so the base
