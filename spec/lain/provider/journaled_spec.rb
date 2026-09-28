@@ -99,6 +99,16 @@ RSpec.describe Lain::Provider::Journaled do
       expect(provider.trained_context_tokens("qwen3:4b")).to eq(inner.trained_context_tokens("qwen3:4b"))
     end
 
+    # THE STRUCTURAL CHECK the example above cannot be. This is a DECORATOR, not
+    # a subclass, so a message added to {Lain::Provider} reaches it only by being
+    # written into the `delegate` list -- and a hand-kept list checked by
+    # hand-written assertions is one nobody updates. The failure mode is not a
+    # red spec: it is a `NoMethodError` in production from a caller holding a
+    # journaled provider, which every unit spec doubling the provider misses.
+    it "forwards every message the Provider duck declares, without anyone listing them here" do
+      expect(Lain::Provider.public_instance_methods(false) - described_class.public_instance_methods).to be_empty
+    end
+
     # Exposed so a security spec can assert on the provider that will actually
     # be asked, through however many decorators sit above it -- see
     # `oracle/secret_read_spec.rb`, where "the judge is a LOCAL ollama" is the

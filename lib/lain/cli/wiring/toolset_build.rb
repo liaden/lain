@@ -252,6 +252,16 @@ module Lain
           Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict, journal: seam.journal))
         end
 
+        # The session model's own capabilities, memoized because the probe is a
+        # round trip and the model does not change within a run. Read from
+        # `seam.provider` rather than a second ivar, the same argument
+        # {#capability_floor} makes for reading `seam.journal`.
+        #
+        # @return [Lain::Provider::ModelCapabilities]
+        def model_capabilities
+          @model_capabilities ||= seam.provider.model_capabilities(backend.model)
+        end
+
         # The ONE {Lain::Tools::Subagent::Seam} every child spawn is built
         # over. The board arrives as a thunk, because {Tools::Subagent::Seam} is
         # a frozen `Data` built ONCE, here, while the run's {Switchboard} does

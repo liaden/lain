@@ -57,7 +57,15 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
     # `Provider::Ollama::CAPABILITIES` it would compare a value with itself,
     # since that constant now reads back from here.
     it "restates the arm's capability list unchanged" do
-      expect(deployment.capabilities).to eq(%i[streaming thinking structured_output])
+      expect(deployment.capabilities).to eq(%i[streaming structured_output])
+    end
+
+    # A deployment states what the WIRE can do. `:thinking` is a property of
+    # the model file -- one server serves models that have it beside models
+    # that do not -- so it is answered per model by
+    # `Provider::Ollama#model_capabilities` and there is one source for it.
+    it "makes no provider-wide claim about thinking, which is per model" do
+      expect(deployment.capabilities).not_to include(:thinking)
     end
 
     # The delegation itself, stated separately so the pair above cannot silently

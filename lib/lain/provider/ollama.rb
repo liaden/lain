@@ -89,12 +89,16 @@ module Lain
       # `structured_output` here is grammar-CONSTRAINED decoding (the native
       # `format` field) -- a stronger guarantee than Anthropic's tool-forcing
       # under the same capability name. See
-      # Provider::AnthropicReference::CAPABILITIES. :thinking is honest because
-      # `think` rides Request#extra onto its own top-level wire field.
-      # :prompt_caching and :strict_tools stay off deliberately: declaring one
-      # the native path cannot demonstrate would be a lying capability in the
-      # one subsystem built to catch them, so the capability policy's
-      # `:degrade` journals those gaps instead.
+      # Provider::AnthropicReference::CAPABILITIES. :prompt_caching and
+      # :strict_tools stay off deliberately: declaring one the native path
+      # cannot demonstrate would be a lying capability in the one subsystem
+      # built to catch them, so the capability policy's `:degrade` journals
+      # those gaps instead.
+      #
+      # :thinking is off for a different reason, and it is not a gap. `think`
+      # does ride Request#extra onto its own top-level wire field, but WHETHER A
+      # MODEL THINKS is a fact about the model file rather than about this
+      # endpoint, so it is answered per model by {#model_capabilities}.
       #
       # Read from the deployment rather than written out a third time.
       # `#capabilities` delegates, so a literal here would be a copy nothing
@@ -225,6 +229,7 @@ module Lain
         @queue = queue
         @journal = journal
         @deployment = deployment
+        @model_capabilities = {}
         @retries = retries || RetryTap.new(channel:, spool: spool || Spool::Null.new)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
@@ -393,7 +398,44 @@ module Lain
         Serving::UNKNOWN
       end
 
+      # What THIS model can do, read off the same `/api/show` the two methods
+      # above read -- see {ModelCapabilities} for why an unanswered probe is a
+      # third answer rather than a no.
+      #
+      # KEPT, unlike {#context_window_tokens}, which is un-memoized on purpose:
+      # a served window changes under a runner reload, a model file's
+      # capabilities do not.
+      #
+      # THE MEMO IS THIS PROVIDER INSTANCE'S RUN STATE, not a process-wide
+      # cache, so a fresh provider probes again. And A FAILED PROBE IS STICKY
+      # for that instance's life: a server that was down at launch reads UNKNOWN
+      # for the rest of the session even once it is up, which is what somebody
+      # asking "why is vision unknown on a server that is running now" has hit.
+      # That is the price of not paying {Transport::PROBE_TIMEOUT_SECONDS} per
+      # turn for a fact the server has already declined to state.
+      #
+      # @param model [String]
+      # @return [ModelCapabilities]
+      def model_capabilities(model)
+        @model_capabilities[model] ||= probe_capabilities(model)
+      end
+
       private
+
+      # Same gate, same rescue set and same reasoning as
+      # {#trained_context_tokens}: `/api/show` is the deployment's to answer
+      # for, and a transport that cannot answer at all stays loud.
+      def probe_capabilities(model)
+        return ModelCapabilities::NOTHING_KNOWN unless @deployment.model_metadata?
+
+        ModelCapabilities.of(wrapping_errors { @transport.model_details(model).body })
+      rescue APIError
+        ModelCapabilities::NOTHING_KNOWN
+      rescue NoMethodError => e
+        raise if e.receiver.equal?(@transport)
+
+        ModelCapabilities::NOTHING_KNOWN
+      end
 
       # The one 400 this arm translates, and only when the body names both
       # numbers: a refusal that cannot say how big the prompt was or how big

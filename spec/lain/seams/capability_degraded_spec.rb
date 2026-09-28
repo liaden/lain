@@ -58,7 +58,7 @@ RSpec.describe "capability degradation on the chat path", :seam do
   end
 
   # The REAL provider class, with the real CAPABILITIES declaration
-  # (`%i[streaming thinking structured_output]` -- no `:prompt_caching`), over
+  # (`%i[streaming structured_output]` -- no `:prompt_caching`), over
   # the canned transport. Constructing the class is the whole point: a double
   # answering `supports?` would be asserting on the double.
   let(:ollama) { Lain::Provider::Ollama.new(transport: canned_transport) }

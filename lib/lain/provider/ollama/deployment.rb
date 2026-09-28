@@ -90,13 +90,22 @@ module Lain
         # back the same object every time on the loopback arm too.
         NO_AUTHORIZATION = {}.freeze
 
-        # IDENTICAL on both arms, which is the point of the cut: same encoder,
-        # same decoder, same wire, so the only variables that moved are
-        # hosted-ness and model class. It notably does NOT include
-        # `:prompt_caching` -- ollama's pricing meters "cached input tokens"
-        # separately, which is suggestive and is not evidence, and the native
-        # response carries only a flat `prompt_eval_count`.
-        CAPABILITIES = %i[streaming thinking structured_output].freeze
+        # WIRE-LEVEL FACTS ONLY, and identical on both arms, which is the point
+        # of the cut: same encoder, same decoder, same wire, so the only
+        # variables that moved are hosted-ness and model class. NDJSON and the
+        # native `format` field are true of every model this endpoint serves.
+        #
+        # `:thinking` is NOT, and used to be. It is a property of the model
+        # file, measured true for some of one server's models and false for
+        # others, so a provider-wide claim here was a lie in the one subsystem
+        # built to catch them. {ModelCapabilities} answers it per model off
+        # `/api/show`, and there is one source for the fact rather than two.
+        #
+        # `:prompt_caching` stays absent for its own reason: ollama's pricing
+        # meters "cached input tokens" separately, which is suggestive and is
+        # not evidence, and the native response carries only a flat
+        # `prompt_eval_count`.
+        CAPABILITIES = %i[streaming structured_output].freeze
 
         # The loopback envelope, unchanged. 300s is not generosity: this is the
         # one arm whose honest shape is a model thinking for six minutes, and

@@ -148,6 +148,16 @@ module Lain
     # @return [Serving]
     def serves?(_model) = Serving::UNKNOWN
 
+    # What this provider knows about `model`'s own capabilities, as opposed to
+    # the endpoint's. A provider with nothing to ask answers
+    # {ModelCapabilities::NOTHING_KNOWN}, whose every answer is UNKNOWN -- the
+    # same posture as {#serves?}, and for the same reason: absence of knowledge
+    # is not a no.
+    #
+    # @param _model [String]
+    # @return [ModelCapabilities]
+    def model_capabilities(_model) = ModelCapabilities::NOTHING_KNOWN
+
     # Raise unless the capability is present. The message names the provider, so
     # a degraded bench run says which arm lost the tactic.
     def require!(capability)

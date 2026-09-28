@@ -48,9 +48,9 @@ RSpec.describe Lain::Provider::Ollama do
     # The remaining capabilities stay off deliberately -- declaring one the
     # native path cannot demonstrate would be a lying capability in the
     # subsystem built to catch them.
-    it "declares :streaming, :thinking, and :structured_output, and nothing it cannot demonstrate" do
+    it "declares :streaming and :structured_output, and nothing it cannot demonstrate" do
       provider = described_class.new(transport: transport_sync({}))
-      expect(provider.capabilities).to eq(%i[streaming thinking structured_output])
+      expect(provider.capabilities).to eq(%i[streaming structured_output])
       expect(provider.capabilities - Lain::Provider::CAPABILITIES).to be_empty
     end
   end
@@ -93,7 +93,7 @@ RSpec.describe Lain::Provider::Ollama do
 
       expect([endpoint_of(provider), provider.capabilities, provider.cache_profile])
         .to eq([Lain::Provider::Ollama::Transport::DEFAULT_API_BASE,
-                %i[streaming thinking structured_output],
+                %i[streaming structured_output],
                 Lain::CacheProfile::NO_CACHING])
     end
 

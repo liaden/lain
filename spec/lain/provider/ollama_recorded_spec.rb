@@ -273,22 +273,26 @@ RSpec.describe Lain::Provider::Ollama, records: :ollama do
   # dangerous one (`model_info`'s context_length is the GGUF's TRAINED maximum
   # and must never be used as a denominator).
   #
-  # `capabilities` is still a FIXTURE rather than coverage -- nothing in lib/
-  # consumes it, so it drives the transport directly and cannot red on a decoder
-  # regression. What it buys is that the endpoint's real answer is committed, so
-  # the card that wires capability discovery can be written and tested by
-  # somebody with no GPU.
+  # `capabilities` is no longer a fixture either. It has a decoder now --
+  # {Lain::Provider::ModelCapabilities} -- so the example drives the
+  # PROVIDER and reds on a real regression, against a real server's real answer
+  # for a real model rather than a body this spec wrote itself. Both directions
+  # are in the one recording: qwen3:4b reports thinking and does not report
+  # vision, so PROBED-and-present and PROBED-and-absent are both live here, and
+  # neither can be confused with the unknown a failed probe answers.
   #
-  # The trained figure is no longer in that position. It has a decoder now --
+  # The trained figure sits in the same position. It has a decoder too --
   # {Lain::Provider#trained_context_tokens}, a ceiling for refusing a `--num-ctx`
   # and never a denominator -- so the second example drives the PROVIDER and
   # reds on a real regression, against a real GGUF's real KV table rather than a
   # body this spec wrote itself.
   describe "what /api/show answers", vcr: { cassette_name: "ollama_show" } do
-    it "states the model's capabilities" do
-      body = T13RecordedOllama.transport.connection.post("api/show", { model: "qwen3:4b" }).body
+    it "states the model's capabilities, and says the server is where they came from" do
+      support = Lain::Provider::ModelCapabilities::Support
+      read = T13RecordedOllama.provider.model_capabilities("qwen3:4b")
 
-      expect(body["capabilities"]).to include("completion", "tools", "thinking")
+      expect([read.provenance, read.supports?(:thinking), read.supports?(:vision)])
+        .to eq([Lain::Provider::ModelCapabilities::PROBED, support::SUPPORTED, support::UNSUPPORTED])
     end
 
     it "offers a trained maximum, which is larger than the window that model is served" do
