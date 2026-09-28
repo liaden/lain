@@ -22,6 +22,12 @@ module Lain
       # DEFAULTS, because an ordinary chat lends none and must construct exactly
       # as it did.
       #
+      # `ladder` rides for `grading`'s reason and is the answer to "bind a rung":
+      # the QA rungs a checkpoint climbs are otherwise {QA::SessionTiers}' default,
+      # whose voice settles nothing, so a caller with measured models -- a bench
+      # comparing tier bindings above all -- has to be able to lend its own. It
+      # DEFAULTS to nil, nobody said, and a run that says nothing runs the default.
+      #
       # `endpoint` is the run's own edge onto WHERE ITS MODELS RUN, named here
       # rather than reached for through `toolset_build`: that seam is how the
       # epic spawns its children, and asking it a question about servers would
@@ -29,8 +35,10 @@ module Lain
       # string and the driver only ever asks {Run.width_for} about it, so
       # nothing here holds a provider. It DEFAULTS to nil -- nobody said -- and
       # a run that says nothing carries exactly what it carried before.
-      Seams = Data.define(:mount, :paths, :journal, :toolset_build, :asker, :conductor, :grading, :endpoint) do
-        def initialize(mount:, paths:, journal:, toolset_build:, asker:, conductor:, grading: nil, endpoint: nil)
+      Seams = Data.define(:mount, :paths, :journal, :toolset_build, :asker, :conductor, :grading, :endpoint,
+                          :ladder) do
+        def initialize(mount:, paths:, journal:, toolset_build:, asker:, conductor:, grading: nil, endpoint: nil,
+                       ladder: nil)
           super
         end
 
@@ -41,7 +49,7 @@ module Lain
         # @return [Factory, Factory::Unmounted]
         def driver(root:, library:, chronicle:)
           Factory.for(mount:, chronicle:, paths:, root:, library:, journal:, toolset_build:, asker:,
-                      grading:, endpoint:, interrupt: stopping)
+                      grading:, endpoint:, ladder:, interrupt: stopping)
         end
 
         private
@@ -77,6 +85,10 @@ module Lain
         # checkout nested inside one still standing goes with it when gc
         # force-removes the old tree.
         LANDING = "landings"
+
+        # The skill every QA rung is briefed with, which is the whole of what this
+        # driver renders for a checkpoint.
+        QA_SKILL = "qa"
 
         # No epic mounted, so no epic to drive. A refusing Null rather than nil:
         # the command is registered in every chat, reads this through the Env
@@ -410,9 +422,12 @@ module Lain
         #   which is all the driver ever needs to know about them -- see
         #   {Seams}. nil means nobody said, and {Run.width_for} reads that as
         #   hosted.
+        # @param ladder [#call, nil] `-> QA::Ladder`, asked once per QA pass at a
+        #   checkpoint; nil climbs {QA::SessionTiers}' default rungs against the
+        #   landing checkout
         def initialize(mount:, chronicle:, paths:, root:, library:, journal:, toolset_build:,
                        asker: nil, config: nil, interrupt: -> { false }, actors: nil, grading: nil,
-                       endpoint: nil)
+                       endpoint: nil, ladder: nil)
           @mount = mount
           @chronicle = chronicle
           @paths = paths
@@ -420,13 +435,13 @@ module Lain
           @library = library
           @journal = journal
           @toolset_build = toolset_build
-          # The six a caller may leave to this object: who answers a gate, the
+          # The seven a caller may leave to this object: who answers a gate, the
           # project's config, when to stop, what launches an issue, what grades
-          # one, and where its models run. ONE slot because what they have in
-          # common is that a chat supplies none of them -- the required seven
-          # above are the object's shape, and these are the seams a bench or a
-          # spec lends.
-          @optional = { asker:, config:, interrupt:, actors:, grading:, endpoint: }
+          # one, where its models run, and which rungs its QA climbs. ONE slot
+          # because what they have in common is that a chat supplies none of them
+          # -- the required seven above are the object's shape, and these are the
+          # seams a bench or a spec lends.
+          @optional = { asker:, config:, interrupt:, actors:, grading:, endpoint:, ladder: }
         end
 
         def mounted? = true
@@ -518,7 +533,35 @@ module Lain
           Run.new(progress: -> { epics.progress(slug) }, plans: ->(issue_id) { plan_for(issue_id, layout) },
                   actors: actors(fleet, layout), supervisor: fleet, gate:, landing: landing(checkout, layout), width:,
                   budget:, attempts:, red_only: RedOnly.new(git: parent, base: working_branch),
-                  interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded)
+                  interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded,
+                  qa_gate: qa_gate(checkout))
+        end
+
+        # QA runs WHERE THE CLUSTER LANDED: lain's own landing checkout, standing
+        # on the epic's branch, which is the only tree in this run that holds what
+        # the whole cluster merged into. Its findings are filed through the same
+        # write path `lain epic add` takes, so a fix is an ordinary issue from then
+        # on.
+        def qa_gate(checkout)
+          QaGate.new(check: cluster_qa(checkout), filing: ->(issue) { epics.file(issue, slug) },
+                     scribe: Lain::Epic::Scribe.new(epic_slug: slug, journal: record))
+        end
+
+        def cluster_qa(checkout)
+          QaGate::ClusterQa.new(ladder: @optional.fetch(:ladder) || session_ladder(checkout))
+        end
+
+        # The ladder is built when a checkpoint is FIRST READY, never at wiring
+        # time: an epic with no checkpoint renders no QA skill and spawns nothing,
+        # and a fresh ladder per pass is a fresh per-rung budget. The rungs are
+        # {Lain::QA::SessionTiers}' default binding, whose own docstring holds the
+        # measurement a caller overrules by lending a ladder of its own -- which is
+        # the only way to overrule it today, there being no `[qa]` config table.
+        def session_ladder(checkout)
+          lambda do
+            spawn = @toolset_build.role_spawn.within(Lain::WorkerEnv.default.with(cwd: checkout.root))
+            Lain::QA::Ladder.new(rungs: Lain::QA::SessionTiers.call(spawn), brief: @library.renderer.render(QA_SKILL))
+          end
         end
 
         def gate = Gate.new(submit:, slug:, journals: method(:signoffs))
@@ -695,6 +738,11 @@ module Lain
         UNPLANNED = "it is still pending, so its issue_plan has not been approved yet -- approve the plan and " \
                     "the issue moves itself into flight"
 
+        # A QA pass that RAISED holds its checkpoint, the way a refused launch
+        # stops only its own issue: nothing a checkpoint blocks may start on a QA
+        # that never ran.
+        QA_UNRUN = "QA could not run, so the checkpoint holds everything it blocks: %<why>s"
+
         NOTHING_COMMITTED = "its actor settled having committed nothing, so there was no implementation to submit"
 
         # The red step commits before the actor's first turn, so an actor that
@@ -866,24 +914,40 @@ module Lain
         #
         # Deeply frozen, like every other value here: the members are interned
         # and the collections copied, so `Ractor.shareable?` holds.
-        Result = Data.define(:landed, :reported, :stopped, :discarded) do
-          def initialize(landed:, reported:, stopped:, discarded: [])
+        #
+        # `audited` is the QA checkpoints this run RELEASED. A checkpoint QA held
+        # is `reported` instead, because what it filed is work left for a human to
+        # plan.
+        Result = Data.define(:landed, :reported, :stopped, :discarded, :audited) do
+          def initialize(landed:, reported:, stopped:, discarded: [], audited: [])
             super(landed: landed.dup.freeze, reported: reported.dup.freeze, stopped: stopped && -stopped,
-                  discarded: discarded.dup.freeze)
+                  discarded: discarded.dup.freeze, audited: audited.dup.freeze)
           end
 
           # @return [String] the reply the human reads at `you>`
-          def to_s = [*discarded.map(&:to_s), *landed_lines, *reported_lines, *stopped_lines, summary].join("\n")
+          def to_s
+            [*discarded.map(&:to_s), *landed_lines, *audited_lines, *reported_lines, *stopped_lines,
+             summary].join("\n")
+          end
 
           private
 
           def landed_lines = landed.map { |entry| "landed #{entry.issue_id} at #{entry.sha}" }
 
+          def audited_lines = audited.map { |verdict| "#{verdict.issue_id}: #{verdict.line}" }
+
           def reported_lines = reported.map { |entry| "#{entry.issue_id}: #{entry.reason}" }
 
           def stopped_lines = stopped.nil? ? [] : [stopped]
 
-          def summary = "#{landed.size} landed, #{reported.size} left for you"
+          # A run whose only work was releasing a checkpoint landed nothing and
+          # reported nothing, and read "0 landed, 0 left for you" -- a line that
+          # says a run did nothing about a run that spent a model on QA.
+          def summary
+            "#{landed.size} landed#{released}, #{reported.size} left for you"
+          end
+
+          def released = audited.empty? ? "" : ", #{audited.size} QA #{"checkpoint".pluralize(audited.size)} released"
         end
 
         # @param progress [#call] answers the epic's {Epic::Progress}, re-read
@@ -911,8 +975,12 @@ module Lain
         #   grades nothing, so an ordinary run is unchanged.
         # @param red_only [#call] `call(red_sha, tip_sha)`, answering whether the
         #   tip retirement anchored carries nothing past the red step's commit
+        # @param qa_gate [#call] `call(checkpoint, graph) -> QaGate::Verdict`,
+        #   asked of each {Epic::QaCheckpoint} as it becomes ready. The Null holds
+        #   every checkpoint, because in an epic QA is not optional
         def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width:, budget: nil,
-                       interrupt: -> { false }, attempts: nil, grading: Ungraded)
+                       interrupt: -> { false }, attempts: nil, grading: Ungraded, qa_gate: QaGate::Unaudited)
+          @qa_gate = qa_gate
           @progress = progress
           @plans = plans
           @actors = actors
@@ -937,6 +1005,7 @@ module Lain
         def call
           @landed = []
           @reported = []
+          @audited = []
           @live = []
           @stopped = nil
           drive
@@ -947,17 +1016,22 @@ module Lain
 
         private
 
-        # Fold, report what cannot run, fill the width, settle one, fold again.
-        # An empty fill means nothing is startable: {#fill} has already offered
-        # every untouched issue a refused launch left room for.
+        # Fold, run any ready QA checkpoint, report what cannot run, fill the
+        # width, settle one, fold again. An empty fill means nothing is startable:
+        # {#fill} has already offered every untouched issue a refused launch left
+        # room for.
         # The refold is the whole of the dependency order: an issue blocked by
         # the one that just landed becomes runnable because the fold now says
-        # its blocker is done, and nothing else here knows about the graph.
+        # its blocker is done, and nothing else here knows about the graph. A
+        # released checkpoint is one more thing that moves the graph, which is why
+        # a pass sends the loop straight back to the fold.
         def drive
           @stopped = stop_reason
           return strand unless @stopped.nil?
 
           folded = @progress.call
+          return drive if run_checkpoints(folded).any?(&:passed)
+
           unplanned(folded).each { |issue| @reported << Reported.new(issue_id: issue.id, reason: UNPLANNED) }
           fill(folded)
           return if @live.empty?
@@ -1000,10 +1074,76 @@ module Lain
 
         def room? = @live.size < @bounds.width
 
-        def startable(folded) = ready(folded) { |issue| issue.status == STARTABLE }
+        # NEITHER CLAUSE BELOW CAN FIRE TODAY, and both stay. {#run_checkpoints}
+        # goes first and records every ready checkpoint, so {#untouched?} has
+        # already excluded them by the time either of these is asked -- a mutation
+        # that drops one reddens nothing. What they buy is that "a checkpoint is
+        # never launched and never reported as unplanned" does not rest on that
+        # ordering: move the audit after the fill and, without them, an
+        # implementer spawns against a node with no plan to read.
+        def startable(folded) = ready(folded) { |issue| issue.status == STARTABLE && !checkpoint?(issue) }
 
-        # Pending, and nothing standing in its way but its own plan.
-        def unplanned(folded) = ready(folded) { |issue| issue.status == Lain::Epic::InFlight::PENDING }
+        # Pending, and nothing standing in its way but its own plan. A checkpoint
+        # waits on no plan: {#run_checkpoints} runs it instead of reporting it.
+        def unplanned(folded) = pending(folded).reject { |issue| checkpoint?(issue) }
+
+        def pending(folded) = ready(folded) { |issue| issue.status == Lain::Epic::InFlight::PENDING }
+
+        # Every checkpoint whose cluster has landed is run now, BEFORE the fill: a
+        # pass is what makes the next cluster startable, and launching around a
+        # ready checkpoint would start nothing it holds anyway.
+        #
+        # Run ONCE PER RUN, which {#untouched?} is what guarantees: the refold is
+        # greedy, so a pass whose write the next fold cannot see would otherwise be
+        # found ready forever and the epic would never stop folding.
+        #
+        # Named for what it DOES rather than as a predicate: it spends a model,
+        # files issues and journals a transition. The caller reads the answer it
+        # hands back -- whether the graph moved, and so whether to fold again.
+        def run_checkpoints(folded)
+          checkpoints(folded).map { |checkpoint| audit(checkpoint, folded.graph) }
+        end
+
+        # A CHECKPOINT IS NEVER LAUNCHED, whatever status it carries: its work is
+        # QA, so an actor started on one would put an implementer in front of a
+        # node with no plan to read. Both live statuses are run, because a human
+        # who approved a plan for a checkpoint moved it into flight and it is still
+        # QA's to settle.
+        def checkpoints(folded) = ready(folded) { |issue| checkpoint?(issue) && unfinished?(issue) }
+
+        def checkpoint?(issue) = Lain::Epic::QaCheckpoint.of?(issue)
+
+        def unfinished?(issue) = [Lain::Epic::InFlight::PENDING, STARTABLE].include?(issue.status)
+
+        # ScriptError as well as StandardError: a lent `qa_gate:` raising
+        # NotImplementedError is neither a StandardError nor a reason to discard a
+        # run that has already landed work, and the claim this message makes -- QA
+        # could not run, so the checkpoint holds -- is true of both.
+        def audit(checkpoint, graph)
+          record(checkpoint, @qa_gate.call(checkpoint, graph))
+        rescue JournalUnreadable
+          raise
+        rescue StandardError, ScriptError => e
+          record(checkpoint, QaGate::Verdict.new(issue_id: checkpoint.id, passed: false,
+                                                 line: format(QA_UNRUN, why: "#{e.class}: #{e.message}")))
+        end
+
+        # KEYED OFF THE CHECKPOINT, never off the verdict's own id. {#untouched?}
+        # is the whole anti-livelock guard, so a gate answering a pass under
+        # somebody else's id would leave this checkpoint untouched and ready, and
+        # the greedy refold would ask it forever. The loop already holds the
+        # checkpoint it asked about, so it records that.
+        def record(checkpoint, verdict)
+          verdict.with(issue_id: checkpoint.id).tap { |answered| kept(answered) }
+        end
+
+        # A checkpoint QA held is REPORTED rather than audited: what it filed is
+        # work for a human to plan before the next run checks again.
+        def kept(answered)
+          return @audited << answered if answered.passed
+
+          reported(answered, answered.line)
+        end
 
         # Indexed ONCE per pass, not once per issue: this is the driver's own
         # loop, re-entered for every issue that settles.
@@ -1016,7 +1156,7 @@ module Lain
         # offered again: the fold is re-read every turn and would otherwise
         # answer the same issue forever.
         def untouched?(id)
-          [@live, @landed, @reported].none? { |seen| seen.any? { |entry| entry.issue_id == id } }
+          [@live, @landed, @reported, @audited].none? { |seen| seen.any? { |entry| entry.issue_id == id } }
         end
 
         # A refusal stops THIS issue and nothing else: the plan is not approved,
@@ -1122,7 +1262,7 @@ module Lain
 
         def reported(entry, reason) = @reported << Reported.new(issue_id: entry.issue_id, reason:)
 
-        def result = Result.new(landed: @landed, reported: @reported, stopped: @stopped)
+        def result = Result.new(landed: @landed, reported: @reported, stopped: @stopped, audited: @audited)
       end
 
       # An issue's red step, run in the checkout its actor holds before the

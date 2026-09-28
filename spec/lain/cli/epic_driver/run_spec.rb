@@ -176,7 +176,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
   # The loop, assembled over the fakes an example set up.
   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
-               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans)
+               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans,
+               qa_gate: nil)
     live = { now: 0 }
     supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
@@ -184,7 +185,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     run = described_class.new(progress: progress_over(issues, statuses), plans: subjects, actors:, supervisor:, gate:,
                               landing: settled, width:, budget:,
                               red_only: red_only || described_class::Identical,
-                              **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}))
+                              **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}),
+                              **(qa_gate ? { qa_gate: } : {}))
     [run, actors, settled, supervisor]
   end
 
@@ -884,6 +886,148 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       reason = refused_by(RuntimeError.new("power cut mid-merge"))
 
       expect(reason).to include("lain epic land", "--resume", "a")
+    end
+  end
+
+  # A QA checkpoint is an issue in the blocking graph: blocked by the cluster it
+  # checks, blocking the cluster after it. So these examples need no new concept
+  # from the loop beyond "a ready checkpoint is RUN, never launched" -- the
+  # holding and the releasing are the fold's.
+  describe "a QA checkpoint between two clusters" do
+    let(:qa_log) { [] }
+    let(:cluster) do
+      [issue("a", blocks: ["qa-gate-1"]), issue("b", blocks: ["qa-gate-1"]), issue("qa-gate-1", blocks: ["c"]),
+       issue("c")]
+    end
+    let(:statuses) { { "a" => "in_flight", "b" => "in_flight", "qa-gate-1" => "pending", "c" => "in_flight" } }
+    let(:reports) { %w[a b c].to_h { |id| [id, anchored("sha-#{id}")] } }
+
+    # A QA gate that answers from a script, and passes by moving the checkpoint
+    # to done the way the real one's scribe does -- which is what the next fold
+    # reads.
+    def qa_gate(statuses, passes: true, raising: false, moving: true)
+      lambda do |checkpoint, graph|
+        qa_log << [checkpoint.id, graph.statuses.select { |_id, status| status == "done" }.keys.sort]
+        raise Lain::Error, "the qa child refused" if raising
+
+        statuses[checkpoint.id] = "done" if passes && moving
+        Lain::CLI::EpicDriver::QaGate::Verdict.new(issue_id: checkpoint.id, passed: passes,
+                                                   line: passes ? "passed QA" : "QA held it")
+      end
+    end
+
+    it "runs QA once the whole cluster has landed, and only then starts the cluster it held" do
+      run, actors, landing = run_over(issues: cluster, statuses:, reports:, qa_gate: qa_gate(statuses))
+
+      result = run.call
+
+      expect(qa_log).to eq([["qa-gate-1", %w[a b]]])
+      expect(landing.landed.map(&:first)).to eq(%w[a b c])
+      expect(actors.launched.map(&:first)).to eq(%w[a b c])
+      expect(result.audited.map(&:issue_id)).to eq(["qa-gate-1"])
+      expect(result.to_s).to include("qa-gate-1: passed QA")
+      # A run that spent a model releasing a checkpoint may not read "0 landed".
+      expect(result.to_s).to include("1 QA checkpoint released")
+    end
+
+    # THE ANTI-LIVELOCK GUARD IS KEYED OFF THE CHECKPOINT. `qa_gate:` is a public
+    # keyword, so a gate answering a pass under somebody else's id must not leave
+    # this checkpoint untouched and ready for the greedy refold to ask forever.
+    it "records a pass against the checkpoint it asked about, whatever id the gate answers under" do
+      stranger = lambda do |checkpoint, _graph|
+        qa_log << checkpoint.id
+        Lain::CLI::EpicDriver::QaGate::Verdict.new(issue_id: "somebody-else", passed: true, line: "passed QA")
+      end
+
+      result = run_over(issues: cluster, statuses:, reports:, qa_gate: stranger).first.call
+
+      expect(qa_log).to eq(["qa-gate-1"])
+      expect(result.audited.map(&:issue_id)).to eq(["qa-gate-1"])
+    end
+
+    # A settled checkpoint is not QA's again: re-running one would put model spend
+    # on every finished checkpoint of every later run, and an abandoned one is a
+    # human's decision this loop may not overturn.
+    it "never runs a checkpoint that is already done or abandoned" do
+      %w[done abandoned].each do |settled|
+        qa_log.clear
+        moved = statuses.merge("qa-gate-1" => settled, "a" => "done", "b" => "done")
+
+        run_over(issues: cluster, statuses: moved, reports:, qa_gate: qa_gate(moved)).first.call
+
+        expect(qa_log).to be_empty
+      end
+    end
+
+    # The re-check is the next FOLD's, never a retry this loop remembers: a held
+    # checkpoint is offered to QA again as soon as a run re-reads the graph, which
+    # is what makes landing the fixes the way past it.
+    it "runs a held checkpoint again on the next run" do
+      run, = run_over(issues: cluster, statuses:, reports:, qa_gate: qa_gate(statuses, passes: false))
+
+      run.call
+      run.call
+
+      expect(qa_log.map(&:first)).to eq(%w[qa-gate-1 qa-gate-1])
+    end
+
+    it "holds the next cluster when QA holds, and reports the checkpoint with QA's own line" do
+      run, actors = run_over(issues: cluster, statuses:, reports:, qa_gate: qa_gate(statuses, passes: false))
+
+      result = run.call
+
+      expect(actors.launched.map(&:first)).to eq(%w[a b])
+      expect(result.reported.map { |entry| [entry.issue_id, entry.reason] }).to eq([["qa-gate-1", "QA held it"]])
+    end
+
+    # Nothing a checkpoint blocks may start on a QA that never ran.
+    it "holds when QA raises, naming why, and leaves the landed cluster landed" do
+      run, actors = run_over(issues: cluster, statuses:, reports:, qa_gate: qa_gate(statuses, raising: true))
+
+      result = run.call
+
+      expect(actors.launched.map(&:first)).to eq(%w[a b])
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+      expect(result.reported.first.reason).to include("QA could not run", "the qa child refused")
+    end
+
+    # THE REFOLD IS GREEDY, so a pass whose write the next fold cannot see would
+    # be found ready again and again. A checkpoint is audited once per run, which
+    # is what keeps that from being an epic that never stops folding.
+    it "runs a ready checkpoint once even when its pass did not move the graph" do
+      run, = run_over(issues: cluster, statuses:, reports:, qa_gate: qa_gate(statuses, moving: false))
+
+      result = run.call
+
+      expect(qa_log.size).to eq(1)
+      expect(result.audited.map(&:issue_id)).to eq(["qa-gate-1"])
+      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+    end
+
+    # In an epic QA is not optional, so a run wired with none holds rather than
+    # waving a checkpoint through -- and never mistakes it for an issue waiting
+    # on its plan.
+    it "holds a checkpoint when no QA is wired, and never reports it as unplanned" do
+      run, actors = run_over(issues: cluster, statuses:, reports:)
+
+      result = run.call
+
+      expect(actors.launched.map(&:first)).to eq(%w[a b])
+      expect(result.reported.map(&:reason)).to eq(["no QA is wired to this run, so the checkpoint holds everything " \
+                                                   "it blocks"])
+    end
+
+    # A checkpoint is QA's, whatever status it carries: launched as an ordinary
+    # issue it would spawn an implementer against a node with no plan.
+    it "runs a checkpoint a human had moved into flight rather than launching it" do
+      moved = statuses.merge("qa-gate-1" => "in_flight")
+      run, actors = run_over(issues: cluster, statuses: moved, reports:, qa_gate: qa_gate(moved))
+
+      result = run.call
+
+      expect(actors.launched.map(&:first)).to eq(%w[a b c])
+      expect(qa_log).to eq([["qa-gate-1", %w[a b]]])
+      expect(result.audited.map(&:issue_id)).to eq(["qa-gate-1"])
     end
   end
 

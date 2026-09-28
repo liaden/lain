@@ -265,6 +265,25 @@ module Lain
         end
       end
 
+      # {#add} for an issue a caller has already built WHOLE -- edges,
+      # description and provenance included -- which is what a QA checkpoint
+      # files: a fix that blocks the checkpoint it was found at. The same one
+      # write path, so the edit is refused, written and journaled exactly as an
+      # `epic add` is.
+      #
+      # @param issue [Epic::Issue] the arriving issue
+      # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @return [String] the applied edit, rendered
+      # @raise [Lain::Error] any refusal from {Epic::Graph}, before anything is
+      #   written
+      def file(issue, slug = nil)
+        apply(slug, command: "epic add ID TITLE") do |graph|
+          fiber = nil
+          revised = graph.add(issue) { |cut| fiber = cut }
+          [revised, fiber]
+        end
+      end
+
       # @param id [String] the issue leaving
       # @param into [String] the parts arriving, comma-separated ids -- each
       #   inherits `id`'s title, description and criteria; an author edits

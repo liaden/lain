@@ -713,6 +713,36 @@ RSpec.describe Lain::CLI::Epic do
       expect(diagram).to include("n_a --> n_b", "n_b --> n_c")
     end
 
+    # What a QA checkpoint files: a fix built WHOLE -- edges, provenance and a
+    # description of the finding -- through the one write path `epic add` takes,
+    # so the read, the refusal, the write and the journal are the same four steps.
+    it "files an issue built whole, edges and provenance kept, and journals one add" do
+      write_epic("alpha", chain)
+      fix = Lain::Epic::Issue.new(id: "qa-fix-1-1", title: "fix: the total is off by one", blocks: ["c"],
+                                  discovered_from: "b",
+                                  description: "Found by QA at b.\n- evidence -- bin/total printed 2")
+
+      told = command.file(fix, "alpha")
+
+      expect(epic_home.read_epic.blocked_by("c")).to include("qa-fix-1-1")
+      expect(epic_home.read_epic.fetch("qa-fix-1-1").description).to include("bin/total printed 2")
+      expect(told).to include("add applied to epic `alpha`")
+      expect(graph_revisions.map { |record| [record["operation"], record.dig("arguments", "discovered_from")] })
+        .to eq([%w[add b]])
+    end
+
+    # The same refusals an `epic add` meets, met before anything is written: the
+    # gate check runs on the fiber's preimage, and the graph refuses a dangling
+    # edge, so a fix naming an issue that does not exist writes nothing.
+    it "refuses a fix whose edge names no issue, leaving the epic untouched" do
+      write_epic("alpha", chain)
+      dangling = Lain::Epic::Issue.new(id: "qa-fix-1-1", title: "fix: nothing", blocks: ["nobody"])
+
+      expect { command.file(dangling, "alpha") }.to raise_error(Lain::Error, /nobody/)
+      expect(epic_home.read_epic.ids).not_to include("qa-fix-1-1")
+      expect(graph_revisions).to be_empty
+    end
+
     it "replaces one issue with its parts and journals one graph_revision" do
       write_epic("alpha", chain)
 

@@ -207,10 +207,10 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil, asker: nil,
-                   endpoint: nil)
+                   endpoint: nil, ladder: nil)
     described_class.for(mount: mounted, chronicle: record, paths:, root: repo, library: backend.library,
                         journal: Lain::Channel::Null.instance, toolset_build:, asker:, config:, actors:, endpoint:,
-                        **(grading ? { grading: } : {}))
+                        ladder:, **(grading ? { grading: } : {}))
   end
 
   # Where a local model is served, taken from the deployment rather than spelt
@@ -287,6 +287,24 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       factory = driver_from(seams_with)
 
       expect(factory.instance_variable_get(:@optional).fetch(:grading)).to be_nil
+    end
+
+    # "Bind a rung" has to be true of something. There is no `[qa]` config table,
+    # so the ladder a checkpoint climbs is either the session default or one a
+    # caller lends here -- and a bench comparing tier bindings is the caller that
+    # needs it.
+    it "carries a ladder seam through to the factory it builds" do
+      seam = -> { :a_ladder }
+
+      factory = driver_from(seams_with(ladder: seam))
+
+      expect(factory.instance_variable_get(:@optional).fetch(:ladder)).to be(seam)
+    end
+
+    it "lends no ladder by default, so a chat climbs the session rungs" do
+      factory = driver_from(seams_with)
+
+      expect(factory.instance_variable_get(:@optional).fetch(:ladder)).to be_nil
     end
 
     it "carries the endpoint its seams name through to the factory it builds" do
@@ -400,6 +418,20 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
       expect(config.epics.width).to be_nil
       expect(Lain::CLI::EpicDriver::Run).to have_received(:new).with(hash_including(width: 1))
+    end
+
+    # The lent ladder reaches the object that climbs it. Asserted over a real run
+    # because the gate is wired per run: a derivation checked on its own passes
+    # while nothing carries the answer this far.
+    it "hands the QA gate the ladder its caller lent, in place of the session rungs" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      lent = -> { :a_ladder }
+      allow(Lain::CLI::EpicDriver::QaGate::ClusterQa).to receive(:new).and_call_original
+
+      factory_over(mount, actors: scripted, record: chronicle, ladder: lent).run(width: 1)
+
+      expect(Lain::CLI::EpicDriver::QaGate::ClusterQa).to have_received(:new).with(ladder: lent)
     end
 
     it "lands a two-issue chain in order, from a chat standing on main" do
