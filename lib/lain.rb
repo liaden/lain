@@ -54,10 +54,10 @@ module Lain
   # public, discoverable method rather than four narrow private call sites.
   def self.live(value) = value.respond_to?(:call) ? value.call : value
 
-  # The three spellings the loader's inflector cannot derive from a path. The
+  # The four spellings the loader's inflector cannot derive from a path. The
   # `version.rb` -> VERSION rule is not here because a gem loader already
   # carries it.
-  LOADER_INFLECTIONS = { "cli" => "CLI", "http" => "HTTP", "tty" => "TTY" }.freeze
+  LOADER_INFLECTIONS = { "cli" => "CLI", "http" => "HTTP", "qa" => "QA", "tty" => "TTY" }.freeze
 
   # Named rather than local so spec/zeitwerk_spec.rb can ask IT which constant
   # each path is expected to yield, reading Zeitwerk's own answer instead of

@@ -179,7 +179,7 @@ External gem/stdlib requires stay in the leaf files that use them, documenting r
 **A `require_relative` anywhere under `lib/` is never correct.** `grep -rn require_relative lib/`
 returns 0 and stays 0 — a convention, not a gate: neither the suite nor `rubocop` nor pre-commit
 fails on one, so writing one is silent. `lib/lain.rb` is no longer a manifest; it holds the loader,
-its three inflections (`cli` → `CLI`, `http` → `HTTP`, `tty` → `TTY`), the compiled extension's
+its four inflections (`cli` → `CLI`, `http` → `HTTP`, `qa` → `QA`, `tty` → `TTY`), the compiled extension's
 require with its `LoadError` re-raise, and `Lain`'s own five members — `spec/lain_spec.rb` pins
 that membership by source location, so a sixth is a deliberate edit. There is no ignore list.
 
