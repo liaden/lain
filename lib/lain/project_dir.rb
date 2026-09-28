@@ -80,6 +80,11 @@ module Lain
     META_DIR = "meta"
     SERVICES_FILE = "services.rb"
 
+    # Where a QA pass leaves its report. What the file is NAMED is
+    # {CLI::Command::QA}'s own decision and documented there, so this constant
+    # does not carry a second copy of it to keep in sync.
+    QA_DIR = "qa"
+
     # The file {Summarizer::Catalog} loads, and the directory `/meta` writes
     # reviewable declarations into. Ruby's own `foo.rb`-plus-`foo/` convention
     # reads a pair like this as one unit and these deliberately are not --
@@ -138,6 +143,7 @@ module Lain
     def summarizers = under(SUMMARIZERS_FILE)
     def summarizer_drafts = under(SUMMARIZER_DRAFTS_DIR)
     def services = under(SERVICES_FILE)
+    def qa = under(QA_DIR)
 
     def state_path = File.join(state_dir, STATE_FILE)
 

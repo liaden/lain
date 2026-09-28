@@ -61,8 +61,8 @@ RSpec.describe "shipped skills" do
   describe "every shipped skill loads and renders" do
     # The derived roster is the guard, so this example is the floor under it:
     # a rename or a deletion still has to be loud somewhere.
-    it "ships the process skills, gherkin-tests, and the four epic-tier skills" do
-      expect(shipped_names).to include(:"create-plan", :"execute-plan", :critique, :"gherkin-tests")
+    it "ships the process skills, qa, gherkin-tests, and the four epic-tier skills" do
+      expect(shipped_names).to include(:"create-plan", :"execute-plan", :critique, :"gherkin-tests", :qa)
       expect(epic_names).to match_array(%i[research-epic plan-epic iterate-epic create-epic-issues])
     end
 
@@ -161,6 +161,81 @@ RSpec.describe "shipped skills" do
         expect(scaffold).to include("red")
         expect(scaffold).to include("worktree")
         expect(scaffold).to include("orchestrat")
+      end
+    end
+
+    it "offers QA between landing and close-out, and hands findings back rather than fixing them" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("execute-plan")
+
+        expect(scaffold.index("/qa")).to be_between(scaffold.index("Phase 4 "), scaffold.index("Phase 5 "))
+        expect(scaffold).to include("reports, never fixes")
+      end
+    end
+  end
+
+  # One source for the ladder's policy, and it is the code. These pin the words
+  # the model is told to the names the code records, so a renamed rule or fence
+  # cannot leave a prompt describing a ladder nothing runs -- the failure mode
+  # this whole spec exists for, one subsystem over.
+  describe "qa's scaffold describes the ladder the code runs" do
+    it "names every escalation rule the code can record, and the fences it reads replies out of" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("qa")
+
+        Lain::QA::Escalation::RULES.each do |rule|
+          expect(scaffold).to include("`#{rule.name}`"), "the qa skill never names the #{rule.name} rule"
+        end
+        expect(scaffold).to include("`#{Lain::QA::Answer::FENCE}`", "`#{Lain::QA::Report::FENCE}`")
+      end
+    end
+
+    it "names every severity, verdict and rung the code carries" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("qa")
+
+        (Lain::QA::SEVERITIES + Lain::QA::VERDICTS + Lain::QA::TIERS).each do |word|
+          expect(scaffold).to include("`#{word}`"), "the qa skill never names #{word}"
+        end
+      end
+    end
+
+    # The criteria grammar is closed and its one human-judged marker is
+    # `# rubric` -- there is no visual axis, so a scaffold offering a `[visual]`
+    # scenario prefix would teach a route to the media rung that no parser reads
+    # and no rung answers.
+    it "teaches the marker the grammar really carries, and offers no route to a rung nothing binds" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("qa")
+
+        expect(scaffold).to include("`#{Lain::Gherkin::Parse::RUBRIC}`")
+        expect(scaffold).not_to include("[visual]")
+      end
+    end
+
+    # The role holds read and search tools and nothing else, so a scaffold that
+    # told it to run the suite would be teaching a tool call it cannot make --
+    # and `executed` is the one field a model could answer dishonestly for it.
+    it "reports rather than fixes, and says the rung runs no command" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("qa")
+
+        expect(scaffold).to include("report, never fix")
+        # The SENTENCE, not a pattern: an earlier alternation here was satisfied
+        # by an unrelated "you cannot run `git`" further down the same scaffold,
+        # so deleting this claim left the suite green -- and this claim is the
+        # whole reason a rung's `executed` can be trusted to be false.
+        expect(scaffold).to include("**you run no commands**")
+        expect(scaffold).to include("so it is `false`")
+      end
+    end
+
+    it "points a project at the tiers slot rather than binding a model itself" do
+      with_empty_project do |_renderer, root|
+        marker = "QA-TIERS-MARKER-19: t1 is the cheap reader, t2 the strong one."
+        write_override(root, "qa", "tiers", marker)
+
+        expect(shipped_renderer(root:).render("qa")).to include(marker)
       end
     end
   end

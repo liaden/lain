@@ -73,6 +73,18 @@ suite green before anything lands, serialized landing of shared-file changes, an
 re-verification after any rebase (hooks do not fire on a ff-merge). A worktree forked before a
 sibling merged owns the integration touch-up at its own merge.
 
+## Phase 4½ — QA (optional; the plan or the user decides)
+
+Once everything has landed, a large plan earns a QA pass: `/qa <plan path> --base <ref>`, with the ref
+the plan's first wave branched from. It runs the landed change against every card's acceptance
+criteria, cheapest rung first, and **reports, never fixes** — the report lands under `.lain/qa/`.
+
+Hand each holding finding (blocker or major) back to that card's implementer verbatim, evidence and
+reproduction included; the fix follows Phase 3's red-before-green rule, with the reproduction becoming
+the red spec. Re-run `/qa` once after the fixes land. Minor findings, and every criterion the pass
+left unsettled, go into the close-out summary as the manual pass still owed. Skip this phase only when
+the plan says so or the user does.
+
 ## Phase 5 — Close out
 
 Run the plan's Integration checks, mark it `done`, and summarize: what landed, what the panel

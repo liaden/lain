@@ -73,6 +73,35 @@ module Lain
         # RELATIVE read lands on committed bytes; the read tools confine no path,
         # so an absolute one can still reach the project's working tree.
         Role.new(name: :diff_critic, only: %i[read_file list_files glob grep], unattended: true),
+        # {QA::Ladder}'s rungs, judging landed work against its acceptance
+        # criteria. "Reports, never fixes" is a CAPABILITY here and not a
+        # promise in the prompt: without `edit_file` or `write_file` it cannot
+        # repair what it judges, which is what lets QA run against the same
+        # checkout the work landed in rather than needing a throwaway one.
+        #
+        # No `bash`, for `merge_resolver`'s reason: nothing watches a ladder -- a
+        # pass is dozens of asks the human waits out -- so a tier-3 call parking
+        # at the approval gate under `ask` would stall every criterion behind it.
+        #
+        # THE COST IS ASYMMETRIC, AND IN THE UNSAFE DIRECTION. A rung cannot run
+        # anything, so `executed` is false for every honest answer this role
+        # gives, and the only two rows of {QA::Escalation::RULES} whose action is
+        # `report` require it. Every other row climbs. So a criterion this role
+        # judges can be CLEARED on words alone -- `unanimous-pass` sits at the
+        # bottom of the table and a strong rung's inferred pass reaches it -- and
+        # can never be FILED, because `unconfirmed-fail` sits above
+        # `no-strong-voice` and sends an inferred fail up a ladder with nothing
+        # above it. The measured hazard the ladder was built against is models
+        # wrongly PASSING real violations, which is the one direction an
+        # unexecuted answer is still allowed to settle.
+        #
+        # So the only route to a filed blocker today is a model that disobeys:
+        # `executed` is a self-report nothing audits, and both the role framing
+        # and the `qa` skill tell it in writing that the field is false. The
+        # structural repair is a rung that declares whether it can execute, with
+        # {QA::Escalation} discounting the self-report against it; until then the
+        # hooks run the tests and this role reads.
+        Role.new(name: :qa, only: %i[read_file list_files glob grep], unattended: true),
         # Runs a whole issue's plan in one ask: dev's tools, a spawner for the
         # implementers and reviewers, and the renderer that puts the plan's
         # skill in front of it. No chat floor holds either extra name, so only

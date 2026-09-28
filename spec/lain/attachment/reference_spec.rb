@@ -221,9 +221,14 @@ RSpec.describe Lain::Attachment::Reference do
       expect(Ractor.shareable?(resolved)).to be(true)
     end
 
+    # Counted rather than signalled by a raise: `not_to raise_error` would say the
+    # same thing, but a count says it positively and `bin/spec-census` cannot tell
+    # a raise-as-signal from an assertion that cannot fail.
     it "never calls for bytes a payload did not ask for" do
-      expect { described_class.resolve([{ "type" => "text", "text" => "hi" }]) { raise "asked anyway" } }
-        .not_to raise_error
+      asked = 0
+      described_class.resolve([{ "type" => "text", "text" => "hi" }]) { asked += 1 }
+
+      expect(asked).to eq(0)
     end
   end
 

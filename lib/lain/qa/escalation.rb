@@ -116,6 +116,15 @@ module Lain
       # The ladder's whole policy, in the order it is tried. The QA skill's prose
       # is pinned to these names rather than restating them, so a rule renamed
       # here cannot go on reading the old way in a prompt.
+      #
+      # THE TWO `report` ROWS ARE UNREACHABLE AS SHIPPED, and a maintainer asking
+      # why QA never files anything is looking at the reason. Both require
+      # `executed`, and the only role in `lib/` a rung spawns as is `qa`, which
+      # holds reading and searching alone -- it cannot run a command, so it cannot
+      # honestly claim one. `role/catalog.rb`'s `qa` entry carries the argument
+      # from the capability side, including why the gap is asymmetric: an
+      # inferred PASS still reaches `unanimous-pass` and settles, while an
+      # inferred FAIL stops at `unconfirmed-fail` and climbs.
       RULES = [
         Rule.new(action: :escalate, name: "nothing-asked", applies: ->(judged) { judged.samples.empty? }),
         Rule.new(action: :report, name: "executed-fail",

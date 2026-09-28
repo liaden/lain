@@ -154,8 +154,14 @@ module Lain
         def builtins
           [Quit.new, Stop.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
            Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands,
-           *epic_commands]
+           *epic_commands, *plan_commands]
         end
+
+        # What a plan's execution offers once it has landed. Its own group for
+        # #builtins' reason, and `/qa` shadows the `qa` skill of the same name
+        # deliberately: the skill is the brief every rung is asked with, and the
+        # command is what drives the ladder over it.
+        def plan_commands = [QA.new(root: @root, renderer: @library.renderer)]
 
         # The commands of the epic this chat is seated in. Its own group rather
         # than another entry above, for the reason #builtins gives: that list

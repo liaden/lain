@@ -151,14 +151,14 @@ RSpec.describe Lain::Skill::Catalog do
     end
   end
 
-  describe "the eight shipped skills still load" do
+  describe "the shipped skills still load" do
     it "presents every real shipped skill with a description, against the real templates tree" do
       Dir.mktmpdir do |root|
         catalog = described_class.load(root:)
 
         expect(catalog.names).to match_array(
           %i[research-epic plan-epic iterate-epic create-epic-issues create-plan execute-plan critique
-             gherkin-tests]
+             gherkin-tests qa]
         )
         catalog.all.each { |skill| expect(skill.description).not_to be_empty }
       end

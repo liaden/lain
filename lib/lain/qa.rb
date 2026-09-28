@@ -25,8 +25,11 @@ module Lain
     SEVERITIES = %w[blocker major minor].freeze
     HOLDING = %w[blocker major].freeze
 
-    # The ladder's rungs, cheapest first. The first spends no model at all; the
-    # last is the media rung, reached only for a criterion that is visual.
+    # The ladder's rungs, cheapest first. The first spends no model at all. The
+    # last is RESERVED for a rung that can look at a picture and nothing binds
+    # one: {Ladder} declines the media axis in writing, and the criteria grammar
+    # has no marker that would route a scenario to it, so a criterion only a
+    # screen could settle comes back unverified and owes a manual pass.
     TIERS = %w[t0 t1 t2 t3].freeze
 
     # What one rung may say about one criterion -- and why that is not

@@ -64,10 +64,10 @@ RSpec.describe Lain::Role do
   # because it answers while a human stands mid-review waiting for the line to
   # change. The catalog argued that invariant in prose and nothing enforced it.
   describe "a role can declare that it answers unattended" do
-    it "defaults to attended, and the two approval judges, the resolver, the docent and the critic declare otherwise" do
+    it "defaults to attended, and the judges, the resolver, the docent, the critic and QA declare otherwise" do
       expect(Lain::Role::Catalog.fetch(:test_engineer).unattended).to be(false)
       expect(Lain::Role::Catalog.all.select(&:unattended).map(&:name))
-        .to eq(%i[auto_approver gate_adjudicator merge_resolver diff_docent diff_critic])
+        .to eq(%i[auto_approver gate_adjudicator merge_resolver diff_docent diff_critic qa])
     end
 
     # Coerced like every member beside it, and for the shareability reason
@@ -95,6 +95,36 @@ RSpec.describe Lain::Role do
       offenders = Lain::Role::Catalog.all.select { |r| r.unattended && r.only.intersect?(parking) }
 
       expect(offenders.map(&:name)).to be_empty
+    end
+  end
+
+  # QA reports and never fixes, and that has to be a fact about what it HOLDS
+  # rather than a promise in its prompt: a role that could edit the tree it is
+  # judging would need a throwaway checkout to be honest, and one that could run
+  # a command would park at the approval gate under `ask` -- stalling a ladder
+  # nobody is watching, which is `merge_resolver`'s argument one role over.
+  #
+  # What that costs, because it is not symmetric: holding no command tool means
+  # `executed` is false for every honest answer, and the only two rows of
+  # {Lain::QA::Escalation::RULES} whose action is `report` require it. So a
+  # criterion judged by this role can be CLEARED on inferred words and can never
+  # be FILED -- `unanimous-pass` is reachable, a blocker is not. The catalog
+  # entry argues it at length; these examples pin the capability it rests on.
+  describe "the qa role reports and cannot fix" do
+    let(:role) { Lain::Role::Catalog.fetch(:qa) }
+
+    it "attenuates the union down to reading and searching alone" do
+      expect(role.attenuate(union).names).to eq(%w[glob grep list_files read_file])
+    end
+
+    # By NAME, so a fifth read tool later cannot smuggle one of these in behind
+    # a count that still looks right.
+    it "holds nothing that writes the tree and nothing that runs a command" do
+      expect(role.only & %i[edit_file write_file bash]).to be_empty
+    end
+
+    it "answers unattended, which it can promise because it holds nothing the gate stops" do
+      expect(role.unattended).to be(true)
     end
   end
 
@@ -233,7 +263,7 @@ RSpec.describe Lain::Role do
       expect(Lain::Role::Catalog.names).to contain_exactly(
         :dev, :test_engineer, :reviewer_sre, :reviewer_security, :reviewer_dba, :reviewer_code, :researcher,
         :court_clerk, :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness, :meta_summarizer,
-        :merge_resolver, :diff_docent, :diff_critic, :issue_orchestrator
+        :merge_resolver, :diff_docent, :diff_critic, :qa, :issue_orchestrator
       )
     end
 
