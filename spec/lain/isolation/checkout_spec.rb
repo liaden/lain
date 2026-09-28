@@ -46,6 +46,108 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
     end
   end
 
+  # Every shape of "git is half way through something", because a reader that
+  # only knew about merges answered false for four of the five and read a
+  # partial or empty diff as the truth.
+  describe "#operation_in_progress?" do
+    # Two commits touching the same line from a common base, which is what a
+    # merge, a rebase, a cherry-pick and a revert each need in order to stop.
+    def diverge!
+      seed = run_git("rev-parse", "HEAD")
+      trunk = run_git("branch", "--show-current")
+      commit!("ours")
+      run_git("checkout", "-q", "-b", "other", seed)
+      commit!("theirs")
+      run_git("checkout", "-q", trunk)
+      [trunk, seed]
+    end
+
+    def commit!(body)
+      File.write(File.join(@dir, "a.rb"), body)
+      run_git("add", "-A")
+      run_git("commit", "-q", "-m", body)
+    end
+
+    # Each of these STOPS on a conflict, so a nonzero status is the point of
+    # the call rather than a failure of the example.
+    def attempt(*args, **environment)
+      Mixlib::ShellOut.new("git", "-C", @dir, *args,
+                           environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(environment)).run_command
+    end
+
+    it "answers false for a checkout git has finished with" do
+      expect(checkout.operation_in_progress?).to be(false)
+    end
+
+    # The one in-between state that is NOT a refusal: a commit-to-commit diff
+    # cannot see the working tree, so uncommitted edits cannot change it.
+    it "answers false for a tree that is merely dirty" do
+      File.write(File.join(@dir, "a.rb"), "uncommitted\n")
+
+      expect(checkout.operation_in_progress?).to be(false)
+    end
+
+    it "answers true for a conflicted merge" do
+      diverge!
+      attempt("merge", "other")
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+
+    it "answers true for a conflicted rebase" do
+      trunk, = diverge!
+      run_git("checkout", "-q", "other")
+      attempt("rebase", trunk)
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+
+    # The state with no pseudo-ref of any kind: nothing conflicted, HEAD simply
+    # parked, and the diff it would answer with is empty.
+    it "answers true for a rebase stopped at a break, which leaves no pseudo-ref to find" do
+      seed = run_git("rev-parse", "HEAD")
+      commit!("two")
+      attempt("rebase", "-i", seed, "GIT_SEQUENCE_EDITOR" => "sed -i '1i break'")
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+
+    it "answers true for a conflicted cherry-pick" do
+      diverge!
+      attempt("cherry-pick", "other")
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+
+    it "answers true for a conflicted revert" do
+      commit!("one")
+      commit!("two")
+      attempt("revert", "--no-edit", "HEAD~1")
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+
+    it "answers true for a patch series git am stopped on" do
+      diverge!
+      patches = File.join(@dir, "patches")
+      run_git("format-patch", "-q", "-1", "-o", patches, "other")
+      attempt("am", *Dir[File.join(patches, "*.patch")])
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+
+    it "answers true during a bisect, whose HEAD is some commit nobody asked about" do
+      seed = run_git("rev-parse", "HEAD")
+      commit!("one")
+      commit!("two")
+      run_git("bisect", "start")
+      run_git("bisect", "bad", "HEAD")
+      run_git("bisect", "good", seed)
+
+      expect(checkout.operation_in_progress?).to be(true)
+    end
+  end
+
   # A git hook exports `-c` config to its children as GIT_CONFIG_PARAMETERS, and
   # GIT_CONFIG_COUNT/KEY_n/VALUE_n carry the same thing another way. Either
   # would let the hook's settings steer every git call lain makes.

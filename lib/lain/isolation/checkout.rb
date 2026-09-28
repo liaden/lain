@@ -37,6 +37,26 @@ module Lain
         ok?(shell) ? shell.stdout.strip : ""
       end
 
+      # Every shape of "git is half way through something", which is not the
+      # same question as {#merging?} and was measured not to be: a conflicted
+      # rebase, a cherry-pick, a revert and a bisect all answer `false` there,
+      # and so does a rebase stopped at a `break`, which leaves no pseudo-ref
+      # at ALL and parks HEAD behind the work. A reader that diffs such a tree
+      # gets a partial answer, or an empty one, with nothing to say it is not
+      # the truth. A merely DIRTY tree is not one of these: it has no operation
+      # to finish, and a commit-to-commit question cannot see it.
+      #
+      # `--git-path` in one call rather than six stats, for {#merging?}'s
+      # reason -- a linked worktree keeps these somewhere `.git/` is not -- and
+      # it answers relative to the working dir, so an absolute reply is left
+      # alone by `expand_path`.
+      IN_PROGRESS = %w[MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG].freeze
+
+      def operation_in_progress?
+        asked = IN_PROGRESS.flat_map { |marker| ["--git-path", marker] }
+        run("rev-parse", *asked).stdout.split("\n").any? { |path| File.exist?(File.expand_path(path, @dir)) }
+      end
+
       # MERGE_HEAD is git's own record that a merge is under way. Asked of git
       # rather than stat'ed on disk, because a LINKED worktree keeps it
       # somewhere `.git/MERGE_HEAD` is not.
