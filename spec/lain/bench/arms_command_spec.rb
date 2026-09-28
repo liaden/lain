@@ -596,7 +596,8 @@ RSpec.describe "lain bench record" do
   it "renders the sampler flags into the Context under the names they were typed" do
     run_record("--model", "qwen3", "--max-tokens", "64", "--temperature", "0.25", "--seed", "99")
 
-    expect(kwargs.fetch(:backend).context.extra).to eq("temperature" => 0.25, "seed" => 99)
+    expect(kwargs.fetch(:backend).context.extra).to eq("temperature" => 0.25, "seed" => 99,
+                                                       "num_batch" => 2048)
     expect(kwargs.fetch(:backend).context.model).to eq("qwen3")
   end
 

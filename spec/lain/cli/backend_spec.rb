@@ -1870,7 +1870,7 @@ RSpec.describe Lain::CLI::Backend do
     it "carries options.temperature 0 and options.seed 7 into the encoded Ollama payload" do
       request = render(provider: "ollama", model: nil, temperature: 0, seed: 7)
       payload = Lain::Provider::Ollama.new.encode(request)
-      expect(payload[:options].except(:num_predict)).to eq(temperature: 0, seed: 7)
+      expect(payload[:options].except(:num_predict)).to eq(temperature: 0, seed: 7, num_batch: 2048)
     end
 
     it "renders a Request whose cache_payload is identical to the flagless render" do
@@ -1880,18 +1880,23 @@ RSpec.describe Lain::CLI::Backend do
       expect(tuned).to have_same_digest_as(plain)
     end
 
-    it "omits absent sampler keys entirely (0 is present, nil is not)" do
+    it "omits absent sampler keys entirely (0 is present, nil is not), but always carries num_batch" do
       request = render(provider: "ollama", model: nil, temperature: 0, seed: nil)
       payload = Lain::Provider::Ollama.new.encode(request)
-      expect(payload[:options]).to eq(num_predict: 1024, temperature: 0)
+      expect(payload[:options]).to eq(num_predict: 1024, temperature: 0, num_batch: 2048)
     end
   end
 
-  # The two throughput knobs reach the wire the same way temperature
-  # and seed do -- through #sampler_extra, so an UNSET flag adds nothing to the
-  # options hash, which is what the third example pins. The hash itself is no
-  # longer evidence of a flag: the encoder seeds it with the generation cap,
-  # which every Request declares and no flag is needed to ask for.
+  # The two throughput knobs no longer reach the wire the same way. `num_ctx`
+  # still follows temperature and seed through #sampler_extra -- an UNSET flag
+  # adds nothing to the options hash, which is what the third example pins.
+  # `num_batch` is the opposite case: ollama's own server default (512) costs
+  # 1.31x prefill against llama.cpp's actual default (2048, measured -- see
+  # {Provider::Ollama::Encoding::SAMPLER_KEYS}), so #sampler_extra sends
+  # {Lain::CLI::Backend::DEFAULT_NUM_BATCH} whether or not a flag set it, on
+  # every ollama chat. The hash is still no longer evidence of a flag having
+  # been TYPED: the encoder seeds it with the generation cap regardless, and
+  # now num_batch rides along unasked too.
   describe "num_batch and num_ctx threading" do
     let(:store) { Lain::Store.new }
     let(:timeline) do
@@ -1909,18 +1914,19 @@ RSpec.describe Lain::CLI::Backend do
       expect(payload_for(num_batch: 2048)[:options]).to eq(num_predict: 1024, num_batch: 2048)
     end
 
-    it "carries an operator-set context length into the encoded request options" do
-      expect(payload_for(num_ctx: 8192)[:options]).to eq(num_predict: 1024, num_ctx: 8192)
+    it "carries an operator-set context length into the encoded request options, alongside the num_batch default" do
+      expect(payload_for(num_ctx: 8192)[:options]).to eq(num_predict: 1024, num_batch: 2048, num_ctx: 8192)
     end
 
-    it "adds no sampler key to the options when no sampler flag was given" do
-      expect(payload_for[:options].keys).to eq([:num_predict])
+    it "defaults num_batch to 2048 when no sampler flag was given, and adds no other sampler key" do
+      expect(payload_for[:options]).to eq(num_predict: 1024, num_batch: 2048)
     end
 
-    # The same claim from argv: the exe's flag band leaves the two runner knobs
-    # nil when neither a flag nor LAIN_NUM_BATCH/LAIN_NUM_CTX says anything, and
-    # the launch's profile carries that absence into the Backend.
-    it "sends no sampler knob for a flagless chat resolved through the exe's profile band" do
+    # The same claim from argv: the exe's flag band leaves num_ctx nil when
+    # neither a flag nor LAIN_NUM_CTX says anything, and the launch's profile
+    # carries that absence into the Backend -- but num_batch still defaults,
+    # because that default is #sampler_extra's own, not the profile's.
+    it "sends the num_batch default and no other sampler knob for a flagless chat through the exe's profile band" do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
       profile = with_env("LAIN_PROVIDER" => "ollama", "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil) do
@@ -1929,7 +1935,7 @@ RSpec.describe Lain::CLI::Backend do
       request = Lain::CLI::ChatLaunch.new(options, profile:).backend
                                      .context.render(timeline:, toolset: Lain::Toolset.new)
 
-      expect(Lain::Provider::Ollama.new.encode(request)[:options].keys).to eq([:num_predict])
+      expect(Lain::Provider::Ollama.new.encode(request)[:options].except(:num_predict)).to eq(num_batch: 2048)
     end
 
     # A sampler knob is not a prompt: the same cache-identity claim temperature
@@ -2014,11 +2020,14 @@ RSpec.describe Lain::CLI::Backend do
       expect(JSON.generate(transport.calls.last)).not_to include("num_batch")
     end
 
-    it "sends no sampler key at all on a flagless run" do
+    # The summarizer shares the chat's own default model and endpoint here, so
+    # it shares its runner too -- the num_batch default follows for the same
+    # reason a typed one would: a mismatched batch size reloads this runner.
+    it "sends the num_batch default and no other sampler key on a flagless run" do
       provider = answering_provider
       summarize_through(backend_for(provider: "ollama", max_tokens: 64), provider)
 
-      expect(ollama_options(provider.last_request).keys).to eq([:num_predict])
+      expect(ollama_options(provider.last_request).except(:num_predict)).to eq(num_batch: 2048)
     end
 
     it "carries the batch size and never the temperature or seed to a summarizer on the chat's own model" do

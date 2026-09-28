@@ -455,12 +455,14 @@ class LainCLI < Thor
     # Both are profile flags, so neither has a Thor `default:` ({endpoint}
     # says why), and {profile} reads their variables. The property that
     # reading must hold: they RESOLVE TO nil when the variable is unset.
-    # {Lain::CLI::Backend}'s sampler loop keeps a key only when its value is
-    # non-nil, so an unset knob contributes nothing and the payload stays
-    # byte-identical. A literal fallback would put an `options` object on every
-    # ollama request in the process, a wire change for callers that never
-    # asked for one. `backend_spec.rb`'s no-options examples are what fail if
-    # this stops holding.
+    # {Lain::CLI::Backend}'s sampler loop keeps `num_ctx` only when its value
+    # is non-nil, so an unset `--num-ctx`/`LAIN_NUM_CTX` still leaves the
+    # payload byte-identical. `num_batch` no longer holds that property, on
+    # purpose: {Lain::CLI::Backend::DEFAULT_NUM_BATCH} fills it in at 2048
+    # when this resolves to nil, because ollama's own server default costs
+    # prefill time measurably and nothing should have to opt into not paying
+    # it. `backend_spec.rb`'s and `cli_spec.rb`'s num_ctx-only no-options
+    # examples are what fail if `num_ctx`'s half stops holding.
     def self.throughput(thor, recorded)
       thor.method_option :num_batch, type: :numeric,
                                      desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \

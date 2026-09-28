@@ -49,6 +49,15 @@ module Lain
       # `seed` would move its answers.
       RUNNER_KEYS = %w[num_batch num_ctx].freeze
 
+      # ollama's own server default (512) undercorrects llama.cpp's actual
+      # default (2048); {Provider::Ollama::Encoding::SAMPLER_KEYS} carries the
+      # measured cost of staying at 512. Every other sampler knob reaches the
+      # wire only when a flag or the environment set it; this is the one
+      # {#sampler_extra} sends on every ollama chat regardless, because unlike
+      # temperature or seed it changes nothing about the answer, only how fast
+      # it arrives.
+      DEFAULT_NUM_BATCH = 2048
+
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama ollama-cloud].freeze
@@ -712,20 +721,23 @@ module Lain
       # -- the determinism recipe -- and a `--seed 0` are KEPT: an unset flag
       # arrives as nil, and nil is the only absence there is here.
       #
-      # The two throughput knobs are resolved HERE and not defaulted inside
-      # {Provider::Ollama::Encoding}, because they are tuning an operator opts
-      # into: a flag nobody set must add nothing to the payload. The generation
-      # cap is the opposite case and lives in the encoder for exactly that
-      # reason -- every Request already declares a max_tokens, so that one is on
-      # every ollama payload rather than waiting for a flag, and `options` is
-      # therefore no longer a witness to a flag having been set. Only an ollama
-      # chat gets {OLLAMA_ONLY_KEYS}. The two runner knobs come off the
+      # `num_ctx` is resolved HERE and not defaulted inside
+      # {Provider::Ollama::Encoding}, because it is tuning an operator opts
+      # into: a flag nobody set must add nothing to the payload. `num_batch` is
+      # the opposite case now -- {DEFAULT_NUM_BATCH} fills it in when neither a
+      # flag nor the environment did, so an ollama chat always sends one. The
+      # generation cap is a third case again and lives in the encoder for its
+      # own reason -- every Request already declares a max_tokens, so that one
+      # is on every ollama payload rather than waiting for a flag. Only an
+      # ollama chat gets {OLLAMA_ONLY_KEYS}. The runner knobs come off the
       # {#run_profile} and the sampling pair off the flags.
       def sampler_extra
         keys = Provider::Ollama::Encoding::SAMPLER_KEYS
         keys -= OLLAMA_ONLY_KEYS unless ollama_chat?
         runner = run_profile.to_options
-        keys.to_h { |key| [key, runner.fetch(key.to_sym) { @options[key.to_sym] }] }.compact
+        extra = keys.to_h { |key| [key, runner.fetch(key.to_sym) { @options[key.to_sym] }] }
+        extra["num_batch"] = DEFAULT_NUM_BATCH if ollama_chat? && extra["num_batch"].nil?
+        extra.compact
       end
 
       def ollama_chat? = OllamaTier::NAMES.include?(run_profile.provider)

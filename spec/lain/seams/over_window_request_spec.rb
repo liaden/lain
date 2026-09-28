@@ -230,9 +230,11 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       expect(chat_bodies.map { |body| body["truncate"] }).to all(be(false))
     end
 
-    # `options` is the generation cap and nothing else: every ollama request
-    # carries one, so its presence says nothing about this machinery -- what
-    # the example pins is that the refusal path added no field of its own.
+    # `options` is the runner knobs and nothing else -- the generation cap the
+    # CLI always sends, plus the batch size it defaults on the ollama arm. Every
+    # ollama request carries both, so their presence says nothing about this
+    # machinery; what the example pins is that the refusal path added no field
+    # of its own.
     it "sends an ordinary request with nothing added but that one key, and records no pressure" do
       _, ask = chat
 
@@ -240,7 +242,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
 
       expect(chat_bodies.first.keys)
         .to contain_exactly("model", "messages", "stream", "tools", "truncate", "options")
-      expect(chat_bodies.first["options"].keys).to eq(["num_predict"])
+      expect(chat_bodies.first["options"].keys).to contain_exactly("num_predict", "num_batch")
       expect(journaled("window_pressure")).to be_empty
     end
   end

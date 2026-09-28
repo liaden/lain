@@ -28,12 +28,14 @@ module Lain
         # the ONLY place it can be corrected. Measured on this box at 1.31x
         # prefill (docs/providers/ollama.md, "Serving performance").
         #
-        # Every key here is strictly opt-in: defaulting one on would be a wire
-        # change for a caller that asked for nothing, so resolution belongs at
-        # the CLI, where an operator's flag is. The generation cap is the
-        # opposite case and deliberately NOT one of these -- see
-        # {#encode_options} -- so `options` itself is no longer opt-in even
-        # though every member of this list still is.
+        # `temperature`, `seed` and `num_ctx` are strictly opt-in: defaulting
+        # one on would be a wire change for a caller that asked for nothing,
+        # so their resolution belongs at the CLI, where an operator's flag is.
+        # `num_batch` is the one exception -- {Lain::CLI::Backend::DEFAULT_NUM_BATCH}
+        # sends it on every ollama chat, flag or not, because the cost above is
+        # paid whether or not anyone asked for it. The generation cap is a third
+        # case again and deliberately NOT one of these -- see {#encode_options}
+        # -- so `options` itself is no longer opt-in either.
         SAMPLER_KEYS = %w[temperature seed num_batch num_ctx].freeze
 
         # `think` requests the reasoning trace onto `message.thinking` (qwen3

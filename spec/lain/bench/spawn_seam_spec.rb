@@ -217,7 +217,7 @@ RSpec.describe Lain::Bench::SpawnSeam do
       context = seam.call(journal:).context
 
       expect(context.model).to eq("qwen3")
-      expect(context.extra).to eq("temperature" => 0, "seed" => 7)
+      expect(context.extra).to eq("temperature" => 0, "seed" => 7, "num_batch" => 2048)
     end
 
     # The memo is right, but identity is not the rule -- CLI::Wiring builds
