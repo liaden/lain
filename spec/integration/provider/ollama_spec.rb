@@ -85,7 +85,14 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
     end
 
     it "accepts a duration string, which is why lain passes that spelling through unconverted" do
-      expect { chat("Reply with exactly the word: pong", extra: { "keep_alive" => "30s" }) }.not_to raise_error
+      # Asserts on the ANSWER and not merely on the absence of a raise: `not_to
+      # raise_error` alone passes for any reply at all, including one the server
+      # accepted and then said nothing in, which is the shape this chunk exists
+      # to stop reading as success.
+      response = chat("Reply with exactly the word: pong", extra: { "keep_alive" => "30s" })
+
+      expect(response.stop_reason).to eq(Lain::StopReason::END_TURN)
+      expect(response.text).not_to be_empty
     end
   end
 
