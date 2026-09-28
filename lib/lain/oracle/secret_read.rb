@@ -54,14 +54,51 @@ module Lain
     # rather than asserted. Nothing here reads it; the surface owns the threshold,
     # because routing is the surface's job.
     module SecretRead
+      # The one spelling of the three words a verdict may be. Named once and
+      # read by the field description, the inclusion check and the question
+      # template below, rather than repeated at each -- three copies of
+      # `%w[approve deny defer]` is the shape that drifts.
+      VERDICTS = %w[approve deny defer].freeze
+
+      # "approve, deny, or defer", built once from {VERDICTS} for the same
+      # reason: the prose in the description, the validator's message and the
+      # template all want the Oxford-comma sentence, not the bare Array.
+      VERDICT_SENTENCE = "#{VERDICTS[0..-2].join(", ")}, or #{VERDICTS.last}".freeze
+
       # `verdict` is the one field that decides anything; `confidence` is what a
       # threshold is applied to; `reason` rides along for the journal.
       SCHEMA = Class.new(Tool::Input) do
         field :verdict, :string, required: true,
-                                 description: "approve, deny, or defer -- defer whenever unsure"
+                                 description: "#{VERDICT_SENTENCE} -- defer whenever unsure"
         field :confidence, :float, required: true,
                                    description: "0.0 to 1.0: how certain this verdict is"
         field :reason, :string, description: "one-line justification, for the journal"
+
+        # A local model has been measured sending schema-valid nonsense past
+        # both fields -- a confidence of 90 where the schema means 0.0 to 1.0,
+        # and a verdict outside the three words asked for. Nothing downstream
+        # re-checks either: {Approval::SecretSurface#confident?} compares
+        # `confidence` straight against a threshold, so an unconstrained 90
+        # would outrank every real verdict forever, and an unrecognised
+        # `verdict` would merely fall through `#settle`'s two `if`s unnoticed
+        # rather than say so.
+        #
+        # `verdict` is normalized -- stripped, downcased -- ON ASSIGNMENT,
+        # before the inclusion check below ever runs. Skipping that would put
+        # this validator at odds with the comparison it exists to protect:
+        # {Approval::SecretSurface#confident?} already tolerates case and
+        # whitespace (`answer.verdict.to_s.strip.downcase == verdict`), so an
+        # exact inclusion check would hard-reject "Approve" or "approve\n" as
+        # an oracle fault even though the surface would have matched either
+        # correctly. Normalizing here, not there, is what makes the STORED
+        # answer canonical rather than merely tolerated at one call site.
+        def verdict=(value)
+          super(value.nil? ? value : value.to_s.strip.downcase)
+        end
+
+        validates :verdict, inclusion: { in: VERDICTS, message: "must be #{VERDICT_SENTENCE}" }
+        validates :confidence, numericality: { greater_than_or_equal_to: 0.0, less_than_or_equal_to: 1.0 },
+                               allow_nil: true
       end
 
       # Three slots, and the absence of a fourth is the point (see the module
@@ -93,8 +130,9 @@ module Lain
         and deferring only leaves it to them.
 
         Reply with a JSON object and nothing else, in exactly this shape:
-        {"verdict": "approve|deny|defer", "confidence": 0.0, "reason": "one line"}
+        {"verdict": "#{VERDICTS.join("|")}", "confidence": 0.0, "reason": "one line"}
       ERB
+                 .freeze
 
       # @param tier [Symbol] folded into the Definition's digest, so the same
       #   question answered by two tiers is two oracles at two addresses (see

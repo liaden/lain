@@ -273,6 +273,43 @@ RSpec.describe Lain::Oracle::SecretRead do
       expect { answer("verdict" => "approve", "confidence" => 1.0, "contents" => "sk-ant-...") }
         .to raise_error(Lain::Oracle::InvalidAnswer)
     end
+
+    # The measurement behind the card: a local model answered `"confidence": 90`
+    # where the schema means 0.0 to 1.0 -- schema-valid JSON, nonsense as a value.
+    # `Approval::SecretSurface#confident?` compares this number straight against a
+    # threshold with no range check of its own, so an unconstrained 90 would
+    # outrank any real verdict forever.
+    it "refuses a confidence outside 0.0 to 1.0, not just a missing one" do
+      expect { answer("verdict" => "approve", "confidence" => 90) }
+        .to raise_error(Lain::Oracle::InvalidAnswer, /confidence/i)
+    end
+
+    it "accepts confidence at either edge of the allowed range" do
+      expect(answer("verdict" => "approve", "confidence" => 1.0).await.confidence).to eq(1.0)
+      expect(answer("verdict" => "deny", "confidence" => 0.0).await.confidence).to eq(0.0)
+    end
+
+    # The reply's `verdict` is a free-form string the schema only DESCRIBES as
+    # "approve, deny, or defer" -- nothing stopped a model from sending a fourth
+    # word until this validation exists, and the error names the three it does
+    # allow rather than reporting a bare "not included in the list".
+    it "refuses a verdict outside the three allowed words, naming them" do
+      expect { answer("verdict" => "maybe", "confidence" => 0.9) }
+        .to raise_error(Lain::Oracle::InvalidAnswer, /approve.*deny.*defer/i)
+    end
+
+    # `Approval::SecretSurface#confident?` compares with
+    # `answer.verdict.to_s.strip.downcase == verdict`, deliberately tolerant of
+    # case and whitespace. An exact inclusion check disagrees with the
+    # comparison it exists to protect: it would hard-reject exactly the replies
+    # `confident?` would have matched, turning a decided approval into an
+    # oracle fault. Normalizing here keeps the two in agreement and makes the
+    # stored answer canonical, not merely lenient at the point of comparison.
+    it "accepts a verdict differing only by case or surrounding whitespace, normalized to the canonical word" do
+      expect(answer("verdict" => "Approve", "confidence" => 0.9).await.verdict).to eq("approve")
+      expect(answer("verdict" => " approve ", "confidence" => 0.9).await.verdict).to eq("approve")
+      expect(answer("verdict" => "approve\n", "confidence" => 0.9).await.verdict).to eq("approve")
+    end
   end
 
   # The calibration half of the card: a local model's self-reported confidence
