@@ -48,8 +48,11 @@ module Lain
     # not a third three-valued set -- it holds one member, deliberately.)
     VERDICTS = %w[pass fail unverified].freeze
 
-    # The risks a plan's cards carry, which the ladder reads to decide how far a
-    # cheap verdict may be trusted.
+    # The risks a plan's cards carry, which the ladder reads to decide how much
+    # corroboration a verdict needs. At any rung, never a veto: an earlier cut read
+    # this as a bound on a CHEAP verdict and escalated every high-risk criterion
+    # unconditionally, which spent the whole ladder and then owed a manual pass on
+    # exactly the cards a gate exists for.
     RISKS = %w[low medium high].freeze
 
     # What it means for a QA record to say nothing, in ONE place. {Blankness} is
