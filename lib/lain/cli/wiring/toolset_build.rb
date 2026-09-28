@@ -69,6 +69,16 @@ module Lain
         # role.
         attr_reader :role_spawn, :auto_surface, :docent
 
+        # The run's ONE {Lain::Attachment::Store}, readable from construction
+        # rather than from {#build}: it is a place, not a discovery. Built here
+        # because two consumers reach for it from opposite ends -- the tool that
+        # puts an attachment's bytes there, and the request stage that reads
+        # them back on the way to the wire -- and a second construction site is
+        # how those two come to address two directories while every spec passes.
+        #
+        # @return [Lain::Attachment::Store]
+        attr_reader :attachments
+
         # The run's collaborators, each INJECTED rather than resolved here for
         # one reason: a second construction site would be a second answer to a
         # question the run may only have one answer to -- which spool round
@@ -143,6 +153,12 @@ module Lain
         #   unrecognized `--exec` refuses before {Chronicle#start} pins the
         #   session header -- the refusal-before-journal ordering
         #   {Wiring#fleet_isolation} keeps.
+        # @param attachments [Lain::Attachment::Store] where bytes a turn must not
+        #   carry are kept, keyed by the PROJECT rather than the session so a
+        #   resumed chat and a fork resolve the digests the first one wrote.
+        #   Resolved here for `exec:`'s reason -- where a capability's bulk lands
+        #   is a fact about the toolset -- and injectable all the same, which is
+        #   what lets a spec drive it against a tmpdir.
         # @param verdict [#call] `String -> Shell::Verdict::Decision`, the
         #   session's ONE shell verdict, threaded to {BaseTools} and no
         #   further. NOT resolved here, where `exec:` is, and the difference is
@@ -172,10 +188,11 @@ module Lain
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        root:, switchboard:, askers:, usage: nil,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
-                       handback: Handback.none,
+                       handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
+          @attachments = attachments
           @exec = exec
           @verdict = verdict
           @epic = epic

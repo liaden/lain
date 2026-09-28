@@ -17,8 +17,15 @@ module Lain
   # * +is_a?(self.class)+ is NOT redundant. Without it a digest collision across
   #   types collapses an Item and a Node sharing a digest into one value. The
   #   guard is receiver-class-directional -- under subclassing, parent == child
-  #   holds while child == parent does not -- but no production subclass of an
-  #   includer exists today, so the asymmetry is latent.
+  #   holds while child == parent does not, and both hash alike, so a Hash
+  #   holding one of each would answer by insertion order. There is one
+  #   production subclass, +Workspace::Snapshot::Blob+ over
+  #   +ContentAddressed::Blob+, and what keeps the asymmetry out of reach there
+  #   is the tag: the subclass closes the tag keyword, so the only parent that
+  #   could equal it is one built with +tag: "blob"+, which nothing constructs.
+  #   Out of reach is not the same as fixed -- making the guard symmetric is the
+  #   real answer, and it moves the refusals pinned below, so it goes in its own
+  #   commit rather than riding a change that merely gained a subclass.
   # * No +rescue NoMethodError+ around +other.digest+. It was proposed and
   #   rejected: it swallows a NoMethodError raised *inside* a broken
   #   +other.digest+ -- a genuine bug in the collaborator -- as a silent

@@ -50,6 +50,21 @@ RSpec.describe Lain::Workspace::Snapshot do
       store.put(first)
       expect { store.put(described_class.new(bytes: "same")) }.not_to change(store, :size)
     end
+
+    # Captured by running these three inputs against the tree as it stood
+    # BEFORE the framing was extracted into {Lain::ContentAddressed::Blob}, so
+    # they are evidence that the extraction moved no recorded snapshot digest.
+    # The extraction had to keep the `blob` tag byte-identical to do that; the
+    # file map digests further down this file are the same claim at the level
+    # of a whole snapshot payload.
+    it "addresses the pre-extraction digests, byte for byte" do
+      expect(described_class.new(bytes: "hello").digest)
+        .to eq("blake3:9db8039d1b509628ad5b125ea89780b69fcde5c272215d690a2e4dc69eac75ad")
+      expect(described_class.new(bytes: "").digest)
+        .to eq("blake3:4a0b6603381c7c38c557e9ceb3cba8876f0a7863146e7309801352e80b073b65")
+      expect(described_class.new(bytes: (+"\xff\x00\xfe").force_encoding(Encoding::BINARY)).digest)
+        .to eq("blake3:34dba65cf73fdba047fe5404d9c5a98d7bbeba767de3f029ef19a81334810e0e")
+    end
   end
 
   # The byte-identity proof. Every FILE digest below was captured by running a

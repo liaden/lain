@@ -50,30 +50,16 @@ module Lain
       # snapshot. Delegated rather than duplicated, so the two cannot drift.
       SCOPE_NOTE = Scope::WriteSet::NOTE
 
-      # Addressed over the RAW bytes -- not through {Canonical}, which pins UTF-8
-      # and would refuse arbitrary file content. The git-style "blob <size>\0"
-      # header domain-separates blob digests from the JSON-canonical digests
-      # every other Store object uses, so byte content that happens to spell a
-      # canonical dump cannot collide.
-      class Blob
-        include ContentAddressed
-
-        attr_reader :bytes, :digest
+      # A file's bytes at their content address. The framing and the reason for
+      # it are {ContentAddressed::Blob}'s; what lives here is the tag, and the
+      # tag is the whole of this class's identity: every snapshot digest ever
+      # recorded rests on this word, so changing it moves them all.
+      class Blob < ContentAddressed::Blob
+        TAG = "blob"
 
         def initialize(bytes:)
-          # `String#b` copies into BINARY, so identical bytes address identically
-          # whatever encoding the caller read under. The header is `.b`'d too:
-          # interpolating binary bytes into a UTF-8 literal raises
-          # Encoding::CompatibilityError, concatenation does not.
-          @bytes = bytes.b.freeze
-          @digest = -"#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex("blob #{@bytes.bytesize}\0".b + @bytes)}"
-          freeze
+          super(bytes:, tag: TAG)
         end
-
-        def to_s
-          "#<Lain::Workspace::Snapshot::Blob #{bytes.bytesize}B #{digest[0, 19]}...>"
-        end
-        alias inspect to_s
       end
 
       # What the last write's scope refused for falling outside the root. Empty

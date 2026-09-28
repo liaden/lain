@@ -358,13 +358,14 @@ module Lain
       # inserted above a secret must not invalidate it, or a region's address
       # would be whole-file behavior wearing a region's name.
       #
-      # The framing is git's -- a type word, the byte length, a NUL -- borrowed
-      # from `workspace/snapshot.rb:75`, with the type word deliberately changed
-      # to `sensitive-region-v1`. That file's own comment says the header exists
-      # TO domain-separate; reusing `blob` would make a region's digest identical
-      # to a snapshot blob's for the same bytes, silently merging two
-      # content-addressing keyspaces. The house precedent is Hunk's
-      # `hunk-content-v1`/`hunk-span-v1`.
+      # The framing is git's -- a type word, the byte length, a NUL -- the same
+      # one {ContentAddressed::Blob} builds, with the type word deliberately
+      # changed to `sensitive-region-v1`. That class exists TO domain-separate;
+      # reusing `blob` would make a region's digest identical to a snapshot
+      # blob's for the same bytes, silently merging two content-addressing
+      # keyspaces. The house precedent is Hunk's
+      # `hunk-content-v1`/`hunk-span-v1`. Still hand-rolled below rather than
+      # built through that class -- the migration is its own change.
       #
       # A Region is shareable, but it can only be CONSTRUCTED on the main
       # Ractor, because `Ext.blake3_hex` is not ractor-safe -- the same recorded
