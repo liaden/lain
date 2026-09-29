@@ -107,7 +107,6 @@ module RootDefaultDiscipline
     # snapshots are rooted at the working directory, exactly as they were
     # under the writer default this replaced. So are a bench arm's and a spec's.
     "lain/agent/snapshot_slot.rb" => %w[initialize:root],
-    "lain/approval/remembered.rb" => %w[initialize:root],
     "lain/approval/risk.rb" => %w[initialize:root],
     "lain/cli/command/meta.rb" => %w[initialize:root],
     "lain/cli/command/review.rb" => %w[initialize:root],

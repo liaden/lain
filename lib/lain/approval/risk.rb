@@ -38,10 +38,7 @@ module Lain
     # Not "cannot be forged": Ruby has no hard `private`, so `allocate` and
     # `send` remain -- `token_for` below spells `Keepsake.send(:for, call)`
     # itself. What the type buys is that every ACCIDENTAL route refuses, which
-    # is the class of mistake that reaches review, and
-    # {Remembered::Persister#remember} additionally refuses a keepsake that is
-    # not deeply frozen -- which is what `allocate` produces and {Keepsake.for}
-    # never does.
+    # is the class of mistake that reaches review.
     #
     # == What it is not
     #

