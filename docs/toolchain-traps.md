@@ -349,6 +349,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   the run's example count drops by about 1,800 as well. Check the count against this name before
   reading it as a dead worker.
 
+  Added 2026-09-29, red once in a whole-suite run (seed 7814) and green 3 of 3 alone, failing at
+  `Socket.unix` on the headless editor's socket before the editor was listening: `Lain::Frontend::Neovim
+  lain://timeline reflects a turn commit does not touch lain://timeline for an event that names no
+  turn`.
+
   Added 2026-09-21, from ten hook-verified landings on a box with one core pinned by an unrelated
   job. Each of these reddened at least one pre-commit suite and then passed 3 of 3 serial runs of
   its file:
