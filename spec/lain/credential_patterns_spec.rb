@@ -145,6 +145,17 @@ RSpec.describe Lain::CredentialPatterns do
     end
   end
 
+  describe "credential-file shapes on the content side" do
+    it "names each format on the content side and none on the write side" do
+      lines = ["machine h login u password hunter2hunter2", "db.example:5432:app:alice:s3cretpass",
+               "alice:$apr1$abc$0123456789abcdefghijk", "password s3cretpass"]
+      named = /netrc|pgpass|htpasswd|msmtprc/
+
+      expect(lines.map { names_matching(:write, _1) }).to all(be_empty)
+      expect(lines.map { names_matching(:content, _1) }).to all(include(a_string_matching(named)))
+    end
+  end
+
   describe "assignment shapes on the content side" do
     it "names a pattern for a dotenv line" do
       line = "ANTHROPIC_API_KEY=sk-ant-0000000000000000000"

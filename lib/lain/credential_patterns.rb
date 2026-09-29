@@ -100,7 +100,31 @@ module Lain
       "yaml assignment" => /^[ \t]*[A-Za-z_][A-Za-z0-9_-]*:[ \t]+\S+/
     )
 
-    CONTENT = unreserved(WRITE.merge(ASSIGNMENTS))
+    # Credential files whose lines carry no `=` or `: ` for the assignment shapes
+    # to key on. The secret is the named `value` group, so a detector can mask it
+    # alone. Each is anchored to its own file grammar: a netrc entry needs
+    # both a `login` and a `password`, a pgpass line is exactly five fields with a
+    # numeric or `*` port, a non-numeric host and only `\:` escaping a colon in
+    # a field, and an htpasswd value must be a crypt or `{SHA}` hash. That
+    # keeps `/etc/passwd`, `/etc/shadow` and timestamped log lines region-free.
+    #
+    # KNOWN IMPRECISION for msmtprc: a bare `password <word>` line has no
+    # neighbour that could confirm the file, and it must stay a region because
+    # that is the whole grammar, so a prose line such as `password required` is
+    # masked. Recorded rather than narrowed, on the ground that a false mask costs
+    # one release decision and a missed credential costs the credential. A netrc
+    # entry with no `login` is likewise not seen, because requiring one is what
+    # keeps `default password reset` prose clean.
+    FILE_FORMATS = unreserved(
+      "netrc password" => /\b(?:machine[ \t]+\S+|default)[ \t]+
+        (?:login[ \t]+\S+[ \t]+password[ \t]+(?<value>\S+)|
+        password[ \t]+(?<value>\S+)[ \t]+login[ \t]+\S+)/x,
+      "pgpass entry" => /^(?!\d+:)(?:[^\s:\\]|\\.)+:(?:\d+|\*):[^\s:]+:[^\s:]+:(?<value>(?:[^\s:\\]|\\.)+)$/,
+      "htpasswd hash" => /^[^\s:]+:(?<value>\$(?:apr1|2[abxy]|[156])\$\S+|\{SHA\}\S+)$/,
+      "msmtprc password" => /^[ \t]*password[ \t]+(?<value>\S+)[ \t]*$/
+    )
+
+    CONTENT = unreserved(WRITE.merge(ASSIGNMENTS, FILE_FORMATS))
 
     # WRITE first, so a line that is both an assignment and a known issuer
     # prefix is journaled under the shape that says more.

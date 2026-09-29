@@ -687,6 +687,50 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
   end
 
+  describe ".detect over credential-file formats" do
+    {
+      "a netrc machine line" => ["machine h login u password hunter2hunter2", "hunter2hunter2"],
+      "a pgpass entry" => ["db.example:5432:app:alice:s3cretpass", "s3cretpass"],
+      "an htpasswd entry" => ["alice:$apr1$abc$0123456789abcdefghijk", "$apr1$abc$0123456789abcdefghijk"],
+      "an msmtprc password line" => ["password s3cretpass", "s3cretpass"]
+    }.each do |label, (line, value)|
+      it "covers the secret value of #{label} with one region" do
+        regions = detect("# header\n#{line}\n")
+
+        expect(regions.map { _1.bytes.dup.force_encoding(Encoding::UTF_8) }).to eq([value])
+      end
+    end
+
+    it "leaves prose that merely mentions a password alone" do
+      expect(detect("Reset your password from the settings page.\nThe password is stored hashed.\n")).to be_empty
+    end
+
+    {
+      "an escaped-colon pgpass host" => ['\:\:1:5432:db:user:pw', "pw"],
+      "a netrc entry with password before login" => ["machine h password p4ssw0rd login u", "p4ssw0rd"],
+      "a netrc default entry" => ["default login u password p4ssw0rd", "p4ssw0rd"]
+    }.each do |label, (line, value)|
+      it "covers the secret of #{label}" do
+        expect(detect("#{line}\n").map { _1.bytes.dup.force_encoding(Encoding::UTF_8) }).to eq([value])
+      end
+    end
+
+    [
+      "12:30:45:foo:bar",
+      "host:80:a:b:c:d:e",
+      "daemon:*:18474:0:99999:7:::",
+      "nobody:*:65534:65534:nobody:/nonexistent:/usr/bin/false",
+      "root:x:0:0:root:/root:/bin/bash",
+      "root:!:19000:0:99999:7:::",
+      "the machine foo password reset",
+      "default password reset"
+    ].each do |line|
+      it "reports no region for #{line.inspect}" do
+        expect(detect("#{line}\n")).to be_empty
+      end
+    end
+  end
+
   describe Lain::Sensitivity::Regions::Region do
     def region(bytes) = described_class.new(start: 0, bytes:, reason: "dotenv assignment", detector: :pattern)
 

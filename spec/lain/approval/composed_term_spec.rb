@@ -572,6 +572,16 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
+    it "refuses a world-readable file under an unknown name that holds a netrc machine line" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(root)
+        write_file(root, "notes.cfg", "machine h login u password hunter2hunter2\n", 0o644)
+        expect_allowed_by_the_verdict("cat notes.cfg")
+
+        expect(rule_for(home, root).decide(call_of("cat notes.cfg", cwd: root))).to be_nil
+      end
+    end
+
     it "refuses a file its owner closed to everyone else, whatever it is called" do
       in_tree do |root, home|
         FileUtils.mkdir_p(root)

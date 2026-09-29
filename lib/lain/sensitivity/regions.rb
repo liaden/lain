@@ -203,6 +203,8 @@ module Lain
         def matches(scanned, shape) = scanned.to_enum(:scan, shape).map { Regexp.last_match }
 
         def pattern_candidate(name, match)
+          return value_group_span(match, name) if match.names.include?("value")
+
           assignment = ASSIGNMENT.match(match[0])
           return span(match.begin(0), match[0], name, :pattern) unless assignment
 
@@ -210,6 +212,8 @@ module Lain
 
           value_span(match, assignment, name)
         end
+
+        def value_group_span(match, name) = span(match.begin(:value), match[:value], name, :pattern)
 
         # The emitted span is the UNQUOTED value. Quotes are the file's syntax,
         # not the secret: masking a span that carries its own delimiters would
