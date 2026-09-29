@@ -332,14 +332,15 @@ module Lain
           @droppable = false
         end
 
-        # @return [Boolean] whether the last recorded decision had a head to drop
+        # @return [Boolean] whether the last recorded decision had a head to
+        #   drop that a rewrite would actually shrink
         def droppable? = @droppable
 
         # @param diagnosis [Diagnosis] this turn's
         # @return [self]
         def record(diagnosis)
           @journal << diagnosis.decision
-          @droppable = !diagnosis.decision.nothing_droppable
+          @droppable = !diagnosis.decision.nothing_droppable && !diagnosis.decision.would_not_shrink
           stalled = diagnosis.stalled?
           @sink.puts(diagnosis.line) if stalled && !@stalled
           @stalled = stalled

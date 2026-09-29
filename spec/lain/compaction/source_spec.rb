@@ -2733,6 +2733,21 @@ RSpec.describe Lain::Compaction::Source do
       expect(cuts).to be_empty
     end
 
+    # One droppable turn is too small for a summary to beat: the derivation
+    # reported would_not_shrink, so an advance is not a move left to make.
+    describe "when the one droppable turn would not shrink" do
+      let(:keep_last) { 4 }
+
+      it "hands off instead of waiting on a compaction that cannot help" do
+        line = small_timeline(5)
+        built = handing_off(need: build_need(byte_threshold: 1), hard_cap: 1)
+
+        expect(refused_render(built, line)).to be(true)
+        expect(cuts.last).to include("kind" => "handoff")
+        expect(built.droppable?).to be(false)
+      end
+    end
+
     it "declines when there is nothing but the ask to replace" do
       line = Lain::Timeline.empty(store: Lain::Store.new).commit(role: "user", content: [block(1)])
       built = handing_off
