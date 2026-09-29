@@ -55,7 +55,12 @@ module StopAsk
 
     runaway = {
       "parked" => -> { Enumerator.produce { conductor.read_reply("[y/N] run bash? ") }.each { |answer| answer } },
-      "looping" => -> { Enumerator.produce { Async::Task.current.sleep(0.05) }.each { |tick| tick } }
+      "looping" => -> { Enumerator.produce { Async::Task.current.sleep(0.05) }.each { |tick| tick } },
+      "ask_human" => lambda {
+        asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new),
+                                          observer: chronicle.observer, journal: chronicle.record_journal)
+        asker.call({ "question" => "which db?" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+      }
     }.fetch(shape)
 
     File.write(File.join(dir, "bound"), "yes")
@@ -128,6 +133,27 @@ module StopAsk
       File.readlines(file).filter_map { |line| parsed(line) }.select { |record| record["type"] == type }
     end
 
+    # The session file folded the way the live views fold it: the HUD's count
+    # and lain://inbox each see the Q arrive, then every consumption record.
+    def inbox_after_replay
+      hud = Lain::StatusFeed::Inbox.new
+      view = Lain::Frontend::Neovim::InboxView.new
+      asked = records("message").map { |record| telemetry("Message", record) }.select { |m| m.to == "human" }
+      drawn = asked.map { |question| arrival(hud, view, question) }
+      drawn += records("questions_consumed").map { |record| consumption(hud, view, record) }
+      { hud: hud.pending_size, buffer: drawn.compact.last.grep(/which db/).size, asked: asked.size }
+    end
+
+    def arrival(hud, view, question)
+      hud.arrived(question)
+      view.update(question)
+    end
+
+    def consumption(hud, view, record)
+      hud.retire(record["digests"])
+      view.update(telemetry("QuestionsConsumed", record))
+    end
+
     def close
       @writer&.close
       @drain&.kill
@@ -143,6 +169,10 @@ module StopAsk
     end
 
     private
+
+    def telemetry(name, record)
+      Lain::Telemetry.const_get(name).new(**record.except("type", "at", "ts").transform_keys(&:to_sym))
+    end
 
     def parsed(line)
       JSON.parse(line)
@@ -211,5 +241,19 @@ RSpec.describe "stopping a running ask from an input pane", :seam do
     expect(offered).to be(true)
     expect_stop_recorded
     expect_session_open
+  end
+
+  it "names the question consumed when the ask parked on ask_human is stopped" do
+    cockpit.asking("ask_human")
+
+    cockpit.type("\x03")
+    cockpit.settles { cockpit.screen.include?("[s] stop this ask") || nil }
+    cockpit.type("s")
+
+    expect_stop_recorded
+    consumed = cockpit.settles { cockpit.records("questions_consumed").first }
+    expect(consumed["digests"].size).to eq(1)
+    expect(consumed["turn"]).to be_nil
+    expect(cockpit.inbox_after_replay).to eq(hud: 0, buffer: 0, asked: 1)
   end
 end

@@ -130,7 +130,7 @@ module Lain
         bind_editor(nil)
         @changeset_review = NoReview
         @reviews = Reviews.new
-        @inbox = Pending.new
+        @inbox = Pending.new(live: ->(digest) { ask_human.awaiting?(digest) })
         @reads = OpenReads.new
         @queued = questions ? Queued.new(questions) : Queued::NOTHING
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
@@ -1117,11 +1117,16 @@ module Lain
       class Pending
         include Enumerable
 
-        def initialize = @items = []
+        # `live` is asked about each digest, so a question whose wait ended
+        # without an answer (a stopped ask) stops being offered.
+        def initialize(live: ->(_digest) { true })
+          @live = live
+          @items = []
+        end
 
-        def each(&block) = @items.each(&block)
+        def each(&block) = current.each(&block)
         def <<(item) = @items << item
-        def empty? = @items.empty?
+        def empty? = current.empty?
 
         # Non-blocking: every arrival on the queue right now, without parking a
         # fiber on an empty one. `dequeue(timeout: 0)` answers nil on empty, so
@@ -1129,6 +1134,7 @@ module Lain
         # safe because nothing forces it past that point.
         def gather(queue)
           @items.concat(Enumerator.produce { queue.dequeue(timeout: 0) }.take_while { |item| !item.nil? })
+          current
         end
 
         # By NAME, never by position: the item an answer belongs to need not be
@@ -1139,7 +1145,13 @@ module Lain
         # What an answer naming no set of its own means: the oldest item listed.
         # {Unlisted} when nothing is, so the refusal is the directory's rather
         # than a nil's.
-        def oldest = @items.first || Unlisted
+        def oldest = current.first || Unlisted
+
+        private
+
+        # A reply that names no question must settle nothing, so a nameless item
+        # stays listed rather than being judged dead by a predicate it cannot answer.
+        def current = @items = @items.select { |item| item.digest.nil? || @live.call(item.digest) }
       end
 
       # One human answer, read, paired with the set it answers. Holds the

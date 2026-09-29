@@ -27,8 +27,11 @@ module Lain
         #   refuses -- see {Lain::Tools::AskHuman::Unattended} -- and this is
         #   the one place that decides, because it is the one place that builds
         #   an asker.
-        def initialize(observer:, attended: true)
+        # @param journal [#<<] where a wait's end names its question consumed;
+        #   the chronicle's record journal, so the live inbox views fold it.
+        def initialize(observer:, attended: true, journal: Lain::Channel::Null.instance)
           @observer = observer
+          @journal = journal
           @attended = attended
           @questions = Async::Queue.new
           @directory = Lain::Tools::AskHuman::Directory.new
@@ -74,7 +77,7 @@ module Lain
         def asker_over(parent, agent:, &notify)
           return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @attended
 
-          Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:)
+          Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:, journal: @journal)
         end
 
         # ONE arrival, and what rides the queue is the inbox item

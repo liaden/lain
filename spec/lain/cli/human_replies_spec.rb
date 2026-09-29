@@ -449,6 +449,21 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
     end
 
+    it "offers nothing for a question whose ask was stopped" do
+      Sync do |task|
+        run = task.async { ask_human.call({ "question" => "which db?" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)) }
+        task.yield
+        run.stop
+        allow(conductor).to receive(:read_reply).and_return("")
+        output.truncate(output.rewind)
+
+        replies.drain_at_prompt
+
+        expect(replies.pending?).to be(false)
+        expect(output.string).not_to include("which db?")
+      end
+    end
+
     # Defect 3: the ensure retired the HEAD, which need not be the item the
     # answer belonged to -- so answering the arriving question dropped the
     # older one from the human's only view of it, while the set it named
@@ -472,28 +487,34 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(output.string).not_to include("q2?")
     end
 
-    # The directory refuses a name nobody holds rather than guessing, and the
-    # refusal is written to be read at a reply prompt: it says the LINE was
-    # stale, not that the answer was wrong.
-    #
-    # It also RETIRES the line, and that half changed in review. It used to
-    # render and return, which left the dead question listed and offered it to
-    # every later `/inbox` -- "a line that lists forever and can only ever
-    # refuse". Nothing else on this path retires it: a drain calls
-    # `#resolve_reply` directly, never through {AnswerLoop}, whose own ensure is
-    # what settles the `human>` path. The refusal MEANS the set is gone, so
-    # nothing is lost by letting the line go with it -- and the re-queue rule
-    # (see "a surface stopped while it still holds an unanswered question") is
-    # what makes a drain the likely finder of a ghost in the first place.
-    it "tells the human when an answer names a set nothing is holding, and lets the stale line go" do
+    it "retires the line when the set dies between /inbox listing it and the reply" do
+      Sync do
+        pending = ask_human.ask(announcement("which db?"))
+        allow(conductor).to receive(:read_reply) do
+          ask_human.withdraw(pending)
+          "too late"
+        end
+
+        replies.drain_at_prompt
+
+        expect(output.string).to include("inbox line offering it is stale")
+        expect(replies.pending?).to be(false)
+      end
+    end
+
+    # A line naming a set no asker still awaits is dropped when the list is
+    # gathered, so `/inbox` never offers a question that can only refuse. The
+    # refusal itself survives for the ghost that dies AFTER it was offered (see
+    # "retires the line when the set dies between /inbox listing it and the reply").
+    it "does not offer a line naming a set nothing is holding, and lets it go" do
       Sync do
         questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "gone?", from: "blake3:aaa",
                                                                  digest: "blake3:deadbeef", asked_at: Time.now))
         allow(conductor).to receive(:read_reply).and_return("too late")
 
-        replies.drain_at_prompt
+        expect(replies.drain_at_prompt).to eq("")
 
-        expect(output.string).to include("blake3:deadbeef").and include("inbox line offering it is stale")
+        expect(output.string).not_to include("gone?")
         expect(replies.pending?).to be(false)
       end
     end
@@ -1099,26 +1120,19 @@ RSpec.describe Lain::CLI::HumanReplies do
         .to raise_error(Lain::Tools::AskHuman::NoPendingQuestion, /inbox line offering it is stale/)
     end
 
-    # The other half of that trade, and the reason it is affordable: a ghost is
-    # served ONCE. The next surface takes it off the queue, the human types, the
-    # directory refuses it as stale in words they can act on, and the ensure
-    # retires it -- so nothing lists a question that can only ever refuse for a
-    # second time.
-    #
-    # BOTH paths owe that, and the second one is the one this card is about.
-    # `/inbox` does not go through {AnswerLoop} at all: `#drain_at_prompt` calls
-    # `#resolve_reply` directly, so a refusal that only RENDERS leaves the line
-    # listed and every later `/inbox` offers the dead question again -- which is
-    # verbatim the property the inverted assertion above was traded against, and
-    # the re-queue rule is what puts ghosts where `/inbox` finds them.
-    it "lets a ghost go when it is /inbox that drained it" do
+    # A ghost is served ONCE by the answer loop: the next surface takes it off
+    # the queue, the human types, the directory refuses it as stale, and the
+    # ensure retires it. `/inbox` never offers one at all, because a drain only
+    # lists sets an asker still awaits.
+    it "lets a ghost go when /inbox finds its wait already ended" do
       strand_a_ghost
       allow(conductor).to receive(:read_reply).and_return("too late")
+      already_printed = output.string.length
 
       answer = replies.drain_at_prompt
 
-      expect(answer).to include("too late")
-      expect(output.string).to include("inbox line offering it is stale")
+      expect(answer).to eq("")
+      expect(output.string[already_printed..]).not_to include("which db?")
       expect(replies.pending?).to be(false)
     end
 
@@ -2828,6 +2842,20 @@ RSpec.describe Lain::CLI::Wiring::Askers do
       expect(item.digest).to eq(asker.last_question.digest)
       expect(item.from).to eq(asker.last_question.from)
       expect(item.question.set).to eq(set)
+    end
+  end
+
+  it "hands its journal to every asker, so a stopped ask is named consumed there" do
+    journal = []
+    wired = described_class.new(observer: Lain::Event::ChainWriter::Null.new, journal:)
+    Sync do |task|
+      asker = wired.enrol(parent).asker
+      run = task.async { asker.call({ "question" => "which db?" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)) }
+      task.yield
+      digest = asker.last_question.digest
+      run.stop
+
+      expect(journal.grep(Lain::Telemetry::QuestionsConsumed).map(&:digests)).to eq([[digest]])
     end
   end
 

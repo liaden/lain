@@ -65,6 +65,7 @@ module Lain
         module Unheld
           def self.asked(digest) = digest
           def self.holds?(_digest) = false
+          def self.awaiting?(_digest) = false
           def self.reply(_answer, digest) = raise(NoPendingQuestion, Directory.unanswerable(digest))
           def self.deregister = nil
           def self.size = 0
@@ -88,6 +89,8 @@ module Lain
             # directory's own refusal because the asker's version describes the
             # ASKER's state to a debugger, where the human who just typed an
             # answer needs to hear that the line was stale and nothing was lost.
+            def awaiting?(digest) = @asker.awaiting?(digest)
+
             def reply(answer, digest)
               @asker.reply(answer, digest)
             rescue NoPendingQuestion
@@ -102,6 +105,8 @@ module Lain
           # outlived its registration would be a map growing with the SESSION
           # instead of with the fleet.
           module Answered
+            def self.awaiting?(_digest) = false
+
             def self.reply(_answer, digest)
               raise Promise::AlreadyResolved, "the question set #{digest} was already answered"
             end
@@ -124,6 +129,8 @@ module Lain
           end
 
           def holds?(digest) = @names.key?(digest)
+
+          def awaiting?(digest) = @names.fetch(digest, Unheld).awaiting?(digest)
 
           # A guard, not a lock: the state read here and the tombstone claimed
           # after it straddle the asker's Store write, which the ChainWriter's
@@ -178,6 +185,8 @@ module Lain
         # @raise [Promise::AlreadyResolved] when this directory already routed
         #   an answer to that name
         def reply(answer, digest) = holder_of(digest).reply(answer, digest)
+
+        def awaiting?(digest) = holder_of(digest).awaiting?(digest)
 
         # Answers the registration itself rather than whether it was there:
         # forgetting one already forgotten is the same fact, not a different

@@ -236,4 +236,29 @@ RSpec.describe Lain::Tools::AskHuman::Directory do
       expect(described_class.unanswerable("sha256:x")).to eq(real.unanswerable("sha256:x"))
     end
   end
+
+  describe "#awaiting?" do
+    it "is true while the named set is parked, false once withdrawn, answered, or unknown" do
+      Sync do
+        asker = build_asker
+        registration, pending = asking(asker, "which file?")
+
+        expect(directory.awaiting?(pending.digest)).to be(true)
+        asker.withdraw(pending)
+        expect(directory.awaiting?(pending.digest)).to be(false)
+        expect(directory.awaiting?("sha256:absent")).to be(false)
+        expect(registration.awaiting?("sha256:absent")).to be(false)
+      end
+    end
+
+    it "is false after the set is answered" do
+      Sync do
+        asker = build_asker
+        _registration, pending = asking(asker, "which file?")
+        directory.reply("config.rb", pending.digest)
+
+        expect(directory.awaiting?(pending.digest)).to be(false)
+      end
+    end
+  end
 end

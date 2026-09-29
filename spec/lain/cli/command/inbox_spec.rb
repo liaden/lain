@@ -112,8 +112,8 @@ RSpec.describe Lain::CLI::Command::Inbox do
   describe "a refusal's settle" do
     let(:views) { instance_double(Lain::Frontend::Neovim::Buffers, answered: nil) }
 
-    # An item listed for a set the asker does not hold: the inbox line that
-    # outlived its question, which is what a stopped run leaves behind.
+    # An item listed for a set: one whose question dies while the human types is
+    # the line that outlived it.
     def listing(digest)
       questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "which db?", from: "orchestrator",
                                                                digest:, asked_at: Time.now))
@@ -123,9 +123,13 @@ RSpec.describe Lain::CLI::Command::Inbox do
 
     it "retires a refusal that DOES name a dead question, exactly as before" do
       Sync do
-        dead = parent.commit(role: :assistant, content: [{ "type" => "text", "text" => "gone" }]).head_digest
+        pending = ask_human.ask("which db?")
+        dead = pending.digest
         listing(dead)
-        allow(conductor).to receive(:read_reply).and_return("42")
+        allow(conductor).to receive(:read_reply) do
+          ask_human.withdraw(pending)
+          "42"
+        end
 
         command.call("", env_with(replies:))
 

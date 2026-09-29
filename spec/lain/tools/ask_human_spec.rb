@@ -1438,4 +1438,62 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(tool.take_answered_questions).to eq([])
     end
   end
+
+  describe "retiring the question when its wait ends" do
+    let(:journal) { [] }
+    let(:tool) { described_class.new(parent:, journal:) }
+
+    def consumed = journal.grep(Lain::Telemetry::QuestionsConsumed)
+
+    it "names the question when the wait is stopped" do
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+        task.yield
+        digest = tool.last_question.digest
+
+        run.stop
+
+        expect(consumed.map(&:digests)).to eq([[digest]])
+        expect(consumed.first.turn).to be_nil
+      end
+    end
+
+    it "names the question exactly once when it is answered" do
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+        task.yield
+        digest = tool.last_question.digest
+
+        answered(tool, "postgres")
+        run.wait
+
+        expect(consumed.map(&:digests)).to eq([[digest]])
+      end
+    end
+
+    it "does not retire a set that is handed back and parked again" do
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+        task.yield
+        answered(tool, "x" * 200_000)
+        task.yield
+
+        expect(consumed).to be_empty
+        run.stop
+        expect(consumed.size).to eq(1)
+      end
+    end
+
+    it "reports whether a named set is still awaited" do
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+        task.yield
+        digest = tool.last_question.digest
+
+        expect(tool.awaiting?(digest)).to be(true)
+        run.stop
+        expect(tool.awaiting?(digest)).to be(false)
+      end
+    end
+  end
 end

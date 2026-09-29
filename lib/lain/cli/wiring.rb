@@ -784,7 +784,7 @@ module Lain
       # routable for exactly as long as the run. A CHILD's must be kept and
       # deregistered on the lease that reaps it -- see {Askers::Enrolled}.
       def wire_askers(parent)
-        @askers = Askers.new(observer: chronicle.observer, attended: attended?)
+        @askers = Askers.new(observer: chronicle.observer, attended: attended?, journal: chronicle.record_journal)
         @askers.enrol(parent, agent: MAIN_AGENT).asker
       end
 

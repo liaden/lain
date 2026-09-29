@@ -262,6 +262,7 @@ module Lain
         def initialize = @pending = Nothing
 
         def pending? = !@pending.resolved?
+        def awaiting?(digest) = pending? && @pending.answers?(digest)
         def digest = @pending.digest
 
         # Open a set for answering, the Q event's digest coming from the block.
@@ -644,7 +645,7 @@ module Lain
       # who inherits what. Passing `to:` explicitly still overrides, for a
       # caller with no handle worth carrying an address on at all.
       def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new, to: nil,
-                     notify: NoArrival)
+                     notify: NoArrival, journal: Channel::Null.instance)
         super()
         @parent = Parent.over(parent)
         @name = name
@@ -654,6 +655,7 @@ module Lain
         @outstanding = Outstanding.new
         @notify = notify
         @answered = Answered.new
+        @journal = journal
       end
 
       # Hoisted out of the method so a paragraph the model actually needs is
@@ -744,6 +746,10 @@ module Lain
       # @return [Boolean] whether a set is awaiting a reply on this asker
       def pending? = @outstanding.pending?
 
+      # Whether THIS set, by name, still has a caller parked on it. The
+      # directory asks it so a listing can drop a question whose wait ended.
+      def awaiting?(digest) = @outstanding.awaiting?(digest)
+
       # A caller that stopped waiting says so, and the set stops being
       # outstanding so this asker can ask again.
       #
@@ -796,9 +802,25 @@ module Lain
       def perform(input, _invocation)
         pending = ask(Announcement.new(requested_set(input)))
         settled(awaited(pending), pending)
+      ensure
+        retired(pending)
       end
 
       private
+
+      # A wait that ended by any road leaves the question listed until
+      # something names it consumed, and a stop has no committed turn to do it.
+      # Recorded from the whole of {#perform}, not {#awaited}, which runs twice
+      # for a handed-back answer while the set is still open. Total, as
+      # {Approval::Gate#retired} is, so a failed write cannot replace the
+      # error or result already on its way out.
+      def retired(pending)
+        return if pending.nil?
+
+        @journal << Telemetry::QuestionsConsumed.new(turn: nil, digests: [pending.digest])
+      rescue StandardError
+        nil
+      end
 
       # What became of one answer, whichever park it arrived at. An
       # {Unanswered} is the one thing that is not an answer at all, so it is

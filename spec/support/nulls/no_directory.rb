@@ -9,6 +9,7 @@ module SpecNulls
   module NoDirectory
     def self.register(_asker) = Lain::Tools::AskHuman::Directory::Unheld
     def self.reply(answer, digest) = Lain::Tools::AskHuman::Directory::Unheld.reply(answer, digest)
+    def self.awaiting?(_digest) = false
     def self.forget(registration) = registration
     def self.size = 0
     def self.unanswerable(digest) = Lain::Tools::AskHuman::Directory.unanswerable(digest)
