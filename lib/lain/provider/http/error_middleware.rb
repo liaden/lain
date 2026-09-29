@@ -48,6 +48,9 @@ module Lain
           # Anthropic and OpenAI-alikes both surface it as one of these two codes.
           CONTEXT_SENSITIVE_STATUSES = [400, 429].freeze
 
+          # A host answers 410 for a model it has withdrawn, which no retry cures.
+          RETIRED_STATUS = 410
+
           STATUS_ERRORS = {
             400 => BadRequestError,
             401 => UnauthorizedError,
@@ -85,6 +88,7 @@ module Lain
           def error_for(status, response, message)
             return context_length_error(response, message) if context_length_exceeded?(status, message)
             return unavailable_error(response, message) if (502..504).cover?(status)
+            return retired_error(response, message) if status == RETIRED_STATUS
 
             klass = STATUS_ERRORS.fetch(status, Error)
             klass.new(response, message || STATUS_MESSAGES[status] || "An unknown error occurred")
@@ -92,6 +96,10 @@ module Lain
 
           def context_length_error(response, message)
             ContextLengthExceededError.new(response, message || "Context length exceeded")
+          end
+
+          def retired_error(response, message)
+            Error.new(response, ["Model retired", message].compact.join(": "))
           end
 
           def unavailable_error(response, message)

@@ -110,8 +110,6 @@ module Lain
     # durable fix -- read the window live rather than transcribing it.
     CLOUD_WINDOWS = {
       # Ollama publishes "1M".
-      "deepseek-v4-flash:cloud" => 1_000_000,
-      "deepseek-v4-flash:0731-cloud" => 1_000_000,
       "deepseek-v4-pro:cloud" => 1_000_000,
       "deepseek-v4-pro:0813-cloud" => 1_000_000,
       "kimi-k3:cloud" => 1_000_000,
@@ -130,8 +128,6 @@ module Lain
       "minimax-m3:cloud" => 512_000,
 
       # Ollama publishes "256K".
-      "qwen3.5:cloud" => 256_000,
-      "qwen3.5:397b-cloud" => 256_000,
       "kimi-k2.7-code:cloud" => 256_000,
       "kimi-k2.6:cloud" => 256_000,
       "gemma4:cloud" => 256_000,
@@ -159,9 +155,6 @@ module Lain
       # because this is a MEASURED bound -- the model's ceiling, though not a
       # promise about what any given request is served.
       "nemotron-3-nano:30b-cloud" => 262_144,
-
-      # Ollama publishes "198K".
-      "glm-5.1:cloud" => 198_000,
 
       # Ollama publishes "128K".
       "gpt-oss:20b-cloud" => 128_000,

@@ -81,5 +81,22 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
         described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::BadRequestError)
     end
+
+    it "maps 410 to an error saying the model was retired and naming it" do
+      msg = "glm-5.1 was retired at 2026-09-25"
+      response = Struct.new(:status, :body).new(410, %({"error":"#{msg}"}))
+      provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: msg)
+
+      expect { described_class.parse_error(provider:, response:) }
+        .to raise_error(Lain::Provider::HTTP::Error, /retired.*glm-5\.1/i)
+    end
+
+    it "still says retired when the body names nothing" do
+      response = Struct.new(:status, :body).new(410, "")
+      provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: nil)
+
+      expect { described_class.parse_error(provider:, response:) }
+        .to raise_error(Lain::Provider::HTTP::Error, /retired/i)
+    end
   end
 end

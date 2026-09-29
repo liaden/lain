@@ -267,10 +267,6 @@ RSpec.describe Lain::ContextWindow do
       {
         "gpt-oss:20b-cloud" => 128_000,
         "gpt-oss:120b-cloud" => 128_000,
-        "qwen3.5:cloud" => 256_000,
-        "qwen3.5:397b-cloud" => 256_000,
-        "deepseek-v4-flash:cloud" => 1_000_000,
-        "deepseek-v4-flash:0731-cloud" => 1_000_000,
         "deepseek-v4-pro:cloud" => 1_000_000,
         "deepseek-v4-pro:0813-cloud" => 1_000_000,
         "kimi-k3:cloud" => 1_000_000,
@@ -280,7 +276,6 @@ RSpec.describe Lain::ContextWindow do
         "kimi-k2.7-code:cloud" => 256_000,
         "kimi-k2.6:cloud" => 256_000,
         "glm-5.2:cloud" => 976_000,
-        "glm-5.1:cloud" => 198_000,
         "minimax-m2.7:cloud" => 196_608,
         "minimax-m3:cloud" => 512_000,
         "gemma4:cloud" => 256_000,
@@ -310,16 +305,20 @@ RSpec.describe Lain::ContextWindow do
         expect(resolution).not_to be_authoritative
       end
 
-      # `deepseek-v4-flash:preview-cloud` and `deepseek-v4-pro:preview-cloud`
-      # were retired -- `/api/show` says so -- so publishing a window for
-      # either is a row that can only ever be wrong. A retired tag is exactly
-      # the "not carried" case above, not a special one: it falls to the same
-      # fallback, not a raise, because a stale session may still name it.
-      %w[deepseek-v4-flash:preview-cloud deepseek-v4-pro:preview-cloud].each do |model|
+      # These tags were retired -- `/api/show` answers 410 "was retired" -- so
+      # publishing a window for any of them is a row that can only ever be
+      # wrong. A retired tag is exactly the "not carried" case above, not a
+      # special one: it falls to the same fallback, not a raise, because a
+      # stale session may still name it.
+      %w[
+        deepseek-v4-flash:preview-cloud deepseek-v4-pro:preview-cloud
+        deepseek-v4-flash:cloud deepseek-v4-flash:0731-cloud
+        qwen3.5:cloud qwen3.5:397b-cloud glm-5.1:cloud
+      ].each do |model|
         it "no longer resolves the retired #{model} as published" do
           resolution = book.resolve(model)
 
-          expect(resolution.provenance).not_to eq(described_class::PUBLISHED)
+          expect(resolution.provenance).to eq(described_class::GUESSED)
           expect(resolution).not_to be_authoritative
         end
       end
@@ -415,7 +414,6 @@ RSpec.describe Lain::ContextWindow do
           "minimax-m2.7:cloud" => 196_608,
           "gpt-oss:20b-cloud" => 131_072,
           "deepseek-v4-pro:0813-cloud" => 1_048_576,
-          "deepseek-v4-flash:0731-cloud" => 1_048_576,
           "kimi-k2.7-code:cloud" => 262_144,
           "gemma4:31b-cloud" => 262_144
         }

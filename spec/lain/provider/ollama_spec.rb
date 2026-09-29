@@ -1606,6 +1606,12 @@ RSpec.describe Lain::Provider::Ollama do
       expect(described_class.new.serves?("nonesuch:1b")).to equal(serving::NOT_SERVED)
     end
 
+    it "answers not served on a 410, a retired model" do
+      show(410, JSON.generate("error" => "glm-5.1 was retired at 2026-09-25"))
+
+      expect(described_class.new.serves?("glm-5.1")).to equal(serving::NOT_SERVED)
+    end
+
     it "answers unknown when no server answered" do
       stub_request(:post, "http://localhost:11434/api/show").to_raise(Faraday::ConnectionFailed)
 

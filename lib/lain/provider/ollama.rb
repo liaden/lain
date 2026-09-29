@@ -75,6 +75,9 @@ module Lain
 
       DEFAULT_MODEL = "qwen3:4b"
 
+      # 410 is a host withdrawing a tag it once served; 404 is one it never had.
+      NOT_SERVING_STATUSES = [404, 410].freeze
+
       # The transport failures that mean no server answered. Faraday's net_http
       # adapter reports a connect timeout as `ConnectionFailed`, so both are
       # needed to cover a black-holed host.
@@ -381,10 +384,11 @@ module Lain
       end
 
       # `/api/show` describes every model the server has, and answers 404 for
-      # one it has not got -- the only answer here that is a no. A described
-      # model is served; a failed round trip, any other status, or a body that
-      # is not a description is {Serving::UNKNOWN}. Asked only where
-      # {#trained_context_tokens} asks, for that method's reason.
+      # one it has not got, or has retired with a 410 -- the only answers here
+      # that are a no. A described model is served; a failed round trip, any
+      # other status, or a body that is not a description is
+      # {Serving::UNKNOWN}. Asked only where {#trained_context_tokens} asks,
+      # for that method's reason.
       #
       # @param model [String]
       # @return [Serving]
@@ -393,7 +397,7 @@ module Lain
 
         wrapping_errors { @transport.model_details(model).body }.is_a?(Hash) ? Serving::SERVED : Serving::UNKNOWN
       rescue APIStatusError => e
-        e.status == 404 ? Serving::NOT_SERVED : Serving::UNKNOWN
+        NOT_SERVING_STATUSES.include?(e.status) ? Serving::NOT_SERVED : Serving::UNKNOWN
       rescue APIError
         Serving::UNKNOWN
       end

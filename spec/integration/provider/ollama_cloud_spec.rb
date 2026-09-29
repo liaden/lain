@@ -124,6 +124,20 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
       expect(trained).to be > Lain::ContextWindow::CLOUD_WINDOWS.fetch(model)
     end
 
+    # A retired tag answers 410 "was retired", and a table row for it can only
+    # be wrong. Any other failure (a 404 for a tag the host has not got, say) is
+    # a different finding and is not this example's to judge.
+    it "answers no shipped window key with a 410" do
+      retired = Lain::ContextWindow::CLOUD_WINDOWS.keys.select do |tag|
+        transport.model_details(tag)
+        false
+      rescue Lain::Provider::HTTP::Error => e
+        e.response.respond_to?(:status) && e.response.status == 410
+      end
+
+      expect(retired).to be_empty
+    end
+
     # The gap this card was asked to establish the evidence for, pinned so the
     # one-line follow-up that closes it has something to turn red. `/api/show`
     # answers (above), but the deployment declares it does not, so the cloud arm
