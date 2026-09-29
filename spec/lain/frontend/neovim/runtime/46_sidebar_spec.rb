@@ -585,6 +585,82 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
         end
       end
 
+      def place_note(kind)
+        inspector.exec_lua(<<~LUA, ["LainNote #{kind} fix this"])
+          local buf = vim.api.nvim_create_buf(true, false)
+          vim.api.nvim_buf_set_name(buf, "blocked-note.txt")
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "one", "two", "three" })
+          vim.bo[buf].modified = false
+          vim.b[buf].lain_review_side = "new"
+          vim.b[buf].lain_review_revision = "abc"
+          vim.b[buf].lain_review_path = "a.rb"
+          vim.api.nvim_set_current_buf(buf)
+          vim.api.nvim_win_set_cursor(0, { 2, 0 })
+          vim.cmd(...)
+        LUA
+      end
+
+      it "refuses approve while a blocker is drawn and names its file and line" do
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.bind_changeset_review(review)
+          place_note("blocker")
+
+          expect(run("LainReviewVerdict approve")).to include("ok" => true)
+          expect(refusal_shown).to include("a.rb:2")
+          expect(review.verdicts).to be_empty
+        end
+      end
+
+      it "sends approve once the blocker has been handed back" do
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.bind_changeset_review(review)
+          place_note("blocker")
+          run("LainNoteDone")
+
+          expect(run("LainReviewVerdict approve")).to include("ok" => true)
+          expect(review.verdicts).to eq(["approve"])
+        end
+      end
+
+      it "refuses approve while a blocker is only drafted" do
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.bind_changeset_review(review)
+          inspector.exec_lua(<<~LUA, [])
+            local buf = vim.api.nvim_create_buf(true, false)
+            vim.api.nvim_buf_set_name(buf, "drafted-note.txt")
+            vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "one", "two", "three" })
+            vim.bo[buf].modified = false
+            vim.b[buf].lain_review_side = "new"
+            vim.b[buf].lain_review_revision = "abc"
+            vim.b[buf].lain_review_path = "a.rb"
+            vim.api.nvim_set_current_buf(buf)
+            vim.api.nvim_win_set_cursor(0, { 3, 0 })
+            vim.cmd("LainNoteCompose blocker")
+          LUA
+          expect(run("LainReviewVerdict approve")).to include("ok" => true)
+          expect(refusal_shown).to include("a.rb:3")
+          expect(review.verdicts).to be_empty
+        end
+      end
+
+      it "sends approve past a drawn note that is not a blocker" do
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.bind_changeset_review(review)
+          place_note("note")
+
+          expect(run("LainReviewVerdict approve")).to include("ok" => true)
+          expect(review.verdicts).to eq(["approve"])
+        end
+      end
+
       # ANSWERED, and the editor with no review open is the ordinary state of
       # every session: the command refuses with {NoReviewWrites}'s own sentence
       # rather than acking a verdict nothing recorded.

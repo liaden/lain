@@ -212,6 +212,11 @@ end, {
 -- under a separate option. A `blocking = true` after a refusal is a REGRESSION,
 -- not a known cost.
 define("LainReviewVerdict", function(opts)
+  local blocker = _G.__lain.review_notes_blocker()
+  if blocker ~= nil then
+    _G.__lain.review_refused("blocker not handed back -- :LainNoteDone first: " .. blocker)
+    return
+  end
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })
   if not taken then
     _G.__lain.review_refused(refusal)
