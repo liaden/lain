@@ -97,8 +97,28 @@ module Lain
       end
       private_constant :Unmeasured
 
+      CeilingFailure = Data.define(:index)
+      private_constant :CeilingFailure
+
+      CEILING_REASON = "ceiling"
+      private_constant :CEILING_REASON
+
       NOT_MEASURED_CELL = "not measured"
       private_constant :NOT_MEASURED_CELL
+
+      # A task an arm never finished because it hit a ceiling. A run that
+      # stopped there has no graded trajectory to fold, and a missing figure
+      # averaged in as zero would read as a cheap success; the cell says so
+      # instead, and only that arm's cell does.
+      Failed = Data.define(:total, :indexes) do
+        def refuses? = false
+
+        def row(name, _fmt)
+          label = "#{indexes.size == 1 ? "task" : "tasks"} #{indexes.join(", ")}"
+          [name, "#{indexes.size} of #{total}", *(["failed: #{CEILING_REASON} (#{label})"] * 4)]
+        end
+      end
+      private_constant :Failed
 
       # @param arms [Array<Arm>] the topologies under comparison
       # @param tasks [Array<String>] the suite; n >= 2 so each arm's fold is a
@@ -141,6 +161,7 @@ module Lain
         # truthfully: no arm this Driver can be given today behaves that way,
         # so it is a forward contract for the arms a project will author, not a
         # description of one in the tree.
+        @journal = journal
         @grader = Grader::Journaling.new(inner: grader, journal:, subject_digest: SUBJECT_DIGEST)
         @isolation = isolation
         @isolation_name = isolation_name
@@ -164,8 +185,23 @@ module Lain
       end
 
       def distributions_for(arm)
-        runs = @tasks.map { |task| arm.run(task, spawn_seam: @spawn_seam, isolation: @isolation, grader: @grader) }
+        runs = @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1) }
         METRICS.transform_values { |spec| fold(runs, spec) }
+      end
+
+      def run_task(arm, task, number)
+        arm.run(task, spawn_seam: @spawn_seam, isolation: @isolation, grader: @grader)
+      rescue Agent::Budget::Exceeded => e
+        journal_failure(task, number, e)
+        CeilingFailure.new(index: number)
+      end
+
+      # The arm never handed back a Timeline, so the task's own prompt is the
+      # only thing left to address the failed grade by.
+      def journal_failure(task, number, error)
+        @journal << Telemetry::GradeRecord.new(grader: self.class.name, score: 0.0, pass: false,
+                                               why: "task #{number} failed at the ceiling: #{error.message}",
+                                               subject_digest: Canonical.digest(task))
       end
 
       # One metric across one arm's runs -- or, where the arm's own PriceBook
@@ -182,6 +218,9 @@ module Lain
       # {Ledger#initialize} each refuse in writing. So an arm whose price
       # {Compare::Run} could not name answers with that {Compare::Unpriced}.
       def fold(runs, spec)
+        failed = runs.grep(CeilingFailure)
+        return Failed.new(total: runs.size, indexes: failed.map(&:index)) if failed.any?
+
         values = runs.map { |run| value_of(run, spec.fetch(:of)) }
         return Unmeasured.new(n: values.size) if spec.fetch(:optional, false) && values.all?(&:zero?)
         return priced_fold(values) if spec.fetch(:priced, false)

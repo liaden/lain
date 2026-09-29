@@ -35,6 +35,12 @@ module DriverSpecSupport
     end
   end
 
+  class CeilingArm < Lain::Arm
+    def run(_task, **)
+      raise Lain::Agent::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
+    end
+  end
+
   # Remembers every subject it was handed on its way to the real grader, so an
   # example can hold the journaled subject digest against the very Timeline
   # that was graded rather than against a shape assertion.
@@ -473,6 +479,36 @@ RSpec.describe Lain::Arm::Driver do
                                          isolation: Lain::Isolation::Null.new, isolation_name: "").report
 
       expect(report).to match(/isolation:\s+#{Regexp.escape(Lain::Isolation::Null.name)}/)
+    end
+  end
+
+  # A task that runs past its ceiling is a failed run of that arm, not the end
+  # of the comparison: the other arm's figures and the paid-for report stand.
+  describe "#report — a task that hits the ceiling" do
+    let(:journal) { Lain::Channel.new }
+    let(:arms) { [DriverSpecSupport::CeilingArm.new(name: "looping"), Lain::Arm::SingleThread.new(name: "steady")] }
+
+    it "marks that arm's row as failed with the reason, in every metric table" do
+      report = described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(["grader score", "total tokens", "wall-time (s)", "cost (USD)", "cache write tokens"].map do |metric|
+        row_for(report, metric, "looping")
+      end)
+        .to all(include("2 of 2", "failed: ceiling (tasks 1, 2)"))
+    end
+
+    it "still folds the sibling arm's runs" do
+      report = described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(row_for(report, "grader score", "steady")).to include("1.000")
+    end
+
+    it "journals a failing grade whose why names the ceiling" do
+      described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+      failed = journal.drain.grep(Lain::Telemetry::GradeRecord).reject(&:pass)
+
+      expect(failed.map(&:why)).to eq(["task 1 failed at the ceiling: loop ran 25 iterations, ceiling is 25",
+                                       "task 2 failed at the ceiling: loop ran 25 iterations, ceiling is 25"])
     end
   end
 

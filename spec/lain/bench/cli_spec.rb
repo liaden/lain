@@ -616,6 +616,40 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  # An agent that loops past its iteration ceiling has FAILED that task; it is
+  # not a crash of the comparison, and the money spent on every other run is
+  # still owed a report.
+  describe "#arms_report, when a task hits the iteration ceiling" do
+    let(:journal) { Lain::Channel.new }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
+    let(:looping) do
+      unresolved = { "type" => "tool_use", "id" => "t1", "name" => "nothing", "input" => {} }
+      loop_turn = Lain::Response.new(content: [unresolved], stop_reason: :tool_use,
+                                     usage: Lain::Usage.new(input_tokens: 1))
+      Lain::Provider::Mock.new(responses: [*[loop_turn] * 30, text_response("FILE lib/widget.rb\nEND")])
+    end
+    let(:report) do
+      allow(backend).to receive(:provider).and_return(looping)
+      cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"), backend:,
+                      tools: Lain::Bench::Harness::NO_TOOLS, isolation: "none", journal:)
+    end
+
+    it "still renders the header, every metric table and the cost column" do
+      expect(report).to include("Arm driver", "grader score", "total tokens", "cost (USD)")
+    end
+
+    it "marks the failed arm's cell with the reason instead of a distribution" do
+      expect(report.lines.grep(/single-thread/).first).to include("failed", "ceiling")
+    end
+
+    it "journals a failing grade record naming the ceiling" do
+      report
+      failed = journal.drain.grep(Lain::Telemetry::GradeRecord).reject(&:pass)
+
+      expect(failed.map(&:why)).to include(a_string_matching(/ceiling/))
+    end
+  end
+
   # The containing set is ENUMERATED rather than derived, which is only safe if
   # something reddens when the advertised set grows. This is that something.
   describe "which isolation backends contain a write" do
