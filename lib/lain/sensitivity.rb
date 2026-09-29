@@ -106,13 +106,38 @@ module Lain
     # no rule anchors there.
     Anchors = Data.define(:home, :root)
 
-    Rule = Data.define(:level, :reason, :under, :inside, :name, :except, :exact, :anchor, :specimens)
+    # The spellings a credential file's name takes once a backup, an editor or a
+    # port from another platform has touched it.
+    module Name
+      BACKUP = /(?:\.(?:bak|old|orig|save)~?|\.~\d+~|\.\d+|~|\d+)\z/
+      DOT = "."
+      UNDERSCORE = "_"
+
+      # @param base [String] a basename
+      # @return [Array<String>] itself, then with one backup suffix stripped, then
+      #   with a leading `_` read as `.` or the missing leading dot added
+      def self.stems(base)
+        stripped = base.sub(BACKUP, "")
+        [base, stripped, dotted(stripped)].uniq
+      end
+
+      def self.dotted(base)
+        return base if base.start_with?(DOT)
+
+        DOT + base.delete_prefix(UNDERSCORE)
+      end
+
+      private_class_method :dotted
+    end
+
+    Rule = Data.define(:level, :reason, :under, :inside, :name, :except, :exact, :anchor, :specimens, :core)
 
     # One rule, as three independent locators, any of which may be absent:
     # `under` is an anchored subtree, `inside` is a directory name that must
     # appear somewhere on the way down, `name` is a basename glob, and `except`
     # takes a basename back. Every entry in both tables below is one of these, so
-    # there is a single matcher to read rather than a family of them.
+    # there is a single matcher to read rather than a family of them. `core`,
+    # set by `variants:`, widens `name` to its backup and undotted spellings.
     #
     # `under` and `inside` are the two halves of the ruling on anchoring:
     # `inside` matches wherever it sits, which is right for `.ssh/id_*`, and
@@ -151,8 +176,15 @@ module Lain
         new(level:, reason:, under: nil, inside:, name:, except:)
       end
 
-      def self.named(name, level:, reason:, except: nil)
-        new(level:, reason:, under: nil, inside: nil, name:, except:)
+      # `variants` matches the name through {Name.stems}, for a file whose
+      # backups hold the same secret. It is held as the name without its dot,
+      # which lets {#called?} skip a basename that cannot be a spelling without
+      # allocating. The specimens name a backup and an undotted spelling so an
+      # exemption reaching either is counted against this entry.
+      def self.named(name, level:, reason:, except: nil, variants: false)
+        core = variants ? name.delete_prefix(Name::DOT).freeze : nil
+        specimens = variants ? [name, "#{name}.bak", "#{name}~", core].map(&:freeze).freeze : NO_SPECIMENS
+        new(level:, reason:, under: nil, inside: nil, name:, except:, specimens:, core:)
       end
 
       # The basename a sample carries when the rule names none. A name no
@@ -162,7 +194,7 @@ module Lain
       STAR = "*"
 
       def initialize(level:, reason:, under:, inside:, name:, except:, exact: false, anchor: HOME,
-                     specimens: NO_SPECIMENS)
+                     specimens: NO_SPECIMENS, core: nil)
         super
       end
 
@@ -246,7 +278,15 @@ module Lain
 
       def named?(base) = called?(base) && !excepted?(base)
 
-      def called?(base) = name.nil? || File.fnmatch?(name, base, GLOB)
+      def called?(base)
+        return true if name.nil?
+
+        core ? variant?(base) : File.fnmatch?(name, base, GLOB)
+      end
+
+      def variant?(base)
+        base.include?(core) && Name.stems(base).any? { |spelling| File.fnmatch?(name, spelling, GLOB) }
+      end
 
       def excepted?(base) = !except.nil? && File.fnmatch?(except, base, EXCEPT_GLOB)
     end
@@ -500,7 +540,7 @@ module Lain
       Rule.within(".gnupg", level: :denied, reason: :protected),
       Rule.within(".aws", name: "credentials", level: :denied, reason: :protected),
       Rule.within(".password-store", level: :denied, reason: :protected),
-      Rule.named(".netrc", level: :denied, reason: :protected),
+      Rule.named(".netrc", level: :denied, reason: :protected, variants: true),
       Rule.named("*.kdbx", level: :denied, reason: :protected),
       # Ambiguous, so anchored under home: `config`, `config.json`, `Cookies`
       # and `key4.db` are all plausible names in a checkout, and every profile
@@ -527,9 +567,11 @@ module Lain
     # Those spellings are ordinary here today.
     GATED = [
       *%w[.env .env.* .envrc *.pem *.p12 *.key *.keyring credentials.json credentials.yml.enc secrets.y*ml
-          .git-credentials .npmrc .pypirc .pgpass .gitconfig rclone.conf terraform.tfstate *.tfvars *_history
-          .vault-token application_default_credentials.json]
+          .git-credentials .npmrc .pypirc .gitconfig rclone.conf terraform.tfstate *.tfvars *_history
+          .vault-token application_default_credentials.json passwords.txt]
         .map { |name| Rule.named(name, level: :gated, reason: :credential) },
+      *%w[.pgpass .authinfo .msmtprc .fetchmailrc .htpasswd .vault_pass .vault-password]
+        .map { |name| Rule.named(name, level: :gated, reason: :credential, variants: true) },
       # A private key copied out of `.ssh`, which is where the DENIED rule
       # reaches. Gated rather than denied because outside `.ssh` the name is
       # ambiguous enough that a denial nobody can lift would be the wrong error.

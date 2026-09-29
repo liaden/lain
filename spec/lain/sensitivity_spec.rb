@@ -459,6 +459,60 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "credential file variants, recognised by name" do
+    def levels(names) = names.to_h { |name| [name, classify("#{home}/#{name}").level] }
+
+    it "keeps a variant of the netrc name denied" do
+      expect(levels(%w[_netrc netrc .netrc.bak .netrc.old])).to eq(
+        "_netrc" => :denied, "netrc" => :denied, ".netrc.bak" => :denied, ".netrc.old" => :denied
+      )
+    end
+
+    it "keeps a variant of the pgpass name gated" do
+      expect(levels(%w[.pgpass.bak pgpass .pgpass2]).values).to all(eq(:gated))
+    end
+
+    it "gates the named credential stores" do
+      names = %w[.authinfo .msmtprc .fetchmailrc .htpasswd .vault_pass .vault-password passwords.txt]
+
+      expect(levels(names).values).to all(eq(:gated))
+    end
+
+    it "keeps numbered and doubled backups denied or gated" do
+      expect(levels(%w[.netrc.1 .netrc.~1~ .netrc.bak~]).values).to all(eq(:denied))
+      expect(levels(%w[.pgpass.1 .pgpass.~2~ .pgpass.old~]).values).to all(eq(:gated))
+    end
+
+    it "refuses an exemption that would lift the backup spellings of several stores" do
+      ["*~", "[!.]*rc"].each do |pattern|
+        expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }) }
+          .to raise_error(Lain::Config::Refusal, /lifts/)
+      end
+    end
+
+    it "leaves ordinary names ordinary" do
+      names = %w[Gemfile.lock notes.txt env gitconfig npmrc netrc_helper.rb pgpass.md]
+
+      expect(levels(names).values).to all(eq(:ordinary))
+    end
+  end
+
+  describe Lain::Sensitivity::Name do
+    it "lists a basename, then its unsuffixed form, then its dotted form" do
+      expect(described_class.stems("_netrc.bak")).to eq(%w[_netrc.bak _netrc .netrc])
+    end
+
+    it "strips one backup suffix or trailing digits" do
+      expect(described_class.stems(".pgpass2")).to eq(%w[.pgpass2 .pgpass])
+      expect(described_class.stems(".netrc.~1~")).to eq(%w[.netrc.~1~ .netrc])
+      expect(described_class.stems("x~")).to eq(%w[x~ x .x])
+    end
+
+    it "lists a plain dotfile once" do
+      expect(described_class.stems(".netrc")).to eq([".netrc"])
+    end
+  end
+
   describe "ordinary paths" do
     it "classes a source file under a project root as ordinary" do
       verdict = classify("lib/lain/session.rb")
@@ -755,12 +809,9 @@ RSpec.describe Lain::Sensitivity do
       end
     end
 
-    it "counts *.bak against the kube backups entry, and against nothing else" do
-      exemption = Lain::Sensitivity::Rules.from({ "exempt" => ["*.bak"] }).exempt.first
-      probe = Lain::Sensitivity::Rules::PROBE
-
-      expect(described_class::GATED.select { |gated| exemption.lifts?(gated, probe) }.map(&:label))
-        .to eq(["~/.kube/config*"])
+    it "counts *.bak against the kube backups entry and the backup spelling of each variant store" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*.bak"] }) }
+        .to raise_error(Lain::Config::Refusal, %r{lifts 8 .*"\.pgpass".*"~/\.kube/config\*"})
     end
 
     it "lifts exactly one entry with the obvious exemption for each credential store the first table missed" do
