@@ -205,6 +205,10 @@ RSpec.describe Lain::Oracle::SecretRead do
       expect(question).to include("JSON").and include("verdict").and include("confidence")
     end
 
+    it "anchors no confidence value, so the model's number is its own rather than a copy of the example" do
+      expect(described_class.definition.render(inputs)).not_to match(/\d\.\d/)
+    end
+
     it "fails loudly when a caller leaves a slot unfilled, rather than asking a blank question" do
       expect { described_class.definition.render(inputs.except(:region_count)) }.to raise_error(KeyError)
     end

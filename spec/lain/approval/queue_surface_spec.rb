@@ -119,6 +119,40 @@ RSpec.describe Lain::Approval::QueueSurface do
     end
   end
 
+  describe "a path-gate pending, once the auto surface yields to the secret surface" do
+    let(:sensitivity) do
+      Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
+    end
+    let(:path_gate) { Lain::Approval::PathGate.new(Lain::Sensitivity::Policy.new(sensitivity:)) }
+    let(:auto) { Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("DEFER") }, enabled: -> { true }) }
+    let(:secret) { Lain::Approval::SecretSurface.new(oracle: instance_double(Lain::Oracle::Model), path_gate:) }
+
+    def parked_read(path)
+      read = QueueSurfaceSpecSupport::Effect.new("read_file", { "path" => path }, "tu_1")
+      Lain::Approval::Queue::Pending.new(effect: read, requester: "agent", clock: -> { 0.0 })
+    end
+
+    it "is claimed by both until the precedence is declared" do
+      pending = parked_read(".env.local")
+
+      expect([auto.mine?(pending), secret.mine?(pending)]).to eq([true, true])
+    end
+
+    it "goes to the secret surface alone once declared" do
+      auto.yield_path_gates_to(secret)
+      pending = parked_read(".env.local")
+
+      expect([auto.mine?(pending), secret.mine?(pending)]).to eq([false, true])
+    end
+
+    it "leaves an ordinary call with the auto surface" do
+      auto.yield_path_gates_to(secret)
+      pending = parked_read("lib/lain.rb")
+
+      expect([auto.mine?(pending), secret.mine?(pending)]).to eq([true, false])
+    end
+  end
+
   # A pending whose `outstanding:` was explicitly nil used to raise inside
   # `mine?`, killing the watch fiber for the rest of the session -- so a LATER
   # well-formed pending was never asked about, with nothing journaled and the

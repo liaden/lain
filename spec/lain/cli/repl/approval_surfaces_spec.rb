@@ -22,11 +22,13 @@ module ApprovalSurfacesSpecSupport
     # stopped task unwinds promptly.
     POLL = 0.01
 
-    attr_reader :queues
+    attr_reader :queues, :senior
 
     def initialize
       @queues = []
     end
+
+    def yield_path_gates_to(surface) = @senior = surface
 
     def watch(queue)
       @queues << queue
@@ -182,6 +184,12 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(result[:watched].size).to eq(4)
       expect(result[:watched]).to all(be_an_instance_of(Async::Task))
       expect(conductor).not_to have_received(:read_reply)
+    end
+
+    it "declares it the senior of the auto surface for path gates, in this one place" do
+      surfaces(auto: auto_surface, secret: secret_surface)
+
+      expect(auto_surface.senior).to be(secret_surface)
     end
 
     it "spawns nothing for it by default, which is every chat launched without the flag" do

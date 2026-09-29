@@ -94,8 +94,15 @@ module Lain
       # @param pending [Approval::Queue::Pending]
       # @return [Boolean]
       def mine?(pending)
-        judges?(pending.outstanding) && !pending.decided? && !@adjudicated.key?(pending)
+        claims?(pending) && !pending.decided? && !@adjudicated.key?(pending)
       end
+
+      # {#judges?} over what the pending carries, and the seam a surface widens
+      # or narrows when the Outstanding alone cannot say whose question it is.
+      #
+      # @param pending [Approval::Queue::Pending]
+      # @return [Boolean]
+      def claims?(pending) = judges?(pending.outstanding)
 
       # The one discriminator a subclass owns, deliberately a function of the
       # {Queue::Outstanding} ALONE so two subclasses' answers can be compared

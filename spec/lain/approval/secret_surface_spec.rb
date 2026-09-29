@@ -134,6 +134,57 @@ RSpec.describe Lain::Approval::SecretSurface do
     expect(settled.surface).to eq(described_class::SURFACE)
   end
 
+  describe "a gated path that carries no regions yet" do
+    let(:sensitivity) do
+      Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
+    end
+    let(:path_gate) { Lain::Approval::PathGate.new(Lain::Sensitivity::Policy.new(sensitivity:)) }
+
+    def gated_surface(tier) = described_class.new(oracle: tier, threshold: 0.8, journal: faults, path_gate:)
+
+    def park(built, path)
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+      Sync do |task|
+        gated = task.async { queue.adjudicate(effect("read_file", { "path" => path }), nil) }
+        task.with_timeout(1) { queue.dequeue }
+        built.sweep(queue)
+        task.with_timeout(2) { gated.wait }
+      ensure
+        gated&.stop
+      end
+    end
+
+    it "asks the oracle once, with the path and the tool, and runs the call on a confident approve" do
+      tier = oracle(verdict: "approve", confidence: 0.95)
+      settled = park(gated_surface(tier), ".env.local")
+
+      expect(tier.asks).to eq([{ path: ".env.local".inspect, tool: "read_file", region_count: "0" }])
+      expect([settled.approved?, settled.surface]).to eq([true, described_class::SURFACE])
+    end
+
+    it "never asks about a denied path" do
+      tier = oracle(verdict: "approve", confidence: 0.95)
+      settled = park(gated_surface(tier), ".netrc")
+
+      expect(tier.asks).to be_empty
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+
+    it "never asks about an ordinary path" do
+      tier = oracle(verdict: "approve", confidence: 0.95)
+      park(gated_surface(tier), "lib/lain.rb")
+
+      expect(tier.asks).to be_empty
+    end
+
+    it "leaves a gated path to the human when built without a path gate" do
+      tier = oracle(verdict: "approve", confidence: 0.95)
+      park(surface(tier), ".env.local")
+
+      expect(tier.asks).to be_empty
+    end
+  end
+
   # AC: "a low-confidence verdict leaves it for the human."
   it "leaves a low-confidence approve undecided, so the clock -- not this surface -- answers" do
     settled = parked(surface(oracle(verdict: "approve", confidence: 0.79)))

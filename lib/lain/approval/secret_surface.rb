@@ -5,8 +5,9 @@ require "async"
 module Lain
   module Approval
     # A local model standing beside the human at {Approval::Queue}'s parked set,
-    # for the ONE kind of pending {AutoSurface} refuses: a gated call carrying
-    # outstanding sensitive regions ({Queue::Outstanding}). Opt-in behind
+    # for the pendings {AutoSurface} refuses -- a gated call carrying
+    # outstanding sensitive regions ({Queue::Outstanding}) -- and, given a
+    # {PathGate}, for a call parked at the path gate, ahead of {AutoSurface}. Opt-in behind
     # `--secret-oracle`, never wired by default. The observing, the seen-set and
     # the polling are {QueueSurface}'s.
     #
@@ -76,8 +77,13 @@ module Lain
       # @param ask_timeout [Numeric] seconds one oracle call may take
       #   ({DEFAULT_ASK_TIMEOUT}). Every other keyword forwards to
       #   {QueueSurface} -- `poll_interval:`, `pruning:`, `journal:`.
-      def initialize(oracle:, threshold: DEFAULT_THRESHOLD, ask_timeout: DEFAULT_ASK_TIMEOUT, **)
+      # @param path_gate [#path_for] which parked calls stopped at the path gate,
+      #   before any region exists; none by default, so a surface built without
+      #   one judges regions only.
+      def initialize(oracle:, threshold: DEFAULT_THRESHOLD, ask_timeout: DEFAULT_ASK_TIMEOUT,
+                     path_gate: PathGate::NONE, **)
         super(**)
+        @path_gate = path_gate
         @oracle = oracle
         @threshold = Float(threshold)
         @ask_timeout = ask_timeout
@@ -90,6 +96,16 @@ module Lain
       # @param outstanding [Approval::Queue::Outstanding]
       # @return [Boolean]
       def judges?(outstanding) = outstanding.any?
+
+      # Regions, or a path the gate parked before the file was read.
+      #
+      # @param pending [Approval::Queue::Pending]
+      # @return [Boolean]
+      def claims?(pending) = super || path_gate?(pending)
+
+      # @param pending [Approval::Queue::Pending]
+      # @return [Boolean]
+      def path_gate?(pending) = !@path_gate.path_for(pending).nil?
 
       private
 
@@ -145,8 +161,10 @@ module Lain
       # and {Prompt::LockedBinding} refuses a non-String outright.
       def inputs_for(pending)
         outstanding = pending.outstanding
-        { path: outstanding.path.inspect, tool: pending.tool.to_s, region_count: outstanding.count.to_s }
+        { path: path_of(pending).inspect, tool: pending.tool.to_s, region_count: outstanding.count.to_s }
       end
+
+      def path_of(pending) = pending.outstanding.any? ? pending.outstanding.path : @path_gate.path_for(pending)
 
       # The path and the failure, NEVER a region's bytes. The path itself is
       # named here and shown to the judge, the one disclosure this surface makes
@@ -156,7 +174,7 @@ module Lain
       # evidence about a decision must never be able to cost the decision.
       def journal_declined(pending, error)
         @journal << { "type" => FAULT_TYPE, "surface" => SURFACE, "tool" => pending.tool,
-                      "path" => pending.outstanding.path, "error" => "#{error.class}: #{error.message}" }
+                      "path" => path_of(pending), "error" => "#{error.class}: #{error.message}" }
       rescue StandardError
         nil
       end

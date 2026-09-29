@@ -31,6 +31,15 @@ module Lain
       VERDICT = /\A(approve|deny|defer)\.?\z/i
       private_constant :VERDICT
 
+      # A session without `--secret-oracle` has no senior; a Null Object so
+      # {#claims?} never guards on nil.
+      class NoSenior
+        def path_gate?(_pending) = false
+      end
+
+      NO_SENIOR = NoSenior.new.freeze
+      private_constant :NO_SENIOR
+
       # @param role_spawn [#call, #never_parking] the
       #   `(role, context_mode, prompt) -> Tool::Result` seam ({Skill::RoleSpawn});
       #   injected, so the surface depends on the message, not on how the child
@@ -45,6 +54,7 @@ module Lain
         super(**)
         @role_spawn = role_spawn
         @enabled = enabled
+        @senior = NO_SENIOR
       end
 
       # Nothing is asked while the layer is off, so a session that never turns
@@ -70,6 +80,21 @@ module Lain
       # @param outstanding [Approval::Queue::Outstanding]
       # @return [Boolean]
       def judges?(outstanding) = outstanding.none?
+
+      # A pending the senior surface takes is not asked here. Declared by the
+      # one place that assembles both surfaces, so no session has two models
+      # judging one path.
+      #
+      # @param pending [Approval::Queue::Pending]
+      # @return [Boolean]
+      def claims?(pending) = super && !@senior.path_gate?(pending)
+
+      # @param surface [#path_gate?] the surface that judges path gates ahead of this one
+      # @return [void]
+      def yield_path_gates_to(surface)
+        @senior = surface
+        nil
+      end
 
       private
 

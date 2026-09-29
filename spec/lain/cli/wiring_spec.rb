@@ -644,6 +644,14 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.secret_surface(backend)).to be_nil
     end
 
+    it "leaves a gated path to the auto surface's own claim without --secret-oracle" do
+      wire_agent
+      effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => ".env.local" }, "tu_1")
+      pending = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
+
+      expect(wiring.auto_surface.mine?(pending)).to be(true)
+    end
+
     describe "--secret-oracle" do
       let(:wiring) { described_class.new(options: { grace: 5, secret_oracle: true }, chronicle:, status_feed:) }
 
@@ -654,6 +662,16 @@ RSpec.describe Lain::CLI::Wiring do
 
       it "constructs the triage surface" do
         expect(wiring.secret_surface(backend)).to be_a(Lain::Approval::SecretSurface)
+      end
+
+      it "claims a call parked at the path gate, but not an ordinary one, through the session's own policy" do
+        surface = wiring.secret_surface(backend)
+        parked = lambda do |path|
+          effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => path }, "tu_1")
+          Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
+        end
+
+        expect([".env.local", "lib/lain.rb"].map { |path| surface.mine?(parked.call(path)) }).to eq([true, false])
       end
 
       it "memoizes it, so the Repl and any later reader share one surface and one journal fd" do

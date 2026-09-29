@@ -115,8 +115,9 @@ module Lain
       # confidence data the threshold is calibrated from never accrued either. No
       # other template in the repo says "JSON".
       TEMPLATE = <<~ERB
-        A tool call is parked at an approval gate. Approving it would release
-        <%= render("region_count") %> sensitive region(s) found in one file.
+        A tool call is parked at an approval gate. It names one file, in which
+        <%= render("region_count") %> sensitive region(s) have been found so far;
+        0 means only the path is gated and the file has not been read.
 
         path: <%= render("path") %>
         tool: <%= render("tool") %>
@@ -130,7 +131,7 @@ module Lain
         and deferring only leaves it to them.
 
         Reply with a JSON object and nothing else, in exactly this shape:
-        {"verdict": "#{VERDICTS.join("|")}", "confidence": 0.0, "reason": "one line"}
+        {"verdict": "#{VERDICTS.join("|")}", "confidence": <your certainty, 0 to 1>, "reason": "one line"}
       ERB
                  .freeze
 

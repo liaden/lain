@@ -222,7 +222,8 @@ module Lain
 
         @secret_surface ||= begin
           journal = goal_journal
-          Approval::SecretSurface.new(oracle: secret_read(backend, journal), journal:)
+          Approval::SecretSurface.new(oracle: secret_read(backend, journal), journal:,
+                                      path_gate: Approval::PathGate.new(@switchboard.sensitivity))
         end
       end
 

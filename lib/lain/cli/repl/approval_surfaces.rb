@@ -28,6 +28,7 @@ module Lain
           @approvals = approvals
           @auto_surface = auto_surface
           @secret_surface = secret_surface
+          @auto_surface.yield_path_gates_to(@secret_surface) if @auto_surface && @secret_surface
           @tty = tty
           @conductor = conductor
         end
