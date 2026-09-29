@@ -483,10 +483,22 @@ module Lain
         # Home could never write.
         Lain::Epic::Home.refuse_unwritable_ids!(parsed)
         revised, fiber = yield(parsed)
+        refuse_unemittable_arrivals!(parsed, revised)
         refuse_gated_edit!(resolved, fiber)
         home.epic.write(Lain::Epic::Document.to_markdown(revised, preamble:))
         journal_revision(resolved, fiber)
         Applied.new(resolved, fiber).to_s
+      end
+
+      # The pre-edit graph was checked above, so only what the edit introduced
+      # can still be unwritable; an id already in the file keeps its repair
+      # message rather than blocking every later edit.
+      def refuse_unemittable_arrivals!(before, after)
+        known = before.ids
+        after.reject { |issue| known.include?(issue.id) }.each do |issue|
+          failures = issue.emittable_failures
+          raise Lain::Epic::MalformedIssue, "issue #{issue.id.inspect}: #{failures.join("; ")}" if failures.any?
+        end
       end
 
       # Every id the fiber's revision is about to remove -- empty for `add`,

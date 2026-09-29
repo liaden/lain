@@ -743,6 +743,41 @@ RSpec.describe Lain::CLI::Epic do
       expect(graph_revisions).to be_empty
     end
 
+    %w[late_discovery a.b].each do |bad|
+      it "refuses add of the id #{bad.inspect} naming the id and the rule, leaving epic.md unchanged" do
+        write_epic("alpha", chain)
+        before = epic_home.epic.read
+
+        expect { command.add(bad, "a title", "alpha") }
+          .to raise_error(Lain::Error, /#{Regexp.escape(bad.inspect)}.*lowercase letters, digits and dashes/)
+        expect(epic_home.epic.read).to eq(before)
+        expect(graph_revisions).to be_empty
+      end
+    end
+
+    it "refuses a filed issue whose id the filesystem cannot hold, leaving epic.md unchanged" do
+      write_epic("alpha", chain)
+      before = epic_home.epic.read
+      bad = Lain::Epic::Issue.new(id: "qa_fix", title: "fix: nothing")
+
+      expect { command.file(bad, "alpha") }.to raise_error(Lain::Error, /"qa_fix".*lowercase letters/)
+      expect(epic_home.epic.read).to eq(before)
+    end
+
+    it "refuses a split whose child id the filesystem cannot hold" do
+      write_epic("alpha", chain)
+      before = epic_home.epic.read
+
+      expect { command.split("a", "x_y,x2", "alpha") }.to raise_error(Lain::Error, /"x_y"/)
+      expect(epic_home.epic.read).to eq(before)
+    end
+
+    it "refuses a merge into an id the filesystem cannot hold" do
+      write_epic("alpha", chain)
+
+      expect { command.merge("a", "b", "alpha", as: "a_b", title: "t") }.to raise_error(Lain::Error, /"a_b"/)
+    end
+
     it "replaces one issue with its parts and journals one graph_revision" do
       write_epic("alpha", chain)
 
