@@ -67,8 +67,8 @@ module Lain
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
-          body.merge!(adopted(head, lifecycle)) unless lifecycle.nil?
           body["unattended"] = true if @policy.unattended
+          body.merge!(adopted(head, lifecycle, body, parent.store)) unless lifecycle.nil?
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
         end
@@ -157,16 +157,17 @@ module Lain
         # per-head sequence is what makes an identical second run replay the
         # same numbers in the same order.
         #
-        # Scoped to THIS writer, which is what it leaves open. A cockpit builds
-        # one {Tools::Subagent} and memoizes its Lineage, so every actor it
-        # launches counts off this one sequence -- but a SECOND writer over the
-        # same head starts again and re-collides on the same work, as a resumed
-        # run does. Both
-        # want an identity minted outside this object.
+        # Scoped to THIS writer: a second writer over the same head starts at 1
+        # again. {#adopted} is what keeps it from colliding, by skipping every
+        # ordinal the shared Store already holds a record for, so a relaunch
+        # or a resumed run over that Store takes the next free address and its
+        # digest depends on what the Store holds. Two writers over DIFFERENT
+        # Stores still count independently.
         #
-        # Unsynchronized, and safe only because nothing between the read and the
-        # write suspends the fiber; behind an await it would issue duplicates
-        # with nothing raised.
+        # Unsynchronized, and safe only because nothing between the read, the
+        # Store check in {#adopted} and the write suspends the fiber; behind an
+        # await two writers could pick one ordinal, or one writer issue
+        # duplicates, with nothing raised.
         #
         # One entry per head ever actor-spawned from, never evicted: O(actor
         # launches), a session-sized Hash rather than a leak.
@@ -175,11 +176,20 @@ module Lain
         end
 
         # The marks only an actor's spawn carries, its lane among them when it
-        # has one.
-        def adopted(head, lifecycle)
+        # has one. The count skips every ordinal whose record the shared Store
+        # already holds, because a relaunch of failed work builds a second
+        # writer over the same head and would otherwise take the first
+        # attempt's address, which the fleet has already retired for good.
+        def adopted(head, lifecycle, body, store)
+          Enumerator.produce { marks_for(head, lifecycle) }.find { |marks| !recorded?(store, body.merge(marks)) }
+        end
+
+        def marks_for(head, lifecycle)
           marks = { "adoption" => next_adoption(head), "lifecycle" => lifecycle }
           @lane.empty? ? marks : marks.merge("lane" => @lane)
         end
+
+        def recorded?(store, body) = store.key?(Event::Payload.new(kind: :spawn, body:).digest)
 
         # The payload-then-envelope write, delegated so @chain_writer is its
         # one home.

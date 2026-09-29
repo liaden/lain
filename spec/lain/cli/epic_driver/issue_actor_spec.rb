@@ -309,6 +309,51 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     end
   end
 
+  # A launch that failed before anchoring leaves the next attempt number where
+  # it was, so the retry is the same lane over the chat's one Store, and here
+  # its branch is back at the epic's tip so the actor's first prompt repeats
+  # too. Its address must still be its own, or the fleet never lists it.
+  context "when an issue is launched again under the same attempt" do
+    let(:script) { [*test_engineer, text_response("plan done"), *test_engineer, text_response("plan done")] }
+    let(:observed) { [] }
+    let(:fleet) { Lain::StatusFeed::Fleet.new }
+    let(:chronicle) do
+      sink = lambda do |event|
+        observed << event
+        event.kind == :spawn ? fleet.launched(event) : fleet.completed(event)
+      end
+      Lain::CLI::Chronicle::Null.new.tap { |null| null.define_singleton_method(:observer) { sink } }
+    end
+    let(:shared_parent) { Lain::Timeline.empty(store: Lain::Store.new) }
+    let(:build) do
+      Lain::CLI::Wiring::ToolsetBuild.new(
+        backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new,
+        parent: -> { shared_parent }, journal: Lain::Channel::Null.instance,
+        library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: repo,
+        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
+      ).tap do |toolset|
+        toolset.build(Lain::Memory::Recorder.new,
+                      ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+      end
+    end
+
+    def actor_spawns = observed.select { |event| event.kind == :spawn && event.body["lifecycle"] == "launched" }
+
+    it "gives the retry a spawn address of its own, listed as running once the first has ended" do
+      first = supervising { |supervisor| launch(supervisor, "a").tap { |row| row.actor.settle } }
+      git(repo, "branch", "-f", "lain/issue/demo/a", epic_tip)
+      git(repo, "update-ref", "refs/lain/owned/heads/lain/issue/demo/a", epic_tip)
+
+      supervising do |supervisor|
+        retry_launch = launch(supervisor, "a").tap { |row| row.actor.settle }
+
+        expect(retry_launch.worker_id).to eq(first.worker_id)
+        expect(actor_spawns.map(&:digest).uniq.size).to eq(2)
+        expect(fleet.digests).to eq([actor_spawns.last.digest])
+      end
+    end
+  end
+
   # A branch lain did not create is somebody's, and the owned marker is the
   # only licence anything has to delete one later.
   it "refuses to claim an issue branch lain did not create, and leaves it unmarked where it was" do

@@ -194,6 +194,18 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
         .not_to have_key("lane")
     end
 
+    # A relaunch builds a second writer over the same head and the same shared
+    # Store, so its count restarts at 1. The Store already holding that address
+    # is what sends it to the next free one.
+    it "gives a second writer's actor an address the shared store does not already hold" do
+      first = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go", lifecycle: "launched")
+      retry_spawn = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go",
+                                                                                     lifecycle: "launched")
+
+      expect(retry_spawn.digest).not_to eq(first.digest)
+      expect(retry_spawn.body.fetch("lane")).to eq("issue.demo.a")
+    end
+
     # The counter is keyed by the head, so a second head starts its own
     # sequence -- what makes the mark a property of the scope collisions happen
     # in rather than of how many spawns this writer has ever made.
