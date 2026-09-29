@@ -261,6 +261,36 @@ RSpec.describe Lain::StatusFeed::Reading do
       expect(reading(fleet_tree: tree).header(now:).lines.last.chomp).to eq("  +3 more")
     end
 
+    # Fleet prunes the oldest ended rows, so the newest ended child is the last
+    # one in the tree and a plain head-take would hide the failure a human needs.
+    it "shows the newest ended children when nothing is running, and counts the rest" do
+      tree = [row("old", state: "done", started: now - 30),
+              row("mid", state: "done", started: now - 20),
+              row("new", state: "failed", started: now - 10)]
+
+      expect(reading(fleet_tree: tree).header(now:).lines.map(&:chomp).drop(1))
+        .to eq(["  mid  done  0t", "  new  failed  0t", "  +1 more"])
+    end
+
+    it "puts running rows first and never shows a child without its parent" do
+      tree = [row("lead", started: now - 40),
+              row("worker", depth: 1, started: now - 35),
+              row("sib_a", state: "done", started: now - 30),
+              row("sib_b", state: "failed", started: now - 20)]
+
+      expect(reading(fleet_tree: tree).header(now:).lines.map(&:chomp).drop(1))
+        .to eq(["  lead  running  0t", "    worker  running  0t", "  +2 more"])
+    end
+
+    it "brings the parent of a shown child along, even when the parent has ended" do
+      tree = [row("lead", state: "done", started: now - 40),
+              row("worker", depth: 1, started: now - 35),
+              row("other", state: "done", started: now - 30)]
+
+      expect(reading(fleet_tree: tree).header(now:).lines.map(&:chomp).drop(1))
+        .to eq(["  lead  done  0t", "    worker  running  0t", "  +1 more"])
+    end
+
     # A state published before the field existed, and the one a --no-journal
     # run never writes at all, both read as no fleet rather than as a failure.
     it "is the HUD alone for a state that carries no tree" do

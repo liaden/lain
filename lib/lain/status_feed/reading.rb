@@ -156,7 +156,7 @@ module Lain
       # @return [Array<String>] the rows as drawn, indented under the HUD
       def fleet_rows
         rows = Array(@state["fleet_tree"])
-        drawn = rows.take(HEADER_ROWS).map { |row| Fleet::Row.undated(row).listed("", under: LEAD) }
+        drawn = shown(rows).map { |row| Fleet::Row.undated(row).listed("", under: LEAD) }
         rows.size > HEADER_ROWS ? [*drawn, "#{LEAD}+#{rows.size - HEADER_ROWS} more"] : drawn
       end
 
@@ -181,6 +181,31 @@ module Lain
       def guess_mark = window_guessed? ? GUESS : ""
 
       private
+
+      # Running rows first, then the newest ended: the tree is oldest-first, so
+      # a head-take would show the oldest ended rows and hide the newest failure.
+      def shown(rows)
+        ranked = rows.each_index.sort_by { |index| [rows[index]["state"] == "running" ? 0 : 1, -index] }
+        chosen = ranked.each_with_object([]) { |index, kept| admit(rows, index, kept) }
+        chosen.sort.map { |index| rows[index] }
+      end
+
+      # A row comes with its ancestors or not at all, so a child is never drawn
+      # without the parent it stands under.
+      def admit(rows, index, kept)
+        needed = [*ancestors(rows, index), index] - kept
+        kept.concat(needed) if kept.size + needed.size <= HEADER_ROWS
+      end
+
+      def ancestors(rows, index)
+        parent = parent_index(rows, index)
+        parent ? [*ancestors(rows, parent), parent] : []
+      end
+
+      def parent_index(rows, index)
+        depth = rows[index]["depth"].to_i
+        rows.each_index.first(index).reverse_each.find { |above| rows[above]["depth"].to_i < depth }
+      end
 
       def cache_deadline
         raw = @state["cache_deadline"]
