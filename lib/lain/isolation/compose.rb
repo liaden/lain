@@ -257,7 +257,7 @@ module Lain
         stack.up
         published = compose_services.map { |service| service.discover(stack) }
         Lease.new(worker_env: enrich(base.worker_env, published), origin: base.origin,
-                  on_release: -> { release(stack, base) })
+                  on_release: ->(discard: false) { release(stack, base, discard:) })
       rescue StandardError
         reap(stack)
         base.release
@@ -271,10 +271,10 @@ module Lain
 
       # Tear the stack down with its volumes, ALWAYS releasing the inner lease --
       # even if `down` raises, the inner checkout must not be stranded.
-      def release(stack, base)
+      def release(stack, base, discard: false)
         stack.down
       ensure
-        base.release
+        base.release(discard:)
       end
 
       # Best-effort teardown on the failed-acquire path: a `down` error here

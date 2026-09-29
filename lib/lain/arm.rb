@@ -21,7 +21,7 @@ module Lain
       # A lease that owns no isolated resource: `worker_env` is nil, meaning "the
       # shared process environment, unchanged".
       class Lease
-        def release = nil
+        def release(**) = nil
         def worker_env = nil
 
         # Always false, truthfully: this lease is shared, frozen and holds

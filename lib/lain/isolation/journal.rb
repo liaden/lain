@@ -51,15 +51,16 @@ module Lain
       def acquire(worker_id)
         lease = @backend.acquire(worker_id)
         emit(:acquired, worker_id, lease.origin)
-        Lease.new(worker_env: lease.worker_env, origin: lease.origin, on_release: -> { release(lease, worker_id) })
+        on_release = ->(discard: false) { release(lease, worker_id, discard:) }
+        Lease.new(worker_env: lease.worker_env, origin: lease.origin, on_release:)
       end
 
       private
 
       # Reclaim via the real lease, THEN journal, so a reclaim failure (a real
       # {Worktree::Refused}) never journals a release that did not happen.
-      def release(lease, worker_id)
-        released = lease.release
+      def release(lease, worker_id, discard: false)
+        released = lease.release(discard:)
         emit(:released, worker_id, lease.origin) if released
         released
       end

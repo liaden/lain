@@ -26,10 +26,12 @@ module Lain
         end
 
         # @param path [String] the checkout whose lease ended
+        # @param discard [Boolean] reclaim the checkout even with uncommitted work,
+        #   for a caller whose result is already recorded elsewhere
         # @return [Symbol] `:retained` when it stays on disk, `:removed` when it went
         # @raise [Refused] when git will not remove a clean checkout
-        def call(path)
-          return retain(path) if @registry.uncommitted?(path)
+        def call(path, discard: false)
+          return retain(path) if !discard && @registry.uncommitted?(path)
 
           reclaim(path)
         end

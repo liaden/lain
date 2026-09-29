@@ -104,6 +104,12 @@ RSpec.describe Lain::Bench::LiveArms do
         .to eq(%w[single-thread orchestrator-worker dual-ledger adaptive-router])
     end
 
+    it "hands every arm a handoff that discards the checkout its lease releases" do
+      handoffs = described_class.build.map { |arm| arm.instance_variable_get(:@handoff) }
+
+      expect(handoffs).to all(be_a(Lain::Isolation::WorkerHandoff::Discarding))
+    end
+
     it "carries none of the altitude arms" do
       expect(described_class.build.map(&:name)).not_to include("one-shot", "plan-only")
     end

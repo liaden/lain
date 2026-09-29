@@ -39,7 +39,7 @@ module Lain
           checkout = Dir.mktmpdir("altitude-#{sanitized(worker_id)}-", @root)
           FileUtils.cp_r(File.join(@project, "."), checkout)
           Lain::Isolation::Lease.new(worker_env: WorkerEnv.new(cwd: checkout, env: ENV.to_h),
-                                     on_release: -> { FileUtils.remove_entry(checkout, true) },
+                                     on_release: ->(**) { FileUtils.remove_entry(checkout, true) },
                                      origin: Lain::Isolation::Lease::Origin.new(path: checkout))
         end
 

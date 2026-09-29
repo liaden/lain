@@ -274,10 +274,11 @@ module Lain
         # and dollars off the same book -- the comparison is only a comparison
         # if the measuring is shared.
         instrument = Arm::Instrument.new(price_book:)
-        [Arm::SingleThread.new(name: "single-thread", instrument:),
-         Arm::OrchestratorWorker.new(name: "orchestrator-worker", instrument:, decompose:),
-         Arm::DualLedger.new(name: "dual-ledger", instrument:),
-         Arm::AdaptiveRouter.new(name: "adaptive-router", instrument:,
+        handoff = Isolation::WorkerHandoff::Discarding.new
+        [Arm::SingleThread.new(name: "single-thread", instrument:, handoff:),
+         Arm::OrchestratorWorker.new(name: "orchestrator-worker", instrument:, decompose:, handoff:),
+         Arm::DualLedger.new(name: "dual-ledger", instrument:, handoff:),
+         Arm::AdaptiveRouter.new(name: "adaptive-router", instrument:, handoff:,
                                  router: router || default_router(model, cheap_model:))]
       end
     end

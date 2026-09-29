@@ -156,7 +156,8 @@ module Lain
       def acquire(worker_id)
         path = worktree_path(worker_id)
         base = @monitor.synchronize { check_out(path) }
-        Lease.new(worker_env: worker_env_for(path, worker_id), on_release: -> { release_path(path) },
+        on_release = ->(discard: false) { release_path(path, discard:) }
+        Lease.new(worker_env: worker_env_for(path, worker_id), on_release:,
                   origin: Lease::Origin.new(path:, base:, branch: @base.name))
       rescue Refused => e
         # The path is a hash of the worker id, so a refusal naming only the
@@ -203,10 +204,10 @@ module Lain
       # Deregister then reclaim, serialized against acquire so a concurrent
       # re-acquire of the path waits for the release rather than clearing
       # mid-add.
-      def release_path(path)
+      def release_path(path, discard: false)
         @monitor.synchronize do
           @leased.delete(path)
-          @retained << path if @release.call(path) == :retained
+          @retained << path if @release.call(path, discard:) == :retained
         end
       end
     end

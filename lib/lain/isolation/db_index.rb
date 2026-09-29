@@ -110,7 +110,7 @@ module Lain
         base = @inner.acquire(worker_id)
         provisioned = provision_all(@paths.project_hash(worker_id.to_s))
         Lease.new(worker_env: enrich(base.worker_env, provisioned), origin: base.origin,
-                  on_release: -> { release(provisioned, base) })
+                  on_release: ->(discard: false) { release(provisioned, base, discard:) })
       rescue StandardError
         # provision_all rolls back the SERVICES it provisioned; the inner lease
         # is ours to reclaim here, or a Worktree inner leaks a checkout on every
@@ -153,11 +153,11 @@ module Lain
       # would then outlive the run. Every teardown is attempted and the first
       # failure is re-raised afterward; the inner lease is ALWAYS released in the
       # ensure, even on that re-raise.
-      def release(provisioned, base)
+      def release(provisioned, base, discard: false)
         failures = provisioned.filter_map { |one| release_error(one) }
         raise failures.first unless failures.empty?
       ensure
-        base.release
+        base.release(discard:)
       end
 
       # Run one teardown, returning its error (never raising) so the caller can

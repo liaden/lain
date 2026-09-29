@@ -74,7 +74,8 @@ module Lain
         cut = Worktree.new(root: @root, repo_root: @repo_root, base: branch, shell_out_factory: @shell_out_factory)
                       .acquire("plan.#{key}")
         cwd = mirrored(cut.origin.path).tap { |dir| FileUtils.mkdir_p(dir) }
-        Lease.new(worker_env: cut.worker_env.with(cwd:), on_release: -> { cut.release }, origin: cut.origin)
+        on_release = ->(discard: false) { cut.release(discard:) }
+        Lease.new(worker_env: cut.worker_env.with(cwd:), on_release:, origin: cut.origin)
       end
 
       # What the model is told about where it is.

@@ -461,6 +461,19 @@ module Lain
         end
         alias_method :surrender, :reclaim
       end.new.freeze
+
+      # For a bench arm, whose grade is journaled before the lease ends: what a
+      # worker left uncommitted is an artefact of one run, not work to keep.
+      class Discarding
+        # @return [Report] nothing moved
+        def reclaim(lease, **)
+          lease&.release(discard: true)
+          Report.nothing
+        end
+
+        # @return [Report] nothing moved
+        def surrender(lease, **) = reclaim(lease)
+      end
     end
   end
 end

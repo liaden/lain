@@ -1038,4 +1038,76 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
       expect(journal.grep(Lain::Telemetry::Handback).first).to have_attributes(sync: :synced, attempts:)
     end
   end
+
+  describe "the discarding handoff" do
+    let(:discarding) { described_class::Discarding.new }
+
+    def dirty_lease
+      backend.acquire("worker-1").tap do |lease|
+        File.write(File.join(lease.worker_env.cwd, "unsaved.txt"), "never committed\n")
+      end
+    end
+
+    it "removes a checkout holding uncommitted work when the arm settles" do
+      lease = dirty_lease
+
+      discarding.reclaim(lease, worker_id: "worker-1")
+
+      expect(File.exist?(lease.origin.path)).to be(false)
+    end
+
+    it "removes it when the arm unwinds too" do
+      lease = dirty_lease
+
+      discarding.surrender(lease, worker_id: "worker-1")
+
+      expect(File.exist?(lease.origin.path)).to be(false)
+    end
+
+    def scripted_shell(argv)
+      Struct.new(:argv) do
+        def run_command = self
+        def exitstatus = 0
+        def stderr = ""
+        def stdout = argv.include?("ps") ? "" : "0.0.0.0:32769"
+      end.new(argv)
+    end
+
+    def scripted_service
+      Struct.new(:env_var, :url, :release) do
+        def provision(_context) = self
+      end.new("DATABASE_URL", "x://y", -> {})
+    end
+
+    def wrapped_by(kind)
+      case kind
+      when :journal then Lain::Isolation::Journal.new(backend:, journal: Lain::Channel.new)
+      when :compose
+        Lain::Isolation::Compose.new(
+          services: [Lain::Isolation::Services::Compose.new(service: "db", container_port: 5432,
+                                                            env_var: "DATABASE_URL", scheme: "tcp")],
+          inner: backend, compose_file: "/proj/compose.yml",
+          shell_out_factory: ->(*argv, **) { scripted_shell(argv) }
+        )
+      when :db_index
+        Lain::Isolation::DbIndex.new(services: [scripted_service],
+                                     inner: backend)
+      end
+    end
+
+    %i[journal compose db_index].each do |kind|
+      it "reaches the checkout through the #{kind} wrapper" do
+        lease = wrapped_by(kind).acquire("worker-1")
+        File.write(File.join(lease.worker_env.cwd, "unsaved.txt"), "never committed\n")
+
+        discarding.reclaim(lease, worker_id: "worker-1")
+
+        expect(File.exist?(lease.origin.path)).to be(false)
+      end
+    end
+
+    it "answers a report that moved nothing, and tolerates no lease" do
+      expect(discarding.reclaim(nil, worker_id: "worker-1").kind).to eq(:nothing_to_do)
+    end
+  end
 end
