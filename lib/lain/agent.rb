@@ -47,21 +47,6 @@ module Lain
     NO_FOLD = ->(_stranded, _folded) {}
     private_constant :NO_FOLD
 
-    # The diagnostic each failing stop_reason records. A lookup table, not control
-    # flow: every stop reason whose event transitions to :failed has an entry.
-    # Root-qualified because {Agent::StopReason} shadows the wire enum
-    # everywhere inside this class.
-    #
-    # The malformed diagnostic names the journal record rather than one shape of
-    # failure, because `Telemetry::MalformedResponse#kind` is where a second
-    # shape would go, and the record is what carries the evidence.
-    FAILURE_REASONS = { ::Lain::StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
-                        ::Lain::StopReason::REFUSAL => "model refused to continue",
-                        ::Lain::StopReason::UNKNOWN => "unrecognized stop_reason from provider",
-                        ::Lain::StopReason::MALFORMED =>
-                          "malformed response from model: see its malformed_response journal record" }.freeze
-    private_constant :FAILURE_REASONS
-
     # Each of the three objects the loop drives, paired with the legacy
     # keywords that BUILD it when it is not injected: the clash table
     # {#refuse_double_wiring} consults. Four of these are {Instrumentation}
@@ -605,7 +590,7 @@ module Lain
     def transition(response)
       __send__(:"#{response.stop_reason}!")
       perform_tools(response) if awaiting_tools?
-      @failure_reason = FAILURE_REASONS[response.stop_reason] if failed?
+      @failure_reason = response.failure&.message if failed?
       done? || failed? ? :settled : :continue
     end
 

@@ -98,19 +98,22 @@ RSpec.describe Lain::Agent do
 
     # The companion guard: the event-totality loop above proves every StopReason
     # fires SOMEWHERE, but a new reason correctly wired to a :failed-targeting
-    # event would still leave @failure_reason silently nil unless FAILURE_REASONS
+    # event would still leave @failure_reason silently nil unless Response::Failure::MESSAGES
     # grew an entry. Derive the failing events from the machine itself so this
     # cannot drift either way -- a missing diagnostic fails, and so does a stale
     # entry for an event that no longer fails.
-    it "has a FAILURE_REASONS diagnostic for exactly the events that land in :failed" do
+    it "has a Response::Failure message for exactly the events that land in :failed" do
       failing_events = described_class.state_machine(:state).events.select do |event|
         event.branches
              .flat_map { |branch| branch.state_requirements.map { |requirement| requirement[:to].values } }
              .flatten.include?(:failed)
       end
 
-      failure_reasons = described_class.const_get(:FAILURE_REASONS)
-      expect(failure_reasons.keys).to match_array(failing_events.map(&:name))
+      emitted = failing_events.map(&:name).select do |reason|
+        Lain::Response.new(content: [], stop_reason: reason).failure
+      end
+      expect(emitted).to match_array(failing_events.map(&:name))
+      expect(Lain::Response::Failure::MESSAGES.keys - failing_events.map(&:name)).to be_empty
     end
   end
 

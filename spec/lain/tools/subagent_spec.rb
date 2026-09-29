@@ -483,6 +483,10 @@ RSpec.describe Lain::Tools::Subagent do
 
       def prose_child = Lain::Provider::Ollama.new(transport: OllamaWire.queue_transport([text_response(envelope)]))
 
+      def prose_child_failure
+        Lain::Response.new(content: [{ "type" => "text", "text" => envelope }], stop_reason: :malformed).failure
+      end
+
       def fleet_rows
         Dir.mktmpdir do |dir|
           feed = Lain::StatusFeed.new(path: File.join(dir, "state.json"))
@@ -511,6 +515,12 @@ RSpec.describe Lain::Tools::Subagent do
         result = dispatched_by_parent(provider: prose_child)
 
         expect(result["content"].to_s).to include("tool call written as prose")
+      end
+
+      it "hands the parent the same message the pane prints for that response" do
+        result = dispatched_by_parent(provider: prose_child)
+
+        expect(result["content"].to_s).to include(prose_child_failure.message)
       end
     end
 

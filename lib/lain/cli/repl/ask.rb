@@ -57,8 +57,13 @@ module Lain
         # different kinds of answer arrive on one return.
         #
         # @param outcome [Lain::Response, Lain::Error, nil]
-        # @return [Lain::Response, nil] nil for a refusal, which is already said
-        def settle(outcome) = outcome.is_a?(Lain::Error) ? refuse(outcome) : outcome
+        # @return [Lain::Response, nil] nil for a refusal or a failed stop, both
+        #   already said
+        def settle(outcome)
+          return refuse(outcome) if outcome.is_a?(Lain::Error)
+
+          outcome&.failure ? say_failure(outcome) : outcome
+        end
 
         RESENDING = "the prompt at the head has no answer on this chain, so this ask carries it too -- " \
                     "/rewind 1 before asking to leave it out"
@@ -67,6 +72,15 @@ module Lain
         private_constant :NOTHING_FOLDED
 
         private
+
+        # A failed stop is said as an error, after whatever text the model got
+        # out that is worth keeping.
+        def say_failure(response)
+          failure = response.failure
+          @tty.render_response(response) unless failure.withholds_text? || response.text.empty?
+          @tty.render_error(failure.message)
+          nil
+        end
 
         # A torn ask: journal the turns that did commit, anchor the stop, then
         # say what stopped it in one line and nothing else. Why it stopped is

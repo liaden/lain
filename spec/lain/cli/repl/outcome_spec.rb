@@ -59,6 +59,12 @@ RSpec.describe Lain::CLI::Repl::Outcome do
       expect(outcome.exit_status).to eq(described_class::UNFINISHED)
     end
 
+    it "counts a malformed turn, whose text was withheld rather than answered" do
+      outcome.note(answered(:malformed))
+
+      expect(outcome.exit_status).to eq(described_class::UNFINISHED)
+    end
+
     it "counts a turn that only paused" do
       outcome.note(answered(:pause_turn))
 

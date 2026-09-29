@@ -49,9 +49,27 @@ module Lain
       blocks_of_type("text").map { |block| block["text"] }.join
     end
 
+    # Nil for a turn that finished or is still mid-loop. Reads the admitted
+    # stop_reason, so a wire value {StopReason.normalize} rewrote is reported
+    # as the :unknown it became.
+    #
+    # @return [Response::Failure, nil]
+    def failure
+      message = failure_message
+      Response::Failure.new(stop_reason:, message:) if message
+    end
+
     def digest
       Canonical.digest({ "content" => content, "stop_reason" => stop_reason.to_s })
     end
+
+    # Response:: for the same lexical-scope reason as #tool_uses.
+    def failure_message
+      return Response::Failure::MESSAGES[stop_reason] unless stop_reason == StopReason::MALFORMED
+
+      text.empty? ? Response::Failure::SILENT : Response::Failure::PROSE_CALL
+    end
+    private :failure_message
 
     # Counts blocks rather than #tool_uses, which would allocate a lens per block
     # to reach a number, on the very path something has already gone wrong on.

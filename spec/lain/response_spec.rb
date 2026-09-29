@@ -68,6 +68,45 @@ RSpec.describe Lain::Response do
     end
   end
 
+  describe "#failure" do
+    def stopped(reason, text: "")
+      described_class.new(content: [{ "type" => "text", "text" => text }], stop_reason: reason)
+    end
+
+    it "is nil for an answer that finished or is still mid-loop" do
+      failures = %i[end_turn stop_sequence tool_use pause_turn].map { |reason| stopped(reason).failure }
+
+      expect(failures).to all(be_nil)
+    end
+
+    it "says a max_tokens stop before finishing, and keeps the text" do
+      failure = stopped(:max_tokens, text: "partial").failure
+
+      expect(failure.message).to eq("model hit max_tokens before finishing")
+      expect(failure.withholds_text?).to be(false)
+    end
+
+    it "names a refusal and an unrecognized wire reason" do
+      expect(stopped(:refusal).failure.message).to include("refused")
+      expect(stopped("coined_in_2099").failure.message).to include("unrecognized")
+    end
+
+    it "withholds the text of a malformed turn and says it was a tool call written as prose" do
+      failure = stopped(:malformed, text: "<function=bash>").failure
+
+      expect(failure.withholds_text?).to be(true)
+      expect(failure.message).to include("malformed", "written as prose", "malformed_response journal record")
+    end
+
+    it "says a malformed turn with no text said nothing at all" do
+      expect(stopped(:malformed).failure.message).to include("said nothing at all")
+    end
+
+    it "stays deeply frozen" do
+      expect(Ractor.shareable?(stopped(:malformed).failure)).to be(true)
+    end
+  end
+
   describe "#digest" do
     it "ignores the provider's raw object" do
       a = described_class.new(content: blocks, stop_reason: :tool_use, raw: Object.new)

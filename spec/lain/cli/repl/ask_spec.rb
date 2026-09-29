@@ -11,7 +11,7 @@ require "stringio"
 RSpec.describe Lain::CLI::Repl::Ask do
   let(:timeline) { instance_double(Lain::Timeline, head_digest: "sha-head") }
   let(:agent) { instance_double(Lain::Agent, timeline:) }
-  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil) }
+  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, render_response: nil) }
   let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil, replaced: nil) }
   let(:ask) { described_class.new(agent:, tty:, chronicle:) }
   let(:response) { Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn) }
@@ -122,6 +122,33 @@ RSpec.describe Lain::CLI::Repl::Ask do
   end
 
   describe "#settle" do
+    def stopped(reason, text)
+      Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: reason)
+    end
+
+    it "says a malformed turn as an error and never prints its envelope as the answer" do
+      malformed = stopped(:malformed, "<function=write_file>{}</function>")
+
+      expect(ask.settle(malformed)).to be_nil
+      expect(tty).to have_received(:render_error).with(malformed.failure.message)
+      expect(tty).not_to have_received(:render_response)
+    end
+
+    it "says max_tokens before any text as an error" do
+      ask.settle(stopped(:max_tokens, ""))
+
+      expect(tty).to have_received(:render_error).with("model hit max_tokens before finishing")
+    end
+
+    it "prints partial text and then the error line for max_tokens after some text" do
+      cut = stopped(:max_tokens, "partial")
+
+      ask.settle(cut)
+
+      expect(tty).to have_received(:render_response).with(cut).ordered
+      expect(tty).to have_received(:render_error).with("model hit max_tokens before finishing").ordered
+    end
+
     it "passes a response through untouched" do
       expect(ask.settle(response)).to equal(response)
     end

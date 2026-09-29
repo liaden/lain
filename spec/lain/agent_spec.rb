@@ -937,7 +937,7 @@ RSpec.describe Lain::Agent do
     it "exposes every declared state" do
       # :stalled is the additive dual-ledger state (see LoopMachine); the
       # transition-legality gates (agent_state_machine_spec's StopReason
-      # totality + FAILURE_REASONS) are untouched -- this is a state-set snapshot
+      # totality + Response::Failure) are untouched -- this is a state-set snapshot
       # that grows with an authorized addition, like the generated diagram.
       expect(described_class::STATES)
         .to contain_exactly(:awaiting_user, :awaiting_model, :awaiting_tools,

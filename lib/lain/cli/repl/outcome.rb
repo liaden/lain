@@ -40,10 +40,10 @@ module Lain
         SETTLED = [Lain::StopReason::END_TURN, Lain::StopReason::STOP_SEQUENCE].freeze
 
         # Records whatever one line produced, and hands it straight back so a
-        # call site reads as the single expression it was. {Repl::Ask#settle}
-        # asks about the same value for a different purpose -- what the human is
-        # owed -- and the two must not drift, so a conversation's definition of
-        # "unfinished" lives here and nowhere else.
+        # call site reads as the single expression it was. {SETTLED} stays its own
+        # allow-list rather than reading {Lain::Response#failure}: a `tool_use` or
+        # `pause_turn` stop is unfinished and has no failure, so "no failure"
+        # would welcome both.
         #
         # @param product [Lain::Response, Lain::Error, nil] the line's answer,
         #   the refusal it came back with, or nil where the ask was torn before

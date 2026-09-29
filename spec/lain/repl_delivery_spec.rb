@@ -45,7 +45,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     end.new
   end
 
-  let(:response) { Struct.new(:text).new("the answer") }
+  let(:response) { Lain::Response.new(content: [{ "type" => "text", "text" => "the answer" }], stop_reason: :end_turn) }
   let(:tty) { instance_spy(Lain::Frontend::TTY) }
 
   # Counts asks so "no model turn was spent" is an assertion, not a hope.

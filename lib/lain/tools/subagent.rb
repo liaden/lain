@@ -323,21 +323,12 @@ module Lain
       # Checked before the bounding, so an envelope too large to deliver is not
       # first handed back to the child to summarize.
       #
-      # `:malformed` names a reading, not a shape, and the parent is told WHICH
-      # one: a provider fires it for a tool call written as prose AND for a turn
-      # that said nothing at all. `#text` is what tells them apart here, the
-      # same discriminator {Answer#undeliverable} already uses one call further
-      # on, and it is enough because an envelope is never empty.
+      # The parent is told the same reading the pane prints, from {Response#failure}.
       def refusing_malformed(response)
-        return response unless response.stop_reason == StopReason::MALFORMED
+        failure = response.failure
+        return response unless failure&.withholds_text?
 
-        raise MalformedAnswer, malformed_reading(response)
-      end
-
-      def malformed_reading(response)
-        return "the child's turn said nothing at all, not an answer" if response.text.empty?
-
-        "the child's turn was a tool call written as prose, not an answer"
+        raise MalformedAnswer, failure.message
       end
 
       def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null)
