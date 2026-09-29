@@ -38,7 +38,7 @@ export XDG_CACHE_HOME="\$QA/xdg/cache"
 export XDG_RUNTIME_DIR="\$QA/xdg/runtime"
 export TMPDIR="\$QA/tmp"
 export LAIN_NUM_BATCH=2048
-export PATH="\$QA/shim:/mnt/nvme/opt/ollama-0.32.12/bin:\$PATH"
+export PATH="\$QA/shim:/mnt/nvme/opt/ollama-0.34.4/bin:\$PATH"
 EOF
 
 # --- the shim: PANE_ENV forwards LAIN_* only, so carry the toolchain in here --

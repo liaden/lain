@@ -1367,3 +1367,40 @@ the premise is what the round owes.
 **The mechanical escalation trigger:** three consecutive turns producing neither a spec file nor an
 implementation file, or any single turn over ten minutes. Drop to the scenario's named simpler
 fallback rather than redesigning mid-run.
+
+## Round 20 (2026-09-29): what running nine forks in parallel taught the process
+
+- **Cap concurrent contexts at about five, not nine.** Nine forks on this 15 GB box got the shared
+  `llama-server` OOM-killed at load average 33, and in-flight requests got 500s. A fork that sees a
+  500 burst should check `dmesg`/the serve log for a kill before filing anything.
+- **A hand-typed `curl` to ollama must carry `"options":{"num_batch":2048,"num_ctx":32768}`.** Without
+  it the probe re-keys the shared runner to `-b 512` and every fork pays a 26-70 s reload. Fork `c` did
+  this four times. Read `-b` from `grep 'msg="starting llama-server"'` before and after any probe.
+- **Ask the tool for its exit status in zsh with `pipestatus`, not `PIPESTATUS`.** The bash spelling
+  expands to nothing and prints `exit=`, which reads as a lost exit code rather than a shell mismatch.
+  `echo == x` also fails in zsh, so quote a `==` banner.
+- **`bench arms` needs the box to itself, and it still cannot report** (BA-1). Until the ceiling is
+  handled per task, budget the run as a reproduction of that defect and take grades from the journal's
+  `grade_record`s. A narrowed fixture does not help: the adaptive-router arm hits the ceiling on two
+  easy tasks.
+- **`$QA/proxy.rb`, `counter.rb` and `pathcount.rb` default to shared ports (21434/21435).** Pass
+  per-sandbox ports whenever two forks run at once.
+- **Do not run `pkill -f`, even scoped.** It self-matched again in three forks this round (exit 144).
+  `ps -eo pid,args | grep '[x]' | awk '{print $1}' | xargs kill` is the working form.
+- **Close-out under a redirected HOME needs `HOME=/home/tara` and `unset XDG_CONFIG_HOME`.** With
+  `secret-boundary`'s redirected HOME, `~` and `find ~/.local/state/lain` silently address the sandbox.
+- **`drive.sh`'s quiet window returns mid-turn on a contended model.** Fork `a`'s `settle.sh` (last
+  input-pane line a bare `you>`, journal quiet 25 s, or an approval parked) held up better. It is at
+  `~/tmp/lain-qa-2026-09-29-a/records/settle.sh`, beside `sever.rb` (fork `c`: a pass-through, sever,
+  hold and strip proxy that logs request bodies) and `inject_e.rb` (fork `e`: fail, envelope and hang
+  modes). All three are worth promoting into the sandbox script.
+- **Harness limits.** A foreground call dies at 120 s and is moved to the background, so keep polls
+  under about 100 s or use `timeout N bash -c 'until …'`. Monitor `sleep` waits fired immediately for
+  fork `e`. A subagent's write of a report file into the repo is refused by the harness, so a fork
+  returns its findings as text and the coordinator persists them.
+- **A `/fork` leaves a second `lain chat` pane on the round's tmux server**, which makes `drive.sh`
+  refuse as ambiguous. Kill that window straight away. A second `lain up` on the same project also dies
+  on the shared per-project nvim socket: two cockpits need different project directories, not just
+  different `--session` names.
+- **Each `$QA` helper prints `mise WARN missing: postgres@15.1`** (from `env.sh`'s `mise env` eval);
+  filter it, and do not read it as a finding.
