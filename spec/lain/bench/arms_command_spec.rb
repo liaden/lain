@@ -489,6 +489,37 @@ RSpec.describe "lain bench arms" do
     end
   end
 
+  # The run is refused before the provider is built, so nothing is journaled
+  # for a roster that could never have run.
+  describe "an arms run whose cheap model cannot route" do
+    let(:fixture) { File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml") }
+
+    around { |example| Dir.mktmpdir("lain-arms-journal") { |dir| (@dir = dir) && example.run } }
+
+    def journal_path = File.join(@dir, "leases.ndjson")
+
+    def run_arms(*extra)
+      run("arms", fixture, "--provider", "ollama", "--model", "qwen3", "--isolation", "worktree",
+          "--journal", journal_path, *extra)
+    end
+
+    it "exits 1 naming the problem and leaves no journal when no cheap model is named" do
+      result = run_arms
+
+      expect(result.stderr).to include("--cheap-model")
+      expect(result.exited.status).to eq(1)
+      expect(File.exist?(journal_path)).to be(false)
+    end
+
+    it "exits 1 naming the problem and leaves no journal when the cheap model is the model" do
+      result = run_arms("--cheap-model", "qwen3")
+
+      expect(result.stderr).to include("--cheap-model")
+      expect(result.exited.status).to eq(1)
+      expect(File.exist?(journal_path)).to be(false)
+    end
+  end
+
   # Scenario: an unknown isolation name fails without running an arm.
   #
   # The examples that drive the REAL assembly, so they prove the flags reach the

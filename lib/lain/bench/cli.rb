@@ -203,6 +203,7 @@ module Lain
       #   the routing arm sends single-file tasks to. Ignored when `router` is
       #   given.
       # @param price_book [Lain::PriceBook] prices every arm's journal
+      # @param memory [String, nil] `--memory`: what each arm's view starts from
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}; ITS
       #   signature owns those defaults, including the unset `system:` that
       #   teaches the arms the FILE/END trajectory format the gold graders
@@ -216,7 +217,6 @@ module Lain
       # @raise [LiveArms::UnroutableBackend] when the resolved model has no
       #   cheaper sibling named, or the server says it has not got the one
       #   named, and no `router` was given
-      # @param memory [String, nil] `--memory`: what each arm's view starts from
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
@@ -234,6 +234,7 @@ module Lain
         # with what actually ran. The ROSTER reads the same answer: the routing
         # arm's capable branch is that model, so all four arms run what the
         # operator asked for and only the cheap branch departs from it.
+        refuse_unroutable_before_provider!(backend, router, cheap_model)
         spawn_options = journaled_provider(backend, journal, spawn_options)
         LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
         spawn_seam = SpawnSeam.new(backend:, memory: memory_store(memory), **spawn_options)
@@ -577,6 +578,11 @@ module Lain
         recording
       rescue ArgumentError => e
         raise Refusal, "#{path}: #{e.message}"
+      end
+
+      # A caller-supplied router answers the question itself.
+      def refuse_unroutable_before_provider!(backend, router, cheap_model)
+        LiveArms.refuse_unroutable_run!(backend.model, cheap_model) if router.nil?
       end
 
       # The one arms provider, built over the journal the comparison records

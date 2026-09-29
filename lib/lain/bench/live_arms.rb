@@ -126,6 +126,16 @@ module Lain
         Oracle::Heuristic.new(definition: Oracle::Router.definition, predicate: default_route(model, cheap:))
       end
 
+      # The refusal {.default_router} would make, asked before a provider exists
+      # so a run that cannot route has journaled nothing.
+      #
+      # @param model [String] what the backend resolves
+      # @param cheap_model [String, nil] `--cheap-model`, read literally
+      # @raise [UnroutableBackend] when no cheaper sibling is named or servable
+      def self.refuse_unroutable_run!(model, cheap_model)
+        refuse_unroutable!(model, cheap_model || claude_default_cheap(model))
+      end
+
       # {CHEAP_MODEL} is Anthropic's own, so it answers "what is cheaper than
       # this" only for a `model` that is itself Anthropic's.
       #
