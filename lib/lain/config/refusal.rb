@@ -25,7 +25,7 @@ module Lain
     # syntax error and a wrong key are different mistakes with different fixes,
     # and {CLI::Wiring::BoardBuild} degrades on both by name.
     class Refusal < Error
-      # @return [String, nil] the config file, absent for a value built by hand
+      # @return [String, nil] the config file, or file:line; absent for a value built by hand
       attr_reader :path
       # @return [String, nil] the table as the file spells it, e.g. `"[shell]"`
       attr_reader :table

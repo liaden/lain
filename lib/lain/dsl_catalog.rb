@@ -64,13 +64,15 @@ module Lain
     # itself, so the location is read off the first backtrace frame the
     # EVALUATED file left behind, the one instance_eval's own `path`/`lineno`
     # arguments stamped.
+    # @param error [Exception] what the evaluated file raised
+    # @param path [String] the file evaluated
+    # @return [String] the message, led by `path:line` where one is known
     def self.refusal_message(error, path)
       return error.message if error.message.start_with?("#{path}:")
 
       frame = Array(error.backtrace).find { |line| line.start_with?("#{path}:") }
       frame ? "#{frame[/\A#{Regexp.escape(path)}:\d+/]}: #{error.message}" : "#{path}: #{error.message}"
     end
-    private_class_method :refusal_message
 
     # Frozen at both levels: a session-fixed SNAPSHOT, not a mutable registry
     # something can register into after load.
