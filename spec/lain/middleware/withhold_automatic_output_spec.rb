@@ -54,6 +54,12 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(env.fetch(:result).content).not_to include("will be asked")
     end
 
+    it "names /mode ask as how a human gets asked while approval is auto" do
+      env, = run(call_of("cat notes.txt"), authority: :automatic)
+
+      expect(env.fetch(:result).content).to include("/mode ask")
+    end
+
     it "bars the command string from automatic approval" do
       run(call_of("cat notes.txt"), authority: :automatic)
 

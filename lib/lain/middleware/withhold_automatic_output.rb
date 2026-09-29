@@ -50,10 +50,11 @@ module Lain
       GUARDED_TOOLS = Set["bash"].freeze
       COMMAND = "command"
 
-      # Mode-neutral: under `auto` nobody is asked, so it names what the
-      # command needs rather than who will answer.
+      # Mode-neutral, and conditional on `auto`: `/mode` switches at runtime,
+      # so which mode is in force when this is read cannot be known here.
       WITHHELD = "%<name>s output withheld: it held %<count>s, and the command was approved automatically, " \
-                 "so it now needs a human's approval."
+                 "so it now needs a human's approval. If approval is auto, no approval is possible, " \
+                 "so a human must first switch to /mode ask."
 
       # Counts, never bytes: a record that quoted the output would write the
       # credential into the journal this layer keeps it out of.
