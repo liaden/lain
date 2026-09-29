@@ -600,7 +600,7 @@ RSpec.describe Lain::CLI::Wiring do
                                                                        max_tokens: 64 }, mock: lacking))
 
       degraded = io.string.each_line.map { |line| JSON.parse(line) }
-                                    .select { |record| record["type"] == "capability_degraded" }
+                   .select { |record| record["type"] == "capability_degraded" }
       expect(default_requires).to include(:prompt_caching)
       expect(degraded.map { |record| record.values_at("capability", "provider") })
         .to eq([["prompt_caching", "Lain::Provider::Mock"]])
@@ -3340,7 +3340,7 @@ RSpec.describe Lain::CLI::Wiring do
         _, _, reference = dispatch(over: recording)
 
         sent = journal_io.string.each_line.map { |line| JSON.parse(line) }
-                                          .find { |record| record["type"] == "request_sent" }
+                         .find { |record| record["type"] == "request_sent" }
         expect(sent["payload"]["messages"].dig(0, "content", 1, "source"))
           .to include("type" => "attachment", "digest" => reference.digest)
         expect(journal_io.string).not_to include([png].pack("m0"))
@@ -3435,7 +3435,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
 
     def degraded_lines
       io.string.each_line.filter_map { |line| Lain::Journal.parse(line) }
-                         .select { |record| record["type"] == "capability_degraded" }
+        .select { |record| record["type"] == "capability_degraded" }
     end
 
     # The real ollama declaration -- `%i[streaming thinking structured_output]`,

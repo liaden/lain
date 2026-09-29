@@ -29,7 +29,7 @@ module Lain
 
       # `k:` is top-k retrieval's name everywhere else in the literature; a
       # longer one would only paraphrase it.
-      # rubocop:disable Naming/MethodParameterName
+      # rubocop:disable-next Naming/MethodParameterName
       def initialize(index:, k:)
         super()
         @index = index
@@ -41,7 +41,6 @@ module Lain
 
         freeze
       end
-      # rubocop:enable Naming/MethodParameterName
 
       def call(messages)
         return messages if messages.empty?

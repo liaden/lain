@@ -195,7 +195,7 @@ module Lain
 
           def held(order)
             @session.compaction_cuts.select { |cut| @timeline.include?(cut.head) }
-                                    .flat_map(&:spans).filter_map { |first, last| span(order, first, last) }
+                    .flat_map(&:spans).filter_map { |first, last| span(order, first, last) }
           end
 
           # A span whose endpoints are not on THIS timeline names no range

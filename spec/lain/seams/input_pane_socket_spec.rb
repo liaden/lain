@@ -223,7 +223,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
   # A published struct, as the chat's own header thunk composes one.
   def publish(**state)
-    File.write(File.join(dir, "hud"), JSON.generate({ "fleet" => [], "inbox_count" => 0 }.merge(state)))
+    struct = { "fleet" => [], "inbox_count" => 0 }.merge(state.transform_keys(&:to_s))
+    File.write(File.join(dir, "hud"), JSON.generate(struct))
   end
 
   # One `fleet_tree` row, as `StatusFeed::Fleet#tree` publishes one.

@@ -26,7 +26,7 @@ RSpec.describe Lain::Bench::Speculative do
 
   def answer_text(timeline)
     timeline.to_a.select { |turn| turn.role == "assistant" }
-                 .flat_map(&:content).filter_map { |block| block["text"] }.join(" ")
+            .flat_map(&:content).filter_map { |block| block["text"] }.join(" ")
   end
 
   def answering(text)

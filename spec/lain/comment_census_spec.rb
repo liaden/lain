@@ -250,7 +250,7 @@ RSpec.describe CommentCensus do
     it "carries no project-scheme citation anywhere the checker scans" do
       stdout, _stderr, = run_cli("--check-tickets")
       sites = stdout.lines.drop_while { |line| !line.start_with?("PROJECT SCHEMES") }
-                          .drop(1).take_while { |line| line.start_with?("  ") }
+                    .drop(1).take_while { |line| line.start_with?("  ") }
 
       expect(sites).to be_empty, "project-scheme citations are banned in comments:\n#{sites.join}"
     end

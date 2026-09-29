@@ -1120,7 +1120,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
       written_to = paths.sessions_dir(project: paths.project_hash(root))
       written = Dir.children(written_to).select { |name| name.end_with?(".ndjson") }
-                                        .flat_map { |name| Lain::Journal.records(File.foreach(File.join(written_to, name))).to_a }
+                   .flat_map { |name| Lain::Journal.records(File.foreach(File.join(written_to, name))).to_a }
       decisions = written.select { |record| record["type"] == "gate_decision" }
 
       expect(status.exitstatus).to eq(130)

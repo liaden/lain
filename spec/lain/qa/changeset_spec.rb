@@ -16,7 +16,9 @@ RSpec.describe Lain::QA::Changeset, :seam do
   # The scrub is what makes this hermetic under pre-commit, which exports
   # GIT_INDEX_FILE into every hook: unscrubbed, the fixture would stage into
   # lain's own index.
-  def git(*) = Mixlib::ShellOut.new("git", "-C", @repo, *, environment: SeedRepo::SCRUB).run_command.tap(&:error!).stdout
+  def git(*)
+    Mixlib::ShellOut.new("git", "-C", @repo, *, environment: SeedRepo::SCRUB).run_command.tap(&:error!).stdout
+  end
 
   def commit(files, message)
     files.each { |path, body| File.write(File.join(@repo, path), body) }

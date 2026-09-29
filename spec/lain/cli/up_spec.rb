@@ -108,9 +108,8 @@ RSpec.describe Lain::CLI::Up do
     def dead_chat_pane?
       chat = tmux("show-options", "-v", "-t", session, Lain::CLI::Up::Panes::CHAT)
       # `#{pane_dead}` is tmux's own format syntax, not Ruby interpolation.
-      # rubocop:disable Lint/InterpolationCheck
+      # rubocop:disable-next Lint/InterpolationCheck
       probe = -> { tmux("display-message", "-p", "-t", chat, '#{pane_dead}') == "1" }
-      # rubocop:enable Lint/InterpolationCheck
       deadline = Time.now + 5
       sleep(0.01) until probe.call || Time.now > deadline
       probe.call
@@ -303,9 +302,8 @@ RSpec.describe Lain::CLI::Up do
 
       # `#{pane_start_command}` is tmux's OWN format-string syntax, not Ruby
       # interpolation -- single-quoted so it reaches tmux byte-for-byte.
-      # rubocop:disable Lint/InterpolationCheck
+      # rubocop:disable-next Lint/InterpolationCheck
       pane_command = tmux("list-panes", "-t", "#{session}:chat", "-F", '#{pane_start_command}')
-      # rubocop:enable Lint/InterpolationCheck
       expect(pane_command).to include("chat --input socket:lain --model claude-fable-5 --no-journal")
     end
 
@@ -456,9 +454,8 @@ RSpec.describe Lain::CLI::Up do
 
       def input_pane_height
         # tmux's own format syntax, not Ruby interpolation.
-        # rubocop:disable Lint/InterpolationCheck
+        # rubocop:disable-next Lint/InterpolationCheck
         tmux("display-message", "-p", "-t", session_option(described_class::Panes::INPUT), '#{pane_height}').to_i
-        # rubocop:enable Lint/InterpolationCheck
       end
 
       # A real tmux CLIENT on a real pty, which is what `lain up` execs and
@@ -478,9 +475,8 @@ RSpec.describe Lain::CLI::Up do
         lay_out(nvim: nil)
 
         # `#{...}` is tmux's OWN format syntax here, not Ruby interpolation.
-        # rubocop:disable Lint/InterpolationCheck
+        # rubocop:disable-next Lint/InterpolationCheck
         rows = pane_rows('#{pane_top} #{pane_height} #{pane_start_command}').map { |row| row.split(" ", 3) }
-        # rubocop:enable Lint/InterpolationCheck
         above, below = rows.sort_by { |top,| top.to_i }
 
         expect(rows.size).to eq(2)
@@ -494,9 +490,8 @@ RSpec.describe Lain::CLI::Up do
       it "records both pane ids on the session, in tmux's own spelling of them" do
         lay_out(nvim: nil)
 
-        # rubocop:disable Lint/InterpolationCheck
+        # rubocop:disable-next Lint/InterpolationCheck
         ids = pane_rows('#{pane_id}')
-        # rubocop:enable Lint/InterpolationCheck
         expect([session_option(described_class::Panes::CHAT), session_option(described_class::Panes::INPUT)])
           .to eq(ids)
       end
@@ -504,10 +499,9 @@ RSpec.describe Lain::CLI::Up do
       it "leaves the cursor in the pane the human types at, not in the transcript" do
         lay_out(nvim: nil)
 
-        # rubocop:disable Lint/InterpolationCheck
+        # rubocop:disable-next Lint/InterpolationCheck
         expect(tmux("display-message", "-p", "-t", "#{session}:chat", '#{pane_id}'))
           .to eq(session_option(described_class::Panes::INPUT))
-        # rubocop:enable Lint/InterpolationCheck
       end
 
       # The escalation this layout causes: the chat pane is no longer the
@@ -673,10 +667,9 @@ RSpec.describe Lain::CLI::Up do
 
             # `#{...}` here is tmux's format-string syntax, not Ruby
             # interpolation -- single-quoted so it reaches tmux byte-for-byte.
-            # rubocop:disable Lint/InterpolationCheck
+            # rubocop:disable-next Lint/InterpolationCheck
             panes = tmux("list-panes", "-t", "#{session}:chat", "-F",
                          '#{pane_start_command}@@#{pane_current_path}@@#{pane_dead}').lines.map(&:strip)
-            # rubocop:enable Lint/InterpolationCheck
             expect(panes.size).to eq(3)
             # The -1 limit is load-bearing: a dead pane reports an EMPTY
             # pane_current_path, and a default String#split drops that trailing
@@ -1940,9 +1933,8 @@ RSpec.describe Lain::CLI::Up do
       # that cannot seat both, and the pane must be UNDER its seat -- which is
       # what keeps the hook a floor rather than a fixed height.
       # tmux's own format syntax, not Ruby interpolation.
-      # rubocop:disable Lint/InterpolationCheck
+      # rubocop:disable-next Lint/InterpolationCheck
       expect(hook).to include('e|-:12,#{window_height}').and include('e|-:#{pane_height},6')
-      # rubocop:enable Lint/InterpolationCheck
       expect(described_class::SEATED_WINDOW_HEIGHT).to eq(13)
     end
 
@@ -2733,9 +2725,8 @@ RSpec.describe Lain::CLI::Up, "the size of the session it creates" do
 
         system("tmux", "-L", socket, "split-window", "-v", "-t", "lain:chat")
         # `#{pane_width}` is tmux's own format syntax, not Ruby interpolation.
-        # rubocop:disable Lint/InterpolationCheck
+        # rubocop:disable-next Lint/InterpolationCheck
         widths = tmux("list-panes", "-t", "lain:chat", "-F", '#{pane_width}').lines.map { |l| l.strip.to_i }
-        # rubocop:enable Lint/InterpolationCheck
 
         # Three now: `up` lays the chat over its input pane, and this one
         # splits a third off them.
@@ -2839,9 +2830,8 @@ RSpec.describe "lain up, under a real terminal", :seam do
   def screen(pane) = tmux("capture-pane", "-p", "-t", pane).lines.map(&:rstrip).reject(&:empty?)
 
   # `#{pane_height}` is tmux's own format syntax, not Ruby interpolation.
-  # rubocop:disable Lint/InterpolationCheck
+  # rubocop:disable-next Lint/InterpolationCheck
   def height(pane) = tmux("display-message", "-p", "-t", pane, '#{pane_height}').to_i
-  # rubocop:enable Lint/InterpolationCheck
 
   # 24 is a terminal's default and was the worst reading; 60 is where the
   # collapse stopped; 40 is between them and was reported as one row through

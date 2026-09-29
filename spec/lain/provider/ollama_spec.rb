@@ -27,9 +27,8 @@ RSpec.describe Lain::Provider::Ollama do
   # ollama transport double.
   def transport_sync(body)
     Class.new do
-      # rubocop:disable Lint/UnusedBlockArgument
+      # rubocop:disable-next Lint/UnusedBlockArgument
       define_method(:sync_post) { |_payload, _headers = {}, attempt: nil, frame: nil| Struct.new(:body).new(body) }
-      # rubocop:enable Lint/UnusedBlockArgument
     end.new
   end
 
@@ -1638,7 +1637,7 @@ RSpec.describe Lain::Provider::Ollama do
   # exercises the surviving handler and one that bypasses it entirely.
   def v2_handler_stream_transport(chunks)
     Class.new do
-      # rubocop:disable Lint/UnusedBlockArgument -- see #transport_sync
+      # rubocop:disable-next Lint/UnusedBlockArgument -- see #transport_sync
       define_method(:stream) do |_payload, _headers = {}, attempt: nil, frame: nil, &on_chunk|
         handler = Lain::Provider::HTTP::Streaming::FaradayHandlers.build(
           on_chunk: ->(chunk, _env) { on_chunk.call(chunk) },
@@ -1647,7 +1646,6 @@ RSpec.describe Lain::Provider::Ollama do
         env = Faraday::Env.from(status: 200)
         chunks.each { |chunk| handler.call(chunk, 0, env) }
       end
-      # rubocop:enable Lint/UnusedBlockArgument
     end.new
   end
 
@@ -1656,12 +1654,11 @@ RSpec.describe Lain::Provider::Ollama do
     Class.new do
       attr_reader :payload
 
-      # rubocop:disable Lint/UnusedMethodArgument -- see #transport_sync
+      # rubocop:disable-next Lint/UnusedMethodArgument -- see #transport_sync
       def sync_post(payload, _headers = {}, attempt: nil, frame: nil)
         @payload = payload
         Struct.new(:body).new({ "message" => { "role" => "assistant", "content" => "ok" }, "done_reason" => "stop" })
       end
-      # rubocop:enable Lint/UnusedMethodArgument
     end.new
   end
 end

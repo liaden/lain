@@ -141,7 +141,10 @@ RSpec.describe Lain::Declarative::Types::StrictInteger do
       "an object that responds only to #to_i (no implicit duck-typing)" =>
         Class.new { def to_i = 99 }.new,
       "an object that responds to #to_i and #to_int" =>
-        Class.new { def to_i = 1; def to_int = 2 }.new, # rubocop:disable Style/Semicolon -- one-line fixture, not a style violation worth a second line
+        Class.new do
+          def to_i = 1
+          def to_int = 2
+        end.new,
       "a Struct instance" => Struct.new(:a).new(1)
     }
 

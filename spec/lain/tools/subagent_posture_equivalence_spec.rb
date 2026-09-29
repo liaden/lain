@@ -44,8 +44,8 @@ RSpec.describe "Subagent posture equivalence" do
 
   def tool_result_blocks(timeline)
     timeline.to_a.select { |turn| turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" } }
-                 .flat_map(&:content)
-                 .select { |b| b["type"] == "tool_result" }
+            .flat_map(&:content)
+            .select { |b| b["type"] == "tool_result" }
   end
 
   # Two single-tool-use rounds, both naming the allowed tool, so the sequence

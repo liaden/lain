@@ -51,9 +51,8 @@ module ForgeProbeSupport
     def pr_state(_number) = "OPEN"
     # The keyword is named because the duck names it; this world simply has no
     # pull requests.
-    # rubocop:disable Lint/UnusedMethodArgument
+    # rubocop:disable-next Lint/UnusedMethodArgument
     def pr_for(head:) = nil
-    # rubocop:enable Lint/UnusedMethodArgument
   end
 end
 

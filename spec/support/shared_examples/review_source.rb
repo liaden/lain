@@ -173,7 +173,7 @@ RSpec.shared_examples "a review changeset source" do |config|
   # alone, which is the unit `#sides` answers in.
   def sides_named_by(source)
     source.files.flat_map { |file| [[file.old_path, "old"], [file.new_path, "new"]] }
-                .select(&:first).map(&:last).uniq
+          .select(&:first).map(&:last).uniq
   end
 
   # The same source, naming one file more than its own revisions carry. Pointing

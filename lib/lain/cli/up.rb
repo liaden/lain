@@ -87,9 +87,8 @@ module Lain
       # holds more than one now and "the chat pane" can no longer be spelled
       # as the window: tmux resolves a window target to its ACTIVE pane, and
       # the active one is the pane the human types in, by design.
-      # rubocop:disable Lint/InterpolationCheck
+      # rubocop:disable-next Lint/InterpolationCheck
       PANE_ID = '#{pane_id}'
-      # rubocop:enable Lint/InterpolationCheck
 
       # Rows for the input pane. It is the human's whole surface -- the chat's
       # HUD line, the prompt under it, and room for a countdown rail or a
@@ -563,9 +562,8 @@ module Lain
 
         # tmux's OWN format syntax, single-quoted so it reaches tmux byte for
         # byte.
-        # rubocop:disable Lint/InterpolationCheck
+        # rubocop:disable-next Lint/InterpolationCheck
         FORMAT = '#{pane_dead} #{pane_dead_status}'
-        # rubocop:enable Lint/InterpolationCheck
 
         # Built where the pane is handed its command, because the grace it
         # measures is the PANE's life: there is no constructing one early and

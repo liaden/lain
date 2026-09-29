@@ -56,10 +56,10 @@ RSpec.describe Lain::Toolset do
 
   def tool(tool_name) = self.class.tool_named(tool_name)
 
-  let(:read)  { tool(:read_file) }
-  let(:grep)  { tool(:grep) }
-  let(:bash)  { tool(:bash) }
-  let(:full)  { described_class.new([read, grep, bash]) }
+  let(:read) { tool(:read_file) }
+  let(:grep) { tool(:grep) }
+  let(:bash) { tool(:bash) }
+  let(:full) { described_class.new([read, grep, bash]) }
 
   describe "construction" do
     it "is frozen -- a capability set does not mutate" do

@@ -33,7 +33,8 @@ RSpec.describe Lain::Provider::Ollama::StreamAssembler do
 
   def done_line(**overrides)
     { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "" },
-      "done" => true, "done_reason" => "stop", "prompt_eval_count" => 11, "eval_count" => 7 }.merge(overrides)
+      "done" => true, "done_reason" => "stop", "prompt_eval_count" => 11, "eval_count" => 7 }
+      .merge(overrides.transform_keys(&:to_s))
   end
 
   def ndjson(lines) = "#{lines.map { |line| JSON.generate(line) }.join("\n")}\n"
@@ -182,7 +183,7 @@ RSpec.describe Lain::Provider::Ollama::StreamAssembler do
     # `attempt:` and `frame:` are DECLARED so a provider that stopped threading
     # them fails loudly here rather than handing them over as a positional Hash
     # of headers -- see `ollama_spec.rb`'s #transport_sync for the full note.
-    # rubocop:disable Lint/UnusedBlockArgument
+    # rubocop:disable-next Lint/UnusedBlockArgument
     def stream_transport(chunks, abandon_after: nil)
       Class.new do
         define_method(:stream) do |_payload, _headers = {}, attempt: nil, frame: nil, &block|
@@ -193,7 +194,6 @@ RSpec.describe Lain::Provider::Ollama::StreamAssembler do
         end
       end.new
     end
-    # rubocop:enable Lint/UnusedBlockArgument
 
     def journaled(chunks, abandon_after: nil)
       io = StringIO.new

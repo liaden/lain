@@ -105,7 +105,7 @@ Gem::Specification.new do |spec|
   # Left transitive, a released gem would get whatever reline the user's Ruby has,
   # and a rename in a minor bump would break the prompt in SILENCE -- the seam would
   # simply stop firing. spec/lain/frontend/line_editor_spec.rb fails loudly instead.
-  spec.add_dependency "reline", "~> 0.6.3"
+  spec.add_dependency "reline", "~> 0.7.0"
   # Declarative state machines. Chosen over `statesman`, which is built around a
   # persisted transition store -- the Timeline already is one, content-addressed
   # and replayable, and a second would only diverge from it.

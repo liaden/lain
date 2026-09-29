@@ -498,7 +498,7 @@ module ProviderConstructionDiscipline
     [["APPROVED", APPROVED], ["UNJOURNALED", UNJOURNALED]].flat_map do |name, list|
       list.flat_map do |path, constants|
         constants.keys.reject { |constant| live.include?([path, constant]) }
-                      .map do |constant|
+                 .map do |constant|
           Violation.new(path, nil,
                         "#{name} names #{constant}, which is constructed nowhere")
         end

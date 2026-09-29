@@ -266,7 +266,7 @@ module CommentCensus
     # @return [Array<String>] its sentences, unwrapped across comment lines
     def self.sentences(text)
       text.lines.map { |line| line.sub(/\A\s*(?:#+|-{2,})\s*/, "") }
-                .join(" ").gsub(/\s+/, " ").split(/(?<=[.:?!])\s+|\s--\s/)
+          .join(" ").gsub(/\s+/, " ").split(/(?<=[.:?!])\s+|\s--\s/)
     end
 
     # @param sentence [String]
@@ -471,7 +471,7 @@ module CommentCensus
     # @return [Array<Array>] its tokens with comments and line breaks removed
     def self.significant(source)
       Prism.lex(source).value.reject { |token, _state| TRIVIA.include?(token.type) }
-                             .map { |token, _state| [token.type, token.value] }
+           .map { |token, _state| [token.type, token.value] }
     end
 
     def self.divergence(original, stripped)

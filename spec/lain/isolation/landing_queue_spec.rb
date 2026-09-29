@@ -283,7 +283,9 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(landing.value.report("w1").kind).to eq(:merged)
     end
 
-    def lock_path = File.join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), Lain::Isolation::ParentLock::NAME)
+    def lock_path
+      File.join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), Lain::Isolation::ParentLock::NAME)
+    end
 
     def free?
       File.open(lock_path, File::RDWR | File::CREAT) { |file| file.flock(File::LOCK_EX | File::LOCK_NB) }

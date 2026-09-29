@@ -888,7 +888,7 @@ module Lain
         # neither side and is dropped by the same rule that keeps both.
         def side(marker)
           hunk.lines.select { |line| line.start_with?(" ", marker) || line.empty? }
-                    .map { |line| line[1..] || "" }.join("\n")
+              .map { |line| line[1..] || "" }.join("\n")
         end
 
         def evidence

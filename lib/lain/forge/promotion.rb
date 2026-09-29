@@ -270,13 +270,12 @@ module Lain
       # {Gh::Answer}, not a value of this class's own: {Gh::Contracts::Answer}
       # refuses `ok: false, observed: true`, so "a refusal that claims the effect
       # was already in place" is unrepresentable rather than merely never written.
-      # rubocop:disable Naming/MethodParameterName -- `ok` is {Outcome}'s field.
+      # rubocop:disable-next Naming/MethodParameterName -- `ok` is {Outcome}'s field.
       def answer(sha, reason:, ok:, observed: false, message: "")
         Gh::Answer.new(ok:, observed:,
                        detail: { "epic_slug" => @branch.epic_slug, "ref" => @branch.ref, "sha" => sha,
                                  "reason" => reason, "message" => message })
       end
-      # rubocop:enable Naming/MethodParameterName
     end
   end
 end

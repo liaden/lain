@@ -860,7 +860,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
     def errors_declared_under(namespace)
       namespace.constants.map { |name| namespace.const_get(name) }
-                         .select { |constant| constant.is_a?(Class) && constant < StandardError }
+               .select { |constant| constant.is_a?(Class) && constant < StandardError }
     end
 
     # Everything the landing and its queue declare they raise is raised before

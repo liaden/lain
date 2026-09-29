@@ -84,9 +84,8 @@ module Lain
         # block must RETURN a [key, value] Array -- reintroducing exactly the
         # per-entry Array this avoids. Measured on a 40-key Hash: each_with_object
         # 3 objects / 2.34kB, to_h 42 objects / 3.60kB.
-        # rubocop:disable Style/ReduceToHash
+        # rubocop:disable-next Style/ReduceToHash
         normalized.keys.sort!.each_with_object({}) { |key, acc| acc[key] = normalized[key] }.freeze
-        # rubocop:enable Style/ReduceToHash
       end
 
       def normalize_key(key)

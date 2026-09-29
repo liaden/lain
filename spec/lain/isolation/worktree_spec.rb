@@ -87,7 +87,7 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
 
   def lock_line(path)
     registered_worktrees.split("\n\n").find { |entry| entry.include?("worktree #{path}\n") }
-                                      .to_s[/^locked.*$/].to_s
+                        .to_s[/^locked.*$/].to_s
   end
 
   # A pid that existed a moment ago and has exited: what a crashed lain leaves

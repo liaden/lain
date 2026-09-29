@@ -785,7 +785,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
           document = rendered
           open_question(document)
           headings = document.each_index.select { |index| document[index].start_with?("## `") }
-                                        .map { |index| index + 1 }
+                             .map { |index| index + 1 }
           expect(headings.size).to eq(kinds.size)
 
           feed("lain://question", "", cursor: [1, 0])

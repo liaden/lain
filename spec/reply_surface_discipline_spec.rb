@@ -204,7 +204,7 @@ module ReplySurfaceDiscipline
     command_root.glob("*.rb").flat_map do |file|
       reads = Scanner.new(file.basename.to_s).scan(file.read)
       reads.group_by(&:klass).reject { |klass_name, _| klass_name.nil? }
-                             .map do |klass_name, klass_reads|
+           .map do |klass_name, klass_reads|
         [
           built_for(klass_name, file), klass_reads
         ]

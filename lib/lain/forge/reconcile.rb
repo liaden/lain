@@ -385,7 +385,7 @@ module Lain
         # the report down with it: a resume with one malformed line still has to
         # say what landed.
         unaddressable, unsettled = pairing.unsettled.map { |intent| observer.judge(intent) }
-                                                    .partition(&:unaddressable?)
+                                          .partition(&:unaddressable?)
         @report = Report.new(settled: pairing.settled, orphans: pairing.orphans, unsettled:, unaddressable:)
       end
 

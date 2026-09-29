@@ -81,9 +81,8 @@ module Lain
       # @param k [Integer] retrieval depth (recall@k)
       # @return [String] the Compare-style report; never printed here
       # @raise [Refusal] on a k that is not a positive whole number
-      # rubocop:disable Naming/MethodParameterName -- `k` is the pinned recall@k name.
+      # rubocop:disable-next Naming/MethodParameterName -- `k` is the pinned recall@k name.
       def sweep_report(k: Sweep::DEFAULT_K) = Sweep.new(k: check_k(k)).report
-      # rubocop:enable Naming/MethodParameterName
 
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
@@ -646,7 +645,7 @@ module Lain
       # Refusal parity with {#check_runs}: a fractional k must refuse rather
       # than truncate -- `Integer(2.5)` quietly scores recall@2 -- and recall@0
       # retrieves nothing.
-      # rubocop:disable Naming/MethodParameterName -- pinned recall@k name.
+      # rubocop:disable-next Naming/MethodParameterName -- pinned recall@k name.
       def check_k(k)
         depth = Integer(k.to_s, exception: false)
         raise Refusal, "k must be a whole number, got #{k}" if depth.nil?
@@ -654,7 +653,6 @@ module Lain
 
         depth
       end
-      # rubocop:enable Naming/MethodParameterName
 
       def prompts_from(taskfile)
         raise Refusal, "no task file at #{taskfile}" unless File.file?(taskfile)
@@ -726,7 +724,7 @@ module Lain
 
         def asked_in(timeline)
           timeline.to_a.select { |turn| turn.role == "user" }
-                       .flat_map(&:content).filter_map { |block| block["text"] }
+                  .flat_map(&:content).filter_map { |block| block["text"] }
         end
       end
       private_constant :SuiteGrader

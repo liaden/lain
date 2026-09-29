@@ -260,7 +260,7 @@ module Lain
       def ordered
         @ordered ||= readings.flat_map(&:records)
                              .each_with_index.sort_by { |record, index| [record["ts"].to_s, index] }
-                                             .map(&:first)
+                             .map(&:first)
       end
 
       # One pass: the counts are taken as the lines go by rather than from a

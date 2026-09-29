@@ -134,7 +134,7 @@ module Lain
         # finest density, built by editing the authored plan, never re-authored.
         def seam_every
           @document.steps[0...-1].map(&:id).reject { |id| @document.seam?(id) }
-                                           .inject(@document) { |doc, id| doc.insert_seam(after: id) }
+                                 .inject(@document) { |doc, id| doc.insert_seam(after: id) }
         end
 
         def strip_seams

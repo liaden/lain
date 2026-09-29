@@ -1291,7 +1291,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     def tool_result_in(request)
       request.messages.flat_map { |message| Array(message["content"]) }
-                      .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+             .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
     end
 
     it "spawns the role the call names, through that role's own spawner" do
@@ -1380,7 +1380,7 @@ RSpec.describe Lain::Tools::Subagent do
       # as an is_error tool_result in its second request.
       expect(provider.call_count).to eq(4)
       refusal = provider.requests[2].messages.flat_map { |m| m["content"] }
-                                             .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
+                                    .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to include("depth")
     end
@@ -1404,7 +1404,7 @@ RSpec.describe Lain::Tools::Subagent do
       # though the spawner had depth to spare, because the inner tool said 0.
       expect(provider.call_count).to eq(2)
       refusal = provider.requests[1].messages.flat_map { |m| m["content"] }
-                                             .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
+                                    .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to include("depth")
     end
@@ -1434,7 +1434,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result.content).to eq("orchestrated")
       expect(provider.call_count).to eq(4)
       refusal = provider.requests[2].messages.flat_map { |m| m["content"] }
-                                             .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
+                                    .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to eq("subagent spawn depth exceeded: this agent is at the ceiling")
     end
@@ -1476,8 +1476,8 @@ RSpec.describe Lain::Tools::Subagent do
 
     def tool_result_blocks(timeline)
       timeline.to_a.select { |turn| turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" } }
-                   .flat_map(&:content)
-                   .select { |b| b["type"] == "tool_result" }
+              .flat_map(&:content)
+              .select { |b| b["type"] == "tool_result" }
     end
 
     def read_edit_toolset
@@ -2039,7 +2039,7 @@ RSpec.describe Lain::Tools::Subagent do
       two_deep(provider, **guarded(**gating)).call({ "prompt" => "start" }, invocation)
 
       provider.requests[2].messages.flat_map { |message| message["content"] }
-                                   .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+                          .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
     end
 
     it "gates a GRANDCHILD's read of .env, two spawns deep" do

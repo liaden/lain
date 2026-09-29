@@ -84,7 +84,9 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
                                                   latency: 0.0, issue_id:)
   end
 
-  def transitions = journal.grep(Lain::Epic::IssueTransition).map { |move| [move.issue_id, move.from_status, move.to_status] }
+  def transitions
+    journal.grep(Lain::Epic::IssueTransition).map { |move| [move.issue_id, move.from_status, move.to_status] }
+  end
 
   def pushed? = calls.any? { |argv| argv.include?("push") }
 

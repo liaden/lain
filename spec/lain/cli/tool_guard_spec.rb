@@ -684,7 +684,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     def constructions
       Dir.glob(File.expand_path("../../../lib/**/*.rb", __dir__)).flat_map do |path|
         File.readlines(path).reject { |line| line.lstrip.start_with?("#") }
-                            .grep(/\bFilter\.new\b/).map { File.basename(path) }
+            .grep(/\bFilter\.new\b/).map { File.basename(path) }
       end
     end
 

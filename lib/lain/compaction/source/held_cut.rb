@@ -292,7 +292,7 @@ module Lain
         # a handoff's own input fits.
         def replacements
           @seam.collapses.reject { |collapse| collapse.fetch("content").empty? }
-                         .map { |collapse| { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") } }
+               .map { |collapse| { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") } }
         end
 
         # The turns a handoff would collapse that no held cut has already: what

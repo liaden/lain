@@ -104,7 +104,7 @@ RSpec.describe "capability degradation on the chat path", :seam do
 
   def degraded_records
     io.string.each_line.filter_map { |line| Lain::Journal.parse(line) }
-                       .select { |record| record["type"] == "capability_degraded" }
+      .select { |record| record["type"] == "capability_degraded" }
   end
 
   # The requirer this run actually has: derived from the pipeline, never named

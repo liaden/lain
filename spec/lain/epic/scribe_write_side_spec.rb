@@ -31,8 +31,8 @@ RSpec.describe "the epic tier's journal records have one writer" do
 
   def constructed_elsewhere(record)
     lib_root.glob("**/*.rb").reject { |file| file == scribe }
-                            .select { |file| constructor_call(record).match?(file.read) }
-                            .map { |file| "  #{record}.new in #{file.relative_path_from(lib_root)}" }
+            .select { |file| constructor_call(record).match?(file.read) }
+            .map { |file| "  #{record}.new in #{file.relative_path_from(lib_root)}" }
   end
 
   it "is called only from lib/lain/epic/scribe.rb" do

@@ -215,7 +215,7 @@ RSpec.describe Lain::Epic::Graph do
     index = plan.each_with_index.flat_map { |wave, at| wave.map { |member| [member.id, at] } }.to_h
     index.keys.flat_map do |id|
       closure.fetch(id).reject { |blocker| index.fetch(blocker) < index.fetch(id) }
-                       .map { |blocker| [blocker, id] }
+             .map { |blocker| [blocker, id] }
     end
   end
 

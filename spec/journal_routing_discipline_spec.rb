@@ -105,7 +105,7 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
 
   def lost
     display.events.select { |event| journalable?(event) }
-                  .reject { |event| Lain::Frontend::Decorators.for(event) || record.events.include?(event) }
+           .reject { |event| Lain::Frontend::Decorators.for(event) || record.events.include?(event) }
   end
 
   it "leaves no journalable record on the display channel that the terminal skips and the record lacks" do

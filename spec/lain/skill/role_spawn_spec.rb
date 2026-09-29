@@ -255,8 +255,8 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
     def tool_results(request)
       request.messages.flat_map { |message| Array(message["content"]) }
-                      .select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
-                      .map { |block| block["content"].to_s }
+             .select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+             .map { |block| block["content"].to_s }
     end
 
     it "runs the child in the held checkout, and takes no lease of its own" do

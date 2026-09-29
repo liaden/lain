@@ -86,7 +86,7 @@ module Lain
       # @return [ArmTasks::Trajectory]
       def self.trajectory(timeline)
         text = timeline.to_a.select { |turn| turn.role == "assistant" }
-                            .flat_map(&:content).filter_map { |block| block["text"] }.join("\n")
+                       .flat_map(&:content).filter_map { |block| block["text"] }.join("\n")
         ArmTasks::Trajectory.new(files: FileBlocks.parse(text))
       end
 

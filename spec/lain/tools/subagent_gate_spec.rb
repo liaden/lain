@@ -447,7 +447,7 @@ RSpec.describe "Subagent gating" do
 
     def tool_results_of(request)
       request.messages.flat_map { |message| message["content"] }
-                      .select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+             .select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
     end
 
     def scripted(name, input) = mock(tool_response(["c1", name, input]), text_response("done"))
