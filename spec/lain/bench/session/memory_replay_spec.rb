@@ -50,6 +50,18 @@ RSpec.describe Lain::Bench::Session::MemoryReplay do
   # on. A list with roots and NO load is damage, and is pinned as such below.
   let(:roots) { [loaded_record, *%w[d1 d2 d3].zip(snapshots).map { |digest, index| root_record(digest, index) }] }
 
+  describe "a resume whose seed holds a clerk's row" do
+    it "rebuilds the seed at the version it was recorded under, author included" do
+      clerk = Lain::Memory::Item.new(id: "ttl", description: "d", body: "b",
+                                     author: Lain::Memory::Author.clerk(spawn: "sha256:abc"))
+      record = JSON.parse(JSON.generate(loaded_record(clerk)))
+
+      replay = described_class.new(records: [record])
+
+      expect(replay.loaded.items.first.author).to eq(clerk.author)
+    end
+  end
+
   describe "#recorded_memory" do
     it "replays the successful writes and pairs each turn with its pre-write root" do
       memory = described_class.new(records: turns + roots).recorded_memory

@@ -3,8 +3,9 @@
 module Lain
   module Memory
     # A frozen unit of memory: a caller-chosen id, a one-line description, and
-    # a body. Its digest is the content address of those three fields, so a
-    # Store dedupes rewrites of identical content for free.
+    # a body. Its digest is the content address of those three fields, plus the
+    # author when it is not the chat, so a Store dedupes rewrites of identical
+    # content for free.
     #
     # The one-line id and description are structural, not advisory: a Manifest
     # renders one line per item, and any vertical whitespace would let one item
@@ -26,7 +27,7 @@ module Lain
       LINE_BREAK = /\R|[\v  ]/
       private_constant :LINE_BREAK
 
-      attr_reader :id, :description, :body, :digest
+      attr_reader :id, :description, :body, :author, :digest
 
       # The blank-id rule as a class-level predicate: directly testable
       # (including the NBSP-only Unicode edge) without constructing a whole
@@ -50,15 +51,19 @@ module Lain
       # The keywords stay spelled out rather than collected as `**attrs`: a
       # declaration has no arity, so a forgotten `body:` would settle to nil and
       # be digested instead of refused.
-      def initialize(id:, description:, body:)
+      def initialize(id:, description:, body:, author: Author.chat)
         @id, @description, @body = self.class.settle!(id:, description:, body:).values_at(:id, :description, :body)
+        @author = author
         @digest = Canonical.digest(payload)
         freeze
       end
 
-      # The exact structure that was hashed. Also what a Journal writes.
+      # The exact structure that was hashed. Also what a Journal writes. The
+      # chat's authorship is omitted so every row and record written before
+      # authors existed keeps the digest it was stored under.
       def payload
-        { "id" => id, "description" => description, "body" => body }
+        base = { "id" => id, "description" => description, "body" => body }
+        author.chat? ? base : base.merge("author" => author.to_h)
       end
 
       def to_s

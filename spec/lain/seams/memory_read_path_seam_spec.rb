@@ -109,7 +109,7 @@ RSpec.describe "Memory read path seam", :seam do
     let(:aspirin) { item("aspirin-dosing", "Aspirin dosing bounds for adults") }
     let(:recorder) { Lain::Memory::Recorder.new }
     let(:toolset) do
-      Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:),
+      Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat),
                          Lain::Tools::MemoryRead.new(index: recorder)])
     end
 
@@ -127,7 +127,7 @@ RSpec.describe "Memory read path seam", :seam do
                          .flat_map(&:content)
                          .find { |block| block["type"] == "tool_result" && block["tool_use_id"] == "tu_2" }
       expect(read_result.fetch("is_error")).to be(false)
-      expect(read_result.fetch("content")).to eq(aspirin.body)
+      expect(read_result.fetch("content")).to eq("author: chat\n#{aspirin.body}")
     end
   end
 end

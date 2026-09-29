@@ -95,7 +95,9 @@ module ToolRegistry
     "edit_file" => -> { Lain::Tools::EditFile.new },
     "write_file" => -> { Lain::Tools::WriteFile.new },
     "todo_write" => -> { Lain::Tools::TodoWrite.new },
-    "memory_write" => -> { Lain::Tools::MemoryWrite.new(recorder: Lain::Memory::Recorder.new) },
+    "memory_write" => lambda {
+      Lain::Tools::MemoryWrite.new(recorder: Lain::Memory::Recorder.new, author: Lain::Memory::Author.chat)
+    },
     "improvement_write" => lambda {
       Lain::Tools::ImprovementWrite.new(sink: Lain::Improvement::Sink.new(paths: Lain::Paths.new, session: "test"))
     },

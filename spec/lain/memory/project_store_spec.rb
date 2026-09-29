@@ -26,6 +26,8 @@ RSpec.describe Lain::Memory::ProjectStore do
     Lain::Memory::Item.new(id:, description: "about #{id}", body:)
   end
 
+  def stored_rows = File.readlines(store.path, chomp: true).map { |line| JSON.parse(line) }
+
   def lines = File.readlines(store.path, chomp: true).reject(&:empty?)
 
   def paths_at(root) = Lain::Paths.new(env: { "XDG_STATE_HOME" => root, "HOME" => root })
@@ -364,6 +366,50 @@ RSpec.describe Lain::Memory::ProjectStore do
       loaded = Lain::Memory::ProjectStore::Loaded.of([item("a"), item("b")])
 
       expect(loaded.index.to_h.keys).to contain_exactly("a", "b")
+    end
+  end
+
+  describe "authorship" do
+    it "writes the chat's rows with author kind chat" do
+      store.append(item("suite"))
+
+      expect(stored_rows.last["author"]).to eq("kind" => "chat")
+    end
+
+    it "writes a clerk's row with its spawn and reads it back" do
+      author = Lain::Memory::Author.clerk(spawn: "sha256:abc")
+      store.append(Lain::Memory::Item.new(id: "ttl", description: "d", body: "b", author:))
+
+      expect(stored_rows.last["author"]).to eq("kind" => "clerk", "spawn" => "sha256:abc")
+      expect(store.load.items.first.author).to eq(author)
+    end
+
+    # A row exactly as the store wrote it before authors existed, digest included.
+    it "loads a pre-author row as the chat's, under its original digest, without Corrupt" do
+      legacy = { "id" => "legacy", "description" => "a legacy row", "body" => "written before authors",
+                 "digest" => "blake3:5d105fb2839229e236252c4339f4cec87dfd5c09bfc96b3ed1d16f5cdfa3d1aa" }
+      FileUtils.mkdir_p(File.dirname(store.path))
+      File.write(store.path, "#{JSON.generate(legacy)}\n")
+
+      expect(store.load.items.first).to have_attributes(id: "legacy", author: Lain::Memory::Author.chat,
+                                                        digest: legacy["digest"])
+    end
+
+    it "skips a row whose author is not a record, rather than refusing the whole store" do
+      row = item("odd").payload.merge("digest" => item("odd").digest, "author" => "clerk")
+      FileUtils.mkdir_p(File.dirname(store.path))
+      File.write(store.path, "#{JSON.generate(row)}\n")
+
+      expect(store.load.items).to be_empty
+    end
+
+    it "refuses a clerk's row edited to claim the chat wrote it" do
+      store.append(Lain::Memory::Item.new(id: "ttl", description: "d", body: "b",
+                                          author: Lain::Memory::Author.clerk(spawn: "sha256:abc")))
+      edited = stored_rows.last.merge("author" => { "kind" => "chat" })
+      File.write(store.path, "#{JSON.generate(edited)}\n")
+
+      expect { store.load }.to raise_error(described_class::Corrupt, /has been edited/)
     end
   end
 end

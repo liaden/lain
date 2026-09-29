@@ -700,7 +700,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
 
     let(:recorder) { Lain::Memory::Recorder.new }
-    let(:memory_toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)]) }
+    let(:memory_toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)]) }
     let(:memory_journal) { Lain::Memory::JournalMemoryRoot.new(journal:, recorder:) }
 
     let(:memory_responses) do

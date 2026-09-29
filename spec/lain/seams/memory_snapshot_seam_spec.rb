@@ -32,7 +32,7 @@ RSpec.describe "Memory snapshot x Journal seam", :seam do
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:journal) { Lain::Memory::JournalMemoryRoot.new(journal: real_journal, recorder:) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
-  let(:toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)]) }
+  let(:toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)]) }
 
   let(:first_gap_writes) do
     [item("aspirin-dosing", "Aspirin dosing bounds for adults"),

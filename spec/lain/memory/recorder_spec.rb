@@ -96,6 +96,6 @@ RSpec.describe Lain::Memory::Recorder do
   it "satisfies the index duck MemoryRead depends on" do
     recorder.write(item("dosage", "500mg"))
     reader = Lain::Tools::MemoryRead.new(index: recorder)
-    expect(reader.call(id: "dosage")).to eq(Lain::Tool::Result.ok("500mg"))
+    expect(reader.call(id: "dosage")).to eq(Lain::Tool::Result.ok("author: chat\n500mg"))
   end
 end

@@ -54,7 +54,8 @@ module Lain
       def name = "memory_read"
 
       def description
-        "Reads the full body of the memory item with the given id. The " \
+        "Reads the full body of the memory item with the given id, after an author " \
+          "line naming who wrote it. The " \
           "memory manifest lists one id and description per item; use this " \
           "to fetch the body behind a manifest line. A body over " \
           "#{BOUND.limit} bytes is refused rather than truncated. Returns an " \
@@ -71,12 +72,13 @@ module Lain
       # Rescuing UnknownId beats a #key? pre-check, which would walk the
       # chain a second time to learn what #fetch already says.
       def perform(input, _invocation)
-        body = index.fetch(input.id).body
+        item = index.fetch(input.id)
+        body = item.body
         # `bytesize` and not `size`: the ceiling counts bytes, and a body of
         # multi-byte characters would otherwise measure short by up to 4x.
         return refusal(input.id, body.bytesize) unless BOUND.admits?(body.bytesize)
 
-        Tool::Result.ok(body)
+        Tool::Result.ok("author: #{item.author}\n#{body}")
       rescue Memory::Index::UnknownId
         Tool::Result.error("no memory with id #{input.id.inspect}")
       end

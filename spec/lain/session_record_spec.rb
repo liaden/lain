@@ -861,7 +861,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   describe "the manifest pair needs no new record" do
     it "reconstructs manifest reminders through the existing MemoryReplay root" do
       recorder = Lain::Memory::Recorder.new
-      memory_toolset = CoreGraph.toolset([Lain::Tools::MemoryWrite.new(recorder:)])
+      memory_toolset = CoreGraph.toolset([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)])
       memory_journal = Lain::Memory::JournalMemoryRoot.new(journal:, recorder:)
       input = { "id" => "aspirin-dosing", "description" => "Aspirin dosing bounds", "body" => "40mg/kg max" }
       usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)

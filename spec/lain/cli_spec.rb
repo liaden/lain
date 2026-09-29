@@ -228,7 +228,7 @@ RSpec.describe LainCLI do
 
       read = chat_toolset.fetch("memory_read").call({ "id" => "aspirin-dosing" })
       expect(read.ok?).to be(true)
-      expect(read.content).to eq("81mg to 325mg daily")
+      expect(read.content).to eq("author: chat\n81mg to 325mg daily")
     end
   end
 

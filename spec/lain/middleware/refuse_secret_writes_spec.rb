@@ -318,7 +318,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
   describe "in an Agent's tool phase" do
     it "keeps the real recorder untouched: the refused write never lands in the Memory::Index" do
       recorder = Lain::Memory::Recorder.new
-      toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)])
+      toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)])
       secret = "sk-#{"a" * 20}"
 
       creds_write = ["tu_1", "memory_write", { "id" => "creds", "description" => "oops", "body" => secret }]

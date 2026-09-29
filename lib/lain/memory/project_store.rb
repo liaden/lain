@@ -238,7 +238,7 @@ module Lain
       def item_from(line)
         record = JSON.parse(line)
         item = Item.new(id: record.fetch("id"), description: record.fetch("description"),
-                        body: record.fetch("body"))
+                        body: record.fetch("body"), author: Author.from(record["author"]))
         return item if item.digest == record.fetch("digest")
 
         raise Corrupt, "#{path} holds an entry recorded as #{record.fetch("digest")} whose content " \
@@ -261,13 +261,15 @@ module Lain
       # bytes that are not a record, is the one failure this ordering exists to
       # prevent.
       def written(items, item)
-        bytes = "#{terminator}#{JSON.generate(item.payload.merge("digest" => item.digest))}\n"
+        bytes = "#{terminator}#{JSON.generate(row_for(item))}\n"
         File.open(path, File::WRONLY | File::CREAT | File::APPEND, 0o644) do |file|
           stored!(file.write(bytes), bytes.bytesize, item)
           file.fsync
         end
         items + [item]
       end
+
+      def row_for(item) = item.payload.merge("author" => item.author.to_h, "digest" => item.digest)
 
       def stored!(landed, owed, item)
         return if landed == owed

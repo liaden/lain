@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Tools::MemoryWrite do
-  subject(:tool) { described_class.new(recorder:) }
+  subject(:tool) { described_class.new(recorder:, author: Lain::Memory::Author.chat) }
 
   let(:recorder) { Lain::Memory::Recorder.new }
 
@@ -9,6 +9,29 @@ RSpec.describe Lain::Tools::MemoryWrite do
     schema = tool.input_schema
     expect(schema["properties"].keys).to eq(%w[id description body])
     expect(schema["required"]).to eq(%w[id description body])
+  end
+
+  describe "authorship" do
+    it "stamps the chat's author on the chat's writes" do
+      tool.call(id: "suite", description: "d", body: "b")
+
+      expect(recorder.fetch("suite").author).to eq(Lain::Memory::Author.chat)
+    end
+
+    it "refuses construction without an author" do
+      expect { described_class.new(recorder:) }.to raise_error(ArgumentError, /author/)
+    end
+
+    it "stamps the author it was constructed with" do
+      author = Lain::Memory::Author.clerk(spawn: "sha256:abc")
+      described_class.new(recorder:, author:).call(id: "suite", description: "d", body: "b")
+
+      expect(recorder.fetch("suite").author).to eq(author)
+    end
+
+    it "offers the model no author field" do
+      expect(tool.input_schema["properties"].keys).to eq(%w[id description body])
+    end
   end
 
   describe "a write" do
@@ -56,7 +79,7 @@ RSpec.describe Lain::Tools::MemoryWrite do
       reader = Lain::Tools::MemoryRead.new(index: recorder)
       tool.call(id: "dosage", description: "Adult dosage", body: "500mg twice daily")
 
-      expect(reader.call(id: "dosage")).to eq(Lain::Tool::Result.ok("500mg twice daily"))
+      expect(reader.call(id: "dosage")).to eq(Lain::Tool::Result.ok("author: chat\n500mg twice daily"))
     end
   end
 

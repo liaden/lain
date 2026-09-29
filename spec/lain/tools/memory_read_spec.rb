@@ -12,8 +12,16 @@ RSpec.describe Lain::Tools::MemoryRead do
   end
   let(:index) { Lain::Memory::Index.empty.write(item) }
 
-  it "returns the item's body verbatim on a hit" do
-    expect(tool.call(id: "dosage")).to eq(Lain::Tool::Result.ok(item.body))
+  it "returns the item's body verbatim after an author line" do
+    expect(tool.call(id: "dosage")).to eq(Lain::Tool::Result.ok("author: chat\n#{item.body}"))
+  end
+
+  it "names the clerk and its lineage on a clerk's item" do
+    clerked = Lain::Memory::Item.new(id: "ttl", description: "d", body: "b",
+                                     author: Lain::Memory::Author.clerk(spawn: "sha256:abc"))
+    result = described_class.new(index: Lain::Memory::Index.empty.write(clerked)).call(id: "ttl")
+
+    expect(result.content).to eq("author: clerk (spawn sha256:abc)\nb")
   end
 
   it "answers an unknown id with an error Result naming the id, never a raise" do
@@ -24,7 +32,11 @@ RSpec.describe Lain::Tools::MemoryRead do
 
   it "does not care about the invocation it is handed" do
     invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1")
-    expect(tool.call({ id: "dosage" }, invocation)).to eq(Lain::Tool::Result.ok(item.body))
+    expect(tool.call({ id: "dosage" }, invocation).content).to end_with(item.body)
+  end
+
+  it "tells the model the result opens with the author line" do
+    expect(tool.description).to include("author")
   end
 
   it "declares one required string field \"id\"" do
@@ -106,7 +118,7 @@ RSpec.describe Lain::Tools::MemoryRead do
     end
 
     it "leaves every item under the ceiling readable" do
-      expect(tool.call(id: "dosage")).to eq(Lain::Tool::Result.ok(item.body))
+      expect(tool.call(id: "dosage")).to eq(Lain::Tool::Result.ok("author: chat\n#{item.body}"))
     end
   end
 end

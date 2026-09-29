@@ -159,7 +159,8 @@ module Lain
                   journal: Lain::Channel::Null.instance)
           [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new, Lain::Tools::Grep.new,
            Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
-           Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
+           Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat),
+           Lain::Tools::MemoryRead.new(index: recorder),
            Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
            Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new,
            Lain::Tools::FileSymbols.new]

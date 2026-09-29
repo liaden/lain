@@ -102,14 +102,14 @@ module Lain
 
     def spawn_clerk(scaffold)
       root_before = recorder.index.root
-      result = build_clerk.ask(scaffold.render).text
+      result = build_clerk(scaffold).ask(scaffold.render).text
       Outcome.new(spawn: scaffold.spawn, result:, wrote: recorder.index.root != root_before)
     end
 
     # The point of this class is the last argument: a tool-phase guard stack the
     # spawn seam would not have supplied.
-    def build_clerk
-      allowed = role.attenuate(clerk_union)
+    def build_clerk(scaffold)
+      allowed = role.attenuate(clerk_union(scaffold.spawn))
       Agent.new(
         provider: @provider, context: clerk_context, toolset: allowed,
         handler: Effect::Handler::Live.new,
@@ -141,9 +141,9 @@ module Lain
     # The union the role attenuates FROM: it must hold every tool the clerk's
     # `only`-set names, or {Toolset#only} fails loudly. Both memory tools share the
     # ONE recorder, so the clerk's writes and its manifest see one index.
-    def clerk_union
-      Toolset.new([Tools::ReadFile.new, Tools::ListFiles.new,
-                   Tools::MemoryRead.new(index: recorder), Tools::MemoryWrite.new(recorder:)])
+    def clerk_union(spawn)
+      Toolset.new([Tools::ReadFile.new, Tools::ListFiles.new, Tools::MemoryRead.new(index: recorder),
+                   Tools::MemoryWrite.new(recorder:, author: Memory::Author.clerk(spawn:))])
     end
 
     def clerk_context = role.child_context(@context, slots: @slots)

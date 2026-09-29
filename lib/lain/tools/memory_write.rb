@@ -56,9 +56,13 @@ module Lain
 
       input_model Input
 
-      def initialize(recorder:)
+      # @param recorder [Memory::Recorder] where the item is written
+      # @param author [Memory::Author] stamped on every write; lain's to set,
+      #   so the model has no field for it
+      def initialize(recorder:, author:)
         super()
         @recorder = recorder
+        @author = author
       end
 
       def name = "memory_write"
@@ -82,7 +86,7 @@ module Lain
         refusal = oversized(input)
         return refusal if refusal
 
-        item = Memory::Item.new(id: input.id, description: input.description, body: input.body)
+        item = Memory::Item.new(id: input.id, description: input.description, body: input.body, author:)
         root = recorder.write(item)
         Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}")
       rescue ArgumentError => e
@@ -106,7 +110,7 @@ module Lain
         bound.refusal(subject: yield, size: text.bytesize, narrower:) unless bound.admits?(text.bytesize)
       end
 
-      attr_reader :recorder
+      attr_reader :recorder, :author
     end
   end
 end

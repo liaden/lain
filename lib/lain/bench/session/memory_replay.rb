@@ -219,7 +219,8 @@ module Lain
         end
 
         def item_from(item)
-          Memory::Item.new(id: item.fetch("id"), description: item.fetch("description"), body: item.fetch("body"))
+          Memory::Item.new(id: item.fetch("id"), description: item.fetch("description"), body: item.fetch("body"),
+                           author: Memory::Author.from(item["author"]))
         end
 
         # The file's writes, paired with the turn that made them.
