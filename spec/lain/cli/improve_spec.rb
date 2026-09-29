@@ -176,6 +176,41 @@ RSpec.describe Lain::CLI::Improve do
     end
   end
 
+  describe "the report says what the pass stored" do
+    it "leads with the count of notes stored and follows with the model's text" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(improvement_write("k1", "first note")),
+                                            tool_response(improvement_write("k2", "second note", kind: "doc")),
+                                            text_response("recorded two improvements")
+                                          ])
+
+      lines = improve(provider).report.lines.map(&:chomp)
+
+      expect(lines.first).to include("stored 2 notes")
+      expect(lines.last).to eq("recorded two improvements")
+    end
+
+    it "says a single note in the singular" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(improvement_write("k1", "a note")),
+                                                      text_response("done")])
+
+      expect(improve(provider).report.lines.first.chomp).to end_with("stored 1 note")
+    end
+
+    it "says stored nothing when the improver wrote no note" do
+      provider = Lain::Provider::Mock.new(responses: [text_response("nothing worth a maintainer's time")])
+
+      expect(improve(provider).report.lines.first).to include("stored nothing")
+    end
+
+    it "does not count a note the sink refused" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(improvement_write("k1", "", kind: "knob")),
+                                                      text_response("done")])
+
+      expect(improve(provider).report.lines.first).to include("stored nothing")
+    end
+  end
+
   describe "the improver cannot write memories" do
     # A named capability the union can hold, without wiring the recorder-bearing
     # real tools (role_spec's idiom).

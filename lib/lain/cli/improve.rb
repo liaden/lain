@@ -204,9 +204,10 @@ module Lain
       # @raise [Bench::Session::Corrupt] naming the file and its damage
       def report
         review = session_review
+        sink = Improvement::Sink.new(session: review.session, paths: @paths)
         journaled do |journal|
-          result = build_improver(review.session, @backend.call, journal).ask(review.prompt).text
-          said("improve: ran a harness_improver pass over session #{review.session}\n#{result}")
+          result = build_improver(sink, @backend.call, journal).ask(review.prompt).text
+          said("improve: ran a harness_improver pass over session #{review.session}, #{stored(sink)}\n#{result}")
         end
       end
 
@@ -222,6 +223,12 @@ module Lain
       end
 
       private
+
+      def stored(sink)
+        return "stored nothing" if sink.appended.zero?
+
+        "stored #{sink.appended} #{sink.appended == 1 ? "note" : "notes"}"
+      end
 
       def said(report) = [*@notices, report].join("\n")
 
@@ -246,8 +253,8 @@ module Lain
       # than littered with zero-byte files.
       def journaled(&block) = Journal.open(File.join(@project_dir.container(JOURNAL_KIND), Journal.stem), &block)
 
-      def build_improver(session, backend, journal)
-        allowed = role.attenuate(improver_union(session))
+      def build_improver(sink, backend, journal)
+        allowed = role.attenuate(improver_union(sink))
         Agent.new(
           provider: backend.provider, context: role.child_context(backend.context, slots: backend.slots),
           toolset: allowed,
@@ -258,9 +265,9 @@ module Lain
 
       # The union the role attenuates FROM: it must hold every tool the role's
       # `only`-set names, or {Toolset#only} fails loudly.
-      def improver_union(session)
+      def improver_union(sink)
         Toolset.new([Tools::ReadFile.new, Tools::ListFiles.new, Tools::Glob.new, Tools::Grep.new,
-                     Tools::ImprovementWrite.new(sink: Improvement::Sink.new(session:, paths: @paths))])
+                     Tools::ImprovementWrite.new(sink:)])
       end
 
       # Routed through the role's own policy so the fresh-root decision has one

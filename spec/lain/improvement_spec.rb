@@ -101,6 +101,20 @@ RSpec.describe Lain::Improvement::Sink do
 
   after { FileUtils.remove_entry(tmp) }
 
+  describe "#appended" do
+    it "counts only the appends that completed" do
+      sink.append(note: "first note", kind: "bug")
+      expect { sink.append(note: "", kind: "bug") }.to raise_error(ArgumentError)
+      sink.append(note: "second note", kind: "doc")
+
+      expect(sink.appended).to eq(2)
+    end
+
+    it "starts at zero" do
+      expect(sink.appended).to eq(0)
+    end
+  end
+
   describe "an improvement lands durably under XDG state" do
     it "appends one NDJSON line under <XDG_STATE_HOME>/lain/improvements.ndjson carrying project_hash and session" do
       record = sink.append(note: "bash timeout is too aggressive for slow test suites", kind: "knob",

@@ -128,7 +128,11 @@ module Lain
     # atomically seeks to end-of-file and writes, so lines interleave whole,
     # never torn, as long as each stays under {LINE_MAX_BYTES}.
     class Sink
+      # Counted after the write returns, so a refused or raised append is never reported as stored.
+      attr_reader :appended
+
       def initialize(session:, paths: Paths.new, project_hash: paths.project_hash)
+        @appended = 0
         @paths = paths
         @session = session
         @project_hash = project_hash
@@ -138,6 +142,7 @@ module Lain
       def append(note:, kind:, evidence_digests: [])
         record = Improvement.new(note:, kind:, evidence_digests:, project_hash: @project_hash, session: @session)
         write(record.line)
+        @appended += 1
         record
       end
 
