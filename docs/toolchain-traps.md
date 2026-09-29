@@ -342,6 +342,13 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
   probing`.
 
+  Added 2026-09-29, red in 2 whole-suite runs on different trees (seeds 38780 and 1410, the second
+  on a box with no other suite live) and green 3 of 3 alone: `Lain::Frontend::InputPane a signal
+  the human sends the pane goes to the chat rather than interrupting the pane`. It fails as an
+  `IO::TimeoutError` reading the chat's next frame, and the watchdog then cuts its worker short, so
+  the run's example count drops by about 1,800 as well. Check the count against this name before
+  reading it as a dead worker.
+
   Added 2026-09-21, from ten hook-verified landings on a box with one core pinned by an unrelated
   job. Each of these reddened at least one pre-commit suite and then passed 3 of 3 serial runs of
   its file:
