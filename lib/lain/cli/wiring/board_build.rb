@@ -379,30 +379,6 @@ module Lain
         # resolve it, and its bytes must be ones a masked read would have sent.
         # Both can only REMOVE an approval.
         class Classifiers
-          # Where a path really lands: the real path of its longest existing
-          # prefix, with the part not on disk yet appended and cleaned. Cleaning
-          # only AFTER resolution matters -- `link/..` is the link target's
-          # parent to the kernel, and lexical cleaning would call it the cwd.
-          #
-          # A DANGLING link is not a missing file: it names a target that can be
-          # created later, outside the root, and the next read would follow it.
-          # It has no landing, so it raises.
-          module Landing
-            module_function
-
-            # @param path [String] absolute and uncleaned, as the call wrote it
-            # @return [String] absolute and clean
-            # @raise [SystemCallError, ArgumentError] when no prefix resolves
-            def of(path)
-              File.realpath(path)
-            rescue Errno::ENOENT
-              parent = File.dirname(path)
-              raise if parent == path || File.symlink?(path)
-
-              Pathname.new("#{of(parent)}#{File::SEPARATOR}#{File.basename(path)}").cleanpath.to_s
-            end
-          end
-
           # A cwd-anchored question about the root, answered twice: lexically
           # from the directory the call named, and again where that path really
           # lands, under the root's own real path. Either answer failing, or
@@ -440,7 +416,7 @@ module Lain
             # @param path [String] a word as the call wrote it
             # @return [String] the path the kernel will open for it
             # @raise [SystemCallError, ArgumentError] when no prefix resolves
-            def landing_of(path) = Landing.of(path.start_with?(File::SEPARATOR) ? path : "#{@landing}/#{path}")
+            def landing_of(path) = Lain::Landing.of(path, cwd: @landing).first
 
             private
 
@@ -589,7 +565,7 @@ module Lain
             # The one resolution of the cwd, asked here and CARRIED: the root
             # question needs it, and so does every word a rule classifies
             # afterwards.
-            real_landing = Landing.of(landing)
+            real_landing = Lain::Landing.of(landing, cwd: landing).first
             return @nowhere unless real_root.contains?(real_landing)
 
             Confinement.new(@confinement, landing, landing:, real_root:, real_landing:)

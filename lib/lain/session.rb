@@ -578,9 +578,9 @@ module Lain
       #
       # @param path [String, nil] as a call wrote it; nil is the scope's cwd
       def holds?(path)
-        landed = landing(worker_env.resolve(path))
+        landed = Lain::Landing.of(worker_env.resolve(path), cwd: root).first
         landed == root || landed.start_with?(File.join(root, ""))
-      rescue SystemCallError, ArgumentError, TypeError
+      rescue SystemCallError, ArgumentError, TypeError, Lain::Landing::Dangling
         false
       end
 
@@ -591,17 +591,6 @@ module Lain
         return leases if leases.is_a?(Isolation::Leases::InPlace)
 
         Isolation::Leases::InPlace.new(worker_env:, lane: leases.lane)
-      end
-
-      private
-
-      def landing(path)
-        File.realpath(path)
-      rescue Errno::ENOENT
-        parent = File.dirname(path)
-        raise if parent == path || File.symlink?(path)
-
-        File.join(landing(parent), File.basename(path))
       end
     end
 
