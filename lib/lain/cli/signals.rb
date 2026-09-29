@@ -20,8 +20,9 @@ module Lain
     class Signals
       # OS signal name -> the {Shutdown} input symbol it maps to. INT and TERM
       # open a grace window (or promote a second time); QUIT skips the countdown
-      # and interrupts at once.
-      MAP = { "INT" => :sigint, "TERM" => :sigterm, "QUIT" => :sigquit }.freeze
+      # and interrupts at once. HUP is a closed terminal and ends like TERM: left
+      # at its default it kills the process before any ensure closes the record.
+      MAP = { "INT" => :sigint, "TERM" => :sigterm, "HUP" => :sigterm, "QUIT" => :sigquit }.freeze
 
       # The absent-coordinator sink: between asks there is no run to stop, so a
       # signal is dropped. {Sink::Null}'s idiom -- the same `#signal` duck with
@@ -75,7 +76,7 @@ module Lain
       # so the whole question stays safe in trap context.
       def ask_in_flight? = @sink.ask_in_flight?
 
-      # Install INT/TERM/QUIT, capturing each prior handler for {#uninstall}. The
+      # Install INT/TERM/HUP/QUIT, capturing each prior handler for {#uninstall}. The
       # trap body reads @sink at delivery time, so a later {#route} redirects
       # already-installed traps without reinstalling.
       def install

@@ -36,21 +36,22 @@ RSpec.describe Lain::CLI::Signals do
   end
 
   describe "the signal map" do
-    it "maps INT/TERM/QUIT to the coordinator inputs, INT/TERM graceful and QUIT immediate" do
-      expect(described_class::MAP).to eq("INT" => :sigint, "TERM" => :sigterm, "QUIT" => :sigquit)
+    it "maps INT/TERM/HUP/QUIT to the coordinator inputs, INT/TERM/HUP graceful and QUIT immediate" do
+      expect(described_class::MAP).to eq("INT" => :sigint, "TERM" => :sigterm, "HUP" => :sigterm,
+                                         "QUIT" => :sigquit)
     end
   end
 
   describe "delivering a real signal while installed" do
-    it "routes each of INT/TERM/QUIT to the current sink as its mapped symbol" do
+    it "routes each of INT/TERM/HUP/QUIT to the current sink as its mapped symbol" do
       signals = described_class.new(sink:).install
 
-      %w[INT TERM QUIT].each { |name| Process.kill(name, Process.pid) }
+      %w[INT TERM HUP QUIT].each { |name| Process.kill(name, Process.pid) }
       # The VM runs deferred trap bodies at the next checkpoint; a bounded spin
       # keeps the example deterministic without a bare sleep.
-      Timeout.timeout(2) { sleep(0.001) until sink.received.size == 3 }
+      Timeout.timeout(2) { sleep(0.001) until sink.received.size == 4 }
 
-      expect(sink.received).to contain_exactly(:sigint, :sigterm, :sigquit)
+      expect(sink.received).to contain_exactly(:sigint, :sigterm, :sigterm, :sigquit)
     ensure
       signals.uninstall
     end
