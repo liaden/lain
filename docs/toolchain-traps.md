@@ -354,6 +354,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   lain://timeline reflects a turn commit does not touch lain://timeline for an event that names no
   turn`.
 
+  Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
+  every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
+  count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
+  descriptor of its own`.
+
   Added 2026-09-21, from ten hook-verified landings on a box with one core pinned by an unrelated
   job. Each of these reddened at least one pre-commit suite and then passed 3 of 3 serial runs of
   its file:
