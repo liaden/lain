@@ -1215,6 +1215,65 @@ RSpec.describe Lain::Review::Docent do
       expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_answered])
     end
 
+    it "tracks the answer's task with the supervisor it was handed, so a stop reaches it" do
+      tracked = []
+      supervisor = Object.new
+      supervisor.define_singleton_method(:track) { |task, role:| task.tap { tracked << [task, role] } }
+      spawn = ->(_role, _mode, _brief) { Lain::Tool::Result.ok("because beta") }
+
+      Sync do
+        subject = described_class.for(changeset:, surface: surface_with_pane(view), spawn:, journal:, supervisor:)
+        subject.open(anchor)
+        asked = subject.ask("a-42", "why this way?")
+        asked.task.wait
+
+        expect(tracked).to eq([[asked.task, described_class::ROLE]])
+      end
+    end
+
+    it "journals an abandonment when a real supervisor stops the answer mid-flight" do
+      spawn = ->(_role, _mode, _brief) { Async::Notification.new.wait }
+
+      Sync do |task|
+        supervisor = Lain::Supervisor.new.run(task)
+        subject = described_class.for(changeset:, surface: surface_with_pane(view), spawn:, journal:, supervisor:)
+        subject.open(anchor)
+        subject.ask("a-42", "why this way?")
+
+        supervisor.live.each { |row| row.actor.stop }
+      ensure
+        supervisor.stop
+      end
+
+      expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_abandoned])
+    end
+
+    # The real close path: the conductor stops the fleet, and only then closes
+    # the record, so what the stopped answer journals lands before it shuts.
+    it "journals its abandonment before the conductor closes the record" do
+      closer = Struct.new(:journal) do
+        def catch_up(_timeline) = self
+        def close(*) = (journal << Struct.new(:journal_type).new("session_closed")) && self
+      end
+      tty = Struct.new(:render_countdown, :stop_countdown, :prompt_drawn?).new
+      spawn = ->(_role, _mode, _brief) { Async::Notification.new.wait }
+
+      Sync do |task|
+        supervisor = Lain::Supervisor.new.run(task)
+        conductor = Lain::CLI::Conductor.new(tty:, chronicle: closer.new(journal),
+                                             signals: Lain::CLI::Signals.new, supervisor:)
+        subject = described_class.for(changeset:, surface: surface_with_pane(view), spawn:, journal:, supervisor:)
+        subject.open(anchor)
+        subject.ask("a-42", "why this way?")
+
+        conductor.close(reason: :exit)
+      ensure
+        supervisor.stop
+      end
+
+      expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_abandoned session_closed])
+    end
+
     # A surface with no pane is not a docent with a null view: an answer nobody
     # can see is not worth a provider call, so the refusal is the one the
     # gesture rail already knows how to render.

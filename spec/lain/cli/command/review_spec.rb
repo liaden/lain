@@ -68,12 +68,12 @@ end
 # {Lain::Review::Surface::Null}. Only the INLET is recorded, because its far
 # side is an editor and this group has none.
 class ReviewCommandEditor
-  def initialize(sink)
+  def initialize(sink, surface: nil)
     @inlet = ReviewCommandInlet.new
     @view = Lain::Frontend::Neovim::ReviewView.new(
       changesets: Lain::Frontend::Neovim::ChangesetDiff.new(rpc: @inlet)
     )
-    @surface = Lain::Review::Surface::Text.new(sink:)
+    @surface = surface || Lain::Review::Surface::Text.new(sink:)
   end
 
   attr_reader :bound, :inlet
@@ -81,6 +81,19 @@ class ReviewCommandEditor
   def review_surface = @surface
   def review_view = @view
   def bind_changeset_review(review) = @bound = review
+end
+
+# The editor's render inlet at the rails a thread-carrying surface posts on,
+# keeping every `set_thread` payload so a spec can read the anchor id back.
+class ReviewCommandThreadInlet
+  def initialize = (@threads = [])
+
+  attr_reader :threads
+
+  def set_review(_lines, _generation, _sides) = nil
+  def review_focus = nil
+  def review_refused(_message) = nil
+  def set_thread(anchor, lines) = @threads << [anchor, lines]
 end
 
 # A journal whose writes park, so a second thread can reach a round's terminal
@@ -1146,6 +1159,38 @@ RSpec.describe Lain::CLI::Command::Review do
 
       expect(editor.bound).not_to equal(first)
       expect(first.session.marks.to_h).to be_empty
+    end
+  end
+
+  # A docent the command wires is one `/stop` can reach: the supervisor it hands
+  # the docent is the run's own, so a dropped pass would leave the answer
+  # running with nothing in the fleet to stop.
+  describe "the docent this command registers with the run's supervisor" do
+    let(:thread_inlet) { ReviewCommandThreadInlet.new }
+    let(:editor) { ReviewCommandEditor.new(sink, surface: Lain::Review::Surface::Neovim.new(rpc: thread_inlet)) }
+
+    it "is stopped by /stop, which names it, and its abandonment is journaled" do
+      stopped = nil
+
+      Sync do |task|
+        supervisor = Lain::Supervisor.new.run(task)
+        parked = build_command_env(replies:, chronicle:, supervisor:,
+                                   role_spawn: ->(*) { Async::Notification.new.wait })
+        attached
+        command.call("feature", parked)
+        handover = editor.bound
+        handover.wrote_annotation({ "path" => "README", "side" => "new", "line" => 2, "kind" => "note",
+                                    "anchor_text" => "the line under review", "text" => "why?", "drifted" => false,
+                                    "revision" => handover.session.changeset.head_ref })
+        handover.ask(thread_inlet.threads.last.first["id"], "why this way?")
+
+        stopped = Lain::CLI::Command::Stop.new.call("", parked)
+      ensure
+        supervisor.stop
+      end
+
+      expect(stopped).to include("diff_docent")
+      expect(record.string.lines.map { |line| JSON.parse(line)["type"] }).to include("docent_abandoned")
     end
   end
 

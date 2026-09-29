@@ -193,4 +193,28 @@ RSpec.describe Lain::CLI::Command::Stop do
       end
     end
   end
+
+  describe "with a real supervisor tracking a one-shot" do
+    it "stops the task, lets its completion run, and names it" do
+      completed = []
+      answer = nil
+
+      Sync do |task|
+        supervisor = Lain::Supervisor.new.run(task)
+        one_shot = task.async(transient: true) do
+          Async::Notification.new.wait
+        ensure
+          completed << :journaled
+        end
+        supervisor.track(one_shot, role: "diff_docent")
+
+        answer = command.call("", env(supervisor:))
+      ensure
+        supervisor.stop
+      end
+
+      expect(completed).to eq([:journaled])
+      expect(answer).to include("stopped").and include("diff_docent")
+    end
+  end
 end

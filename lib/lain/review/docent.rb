@@ -268,11 +268,15 @@ module Lain
       # @param spawn [#call] `(role, context_mode, prompt) -> Tool::Result`
       # @param journal [#<<] the round's own journal, so an exchange replays
       #   with the review it belongs to
+      # @param supervisor [#track] the fleet each answer's task is registered
+      #   with, so `/stop` and a session's close reach it; nothing by default
       # @return [Docent, Object] a docent, or {Handover::Unattended}
-      def self.for(changeset:, surface:, spawn:, journal:)
+      def self.for(changeset:, surface:, spawn:, journal:, supervisor: Supervisor::Null)
         return Handover::Unattended unless surface.respond_to?(:thread_view)
 
-        new(changeset:, view: surface.thread_view, answerer: Answerer.new(spawn:), journal:)
+        answerer = Answerer.new(spawn:)
+        runner = ->(&block) { supervisor.track(Reactor.call(&block), role: answerer.role) }
+        new(changeset:, view: surface.thread_view, answerer:, journal:, runner:)
       end
 
       # @param changeset [Review::Changeset] the diff every question is about;

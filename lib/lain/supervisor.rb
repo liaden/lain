@@ -133,6 +133,24 @@ module Lain
       end.wait
     end
 
+    # A one-shot the fleet can stop: a task some other object started, that
+    # {#live} lists and {#stop} ends before the session's record closes. It is
+    # never adopted, so it is not relaunched, leased or reaped -- only known.
+    #
+    # @param task [Async::Task] a task already running
+    # @param role [String] what it is for -- the registry's label
+    # @return [Async::Task] the task, so a caller may chain
+    def track(task, role:)
+      raise NotRunning, "no reactor task is running; #run this supervisor first (tracking role: #{role})" unless
+        running?
+
+      registration = Registration.new(role:, actor: OneShot.new(task), lease: Isolation::Null.new.acquire,
+                                      worker_id: next_worker_id(role))
+      @registry << registration
+      @task.async(transient: true) { untrack_when_ended(task, registration) }
+      task
+    end
+
     # One {Drain} capping the WHOLE fleet's settling at `within` seconds.
     # Unbounded, a hung actor wedges wait_responses forever with the sigquit
     # escape hatch queued unread behind the blocked coordinator fiber.
@@ -223,6 +241,16 @@ module Lain
       # nothing.
       raise Error, format(Isolation::Worktree::Handback::Retirement::RELEASED, worker:) if
         registration.lease.released?
+    end
+
+    # A one-shot's failure belongs to whoever awaits it, so the wait here is
+    # only for its end, and the row leaves whichever way it ended.
+    def untrack_when_ended(task, registration)
+      task.wait
+    rescue StandardError
+      nil
+    ensure
+      @registry.delete(registration)
     end
 
     # A CRASHED row is surrendered rather than released because the release
@@ -391,6 +419,22 @@ module Lain
     # responsibility, and the split keeps every class body within
     # Metrics/ClassLength instead of loosening it.
 
+    # The part of an actor's duck a {Registration} reads, over a bare task. A
+    # task that ended by itself reads `stopped?` too: it is not live, and it is
+    # not a crash for {#reap} to surrender.
+    OneShot = Data.define(:task) do
+      def alive? = task.alive?
+
+      def stop = task.stop
+
+      def stopped? = !alive?
+
+      def dead? = false
+
+      # A one-shot is never worth waiting for at a drain.
+      def settle = self
+    end
+
     # What a retirement's report says of an actor stopped before its first
     # turn settled.
     STOPPED_MIDTURN = "the actor was stopped before its turn settled, so its checkout was anchored as it stood"
@@ -514,6 +558,9 @@ module Lain
 
         self
       end
+
+      # Nothing is tracked; the task runs on and is the caller's own.
+      def self.track(task, **) = task
 
       # Nothing running, ever -- the empty answer {CLI::Command::Stop} reads
       # before it touches anything.

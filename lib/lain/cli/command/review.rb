@@ -376,7 +376,7 @@ module Lain
           view = env.replies.review_view
           view.reviewing(session.changeset)
           docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
-                                            journal: env.chronicle.record_journal)
+                                            journal: env.chronicle.record_journal, supervisor: env.supervisor)
           Lain::Review::Handover.new(session:, view:, docent:, closing:,
                                      redraw: Lain::Review::Handover::Redraw.new(scope:))
         end

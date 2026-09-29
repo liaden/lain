@@ -622,6 +622,116 @@ RSpec.describe Lain::Supervisor do
   # therefore runs through {Isolation::WorkerHandoff#surrender}: anchor under
   # refs/lain/worker/, then release, spawning no resolver.
 
+  describe "tracking a one-shot task" do
+    def parked(task, journal = [])
+      task.async(transient: true) do
+        Async::Notification.new.wait
+      ensure
+        journal << :completed
+      end
+    end
+
+    it "lists the task as live under its role, and stops it through the row" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        journal = []
+
+        supervisor.track(parked(task, journal), role: "diff_docent")
+
+        expect(supervisor.live.map(&:role)).to eq(["diff_docent"])
+        supervisor.live.each { |row| row.actor.stop }
+        expect(journal).to eq([:completed])
+        expect(supervisor.live).to be_empty
+      ensure
+        supervisor.stop
+      end
+    end
+
+    it "drops the row from live once the task ends by itself" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        finished = task.async(transient: true) { :done }
+
+        supervisor.track(finished, role: "diff_docent")
+        finished.wait
+        task.yield
+
+        expect(supervisor.to_a).to be_empty
+      ensure
+        supervisor.stop
+      end
+    end
+
+    it "drops the row when the task is stopped, and when it fails" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        stopped = parked(task)
+        failed = task.async(transient: true) { raise Lain::Error, "boom" }
+        supervisor.track(stopped, role: "diff_docent")
+        supervisor.track(failed, role: "diff_docent")
+
+        stopped.stop
+        task.yield
+
+        expect(supervisor.to_a).to be_empty
+      ensure
+        supervisor.stop
+      end
+    end
+
+    it "refuses to track before #run, as adoption does" do
+      Sync do |task|
+        expect { described_class.new.track(parked(task), role: "diff_docent") }
+          .to raise_error(described_class::NotRunning)
+      end
+    end
+
+    it "stops a running one-shot at #stop, so its ensure runs before stop returns" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        journal = []
+        supervisor.track(parked(task, journal), role: "diff_docent")
+
+        supervisor.stop
+
+        expect(journal).to eq([:completed])
+      end
+    end
+
+    it "does not wait on a one-shot when draining" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        supervisor.track(parked(task), role: "diff_docent")
+
+        expect { supervisor.drain(within: 1).each(&:settle) }.not_to raise_error
+      ensure
+        supervisor.stop
+      end
+    end
+
+    it "answers the task, so a caller may chain" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        one_shot = parked(task)
+
+        expect(supervisor.track(one_shot, role: "diff_docent")).to be(one_shot)
+      ensure
+        supervisor.stop
+      end
+    end
+
+    it "is answered by the Null supervisor without tracking anything" do
+      Sync do |task|
+        one_shot = parked(task)
+
+        expect(described_class::Null.track(one_shot, role: "diff_docent")).to be(one_shot)
+        expect(described_class::Null.live).to be_empty
+      ensure
+        one_shot.stop
+      end
+    end
+  end
+
   describe "reaping a crashed worker" do
     # ONE log for both collaborators, because what this scenario is about is
     # ORDER: the surrender lands before the release under it, and both land

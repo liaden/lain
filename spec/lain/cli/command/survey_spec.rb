@@ -1162,6 +1162,31 @@ RSpec.describe Lain::CLI::Command::Survey do
       Sync { handover.ask(anchor_id, question).tap { |outcome| outcome.task&.wait } }
     end
 
+    # The docent is registered with the run's own supervisor, so a `/stop` typed
+    # at `you>` reaches an answer in flight; a dropped `supervisor:` would leave
+    # it running with nothing in the fleet to name.
+    it "registers the docent with the run's supervisor, so /stop stops it and names it" do
+      stopped = nil
+
+      Sync do |task|
+        supervisor = Lain::Supervisor.new.run(task)
+        parked = build_command_env(replies:, chronicle:, supervisor:,
+                                   role_spawn: ->(*) { Async::Notification.new.wait })
+        attached
+        command.call(@root, parked)
+        handover = editor.bound
+        handover.wrote_annotation(note)
+        handover.ask(anchor_id, "why is the range inclusive?")
+
+        stopped = Lain::CLI::Command::Stop.new.call("", parked)
+      ensure
+        supervisor.stop
+      end
+
+      expect(stopped).to include(Lain::Review::Docent::ROLE.to_s)
+      expect(records.map { |entry| entry["type"] }).to include("docent_abandoned")
+    end
+
     it "reaches the run's role spawn with the docent's own role and mode" do
       asked("why is the range inclusive?")
 
