@@ -25,9 +25,8 @@ module Lain
     # secret reaches the corpus" is a claim it cannot make. A value the detector
     # reports is masked wherever it sits; one it does not report is not. So a
     # credential repeated in a sentence, a shell transcript or a JSON body
-    # projects verbatim; `machine host login sam password hunter2` has no
-    # assignment shape and is not seen; UTF-16LE content is invisible end to end,
-    # because the shapes are byte-anchored. That is the detector's documented
+    # projects verbatim; UTF-16LE content is invisible end to end, because the
+    # shapes are byte-anchored. That is the detector's documented
     # residual, and the read path behaves identically over the same file. What
     # the projection guarantees is narrower and true: no region the ledger holds
     # as unreleased survives into a survey artifact.
@@ -143,7 +142,31 @@ module Lain
                                     ordinals: crossing.map { |_, index| index + 1 }.each)
       end
 
+      # Where a raw line lands in {#project}'s answer. A region collapses to one
+      # placeholder, so every line it spans answers the placeholder's line and
+      # every line below shifts up by the newlines the regions above swallowed.
+      #
+      # @param path [String, Pathname] the file, ABSOLUTE, as for {#project}
+      # @param content [String] its whole bytes
+      # @param raw_line [Integer] 1-based, by {Review::Anchor.lines}' rule
+      # @return [Integer] 1-based; `raw_line` itself when the file holds no such line
+      def projected_line(path, content, raw_line)
+        unreleased = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+        from, to = span(content, raw_line)
+        return raw_line if from.nil?
+
+        offset = unreleased.find { |region| crosses?(region, from, to) }&.start || from
+        1 + newlines(content, 0, offset) - swallowed_before(content, unreleased, offset)
+      end
+
       private
+
+      def newlines(content, start, length) = content.b.byteslice(start, length).count("\n")
+
+      def swallowed_before(content, regions, offset)
+        regions.select { |region| region.start + region.length <= offset }
+               .sum { |region| newlines(content, region.start, region.length) }
+      end
 
       Clipped = Data.define(:start, :length)
       private_constant :Clipped

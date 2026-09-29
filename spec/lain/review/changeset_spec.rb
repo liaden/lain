@@ -756,6 +756,7 @@ RSpec.describe Lain::Review::Changeset do
                       files: parsed(renamed_diff), commits: [commit_record(sha: "c1", paths: ["from.rb => to.rb"])],
                       base_ref: "b" * 40, head_ref: "h" * 40).tap do |double|
         allow(double).to receive(:line_at) { |revision, path, line| held[[revision, path]]&.[](line - 1) }
+        allow(double).to receive(:projected_line) { |_revision, _path, line| line }
       end
     end
 

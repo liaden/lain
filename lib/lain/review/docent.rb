@@ -654,7 +654,10 @@ module Lain
 
         def enclosing(file, anchor)
           path = anchor.side == :old ? file.old_path : file.new_path
-          file.hunks.find { |hunk| span(hunk, anchor.side).cover?(anchor.line) } if path == anchor.path
+          return unless path == anchor.path
+
+          line = @changeset.projected_line(anchor.side, path, anchor.line)
+          file.hunks.find { |hunk| span(hunk, anchor.side).cover?(line) }
         end
 
         def span(hunk, side)

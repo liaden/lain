@@ -251,6 +251,42 @@ RSpec.describe Lain::Survey::Projection do
     end
   end
 
+  describe "a raw line, by its projected number" do
+    let(:pem) do
+      "-----BEGIN PRIVATE KEY-----\n#{Array.new(4) { "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn" }.join("\n")}\n" \
+        "-----END PRIVATE KEY-----"
+    end
+    let(:keyed) { "#{pem}\nseven\neight\n" }
+
+    it "sends every line of a masked region to the line holding its placeholder" do
+      expect((1..6).map { |number| projection.projected_line(path, keyed, number) }).to all(eq(1))
+    end
+
+    it "shifts a line below a region by the lines the region swallowed" do
+      expect([7, 8].map { |number| projection.projected_line(path, keyed, number) }).to eq([2, 3])
+    end
+
+    it "agrees with the projection about where that line lands" do
+      projected = projection.project(path, keyed).lines(chomp: true)
+
+      expect(projected[projection.projected_line(path, keyed, 8) - 1]).to eq("eight")
+    end
+
+    it "leaves every line alone in a file with nothing to mask" do
+      expect((1..3).map { |number| projection.projected_line(path, "a\nb\nc\n", number) }).to eq([1, 2, 3])
+    end
+
+    it "does not shift past a region the human released" do
+      ledger.release(path, regions_in(keyed))
+
+      expect(projection.projected_line(path, keyed, 8)).to eq(8)
+    end
+
+    it "answers the number it was given for a line the file does not hold" do
+      expect(projection.projected_line(path, keyed, 40)).to eq(40)
+    end
+  end
+
   # Walk and projection are one admission policy: which paths enter, and which
   # bytes of them. A denied path is decided by the first half and no amount of
   # the second half brings it back -- denial is not approvable.

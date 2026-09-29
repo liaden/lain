@@ -16,8 +16,9 @@ module Lain
     #   #sides        which of {Review::SIDES} this round presents at all
     #
     # Every source also answers `#line_at`, one line by the file's own numbering,
-    # which a note's evidence is read from. The shared group does not hold it
-    # yet; each source's own spec does.
+    # which a note's evidence is read from, and `#projected_line`, where a line
+    # of the file's own numbering sits in the hunks this source hands out. The
+    # shared group holds neither yet; each source's own spec does.
     #
     # {LocalBranch#diff} and {LocalBranch#commits} are NOT on that list. They
     # belong to sources that have unified-diff bytes and a commit walk, which is
@@ -305,6 +306,14 @@ module Lain
           bytes = file_at(revision, path)
           projection.line(ledger_path(path), bytes, number) unless bytes.nil?
         end
+
+        # A diff's hunks number the file as it is, so there is nothing to map.
+        #
+        # @param _revision [String]
+        # @param _path [String]
+        # @param number [Integer] 1-based
+        # @return [Integer] `number`
+        def projected_line(_revision, _path, number) = number
 
         private
 

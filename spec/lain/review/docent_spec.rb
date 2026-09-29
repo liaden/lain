@@ -373,6 +373,71 @@ RSpec.describe Lain::Review::Docent do
     end
   end
 
+  describe "a thread opened on a surveyed file that holds a masked region", :seam do
+    let(:pem) do
+      "-----BEGIN PRIVATE KEY-----\n#{Array.new(4) { "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn" }.join("\n")}\n" \
+        "-----END PRIVATE KEY-----\n"
+    end
+    let(:changeset) do
+      File.write(File.join(@root, "notes.txt"), "#{pem}seven\nCODE_LINE\n")
+      sensitivity = Lain::Sensitivity.new(home: "/home/surveyor", cwd: @root)
+      projection = Lain::Survey::Projection.new(ledger: Lain::Sensitivity::Ledger.new)
+      corpus = Lain::Review::Source::Corpus.new(walk: Lain::Survey::Walk.new(root: @root, sensitivity:), projection:)
+      Lain::Review::Changeset.new(source: corpus)
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-docent-survey") { |made| @root = File.realpath(made) and example.run }
+    end
+
+    def surveyed(line, id:)
+      anchor(path: "notes.txt", line:, anchor_text: nil, revision: changeset.head_ref, id:)
+    end
+
+    it "opens a raw line inside the region on the hunk holding its placeholder" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+
+      expect(subject.open(surveyed(4, id: "a-inside"))).not_to be_nil
+
+      Sync { subject.ask("a-inside", "what is this?").task.wait }
+      expect(prompts.first).to include("<redacted:1>")
+    end
+
+    it "opens a raw line below the region, which the projection numbers lower" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+
+      expect(subject.open(surveyed(8, id: "a-below"))).not_to be_nil
+
+      Sync { subject.ask("a-below", "why?").task.wait }
+      expect(prompts.first).to include("CODE_LINE")
+    end
+
+    it "keeps the anchor at the raw line the human named" do
+      answerer, = recording_answerer
+      subject = docent(answerer:)
+      subject.open(surveyed(8, id: "a-raw"))
+
+      Sync { subject.ask("a-raw", "why?").task.wait }
+
+      expect(journal.first.to_journal).to include("line" => 8)
+    end
+  end
+
+  describe "a thread opened on a git changeset" do
+    it "reads the anchor's line as the diff numbers it" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+
+      expect(subject.open(anchor(line: 42, id: "a-git"))).not_to be_nil
+
+      Sync { subject.ask("a-git", "why?").task.wait }
+      expect(prompts.first).to include("+forty two").and include("+FORTY ONE")
+      expect(prompts.first).not_to include("EIGHTY ONE")
+    end
+  end
+
   describe "the exchange is journaled for replay" do
     it "records the question and the answer as two joinable records" do
       answerer, = recording_answerer

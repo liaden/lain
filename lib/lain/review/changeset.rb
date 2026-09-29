@@ -139,6 +139,20 @@ module Lain
       # @return [Boolean]
       def checked_out?(file) = @source.checked_out?(file.path)
 
+      # The line a hunk numbers for a position named in the file's own numbering.
+      # Only a source whose hunks number a PROJECTION of the file has anything to
+      # map, and the old side is never projected.
+      #
+      # @param side [Symbol] one of {Review::SIDES}
+      # @param path [String] the path as that side's revision names it
+      # @param number [Integer] 1-based
+      # @return [Integer]
+      def projected_line(side, path, number)
+        return number unless side == :new
+
+        @source.projected_line(head_ref, path, number)
+      end
+
       # The position a note names, with the evidence read out of the revision
       # that side rests on -- the head for `new`, the base for `old` -- rather
       # than out of the editor buffer the note was placed in. On a changeset that

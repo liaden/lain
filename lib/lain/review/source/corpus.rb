@@ -207,6 +207,14 @@ module Lain
           # @return [String, nil]
           def line(number) = projection.line(listing.absolute, File.binread(listing.absolute), number)
 
+          # Where a raw line lands in {#content} ({Survey::Projection#projected_line}).
+          #
+          # @param number [Integer] 1-based
+          # @return [Integer]
+          def projected_line(number)
+            projection.projected_line(listing.absolute, File.binread(listing.absolute), number)
+          end
+
           private
 
           # `File.join` and not interpolation, so a prefix is joined by one rule
@@ -325,6 +333,24 @@ module Lain
           reading&.line(number)
         rescue SystemCallError
           nil
+        end
+
+        # The number a hunk of this corpus gives a raw line. A hunk numbers the
+        # PROJECTED text while the buffer a human names a line in is the file on
+        # disk, and the two differ below any region that masks across lines.
+        #
+        # A file gone since the corpus listed it, or a revision it does not hold,
+        # answers the number unchanged: there is no projection to map through.
+        #
+        # @param revision [String] {#head_ref}
+        # @param path [String] one of {#files}' paths
+        # @param number [Integer] 1-based, by the file's own numbering
+        # @return [Integer]
+        def projected_line(revision, path, number)
+          reading = readings[path.to_s] if revision.to_s == head_ref
+          reading ? reading.projected_line(number) : number
+        rescue SystemCallError
+          number
         end
 
         # The object database answered and nobody was asked -- the same fact
