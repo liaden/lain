@@ -866,4 +866,5 @@ function _G.__lain.review_settled()
     review_diff.withdraw(buf)
     review_diff.forget_round(buf)
   end
+  _G.__lain.review_notes_forget()
 end

@@ -816,6 +816,18 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
       expect(marks_on(buf_in(slots.fetch("new")))).to be_empty
     end
 
+    it "leaves no notes behind when the review settles without them being handed back" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      3.times { |i| note("new", 10 + i, "note", "first review #{i}") }
+      lua("_G.__lain.review_settled()")
+
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 30, "note", "second review")
+
+      expect(marks_on(buf_in(slots.fetch("new"))).size).to eq(1)
+      expect(settled.size).to eq(1)
+    end
+
     # ...and only when it really was handed over. `review_notes` is an ANSWERED
     # verb, so lain's refusal comes back as the request's error -- which is
     # exactly why `forget` sits on the far side of a `pcall`. A refused write

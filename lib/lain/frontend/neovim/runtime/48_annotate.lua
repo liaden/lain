@@ -560,6 +560,12 @@ end
 -- per-buffer table that keeps entries for dead buffers grows for the life of the
 -- session, and a leak nothing can observe is a leak nobody notices. `65_review`'s
 -- own GC comment records that registry growth as the defect it exists for.
+-- A settled review's notes are not the next review's; 47's `review_settled` reaches
+-- `forget` through this because 47 loads first and cannot see the local.
+function _G.__lain.review_notes_forget()
+  review_notes.forget()
+end
+
 function _G.__lain.review_notes_held(buf)
   local live = review_notes.by_buf[buf]
   if live == nil then
