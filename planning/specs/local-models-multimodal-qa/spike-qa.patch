@@ -1,0 +1,2414 @@
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/cli/command/qa.rb qa-spike-main/lib/lain/cli/command/qa.rb
+--- a/lib/lain/cli/command/qa.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/cli/command/qa.rb	2026-09-22 09:29:02.355986053 -0400
+@@ -0,0 +1,116 @@
++# frozen_string_literal: true
++
++require "fileutils"
++
++module Lain
++  module CLI
++    module Command
++      # `/qa PLAN --base REF` at `you>`: check a landed change against its
++      # plan's acceptance criteria and write the report the implementer fixes
++      # from. The optional step after `/execute-plan` on a large issue.
++      #
++      # The rungs are {::Lain::Qa}'s -- the structural check with no model,
++      # then {::Lain::Qa::Ladder} over the criteria -- and this command is the
++      # door onto them: it reads the plan and the changeset, binds each rung to
++      # a spawn, and says where the report went. It never touches the source
++      # tree; the one file it writes is the report, under {REPORTS}.
++      #
++      # Every `::Lain::Qa` below is root-qualified: this class is named for that
++      # namespace, and inside it a bare `Qa` is this class.
++      class Qa
++        USAGE = "/qa PLAN --base REF -- QA the change since REF against PLAN's acceptance criteria " \
++                "(reports, never fixes)"
++        FLAGS = %w[--base].freeze
++
++        # Under the project's own state directory, beside nothing it governs:
++        # a report is an artifact of one pass over one head, so it is named for
++        # the plan and the head it judged, and a re-run after fixes writes a
++        # second report rather than overwriting the evidence of the first.
++        REPORTS = File.join(".lain", "qa")
++
++        # Asks per rung for one pass. Sized so the cheap rung can sample twenty
++        # criteria three times while the strong one looks at one in five.
++        BUDGETS = { "t1" => 60, "t2" => 12, "t3" => 6 }.freeze
++
++        # @param root [String] the project root, where the plan and the report
++        #   paths resolve
++        # @param renderer [Skill::Renderer] renders the `qa` skill as the brief
++        # @param tiers [#call] `role_spawn -> {rung => #call}`, binding each
++        #   rung to the model it runs on
++        # @param budgets [Hash{String=>Integer}] asks per rung for the pass
++        # @param changeset [#call] `root:, base: -> Qa::Changeset`
++        def initialize(root:, renderer:, tiers: ::Lain::Qa::SessionTiers, budgets: BUDGETS,
++                       changeset: ::Lain::Qa::Changeset.method(:read))
++          @root = root
++          @renderer = renderer
++          @tiers = tiers
++          @budgets = budgets
++          @changeset = changeset
++        end
++
++        def name = "qa"
++
++        def usage = USAGE
++
++        # @param args [String] the line after the verb
++        # @param env [Env] the run's collaborators; its role spawn runs the rungs
++        # @return [String] the verdict, the counts, and where the report is
++        # @raise [Lain::Error] on a missing plan or base, or a changeset git
++        #   cannot read
++        def call(args, env)
++          plan, base = parsed(args)
++          changes = @changeset.call(root: @root, base:)
++          cards = ::Lain::Qa::PlanCards.read(File.read(plan))
++          report = judged(plan, changes, cards, env)
++          summary(report, written(plan, changes, report))
++        end
++
++        private
++
++        def judged(plan, changes, cards, env)
++          structural = ::Lain::Qa::ClaimCheck.new(claims: cards.claims, changed: changes.changed, range: changes.range)
++          climb = ladder(changes, env).call(cards.criteria)
++          ::Lain::Qa::Report.new(subject: "#{relative(plan)} @ #{changes.range}",
++                                 findings: structural.findings + climb.findings,
++                                 tiers_run: ["t0", *climb.tiers_run], escalations: climb.escalations)
++        end
++
++        def ladder(changes, env)
++          ::Lain::Qa::Ladder.new(tiers: @tiers.call(env.role_spawn), budgets: @budgets,
++                                 brief: "#{@renderer.render("qa")}\n\n## Under test\n\n`#{changes.range}`")
++        end
++
++        def written(plan, changes, report)
++          path = File.join(@root, REPORTS, "#{File.basename(plan, ".*")}-#{changes.head[0, 12]}.md")
++          FileUtils.mkdir_p(File.dirname(path))
++          File.write(path, report.to_markdown)
++          path
++        end
++
++        def summary(report, path)
++          verdict = report.passed? ? "PASS" : "HOLD"
++          "QA #{verdict}: #{report.findings.size} findings, #{report.holding.size} holding, " \
++            "rungs #{report.tiers_run.join("/")} -- report at #{relative(path)}"
++        end
++
++        def parsed(args)
++          parsed = Args.parse(args, name:, usage: USAGE, flags: FLAGS, positionals: 1)
++          plan = parsed.positionals.first
++          base = parsed.pairs["base"]
++          raise Error, "#{name} needs a plan doc and --base REF -- #{USAGE}" if plan.nil? || base.nil?
++
++          [readable(plan), base]
++        end
++
++        def readable(plan)
++          path = File.expand_path(plan, @root)
++          raise Error, "#{name} cannot read the plan at #{path}" unless File.file?(path)
++
++          path
++        end
++
++        def relative(path) = path.delete_prefix("#{@root}/")
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/cli/command/surface.rb qa-spike-main/lib/lain/cli/command/surface.rb
+--- a/lib/lain/cli/command/surface.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/lib/lain/cli/command/surface.rb	2026-09-22 09:22:04.096839430 -0400
+@@ -154,9 +154,14 @@
+         def builtins
+           [Quit.new, Stop.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
+            Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands,
+-           *epic_commands]
++           *epic_commands, *plan_commands]
+         end
+ 
++        # The steps a plan's execution offers after it lands. `/qa` shadows the
++        # `qa` skill of the same name, which is the point: the skill is the
++        # brief, and the command is what runs the ladder over it.
++        def plan_commands = [Qa.new(root: @root, renderer: @library.renderer)]
++
+         # The commands of the epic this chat is seated in. Its own group rather
+         # than another entry above, for the reason #builtins gives: that list
+         # sits at Metrics/AbcSize's limit, so a new command founds a group.
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/cli/epic_driver/factory.rb qa-spike-main/lib/lain/cli/epic_driver/factory.rb
+--- a/lib/lain/cli/epic_driver/factory.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/lib/lain/cli/epic_driver/factory.rb	2026-09-22 09:29:24.125915151 -0400
+@@ -500,7 +500,25 @@
+           Run.new(progress: -> { epics.progress(slug) }, plans: ->(issue_id) { plan_for(issue_id, layout) },
+                   actors: actors(fleet, layout), supervisor: fleet, gate:, landing: landing(checkout, layout), width:,
+                   budget:, attempts:, red_only: RedOnly.new(git: parent, base: working_branch),
+-                  interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded)
++                  interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded,
++                  qa_gate: qa_gate(checkout))
++        end
++
++        # QA runs where the cluster landed: lain's own landing checkout, on the
++        # epic's branch. Its findings are filed through the same write path
++        # `lain epic add` takes, so a fix is an ordinary issue from then on.
++        def qa_gate(checkout)
++          QaGate.new(check: cluster_qa(checkout), scribe: Lain::Epic::Scribe.new(epic_slug: slug, journal: record),
++                     filing: ->(issue) { epics.file(issue, slug) })
++        end
++
++        # Built when a checkpoint is first ready, never before: an epic with no
++        # checkpoint spawns nothing and renders nothing for one.
++        def cluster_qa(checkout)
++          QaGate::ClusterQa.new(ladder: lambda do
++            spawn = @toolset_build.role_spawn.within(Lain::WorkerEnv.default.with(cwd: checkout.root))
++            Lain::Qa::Ladder.new(tiers: Lain::Qa::SessionTiers.call(spawn), brief: @library.renderer.render("qa"))
++          end)
+         end
+ 
+         def gate = Gate.new(submit:, slug:, journals: method(:signoffs))
+@@ -789,19 +807,25 @@
+         #
+         # Deeply frozen, like every other value here: the members are interned
+         # and the collections copied, so `Ractor.shareable?` holds.
+-        Result = Data.define(:landed, :reported, :stopped, :discarded) do
+-          def initialize(landed:, reported:, stopped:, discarded: [])
++        # `audited` is the QA checkpoints this run passed; a checkpoint QA held
++        # is `reported`, since what it filed is left for a human to plan.
++        Result = Data.define(:landed, :reported, :stopped, :discarded, :audited) do
++          def initialize(landed:, reported:, stopped:, discarded: [], audited: [])
+             super(landed: landed.dup.freeze, reported: reported.dup.freeze, stopped: stopped && -stopped,
+-                  discarded: discarded.dup.freeze)
++                  discarded: discarded.dup.freeze, audited: audited.dup.freeze)
+           end
+ 
+           # @return [String] the reply the human reads at `you>`
+-          def to_s = [*discarded.map(&:to_s), *landed_lines, *reported_lines, *stopped_lines, summary].join("\n")
++          def to_s
++            [*discarded.map(&:to_s), *landed_lines, *audited_lines, *reported_lines, *stopped_lines, summary].join("\n")
++          end
+ 
+           private
+ 
+           def landed_lines = landed.map { |entry| "landed #{entry.issue_id} at #{entry.sha}" }
+ 
++          def audited_lines = audited.map { |verdict| "#{verdict.issue_id}: #{verdict.line}" }
++
+           def reported_lines = reported.map { |entry| "#{entry.issue_id}: #{entry.reason}" }
+ 
+           def stopped_lines = stopped.nil? ? [] : [stopped]
+@@ -831,8 +855,11 @@
+         #   grades nothing, so an ordinary run is unchanged.
+         # @param red_only [#call] `call(red_sha, tip_sha)`, answering whether the
+         #   tip retirement anchored carries nothing past the red step's commit
++        # @param qa_gate [#call] `call(checkpoint, graph) -> QaGate::Verdict`,
++        #   asked of each {Epic::QaCheckpoint} as it becomes ready
+         def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width: WIDTH, budget: nil,
+-                       interrupt: -> { false }, attempts: nil, grading: Ungraded)
++                       interrupt: -> { false }, attempts: nil, grading: Ungraded, qa_gate: QaGate::Unaudited)
++          @qa_gate = qa_gate
+           @progress = progress
+           @plans = plans
+           @actors = actors
+@@ -857,6 +884,7 @@
+         def call
+           @landed = []
+           @reported = []
++          @audited = []
+           @live = []
+           @stopped = nil
+           drive
+@@ -878,6 +906,8 @@
+           return strand unless @stopped.nil?
+ 
+           folded = @progress.call
++          return drive if audited?(folded)
++
+           unplanned(folded).each { |issue| @reported << Reported.new(issue_id: issue.id, reason: UNPLANNED) }
+           fill(folded)
+           return if @live.empty?
+@@ -922,8 +952,42 @@
+ 
+         def startable(folded) = ready(folded) { |issue| issue.status == STARTABLE }
+ 
+-        # Pending, and nothing standing in its way but its own plan.
+-        def unplanned(folded) = ready(folded) { |issue| issue.status == Lain::Epic::InFlight::PENDING }
++        # Pending, and nothing standing in its way but its own plan. A QA
++        # checkpoint has no plan to wait on: {#audited?} runs it instead.
++        def unplanned(folded) = pending(folded).reject { |issue| Lain::Epic::QaCheckpoint.of?(issue) }
++
++        def pending(folded) = ready(folded) { |issue| issue.status == Lain::Epic::InFlight::PENDING }
++
++        # Every checkpoint whose cluster has landed is run now, BEFORE the fill:
++        # a pass is what makes the next cluster startable, and launching around
++        # a ready checkpoint would start nothing it holds anyway. A pass moved
++        # the graph, so the answer is whether to fold again.
++        def audited?(folded)
++          pending(folded).select { |issue| Lain::Epic::QaCheckpoint.of?(issue) }
++                         .map { |checkpoint| audit(checkpoint, folded.graph) }.any?(&:passed)
++        end
++
++        # A checkpoint QA held is reported, not audited: what it filed is work
++        # for a human to plan before the next run checks again.
++        #
++        # A pass that RAISED holds its checkpoint, the way a refused launch
++        # stops only its own issue: nothing it blocks may start on a QA that
++        # never ran.
++        def audit(checkpoint, graph)
++          @qa_gate.call(checkpoint, graph).tap { |verdict| record(verdict) }
++        rescue JournalUnreadable
++          raise
++        rescue StandardError => e
++          QaGate::Verdict.new(issue_id: checkpoint.id, passed: false,
++                              line: "QA could not run, so the checkpoint holds: #{e.class}: #{e.message}")
++                         .tap { |verdict| record(verdict) }
++        end
++
++        def record(verdict)
++          return @audited << verdict if verdict.passed
++
++          @reported << Reported.new(issue_id: verdict.issue_id, reason: verdict.line)
++        end
+ 
+         # Indexed ONCE per pass, not once per issue: this is the driver's own
+         # loop, re-entered for every issue that settles.
+@@ -936,7 +1000,7 @@
+         # offered again: the fold is re-read every turn and would otherwise
+         # answer the same issue forever.
+         def untouched?(id)
+-          [@live, @landed, @reported].none? { |seen| seen.any? { |entry| entry.issue_id == id } }
++          [@live, @landed, @reported, @audited].none? { |seen| seen.any? { |entry| entry.issue_id == id } }
+         end
+ 
+         # A refusal stops THIS issue and nothing else: the plan is not approved,
+@@ -1042,7 +1106,7 @@
+ 
+         def reported(entry, reason) = @reported << Reported.new(issue_id: entry.issue_id, reason:)
+ 
+-        def result = Result.new(landed: @landed, reported: @reported, stopped: @stopped)
++        def result = Result.new(landed: @landed, reported: @reported, stopped: @stopped, audited: @audited)
+       end
+ 
+       # An issue's red step, run in the checkout its actor holds before the
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/cli/epic_driver/qa_gate.rb qa-spike-main/lib/lain/cli/epic_driver/qa_gate.rb
+--- a/lib/lain/cli/epic_driver/qa_gate.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/cli/epic_driver/qa_gate.rb	2026-09-22 09:29:24.124855055 -0400
+@@ -0,0 +1,125 @@
++# frozen_string_literal: true
++
++module Lain
++  module CLI
++    module EpicDriver
++      # What the loop does when an {Epic::QaCheckpoint} becomes ready: run QA
++      # over the cluster that just landed, and either pass the checkpoint --
++      # which is what releases the next cluster -- or hold it and file every
++      # holding finding as an issue of its own.
++      #
++      # A FAILING PASS BLOCKS BY EDGES, NOT BY STATE. Each filed fix blocks the
++      # checkpoint, so the checkpoint is not ready again until every fix has
++      # landed, and whatever the checkpoint blocks stays blocked all that time
++      # with no flag anywhere saying so. The next run re-folds, finds the
++      # checkpoint ready, and runs QA again: the re-check is the fold's, not a
++      # retry this object remembers.
++      #
++      # Findings become ISSUES rather than annotations or a refused gate
++      # because a fix is work: it needs a plan, failing tests, an implementer
++      # and a landing, which is exactly what an issue already gets and nothing
++      # else in an epic does. `discovered_from` names the checkpoint, so the
++      # lineage says which pass found it.
++      class QaGate
++        PENDING = Lain::Epic::InFlight::PENDING
++
++        # What one pass came to, as the loop reports it.
++        Verdict = Data.define(:issue_id, :passed, :line) do
++          def initialize(issue_id:, passed:, line:) = super(issue_id: -issue_id.to_s, passed:, line: -line.to_s)
++        end
++
++        # No QA wired: a checkpoint holds its cluster, and says why. The loop's
++        # Null, for a bench or a spec that drives an epic with no QA -- in an
++        # epic QA is not optional, so this never passes anything.
++        module Unaudited
++          def self.call(issue, _graph)
++            Verdict.new(issue_id: issue.id, passed: false,
++                        line: "no QA is wired to this run, so the checkpoint holds everything it blocks")
++          end
++        end
++
++        # @param check [#call] `(checkpoint, graph) -> Qa::Report`
++        # @param scribe [#issue_moved] the epic's {Epic::Scribe}
++        # @param filing [#call] `issue ->` adds it to the epic's graph, written
++        #   and journaled ({CLI::Epic#file})
++        def initialize(check:, scribe:, filing:)
++          @check = check
++          @scribe = scribe
++          @filing = filing
++        end
++
++        # @param checkpoint [Epic::Issue] a ready {Epic::QaCheckpoint}
++        # @param graph [Epic::Graph] the fold it became ready in
++        # @return [Verdict]
++        def call(checkpoint, graph)
++          report = @check.call(checkpoint, graph)
++          report.passed? ? passed(checkpoint, report) : held(checkpoint, report, graph)
++        end
++
++        private
++
++        def passed(checkpoint, report)
++          @scribe.issue_moved(checkpoint.id, from: PENDING, to: Lain::Epic::DONE)
++          Verdict.new(issue_id: checkpoint.id, passed: true,
++                      line: "passed QA (#{report.findings.size} minor findings carried)")
++        end
++
++        def held(checkpoint, report, graph)
++          ids = Lain::Epic::QaCheckpoint.fix_ids(checkpoint.id, graph.ids)
++          filed = report.holding.zip(ids.first(report.holding.size)).map do |finding, id|
++            @filing.call(fix(checkpoint, finding, id))
++            id
++          end
++          Verdict.new(issue_id: checkpoint.id, passed: false,
++                      line: "QA held it: #{filed.size} holding findings filed as #{filed.join(", ")}, each " \
++                            "blocking this checkpoint -- plan and land them, and the next run checks again")
++        end
++
++        # One line per field, each opened with a bullet: the epic grammar reads
++        # a line opening `###`, a fence, or `Word: value` as structure, and a
++        # finding's evidence can hold any of the three.
++        def fix(checkpoint, finding, id)
++          Lain::Epic::Issue.new(id:, title: one_line("fix: #{finding.summary}")[0, 100].strip, blocks: [checkpoint.id],
++                                discovered_from: checkpoint.id, description: described(checkpoint, finding))
++        end
++
++        def described(checkpoint, finding)
++          fields = %w[criterion evidence reproduction].map do |field|
++            "- #{field} -- #{one_line(finding.public_send(field))}"
++          end
++          ["Found by QA at #{checkpoint.id} (#{finding.severity}, rung #{finding.tier}).", *fields].join("\n")
++        end
++
++        def one_line(text) = text.to_s.gsub(/\s+/, " ").strip
++
++        # What QA checks at a checkpoint: the acceptance criteria of every issue
++        # the checkpoint waits on, which is exactly the cluster that has just
++        # landed. An issue carries no risk, so each is the middle arm.
++        class ClusterQa
++          # @param ladder [#call] `-> Qa::Ladder`, built fresh per pass so each
++          #   pass has its own budget
++          def initialize(ladder:)
++            @ladder = ladder
++          end
++
++          # @return [Qa::Report]
++          def call(checkpoint, graph)
++            cluster = graph.blocked_by(checkpoint.id).map { |id| graph.fetch(id) }
++            climb = @ladder.call.call(cluster.flat_map { |issue| criteria(issue) })
++            Lain::Qa::Report.new(subject: "#{checkpoint.id} over #{cluster.map(&:id).join(", ")}",
++                                 findings: climb.findings, tiers_run: climb.tiers_run,
++                                 escalations: climb.escalations)
++          end
++
++          private
++
++          def criteria(issue)
++            Lain::Gherkin::Criteria.parse(issue.criteria.to_s).map do |scenario|
++              Lain::Qa::Ladder::Criterion.new(id: "#{issue.id}/#{scenario.name}", scenario:, risk: "medium")
++            end
++          end
++        end
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/cli/epic.rb qa-spike-main/lib/lain/cli/epic.rb
+--- a/lib/lain/cli/epic.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/lib/lain/cli/epic.rb	2026-09-22 09:26:04.527052145 -0400
+@@ -265,6 +265,25 @@
+         end
+       end
+ 
++      # {#add} for an issue a caller has already built whole -- edges,
++      # description and provenance included -- which is what a QA checkpoint
++      # files: a fix that blocks the checkpoint it was found at. The same one
++      # write path, so the edit is refused, written and journaled exactly as
++      # an `epic add` is.
++      #
++      # @param issue [Epic::Issue] the arriving issue
++      # @param slug [String, nil] the epic; omitted resolves to the sole one
++      # @return [String] the applied edit, rendered
++      # @raise [Lain::Error] any refusal from {Epic::Graph}, before anything is
++      #   written
++      def file(issue, slug = nil)
++        apply(slug, command: "epic add ID TITLE") do |graph|
++          fiber = nil
++          revised = graph.add(issue) { |cut| fiber = cut }
++          [revised, fiber]
++        end
++      end
++
+       # @param id [String] the issue leaving
+       # @param into [String] the parts arriving, comma-separated ids -- each
+       #   inherits `id`'s title, description and criteria; an author edits
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/epic/qa_checkpoint.rb qa-spike-main/lib/lain/epic/qa_checkpoint.rb
+--- a/lib/lain/epic/qa_checkpoint.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/epic/qa_checkpoint.rb	2026-09-22 09:23:59.336504529 -0400
+@@ -0,0 +1,42 @@
++# frozen_string_literal: true
++
++module Lain
++  module Epic
++    # A QA checkpoint: an issue in the blocking graph whose work is QA itself.
++    #
++    # It needs no new concept because the graph already says everything a
++    # checkpoint means. Blocked by a cluster's issues, it becomes ready exactly
++    # when the cluster has landed; blocking the next cluster, it holds that
++    # cluster until QA passes; blocked by every leaf, it is the epic's final
++    # pass. A failing pass files each holding finding as a new issue that
++    # BLOCKS the checkpoint, so the checkpoint runs again once the fixes land
++    # -- and the next cluster stays held the whole time, by the edges alone.
++    #
++    # Marked by its id, because an id is the one thing the epic markdown, the
++    # issue's filename and the digest already carry: a new {Issue} member would
++    # move the digest of every issue in every existing epic, and a new
++    # {STAGES} member cannot sit BETWEEN two clusters of one stage.
++    module QaCheckpoint
++      PREFIX = "qa-gate-"
++
++      # The fix issues a checkpoint files open with this, which does NOT open
++      # with {PREFIX}: a fix read as a checkpoint would be run as QA instead of
++      # being implemented.
++      FIX_PREFIX = "qa-fix-"
++
++      # @param issue [Issue]
++      def self.of?(issue) = issue.id.start_with?(PREFIX)
++
++      # The first fix id past every one +taken+ already holds, so a second
++      # failing pass files beside the first rather than colliding with it.
++      #
++      # @param checkpoint_id [String] a checkpoint's id
++      # @param taken [Array<String>] every id the graph holds
++      # @return [Enumerator<String>] fresh ids, in order
++      def self.fix_ids(checkpoint_id, taken)
++        stem = "#{FIX_PREFIX}#{checkpoint_id.delete_prefix(PREFIX)}-"
++        (1..).lazy.map { |n| "#{stem}#{n}" }.reject { |id| taken.include?(id) }
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/prompt/templates/role/qa.md qa-spike-main/lib/lain/prompt/templates/role/qa.md
+--- a/lib/lain/prompt/templates/role/qa.md	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/prompt/templates/role/qa.md	2026-09-22 09:19:13.062815915 -0400
+@@ -0,0 +1,15 @@
++## Your role: QA
++
++You check work that has already been built and reviewed, by running it against what it was meant
++to do. You report defects; you never fix them. You do not edit files, and a command you run must
++not change the source tree — if checking a criterion would need a change, that is a finding, not a
++task. Your report goes back to the implementer, who fixes what you found.
++
++Every finding must be falsifiable: what you observed (command output, `file:line`, a screenshot
++reference) and how somebody else can observe it again. A suspicion you could not reproduce is not a
++finding; say the criterion is unverified instead. Prefer running something over reading something:
++an exit status is evidence, an impression is not.
++
++You answer without a human. When you cannot settle a criterion, say so in your answer with what
++stopped you — never ask, and never guess a pass. A clean check says so plainly, rather than
++inventing findings to look thorough.
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/prompt/templates/skill/execute-plan/skill.md qa-spike-main/lib/lain/prompt/templates/skill/execute-plan/skill.md
+--- a/lib/lain/prompt/templates/skill/execute-plan/skill.md	2026-09-21 15:26:57.000000000 -0400
++++ b/lib/lain/prompt/templates/skill/execute-plan/skill.md	2026-09-22 09:20:17.253074888 -0400
+@@ -68,6 +68,17 @@
+ re-verification after any rebase (hooks do not fire on a ff-merge). A worktree forked before a
+ sibling merged owns the integration touch-up at its own merge.
+ 
++## Phase 4½ — QA (optional; the plan or the user decides)
++
++Once everything has landed, a large plan earns a QA pass: `/qa <plan path> --base <ref>` with the
++ref the plan's first wave branched from. QA runs the landed change against the cards' acceptance
++criteria, cheapest checks first, and **reports, never fixes** — its report lands under
++`.lain/qa/`. For each holding finding (blocker or major), hand the finding back to the card's
++implementer verbatim, evidence and reproduction included; the fix follows Phase 3's
++red-before-green rule, the reproduction becoming the red spec. Re-run `/qa` once after the fixes
++land. Minor findings go in the close-out summary as the manual pass owed. Skip this phase only
++when the plan says so or the user does.
++
+ ## Phase 5 — Close out
+ 
+ Run the plan's Integration checks, mark it `done`, and summarize: what landed, what the panel
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/prompt/templates/skill/qa/skill.md qa-spike-main/lib/lain/prompt/templates/skill/qa/skill.md
+--- a/lib/lain/prompt/templates/skill/qa/skill.md	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/prompt/templates/skill/qa/skill.md	2026-09-22 09:20:02.778242075 -0400
+@@ -0,0 +1,90 @@
++---
++description: QA a change that has landed — check it against its plan's acceptance criteria by running it, cheapest checks first, escalating to stronger models only when a rule says so. Reports falsifiable findings back to the implementer; never fixes. Use after /execute-plan on a large issue, and at an epic's QA checkpoints.
++slots:
++  - tiers
++---
++# qa
++
++You are **QA**. The work in front of you is built, reviewed, and on its branch; the hooks have
++already run its tests, lint and build. Your job is what they cannot do: check that the change does
++what its acceptance criteria say, by exercising it, and report every defect you find in a form the
++implementer can reproduce. You **report, never fix**: you edit nothing, and a command you run must
++not change the source tree. `git status --porcelain` must read the same when you finish as when you
++started — if it does not, that is the first finding, and it is against you.
++
++## What you are given
++
++- The plan doc (or the epic's issues) naming each card, its **Files**, its **risk**, and its
++  Gherkin **acceptance criteria**. A scenario whose name opens with `[visual]` is judged by
++  looking at it; one marked `# rubric` is human-judged, and you check it only as far as evidence
++  goes.
++- The revision range under test (`BASE..HEAD`).
++- The structural rung's findings (t0), already computed without a model — do not re-derive them.
++
++## The ladder
++
++Cost, not thoroughness, orders the rungs: each one is cheaper per defect found than the one above
++it, until it is not. Climb only when a rule below says to, and record every climb with the rule's
++name — an escalation nobody can audit cannot be tuned.
++
++<%= render("tiers") %>
++
++**t0 — structural, no model.** Claimed against performed: every path a card's Files names must
++appear in `git diff --name-only BASE..HEAD`; a named spec file that never appeared means the card's
++criteria were never made into anything that can fail. Paths changed that no card names are carried
++as minor. Lain computes this before any model is asked.
++
++**t1 — small model, sampled.** Each criterion is asked k times (default 3) of the small tier. Each
++sample answers one criterion: `pass`, `fail`, or `unverified`, with a confidence, and says whether
++its evidence came from **running** something (`executed: true`) or from reading.
++
++**Escalation rules** — first match wins, and the decision records its name:
++
++1. `executed-fail` → **report**. A failure observed by running something is not an opinion; no
++   stronger model is needed to believe an exit status, even on a high-risk card.
++2. `risk-high` → **escalate**. On a high-risk card t1 is advisory; t2 judges every criterion.
++3. `unverified` → **escalate**. Any sample that could not settle it.
++4. `disagreement` → **escalate**. The samples do not agree.
++5. `unconfirmed-fail` → **escalate**. A unanimous fail that was only inferred. A weak model's false
++   positive costs the implementer a fix round, which is more than a t2 call costs.
++6. `low-confidence` → **escalate**. Unanimous pass, mean confidence under the floor (default 0.7).
++7. otherwise `unanimous-pass` → **accept**, and spend nothing more on this criterion.
++
++**t2 — strong reviewer, once per escalated criterion.** A model at least as strong as the
++implementer's, or of a different family. Its fail becomes a finding only with evidence and a
++reproduction; its `unverified` becomes a minor "manual pass owed" finding.
++
++**t3 — media.** Only for `[visual]` criteria, which skip t1 and t2: a text model asked whether a
++pane renders correctly can only guess. If you hold a `screenshot` tool, capture the state the
++scenario names and cite the capture as evidence (`screenshot:<ref>`); compare against what the
++scenario says, not against taste. If you hold no such tool, the criterion is unverified — say so;
++never describe a screen you did not capture.
++
++**Stopping rules.** Each rung has a budget of asks for the whole pass. When a rung's budget is
++spent, every criterion that needed it is reported as a minor unsettled finding, never as a pass.
++Stop when every criterion is accepted, reported, or unsettled. Do not re-check a criterion a lower
++rung accepted.
++
++## Answering one criterion
++
++When a prompt names a single rung and a single criterion, check that criterion only, and end your
++reply with exactly one fenced block tagged `qa-answer` holding a JSON object:
++
++```
++{"verdict": "pass|fail|unverified", "confidence": 0.0-1.0, "executed": true|false,
++ "summary": "one line", "evidence": "what you observed", "reproduction": "how to observe it again"}
++```
++
++A `fail` with no `evidence` or no `reproduction` is discarded as unfalsifiable, so a failure you
++cannot reproduce is `unverified`, with what stopped you in `evidence`.
++
++## Reporting a whole pass
++
++When asked for the whole pass, end with exactly one fenced block tagged `qa-report` holding
++`{"findings": [...], "tiers_run": [...], "escalations": [...]}`. Each finding carries `severity`
++(`blocker` — a high-risk criterion fails; `major` — a criterion fails, or a claimed file is
++missing; `minor` — unsettled, or out-of-scope change), `criterion` (the card and scenario, e.g.
++`T3/Scenario: refunds keep tax`), `summary`, `evidence` (command and its output, `file:line`, or a
++screenshot ref), `reproduction` (the exact command or steps), and `tier` (the rung that found it).
++Blocker and major findings hold the work; minor ones are carried to the implementer and hold
++nothing.
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/prompt/templates/skill/qa/tiers.md qa-spike-main/lib/lain/prompt/templates/skill/qa/tiers.md
+--- a/lib/lain/prompt/templates/skill/qa/tiers.md	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/prompt/templates/skill/qa/tiers.md	2026-09-22 09:20:12.918124963 -0400
+@@ -0,0 +1,9 @@
++## The tiers this project runs
++
++By default every rung runs on the session's own model, which makes the ladder a sampling and
++stopping discipline without a cost gradient. This hole is where a project names a model per rung
++and a budget per pass — the small tier for t1, a reviewer at least as strong as the implementer or
++of a different family for t2, a vision-capable model for t3 — and any standing rule such as "every
++card touching billing is high risk". Override it at `.lain/slots/skill/qa/tiers.md`. This text
++describes the assignment to the model reading it; the process that runs the ladder is what binds
++each rung to its model.
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/answer.rb qa-spike-main/lib/lain/qa/answer.rb
+--- a/lib/lain/qa/answer.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/answer.rb	2026-09-22 09:15:47.673179098 -0400
+@@ -0,0 +1,65 @@
++# frozen_string_literal: true
++
++require "json"
++
++module Lain
++  module Qa
++    # One tier's answer about one criterion, read out of a child's reply.
++    #
++    # The child ends its reply with ONE fenced block tagged {FENCE} holding a
++    # JSON object. A reply with no such block, or one that does not parse, is
++    # not an error here: it reads as `unverified` with the reason in its
++    # evidence. A small model that cannot keep a format is a reason to climb
++    # the ladder, and crashing the pass over it would spend the whole run on
++    # the cheapest rung's weakness.
++    Answer = Data.define(:verdict, :confidence, :executed, :summary, :evidence, :reproduction) do
++      def self.parse(text)
++        body = text.to_s[Answer::PATTERN, 1]
++        return unreadable("the reply held no ```#{Answer::FENCE} block") if body.nil?
++
++        wire = JSON.parse(body)
++        return unreadable("the reply's block is not an object") unless wire.is_a?(Hash)
++
++        from_wire(wire)
++      rescue JSON::ParserError, ArgumentError, TypeError => e
++        unreadable("the reply's block did not read: #{e.message}")
++      end
++
++      def self.from_wire(wire)
++        new(verdict: wire.fetch("verdict", "unverified"), confidence: wire.fetch("confidence", 0.0),
++            executed: wire["executed"] == true, summary: wire["summary"].to_s,
++            evidence: wire["evidence"].to_s, reproduction: wire["reproduction"].to_s)
++      end
++
++      def self.unreadable(why)
++        new(verdict: "unverified", confidence: 0.0, executed: false, summary: why, evidence: why, reproduction: "")
++      end
++
++      def initialize(verdict:, confidence:, executed:, summary:, evidence:, reproduction:)
++        sample = Escalation::Sample.new(verdict:, confidence:, executed:)
++        super(verdict: sample.verdict, confidence: sample.confidence, executed: sample.executed,
++              summary: -summary.to_s, evidence: -evidence.to_s, reproduction: -reproduction.to_s)
++      end
++
++      def sample = Escalation::Sample.new(verdict:, confidence:, executed:)
++
++      # This answer as findings against +criterion+: one when it is a finding
++      # a person can check, none when it is not. A fail with no evidence or no
++      # way to reproduce it is exactly the weak-model false positive the ladder
++      # exists to keep from an implementer.
++      #
++      # @return [Array<Finding>]
++      def findings(criterion:, tier:, severity:)
++        [Finding.new(severity:, criterion:, tier:, summary: summary.empty? ? "fails: #{criterion}" : summary,
++                     evidence:, reproduction:)]
++      rescue MalformedFinding
++        []
++      end
++    end
++
++    class Answer
++      FENCE = "qa-answer"
++      PATTERN = /^```#{FENCE}[ \t]*\r?\n(.*?)^```[ \t]*$/m
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/changeset.rb qa-spike-main/lib/lain/qa/changeset.rb
+--- a/lib/lain/qa/changeset.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/changeset.rb	2026-09-22 09:21:32.324207065 -0400
+@@ -0,0 +1,39 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # The revisions a QA pass is about: a base the work started from, the head
++    # it reached, and the paths that differ between them. Read from git once,
++    # then a value, so every rung and every finding quotes the same range.
++    Changeset = Data.define(:base, :head, :changed) do
++      # @param root [String] the checkout to read
++      # @param base [String] any revision git resolves
++      # @param git [#run] an {Isolation::Checkout}; built over +root+ unless lent
++      # @return [Changeset]
++      # @raise [Lain::Error] when git cannot resolve either end or diff them
++      def self.read(root:, base:, git: Isolation::Checkout.new(root))
++        from = resolved(git, base)
++        to = resolved(git, "HEAD")
++        new(base: from, head: to, changed: git!(git, "diff", "--name-only", "-z", "--no-renames", from, to).split("\0"))
++      end
++
++      def self.resolved(git, revision) = git!(git, "rev-parse", "--verify", "--quiet", "#{revision}^{commit}").strip
++
++      def self.git!(git, *args)
++        shell = git.run(*args)
++        return shell.stdout if shell.exitstatus.zero?
++
++        raise Error, "QA could not read the changeset: `git #{args.join(" ")}` failed #{shell.stderr.to_s.strip}".strip
++      end
++      private_class_method :resolved, :git!
++
++      def initialize(base:, head:, changed:)
++        super(base: -base.to_s, head: -head.to_s, changed: changed.map { |path| -path.to_s }.freeze)
++      end
++
++      # The range every finding's reproduction quotes, in short SHAs a human
++      # can paste.
++      def range = "#{base[0, 12]}..#{head[0, 12]}"
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/claim_check.rb qa-spike-main/lib/lain/qa/claim_check.rb
+--- a/lib/lain/qa/claim_check.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/claim_check.rb	2026-09-22 09:14:55.938772012 -0400
+@@ -0,0 +1,61 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # The ladder's free rung: what the work CLAIMED against what the changeset
++    # PERFORMED, with no model asked.
++    #
++    # It runs first because it is the cheapest defect there is to find and the
++    # most expensive to find late. A card whose named spec file never appeared
++    # is a card whose acceptance criteria were never turned into anything that
++    # can fail; no model needs to read a line to know that.
++    #
++    # Pure over two lists. Where they came from -- a plan's `**Files:**`
++    # paragraphs, an implementer's hand-back, `git diff --name-only` -- is the
++    # caller's, and `range` is only quoted back so each finding carries the
++    # command that reproduces it.
++    class ClaimCheck
++      # @param claims [Hash{String=>Array<String>}] claimant (a card id) to the
++      #   paths it says it changed
++      # @param changed [Array<String>] the paths the changeset really touches
++      # @param range [String] the revision range `changed` was read over
++      def initialize(claims:, changed:, range:)
++        @claims = claims
++        @changed = changed.to_set
++        @range = range
++      end
++
++      # @return [Array<Finding>] unperformed claims first, then unclaimed work
++      def findings = unperformed + unclaimed
++
++      private
++
++      def unperformed
++        @claims.flat_map do |card, paths|
++          paths.reject { |path| @changed.include?(path) }.map { |path| unperformed_finding(card, path) }
++        end
++      end
++
++      # Scope creep is carried, never held on: a shared file an orchestrator
++      # wired is exactly this shape and is not a defect.
++      def unclaimed
++        claimed = @claims.values.flatten.to_set
++        @changed.reject { |path| claimed.include?(path) }.map { |path| unclaimed_finding(path) }
++      end
++
++      def unperformed_finding(card, path)
++        Finding.new(severity: "major", criterion: "#{card}/Files", tier: "t0",
++                    summary: "#{card} claims #{path}, and the changeset never touches it",
++                    evidence: "`git diff --name-only #{@range}` lists #{@changed.size} paths, not this one",
++                    reproduction: "git diff --name-only #{@range} -- #{path}   # prints nothing")
++      end
++
++      def unclaimed_finding(path)
++        Finding.new(severity: "minor", criterion: "plan/Files", tier: "t0",
++                    summary: "#{path} changed, and no card's Files names it",
++                    evidence: "`git diff --name-only #{@range}` lists it; no `**Files:**` paragraph does",
++                    reproduction: "git diff --stat #{@range} -- #{path}")
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/escalation.rb qa-spike-main/lib/lain/qa/escalation.rb
+--- a/lib/lain/qa/escalation.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/escalation.rb	2026-09-22 09:14:32.202043677 -0400
+@@ -0,0 +1,89 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # The rule that decides whether a cheap tier's verdict on ONE criterion is
++    # the answer, or whether a stronger tier has to look.
++    #
++    # Code rather than prose in the skill, because an escalation is spend, and a
++    # spend nobody can audit cannot be tuned: every {Decision} names the rule
++    # that fired, and the report carries it. The rules are ordered and the first
++    # to match wins, so each one reads as an exception to the ones below it.
++    #
++    # The tension this arbitrates is the user's: a weak model is cheap per call
++    # but a false positive it hands an implementer costs a whole fix round,
++    # while climbing on every doubt spends the strong model the ladder exists to
++    # save. So a CHEAP PASS stops only when it is unanimous and confident on a
++    # card that is not high risk, and a CHEAP FAIL stops only when it was
++    # observed by running something -- an exit status is not a model's opinion,
++    # so no stronger model is needed to believe it.
++    class Escalation
++      # One tier-1 sample of one criterion. `executed` is whether the sample's
++      # evidence is a command it ran and whose result it observed, rather than
++      # something it read and inferred.
++      Sample = Data.define(:verdict, :confidence, :executed) do
++        def initialize(verdict:, confidence:, executed: false)
++          verdict = verdict.to_s
++          raise ArgumentError, "verdict #{verdict.inspect} is not one of #{VERDICTS.join("/")}" unless
++            VERDICTS.include?(verdict)
++
++          super(verdict: -verdict, confidence: Float(confidence).clamp(0.0, 1.0), executed: executed ? true : false)
++        end
++
++        def executed_fail? = executed && verdict == "fail"
++      end
++
++      # `action` is what the ladder does next; `rule` is the name a report
++      # records, so the same decision reads the same way wherever it is audited.
++      Decision = Data.define(:action, :rule) do
++        def escalate? = action == :escalate
++
++        def to_s = "#{action} (#{rule})"
++      end
++
++      # The rules, in the order they are tried. Each is a name and a predicate
++      # over the samples and the card's risk.
++      RULES = [
++        [:report, "executed-fail", ->(samples, _risk) { samples.any?(&:executed_fail?) }],
++        [:escalate, "risk-high", ->(_samples, risk) { risk == "high" }],
++        [:escalate, "unverified", ->(samples, _risk) { samples.any? { |s| s.verdict == "unverified" } }],
++        [:escalate, "disagreement", ->(samples, _risk) { samples.map(&:verdict).uniq.size > 1 }],
++        [:escalate, "unconfirmed-fail", ->(samples, _risk) { samples.first.verdict == "fail" }]
++      ].freeze
++
++      # @param samples [Integer] how many tier-1 samples a criterion needs
++      #   before its agreement means anything; fewer is itself a reason to climb
++      # @param confidence [Float] the mean confidence below which a unanimous
++      #   pass is still not believed
++      def initialize(samples: 3, confidence: 0.7)
++        @samples = Integer(samples)
++        @confidence = Float(confidence)
++      end
++
++      # @param samples [Array<Sample>] every tier-1 sample of one criterion
++      # @param risk [String] the card's risk, one of {RISKS}
++      # @return [Decision]
++      def call(samples, risk:)
++        risk = known_risk(risk)
++        return Decision.new(action: :escalate, rule: "too-few-samples") if samples.size < @samples
++
++        action, rule, = RULES.find { |_action, _rule, applies| applies.call(samples, risk) }
++        return Decision.new(action:, rule:) unless rule.nil?
++
++        confident?(samples) ? Decision.new(action: :accept, rule: "unanimous-pass") : low_confidence
++      end
++
++      private
++
++      def confident?(samples) = samples.sum(&:confidence) / samples.size >= @confidence
++
++      def low_confidence = Decision.new(action: :escalate, rule: "low-confidence")
++
++      def known_risk(risk)
++        raise ArgumentError, "risk #{risk.inspect} is not one of #{RISKS.join("/")}" unless RISKS.include?(risk.to_s)
++
++        -risk.to_s
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/finding.rb qa-spike-main/lib/lain/qa/finding.rb
+--- a/lib/lain/qa/finding.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/finding.rb	2026-09-22 09:31:21.896022081 -0400
+@@ -0,0 +1,61 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # One defect QA observed, in a shape somebody else can check.
++    #
++    # FALSIFIABLE OR REFUSED. A finding with no evidence or no reproduction is
++    # an opinion, and an implementer handed an opinion spends a round arguing
++    # with it; so both are required and blank is refused at construction, the
++    # way {Epic::Issue} refuses criteria that parse to nothing. `evidence` is
++    # what was observed (command output, `file:line`, a screenshot reference);
++    # `reproduction` is how to observe it again.
++    #
++    # `criterion` names what the finding is measured against: an acceptance
++    # criterion, or a card's claim (`<card>/Files`) for the structural rung.
++    Finding = Data.define(:severity, :criterion, :summary, :evidence, :reproduction, :tier) do
++      def initialize(severity:, criterion:, summary:, evidence:, reproduction:, tier:)
++        super(severity: member!(severity, SEVERITIES, "severity"), criterion: text!(criterion, "criterion"),
++              summary: text!(summary, "summary"), evidence: text!(evidence, "evidence"),
++              reproduction: text!(reproduction, "reproduction"), tier: member!(tier, TIERS, "tier"))
++      end
++
++      # The wire form the QA child emits and the report file stores.
++      #
++      # @param hash [Hash] String or Symbol keys
++      # @return [Finding]
++      # @raise [MalformedFinding] naming the member that is missing or wrong
++      def self.from_h(hash)
++        raise MalformedFinding, "a finding must be an object, got #{hash.inspect}" unless hash.is_a?(Hash)
++
++        keyed = hash.transform_keys(&:to_sym)
++        missing = members - keyed.keys
++        raise MalformedFinding, "a finding names no #{missing.join(", ")}" unless missing.empty?
++
++        new(**keyed.slice(*members))
++      end
++
++      # Whether this finding stops the work it is about from going further.
++      def holds? = HOLDING.include?(severity)
++
++      def to_h = super.transform_keys(&:to_s)
++
++      private
++
++      def member!(value, set, field)
++        value = value.to_s
++        raise MalformedFinding, "#{field} #{value.inspect} is not one of #{set.join("/")}" unless set.include?(value)
++
++        -value
++      end
++
++      def text!(value, field)
++        value = value.to_s.strip
++        raise MalformedFinding, "a finding's #{field} cannot be blank: a finding nobody can check is an opinion" if
++          value.empty?
++
++        -value
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/ladder.rb qa-spike-main/lib/lain/qa/ladder.rb
+--- a/lib/lain/qa/ladder.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/ladder.rb	2026-09-22 09:32:21.131673544 -0400
+@@ -0,0 +1,160 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # The model rungs of the QA ladder, driven by lain rather than by a model:
++    # which tier looks at which criterion, how many times, and when to stop.
++    #
++    # Lain owns this loop for the reason it owns the agent loop -- the loop is
++    # the thing under study. Which rung found a defect, what each escalation
++    # cost, and which rule sent it there are all a bench wants to compare
++    # across tier assignments, and a QA child choosing its own escalations
++    # would leave none of it on the record.
++    #
++    # A tier is anything answering `call(prompt) -> String`: the QA role bound
++    # to that tier's provider and model ({Skill::RoleSpawn#tiered}). A tier the
++    # ladder was not given is a rung it cannot climb to, and every criterion
++    # that needed it is reported unsettled rather than silently passed.
++    class Ladder
++      # A scenario whose name opens with this is judged by looking at it. A
++      # name prefix because the Gherkin grammar is closed and a name is free
++      # text; the grammar's own `# rubric` marker is where this belongs once it
++      # grows a second value.
++      VISUAL = "[visual]"
++
++      # What tier 1 answers for a criterion it leaves to tier 2.
++      CLIMB = :climb
++
++      Criterion = Data.define(:id, :scenario, :risk)
++
++      # One criterion to check: `id` is what a finding cites
++      # (`<card>/<scenario name>`), `risk` the card's. Reopened so {VISUAL} is
++      # read from the Ladder rather than declared inside the Data block.
++      class Criterion
++        def visual? = scenario.name.start_with?(VISUAL)
++      end
++
++      # What the ladder came to, for {Report} to carry.
++      Climb = Data.define(:findings, :escalations, :tiers_run)
++
++      # @param tiers [Hash{String=>#call}] rung name to the tier asked there
++      # @param brief [String] what every prompt opens with -- the rendered
++      #   `qa` skill and the changeset under test
++      # @param budgets [Hash{String=>Integer}] how many asks each rung may spend
++      #   across the whole pass; a rung absent here is unbounded
++      # @param escalation [Escalation] the rule over tier-1's samples
++      # @param samples [Integer] tier-1 asks per criterion
++      def initialize(tiers:, brief:, budgets: {}, escalation: Escalation.new(samples: 3), samples: 3)
++        @tiers = tiers
++        @brief = brief
++        @left = budgets.dup
++        @escalation = escalation
++        @samples = samples
++        @escalations = []
++        @asked = []
++      end
++
++      # BREADTH-FIRST BY RUNG. Every criterion's tier-1 samples are taken
++      # before any tier-2 ask, and the media rung goes last: on one GPU that
++      # holds one large model at a time, a swap costs the better part of a
++      # minute and a per-criterion climb would pay it twice per escalation.
++      # Taken rung by rung, a pass pays it once per rung.
++      #
++      # @param criteria [Array<Criterion>]
++      # @return [Climb]
++      def call(criteria)
++        visual, text = criteria.partition(&:visual?)
++        first = text.map { |criterion| [criterion, first_rung(criterion)] }
++        climbing = first.select { |_criterion, found| found == CLIMB }.map(&:first)
++        settled = first.flat_map { |_criterion, found| found == CLIMB ? [] : found }
++        findings = settled + climbing.flat_map { |criterion| escalated(criterion) } + visual.flat_map { |c| looked(c) }
++        Climb.new(findings:, escalations: @escalations.dup, tiers_run: TIERS & @asked)
++      end
++
++      private
++
++      # Visual criteria skip the text rungs: a text model asked whether a pane
++      # renders correctly can only guess, and a guess is what the ladder is
++      # built to keep off the record.
++      def looked(criterion)
++        return unsettled(criterion, "t3", "no media tier could look at it") unless open?("t3")
++
++        judged(ask("t3", criterion), criterion, "t3")
++      end
++
++      # What tier 1 settled on its own, or {CLIMB} for the tier-2 pass. A
++      # reported fail that will not stand as a finding climbs too.
++      def first_rung(criterion)
++        decision = t1_decision(criterion)
++        @escalations << "#{criterion.id}: t1 #{decision}"
++        case decision.action
++        when :accept then []
++        when :report then reported(decision.samples, criterion)
++        else CLIMB
++        end
++      end
++
++      # The samples ride on the decision so {#reported} can find the one whose
++      # execution is the evidence.
++      Judged = Data.define(:action, :rule, :samples) do
++        def to_s = "#{action} (#{rule})"
++      end
++      private_constant :Judged
++
++      def t1_decision(criterion)
++        return Judged.new(action: :escalate, rule: "t1-unavailable", samples: []) unless open?("t1", @samples)
++
++        answers = Array.new(@samples) { ask("t1", criterion) }
++        decision = @escalation.call(answers.map(&:sample), risk: criterion.risk)
++        Judged.new(action: decision.action, rule: decision.rule, samples: answers)
++      end
++
++      # The executed failure is the evidence; if it will not stand as a finding
++      # after all, the stronger rung decides.
++      def reported(answers, criterion)
++        executed = answers.find { |answer| answer.sample.executed_fail? }
++        found = executed.findings(criterion: criterion.id, tier: "t1", severity: severity(criterion))
++        found.empty? ? CLIMB : found
++      end
++
++      def escalated(criterion)
++        return unsettled(criterion, "t2", "t1 could not settle it, and t2 is absent or spent") unless open?("t2")
++
++        judged(ask("t2", criterion), criterion, "t2")
++      end
++
++      def judged(answer, criterion, tier)
++        return [] if answer.verdict == "pass"
++
++        found = []
++        found = answer.findings(criterion: criterion.id, tier:, severity: severity(criterion)) if
++          answer.verdict == "fail"
++        found.empty? ? unsettled(criterion, tier, "#{tier} said #{answer.verdict}: #{answer.evidence}") : found
++      end
++
++      # A criterion the ladder could not settle is carried as a minor finding
++      # rather than dropped: "nobody could tell" is the manual pass owed, and a
++      # report that omitted it would read as a pass.
++      def unsettled(criterion, tier, why)
++        [Finding.new(severity: "minor", criterion: criterion.id, tier:, summary: "unsettled -- a manual pass is owed",
++                     evidence: why, reproduction: criterion.scenario.render)]
++      end
++
++      def severity(criterion) = criterion.risk == "high" ? "blocker" : "major"
++
++      # Whether +tier+ is wired and can still afford +asks+ more.
++      def open?(tier, asks = 1) = @tiers.key?(tier) && (!@left.key?(tier) || @left.fetch(tier) >= asks)
++
++      def ask(tier, criterion)
++        @asked << tier
++        @left[tier] -= 1 if @left.key?(tier)
++        Answer.parse(@tiers.fetch(tier).call(prompt(tier, criterion)))
++      end
++
++      def prompt(tier, criterion)
++        "#{@brief}\n\n## Rung #{tier}: criterion #{criterion.id} (risk: #{criterion.risk})\n\n" \
++          "```gherkin\n#{criterion.scenario.render}\n```\n"
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/plan_cards.rb qa-spike-main/lib/lain/qa/plan_cards.rb
+--- a/lib/lain/qa/plan_cards.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/plan_cards.rb	2026-09-22 09:29:46.219475993 -0400
+@@ -0,0 +1,62 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # A `/create-plan` doc read for what QA holds it to: each card's claimed
++    # files, its risk, and its acceptance criteria.
++    #
++    # Read by the grammar the shipped create-plan scaffold asks for -- a card
++    # headed `### T<id> ... [risk: <level>]`, its paths backticked on a
++    # `**Files:**` paragraph that runs to the next blank line, its criteria in
++    # ```gherkin fences -- and no further. A card that states a part some other
++    # way yields nothing for that part, which the checks downstream report as
++    # a card with nothing to hold it to rather than guessing.
++    class PlanCards
++      include Enumerable
++
++      CARD = /^###\s+(T[\w.-]+)\b/
++      RISK = /\[risk:\s*(\w+)\]/
++      FILES = /^\*\*Files:\*\*(.*?)(?=^\s*$|^\*\*\w|\z)/m
++      PATH = /`([^`\s]+)`/
++
++      # One card. `risk` is `medium` when the heading names none: the middle
++      # arm neither waves a criterion through nor spends t2 on every one.
++      Card = Data.define(:id, :risk, :files, :criteria)
++
++      # @param markdown [String] the plan doc
++      # @return [PlanCards]
++      # @raise [Gherkin::MalformedBlock] for a card whose criteria do not parse
++      def self.read(markdown)
++        new(markdown.to_s.split(/(?=^###\s)/).filter_map { |section| card(section) })
++      end
++
++      def self.card(section)
++        id = section[CARD, 1]
++        return if id.nil?
++
++        risk = section[RISK, 1]
++        Card.new(id: -id, risk: RISKS.include?(risk) ? -risk : "medium", files: paths(section),
++                 criteria: Gherkin::Criteria.parse(section))
++      end
++
++      def self.paths(section) = section[FILES, 1].to_s.scan(PATH).flatten.map(&:-@).uniq.freeze
++      private_class_method :card, :paths
++
++      def initialize(cards) = @cards = cards.freeze
++
++      def each(&block) = @cards.each(&block)
++
++      # @return [Hash{String=>Array<String>}] card id to the paths it claims,
++      #   every card present even when it claims nothing -- {ClaimCheck}'s input
++      def claims = to_h { |card| [card.id, card.files] }
++
++      # @return [Array<Ladder::Criterion>] every scenario of every card, cited
++      #   as `<card>/<scenario name>` and carrying its card's risk
++      def criteria
++        flat_map do |card|
++          card.criteria.map { |scenario| Ladder::Criterion.new(id: "#{card.id}/#{scenario.name}", scenario:, risk: card.risk) }
++        end
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/report.rb qa-spike-main/lib/lain/qa/report.rb
+--- a/lib/lain/qa/report.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/report.rb	2026-09-22 09:13:57.699438104 -0400
+@@ -0,0 +1,82 @@
++# frozen_string_literal: true
++
++require "json"
++
++module Lain
++  module Qa
++    # What one QA pass came to: the findings, which rungs of the ladder ran,
++    # and every escalation it took with the rule that fired -- so a reader can
++    # see what the pass spent and why, not only what it found.
++    #
++    # The QA child answers in prose and ends with ONE fenced block tagged
++    # {FENCE} holding this value as JSON. Only the fence is read: prose around
++    # it is for the human, and a child whose answer has no fence produced no
++    # report, which is refused rather than read as a clean pass.
++    Report = Data.define(:subject, :findings, :tiers_run, :escalations) do
++      def initialize(subject:, findings: [], tiers_run: [], escalations: [])
++        super(subject: -subject.to_s, findings: findings.dup.freeze,
++              tiers_run: tiers_run.map { |tier| -tier.to_s }.freeze,
++              escalations: escalations.map { |line| -line.to_s }.freeze)
++      end
++
++      # @param text [String] the QA child's whole answer
++      # @param subject [String] what was checked, stamped by the caller
++      # @return [Report]
++      # @raise [MalformedReport] when the answer holds no report fence, or the
++      #   fence is not a report
++      def self.parse(text, subject:)
++        body = text.to_s[Report::PATTERN, 1]
++        raise MalformedReport, "the QA answer holds no ```#{Report::FENCE} block, so it reported nothing" if body.nil?
++
++        wire = JSON.parse(body)
++        new(subject:, findings: Array(wire["findings"]).map { |finding| Finding.from_h(finding) },
++            tiers_run: Array(wire["tiers_run"]), escalations: Array(wire["escalations"]))
++      rescue JSON::ParserError => e
++        raise MalformedReport, "the QA answer's report block is not JSON: #{e.message}"
++      end
++
++      # Nothing found holds the work back. Minor findings do not.
++      def passed? = findings.none?(&:holds?)
++
++      def holding = findings.select(&:holds?)
++
++      # This report with +others+ found before it -- the structural rung's
++      # findings, which run in-process ahead of any model.
++      def prepend(others) = with(findings: others + findings, tiers_run: (["t0"] + tiers_run).uniq)
++
++      # @return [String] the report file a human and the implementer read
++      def to_markdown
++        [header, *escalation_lines, "", *findings.each_with_index.map { |finding, index| entry(finding, index) }]
++          .join("\n")
++      end
++
++      private
++
++      def header
++        verdict = passed? ? "PASS" : "HOLD (#{holding.size} holding)"
++        "# QA report: #{subject}\n\nVerdict: #{verdict}. Tiers run: #{tiers_run.join(", ")}. " \
++          "Findings: #{findings.size}."
++      end
++
++      def escalation_lines
++        escalations.empty? ? [] : ["", "## Escalations", *escalations.map { |line| "- #{line}" }]
++      end
++
++      def entry(finding, index)
++        <<~ENTRY
++          ## #{index + 1}. [#{finding.severity}] #{finding.summary}
++
++          - criterion: #{finding.criterion}
++          - found at: #{finding.tier}
++          - evidence: #{finding.evidence}
++          - reproduce: #{finding.reproduction}
++        ENTRY
++      end
++    end
++
++    class Report
++      FENCE = "qa-report"
++      PATTERN = /^```#{FENCE}[ \t]*\r?\n(.*?)^```[ \t]*$/m
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa/session_tiers.rb qa-spike-main/lib/lain/qa/session_tiers.rb
+--- a/lib/lain/qa/session_tiers.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa/session_tiers.rb	2026-09-22 09:25:42.323309884 -0400
+@@ -0,0 +1,18 @@
++# frozen_string_literal: true
++
++module Lain
++  module Qa
++    # Every text rung on the session's own model, and no media rung: the
++    # ladder's sampling and stopping discipline without its cost gradient,
++    # which is what a pass gets until a project binds its tiers. Each rung is
++    # the `qa` role on a fresh context, so no rung sees another's reasoning.
++    module SessionTiers
++      # @param role_spawn [Skill::RoleSpawn] the spawn every rung runs through
++      # @return [Hash{String=>#call}] rung name to `prompt -> reply`
++      def self.call(role_spawn)
++        ask = ->(prompt) { role_spawn.call(:qa, :fresh, prompt).content }
++        { "t1" => ask, "t2" => ask }
++      end
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/qa.rb qa-spike-main/lib/lain/qa.rb
+--- a/lib/lain/qa.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/lib/lain/qa.rb	2026-09-22 09:13:29.335761928 -0400
+@@ -0,0 +1,34 @@
++# frozen_string_literal: true
++
++module Lain
++  # Quality assurance over work that has already landed: a role that runs the
++  # change and REPORTS, never fixes, climbing a ladder of model tiers from the
++  # free checks to the expensive ones only as far as the evidence demands.
++  #
++  # The closed vocabularies live here, in the namespace file, because
++  # {Qa::Finding} and {Qa::Escalation} both cite them in their class bodies.
++  module Qa
++    # A finding at one of the first two holds the gate; `minor` is carried in
++    # the report and holds nothing. Closed because the gate's whole rule is
++    # "does any finding hold", and a fourth spelling would silently hold
++    # nothing.
++    SEVERITIES = %w[blocker major minor].freeze
++    HOLDING = %w[blocker major].freeze
++
++    # The ladder's rungs, cheapest first. `t0` spends no model at all; `t3` is
++    # the media rung, reached only for a criterion that is visual.
++    TIERS = %w[t0 t1 t2 t3].freeze
++
++    # What one sample of one criterion may say. `unverified` is not a pass: it
++    # is a tier admitting it could not settle the criterion, which is a reason
++    # to climb rather than a verdict to average.
++    VERDICTS = %w[pass fail unverified].freeze
++
++    # The card risks `/create-plan` assigns, which the ladder reads to decide
++    # how far a cheap verdict may be trusted.
++    RISKS = %w[low medium high].freeze
++
++    class MalformedFinding < Error; end
++    class MalformedReport < Error; end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/role/catalog.rb qa-spike-main/lib/lain/role/catalog.rb
+--- a/lib/lain/role/catalog.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/lib/lain/role/catalog.rb	2026-09-22 09:19:08.326870547 -0400
+@@ -73,6 +73,16 @@
+         # RELATIVE read lands on committed bytes; the read tools confine no path,
+         # so an absolute one can still reach the project's working tree.
+         Role.new(name: :diff_critic, only: %i[read_file list_files glob grep], unattended: true),
++        # {Qa::Ladder}'s one persona, at every rung. It REPORTS and never fixes:
++        # nothing here edits a file. It holds `bash` all the same, because a
++        # criterion is checked by running the change, and an exit status is the
++        # one evidence a cheap rung may be believed on without climbing; so
++        # read-only-on-source is the checkout's promise (a detached one the
++        # pass discards), not `only:`'s. Unattended because a question it
++        # cannot settle is a finding owed, not a human to wait on -- and a
++        # driver waiting on its verdict must not park behind one. `bash` still
++        # passes the gate like any other tier-3 call.
++        Role.new(name: :qa, only: %i[read_file list_files glob grep bash], unattended: true),
+         # Runs a whole issue's plan in one ask: dev's tools, a spawner for the
+         # implementers and reviewers, and the renderer that puts the plan's
+         # skill in front of it. No chat floor holds either extra name, so only
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/lib/lain/skill/role_spawn.rb qa-spike-main/lib/lain/skill/role_spawn.rb
+--- a/lib/lain/skill/role_spawn.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/lib/lain/skill/role_spawn.rb	2026-09-22 09:18:27.919336432 -0400
+@@ -71,6 +71,27 @@
+                        slots: @slots, max_depth: @max_depth)
+       end
+ 
++      # This spawn, its children asking +provider+ for +model+ instead of the
++      # chat's own pair. What a caller that runs a role at SEVERAL strengths
++      # holds -- the QA ladder's rungs, one per tier -- so the choice of model
++      # is the caller's per spawn rather than a property of the role: a role is
++      # capability-shaped, and the same `qa` persona is the cheap rung and the
++      # strong one.
++      #
++      # Only the provider and the context's model change. The persona, the
++      # guard, the gate and the lineage are this spawn's, so a tiered child is
++      # recorded and gated exactly as any other.
++      #
++      # @param provider [Provider] the tier's, e.g. {CLI::Backend#provider}
++      #   under that tier's provider name
++      # @param model [String] the tier's model id
++      # @return [RoleSpawn]
++      def tiered(provider:, model:)
++        factory = @seam.context_factory
++        self.class.new(seam: @seam.with(provider:, context_factory: -> { factory.call.with_model(model) }),
++                       toolset: @toolset, slots: @slots, max_depth: @max_depth)
++      end
++
+       private
+ 
+       # The caller's own lane travels with the lease it lends, so a lent
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/cli/command/qa_spec.rb qa-spike-main/spec/lain/cli/command/qa_spec.rb
+--- a/spec/lain/cli/command/qa_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/cli/command/qa_spec.rb	2026-09-22 09:25:54.739165769 -0400
+@@ -0,0 +1,103 @@
++# frozen_string_literal: true
++
++require "tmpdir"
++
++# The `qa` skill, rendered: the command only ever quotes it as the brief.
++class QaCommandSpecRenderer
++  def render(name) = "BRIEF(#{name})"
++end
++
++# `/qa PLAN --base REF`: the door onto the QA ladder. What these examples pin is
++# the door -- what it reads, which rungs it binds, what it writes and where --
++# over a changeset and tiers that are both doubled, so no git and no model runs.
++RSpec.describe Lain::CLI::Command::Qa do
++  around do |example|
++    Dir.mktmpdir("lain-qa-command") do |root|
++      @root = root
++      FileUtils.mkdir_p(File.join(root, "planning/specs"))
++      File.write(File.join(root, "planning/specs/totals.md"), plan)
++      example.run
++    end
++  end
++
++  let(:plan) do
++    <<~MD
++      ### T1 — Add the order total          [wave 1] [risk: low]
++
++      **Files:** `lib/order.rb` (create), `spec/order_spec.rb` (create)
++
++      ```gherkin
++      Scenario: the total sums the lines
++        Given an order of two lines
++        Then its total is their sum
++      ```
++    MD
++  end
++
++  let(:head) { "b" * 40 }
++  let(:asked) { [] }
++
++  def changes(*changed) = Lain::Qa::Changeset.new(base: "a" * 40, head:, changed:)
++
++  def reply(verdict) = "```qa-answer\n#{JSON.generate("verdict" => verdict, "confidence" => 0.9)}\n```\n"
++
++  def command(changed: %w[lib/order.rb spec/order_spec.rb], verdict: "pass")
++    tier = lambda do |prompt|
++      asked << prompt
++      reply(verdict)
++    end
++    described_class.new(root: @root, renderer: QaCommandSpecRenderer.new, tiers: ->(_spawn) { { "t1" => tier } },
++                        changeset: ->(root:, base:) { base == "main" && root == @root ? changes(*changed) : nil })
++  end
++
++  def report_path = File.join(@root, ".lain/qa/totals-#{head[0, 12]}.md")
++
++  it "is named for the verb a human types, and says it reports rather than fixes" do
++    expect(command.name).to eq("qa")
++    expect(command.usage).to include("/qa PLAN --base REF", "never fixes")
++  end
++
++  it "passes a change that did what it claimed, and writes the report named for the plan and the head" do
++    reply = command.call("planning/specs/totals.md --base main", build_command_env)
++
++    expect(reply).to eq("QA PASS: 0 findings, 0 holding, rungs t0/t1 -- report at .lain/qa/totals-#{head[0, 12]}.md")
++    expect(File.read(report_path)).to include("Verdict: PASS")
++  end
++
++  it "opens every rung's prompt with the qa skill and the range under test" do
++    command.call("planning/specs/totals.md --base main", build_command_env)
++
++    expect(asked.first).to start_with("BRIEF(qa)").and include("aaaaaaaaaaaa..bbbbbbbbbbbb")
++  end
++
++  # The free rung holds before any model could: the card's named spec never
++  # appeared, so its criteria were never made into anything that can fail.
++  it "holds on a claimed spec file the changeset never touched, found at t0" do
++    reply = command(changed: %w[lib/order.rb]).call("planning/specs/totals.md --base main", build_command_env)
++
++    expect(reply).to start_with("QA HOLD: 1 findings, 1 holding")
++    expect(File.read(report_path)).to include("T1 claims spec/order_spec.rb", "- found at: t0")
++  end
++
++  it "refuses without a base rather than guessing where the work started" do
++    expect { command.call("planning/specs/totals.md", build_command_env) }.to raise_error(Lain::Error, /--base REF/)
++  end
++
++  it "refuses a plan it cannot read, naming the path" do
++    expect { command.call("planning/specs/nope.md --base main", build_command_env) }
++      .to raise_error(Lain::Error, %r{cannot read the plan at .*planning/specs/nope\.md})
++  end
++
++  # Unbound, every rung is the session's own spawn of the qa role.
++  it "runs its rungs on the session's spawn when no tiers are bound" do
++    spawn = instance_double(Lain::Skill::RoleSpawn)
++    allow(spawn).to receive(:call).with(:qa, :fresh, anything)
++                                  .and_return(Struct.new(:content).new(reply("pass")))
++    command = described_class.new(root: @root, renderer: QaCommandSpecRenderer.new,
++                                  changeset: ->(**) { changes("lib/order.rb", "spec/order_spec.rb") })
++
++    expect(command.call("planning/specs/totals.md --base main", build_command_env(role_spawn: spawn)))
++      .to start_with("QA PASS")
++    expect(spawn).to have_received(:call).exactly(3).times
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/cli/command/surface_spec.rb qa-spike-main/spec/lain/cli/command/surface_spec.rb
+--- a/spec/lain/cli/command/surface_spec.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/spec/lain/cli/command/surface_spec.rb	2026-09-22 09:22:16.959690543 -0400
+@@ -187,7 +187,7 @@
+       expect(surface.commands.registry.map(&:name)).to contain_exactly(
+         "quit", "rewind", "undo", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
+         "ruby", "mode", "goal", "meta", "introspect", "review", "review-submit", "survey",
+-        "implement-epic", "stop", "help", "approve", "model"
++        "implement-epic", "qa", "stop", "help", "approve", "model"
+       )
+     end
+   end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/cli/epic_driver/qa_gate_spec.rb qa-spike-main/spec/lain/cli/epic_driver/qa_gate_spec.rb
+--- a/spec/lain/cli/epic_driver/qa_gate_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/cli/epic_driver/qa_gate_spec.rb	2026-09-22 09:29:24.123602230 -0400
+@@ -0,0 +1,97 @@
++# frozen_string_literal: true
++
++# The scribe, as the gate uses it: one transition per passed checkpoint.
++class QaGateSpecScribe
++  def moved = @moved ||= []
++
++  def issue_moved(id, from:, to:) = moved << [id, from, to]
++end
++
++# A QA checkpoint's verdict: pass it and release what it blocks, or hold it and
++# file each holding finding as an issue that blocks it -- so it runs again once
++# the fixes land, and what it holds stays held by the edges alone.
++RSpec.describe Lain::CLI::EpicDriver::QaGate do
++  let(:scribe) { QaGateSpecScribe.new }
++  let(:filed) { [] }
++  let(:criteria) { "```gherkin\nScenario: totals sum\n  Given lines\n  Then the total is their sum\n```\n" }
++
++  let(:graph) do
++    Lain::Epic::Graph.new(issues: [
++                            Lain::Epic::Issue.new(id: "a", title: "a", blocks: ["qa-gate-1"], criteria:),
++                            Lain::Epic::Issue.new(id: "qa-gate-1", title: "QA the first cluster", blocks: ["c"]),
++                            Lain::Epic::Issue.new(id: "c", title: "c"),
++                            Lain::Epic::Issue.new(id: "qa-fix-1-1", title: "an earlier pass's fix", status: "done")
++                          ])
++  end
++
++  let(:checkpoint) { graph.fetch("qa-gate-1") }
++
++  def finding(severity, evidence: "bin/total printed 2")
++    Lain::Qa::Finding.new(severity:, criterion: "a/totals sum", summary: "the total is off by one", evidence:,
++                          reproduction: "bin/total --lines 1,1", tier: "t2")
++  end
++
++  def gate(*findings)
++    report = Lain::Qa::Report.new(subject: "qa-gate-1", findings:)
++    described_class.new(check: ->(_checkpoint, _graph) { report }, scribe:, filing: ->(issue) { filed << issue })
++  end
++
++  it "passes a checkpoint whose findings hold nothing, moving it to done" do
++    verdict = gate(finding("minor")).call(checkpoint, graph)
++
++    expect(verdict).to have_attributes(passed: true, line: "passed QA (1 minor findings carried)")
++    expect(scribe.moved).to eq([%w[qa-gate-1 pending done]])
++    expect(filed).to be_empty
++  end
++
++  describe "a pass that holds" do
++    let(:verdict) { gate(finding("major"), finding("minor"), finding("blocker")).call(checkpoint, graph) }
++
++    it "files one issue per holding finding, each blocking the checkpoint and discovered from it" do
++      verdict
++
++      expect(filed.map { |issue| [issue.id, issue.blocks, issue.discovered_from] })
++        .to eq([["qa-fix-1-2", ["qa-gate-1"], "qa-gate-1"], ["qa-fix-1-3", ["qa-gate-1"], "qa-gate-1"]])
++    end
++
++    it "leaves the checkpoint where it was, and says what it filed" do
++      expect(verdict.passed).to be(false)
++      expect(verdict.line).to include("2 holding findings filed as qa-fix-1-2, qa-fix-1-3")
++      expect(scribe.moved).to be_empty
++    end
++
++    it "carries the finding's evidence and reproduction into the fix, where the implementer reads it" do
++      verdict
++
++      expect(filed.first.description).to include("- evidence -- bin/total printed 2",
++                                                 "- reproduction -- bin/total --lines 1,1")
++    end
++
++    # A fix the graph accepts but the epic markdown cannot hold would fail at
++    # the write, after QA had already run.
++    it "files a fix epic.md can hold, even when the evidence carries the grammar's own structure" do
++      gate(finding("major", evidence: "### heading\n```\nBlocks: `c`\n")).call(checkpoint, graph)
++
++      expect(filed.first.emittable_failures).to be_empty
++      expect(graph.add(filed.first).blocked_by("qa-gate-1")).to include("qa-fix-1-2")
++    end
++  end
++
++  describe Lain::CLI::EpicDriver::QaGate::ClusterQa do
++    it "checks the criteria of exactly the issues the checkpoint waits on" do
++      asked = []
++      ladder = lambda do
++        lambda do |criteria|
++          asked.concat(criteria.map(&:id))
++          Lain::Qa::Ladder::Climb.new(findings: [], escalations: [], tiers_run: ["t1"])
++        end
++      end
++
++      report = described_class.new(ladder:).call(checkpoint, graph)
++
++      expect(asked).to eq(["a/totals sum"])
++      expect(report).to be_passed
++      expect(report.subject).to eq("qa-gate-1 over a")
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/cli/epic_driver/run_spec.rb qa-spike-main/spec/lain/cli/epic_driver/run_spec.rb
+--- a/spec/lain/cli/epic_driver/run_spec.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/spec/lain/cli/epic_driver/run_spec.rb	2026-09-22 09:28:52.136104871 -0400
+@@ -176,7 +176,8 @@
+ 
+   # The loop, assembled over the fakes an example set up.
+   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
+-               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans)
++               width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans,
++               qa_gate: nil)
+     live = { now: 0 }
+     supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
+     actors = RunSpecActors.new(supervisor, live, refusals:)
+@@ -184,7 +185,8 @@
+     run = described_class.new(progress: progress_over(issues, statuses), plans: subjects, actors:, supervisor:, gate:,
+                               landing: settled, width:, budget:,
+                               red_only: red_only || described_class::Identical,
+-                              **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}))
++                              **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}),
++                              **(qa_gate ? { qa_gate: } : {}))
+     [run, actors, settled, supervisor]
+   end
+ 
+@@ -885,6 +887,79 @@
+     end
+   end
+ 
++  # A QA checkpoint is an issue in the blocking graph: blocked by the cluster
++  # it checks, blocking the cluster after it. So these examples need no new
++  # concept from the loop beyond "a ready checkpoint is run, not launched" --
++  # the holding and the releasing are the fold's.
++  describe "a QA checkpoint between two clusters" do
++    # A QA gate that answers from a script, and passes by moving the
++    # checkpoint to done the way the real one's scribe does -- which is what
++    # the next fold reads.
++    let(:qa_log) { [] }
++    let(:graph) do
++      [issue("a", blocks: ["qa-gate-1"]), issue("b", blocks: ["qa-gate-1"]), issue("qa-gate-1", blocks: ["c"]),
++       issue("c")]
++    end
++    let(:statuses) { { "a" => "in_flight", "b" => "in_flight", "qa-gate-1" => "pending", "c" => "in_flight" } }
++    let(:reports) { %w[a b c].to_h { |id| [id, anchored("sha-#{id}")] } }
++
++    def qa_gate(statuses, passes: true, raising: false)
++      lambda do |checkpoint, graph|
++        qa_log << [checkpoint.id, graph.statuses.select { |_id, status| status == "done" }.keys.sort]
++        raise Lain::Error, "the qa child refused" if raising
++
++        statuses[checkpoint.id] = "done" if passes
++        Lain::CLI::EpicDriver::QaGate::Verdict.new(issue_id: checkpoint.id, passed: passes,
++                                                   line: passes ? "passed QA" : "QA held it")
++      end
++    end
++
++    it "runs QA once the whole cluster has landed, and only then starts the cluster it held" do
++      run, actors, landing = run_over(issues: graph, statuses:, reports:, qa_gate: qa_gate(statuses))
++
++      result = run.call
++
++      expect(qa_log).to eq([["qa-gate-1", %w[a b]]])
++      expect(landing.landed.map(&:first)).to eq(%w[a b c])
++      expect(actors.launched.map(&:first)).not_to include("qa-gate-1")
++      expect(result.audited.map(&:issue_id)).to eq(["qa-gate-1"])
++      expect(result.to_s).to include("qa-gate-1: passed QA")
++    end
++
++    it "holds the next cluster when QA holds, and reports the checkpoint with QA's own line" do
++      run, actors = run_over(issues: graph, statuses:, reports:, qa_gate: qa_gate(statuses, passes: false))
++
++      result = run.call
++
++      expect(actors.launched.map(&:first)).to eq(%w[a b])
++      expect(result.reported.map { |entry| [entry.issue_id, entry.reason] }).to eq([["qa-gate-1", "QA held it"]])
++    end
++
++    # Nothing it blocks may start on a QA that never ran.
++    it "holds when QA raises, naming why, and leaves the landed cluster landed" do
++      run, actors = run_over(issues: graph, statuses:, reports:, qa_gate: qa_gate(statuses, raising: true))
++
++      result = run.call
++
++      expect(actors.launched.map(&:first)).to eq(%w[a b])
++      expect(result.landed.map(&:issue_id)).to eq(%w[a b])
++      expect(result.reported.first.reason).to include("QA could not run", "the qa child refused")
++    end
++
++    # In an epic QA is not optional, so a run wired with none holds rather
++    # than waving a checkpoint through -- and never mistakes it for an issue
++    # waiting on its plan.
++    it "holds a checkpoint when no QA is wired, and never reports it as unplanned" do
++      run, actors = run_over(issues: graph, statuses:, reports:)
++
++      result = run.call
++
++      expect(actors.launched.map(&:first)).to eq(%w[a b])
++      expect(result.reported.map(&:reason)).to eq(["no QA is wired to this run, so the checkpoint holds everything " \
++                                                   "it blocks"])
++    end
++  end
++
+   describe "the reply" do
+     it "lists what landed and what is still waiting" do
+       statuses = { "a" => "in_flight", "c" => "in_flight" }
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/cli/epic_spec.rb qa-spike-main/spec/lain/cli/epic_spec.rb
+--- a/spec/lain/cli/epic_spec.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/spec/lain/cli/epic_spec.rb	2026-09-22 09:27:26.488100270 -0400
+@@ -713,6 +713,22 @@
+       expect(diagram).to include("n_a --> n_b", "n_b --> n_c")
+     end
+ 
++    # What a QA checkpoint files: a fix built whole, blocking the checkpoint
++    # that found it, through the one write path `epic add` takes.
++    it "files an issue built whole, edges and provenance kept, and journals one add" do
++      write_epic("alpha", chain)
++      fix = Lain::Epic::Issue.new(id: "qa-fix-1-1", title: "fix: the total", blocks: ["c"], discovered_from: "b",
++                                  description: "Found by QA at b.\n- evidence -- bin/total printed 2")
++
++      told = command.file(fix, "alpha")
++
++      expect(epic_home.read_epic.blocked_by("c")).to include("qa-fix-1-1")
++      expect(epic_home.read_epic.fetch("qa-fix-1-1").description).to include("bin/total printed 2")
++      expect(told).to include("add applied to epic `alpha`")
++      expect(graph_revisions.map { |record| [record["operation"], record.dig("arguments", "discovered_from")] })
++        .to eq([%w[add b]])
++    end
++
+     it "replaces one issue with its parts and journals one graph_revision" do
+       write_epic("alpha", chain)
+ 
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/epic/qa_checkpoint_spec.rb qa-spike-main/spec/lain/epic/qa_checkpoint_spec.rb
+--- a/spec/lain/epic/qa_checkpoint_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/epic/qa_checkpoint_spec.rb	2026-09-22 09:26:57.460437471 -0400
+@@ -0,0 +1,26 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Epic::QaCheckpoint do
++  def issue(id) = Lain::Epic::Issue.new(id:, title: "the #{id} issue")
++
++  it "recognizes a checkpoint by its id, which the epic markdown already carries" do
++    expect(%w[qa-gate-1 qa-gate-final dashboard].map { |id| described_class.of?(issue(id)) })
++      .to eq([true, true, false])
++  end
++
++  # A fix read as a checkpoint would be run as QA instead of being implemented.
++  it "mints fix ids that are never themselves checkpoints" do
++    fix = described_class.fix_ids("qa-gate-1", []).first
++
++    expect(fix).to eq("qa-fix-1-1")
++    expect(described_class.of?(issue(fix))).to be(false)
++  end
++
++  it "files a second failing pass beside the first rather than colliding with it" do
++    expect(described_class.fix_ids("qa-gate-1", %w[qa-fix-1-1 qa-fix-1-2]).first(2)).to eq(%w[qa-fix-1-3 qa-fix-1-4])
++  end
++
++  it "mints ids the filesystem grammar accepts" do
++    expect(Lain::Epic::Home.filesystem_name_failure(described_class.fix_ids("qa-gate-final", []).first, "id")).to be_nil
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/answer_spec.rb qa-spike-main/spec/lain/qa/answer_spec.rb
+--- a/spec/lain/qa/answer_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/answer_spec.rb	2026-09-22 09:28:47.788155418 -0400
+@@ -0,0 +1,38 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::Answer do
++  def reply(body) = "Checked it.\n\n```qa-answer\n#{body}\n```\n"
++
++  it "reads the verdict, confidence and evidence out of the fenced block" do
++    answer = described_class.parse(reply(JSON.generate(
++                                           "verdict" => "fail", "confidence" => 0.8, "executed" => true,
++                                           "summary" => "total off by one", "evidence" => "exit 1",
++                                           "reproduction" => "bin/total"
++                                         )))
++
++    expect(answer).to have_attributes(verdict: "fail", confidence: 0.8, executed: true, reproduction: "bin/total")
++  end
++
++  # A small model that cannot keep a format is a reason to climb, not a crash
++  # that spends the whole pass on the cheapest rung's weakness.
++  it "reads a reply with no block, or a broken one, as unverified with the reason" do
++    expect(described_class.parse("it works").verdict).to eq("unverified")
++    expect(described_class.parse(reply("{broken")).evidence).to include("did not read")
++    expect(described_class.parse(reply(JSON.generate("verdict" => "maybe"))).verdict).to eq("unverified")
++  end
++
++  describe "#findings" do
++    it "is one finding when the answer can be checked by somebody else" do
++      answer = described_class.parse(reply(JSON.generate("verdict" => "fail", "evidence" => "exit 1",
++                                                         "reproduction" => "bin/total")))
++
++      expect(answer.findings(criterion: "T1/s", tier: "t2", severity: "major").size).to eq(1)
++    end
++
++    it "is none for a fail with no reproduction -- the false positive the ladder keeps from an implementer" do
++      answer = described_class.parse(reply(JSON.generate("verdict" => "fail", "evidence" => "looks wrong")))
++
++      expect(answer.findings(criterion: "T1/s", tier: "t1", severity: "major")).to be_empty
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/changeset_spec.rb qa-spike-main/spec/lain/qa/changeset_spec.rb
+--- a/spec/lain/qa/changeset_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/changeset_spec.rb	2026-09-22 09:23:11.751056009 -0400
+@@ -0,0 +1,33 @@
++# frozen_string_literal: true
++
++require "fileutils"
++require "tmpdir"
++
++RSpec.describe Lain::Qa::Changeset, :seam do
++  around do |example|
++    Dir.mktmpdir("lain-qa-changeset") do |dir|
++      @repo = File.realpath(dir)
++      FileUtils.cp_r("#{SeedRepo.at({ "README" => "seed\n" })}/.", @repo)
++      example.run
++    end
++  end
++
++  def git(*) = Mixlib::ShellOut.new("git", "-C", @repo, *, environment: SeedRepo::SCRUB).run_command.tap(&:error!).stdout
++
++  it "reads the paths changed since the base, and quotes the range a finding reproduces with" do
++    base = git("rev-parse", "HEAD").strip
++    File.write(File.join(@repo, "order.rb"), "total\n")
++    git("add", "-A")
++    git("commit", "-q", "-m", "work")
++
++    changes = described_class.read(root: @repo, base:)
++
++    expect(changes.changed).to eq(["order.rb"])
++    expect(changes.range).to eq("#{base[0, 12]}..#{git("rev-parse", "HEAD").strip[0, 12]}")
++  end
++
++  it "refuses a base git cannot resolve, naming the command" do
++    expect { described_class.read(root: @repo, base: "no-such-ref") }
++      .to raise_error(Lain::Error, /could not read the changeset: `git rev-parse/)
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/claim_check_spec.rb qa-spike-main/spec/lain/qa/claim_check_spec.rb
+--- a/spec/lain/qa/claim_check_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/claim_check_spec.rb	2026-09-22 09:17:36.501928587 -0400
+@@ -0,0 +1,30 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::ClaimCheck do
++  def check(claims, changed) = described_class.new(claims:, changed:, range: "main..HEAD").findings
++
++  it "finds nothing when the changeset is exactly what the cards claimed" do
++    expect(check({ "T1" => %w[a.rb a_spec.rb] }, %w[a.rb a_spec.rb])).to be_empty
++  end
++
++  # The case that matters: a named spec file that never appeared means the
++  # card's criteria were never turned into anything that can fail.
++  it "holds on a claimed path the changeset never touched, citing the card and the command that shows it" do
++    finding = check({ "T1" => %w[a.rb a_spec.rb] }, %w[a.rb]).first
++
++    expect(finding).to have_attributes(severity: "major", criterion: "T1/Files", tier: "t0")
++    expect(finding.reproduction).to eq("git diff --name-only main..HEAD -- a_spec.rb   # prints nothing")
++    expect(finding).to be_holds
++  end
++
++  it "carries work no card claimed without holding on it" do
++    finding = check({ "T1" => %w[a.rb] }, %w[a.rb .rubocop.yml]).first
++
++    expect(finding).to have_attributes(severity: "minor", summary: include(".rubocop.yml"))
++    expect(finding).not_to be_holds
++  end
++
++  it "reports unperformed claims ahead of unclaimed work" do
++    expect(check({ "T1" => %w[a.rb] }, %w[b.rb]).map(&:severity)).to eq(%w[major minor])
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/escalation_spec.rb qa-spike-main/spec/lain/qa/escalation_spec.rb
+--- a/spec/lain/qa/escalation_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/escalation_spec.rb	2026-09-22 09:17:26.073048595 -0400
+@@ -0,0 +1,63 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::Escalation do
++  subject(:escalation) { described_class.new(samples: 3, confidence: 0.7) }
++
++  def sample(verdict, confidence = 0.9, executed: false)
++    described_class::Sample.new(verdict:, confidence:, executed:)
++  end
++
++  def decide(samples, risk: "medium") = escalation.call(samples, risk:)
++
++  describe "when a cheap pass is the answer" do
++    it "accepts a unanimous, confident pass on a card that is not high risk" do
++      expect(decide([sample("pass")] * 3)).to have_attributes(action: :accept, rule: "unanimous-pass")
++    end
++
++    it "does not believe a unanimous pass whose confidence is low" do
++      expect(decide([sample("pass", 0.4)] * 3)).to have_attributes(action: :escalate, rule: "low-confidence")
++    end
++
++    it "sends every high-risk criterion up, however unanimous" do
++      expect(decide([sample("pass")] * 3, risk: "high")).to have_attributes(action: :escalate, rule: "risk-high")
++    end
++  end
++
++  describe "when a cheap fail is the answer" do
++    # An exit status is not a model's opinion: no stronger model is needed to
++    # believe it, even on a high-risk card.
++    it "reports a failure observed by running something, even at high risk" do
++      samples = [sample("pass"), sample("fail", 0.5, executed: true), sample("pass")]
++
++      expect(decide(samples, risk: "high")).to have_attributes(action: :report, rule: "executed-fail")
++    end
++
++    # A weak model's false positive costs an implementer a fix round, so a
++    # fail it only inferred is confirmed before anyone is handed it.
++    it "escalates a unanimous fail that was only inferred" do
++      expect(decide([sample("fail")] * 3)).to have_attributes(action: :escalate, rule: "unconfirmed-fail")
++    end
++  end
++
++  describe "when the cheap tier cannot settle it" do
++    it "escalates on disagreement" do
++      expect(decide([sample("pass"), sample("fail"), sample("pass")])).to have_attributes(rule: "disagreement")
++    end
++
++    it "escalates when any sample could not verify the criterion" do
++      expect(decide([sample("pass"), sample("unverified"), sample("pass")])).to have_attributes(rule: "unverified")
++    end
++
++    it "escalates when fewer samples came back than agreement needs" do
++      expect(decide([sample("pass")] * 2)).to have_attributes(action: :escalate, rule: "too-few-samples")
++    end
++  end
++
++  it "refuses a risk the plan grammar does not assign" do
++    expect { decide([sample("pass")] * 3, risk: "spicy") }.to raise_error(ArgumentError, %r{low/medium/high})
++  end
++
++  it "records a decision as the action and the rule that fired" do
++    expect(decide([sample("fail")] * 3).to_s).to eq("escalate (unconfirmed-fail)")
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/finding_spec.rb qa-spike-main/spec/lain/qa/finding_spec.rb
+--- a/spec/lain/qa/finding_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/finding_spec.rb	2026-09-22 09:17:07.121266588 -0400
+@@ -0,0 +1,45 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::Finding do
++  def finding(**overrides)
++    described_class.new(severity: "major", criterion: "T1/Scenario: totals", summary: "the total is off by one",
++                        evidence: "spec/order_spec.rb:12 expected 3, got 2",
++                        reproduction: "bundle exec rspec spec/order_spec.rb:12", tier: "t1", **overrides)
++  end
++
++  describe "a finding somebody else can check" do
++    it "refuses blank evidence, because a finding nobody can check is an opinion" do
++      expect { finding(evidence: "  ") }.to raise_error(Lain::Qa::MalformedFinding, /evidence cannot be blank/)
++    end
++
++    it "refuses a blank reproduction for the same reason" do
++      expect { finding(reproduction: "") }.to raise_error(Lain::Qa::MalformedFinding, /reproduction/)
++    end
++
++    it "refuses a severity or a tier outside the closed sets" do
++      expect { finding(severity: "critical") }.to raise_error(Lain::Qa::MalformedFinding, %r{blocker/major/minor})
++      expect { finding(tier: "t9") }.to raise_error(Lain::Qa::MalformedFinding, /t0/)
++    end
++  end
++
++  describe "which findings hold the work" do
++    it "holds on blocker and major, and carries minor without holding" do
++      expect(%w[blocker major minor].map { |severity| finding(severity:).holds? }).to eq([true, true, false])
++    end
++  end
++
++  describe "the wire form" do
++    it "round-trips through the Hash the QA child emits" do
++      expect(described_class.from_h(JSON.parse(JSON.generate(finding.to_h)))).to eq(finding)
++    end
++
++    it "names the member a wire finding is missing" do
++      expect { described_class.from_h("severity" => "major") }
++        .to raise_error(Lain::Qa::MalformedFinding, /names no criterion/)
++    end
++
++    it "is deeply frozen" do
++      expect(Ractor.shareable?(finding)).to be(true)
++    end
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/ladder_spec.rb qa-spike-main/spec/lain/qa/ladder_spec.rb
+--- a/spec/lain/qa/ladder_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/ladder_spec.rb	2026-09-22 09:32:39.031465186 -0400
+@@ -0,0 +1,136 @@
++# frozen_string_literal: true
++
++# A tier that answers from a script, cycling one reply per ask, and counts its asks --
++# which is what makes "the cheap rung stopped it" observable as spend.
++class LadderSpecTier
++  def initialize(*replies)
++    @replies = replies
++    @prompts = []
++  end
++
++  attr_reader :prompts
++
++  def call(prompt)
++    @prompts << prompt
++    "```qa-answer\n#{JSON.generate(@replies[(@prompts.size - 1) % @replies.size])}\n```\n"
++  end
++end
++
++RSpec.describe Lain::Qa::Ladder do
++  let(:pass) { { "verdict" => "pass", "confidence" => 0.9 } }
++  let(:inferred_fail) do
++    { "verdict" => "fail", "confidence" => 0.9, "evidence" => "reads wrong", "reproduction" => "" }
++  end
++  let(:confirmed_fail) do
++    { "verdict" => "fail", "confidence" => 0.9, "summary" => "total off by one",
++      "evidence" => "bin/total printed 2", "reproduction" => "bin/total" }
++  end
++
++  def criterion(name = "totals", risk: "medium")
++    scenario = Lain::Gherkin::Scenario.new(name:, clauses: [Lain::Gherkin::Clause.new(keyword: "Then", text: "ok")])
++    described_class::Criterion.new(id: "T1/#{name}", scenario:, risk:)
++  end
++
++  def climb(tiers, *criteria, budgets: {}) = described_class.new(tiers:, brief: "QA brief", budgets:).call(criteria)
++
++  it "stops at the cheap rung when its samples agree, spending nothing above it" do
++    t1 = LadderSpecTier.new(pass)
++    t2 = LadderSpecTier.new(pass)
++
++    climb = climb({ "t1" => t1, "t2" => t2 }, criterion)
++
++    expect(climb.findings).to be_empty
++    expect([t1.prompts.size, t2.prompts.size]).to eq([3, 0])
++    expect(climb.escalations).to eq(["T1/totals: t1 accept (unanimous-pass)"])
++  end
++
++  it "climbs on disagreement and reports the stronger rung's finding as that rung's" do
++    t1 = LadderSpecTier.new(pass, inferred_fail, pass)
++    t2 = LadderSpecTier.new(confirmed_fail)
++
++    climb = climb({ "t1" => t1, "t2" => t2 }, criterion)
++
++    expect(climb.findings.map { |f| [f.tier, f.severity, f.reproduction] }).to eq([%w[t2 major bin/total]])
++    expect(climb.escalations).to eq(["T1/totals: t1 escalate (disagreement)"])
++    expect(climb.tiers_run).to eq(%w[t1 t2])
++  end
++
++  # The weak-model false positive: the cheap rung is unanimous that it fails,
++  # but only inferred it, and the stronger rung finds it passes.
++  it "keeps an unconfirmed cheap fail away from the implementer when the stronger rung disagrees" do
++    climb = climb({ "t1" => LadderSpecTier.new(inferred_fail), "t2" => LadderSpecTier.new(pass) }, criterion)
++
++    expect(climb.findings).to be_empty
++    expect(climb.escalations.first).to end_with("(unconfirmed-fail)")
++  end
++
++  it "takes an executed cheap fail as the finding without asking the stronger rung" do
++    executed = confirmed_fail.merge("executed" => true)
++    t2 = LadderSpecTier.new(pass)
++
++    climb = climb({ "t1" => LadderSpecTier.new(pass, executed, pass), "t2" => t2 }, criterion(risk: "high"))
++
++    expect(climb.findings.map { |f| [f.tier, f.severity] }).to eq([%w[t1 blocker]])
++    expect(t2.prompts).to be_empty
++  end
++
++  describe "the stopping rules" do
++    # "Nobody could tell" is the manual pass owed; omitting it would read as a
++    # pass.
++    it "carries a criterion no rung could settle as a minor finding, never as a pass" do
++      climb = climb({ "t1" => LadderSpecTier.new(pass, inferred_fail, pass) }, criterion)
++
++      found = climb.findings.map { |f| [f.severity, f.summary] }
++
++      expect(found).to eq([["minor", "unsettled -- a manual pass is owed"]])
++    end
++
++    it "stops asking a rung once its budget is spent, and says so on the finding" do
++      t2 = LadderSpecTier.new(pass)
++      tiers = { "t1" => LadderSpecTier.new(pass, inferred_fail, pass), "t2" => t2 }
++
++      climb = climb(tiers, criterion("a"), criterion("b"), budgets: { "t2" => 1 })
++
++      expect(t2.prompts.size).to eq(1)
++      expect(climb.findings.map(&:criterion)).to eq(["T1/b"])
++    end
++  end
++
++  describe "visual criteria" do
++    it "skips the text rungs and asks the media rung" do
++      t1 = LadderSpecTier.new(pass)
++      t3 = LadderSpecTier.new(confirmed_fail)
++
++      climb = climb({ "t1" => t1, "t3" => t3 }, criterion("[visual] the status line shows the model"))
++
++      expect(t1.prompts).to be_empty
++      expect(climb.findings.map(&:tier)).to eq(["t3"])
++    end
++
++    it "owes a manual pass when no media rung is wired" do
++      climb = climb({ "t1" => LadderSpecTier.new(pass) }, criterion("[visual] the pane is green"))
++
++      expect(climb.findings.map { |f| [f.tier, f.evidence] }).to eq([["t3", "no media tier could look at it"]])
++    end
++  end
++
++  # One GPU holds one large model at a time, so a per-criterion climb would
++  # pay a model swap twice per escalation.
++  it "takes every criterion's cheap samples before any stronger ask" do
++    order = []
++    fence = ->(reply) { "```qa-answer\n#{JSON.generate(reply)}\n```" }
++    t1 = ->(_prompt) { (order << "t1") && fence.call(order.size.odd? ? pass : inferred_fail) }
++    t2 = ->(_prompt) { (order << "t2") && fence.call(pass) }
++
++    climb({ "t1" => t1, "t2" => t2 }, criterion("a"), criterion("b"))
++
++    expect(order).to eq(%w[t1 t1 t1 t1 t1 t1 t2 t2])
++  end
++
++  it "opens every prompt with the brief and names the rung and the criterion" do
++    t1 = LadderSpecTier.new(pass)
++    climb({ "t1" => t1 }, criterion)
++
++    expect(t1.prompts.first).to start_with("QA brief").and include("## Rung t1: criterion T1/totals (risk: medium)")
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/plan_cards_spec.rb qa-spike-main/spec/lain/qa/plan_cards_spec.rb
+--- a/spec/lain/qa/plan_cards_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/plan_cards_spec.rb	2026-09-22 09:21:07.876489811 -0400
+@@ -0,0 +1,57 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::PlanCards do
++  let(:plan) do
++    <<~MD
++      # A plan
++
++      ### T1 — Add the order total          [wave 1] [risk: low]
++
++      **Files:** `lib/app/order.rb` (create),
++      `spec/app/order_spec.rb` (create)
++
++      **Reuse:** `lib/app/money.rb`
++
++      ```gherkin
++      Scenario: the total sums the lines
++        Given an order of two lines
++        Then its total is their sum
++      ```
++
++      ### T2 — Wire the CLI          [wave 2] [risk: high]
++
++      **Files:** `exe/app` (modify), `spec/app/cli_spec.rb` (modify)
++
++      ```gherkin
++      Scenario: [visual] the prompt shows the total
++        Then the prompt reads "total: 3"
++      ```
++
++      ### T3 — A card that states no files and no risk
++    MD
++  end
++
++  let(:cards) { described_class.read(plan) }
++
++  it "reads each card's backticked Files paragraph and nothing past it" do
++    expect(cards.claims).to eq(
++      "T1" => %w[lib/app/order.rb spec/app/order_spec.rb], "T2" => %w[exe/app spec/app/cli_spec.rb], "T3" => []
++    )
++  end
++
++  it "cites each scenario by card and name, carrying its card's risk" do
++    expect(cards.criteria.map { |criterion| [criterion.id, criterion.risk, criterion.visual?] }).to eq(
++      [["T1/the total sums the lines", "low", false], ["T2/[visual] the prompt shows the total", "high", true]]
++    )
++  end
++
++  it "reads a card whose heading names no risk as medium" do
++    expect(cards.find { |card| card.id == "T3" }.risk).to eq("medium")
++  end
++
++  it "reads a document with no cards as no claims and no criteria" do
++    cards = described_class.read("# just prose\n")
++
++    expect([cards.claims, cards.criteria]).to eq([{}, []])
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/report_spec.rb qa-spike-main/spec/lain/qa/report_spec.rb
+--- a/spec/lain/qa/report_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/report_spec.rb	2026-09-22 09:17:17.310149405 -0400
+@@ -0,0 +1,70 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::Report do
++  def wire(severity)
++    { "severity" => severity, "criterion" => "T2/Scenario: refunds", "summary" => "refund skips tax",
++      "evidence" => "bin/refund 12 printed 10.00", "reproduction" => "bin/refund 12", "tier" => "t2" }
++  end
++
++  def answer(body) = "I ran the refund path.\n\n```qa-report\n#{JSON.generate(body)}\n```\n"
++
++  describe ".parse" do
++    it "reads the one fenced block and ignores the prose around it" do
++      report = described_class.parse(answer("findings" => [wire("major")], "tiers_run" => %w[t1 t2],
++                                            "escalations" => ["T2: t1 escalate (disagreement)"]),
++                                     subject: "plan.md @ a..b")
++
++      expect(report.findings.map(&:severity)).to eq(["major"])
++      expect(report.tiers_run).to eq(%w[t1 t2])
++      expect(report.escalations).to eq(["T2: t1 escalate (disagreement)"])
++    end
++
++    # A child that answered without the block reported nothing, and reading
++    # that as a clean pass is the silent failure this refuses.
++    it "refuses an answer with no report block rather than reading it as a pass" do
++      expect { described_class.parse("Looks good to me!", subject: "x") }
++        .to raise_error(Lain::Qa::MalformedReport, /reported nothing/)
++    end
++
++    it "refuses a block that is not JSON" do
++      expect { described_class.parse("```qa-report\n{nope\n```\n", subject: "x") }
++        .to raise_error(Lain::Qa::MalformedReport, /not JSON/)
++    end
++  end
++
++  describe "the verdict" do
++    it "passes with only minor findings and holds on any major one" do
++      minor = Lain::Qa::Finding.from_h(wire("minor"))
++      major = Lain::Qa::Finding.from_h(wire("major"))
++
++      expect(described_class.new(subject: "x", findings: [minor])).to be_passed
++      expect(described_class.new(subject: "x", findings: [minor, major]).holding).to eq([major])
++    end
++  end
++
++  describe "#prepend" do
++    it "puts the structural rung's findings first and records that it ran" do
++      t0 = Lain::Qa::Finding.from_h(wire("major").merge("tier" => "t0"))
++      report = described_class.new(subject: "x", findings: [Lain::Qa::Finding.from_h(wire("minor"))],
++                                   tiers_run: ["t1"]).prepend([t0])
++
++      expect(report.findings.first).to eq(t0)
++      expect(report.tiers_run).to eq(%w[t0 t1])
++    end
++  end
++
++  describe "#to_markdown" do
++    it "states the verdict and gives every finding its evidence and reproduction" do
++      markdown = described_class.new(subject: "plan.md", findings: [Lain::Qa::Finding.from_h(wire("major"))],
++                                     tiers_run: ["t2"]).to_markdown
++
++      expect(markdown).to include("Verdict: HOLD (1 holding)")
++      expect(markdown).to include("- evidence: bin/refund 12 printed 10.00", "- reproduce: bin/refund 12")
++    end
++  end
++
++  it "is deeply frozen" do
++    expect(Ractor.shareable?(described_class.new(subject: +"x", findings: [Lain::Qa::Finding.from_h(wire("minor"))])))
++      .to be(true)
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/qa/session_tiers_spec.rb qa-spike-main/spec/lain/qa/session_tiers_spec.rb
+--- a/spec/lain/qa/session_tiers_spec.rb	1969-12-31 19:00:00.000000000 -0500
++++ b/spec/lain/qa/session_tiers_spec.rb	2026-09-22 09:25:57.687131548 -0400
+@@ -0,0 +1,13 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Qa::SessionTiers do
++  it "binds t1 and t2 to the qa role on a fresh context, and leaves the media rung unbound" do
++    spawn = instance_double(Lain::Skill::RoleSpawn)
++    allow(spawn).to receive(:call).with(:qa, :fresh, "p").and_return(Struct.new(:content).new("answered"))
++
++    tiers = described_class.call(spawn)
++
++    expect(tiers.keys).to eq(%w[t1 t2])
++    expect(tiers.fetch("t2").call("p")).to eq("answered")
++  end
++end
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/role_spec.rb qa-spike-main/spec/lain/role_spec.rb
+--- a/spec/lain/role_spec.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/spec/lain/role_spec.rb	2026-09-22 09:19:35.758554026 -0400
+@@ -64,10 +64,10 @@
+   # because it answers while a human stands mid-review waiting for the line to
+   # change. The catalog argued that invariant in prose and nothing enforced it.
+   describe "a role can declare that it answers unattended" do
+-    it "defaults to attended, and the two approval judges, the resolver, the docent and the critic declare otherwise" do
++    it "defaults to attended, and the approval judges, the resolver, the docent, the critic and qa declare otherwise" do
+       expect(Lain::Role::Catalog.fetch(:test_engineer).unattended).to be(false)
+       expect(Lain::Role::Catalog.all.select(&:unattended).map(&:name))
+-        .to eq(%i[auto_approver gate_adjudicator merge_resolver diff_docent diff_critic])
++        .to eq(%i[auto_approver gate_adjudicator merge_resolver diff_docent diff_critic qa])
+     end
+ 
+     # Coerced like every member beside it, and for the shareability reason
+@@ -233,7 +233,7 @@
+       expect(Lain::Role::Catalog.names).to contain_exactly(
+         :dev, :test_engineer, :reviewer_sre, :reviewer_security, :reviewer_dba, :reviewer_code, :researcher,
+         :court_clerk, :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness, :meta_summarizer,
+-        :merge_resolver, :diff_docent, :diff_critic, :issue_orchestrator
++        :merge_resolver, :diff_docent, :diff_critic, :qa, :issue_orchestrator
+       )
+     end
+ 
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/skill/role_spawn_spec.rb qa-spike-main/spec/lain/skill/role_spawn_spec.rb
+--- a/spec/lain/skill/role_spawn_spec.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/spec/lain/skill/role_spawn_spec.rb	2026-09-22 09:28:48.079152035 -0400
+@@ -218,6 +218,35 @@
+     end
+   end
+ 
++  # ---- A role run at a strength the caller picks ------------------------------
++  #
++  # The QA ladder runs one persona on several models. Which model is the
++  # caller's per spawn, never the role's.
++  describe "a tiered role spawn" do
++    it "asks the tier's provider for the tier's model, and leaves the spawn it came from on its own" do
++      chat = mock(text_response("unused"))
++      tier = mock(text_response("from the small tier"))
++      spawn = seam(provider: chat)
++
++      result = spawn.tiered(provider: tier, model: "qwen3:4b").call(:reviewer_code, :fresh, "go")
++
++      expect(result.content).to eq("from the small tier")
++      expect(tier.last_request.model).to eq("qwen3:4b")
++      expect(spawn.seam.provider).to be(chat)
++      expect(spawn.seam.context_factory.call.model).to eq("child-model")
++    end
++
++    it "keeps the role's persona and attenuation on the tier's model" do
++      tier = mock(text_response("done"))
++      seam(provider: mock(text_response("unused"))).tiered(provider: tier, model: "small").call(:reviewer_code,
++                                                                                                :fresh, "go")
++
++      expect(tier.last_request.tools.map { |tool| tool["name"] })
++        .to match_array(%w[read_file list_files glob grep ask_human])
++      expect(tier.last_request.system.last["text"]).to include("reviewer (code)")
++    end
++  end
++
+   # ---- One Seam held, and per-call work that is role selection only ----------
+   #
+   # This class's own doc already says it "holds the same collaborator set the
+diff -ruN '--exclude=lain.so' '--exclude=.lain' '--exclude=.rspec_status' '--exclude=tmp' '--exclude=log' qa-spike-pristine/spec/lain/skill/shipped_skills_spec.rb qa-spike-main/spec/lain/skill/shipped_skills_spec.rb
+--- a/spec/lain/skill/shipped_skills_spec.rb	2026-09-21 15:26:57.000000000 -0400
++++ b/spec/lain/skill/shipped_skills_spec.rb	2026-09-22 09:20:31.687908115 -0400
+@@ -152,6 +152,41 @@
+         expect(scaffold).to include("orchestrat")
+       end
+     end
++
++    it "offers QA between landing and close-out, and hands findings back rather than fixing them" do
++      with_empty_project do |renderer|
++        scaffold = renderer.render("execute-plan")
++
++        expect(scaffold.index("/qa")).to be_between(scaffold.index("Phase 4 "), scaffold.index("Phase 5 "))
++        expect(scaffold).to include("reports, never fixes")
++      end
++    end
++  end
++
++  # The skill's prose and the code that runs the ladder describe one policy;
++  # these pin the words the model is told to the names the code records, so
++  # a renamed rule or fence cannot leave the prose describing a ladder that no
++  # longer exists.
++  describe "qa's scaffold describes the ladder the code runs" do
++    it "names every escalation rule Qa::Escalation can record, and the fences Qa reads" do
++      with_empty_project do |renderer|
++        scaffold = renderer.render("qa")
++
++        Lain::Qa::Escalation::RULES.each { |_action, rule, _applies| expect(scaffold).to include("`#{rule}`") }
++        expect(scaffold).to include("`unanimous-pass`", "`low-confidence`")
++        expect(scaffold).to include("`#{Lain::Qa::Answer::FENCE}`", "`#{Lain::Qa::Report::FENCE}`")
++      end
++    end
++
++    it "reports and never fixes, and gates the media rung on the screenshot tool being held" do
++      with_empty_project do |renderer|
++        scaffold = renderer.render("qa")
++
++        expect(scaffold).to include("report, never fix")
++        expect(scaffold).to include("If you hold a `screenshot` tool")
++        expect(Lain::Qa::SEVERITIES.map { |severity| "`#{severity}`" }).to all(satisfy { |s| scaffold.include?(s) })
++      end
++    end
+   end
+ 
+   describe "critique's scaffold reviews without touching the tree" do

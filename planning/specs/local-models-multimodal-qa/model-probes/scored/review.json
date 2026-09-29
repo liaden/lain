@@ -1,0 +1,293 @@
+{
+ "qwen3:4b": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "lfm2.5": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": "<think>\nWe need to review the pull request for correctness. The change adds three new files: lib/shop/invoice_paginator.rb, lib/shop/discount_rules.rb, and lib/shop/export_job.rb.\n\nWe must report only real defects: behavior that is wrong, crashes, leaks resources, or contradicts documented intent. Do not report style preferences, missing tests, or unfamiliar-but-valid Ruby syntax.\n\nThus we need to examine each file for any issues.\n\nFirst file: invoice_paginator.rb\n\n- It defines a module Shop with class InvoicePaginator. It includes Enumerable. The code seems correct? Let's check:\n\nLine 9: \"class InvoicePaginator\" is fine.\n\nLine 7: include Enumerable - okay.\n\nPage = Struct.new(:number, :items, :subtotal, keyword_init: true) do ... This defines a struct with attributes number, items, subtotal. The struct has attr_writer :last. That's fine.\n\ndef last? = @last == true. Actually Ruby allows attr_writer :last and then define method last? = @last == true? Wait, they used attr_writer: :last (they wrote attr_writer :last). But in the code we see \"attr_writer :last\". However they also have a method `last?` defined as:\n\n```\ndef last? = @last == true\nend\n```\n\nBut there is no `def last?` before that. Actually the original line 12: `attr_writer :last`. That means the struct has a writer method automatically generated: `def last=(value) ... end`. However they then define an instance method `last?` which shadows it. But it's not typical to have both attr_writer and overriding method with same name; but it's allowed. However there is a bug: The attr_writer generates a setter that assigns to @last, but the method last? uses `= true`. That's fine.\n\nBut maybe they intended to use `attr_reader`? Not sure. However this could cause confusion but not a defect.\n\nPotential issues:\n\n- In `initialize`, they raise ArgumentError if per_page is not positive: `per_page.positive?` works, but note that in Ruby, `positive?` checks >0, so fine.\n\n- `@items = items.freeze`. This freezes the array; okay.\n\n- `page_count = (@items.size + @per_page - 1) / @per_page`. This uses integer division (since both sides are integers). In Ruby, `/` with integers does floor division. So if size is not divisible by per_page, page_count will be ceil? Actually `(size + per_page - 1) / per_page` yields ceiling division for positive numbers because of the addition. However using `/` without `fdiv` may produce a float then integer division? In Ruby, `/` with integers returns a Float if denominator doesn't divide numerator; but they are doing integer division? Actually in Ruby, `5 / 2` returns 2 (integer). If we have `(size + per_page - 1) / per_page`, this yields an integer because both numerator and denominator are integers. But due to the addition, it's effectively ceiling division. However if size is exactly divisible, e.g., size=50, per_page=25 => (50+24)/25 = 74/25 = 2.96? Wait compute: (size + per_page -1) = 50+25-1 = 74; 74/25 = 2.96, but Ruby integer division truncates toward zero, so 2.96 -> 2. "
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": "<think>\nWe need to review the pull request for correctness. The change adds three new files: invoice_paginator.rb, discount_rules.rb, export_job.rb. We must report only real defects: behavior wrong, crashes, leaks resources, or contradicts documented intent. No style preferences, missing tests, or unfamiliar-but-valid Ruby syntax.\n\nWe need to examine each file for issues.\n\nLet's analyze each file thoroughly.\n\nFirst, note that the code is Ruby 3.4. The line numbers are given as new-file line numbers (starting at 1). We'll check each line.\n\nFile: lib/shop/invoice_paginator.rb\n\nLine 1: \"# frozen_string_literal: true\" - fine.\n\nLine 2: empty\n\nLine 3: \"module Shop\" - okay.\n\nLine 4-5: comments.\n\nLine 6: \"class InvoicePaginator\" - okay.\n\nLine 7: \"include Enumerable\" - fine.\n\nLine 8-13: comment block.\n\nLine 14: \"DEFAULT_PER_PAGE = 25\" - constant.\n\nLine 15: \"def initialize(items, per_page: DEFAULT_PER_PAGE)\" - okay.\n\nLine 16: \"raise ArgumentError, \"per_page must be positive\" unless per_page.positive?\"\"\n\nPotential issue: The syntax \"unless per_page.positive?\" is not valid Ruby. In Ruby, you can write:\n\nraise ArgumentError, \"per_page must be positive\" unless per_page.positive?\n\nActually, that's allowed? Let's think: In Ruby, you can have an unless clause with a condition that includes a method call? The syntax \"unless per_page.positive?\" is valid: it means raise unless per_page.positive? So if per_page is not truthy (i.e., false or nil), then raise. But note that per_page default is 25, which is truthy. However, the argument error check says \"must be positive\". If someone passes 0, it should raise. The expression \"unless per_page.positive?\" will treat 0 as false, so it will raise. That's okay.\n\nBut there may be a style issue: using .positive? on integer is fine. However, we need to consider if any bug: The error message says \"per_page must be positive\" but the condition uses .positive? which returns true for non-zero numbers, but for negative numbers it also returns false. That's okay.\n\nBut there might be a logical flaw: If per_page is nil, then per_page.positive? would raise NoMethodError because nil doesn't have .positive? method. However, the method signature includes default value DEFAULT_PER_PAGE which is 25, so per_page will always be defined (non-nil). So it's fine.\n\nLine 20: \"@items = items.freeze\" - okay.\n\nLine 21: \"@per_page = per_page\" - fine.\n\nLine 22-26: page_count calculation: (size + per_page - 1) / per_page. This is integer ceiling division but using / which returns a float in Ruby. However, they are dividing integers; the result will be a float, but later they compare index with that count. That's fine. But note that if size is exactly divisible, you get exact integer (e.g., 100/25 = 4.0). That's okay.\n\nBut there might be a bug: The method page_count uses integer division? Actually it's ceiling division: (size + per_page - 1) / per_page. This works for positive ints. So fine.\n\nLine 27-30: each returns enum_for(:each) { page_count } unless bl"
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": "<think>\nWe need to review the pull request for correctness, reporting only real defects: behavior wrong, crashes, leaks resources, or contradicts documented intent. No style preferences, missing tests, or unfamiliar-but-valid Ruby syntax.\n\nWe have three new files: invoice_paginator.rb, discount_rules.rb, export_job.rb.\n\nWe must examine each file for any issues.\n\nFirst, let's analyze each file thoroughly.\n\n**File 1: lib/shop/invoice_paginator.rb**\n\nLines:\n\n- line 1: # frozen_string_literal: true\n- line 2: (blank)\n- line 3: module Shop\n- line 4:   # Splits an invoice's line items into fixed-size pages for the PDF renderer.\n- line 5:   # Every line item appears on exactly one page.\n- line 6:   class InvoicePaginator\n- line 7:     include Enumerable\n- line 8: \n- line 9:     Page = Struct.new(:number, :items, :subtotal, keyword_init: true) do\n- line 10:       attr_writer :last\n- line 11:\n- line 12:       def last? = @last == true\n- line 13:     end\n- line 14: \n- line 15:     DEFAULT_PER_PAGE = 25\n- line 16: \n- line 17:     def initialize(items, per_page: DEFAULT_PER_PAGE)\n- line 18:       raise ArgumentError, \"per_page must be positive\" unless per_page.positive?\n- line 19:\n- line 20:       @items = items.freeze\n- line 21:       @per_page = per_page\n- line 22:     end\n- line 23: \n- line 24:     # Ceiling division without floats.\n- line 25:     def page_count = (@items.size + @per_page - 1) / @per_page\n- line 26: \n- line 27:     def each = (return enum_for(:each) { page_count } unless block_given?\n- line 28:       return enum_for(:each) { page_count }\n- line 29: if block_given? Actually syntax is weird: \"unless block_given?\" but they wrote \"unless block_given?\" as part of the method? Let's read original:\n\n```\ndef each\n  return enum_for(:each) { page_count } unless block_given?\nend\n```\n\nActually typical Ruby: `def each; return enum_for(:each) { page_count } unless block_given? end`. That is valid but unusual. However, there may be a problem: The method returns an enumerator that yields the number of pages, not the items themselves. The comment says \"Ceiling division without floats.\" But `page_count` is integer.\n\nPotential issues:\n\n- `page_count = (@items.size + @per_page - 1) / @per_page`. In Ruby, `/` with integers does floor division (integer division). However, `(@items.size + @per_page - 1) / @per_page` yields a float? Actually in Ruby, dividing two integers returns a float if using `/`? Wait: In Ruby, `/` between integers returns a float (e.g., 5/2 = 2.5). So it's fine.\n\n- However, there might be an off-by-one error: Ceil division without floats is correct. But they used `page_count = ...`. That's okay.\n\n- The `each` method returns an enumerator that yields the number of pages? Actually each item? Let's examine: `def each` with `return enum_for(:each) { page_count } unless block_given?`. If a block is given, it will iterate over items and yield each. But they are using `page_count` as the enumerator? That seems wrong: The method should return an enu"
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": "<think>\nWe need to review the pull request for correctness. The change adds three new files: lib/shop/invoice_paginator.rb, lib/shop/discount_rules.rb, and lib/shop/export_job.rb.\n\nWe must report only real defects: behavior wrong, crashes, leaks resources, or contradicts documented intent. Not style preferences, missing tests, or unfamiliar-but-valid Ruby syntax.\n\nWe need to examine each file for any issues.\n\nLet's analyze each file thoroughly.\n\nFirst, note that the code is Ruby 3.4 codebase. The line numbers are given as new-file line numbers (the line numbers in the snippet). We'll check each file.\n\nFile: lib/shop/invoice_paginator.rb\n\nWe need to see if there are any defects.\n\n- Line 1: # frozen_string_literal: true\n- Line 2: empty\n- Line 3: module Shop\n- Line 4: comment about splitting invoice's line items into fixed-size pages for PDF renderer.\n- Line 5: \"# Every line item appears on exactly one page.\"\n- Line 6: class InvoicePaginator\n- Line 7: include Enumerable\n- Line 8-13: comments and constants.\n- Line 15: DEFAULT_PER_PAGE = 25\n- Line 17: def initialize(items, per_page: DEFAULT_PER_PAGE)\n- Line 18: raise ArgumentError unless per_page.positive? (makes sense)\n- Line 20: @items = items.freeze; line 21: @per_page = per_page\n- Line 25: # Ceiling division without floats.\n- Line 27: def page_count = (@items.size + @per_page - 1) / @per_page\n- This is integer ceiling division. In Ruby, using / with integers does floating point division then truncates? Actually in Ruby, / on integers returns a Float (unless using integer division operator). But they wrote \"# Ceiling division without floats.\" They used / but not with /. Actually they wrote: def page_count = (@items.size + @per_page - 1) / @per_page. In Ruby, this will produce a Float because of division operator / returning Float. However they might intend integer ceiling division. But they have comment \"Ceiling division without floats.\" That suggests they want integer result. However using / yields float; but later they use page_count in methods like each, page, etc. The each method uses index and builds pages based on page_count. If page_count is a Float, then the loop will iterate over a Float? Actually page_count.times { |index| yield build_page(index) } - if page_count is a Float, .times expects integer. This would raise ArgumentError: iterated object must be integer. So that's a bug! Indeed, they should use integer division (e.g., (size + per_page - 1) / per_page). Using / yields float. That could cause a crash.\n\nBut maybe Ruby's / with integers returns integer? Let's recall: In Ruby, the / operator for integers does integer division? Actually in Ruby, the / operator for integers returns an integer if both operands are integers (since Ruby 1.9?), but there is also a special case for large numbers? Wait, I think Ruby's / for integers returns integer division (floor) when using / with two integers? Let's verify: In Ruby, 5 / 2 = 2 (integer). However if one operand is float, it returns float. So"
+  }
+ ],
+ "ornith-1.5:9b": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3-coder:30b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses a range that may include an off-by-one error, causing the last page to potentially contain more items than specified by per_page.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"The loyalty discount rule on line 42 does not handle nil loyalty_tier values properly, which could lead to a NoMethodError when customer.loyalty_tier is nil.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"medium\",\n    \"claim\": \"The file handle on line 24 is closed on line 30, but if an exception occurs between lines 24 and 30, the file handle will not be properly closed, leading to a resource leak.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:43 [high] The slice calculation on line 43 uses incorrect range syntax that will include one too many items per page, causing pagination to be incorrect."
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses incorrect range syntax that will include one too many items per page, causing pagination to be incorrect.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"medium\",\n    \"claim\": \"The loyalty tier lookup on line 42 may raise a NoMethodError if customer.loyalty_tier is nil, because upcase is called on nil.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"high\",\n    \"claim\": \"The file handle opened on line 24 is closed on line 30 but not properly managed in case of exceptions, which could lead to resource leaks.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:43 [high] The slice calculation on line 43 uses a range that may include one too many items, causing incorrect pagination when the number of items is exactly divisible by per_page."
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses a range that may include one too many items, causing incorrect pagination when the number of items is exactly divisible by per_page.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"medium\",\n    \"claim\": \"The loyalty tier lookup on line 42 may raise a NoMethodError if customer.loyalty_tier is nil, because upcase is called on a nil value.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"high\",\n    \"claim\": \"The file handle opened on line 24 is closed on line 30, but if an exception occurs between lines 24 and 30, the file handle will not be closed, leading to a resource leak.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:43 [high] The slice calculation on line 43 uses a range that may include an out-of-bounds element, causing incorrect page content."
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses a range that may include an out-of-bounds element, causing incorrect page content.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"medium\",\n    \"claim\": \"The loyalty tier lookup on line 42 does not handle nil customer.loyalty_tier, which could lead to a NoMethodError.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"high\",\n    \"claim\": \"The file handle is closed on line 30 but the CSV generation may not be properly flushed, leading to incomplete data in the output file.\"\n  }\n]"
+  }
+ ],
+ "laguna-xs-2.1": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice range uses inclusive end index causing page items to exceed per_page count\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"medium\", \"claim\": \"Bulk discount condition uses > instead of >= for $100 threshold as documented\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling upcase on nil loyalty_tier causes NoMethodError for guest customers\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"high\", \"claim\": \"File opened without ensure block may leak file descriptor on write errors\"}\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice uses incorrect range causing one extra item per page\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling upcase on nil loyalty_tier causes NoMethodError for guest customers\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"medium\", \"claim\": \"File handle may leak if exception occurs before io.close is called\"}\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice calculation includes one extra item due to incorrect range end, causing pages to have @per_page+1 items instead of @per_page\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling .upcase on customer.loyalty_tier will raise NoMethodError when loyalty_tier is nil for guest checkouts\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"high\", \"claim\": \"File.open without a block leaves the file descriptor open on early return and during exceptions, causing resource leaks\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice uses offset + @per_page which includes one extra item, causing pages to have one more item than intended.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling upcase on nil for guest customers with nil loyalty_tier causes a NoMethodError.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"medium\", \"claim\": \"File handle is not closed if an exception occurs during writing, causing a resource leak.\"}\n]"
+  }
+ ],
+ "north-mini-code-1.0": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 2,
+    "fp_claims": [
+     "lib/shop/discount_rules.rb:47 [high] seasonal method references undefined constant SEASONAL_RATE, causing NameError when a December discount is evaluated.",
+     "lib/shop/export_job.rb:29 [high] row.values_at(*HEADERS.map(&:to_sym)) incorrectly uses array method values_at on a hash, causing NoMethodError."
+    ],
+    "dups": 0,
+    "n": 5
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"slice = @items[offset..offset + @per_page] includes one extra item, causing pages to have size per_page+1 and violating the guarantee that each line item appears on exactly one page.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 47, \"severity\": \"high\", \"claim\": \"seasonal method references undefined constant SEASONAL_RATE, causing NameError when a December discount is evaluated.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"loyalty method calls .upcase on possibly nil customer.loyalty_tier, raising NoMethodError for guest checkouts.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"medium\", \"claim\": \"File is opened before checking rows, leading to a resource leak and unnecessary file creation when there are no rows to export.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 29, \"severity\": \"high\", \"claim\": \"row.values_at(*HEADERS.map(&:to_sym)) incorrectly uses array method values_at on a hash, causing NoMethodError.\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3.8:27b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The range `offset..offset + @per_page` yields per_page+1 elements per slice, so items at the boundary appear on two pages, violating the documented guarantee that every line item appears on exactly one page.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"Calling `.upcase` on `customer.loyalty_tier` raises NoMethodError for guest customers whose tier is nil, contradicting the documented note that guests have a nil loyalty tier.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 38,\n    \"severity\": \"medium\",\n    \"claim\": \"Using `>` instead of `>=` excludes orders of exactly $100.00 from the bulk discount, contradicting the documented rule 'Orders of $100.00 or more get 10% off.'\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 26,\n    \"severity\": \"medium\",\n    \"claim\": \"The early `return :empty` path exits without closing the file handle opened on line 24, leaking a file descriptor in the long-lived worker process.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The range `offset..offset + @per_page` is inclusive on both ends, selecting per_page+1 elements per page and causing the first item of the next page to also appear on the current page, violating the documented guarantee that every line item appears on exactly one page.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling `.upcase` on `customer.loyalty_tier` raises NoMethodError when the tier is nil (guest checkout), contradicting the documented behaviour that guests simply have no loyalty discount.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"medium\", \"claim\": \"The comparison `order.total_cents > BULK_THRESHOLD_CENTS` excludes an order of exactly $100.00 (10000 cents), contradicting the documented rule that orders of \\\"$100.00 or more\\\" receive the 10 % discount.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 26, \"severity\": \"medium\", \"claim\": \"When `rows.none?` the method returns `:empty` without closing the `File` handle opened on line 24, leaking a file descriptor in the long-lived worker process.\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The range slice `@items[offset..offset + @per_page]` is inclusive on both ends, yielding per_page+1 elements on the first page and causing the last element of one page to also appear on the next, violating the documented guarantee that every line item appears on exactly one page.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"`customer.loyalty_tier.upcase` raises NoMethodError when `loyalty_tier` is nil (guest checkout), which the class documentation explicitly states is a valid case.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 38,\n    \"severity\": \"medium\",\n    \"claim\": \"The comparison `order.total_cents > BULK_THRESHOLD_CENTS` uses strict greater-than, so an order of exactly $100.00 (10 000 cents) does not receive the 10 % bulk discount, contradicting the documented rule \\\"Orders of $100.00 or more get 10% off.\\\"\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 26,\n    \"severity\": \"medium\",\n    \"claim\": \"The early `return :empty` path leaves the file handle `io` (opened on line 24) unclosed, leaking a file descriptor in the long-lived worker process described in the class comment.\"\n  }\n]"
+  }
+ ]
+}

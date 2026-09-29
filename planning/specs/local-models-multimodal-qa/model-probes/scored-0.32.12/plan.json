@@ -1,0 +1,351 @@
+{
+ "qwen3:4b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 3
+   },
+   "content": "[\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4 but Wave 1 (which contains Card 2) runs before Wave 2 (which contains Card 4)\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criteria requires observing internal cache state which cannot be verified without code access\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 states retry up to 5 times but requirement R3 specifies at most 3 retries\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "D1",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 2
+   },
+   "content": "[\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 4 is scheduled in Wave 2 which runs after Wave 1 (where Card 2 is scheduled).\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies 5 retry attempts for upload failures, but requirement R3 states that failed uploads must be retried at most 3 times.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "lfm2.5": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 1,
+    "hit": [
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 2
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The plan specifies at most 3 retries (R3), but Card 3 implements up to 5 retries, contradicting the acceptance criteria.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 introduces additional alert posting retry logic after final upload failure that is not specified in the original acceptance criteria.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "D1",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 2
+   },
+   "content": "[\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The acceptance criteria contradict: final upload failure triggers exit 2 and alert posting, but also states that if the alert post fails, the upload should be retried until the alert succeeds.\"\n  },\n  {\n    \"where\": \"Wave schedule (ordering error)\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, yet Wave 1 includes Card 2 before Card 4 is ready.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "D1",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Card 5 [unobservable_acceptance_criteria] The plan introduces an in-process cache for export metadata, adding functionality that cannot be verified from outside the code under test."
+    ],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 4 is defined after Card 2 in the wave schedule.\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Retry logic is defined to attempt upload up to 5 times, contradicting requirement that it should be at most 3 attempts before failing loudly.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The plan adds logic to keep retrying the upload until the alert succeeds, which is not required by the stated acceptance criteria.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_acceptance_criteria\",\n    \"claim\": \"The plan introduces an in-process cache for export metadata, adding functionality that cannot be verified from outside the code under test.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 1,
+    "hit": [
+     "D3"
+    ],
+    "fp": 2,
+    "fp_claims": [
+     "Card 3 [dependency] Card 3 depends on Card 4, but Card 4 is defined later in the wave schedule, causing a dependency ordering error.",
+     "Card 6 [unobservable_ac] The acceptance criterion for Card 6 regarding repeated upload attempts on alert failure cannot be verified from outside the code under test."
+    ],
+    "n": 3
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 3 depends on Card 4, but Card 4 is defined later in the wave schedule, causing a dependency ordering error.\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Requirement R3 specifies at most 3 retries for failed uploads, while Card 3 implements up to 5 retries with exponential backoff.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion for Card 6 regarding repeated upload attempts on alert failure cannot be verified from outside the code under test.\"\n  }\n]"
+  }
+ ],
+ "ornith-1.5:9b": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "```json\n[\n  {\n    \"where\": \"Card 2 (Wave 1)\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 is scheduled in Wave 1 but depends on Card 4, which is only produced in Wave 2, so the upload client it references does not exist when Card 2 runs.\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 retries on IOError up to 5 times, contradicting R3 which requires a failed upload be retried at most 3 times.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The scenario requires the cache to 'internally mark the old entry as stale before replacing it', an internal state that cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to 'keep retrying the upload until the alert succeeds', contradicting R3 which requires the job to fail loudly after at most 3 failed upload retries.\"\n  }\n]\n```"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 2 - CSV writer\", \"kind\": \"dependency\", \"claim\": \"Card 2 (Wave 1) depends on Card 4 (Wave 2), so it runs before the upload client it references is implemented.\"},\n  {\"where\": \"Card 3 - Upload retry\", \"kind\": \"contradiction\", \"claim\": \"Retry up to 5 times contradicts R3, which requires a failed upload to be retried at most 3 times.\"},\n  {\"where\": \"Card 5 - Cache of export metadata\", \"kind\": \"unobservable_ac\", \"claim\": \"'the cache internally marks the old entry as stale before replacing it' is an implementation detail not observable from outside the code under test.\"},\n  {\"where\": \"Card 6 - Alerting\", \"kind\": \"contradiction\", \"claim\": \"Keeping retrying the upload until the alert succeeds contradicts R3's 'the job fails loudly (non-zero exit, alert)', and the scenario 'uploader always fails ... one message is posted' is self-contradictory.\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3-coder:30b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "D1",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Card 2 [unobservable_ac] The acceptance criterion checks for file existence and line count, which cannot be verified without access to the file system from outside the code under test."
+    ],
+    "n": 3
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario says to retry up to 5 times, but requirement R3 states a maximum of 3 retries.\"\n  },\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion checks for file existence and line count, which cannot be verified without access to the file system from outside the code under test.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 4 is scheduled for Wave 2, making it unavailable during Wave 1.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 2,
+    "fp_claims": [
+     "Wave 3 [dependency] Card 6 depends on Card 3, but Card 3 is in Wave 3, so Card 6 cannot run in Wave 4.",
+     "Card 2 [unobservable_ac] The acceptance criteria for Card 2 cannot be verified without access to the file system or internal state of the job."
+    ],
+    "n": 5
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The requirement states that a failed upload is retried at most 3 times, but the card describes retrying up to 5 times.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 4 is in Wave 2, so Card 2 cannot run in Wave 1.\"\n  },\n  {\n    \"where\": \"Wave 3\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 6 depends on Card 3, but Card 3 is in Wave 3, so Card 6 cannot run in Wave 4.\"\n  },\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criteria for Card 2 cannot be verified without access to the file system or internal state of the job.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criteria for Card 5 cannot be verified from outside the code under test as it depends on in-process caching behavior.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Card 6 [dependency] Card 6 depends on Card 3, which is in a later wave, violating the wave execution order."
+    ],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The requirement states that upload retries are limited to 3 times, but the card describes a retry mechanism with up to 5 retries.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, which is not included in Wave 1, violating the wave execution order.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion for Card 5 refers to internal cache behavior that cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 6 depends on Card 3, which is in a later wave, violating the wave execution order.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 3,
+    "fp_claims": [
+     "Card 2 [unobservable_ac] The acceptance criterion checks for a header row in the CSV file, which cannot be verified without access to the actual file contents from outside the code under test.",
+     "Wave 3 [dependency] Card 3 depends on Card 4, which is scheduled for Wave 2, so Card 3 cannot start until after Wave 2 completes.",
+     "Wave 4 [dependency] Card 6 depends on Card 3, but Card 3 is scheduled for Wave 3, so Card 6 cannot start until after Wave 3 completes."
+    ],
+    "n": 6
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario specifies retrying up to 5 times, but requirement R3 states retries are limited to 3 times.\"\n  },\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion checks for a header row in the CSV file, which cannot be verified without access to the actual file contents from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The scenario verifies internal cache behavior that is not observable from outside the code under test.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 1 and Card 4, but Card 4 is scheduled for Wave 2, making it unavailable during Wave 1 execution.\"\n  },\n  {\n    \"where\": \"Wave 3\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 3 depends on Card 4, which is scheduled for Wave 2, so Card 3 cannot start until after Wave 2 completes.\"\n  },\n  {\n    \"where\": \"Wave 4\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 6 depends on Card 3, but Card 3 is scheduled for Wave 3, so Card 6 cannot start until after Wave 3 completes.\"\n  }\n]"
+  }
+ ],
+ "laguna-xs-2.1": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 is in Wave 1 but depends on Card 4 which is in Wave 2, violating wave execution order.\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies up to 5 retries while R3 requires at most 3 retries.\"},\n  {\"where\": \"Card 6\", \"kind\": \"contradiction\", \"claim\": \"Card 6's scenario allows retries beyond 3 on alert failure, contradicting R3's 3-retry limit.\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"Card 5's scenario tests internal cache state ('marks stale') which cannot be verified externally.\"}\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Card 2 [unobservable_ac] The scenario only checks for a header row but does not verify idempotency (R4) by confirming re-running overwrites the file."
+    ],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4, but Card 2 is in Wave 1 while Card 4 is in Wave 2, violating the wave ordering.\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3's scenario retries up to 5 times, contradicting R3 which specifies at most 3 retries.\"},\n  {\"where\": \"Card 2\", \"kind\": \"unobservable_ac\", \"claim\": \"The scenario only checks for a header row but does not verify idempotency (R4) by confirming re-running overwrites the file.\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"The scenario describes internal cache behavior ('marks the old entry as stale') which cannot be verified from outside the code.\"}\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 3
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4 which is in Wave 2, but Card 2 is in Wave 1\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies 5 retries but R3 requires at most 3 retries\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"Card 5's scenario tests internal cache state which cannot be verified from outside the code\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4, but Card 2 is in Wave 1 while Card 4 is in Wave 2, violating the wave execution order.\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies retrying up to 5 times, contradicting R3 which requires at most 3 retries.\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"The scenario checks internal cache state ('marks the old entry as stale'), which cannot be verified from outside the code.\"},\n  {\"where\": \"Card 6\", \"kind\": \"contradiction\", \"claim\": \"Card 6's scenario allows retrying uploads beyond 3 times if the alert fails, contradicting R3's 3-retry limit.\"}\n]"
+  }
+ ],
+ "north-mini-code-1.0": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": "[\n  {\"where\":\"Card 2\",\"kind\":\"dependency\",\"claim\":\"Card 2 depends on Card 4, but Card 4 is scheduled in Wave 2, causing a dependency error because Card 2 is in Wave 1.\"},\n  {\"where\":\"Card 5\",\"kind\":\"unobservable_ac\",\"claim\":\"The scenario requires the cache to internally mark the old entry as stale before replacing it, which is an internal implementation detail not verifiable from outside the code under test.\"},\n  {\"where\":\"Card 3\",\"kind\":\"contradiction\",\"claim\":\"Card 3 retries up to 5 times, conflicting with R3 which limits retries to at"
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3.8:27b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 5
+   },
+   "content": "[\n  {\n    \"where\": \"Dependencies and waves / Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 is placed in Wave 1 but explicitly depends on Card 4 (S3Uploader), which is not available until Wave 2, so Card 2 cannot be implemented or tested in its assigned wave.\"\n  },\n  {\n    \"where\": \"Card 3 \u2013 Upload retry\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies retrying up to 5 times, but requirement R3 mandates at most 3 retries before the job fails.\"\n  },\n  {\n    \"where\": \"Card 5 \u2013 Cache of export metadata\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion 'the cache internally marks the old entry as stale before replacing it' describes an internal implementation detail that cannot be verified by any external test or observation.\"\n  },\n  {\n    \"where\": \"Card 6 \u2013 Alerting\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to 'keep retrying the upload until the alert succeeds' on alert failure, which implies unbounded retries and directly contradicts R3's 'at most 3 times' bound.\"\n  },\n  {\n    \"where\": \"Dependencies and waves / Wave 1 (Card 5)\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 5's scenario ('When the job re-runs for 2026-09-01') requires the export job from Card 2 to exist, yet both cards are in the same parallel wave with no ordering guarantee.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Dependencies and waves / Wave 1 vs Wave 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 is scheduled in Wave 1 but the dependencies section states it depends on Card 4, which is not available until Wave 2.\"\n  },\n  {\n    \"where\": \"Card 3 \u2013 Upload retry\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies retrying up to 5 times, but requirement R3 caps retries at 3.\"\n  },\n  {\n    \"where\": \"Card 5 \u2013 Cache of export metadata\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion 'the cache internally marks the old entry as stale before replacing it' is an internal implementation detail that cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6 \u2013 Alerting\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to 'exit 2' on final failure while also saying to 'keep retrying the upload until the alert succeeds,' which is self-contradictory (a process cannot both exit and continue retrying) and violates R3's hard cap of 3 retries.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 5
+   },
+   "content": "[\n  {\n    \"where\": \"Dependencies and waves\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 is listed as depending on Card 4, yet Card 2 is placed in Wave 1 while Card 4 is in Wave 2, so Card 2 would execute before its dependency is merged.\"\n  },\n  {\n    \"where\": \"Card 3 \u2013 Upload retry\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies retrying up to 5 times, but requirement R3 states a failed upload is retried at most 3 times.\"\n  },\n  {\n    \"where\": \"Card 5 \u2013 Cache of export metadata\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion 'the cache internally marks the old entry as stale before replacing it' describes an internal implementation step that cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6 \u2013 Alerting\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to 'keep retrying the upload until the alert succeeds' after a final upload failure, which is incoherent (the upload has already been exhausted) and contradicts R3's requirement that the job then fails loudly with a non-zero exit.\"\n  },\n  {\n    \"where\": \"Dependencies and waves\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 5's scenario references 'the job re-runs' (i.e., Card 2), but no dependency is declared between Card 5 and Card 2, and both are scheduled in the same parallel Wave 1.\"\n  }\n]"
+  }
+ ]
+}

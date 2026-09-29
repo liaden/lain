@@ -10,7 +10,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-magnus = { version = "0.8.2" }
+magnus = { version = "0.9.0" }
 tracing = "0.1"
 # `default-features = false` to drop `ansi`, which is the whole point of the
 # line: that feature pulls `nu-ansi-term` AND makes the fmt layer's default
@@ -88,16 +88,16 @@ thiserror = "2"
 # recursive file-walking (the `ignore`-backed CLI path) is I/O-shaped and would
 # belong out of process. `ast-grep-language` supplies the ~26 bundled
 # tree-sitter grammars behind `SupportLang`. The core Rust API is explicitly
-# unstable across minors, so both are pinned EXACT (`=0.44.1`) and the whole
+# unstable across minors, so both are pinned EXACT (`=0.45.3`) and the whole
 # surface is wrapped behind `astgrep.rs` + locked by golden tests. (Trimming the
 # grammar set to the four languages we use is a filed follow-up, not this dep.)
-ast-grep-core = "=0.44.1"
-ast-grep-language = "=0.44.1"
+ast-grep-core = "=0.45.3"
+ast-grep-language = "=0.45.3"
 # tree-sitter query engine (Query/QueryCursor) for the raw-query tool. The
 # grammars are reused from ast-grep-language via SupportLang::get_ts_language()
 # -- NO separate grammar deps. Pinned EXACT to the version ast-grep-language
-# already resolves (=0.26.11) so the Language ABI matches its bundled grammars.
-tree-sitter = "=0.26.11"
+# already resolves (=0.27.0) so the Language ABI matches its bundled grammars.
+tree-sitter = "=0.27.0"
 # Style VALUE TYPES for the prompt formatter -- `Style`, `AnsiColor`,
 # `Ansi256Color`, `RgbColor`, `Effects` -- and their `Display` renderers. Chosen
 # over `console`/`termcolor`/`owo-colors` for one reason that is a rule, not a
@@ -166,4 +166,4 @@ unicode-segmentation = "1"
 # a `multiple-versions` warning. Reported, not silenced: that requirement is
 # upstream's, and `[bans] multiple-versions` is set to "warn" precisely so a
 # duplicate stays visible instead of being fatal or hidden.
-petgraph = "=0.8.1"
+petgraph = "=0.8.3"

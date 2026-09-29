@@ -1,0 +1,324 @@
+{
+ "qwen3:4b": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "lfm2.5": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 1,
+    "hit": [
+     "BUG3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:23 [high] page_count calculation uses floating division, causing incorrect ceiling division and potential runtime error when page_count is non-integer or zero."
+    ],
+    "dups": 0,
+    "n": 2
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 23,\n    \"severity\": \"high\",\n    \"claim\": \"page_count calculation uses floating division, causing incorrect ceiling division and potential runtime error when page_count is non-integer or zero.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"loyalty(customer) method accesses customer.loyalty_tier.upcase without checking for nil, causing NoMethodError for guest customers.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 1,
+    "hit": [
+     "BUG3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:30 [high] The `each` method incorrectly returns a single integer or ignores the block when iterated, causing iteration to fail."
+    ],
+    "dups": 1,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 30,\n    \"severity\": \"high\",\n    \"claim\": \"The `each` method incorrectly returns a single integer or ignores the block when iterated, causing iteration to fail.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 39,\n    \"severity\": \"high\",\n    \"claim\": \"The `loyalty` method calls `.upcase` on a possibly nil customer.loyalty_tier, raising a NoMethodError.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The `loyalty` method raises a NoMethodError when a customer has no loyalty tier.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 1,
+    "hit": [
+     "BUG3"
+    ],
+    "fp": 2,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:27 [high] each method has invalid conditional and uses floating-point division causing TypeError",
+     "lib/shop/invoice_paginator.rb:25 [high] uses / which yields a Float, causing TypeError when .times is called with a float argument"
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 27,\n    \"severity\": \"high\",\n    \"claim\": \"each method has invalid conditional and uses floating-point division causing TypeError\"\n  },\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 25,\n    \"severity\": \"high\",\n    \"claim\": \"uses / which yields a Float, causing TypeError when .times is called with a float argument\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 41,\n    \"severity\": \"medium\",\n    \"claim\": \"customer.loyalty_tier is nil for guest checkouts, causing NoMethodError when calling upcase\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 1,
+    "hit": [
+     "BUG3"
+    ],
+    "fp": 2,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:25 [high] Page count calculation uses floating-point division, resulting in a non-integer value that causes each and page methods to raise ArgumentError",
+     "lib/shop/export_job.rb:28 [high] Using row.values_at on an array leads to NoMethodError because Enumerable#values_at expects a hash"
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 25,\n    \"severity\": \"high\",\n    \"claim\": \"Page count calculation uses floating-point division, resulting in a non-integer value that causes each and page methods to raise ArgumentError\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"customer.loyalty_tier.upcase raises NoMethodError when loyalty_tier is nil\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 28,\n    \"severity\": \"high\",\n    \"claim\": \"Using row.values_at on an array leads to NoMethodError because Enumerable#values_at expects a hash\"\n  }\n]"
+  }
+ ],
+ "ornith-1.5:9b": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3-coder:30b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:43 [high] The slice calculation on line 43 uses an incorrect range that excludes the last item in each page, causing missing line items in the generated pages."
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses an incorrect range that excludes the last item in each page, causing missing line items in the generated pages.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"The loyalty rule on line 42 does not handle nil loyalty_tier values properly, which can cause a NoMethodError when a guest customer is processed.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"medium\",\n    \"claim\": \"The file handle on line 30 may not be closed properly if an exception occurs between opening and closing, leading to resource leaks.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:43 [high] The slice calculation on line 43 uses a range that may include an out-of-bounds element, causing incorrect page content."
+    ],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses a range that may include an out-of-bounds element, causing incorrect page content.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"medium\",\n    \"claim\": \"The loyalty tier lookup on line 42 does not handle nil customer.loyalty_tier, which could lead to a NoMethodError.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"high\",\n    \"claim\": \"The file handle on line 24 is closed on line 30 but the CSV writing on line 29 may not be flushed, potentially causing data loss.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice operation on line 43 uses a range that incorrectly includes one extra item beyond the page size due to using `..` instead of `...`, causing pages to contain more items than specified by `@per_page`.\"\n  },\n  {\n    \"file\": \"lib/shop/discount_rules.rb\",\n    \"line\": 42,\n    \"severity\": \"high\",\n    \"claim\": \"The loyalty rule on line 42 does not handle nil customer.loyalty_tier properly, which will cause a NoMethodError when the customer is a guest and loyalty_tier is nil.\"\n  },\n  {\n    \"file\": \"lib/shop/export_job.rb\",\n    \"line\": 30,\n    \"severity\": \"medium\",\n    \"claim\": \"The file handle on line 30 may not be closed properly if an exception occurs between io.write and io.close, leading to resource leaks.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 0,
+    "hit": [],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/invoice_paginator.rb:43 [high] The slice calculation on line 43 uses incorrect range syntax that will include one too many items per page, causing pagination to be incorrect."
+    ],
+    "dups": 0,
+    "n": 1
+   },
+   "content": "[\n  {\n    \"file\": \"lib/shop/invoice_paginator.rb\",\n    \"line\": 43,\n    \"severity\": \"high\",\n    \"claim\": \"The slice calculation on line 43 uses incorrect range syntax that will include one too many items per page, causing pagination to be incorrect.\"\n  }\n]"
+  }
+ ],
+ "laguna-xs-2.1": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice in build_page uses offset + @per_page which includes one extra item, exceeding the per_page limit.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"high\", \"claim\": \"The bulk discount condition uses > instead of >= for the threshold, excluding orders exactly at $100.00.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling upcase on customer.loyalty_tier fails when the tier is nil, causing a NoMethodError for guest checkouts.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"medium\", \"claim\": \"File.open without a block may leak the file descriptor if an exception occurs during writing.\"}\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG4"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "lib/shop/export_job.rb:38 [high] Retry logic is flawed because 'retry' restarts the method resetting attempts counter, preventing proper retry behavior."
+    ],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice uses an inclusive end index causing pages to have one extra item, contradicting the documented intent of fixed-size pages.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"high\", \"claim\": \"The bulk discount condition uses '>' instead of '>=' causing orders exactly at the $100.00 threshold to be excluded.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"medium\", \"claim\": \"File opened without a block or ensure causing potential resource leak if an exception occurs during writing.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 38, \"severity\": \"high\", \"claim\": \"Retry logic is flawed because 'retry' restarts the method resetting attempts counter, preventing proper retry behavior.\"}\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice uses offset + @per_page as the end index, resulting in per_page + 1 items instead of per_page items.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling customer.loyalty_tier.upcase will raise NoMethodError if loyalty_tier is nil for guest checkouts.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"medium\", \"claim\": \"File opened with File.open is not in a block, risking resource leak if an exception occurs before io.close is called.\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "BUG1",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 3
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice uses inclusive range with offset + @per_page, resulting in one extra item per page.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling upcase on customer.loyalty_tier will crash when the tier is nil (guest checkouts).\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 24, \"severity\": \"high\", \"claim\": \"File handle is not closed if an exception occurs during writing, causing a resource leak.\"}\n]"
+  }
+ ],
+ "north-mini-code-1.0": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3.8:27b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The slice `@items[offset..offset + @per_page]` is inclusive on both ends, so each page contains per_page+1 items and the first item of the next page is duplicated, violating the documented guarantee that \\\"Every line item appears on exactly one page.\\\"\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"`customer.loyalty_tier.upcase` raises NoMethodError when `loyalty_tier` is nil, which the class's own documentation (line 10) states is the case for every guest checkout.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"medium\", \"claim\": \"The comparison `order.total_cents > BULK_THRESHOLD_CENTS` uses strict greater-than, so an order of exactly $100.00 (10 000 cents) does not qualify for the 10% bulk discount, contradicting the documented rule \\\"Orders of $100.00 or more get 10% off.\\\"\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 26, \"severity\": \"medium\", \"claim\": \"When `rows.none?` the method returns early without closing the `File` handle opened on line 24, leaking a file descriptor in the long-lived worker process described in the class comment.\"}\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The end-of-range `offset + @per_page` is one past the intended last index, so each page contains `per_page + 1` items and adjacent pages overlap, violating the documented guarantee that every line item appears on exactly one page.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling `.upcase` on `customer.loyalty_tier` raises NoMethodError for guest checkouts where the tier is nil, which the class documentation explicitly lists as a valid case.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"medium\", \"claim\": \"The bulk check uses strict `>` so an order of exactly $100.00 (10 000 cents) does not qualify, contradicting the documented rule \\\"Orders of $100.00 or more get 10% off.\\\"\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 26, \"severity\": \"medium\", \"claim\": \"When `rows.none?` the method returns early without closing the file handle opened on line 24, leaking the file descriptor in a long-lived worker process.\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 4,
+    "hit": [
+     "BUG1",
+     "BUG2",
+     "BUG3",
+     "BUG4"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "dups": 0,
+    "n": 4
+   },
+   "content": "[\n  {\"file\": \"lib/shop/invoice_paginator.rb\", \"line\": 43, \"severity\": \"high\", \"claim\": \"The range `offset..offset + @per_page` is one element too wide, so every non-final page contains per_page+1 items and the boundary item appears on two consecutive pages, violating the documented guarantee that every line item appears on exactly one page.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 38, \"severity\": \"medium\", \"claim\": \"The comparison uses `>` (strictly greater than) but the documented rule says \\\"$100.00 or more\\\", so an order of exactly 10 000 cents is incorrectly excluded from the bulk discount.\"},\n  {\"file\": \"lib/shop/discount_rules.rb\", \"line\": 42, \"severity\": \"high\", \"claim\": \"Calling `.upcase` on `customer.loyalty_tier` raises NoMethodError when the tier is nil, which the class documentation explicitly states is the case for guest checkouts.\"},\n  {\"file\": \"lib/shop/export_job.rb\", \"line\": 26, \"severity\": \"medium\", \"claim\": \"When `rows.none?` the method returns `:empty` without closing the `File` handle opened on line 24, leaking a file descriptor in the long-lived worker process.\"}\n]"
+  }
+ ]
+}

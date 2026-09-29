@@ -1,0 +1,1252 @@
+diff --git a/lib/lain/bench/harness.rb b/lib/lain/bench/harness.rb
+--- a/lib/lain/bench/harness.rb
++++ b/lib/lain/bench/harness.rb
+@@ -52,7 +52,7 @@
+       # The floor's remaining members, named so the partition can be checked for
+       # totality rather than assumed.
+       READERS = %w[ast_dump ast_search file_symbols glob grep list_files memory_read memory_write
+-                   read_file test_pattern todo_write web_fetch web_search].freeze
++                   read_file screenshot test_pattern todo_write web_fetch web_search].freeze
+ 
+       module_function
+ 
+diff --git a/lib/lain/cli/wiring.rb b/lib/lain/cli/wiring.rb
+--- a/lib/lain/cli/wiring.rb
++++ b/lib/lain/cli/wiring.rb
+@@ -162,7 +162,7 @@
+            Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
+            Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+            Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new,
+-           Lain::Tools::FileSymbols.new]
++           Lain::Tools::FileSymbols.new, Lain::Tools::Screenshot.new]
+         end
+       end
+ 
+diff --git a/lib/lain/image/admission.rb b/lib/lain/image/admission.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/lain/image/admission.rb
+@@ -0,0 +1,85 @@
++# frozen_string_literal: true
++
++module Lain
++  module Image
++    # What happens to image blocks bound for a model that cannot see them, as
++    # the two strategies {Capability::Policy} already names.
++    #
++    # `:strict` refuses by name before the wire. Without it the refusal still
++    # comes -- ollama answers 400 "Multimodal data provided, but model does not
++    # support multimodal requests" -- but only after loading the model, and
++    # naming neither the model nor where the image came from.
++    #
++    # `:degrade` swaps each image for a placeholder sentence the model CAN
++    # read, and journals {Telemetry::ImagesWithheld}. Its honest use is
++    # history: a session that switched to a blind model mid-run still holds
++    # the screenshots an earlier model took, and refusing every later request
++    # for them would end the session over something nobody is asking about.
++    #
++    # Pure over the messages: the Timeline keeps the images, and only what
++    # leaves for this one request changes.
++    class Admission
++      class Blind < Error; end
++
++      POLICIES = %i[strict degrade].freeze
++
++      # @param policy [Symbol] one of {POLICIES}
++      # @param journal [#<<] where a degrade is recorded
++      def initialize(policy:, journal: Channel::Null.instance)
++        raise ArgumentError, "unknown image policy #{policy.inspect}, expected one of #{POLICIES.inspect}" \
++          unless POLICIES.include?(policy)
++
++        @policy = policy
++        @journal = journal
++        freeze
++      end
++
++      # @param messages [Array<Hash>] a Request's messages
++      # @param model [String]
++      # @param vision [Provider::Vision]
++      # @return [Array<Hash>] the messages as they may be sent
++      # @raise [Blind] under `:strict`, when the model is blind and an image is present
++      def admit(messages, model:, vision:)
++        return messages unless vision.blind?
++
++        count = messages.sum { |message| Image.each_in(message["content"]).count }
++        return messages if count.zero?
++
++        @policy == :strict ? refuse(model, count) : withhold(messages, model, count)
++      end
++
++      private
++
++      def refuse(model, count)
++        raise Blind, "#{count} image block(s) are bound for #{model}, whose capabilities do not include " \
++                     "vision -- switch to a model that lists it, or run with the image policy :degrade"
++      end
++
++      def withhold(messages, model, count)
++        @journal << Telemetry::ImagesWithheld.new(model:, count:)
++        messages.map { |message| message.merge("content" => placeholders(message["content"], model)) }
++      end
++
++      def placeholders(content, model)
++        return content unless content.is_a?(Array)
++
++        content.map { |block| substitute(block, model) }
++      end
++
++      def substitute(block, model)
++        return placeholder(block, model) if Image.image?(block)
++        return block unless Image.tool_result?(block)
++
++        block.merge("content" => placeholders(block["content"], model))
++      end
++
++      # States what was there and why it is not, so the model neither pretends
++      # to have seen it nor re-takes a screenshot it will be blind to again.
++      def placeholder(block, model)
++        { "type" => "text",
++          "text" => "[an image (#{block.dig("source", "media_type")}) was here; #{model} cannot see images, " \
++                    "so it was withheld from this request]" }
++      end
++    end
++  end
++end
+diff --git a/lib/lain/image/blobs.rb b/lib/lain/image/blobs.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/lain/image/blobs.rb
+@@ -0,0 +1,102 @@
++# frozen_string_literal: true
++
++require "fileutils"
++
++module Lain
++  module Image
++    # Image bytes stored once, by content address, so a Timeline can hold a
++    # reference block instead of the base64 itself:
++    #
++    #   { "type" => "image",
++    #     "source" => { "type" => "blob", "media_type" => "image/png", "digest" => "blake3:4ce4..." } }
++    #
++    # {Canonical} then hashes the reference, and the digest inside it commits
++    # the Event to the exact bytes -- the Merkle property survives without the
++    # bytes riding the chain. What pays for that is one resolution step: an
++    # encoder must call {#inline} on the way to the wire, because no provider
++    # knows what a blob is.
++    #
++    # The digest is BLAKE3 over the RAW bytes, not over a canonical form: the
++    # blob is not a JSON value, and hashing its base64 would make the address
++    # depend on a transport encoding.
++    #
++    # A directory rather than the Store because the Store is in-memory and the
++    # session file is the durable record; a blob directory beside the sessions
++    # directory keeps both `lain resume` and a fork resolving the same digests,
++    # and dedupes a screenshot taken twice.
++    class Blobs
++      class Missing < Error; end
++      class Corrupt < Error; end
++
++      # @param root [String] the directory blobs live under, fanned out by the
++      #   first two hex digits as git does
++      def initialize(root:)
++        @root = root
++        freeze
++      end
++
++      # @param bytes [String]
++      # @return [String] the blob's digest, `"blake3:<hex>"`
++      def put(bytes)
++        digest = digest_of(bytes)
++        path = path_for(digest)
++        write(path, bytes) unless File.exist?(path)
++        digest
++      end
++
++      # @raise [Missing] when no blob has this digest
++      # @raise [Corrupt] when the bytes on disk no longer hash to it
++      def fetch(digest)
++        path = path_for(digest)
++        raise Missing, "no image blob #{digest}" unless File.exist?(path)
++
++        bytes = File.binread(path)
++        raise Corrupt, "image blob #{digest} does not hash to its own name" unless digest_of(bytes) == digest
++
++        bytes
++      end
++
++      # @param bytes [String]
++      # @return [Hash] a frozen reference block
++      def reference(bytes)
++        source = { "type" => BLOB, "media_type" => Image.media_type(bytes), "digest" => put(bytes) }
++        { "type" => TYPE, "source" => source.freeze }.freeze
++      end
++
++      # A content value with every reference replaced by the inline block its
++      # bytes make, at any depth a block nests. What an encoder calls last.
++      #
++      # @param content [String, Array, Hash]
++      def inline(content)
++        case content
++        when Array then content.map { |node| inline(node) }
++        when Hash then reference?(content) ? Image.block(fetch(content.dig("source", "digest"))) : inline_hash(content)
++        else content
++        end
++      end
++
++      private
++
++      def inline_hash(hash) = hash.transform_values { |value| inline(value) }
++
++      def reference?(block) = Image.image?(block) && block.dig("source", "type") == BLOB
++
++      def digest_of(bytes) = "#{Canonical::DIGEST_ALGORITHM}:#{Lain::Ext.blake3_hex(bytes.b)}"
++
++      def path_for(digest)
++        hex = digest.delete_prefix("#{Canonical::DIGEST_ALGORITHM}:")
++        raise ArgumentError, "not a blake3 digest" unless hex.match?(/\A\h{64}\z/)
++
++        File.join(@root, hex[0, 2], hex)
++      end
++
++      # Written beside and renamed, so a reader never sees half a blob.
++      def write(path, bytes)
++        FileUtils.mkdir_p(File.dirname(path))
++        partial = "#{path}.#{Process.pid}.partial"
++        File.binwrite(partial, bytes)
++        File.rename(partial, path)
++      end
++    end
++  end
++end
+diff --git a/lib/lain/image.rb b/lib/lain/image.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/lain/image.rb
+@@ -0,0 +1,107 @@
++# frozen_string_literal: true
++
++module Lain
++  # An image as lain's neutral content form carries it: an Anthropic-shaped
++  # block, string-keyed like every other block, so a user turn, a tool_result's
++  # content Array and a Context render all hold one without a new type.
++  #
++  #   { "type" => "image",
++  #     "source" => { "type" => "base64", "media_type" => "image/png", "data" => "iVBOR..." } }
++  #
++  # The bytes ride as base64 TEXT because {Canonical.normalize} admits UTF-8
++  # Strings and nothing binary. Base64's alphabet is ASCII, so the block also
++  # passes {Tool::ResultBlock::Text}'s check unchanged and hashes like any other.
++  #
++  # The second source shape, `"type" => "blob"`, names the bytes by digest
++  # instead of carrying them -- see {Image::Blobs}. It is the one a Timeline
++  # should hold: an inline block rides every later `request_sent` whole.
++  module Image
++    class UnknownMediaType < Error; end
++    class Unresolved < Error; end
++
++    TYPE = "image"
++    BASE64 = "base64"
++    BLOB = "blob"
++    TOOL_RESULT = "tool_result"
++
++    # Sniffed from the bytes rather than taken from a file name or a caller's
++    # word: the provider checks the declared type against the bytes, and a
++    # mismatch is a 400 far from whoever mislabelled it.
++    SIGNATURES = {
++      "image/png" => "\x89PNG\r\n\x1A\n".b,
++      "image/jpeg" => "\xFF\xD8\xFF".b,
++      "image/gif" => "GIF8".b
++    }.freeze
++    WEBP = "image/webp"
++
++    class << self
++      # @param bytes [String] the encoded image, whatever its encoding tag
++      # @return [Hash] a frozen inline image block
++      # @raise [UnknownMediaType] unless the bytes are PNG, JPEG, GIF or WebP
++      def block(bytes)
++        source = { "type" => BASE64, "media_type" => media_type(bytes), "data" => base64(bytes) }
++        { "type" => TYPE, "source" => source.freeze }.freeze
++      end
++
++      # @raise [UnknownMediaType]
++      def media_type(bytes)
++        raw = bytes.b
++        found = SIGNATURES.find { |_, magic| raw.start_with?(magic) }&.first
++        found || webp(raw) || raise(UnknownMediaType, "not a PNG, JPEG, GIF or WebP image (#{raw.bytesize} bytes)")
++      end
++
++      def image?(block) = block.is_a?(Hash) && block["type"] == TYPE
++
++      def tool_result?(block) = block.is_a?(Hash) && block["type"] == TOOL_RESULT
++
++      # Every image block in a content value, including those nested in a
++      # tool_result's content Array -- the one place a block nests today.
++      #
++      # @param content [String, Array<Hash>]
++      # @return [Enumerator<Hash>]
++      def each_in(content, &)
++        return enum_for(:each_in, content) unless block_given?
++        return unless content.is_a?(Array)
++
++        content.each do |block|
++          yield block if image?(block)
++          each_in(block["content"], &) if tool_result?(block)
++        end
++      end
++
++      # The base64 payload of an inline block. A reference has none to give,
++      # and an encoder that met one was handed content nobody resolved through
++      # {Blobs#inline}; sending the request without the image would answer a
++      # question about a picture the model never saw.
++      #
++      # @raise [Unresolved]
++      def data(block)
++        source = block.fetch("source")
++        return source.fetch("data") if source["type"] == BASE64
++
++        raise Unresolved, "an image #{source["type"].inspect} source reached an encoder unresolved"
++      end
++
++      # What a model is charged, which is pixels and not bytes: Anthropic bills
++      # an image at about `width * height / 750` tokens once its long edge is
++      # scaled to at most 1568px, so a 1280x800 screenshot costs ~1,366 tokens
++      # whether its PNG is 15KB or 290KB.
++      #
++      # @return [Integer]
++      def anthropic_tokens(width, height)
++        scale = [1.0, 1568.0 / [width, height].max].min
++        ((width * scale) * (height * scale) / 750).ceil
++      end
++
++      private
++
++      # `pack` answers US-ASCII, which {Tool::ResultBlock::Text} would re-tag by
++      # COPYING a quarter-megabyte String on every result; tagged UTF-8 here, it
++      # passes through by identity. `freeze`, not `-@`, which would intern a
++      # payload-sized String for the life of the process.
++      def base64(bytes) = [bytes].pack("m0").force_encoding(Encoding::UTF_8).freeze
++
++      def webp(raw) = (WEBP if raw.byteslice(0, 4) == "RIFF" && raw.byteslice(8, 4) == "WEBP")
++    end
++  end
++end
+diff --git a/lib/lain/provider/anthropic.rb b/lib/lain/provider/anthropic.rb
+--- a/lib/lain/provider/anthropic.rb
++++ b/lib/lain/provider/anthropic.rb
+@@ -82,6 +82,10 @@
+       # differential proves #encode is byte-identical, so this must not drift.
+       def cache_profile = CacheProfile::ANTHROPIC
+ 
++      # Every model the Messages API serves takes image blocks, top level and
++      # inside a tool_result, so the answer does not need the model.
++      def vision(_model) = Vision::SEES
++
+       # One round trip into a neutral Response. Streaming by default (Context
+       # renders `stream: true`); both paths converge on the full block list and
+       # parsed tool inputs. `on_stream_started` is the stream-started signal --
+diff --git a/lib/lain/provider/ollama/encoding.rb b/lib/lain/provider/ollama/encoding.rb
+--- a/lib/lain/provider/ollama/encoding.rb
++++ b/lib/lain/provider/ollama/encoding.rb
+@@ -129,15 +129,30 @@
+         # calls hit the SAME tool the wire cannot disambiguate their results -- a
+         # documented Ollama gap, not a bug here; Lain's own tool_use_id keeps the
+         # loop unambiguous regardless.
++        #
++        # A tool_result's images ride the tool message's own `images` field:
++        # measured on 0.32.12 with gemma4:e4b, a role:"tool" message carrying
++        # one is read -- the model quoted a codeword only the image held, and
++        # the same request without it invented one -- so nothing is hoisted
++        # into a user turn the model did not receive.
+         def tool_message(block, names)
+-          { role: "tool", tool_name: names[block["tool_use_id"]], content: text_of(block["content"]) }
++          with_images({ role: "tool", tool_name: names[block["tool_use_id"]], content: text_of(block["content"]) },
++                      block["content"])
+         end
+ 
+         def assistant_or_user(message, blocks)
+           rebuilt = { role: message["role"], content: text_of(blocks) }
+           calls = blocks.select { |block| block_type(block) == TOOL_USE }.map { |block| tool_call(block) }
+           rebuilt[:tool_calls] = calls unless calls.empty?
+-          rebuilt
++          with_images(rebuilt, blocks)
++        end
++
++        # Ollama wants bare base64 in a per-message list, not blocks. ABSENT
++        # when there are none, so a text-only request stays byte-identical to
++        # one encoded before images existed.
++        def with_images(message, content)
++          images = Image.each_in(content).map { |block| Image.data(block) }
++          images.empty? ? message : message.merge(images:)
+         end
+ 
+         def tool_call(block)
+@@ -181,7 +196,8 @@
+         end
+ 
+         # Flattened to the plain text Ollama's `content` field wants; non-text
+-        # blocks ride their own fields and contribute nothing.
++        # blocks ride their own fields (`tool_calls`, `images`) and contribute
++        # nothing here.
+         def text_of(value)
+           return value if value.is_a?(String)
+           return "" unless value.is_a?(Array)
+diff --git a/lib/lain/provider/ollama.rb b/lib/lain/provider/ollama.rb
+--- a/lib/lain/provider/ollama.rb
++++ b/lib/lain/provider/ollama.rb
+@@ -393,6 +393,26 @@
+         Serving::UNKNOWN
+       end
+ 
++      # `/api/show` lists what a model can do in `capabilities` -- measured on
++      # 0.32.12, gemma4:e4b answers `completion vision audio tools thinking`
++      # and qwen3:4b `completion tools thinking`. Only a described model whose
++      # list lacks "vision" is {Vision::BLIND}; the same gate and rescues as
++      # {#serves?}, so an arm that cannot be asked answers UNKNOWN.
++      #
++      # @param model [String]
++      # @return [Vision]
++      def vision(model)
++        return Vision::UNKNOWN unless @deployment.model_metadata?
++
++        listed = wrapping_errors { @transport.model_details(model).body }
++        capabilities = listed["capabilities"] if listed.is_a?(Hash)
++        return Vision::UNKNOWN unless capabilities.is_a?(Array)
++
++        capabilities.include?("vision") ? Vision::SEES : Vision::BLIND
++      rescue APIError
++        Vision::UNKNOWN
++      end
++
+       private
+ 
+       # The one 400 this arm translates, and only when the body names both
+diff --git a/lib/lain/provider.rb b/lib/lain/provider.rb
+--- a/lib/lain/provider.rb
++++ b/lib/lain/provider.rb
+@@ -148,6 +148,30 @@
+     # @return [Serving]
+     def serves?(_model) = Serving::UNKNOWN
+ 
++    Vision = Data.define(:answer)
++
++    # Whether a model reads image blocks. A property of the MODEL, not of the
++    # deployment, which is why it is not one of {CAPABILITIES}: one ollama
++    # endpoint serves gemma4:e4b, which sees, beside qwen3:4b, which answers
++    # an image with HTTP 400 "Multimodal data provided, but model does not
++    # support multimodal requests" -- after loading the model to say so.
++    class Vision
++      SEES = new(answer: :sees)
++      BLIND = new(answer: :blind)
++      UNKNOWN = new(answer: :unknown)
++
++      def blind? = answer == :blind
++    end
++
++    # Asked before an image is sent, and before a tool that makes one is
++    # offered. {Vision::UNKNOWN} unless a provider has a way to know; a caller
++    # decides what unknown means, and the spike's recommendation is "offer the
++    # tool, let the wire answer".
++    #
++    # @param _model [String]
++    # @return [Vision]
++    def vision(_model) = Vision::UNKNOWN
++
+     # Raise unless the capability is present. The message names the provider, so
+     # a degraded bench run says which arm lost the tactic.
+     def require!(capability)
+diff --git a/lib/lain/telemetry/images_withheld.rb b/lib/lain/telemetry/images_withheld.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/lain/telemetry/images_withheld.rb
+@@ -0,0 +1,17 @@
++# frozen_string_literal: true
++
++module Lain
++  module Telemetry
++    # Image blocks a request carried were replaced by placeholder text because
++    # the model it went to cannot see. The turn the model answered is then not
++    # the turn the Timeline holds, which is the divergence a comparison must be
++    # able to find -- so it is journaled per request, never inferred.
++    ImagesWithheld = Data.define(:model, :count) do
++      include Journalable
++
++      def initialize(model:, count:)
++        super(model: model.dup.freeze, count:)
++      end
++    end
++  end
++end
+diff --git a/lib/lain/tool/bounds.rb b/lib/lain/tool/bounds.rb
+--- a/lib/lain/tool/bounds.rb
++++ b/lib/lain/tool/bounds.rb
+@@ -202,6 +202,13 @@
+       # {Enumeration} is a second bound beside it, never a substitute.
+       RESULT_BYTES = 16 * 1024
+ 
++      # What one IMAGE may weigh, raw. Not derived from the window: a model is
++      # charged for an image's pixels, not its bytes, so a byte ceiling cannot
++      # be what keeps an image's tokens down. It keeps its base64 -- 4/3 of
++      # this, 4 MiB -- under Anthropic's 5MB-per-image refusal, and bounds
++      # what one picture adds to every later request the journal records.
++      IMAGE_BYTES = 3 * 1024 * 1024
++
+       CEILINGS = {
+         "read_file" => RESULT_BYTES,
+         "bash" => RESULT_BYTES,
+@@ -218,7 +225,8 @@
+         "web_search" => RESULT_BYTES,
+         "ast_search" => RESULT_BYTES,
+         "ast_dump" => RESULT_BYTES,
+-        "web_fetch" => RESULT_BYTES
++        "web_fetch" => RESULT_BYTES,
++        "screenshot" => IMAGE_BYTES
+       }.freeze
+ 
+       # The disclosing shape: cap the rows, say so in the rows.
+diff --git a/lib/lain/tools/screenshot.rb b/lib/lain/tools/screenshot.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/lain/tools/screenshot.rb
+@@ -0,0 +1,144 @@
++# frozen_string_literal: true
++
++require "tmpdir"
++require "uri"
++
++module Lain
++  module Tools
++    # Renders one URL in headless Chromium and returns the picture as an
++    # {Image} block beside a line of text saying what was captured.
++    #
++    # Tier 2 by the command axis -- an argv Array, no model-controlled command
++    # string -- and gated anyway, because the axis that decides here is the
++    # other one {WebFetch} names: egress. WebFetch's safety is structural (the
++    # host is checked on every hop, the body is capped as it streams) and none
++    # of that transfers. The URL is checked once, and then a browser fetches
++    # whatever the page asks for, runs its scripts, and follows its redirects,
++    # none of which this process sees. So a human approves the destination.
++    #
++    # Chromium's CLI cannot say whether the navigation worked: an unresolvable
++    # host, a refused port and a 404 all exit 0 and write a picture of
++    # Chromium's own error page. The model can read that page, and the result
++    # says the status is unknown rather than implying success.
++    class Screenshot < Tool
++      CHROMIUM = "/usr/bin/chromium"
++      ALLOWED_SCHEMES = WebFetch::ALLOWED_SCHEMES
++
++      DEFAULT_WIDTH = 1280
++      DEFAULT_HEIGHT = 800
++
++      # The CLI captures the window and nothing below it, so a "full page" is
++      # a tall window: short pages come back padded with blank, long ones cut.
++      # A real full-page capture needs the DevTools protocol.
++      FULL_PAGE_HEIGHT = 4096
++
++      # What a picture may weigh. Its token cost is set by its pixels (see
++      # {Image.anthropic_tokens}), so this bounds the request's BYTES -- the
++      # journal, the wire, Anthropic's 5MB-per-image ceiling on the base64 --
++      # and is a different question from the 16 KiB text row, which it
++      # deliberately does not share.
++      BOUND = Tool::Bounds::Artifact.new(limit: Tool::Bounds::CEILINGS.fetch("screenshot"))
++
++      # Chromium's own startup is ~1.3s here; the rest is the page.
++      TIMEOUT = 30
++
++      # The wire shape: a URL, and the window it is rendered in.
++      class Input < Tool::Input
++        field :url, :string, required: true, description: "Absolute http(s) URL to render."
++        field :width, :integer, description: "Viewport width in CSS pixels. Defaults to #{DEFAULT_WIDTH}."
++        field :height, :integer, description: "Viewport height in CSS pixels. Defaults to #{DEFAULT_HEIGHT}."
++        field :full_page, :boolean,
++              description: "Capture a #{FULL_PAGE_HEIGHT}px-tall window instead of the viewport height. " \
++                           "Longer pages are still cut at that height."
++
++        # Shape, not safety: a viewport outside these is not a screen.
++        validates :width, numericality: { greater_than_or_equal_to: 320, less_than_or_equal_to: 1920 }, allow_nil: true
++        validates :height, numericality: { greater_than_or_equal_to: 200, less_than_or_equal_to: 1600 },
++                           allow_nil: true
++      end
++
++      input_model Input
++
++      # @param shell_out_factory [#call] `(*argv, timeout:) -> #run_command`,
++      #   the {Shell::Out} surface
++      # @param scratch [#call] yields a private directory and removes it after
++      def initialize(shell_out_factory: Shell::Out.public_method(:new), scratch: Dir.method(:mktmpdir))
++        super()
++        @shell_out_factory = shell_out_factory
++        @scratch = scratch
++      end
++
++      def name = "screenshot"
++
++      def description
++        "Renders a web page in a headless browser and returns a picture of it, for questions about how a " \
++          "page LOOKS -- layout, styling, a chart, an error dialog. For what a page SAYS, web_fetch is cheaper " \
++          "and exact. Loads the page's scripts and subresources, so it asks the human first. A failed load is " \
++          "not reported as an error: you get a picture of the browser's error page, so read it."
++      end
++
++      def requires_approval? = true
++
++      protected
++
++      def perform(input, _invocation)
++        refusal = refused(input.url)
++        return Tool::Result.error(refusal) if refusal
++
++        width, height = viewport(input)
++        @scratch.call("lain-screenshot") { |dir| capture(input.url, width, height, dir) }
++      end
++
++      private
++
++      def refused(url)
++        scheme = URI.parse(url).scheme.to_s.downcase
++        "screenshot: only #{ALLOWED_SCHEMES.join("/")} URLs can be rendered, got #{scheme.inspect}" \
++          unless ALLOWED_SCHEMES.include?(scheme)
++      rescue URI::InvalidURIError
++        "screenshot: #{url.inspect} is not a URL"
++      end
++
++      def viewport(input)
++        width = input.width || DEFAULT_WIDTH
++        [width, input.full_page ? FULL_PAGE_HEIGHT : (input.height || DEFAULT_HEIGHT)]
++      end
++
++      def capture(url, width, height, dir)
++        png = File.join(dir, "shot.png")
++        run = @shell_out_factory.call(*argv(url, width, height, dir, png), timeout: TIMEOUT).run_command
++        return failed(run) unless run.exitstatus.zero? && File.exist?(png)
++
++        delivered(url, width, height, File.binread(png))
++      rescue Shell::Out::Timeout
++        Tool::Result.error("screenshot: #{url} did not render within #{TIMEOUT}s")
++      end
++
++      # A fresh profile per call, so no cookie, cache entry or login outlives
++      # it; the scratch directory holding it goes with the picture.
++      def argv(url, width, height, dir, png)
++        [CHROMIUM, "--headless", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--mute-audio",
++         "--user-data-dir=#{File.join(dir, "profile")}", "--screenshot=#{png}", "--window-size=#{width},#{height}",
++         url]
++      end
++
++      def failed(run)
++        Tool::Result.error("screenshot: the browser exited #{run.exitstatus.inspect} without a picture")
++      end
++
++      def delivered(url, width, height, bytes)
++        unless BOUND.admits?(bytes.bytesize)
++          return BOUND.refusal(subject: "the picture of #{url}", size: bytes.bytesize,
++                               narrower: ["ask for a smaller width and height", "drop full_page"])
++        end
++
++        Tool::Result.ok([{ "type" => "text", "text" => caption(url, width, height, bytes) }, Image.block(bytes)])
++      end
++
++      def caption(url, width, height, bytes)
++        "#{url} rendered at #{width}x#{height} (#{bytes.bytesize} bytes of PNG). The page's HTTP status is not " \
++          "known; if the picture is a browser error page, the load failed."
++      end
++    end
++  end
++end
+diff --git a/spec/lain/image/admission_spec.rb b/spec/lain/image/admission_spec.rb
+new file mode 100644
+--- /dev/null
++++ b/spec/lain/image/admission_spec.rb
+@@ -0,0 +1,64 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Image::Admission do
++  let(:vision) { Lain::Provider::Vision }
++  let(:image) { Lain::Image.block(ImageFixtures.png) }
++  let(:result) do
++    { "type" => "tool_result", "tool_use_id" => "c1", "is_error" => false,
++      "content" => [{ "type" => "text", "text" => "shot" }, image] }
++  end
++  let(:messages) do
++    [{ "role" => "user", "content" => [{ "type" => "text", "text" => "look" }, image] },
++     { "role" => "user", "content" => [result] }]
++  end
++
++  it "passes images through untouched to a model that sees" do
++    admitted = described_class.new(policy: :strict).admit(messages, model: "gemma4:e4b", vision: vision::SEES)
++
++    expect(admitted).to equal(messages)
++  end
++
++  # Unknown is not blind: refusing on it would refuse every arm that simply
++  # has no way to ask, which is the cloud arm and every arm when ollama is down.
++  it "passes images through when nobody could say" do
++    admitted = described_class.new(policy: :strict).admit(messages, model: "m", vision: vision::UNKNOWN)
++
++    expect(admitted).to equal(messages)
++  end
++
++  it "passes a blind model's text-only request through" do
++    text = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }]
++
++    expect(described_class.new(policy: :strict).admit(text, model: "qwen3:4b", vision: vision::BLIND)).to equal(text)
++  end
++
++  describe ":strict" do
++    it "refuses by the model's name, counting nested images too" do
++      expect { described_class.new(policy: :strict).admit(messages, model: "qwen3:4b", vision: vision::BLIND) }
++        .to raise_error(described_class::Blind, /2 image block\(s\) are bound for qwen3:4b/)
++    end
++  end
++
++  describe ":degrade" do
++    it "replaces every image, nested or not, with a sentence naming why" do
++      admitted = described_class.new(policy: :degrade).admit(messages, model: "qwen3:4b", vision: vision::BLIND)
++
++      expect(admitted.flat_map { |message| Lain::Image.each_in(message["content"]).to_a }).to be_empty
++      expect(admitted.first["content"].last["text"]).to include("qwen3:4b cannot see images")
++      expect(admitted.last["content"].first["content"].first).to eq("type" => "text", "text" => "shot")
++    end
++
++    it "journals how many it withheld and from which model" do
++      recorded = []
++      described_class.new(policy: :degrade, journal: recorded).admit(messages, model: "qwen3:4b",
++                                                                               vision: vision::BLIND)
++
++      expect(recorded).to eq([Lain::Telemetry::ImagesWithheld.new(model: "qwen3:4b", count: 2)])
++      expect(recorded.first.to_journal).to eq("type" => "images_withheld", "model" => "qwen3:4b", "count" => 2)
++    end
++  end
++
++  it "refuses a policy it does not know" do
++    expect { described_class.new(policy: :ignore) }.to raise_error(ArgumentError, /expected one of/)
++  end
++end
+diff --git a/spec/lain/image/blobs_spec.rb b/spec/lain/image/blobs_spec.rb
+new file mode 100644
+--- /dev/null
++++ b/spec/lain/image/blobs_spec.rb
+@@ -0,0 +1,65 @@
++# frozen_string_literal: true
++
++require "tmpdir"
++
++RSpec.describe Lain::Image::Blobs do
++  around do |example|
++    Dir.mktmpdir("lain-blobs") do |root|
++      @root = root
++      example.run
++    end
++  end
++
++  let(:blobs) { described_class.new(root: @root) }
++  let(:png) { ImageFixtures.png }
++
++  it "stores bytes once under the BLAKE3 of the raw bytes" do
++    digest = blobs.put(png)
++
++    expect(digest).to eq("blake3:#{Lain::Ext.blake3_hex(png)}")
++    expect(blobs.put(png.dup)).to eq(digest)
++    expect(Dir.glob(File.join(@root, "**", "*")).count { |path| File.file?(path) }).to eq(1)
++  end
++
++  it "hands the same bytes back" do
++    expect(blobs.fetch(blobs.put(png))).to eq(png.b)
++  end
++
++  it "refuses a digest it holds no blob for" do
++    expect { blobs.fetch("blake3:#{"0" * 64}") }.to raise_error(described_class::Missing)
++  end
++
++  it "refuses bytes that no longer hash to their own name" do
++    digest = blobs.put(png)
++    File.binwrite(Dir.glob(File.join(@root, "*", "*")).first, "tampered")
++
++    expect { blobs.fetch(digest) }.to raise_error(described_class::Corrupt)
++  end
++
++  describe "#reference and #inline" do
++    # The whole trade: the Timeline holds a small reference, and what reaches
++    # the encoder is byte-identical to the block an inline tool would have
++    # built.
++    it "round-trips to the inline block, wherever the reference nests" do
++      reference = blobs.reference(png)
++      content = [{ "type" => "tool_result", "tool_use_id" => "c", "is_error" => false,
++                   "content" => [{ "type" => "text", "text" => "shot" }, reference] }]
++
++      resolved = blobs.inline(Lain::Canonical.normalize(content))
++
++      expect(resolved.first["content"].last).to eq(Lain::Image.block(png))
++    end
++
++    it "keeps the reference small whatever the image weighs" do
++      reference = blobs.reference(png * 1000)
++
++      expect(Lain::Canonical.dump(reference).bytesize).to be < 160
++    end
++
++    # The Merkle property survives: two different images give two different
++    # references, so two Events holding them hash apart.
++    it "names different bytes with different references" do
++      expect(Lain::Canonical.digest(blobs.reference(png))).not_to eq(Lain::Canonical.digest(blobs.reference("#{png}x")))
++    end
++  end
++end
+diff --git a/spec/lain/image_spec.rb b/spec/lain/image_spec.rb
+new file mode 100644
+--- /dev/null
++++ b/spec/lain/image_spec.rb
+@@ -0,0 +1,79 @@
++# frozen_string_literal: true
++
++RSpec.describe Lain::Image do
++  let(:png) { ImageFixtures.png }
++
++  describe ".block" do
++    it "carries the bytes as base64 text under the media type the bytes declare" do
++      block = described_class.block(png)
++
++      expect(block).to eq("type" => "image",
++                          "source" => { "type" => "base64", "media_type" => "image/png",
++                                        "data" => [png].pack("m0") })
++    end
++
++    # The premise of the inline shape: Canonical admits it, so an Event can hold
++    # it and a digest can name it, and the result is deeply frozen.
++    it "survives Canonical.normalize as a shareable value" do
++      normalized = Lain::Canonical.normalize([described_class.block(png)])
++
++      expect(Ractor.shareable?(normalized)).to be(true)
++      expect(Lain::Canonical.digest(normalized)).to start_with("blake3:")
++    end
++
++    it "passes the tool_result text check a binary String would fail" do
++      result = Lain::Tool::Result.ok([{ "type" => "text", "text" => "shot" }, described_class.block(png)])
++
++      expect(Lain::Tool::ResultBlock::Text.committable(result)).to equal(result)
++    end
++
++    it "refuses bytes that are no image it can name" do
++      expect { described_class.block("%PDF-1.7") }.to raise_error(described_class::UnknownMediaType, /8 bytes/)
++    end
++  end
++
++  describe ".media_type" do
++    {
++      "image/jpeg" => "\xFF\xD8\xFF\xE0rest".b,
++      "image/gif" => "GIF89a....",
++      "image/webp" => "RIFF\x00\x00\x00\x00WEBPVP8 ".b
++    }.each do |type, bytes|
++      it "sniffs #{type} from its signature" do
++        expect(described_class.media_type(bytes)).to eq(type)
++      end
++    end
++  end
++
++  describe ".each_in" do
++    it "finds images at the top level and inside a tool_result's content" do
++      top = described_class.block(png)
++      nested = described_class.block(png.dup)
++      content = [{ "type" => "text", "text" => "a" }, top,
++                 { "type" => "tool_result", "tool_use_id" => "c", "is_error" => false, "content" => [nested] }]
++
++      expect(described_class.each_in(content).to_a).to eq([top, nested])
++    end
++
++    it "finds nothing in String content" do
++      expect(described_class.each_in("just text").to_a).to eq([])
++    end
++  end
++
++  describe ".data" do
++    it "refuses a reference, which only a blob store can turn into bytes" do
++      reference = { "type" => "image", "source" => { "type" => "blob", "digest" => "blake3:00" } }
++
++      expect { described_class.data(reference) }.to raise_error(described_class::Unresolved)
++    end
++  end
++
++  describe ".anthropic_tokens" do
++    it "prices a 1280x800 screenshot by its pixels" do
++      expect(described_class.anthropic_tokens(1280, 800)).to eq(1366)
++    end
++
++    it "prices a long edge past 1568px as if scaled down to it" do
++      expect(described_class.anthropic_tokens(3136, 1568)).to eq(described_class.anthropic_tokens(1568, 784))
++    end
++  end
++end
+diff --git a/spec/lain/middleware/gate_spec.rb b/spec/lain/middleware/gate_spec.rb
+--- a/spec/lain/middleware/gate_spec.rb
++++ b/spec/lain/middleware/gate_spec.rb
+@@ -389,7 +389,7 @@
+ 
+     # `.env` in every path-ish field the tool declares, so a Null that gated
+     # anything would land in this partition rather than passing unnoticed.
+-    it "gates exactly bash when every shipped tool is offered" do
++    it "gates exactly the approval-gated tools when every shipped tool is offered" do
+       gated = ToolRegistry.names.select do |name|
+         policy = spy
+         through(described_class.new(policy:), tool_call(name, { "path" => ".env", "cwd" => ".env" }),
+@@ -397,7 +397,7 @@
+         policy.asked.any?
+       end
+ 
+-      expect(gated).to match_array(%w[bash])
++      expect(gated).to match_array(%w[bash screenshot])
+     end
+   end
+ 
+diff --git a/spec/lain/provider/anthropic_encoding_spec.rb b/spec/lain/provider/anthropic_encoding_spec.rb
+--- a/spec/lain/provider/anthropic_encoding_spec.rb
++++ b/spec/lain/provider/anthropic_encoding_spec.rb
+@@ -158,4 +158,45 @@
+         .to raise_error(Lain::Error, /5 cache breakpoints/)
+     end
+   end
++
++  # lain's neutral image block IS Anthropic's, so the encoder carries it as it
++  # carries text: verbatim, at the top level of a turn and inside a
++  # tool_result's content Array, which is the one place the API nests a block.
++  # Driven through the real builders -- Image.block, ResultBlock.of, Request's
++  # normalize -- and read back off the JSON the wire would send.
++  describe "images" do
++    let(:image) { Lain::Image.block(ImageFixtures.png) }
++    let(:wire_image) do
++      { "type" => "image",
++        "source" => { "type" => "base64", "media_type" => "image/png", "data" => [ImageFixtures.png].pack("m0") } }
++    end
++
++    def on_the_wire(messages) = JSON.parse(JSON.generate(encoder.encode(request(messages:))[:messages]))
++
++    it "sends a user turn's image block as Anthropic's image block" do
++      sent = on_the_wire([{ role: "user", content: [{ "type" => "text", "text" => "what is this?" }, image] }])
++
++      expect(sent.last["content"]).to eq([{ "type" => "text", "text" => "what is this?" }, wire_image])
++    end
++
++    it "sends a tool_result's image inside that tool_result's content" do
++      call = { "type" => "tool_use", "id" => "toolu_1", "name" => "screenshot", "input" => { "url" => "u" } }
++      result = Lain::Tool::Result.ok([{ "type" => "text", "text" => "1280x800" }, image])
++      block = Lain::Tool::ResultBlock.of(result, tool_use_id: "toolu_1").to_h
++
++      sent = on_the_wire([{ role: "user", content: "shoot it" }, { role: "assistant", content: [call] },
++                          { role: "user", content: [block] }])
++
++      expect(sent.last["content"]).to eq([{ "type" => "tool_result", "tool_use_id" => "toolu_1", "is_error" => false,
++                                            "content" => [{ "type" => "text", "text" => "1280x800" }, wire_image] }])
++    end
++
++    # The breakpoint Context places on a turn's LAST block may land on an image
++    # block, which Anthropic accepts; the marker translates there as anywhere.
++    it "translates a cache marker the Context placed on an image block" do
++      sent = on_the_wire([{ role: "user", content: [image.merge("cache" => true)] }])
++
++      expect(sent.last["content"]).to eq([wire_image.merge("cache_control" => { "type" => "ephemeral" })])
++    end
++  end
+ end
+diff --git a/spec/lain/provider/ollama/encoding_spec.rb b/spec/lain/provider/ollama/encoding_spec.rb
+--- a/spec/lain/provider/ollama/encoding_spec.rb
++++ b/spec/lain/provider/ollama/encoding_spec.rb
+@@ -151,4 +151,42 @@
+       expect(encoder.encode(request)).to include(options: { num_predict: 64 })
+     end
+   end
++
++  # Ollama carries images as bare base64 in a per-message `images` list rather
++  # than as blocks. Measured on 0.32.12: a role:"tool" message carrying one is
++  # read by a vision model, so a tool_result's image stays on its own message.
++  describe "images" do
++    let(:image) { Lain::Image.block(ImageFixtures.png) }
++    let(:data) { image.dig("source", "data") }
++
++    it "puts a user turn's image on that message's images list, beside its text" do
++      content = [{ "type" => "text", "text" => "what is this?" }, image]
++      encoded = encoder.encode(request(messages: [{ role: "user", content: }]))
++
++      expect(encoded[:messages].last).to eq(role: "user", content: "what is this?", images: [data])
++    end
++
++    it "puts a tool_result's image on the tool message that answers the call" do
++      call = { "type" => "tool_use", "id" => "c1", "name" => "screenshot", "input" => { "url" => "u" } }
++      result = { "type" => "tool_result", "tool_use_id" => "c1", "is_error" => false,
++                 "content" => [{ "type" => "text", "text" => "800x400" }, image] }
++      encoded = encoder.encode(request(messages: [{ role: "user", content: "shoot it" },
++                                                  { role: "assistant", content: [call] },
++                                                  { role: "user", content: [result] }]))
++
++      expect(encoded[:messages].last).to eq(role: "tool", tool_name: "screenshot", content: "800x400", images: [data])
++    end
++
++    it "sends no images key at all on a message that has none" do
++      expect(encoder.encode(request)[:messages].last).not_to have_key(:images)
++    end
++
++    it "refuses an image reference nobody resolved rather than send the turn without it" do
++      reference = { "type" => "image",
++                    "source" => { "type" => "blob", "media_type" => "image/png", "digest" => "blake3:00" } }
++
++      expect { encoder.encode(request(messages: [{ role: "user", content: [reference] }])) }
++        .to raise_error(Lain::Image::Unresolved, /"blob" source reached an encoder unresolved/)
++    end
++  end
+ end
+diff --git a/spec/lain/provider/ollama_spec.rb b/spec/lain/provider/ollama_spec.rb
+--- a/spec/lain/provider/ollama_spec.rb
++++ b/spec/lain/provider/ollama_spec.rb
+@@ -1561,6 +1561,45 @@
+     end
+   end
+ 
++  # The two capability lists are the ones 0.32.12 answered on this box.
++  describe "#vision", :webmock do
++    let(:vision) { Lain::Provider::Vision }
++
++    def show(status, body)
++      stub_request(:post, "http://localhost:11434/api/show")
++        .to_return(status:, headers: { "Content-Type" => "application/json" }, body:)
++    end
++
++    it "answers sees for a model whose capabilities list vision" do
++      show(200, JSON.generate("capabilities" => %w[completion vision audio tools thinking]))
++
++      expect(described_class.new.vision("gemma4:e4b")).to equal(vision::SEES)
++    end
++
++    it "answers blind for a described model whose capabilities do not" do
++      show(200, JSON.generate("capabilities" => %w[completion tools thinking]))
++
++      expect(described_class.new.vision("qwen3:4b")).to equal(vision::BLIND)
++    end
++
++    it "answers unknown for a description with no capabilities list" do
++      show(200, JSON.generate("model_info" => {}))
++
++      expect(described_class.new.vision("old:1b")).to equal(vision::UNKNOWN)
++    end
++
++    it "answers unknown when the model is not there to describe" do
++      show(404, JSON.generate("error" => "model 'nonesuch:1b' not found"))
++
++      expect(described_class.new.vision("nonesuch:1b")).to equal(vision::UNKNOWN)
++    end
++
++    it "answers unknown, asking nothing, on an arm whose /api/show is unverified" do
++      expect(described_class.cloud(api_key: "sk-test").vision("gpt-oss:120b")).to equal(vision::UNKNOWN)
++      expect(a_request(:post, %r{/api/show})).not_to have_been_made
++    end
++  end
++
+   # A transport double whose #stream wires the SAME on_data proc production
+   # code builds -- `Provider::HTTP::Streaming::FaradayHandlers.build`'s v2
+   # handler, with a real `Faraday::Env` -- rather than replaying chunks
+diff --git a/spec/lain/provider_spec.rb b/spec/lain/provider_spec.rb
+--- a/spec/lain/provider_spec.rb
++++ b/spec/lain/provider_spec.rb
+@@ -88,6 +88,23 @@
+ 
+   # Whether a server can answer for a model, asked before anything is spent on
+   # it. A provider with no server to ask cannot say either way.
++  describe "#vision" do
++    it "answers unknown from the abstract surface" do
++      expect(described_class.new.vision("m")).to equal(Lain::Provider::Vision::UNKNOWN)
++    end
++
++    it "answers sees on the hosted Anthropic arm, whatever the model" do
++      expect(Lain::Provider::Anthropic.allocate.vision("claude-haiku-4-5")).to equal(Lain::Provider::Vision::SEES)
++    end
++
++    it "answers three shareable values, only one of them blind" do
++      answers = [Lain::Provider::Vision::SEES, Lain::Provider::Vision::BLIND, Lain::Provider::Vision::UNKNOWN]
++
++      expect(answers).to all(satisfy { |answer| Ractor.shareable?(answer) })
++      expect(answers.map(&:blind?)).to eq([false, true, false])
++    end
++  end
++
+   describe "#serves?" do
+     it "answers unknown from the abstract surface" do
+       expect(described_class.new.serves?("claude-haiku-4-5")).to equal(Lain::Provider::Serving::UNKNOWN)
+diff --git a/spec/lain/tools/parallel_safety_spec.rb b/spec/lain/tools/parallel_safety_spec.rb
+--- a/spec/lain/tools/parallel_safety_spec.rb
++++ b/spec/lain/tools/parallel_safety_spec.rb
+@@ -60,7 +60,7 @@
+   # web tools, tool_search) -- none opted in without a deliberate audit of
+   # its own.
+   FALSE_TOOLS = %w[bash edit_file write_file todo_write memory_write improvement_write
+-                   run_skill ask_human request_review web_fetch web_search tool_search].freeze
++                   run_skill ask_human request_review web_fetch web_search tool_search screenshot].freeze
+ 
+   # The builder table moved to spec/support/tool_registry.rb once a second
+   # cross-tool property (the approval tier -- see
+diff --git a/spec/lain/tools/screenshot_spec.rb b/spec/lain/tools/screenshot_spec.rb
+new file mode 100644
+--- /dev/null
++++ b/spec/lain/tools/screenshot_spec.rb
+@@ -0,0 +1,122 @@
++# frozen_string_literal: true
++
++require "socket"
++
++RSpec.describe Lain::Tools::Screenshot do
++  # Stands in for Chromium: records the argv it was built with and, when told
++  # to, writes a picture where `--screenshot=` asked for one.
++  let(:launches) { [] }
++
++  def browser(writes: ImageFixtures.png, exitstatus: 0)
++    launched = launches
++    lambda do |*argv, timeout:|
++      launched << { argv:, timeout: }
++      target = argv.find { |arg| arg.start_with?("--screenshot=") }.delete_prefix("--screenshot=")
++      Struct.new(:exitstatus) { def run_command = self }.new(exitstatus).tap do
++        File.binwrite(target, writes) if writes
++      end
++    end
++  end
++
++  def tool(**) = described_class.new(shell_out_factory: browser(**))
++
++  it "returns a caption and an image block, in that order" do
++    result = tool.call({ "url" => "https://example.com" })
++
++    expect(result).to be_ok
++    expect(result.content.first["text"]).to start_with("https://example.com rendered at 1280x800")
++    expect(result.content.last).to eq(Lain::Image.block(ImageFixtures.png))
++  end
++
++  it "renders at the viewport asked for, with a fresh profile and the URL last" do
++    tool.call({ "url" => "https://example.com", "width" => 390, "height" => 844 })
++
++    argv = launches.first[:argv]
++    expect(argv).to include("--window-size=390,844", "--headless")
++    expect(argv.find { |arg| arg.start_with?("--user-data-dir=") }).to end_with("/profile")
++    expect(argv.last).to eq("https://example.com")
++  end
++
++  it "stands a full page in for a tall window" do
++    tool.call({ "url" => "https://example.com", "full_page" => true })
++
++    expect(launches.first[:argv]).to include("--window-size=1280,#{described_class::FULL_PAGE_HEIGHT}")
++  end
++
++  it "refuses a scheme the web does not serve, launching nothing" do
++    result = tool.call({ "url" => "file:///etc/passwd" })
++
++    expect(result).to be_error
++    expect(result.content).to include('got "file"')
++    expect(launches).to be_empty
++  end
++
++  it "refuses a viewport that is not a screen" do
++    expect { tool.call({ "url" => "https://example.com", "width" => 20_000 }) }
++      .to raise_error(Lain::Tool::InvalidInput, /Width must be less than or equal to 1920/)
++  end
++
++  it "reports a browser that left no picture as an error" do
++    result = tool(writes: nil, exitstatus: 1).call({ "url" => "https://example.com" })
++
++    expect(result).to be_error
++    expect(result.content).to include("exited 1 without a picture")
++  end
++
++  it "refuses a picture over its byte ceiling, carrying none of it" do
++    heavy = ImageFixtures.png + ("\0" * Lain::Tool::Bounds::IMAGE_BYTES)
++    result = tool(writes: heavy).call({ "url" => "https://example.com" })
++
++    expect(result).to be_error
++    expect(result.content).to be_a(String).and include("over the ceiling", "smaller width")
++  end
++
++  # It launches a browser that fetches whatever the page asks for, so the
++  # destination is the human's call; the command axis alone would say tier 2.
++  it "asks for approval" do
++    expect(described_class.new.requires_approval?).to be(true)
++  end
++
++  it "survives the commit path's text check whole" do
++    result = tool.call({ "url" => "https://example.com" })
++
++    expect(Lain::Tool::ResultBlock::Text.committable(result)).to equal(result)
++  end
++
++  # The real browser against a real local socket: what the doubles above
++  # assume about Chromium's CLI -- a PNG at the path, exit 0 -- checked once.
++  describe "against headless Chromium", :seam do
++    around do |example|
++      skip "no #{described_class::CHROMIUM}" unless File.executable?(described_class::CHROMIUM)
++
++      server = TCPServer.new("127.0.0.1", 0)
++      page = "<html><body style='background:#1a4fd6'>blue</body></html>"
++      responder = Thread.new do
++        loop do
++          client = server.accept
++          client.readpartial(4096)
++          client.write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: #{page.bytesize}\r\n" \
++                       "Connection: close\r\n\r\n#{page}")
++          client.close
++        rescue IOError, SystemCallError
++          nil
++        end
++      end
++      @url = "http://127.0.0.1:#{server.addr[1]}/"
++      example.run
++    ensure
++      responder&.kill
++      server&.close
++    end
++
++    it "returns a PNG of the viewport it asked for" do
++      result = described_class.new.call({ "url" => @url, "width" => 640, "height" => 400 })
++
++      image = result.content.last
++      bytes = image.dig("source", "data").unpack1("m0")
++      expect(result).to be_ok
++      expect(image.dig("source", "media_type")).to eq("image/png")
++      expect(bytes.byteslice(16, 8).unpack("NN")).to eq([640, 400])
++    end
++  end
++end
+diff --git a/spec/lain/tools/tool_surface_spec.rb b/spec/lain/tools/tool_surface_spec.rb
+--- a/spec/lain/tools/tool_surface_spec.rb
++++ b/spec/lain/tools/tool_surface_spec.rb
+@@ -9,7 +9,11 @@
+   # read-versus-write (see Lain::Tool#requires_approval? and the plan's "Tool
+   # tiers"), which is why this list is short and every addition to it is an
+   # argument rather than a category.
+-  GATED = %w[bash].freeze
++  #
++  # `screenshot` is the first such argument: an argv tool whose URL is checked
++  # once, after which a browser fetches whatever the page asks for -- egress
++  # nothing in this process can bound, so the destination is a human's call.
++  GATED = %w[bash screenshot].freeze
+ 
+   # Everything else, derived rather than written down: a new tool is ungated by
+   # DEFAULT here and must be argued into GATED, which is the safe direction to
+diff --git a/spec/support/image_fixtures.rb b/spec/support/image_fixtures.rb
+new file mode 100644
+--- /dev/null
++++ b/spec/support/image_fixtures.rb
+@@ -0,0 +1,11 @@
++# frozen_string_literal: true
++
++# A real, decodable 2x1 PNG (one red pixel, one blue), small enough to live in
++# source: specs that carry an image through Canonical, a ResultBlock or an
++# encoder need bytes a provider would accept, not a stand-in String.
++module ImageFixtures
++  TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4zwAE/wEHAAH/4iOeWQAAAABJRU5ErkJggg=="
++             .unpack1("m0").freeze
++
++  def self.png = TINY_PNG
++end
+diff --git a/spec/support/tool_registry.rb b/spec/support/tool_registry.rb
+--- a/spec/support/tool_registry.rb
++++ b/spec/support/tool_registry.rb
+@@ -109,6 +109,7 @@
+     "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil, told: SILENT, notes: nil) },
+     "web_fetch" => -> { Lain::Tools::WebFetch.new },
+     "web_search" => -> { Lain::Tools::WebSearch.new },
++    "screenshot" => -> { Lain::Tools::Screenshot.new },
+     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },
+     # Construction-only, the same idiom -- and here the nil is the POINT: a
+     # thunk over `Usage.zero` would be a fabricated zero, which is

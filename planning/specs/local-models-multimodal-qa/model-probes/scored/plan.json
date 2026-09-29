@@ -1,0 +1,296 @@
+{
+ "qwen3:4b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 3
+   },
+   "content": "[\n  {\n    \"where\": \"Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4 but Wave 1 (which contains Card 2) runs before Wave 2 (which contains Card 4)\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion describes an internal cache operation that cannot be verified from outside the code\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The requirement states a maximum of 3 retries, but Card 3 specifies 5 retries\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "lfm2.5": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": "<think>\nWe need to review the implementation plan and find defects in the PLAN itself: ordering/dependency errors, acceptance criteria that cannot be verified from outside the code under test, and cards that contradict the stated requirements. We must output a JSON array of objects with fields \"where\", \"kind\", and \"claim\". No extra prose.\n\nWe need to examine each card and see if there are issues:\n\n- Card 1: Export query - seems okay: includes soft-deleted orders excluded. It says \"Add OrderRepo#settled_on(date) returning settled orders for a date, excluding soft-deleted rows.\" The Gherkin scenario matches requirement R1. No obvious defect.\n\n- Card 2: CSV writer - writes file using upload client from Card 4. The acceptance criteria: \"Write ExportJob#call(date) producing exports/orders-<date>.csv using the upload client from Card 4.\" That seems fine, but we need to check if any issues: maybe missing header row? It says scenario includes header row. But requirement doesn't specify header details; just that file is written with a header row. This might be okay.\n\n- Card 3: Upload retry - \"Wrap the uploader: on IOError, retry up to 5 times with exponential backoff, then raise.\" The scenario says \"Given the uploader fails twice then succeeds\". However requirement R3: \"A failed upload is retried at most 3 times, then the job fails loudly (non-zero exit, alert).\" Wait, there's a conflict: Card 3 says \"retry up to 5 times with exponential backoff, then raise.\" But requirement says max 3 times. This is a contradiction: acceptance criteria says at most 3 retries; card suggests 5. That is a defect.\n\n- Card 4: Upload client - \"Add S3Uploader#put(path) wrapping the storage SDK; raise IOError on any transport error.\" Scenario matches requirement R4. No obvious defect.\n\n- Card 5: Cache of export metadata - \"Keep an in-process cache of the last export's row count for the status page.\" The acceptance criteria doesn't mention caching, but there might be a need to verify that it can be observed externally? It says \"acceptance criteria that cannot be verified from outside the code under test\". Does this card add a new behavior not required? Possibly contradictory: adding an in-process cache means it's not observable from outside; maybe that's okay. But we need to check if any ordering/dependency errors: Card 5 depends on previous cards? It doesn't explicitly state dependencies, but likely after export job runs, caches are updated. However there is a potential issue: the cache being in-process may cause race conditions or not reflect latest state across processes. But that's more of a design flaw, not necessarily a defect in the plan.\n\n- Card 6: Alerting - \"On final upload failure, exit 2 and post to #ops-alerts. If the alert post itself fails, keep retrying the upload until the alert succeeds.\" This seems to be a more complex behavior: if final upload fails (i.e., after all retries?), then exit 2 and post to alerts; if that alert posting also fails, keep retrying the "
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": "<think>\nWe need to review the implementation plan and find defects in the PLAN itself. The request:\n\n\"Do not suggest extra features or style changes.\n\nAnswer with ONLY a JSON array, no prose, of objects:\n  {\"where\": \"<card or section>\", \"kind\": \"dependency|unobservable_ac|contradiction|other\", \"claim\": \"<one sentence>\"}\"\n\nWe have to identify defects in the plan itself: ordering/dependency errors, acceptance criteria that cannot be verified from outside the code under test, and cards that contradict the stated requirements.\n\nWe have a set of cards with descriptions. Let's analyze each card for potential issues:\n\n- Card 1: Export query. It says \"Add `OrderRepo#settled_on(date)` returning settled orders for a date, excluding soft-deleted rows.\" This seems to be an acceptance criterion that can be verified from outside the code (i.e., test can call this method). So it's okay.\n\n- Card 2: CSV writer. It says \"Write `ExportJob#call(date)` producing `exports/orders-<date>.csv` using the upload client from Card 4.\" There is no explicit dependency on Card 1, but Card 2 depends on Card 4 (as per dependencies). That's fine.\n\n- Card 3: Upload retry. \"Wrap the uploader: on IOError, retry up to 5 times with exponential backoff, then raise.\" This is an acceptance criterion that can be verified from outside? Possibly yes; but it may be a detail of implementation. However, we need to see if there are contradictions.\n\n- Card 4: Upload client. \"Add `S3Uploader#put(path)` wrapping the storage SDK; raise IOError on any transport error.\" This is also an acceptance criterion that can be verified from outside (the method raises). So fine.\n\n- Card 5: Cache of export metadata. \"Keep an in-process cache of the last export's row count for the status page.\" This may have issues: It says \"for the status page\". The status page might be a separate UI, but it's not clear if this is verifiable from outside. However, the requirement doesn't mention caching; maybe it's unnecessary and could cause inconsistency (e.g., stale cache). But we need to find contradictions.\n\n- Card 6: Alerting. \"On final upload failure, exit 2 and post to #ops-alerts. If the alert post itself fails, keep retrying the upload until the alert succeeds.\" This seems contradictory: The requirement says \"If the alert post itself fails, keep retrying the upload until the alert succeeds.\" That suggests that after a final upload failure (i.e., all retries exhausted), you should exit 2 and post to #ops-alerts. But if posting to #ops-alerts also fails, then you should keep retrying the upload until the alert succeeds? Actually it's ambiguous: The original plan says \"If the alert post itself fails, keep retrying the upload until the alert succeeds.\" That seems contradictory because the final upload failure is when all retries have been exhausted. If the alert posting also fails, you might need to continue trying to upload again (maybe after a delay). However, the requirement for Card 6 says \"On final upload failure, exi"
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": "<think>\nWe need to review the implementation plan and find defects in the PLAN itself. The defects categories:\n\n- ordering/dependency errors,\n- acceptance criteria that cannot be verified from outside the code under test,\n- cards that contradict the stated requirements.\n\nWe must output a JSON array of objects, each with fields: where (card or section), kind (dependency|unobservable_ac|contradiction|other), claim (one sentence). No extra prose. Only that format.\n\nWe need to examine each card and see if there are issues.\n\nGiven the plan:\n\nRequirements:\n\nR1: A CSV of the day's settled orders is written to `exports/` once a night.\n\nR2: Orders deleted by support (soft-deleted, `deleted_at` set) never appear in any export.\n\nR3: A failed upload is retried at most 3 times, then the job fails loudly (non-zero exit, alert).\n\nR4: Exports are idempotent: re-running a night overwrites that night's file, never appends.\n\nCards:\n\nCard 1 - Export query. It defines scenario for Card 1: \"Add OrderRepo#settled_on(date) returning settled orders for a date, excluding soft-deleted rows.\"\n\nPotential issues: Does it define acceptance criteria? The scenario is given; but maybe the requirement that the CSV includes only settled orders (not deleted) is already covered. However, we need to check if there's any unobservable acceptance criterion or contradictory info.\n\nBut \"Find defects in the PLAN itself: ordering/dependency errors, acceptance criteria that cannot be verified from outside the code under test, and cards that contradict the stated requirements.\" So we must find issues within this plan (the description of card functionality). Possibly something like:\n\n- Card 1: It mentions returning settled orders for a date, but does it also specify that only settled orders are included? Actually requirement says \"A CSV of the day's settled orders is written\". The scenario includes \"settled_on(date)\" and \"excluding soft-deleted rows.\" That seems consistent.\n\nBut maybe there is an issue: The card description may not specify that the CSV must be generated at night (i.e., scheduled). However, the requirement says it's a nightly job; Card 1 doesn't mention scheduling. But ordering/dependency errors? Not necessarily.\n\n- Card 2: Write CSV using upload client from Card 4. Dependencies: Card 4 not yet done in wave 1. That might be a dependency error because Card 2 depends on Card 1 and Card 4, but Card 2 is defined before Card 4 in the list. However ordering doesn't matter for plan correctness; but if it's listed after, that could cause confusion. But we are to find defects: maybe Card 2 lacks acceptance criteria about file path? It says \"producing exports/orders-<date>.csv using the upload client from Card 4.\" That seems okay.\n\nBut there might be an issue: The scenario for Card 2 says \"Given one settled order on 2026-09-01\" but that is not consistent with requirement (one order per day). However, that's a test case maybe; not a defect. But the acceptance criteria cannot be verified fr"
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": "<think>\nWe need to review the implementation plan before sub-agents execute it card by card, in waves. Find defects in the PLAN itself: ordering/dependency errors, acceptance criteria that cannot be verified from outside the code under test, and cards that contradict the stated requirements.\n\nWe must answer with only a JSON array of objects:\n\n{\n  \"where\": \"<card or section>\",\n  \"kind\": \"dependency|unobservable_ac|contradiction|other\",\n  \"claim\": \"<one sentence>\"\n}\n\nWe need to identify defects. Let's parse each card and see if there are issues.\n\nFirst, the plan: nightly order export with upload retry.\n\nRequirements:\n\nR1: A CSV of the day's settled orders is written to `exports/` once a night.\nR2: Orders deleted by support (soft-deleted, `deleted_at` set) never appear in any export.\nR3: A failed upload is retried at most 3 times, then the job fails loudly (non-zero exit, alert).\nR4: Exports are idempotent: re-running a night overwrites that night's file, never appends.\n\nCards:\n\nCard 1 - Export query: Add `OrderRepo#settled_on(date)` returning settled orders for a date, excluding soft-deleted rows. This seems correct and verifiable? Possibly can be verified by checking the query. It matches R1 (CSV of day's settled orders). However, does it guarantee that only settled orders are included? The requirement says \"A CSV of the day's settled orders is written to exports/once a night.\" So Card 1 implements that: returns settled orders for a date, excluding soft-deleted rows. That seems fine.\n\nCard 2 - CSV writer: Write `ExportJob#call(date)` producing `exports/orders-<date>.csv` using the upload client from Card 4. This depends on Card 1 and Card 4. The acceptance criteria: \"Given one settled order on 2026-09-01, when the job runs for 2026-09-01, then exports/orders-2026-09-01.csv has 2 lines and the first is the header.\" That seems plausible. However, we need to check if this acceptance criterion can be verified from outside the code under test. The scenario: one settled order exists; after job runs, file has header + data line. That's verifiable externally (file system). So it's okay.\n\nCard 3 - Upload retry: Wrap the uploader: on IOError, retry up to 5 times with exponential backoff, then raise. This depends on Card 4. Acceptance criteria: \"Given the uploader fails twice then succeeds, when the job runs, file is uploaded once and the job exits 0.\" That seems okay.\n\nCard 4 - Upload client: Add `S3Uploader#put(path)` wrapping the storage SDK; raise IOError on any transport error. Acceptance criteria: \"Given the storage SDK raises a timeout, when put is called, then IOError is raised.\" This matches R3? Actually R3 says failed upload retry at most 3 times with exponential backoff. Card 4 just defines the wrapper that raises IOError on any transport error. It doesn't mention retry logic. So there might be a contradiction: The plan includes retry logic in Card 3, but Card 4 only defines the wrapper. However, the acceptance criteria for Card 4 is about raising"
+  }
+ ],
+ "ornith-1.5:9b": [
+  {
+   "run": "s11",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3-coder:30b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario specifies retrying up to 5 times, but requirement R3 states retries are limited to 3 times.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, which is not included in Wave 1, violating the wave execution order.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion about cache staleness cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario says to keep retrying the upload until the alert succeeds, which contradicts R3's requirement that failed uploads fail loudly after 3 retries.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Wave 3 [dependency] Card 6 depends on Card 3, but Card 3 is scheduled for Wave 3, so the dependency cannot be satisfied if Card 6 starts before Card 3 completes."
+    ],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario specifies a retry limit of 5 times, which contradicts requirement R3 that states retries are limited to 3 times.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 1 and Card 4, but Card 4 is scheduled for Wave 2, making it unavailable when Card 2 runs in Wave 1.\"\n  },\n  {\n    \"where\": \"Wave 3\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 6 depends on Card 3, but Card 3 is scheduled for Wave 3, so the dependency cannot be satisfied if Card 6 starts before Card 3 completes.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criteria for Card 5 cannot be verified from outside the code under test because it refers to internal cache behavior that is not exposed externally.\"\n  }\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Wave 3 [dependency] Card 6 depends on Card 3, but Card 3 is scheduled for Wave 3, creating a circular dependency."
+    ],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario specifies retrying up to 5 times, but requirement R3 states retries are limited to 3 times.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The scenario tests internal cache behavior which cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 4 is scheduled for Wave 2, making this dependency invalid.\"\n  },\n  {\n    \"where\": \"Wave 3\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 6 depends on Card 3, but Card 3 is scheduled for Wave 3, creating a circular dependency.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 2,
+    "hit": [
+     "D1",
+     "D3"
+    ],
+    "fp": 1,
+    "fp_claims": [
+     "Card 6 [unobservable_ac] The acceptance criterion for alerting cannot be verified without access to the #ops-alerts channel or the alerting system itself."
+    ],
+    "n": 3
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"The scenario specifies retrying up to 5 times, but requirement R3 states retries are limited to 3 times.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion for alerting cannot be verified without access to the #ops-alerts channel or the alerting system itself.\"\n  },\n  {\n    \"where\": \"Wave 1\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 4 is scheduled for Wave 2, making it unavailable during Wave 1.\"\n  }\n]"
+  }
+ ],
+ "laguna-xs-2.1": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4, but Card 2 is in Wave 1 while Card 4 is in Wave 2, violating wave ordering.\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies retry up to 5 times, contradicting R3 which requires a maximum of 3 retries.\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"The scenario requires verifying internal cache state ('marks old entry as stale'), which is unobservable from outside the code.\"},\n  {\"where\": \"Card 6\", \"kind\": \"contradiction\", \"claim\": \"Card 6's scenario retries upload after alert post failure, contradicting R3 which limits upload retries to 3.\"}\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies retrying up to 5 times, conflicting with requirement R3 which limits retries to 3\"},\n  {\"where\": \"Card 2 dependencies\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4 but is placed in Wave 1 while Card 4 is in Wave 2, violating the wave execution order\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"Card 5's acceptance criteria tests internal cache state rather than observable behavior\"},\n  {\"where\": \"Card 6\", \"kind\": \"contradiction\", \"claim\": \"Card 6 allows retrying uploads beyond 3 times if alert posting fails, contradicting R3's retry limit\"}\n]"
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 3
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4 which is in Wave 2, but Card 2 is in Wave 1, creating an invalid dependency order\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies retrying up to 5 times, contradicting requirement R3 which allows at most 3 retries\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"Card 5's scenario checks internal cache state which cannot be verified from outside the code under test\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 specifies retrying up to 5 times, but R3 requires at most 3 retries\"},\n  {\"where\": \"Wave 1\", \"kind\": \"dependency\", \"claim\": \"Card 2 in Wave 1 depends on Card 4 in Wave 2, but Wave 1 runs before Wave 2\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"Card 5's scenario verifies internal cache state which cannot be observed from outside the code\"},\n  {\"where\": \"Card 3\", \"kind\": \"dependency\", \"claim\": \"Card 3 depends on Card 4 which is in Wave 2, but Card 3 is in Wave 3 which is correct, but the description contradicts R3\"}\n]"
+  }
+ ],
+ "north-mini-code-1.0": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\":\"Card 2\",\"kind\":\"dependency\",\"claim\":\"Card 2 depends on Card 4, which is scheduled in Wave 2, breaking the dependency order because Card 2 is in Wave 1.\"},\n  {\"where\":\"Card 5\",\"kind\":\"unobservable_ac\",\"claim\":\"Card 5\u2019s scenario asserts that the cache internally marks an old entry as stale before replacement, which cannot be verified from outside the code.\"},\n  {\"where\":\"Card 3\",\"kind\":\"contradiction\",\"claim\":\"Card 3 retries up to 5 times, contradicting Requirement R3 which limits retries to at most 3.\"},\n  {\"where\":\"Card 6\",\"kind\":\"contradiction\",\"claim\":\"Card 6\u2019s requirement to keep retrying the upload until the alert succeeds violates R3\u2019s limit of at most 3 retries and conflicts with the scenario\u2019s expectation of a single alert message.\"}\n]"
+  },
+  {
+   "run": "s22",
+   "score": null,
+   "content": ""
+  },
+  {
+   "run": "s33",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\"where\": \"Card 2\", \"kind\": \"dependency\", \"claim\": \"Card 2 depends on Card 4, but Card 4 is in Wave 2, which runs after Card 2, causing an ordering violation.\"},\n  {\"where\": \"Card 3\", \"kind\": \"contradiction\", \"claim\": \"Card 3 retries up to 5 times, contradicting requirement R3 which limits retries to at most 3.\"},\n  {\"where\": \"Card 6\", \"kind\": \"contradiction\", \"claim\": \"Card 6's fallback to retry uploads indefinitely if alert fails contradicts requirement R3's limit of at most 3 upload retries.\"},\n  {\"where\": \"Card 5\", \"kind\": \"unobservable_ac\", \"claim\": \"Card 5's scenario checks internal cache stale marking, which cannot be verified from outside the code.\"}\n]"
+  },
+  {
+   "run": "t0",
+   "score": null,
+   "content": ""
+  }
+ ],
+ "qwen3.8:27b": [
+  {
+   "run": "s11",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 4
+   },
+   "content": "[\n  {\n    \"where\": \"Dependencies and waves\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 is placed in Wave 1 but explicitly depends on Card 4 (Wave 2) and Card 1 (also Wave 1, running in parallel), so its stated prerequisites are not yet merged when it executes.\"\n  },\n  {\n    \"where\": \"Card 3 \u2013 Upload retry\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies retrying up to 5 times, but requirement R3 mandates at most 3 retries before the job fails.\"\n  },\n  {\n    \"where\": \"Card 5 \u2013 Cache of export metadata\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion 'the cache internally marks the old entry as stale before replacing it' describes an internal sequencing detail that cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6 \u2013 Alerting\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to 'keep retrying the upload until the alert succeeds,' which permits an unbounded loop and contradicts R3's requirement that after the retry budget is exhausted the job must fail with a non-zero exit.\"\n  }\n]"
+  },
+  {
+   "run": "s22",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 5
+   },
+   "content": "[\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies retrying up to 5 times, but requirement R3 mandates at most 3 retries.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to keep retrying the upload indefinitely if the alert post fails, contradicting R3's hard limit of at most 3 retries followed by a loud failure.\"\n  },\n  {\n    \"where\": \"Waves / Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 1, yet both are placed in Wave 1 where they run in parallel, so Card 2 cannot be built against Card 1's code.\"\n  },\n  {\n    \"where\": \"Waves / Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 depends on Card 4, but Card 2 is in Wave 1 while Card 4 is not merged until Wave 2, making the dependency unsatisfiable.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion requires observing that the cache 'internally marks the old entry as stale before replacing it,' an internal state transition that cannot be verified from outside the code under test.\"\n  }\n]"
+  },
+  {
+   "run": "t0",
+   "score": {
+    "tp": 3,
+    "hit": [
+     "D1",
+     "D2",
+     "D3"
+    ],
+    "fp": 0,
+    "fp_claims": [],
+    "n": 5
+   },
+   "content": "[\n  {\n    \"where\": \"Dependencies and waves / Card 2\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 2 is placed in Wave 1 but the plan's own dependency list states it depends on Card 4, which is not available until Wave 2.\"\n  },\n  {\n    \"where\": \"Card 3\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 3 specifies retrying up to 5 times, but requirement R3 mandates at most 3 retries.\"\n  },\n  {\n    \"where\": \"Card 5\",\n    \"kind\": \"unobservable_ac\",\n    \"claim\": \"The acceptance criterion 'the cache internally marks the old entry as stale before replacing it' describes an internal implementation step that cannot be verified from outside the code under test.\"\n  },\n  {\n    \"where\": \"Card 6\",\n    \"kind\": \"contradiction\",\n    \"claim\": \"Card 6 instructs to keep retrying the upload indefinitely if the alert post fails, which contradicts R3's hard limit of at most 3 retries before the job fails.\"\n  },\n  {\n    \"where\": \"Dependencies and waves / Card 5\",\n    \"kind\": \"dependency\",\n    \"claim\": \"Card 5's acceptance scenario requires the export job (Card 2) to exist and re-run, yet both cards are scheduled in the same Wave 1 and run in parallel, so Card 5 cannot exercise its scenario until Card 2 is merged.\"\n  }\n]"
+  }
+ ]
+}

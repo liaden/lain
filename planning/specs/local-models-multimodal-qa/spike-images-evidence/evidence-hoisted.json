@@ -1,0 +1,84 @@
+{
+  "probe": "hoisted",
+  "status": "200",
+  "seconds": 1.49,
+  "request": {
+    "model": "gemma4:e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Take a screenshot of http://probe.test and tell me the codeword on the page and the colour of the rectangle. Answer in one sentence."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "function": {
+              "name": "screenshot",
+              "arguments": {
+                "url": "http://probe.test"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_name": "screenshot",
+        "content": "Screenshot captured: 800x400 PNG. The image follows in the next message."
+      },
+      {
+        "role": "user",
+        "content": "[image returned by the screenshot tool call]",
+        "images": [
+          "<base64 PNG, 14576 chars>"
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "screenshot",
+          "description": "Screenshot a URL and return the image.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "think": false,
+    "truncate": false,
+    "options": {
+      "num_predict": 120,
+      "temperature": 0,
+      "seed": 1
+    }
+  },
+  "response": {
+    "model": "gemma4:e4b",
+    "created_at": "2026-09-22T13:11:24.579043443Z",
+    "message": {
+      "role": "assistant",
+      "content": "The codeword on the page is PELICAN-4417 and the colour of the rectangle is blue."
+    },
+    "done": true,
+    "done_reason": "stop",
+    "total_duration": 1484202490,
+    "load_duration": 706744858,
+    "prompt_eval_count": 291,
+    "prompt_eval_duration": 538354000,
+    "eval_count": 23,
+    "eval_duration": 227329000
+  }
+}

@@ -1,0 +1,2038 @@
+{
+ "qwen3:4b": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 HTTP status code and response body {\"error\":\"cart_empty\"} when the client POSTs /checkout with an empty cart (simulated via cookie 'cart=empty')."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 response with body {\"error\":\"cart_empty\"} when the cart is empty, matching the acceptance criterion exactly."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows the response body is \"{\"error\":\"cart_empty\"}\" and HTTP status 422, exactly matching the acceptance criterion for an empty cart."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 response with body {\"error\":\"cart_empty\"} when the cart is empty, matching the acceptance criterion exactly."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code rejects 12-character passwords (since 12 is not greater than 12), but the acceptance criterion requires 12-character passwords to be accepted."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code rejects 12-character passwords (since 12 is not greater than 12), but the acceptance criterion requires that passwords of 12 or more characters are accepted."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code rejects 12-character passwords (as it requires length > 12) but the acceptance criterion requires 12-character passwords to be accepted."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a warning log for path /reports/big with 'upstream timeout after 30s' and elapsed time 30.04s exceeding 30 seconds, matching the code's timeout behavior."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a timeout warning for path /reports/big with elapsed time 30.04s, which exceeds the 30-second threshold and matches the expected timeout logging behavior in the code."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a warning logged for path '/reports/big' after 30.04 seconds, matching the 30-second timeout threshold and confirming the request was abandoned as a timeout."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a timeout warning for the path '/reports/big' after 30.04 seconds, which exceeds the 30-second threshold, and the code logs the timeout as required."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for the health check request (status 200) does not include the request id, violating the acceptance criterion that every completed request must write a log line with the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for the health check request (status 200) shows no request id, as the code only appends the request id for responses >= 400, violating the requirement that every completed request must include the request id in its log line."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for the health check request (status 200) does not include the request id because the condition (response.status >= 400) is not met, violating the requirement that every completed request must write a log line with the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for the completed request (status 200) does not include the request id, as the code only appends the request id when response.status >= 400."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows sessions ordered from most recent (2026-09-21 18:40) to oldest (2026-09-18 14:30), matching the code's implementation of sorting by started_at in ascending order then reversing the array to list newest sessions first."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows sessions in descending order of started_at (newest first), matching the code's behavior of sorting by started_at and then reversing the list."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output lists sessions starting with the most recent (2026-09-21 18:40) and ending with the oldest (2026-09-18 14:30), matching the requirement of newest-first ordering as implemented by the code's `.reverse` after sorting by `started_at`."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows sessions ordered from newest (2026-09-21 18:40) to oldest (2026-09-18 14:30), which matches the code's behavior of sorting by started_at ascending then reversing to list newest first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 when linting clean files (fixtures/clean/*.rb) and exits 1 when there is at least one offense (fixtures/dirty/a.rb), matching the acceptance criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows `lint` exits 0 for clean files (fixtures/clean/*.rb) and 1 when any file has an offense (fixtures/dirty/a.rb), matching the code's behavior of exiting 0 when `offenses` is empty and 1 otherwise."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 when linting clean files (first test) and 1 when there's at least one offense (second test), matching the code's behavior of exiting 0 only when offenses are empty and 1 otherwise."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured outputs show lint exits 0 when linting clean files (fixtures/clean/*.rb) and 1 when there is an offense (fixtures/dirty/a.rb), matching the acceptance criterion exactly."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows `lint` printed '3 files inspected, no offenses' when run with `--quiet` on clean files, contradicting the requirement that it prints nothing at all."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows `lint --quiet` printed \"3 files inspected, no offenses\" when files were clean, which violates the requirement of printing nothing at all with --quiet and clean files."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows `lint --quiet` printed '3 files inspected, no offenses' when files are clean, contradicting the requirement that it prints nothing at all."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' when running with --quiet and clean files, meaning it printed non-empty output instead of nothing as required."
+  }
+ ],
+ "qwen3:4b::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "unparsed",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "unparsed",
+    "unparsed",
+    "unparsed",
+    "unparsed"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ },
+ "lfm2.5": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The curl command returned HTTP status 422 with body {\"error\":\"cart_empty\"}, matching the acceptance criterion."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The response is 422 with body {\"error\":\"cart_empty\"}, matching the acceptance criterion."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The curl command returned a JSON body {\"error\":\"cart_empty\"} with HTTP status 422, matching the acceptance criterion."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The curl output shows a 422 status with body {\"error\":\"cart_empty\"}, which matches the acceptance criterion."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "unsure",
+   "evidence": "The test output does not include any example of a 12\u2011character password, and the code rejects passwords with length exactly equal to MIN, leaving ambiguity about compliance."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The test output shows that passwords shorter than 12 characters are rejected and passwords of 12 or more characters are accepted, satisfying the acceptance criterion."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The test output shows a password of length 11 is rejected and a password of length 20 is accepted, matching the specified acceptance criterion."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code rejects passwords shorter than 12 but only accepts those longer than 12, failing to accept passwords of exactly 12 characters as required."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The upstream request exceeded the 30\u2011second timeout, was logged as a timeout, and the elapsed time was reported as 30.04 seconds; therefore the acceptance criterion is satisfied."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The acceptance criterion is satisfied because the request took 30.04s (>30s), was logged as \"upstream timeout after 30s\" and then re-raised, confirming it is abandoned."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The script logs a timeout message and re-raises the exception after exceeding the 30\u2011second timeout, confirming that long\u2011running upstream requests are abandoned and logged."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows the request took 30.04 seconds (>30s), was logged as a timeout, and then re-raised, satisfying the acceptance criterion."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The acceptance criterion requires each completed request to include its request id in the log line, but the captured output shows a successful (200) request without such an id, violating the requirement."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line 'completed 200 in 3ms' does not contain the request id, violating the acceptance criterion."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for a successful (200) request does not include the request_id, violating the requirement that every completed request includes it."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log shows a 'completed 200' line without the request_id, and the after_action code only logs when response.status >= 400, so not all requests produce a log line containing the request id."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts by started_at ascending then reverses, yielding sessions newest first, and the captured output shows timestamps decreasing from newest to oldest."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows sessions ordered newest first, matching the acceptance criterion."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts by started_at ascending and then reverses the array, ensuring newest sessions appear first, matching the acceptance criterion."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The output lists sessions in descending order of start time, i.e., newest first, meeting the acceptance criterion."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output lists runs in descending order of started_at, i.e., newest first, satisfying the criterion."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output shows the runs ordered from newest to oldest, confirming that `lain runs` lists runs newest first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output is ordered newest first, satisfying the acceptance criterion."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output lists runs in descending order of started_at, with the most recent entry first, satisfying the criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 for clean files and 1 for a file with an offense, confirming the acceptance criterion is satisfied."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The lint command returns exit code 0 for clean files and 1 for dirty files, matching the acceptance criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 for clean files and 1 when an offense is found, matching the acceptance criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The lint command returns exit code 0 for clean files and 1 when any offense is found, matching the acceptance criterion."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output includes '3 files inspected, no offenses' after running lint --quiet, which violates the requirement that nothing be printed when all files are clean."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output includes the line \"3 files inspected, no offenses\" after running lint with --quiet, meaning lint printed something rather than nothing as required."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "lint printed a message '3 files inspected, no offenses' despite all files being clean, which violates the requirement that it prints nothing."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output includes a non-empty line '3 files inspected, no offenses' printed by the summary call."
+  }
+ ],
+ "lfm2.5::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "unsure",
+    "pass",
+    "pass",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ },
+ "ornith-1.5:9b": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The curl POST to /checkout with an empty cart (cookie cart=empty) returned HTTP 422 with body {\"error\":\"cart_empty\"}, matching the criterion exactly."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "A POST to /checkout with an empty cart (cart=empty) returned HTTP status 422 and body {\"error\":\"cart_empty\"}, exactly matching the expected response."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The client POSTs /checkout with an empty cart (cookie cart=empty), and the captured response is HTTP 422 with body {\"error\":\"cart_empty\"}, exactly matching the code's behavior for an empty cart."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a POST to /checkout with an empty cart (cart=empty) returning HTTP 422 and body {\"error\":\"cart_empty\"}, exactly matching the criterion. The code excerpt confirms the create action renders 422 with that body when cart.items is empty."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (strictly greater than 12), which rejects a password of exactly 12 characters\u2014violating the rule that passwords of 12 or more characters must be accepted. The captured tests only cover 11 and 20 characters, so they pass, but they do not exercise the 12-character boundary where the criterion diverges from the implementation."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (i.e., > 12), so a 12-character password is rejected, contradicting the criterion that 12-or-more characters must be accepted. The tests only cover 11 (rejected) and 20 (accepted) and never exercise the length-12 boundary."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The implementation uses strict greater-than (pw.length > MIN), so a password of exactly 12 characters is rejected (12 > 12 is false), contradicting the criterion that 12-or-more characters should be accepted. The captured tests only cover 11 and 20 characters and thus fail to catch this off-by-one boundary bug."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (strictly greater than 12), which rejects exactly-12-character passwords, violating the '12 or more characters are accepted' requirement. The captured tests only cover 11 and 20 characters and do not exercise the 12-character boundary, so the off-by-one bug goes undetected."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The probe requested a 45s delay but elapsed only 30.04s, showing the request was abandoned at the 30s timeout, and the WARN log line 'upstream timeout after 30s: /reports/big' confirms it was logged as a timeout."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The probe sent a request with a 45s delay but the code abandoned it at 30.04s (not waiting the full 45s), matching the 30s Faraday timeout, and logged 'upstream timeout after 30s: /reports/big' before raising Faraday::TimeoutError, satisfying both the 'abandoned' and 'logged as a timeout' requirements."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The probe issued an upstream request with a 45s delay, but the connection was abandoned at 30.04s (the configured 30s timeout) rather than waiting for completion, and the WARN log recorded it as 'upstream timeout after 30s: /reports/big'."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The output shows the request was abandoned at 30.04s (well before the 45s upstream delay) and logged a WARN 'upstream timeout after 30s: /reports/big', with a Faraday::TimeoutError raised, confirming both abandonment and timeout logging."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code only appends request_id when response.status >= 400, so successful requests omit it. The captured output confirms this: the completed 200 request logged 'completed 200 in 3ms' with no request_id, violating the criterion that every completed request's log line includes the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The criterion requires every completed request to include the request id, but the captured output shows a completed 200 request whose log line ('completed 200 in 3ms') omits the request id entirely, matching the code that only appends request_id when status >= 400."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code only appends request_id when response.status >= 400, so successful requests omit it. The captured output confirms this violation: a completed 200 request logged 'completed 200 in 3ms' without the request id (abc123) that was sent via X-Request-Id, contradicting the criterion that every completed request must include the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows a completed 200 request whose log line 'completed 200 in 3ms' omits the request id, directly contradicting the requirement that every completed request's log line includes the request id."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts by started_at ascending then reverses, and the captured output confirms sessions are listed from newest (2026-09-21 18:40) to oldest (2026-09-18 14:30), i.e., newest first."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by started_at ascending and reverses the list, so newest-first is intended; the captured output confirms the timestamps appear in descending order (2026-09-21 18:40 \u2192 09:12 \u2192 2026-09-19 \u2192 2026-09-18), matching newest first."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by started_at ascending then reverses, yielding newest-first order, and the captured output confirms this: entries run from 2026-09-21 18:40 down to 2026-09-18 14:30, with the newest timestamp at the top."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by started_at and reverses, and the captured output confirms descending chronological order (2026-09-21 18:40 \u2192 2026-09-18 14:30), listing newest first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists 2026-08-30 (the oldest date) first, while 2026-09-21 (the newest date) appears second, so runs are not ordered newest-first. This matches the code's sort key \"%d %H:%M\", which sorts only by day-of-month and time and ignores the month, producing an incorrect ordering."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The newest run (2026-09-21) is listed second while the oldest (2026-08-30) is listed first; the sort uses the day-of-month string '%d %H:%M' and reverses it, producing day-number ordering rather than chronological newest-first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists the oldest run (2026-08-30 18:40) first and the newest run (2026-09-21 09:12) second, so the runs are NOT ordered newest first. The sort key \"%d %H:%M\" ignores the month, which is why the day-of-month=30 entry is incorrectly treated as newest."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The clean-files invocation returns status=0 (all files clean), and the invocation containing a dirty file with a trailing-whitespace offense returns status=1, matching the code's `exit(offenses.empty? ? 0 : 1)` logic."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The output shows exit status 0 for the all-clean fixture set and exit status 1 when a file with an offense is included, matching the code's `exit(offenses.empty? ? 0 : 1)` logic."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The clean-files case exits 0 (status=0) and the case with an offending file exits 1 (status=1) after reporting the offense, matching the criterion exactly."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The clean-files run exits with status=0, and the run containing an offending file (fixtures/dirty/a.rb) reports the offense and exits with status=1, matching the code's exit(offenses.empty? ? 0 : 1) logic."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output prints '3 files inspected, no offenses' even though --quiet was passed and all files are clean, violating the 'prints nothing at all' criterion. This matches the code bug: the `summary` call is guarded by `unless options[:quiet] && offenses.any?`, which does not suppress the summary when files are clean."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' was printed even though --quiet was used and all files were clean, which violates the criterion. This matches the code's summary line `summary(files.size) unless options[:quiet] && offenses.any?`, which evaluates to true (summary printed) when files are clean regardless of --quiet."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "With --quiet and clean files, the captured output still shows '3 files inspected, no offenses' being printed (the `summary` line is not guarded by --quiet when offenses are empty), which contradicts the requirement that nothing be printed."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' was printed even with --quiet, and the code confirms this: the `summary(files.size)` line runs whenever offenses are empty (since `offenses.any?` is false), so a clean run still prints the summary."
+  }
+ ],
+ "ornith-1.5:9b::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "unparsed"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ },
+ "qwen3-coder:30b": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 status code with the expected error message {'error':'cart_empty'} when POSTing to /checkout with an empty cart, which matches the acceptance criterion exactly."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 status code with the expected error message {'error':'cart_empty'} when posting to /checkout with an empty cart, which matches the acceptance criterion exactly."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 status code with the expected error message {'error':'cart_empty'} when POSTing to /checkout with an empty cart, which matches the acceptance criterion exactly."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 422 status code with the expected error message {'error':'cart_empty'} when POSTing to /checkout with an empty cart, which matches the acceptance criterion exactly."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code implements `pw.length > MIN` which accepts passwords of exactly 12 characters, but the test output shows it rejects an 11-character password and accepts a 20-character password, indicating the policy should accept 12+ character passwords but the code logic is incorrect."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` which accepts passwords of exactly 12 characters, but the test output shows it rejects an 11-character password and accepts a 20-character password, indicating that 12-character passwords should be accepted but the code logic is incorrect."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code implements `pw.length > MIN` which accepts passwords of exactly 12 characters, but the test output shows it rejects 11-character passwords and accepts 20-character passwords, indicating the policy should be `pw.length >= MIN` to properly reject passwords shorter than 12 characters."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` which accepts passwords of exactly 12 characters, but the test output shows it rejects an 11-character password and accepts a 20-character password, indicating that passwords of exactly 12 characters should be accepted according to the criterion."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sets a 30-second timeout and logs a warning message when a timeout occurs, as shown in the captured output where a 45-second delay resulted in a timeout after 30.04 seconds with the expected log message."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sets a 30-second timeout and logs a warning when the timeout is exceeded. The test output shows a 45-second delay being cut off at 30.04 seconds with the expected timeout warning message."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sets a 30-second timeout and logs a warning when the timeout occurs, as shown by the captured output where a 45-second delay resulted in a timeout log at 30.04 seconds with the message 'upstream timeout after 30s'. The Faraday::TimeoutError is properly raised after the timeout."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sets a 30-second timeout and logs a warning message when a timeout occurs, as shown in the captured output where a 45-second delay results in a timeout after 30.04 seconds with the expected log message."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line shows a 200 status response but does not include the request_id 'abc123' as required by the criterion. The condition 'if response.status >= 400' means request_id is only added for error responses, but we need to verify if this applies to all completed requests."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line shows a 200 status response but does not include the request_id 'abc123' as required by the criterion. The condition 'if response.status >= 400' means request_id is only logged for error responses, violating the requirement that every completed request writes a log line with the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line shows a successful request (200 status) but does not include the request_id as required by the criterion. The condition 'if response.status >= 400' means request_id is only added for error status codes, violating the requirement that every completed request writes a log line with the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line shows a 200 status response but does not include the request_id as required by the criterion. The condition 'if response.status >= 400' means request_id is only added for error responses, violating the requirement that every completed request writes one log line with request id."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The sessions are listed with the newest first (2026-09-21) followed by older dates, and the sort_by(&:started_at).reverse operation correctly orders them in descending order by timestamp."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The sessions are listed with the newest first (2026-09-21) followed by older dates, and the code excerpt shows sorting by started_at in reverse order."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The sessions are listed with the newest first (2026-09-21) followed by older dates, which matches the expected sorting behavior. The code excerpt shows .sort_by(&:started_at).reverse which correctly sorts sessions newest first."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The sessions are listed with the newest first (2026-09-21) followed by older dates, and the sort_by(&:started_at).reverse operation in the code ensures newest sessions appear first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output shows runs sorted by date and time in descending order (newest first), which matches the code's .reverse() operation. The most recent run '2026-09-21 09:12' appears first, followed by older runs."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The runs are listed with the newest first (2026-09-21 09:12) followed by older dates, which matches the expected ordering from the code that sorts by date and reverses the result."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output shows runs listed from newest to oldest (2026-09-21, 2026-09-11, 2026-09-09, 2026-08-30), which matches the expected behavior of sorting by started_at in descending order as implemented in the code."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "pass",
+   "evidence": "The output shows runs listed from newest to oldest (2026-09-21, 2026-09-11, 2026-09-09, 2026-08-30), which matches the expected behavior of the sort_by with reverse operation."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code excerpt shows that lint exits 0 when no offenses are found (offenses.empty? ? 0 : 1) and exits 1 when offenses exist. The captured output confirms this behavior: clean files result in status=0 and dirty files result in status=1 with offense reporting."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code excerpt shows that lint exits 0 when no offenses are found (offenses.empty? ? 0 : 1) and exits 1 when offenses exist. The captured output confirms this behavior: clean files return status=0 and dirty files return status=1."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code excerpt shows that lint exits 0 when no offenses are found (offenses.empty? ? 0 : 1) and exits 1 when offenses exist. The captured output confirms this behavior: clean files return status 0 and dirty files return status 1."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code excerpt shows that lint exits 0 when no offenses are found (offenses.empty? ? 0 : 1) and exits 1 when there are offenses. The captured output confirms this behavior: clean files result in status=0 and dirty files result in status=1 with an offense report."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows '3 files inspected, no offenses' being printed even with --quiet flag, which violates the criterion that nothing should be printed when every file is clean. The code logic appears correct but the actual behavior contradicts the expected quiet output."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows '3 files inspected, no offenses' being printed even with --quiet flag, which violates the criterion that nothing should be printed when every file is clean."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows '3 files inspected, no offenses' being printed even with --quiet flag, which violates the criterion that nothing should be printed when every file is clean."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows '3 files inspected, no offenses' being printed even with --quiet flag, which violates the criterion that nothing should be printed when every file is clean. The command exit status is 0 (success) but the output still contains information."
+  }
+ ],
+ "qwen3-coder:30b::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ },
+ "laguna-xs-2.1": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The curl output shows the response body {\"error\":\"cart_empty\"} and status code 422 when POSTing to /checkout with an empty cart, matching the acceptance criterion."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a POST to /checkout with an empty cart resulted in a 422 status and body {\"error\":\"cart_empty\"}, matching the acceptance criterion."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code returns 422 with {\"error\":\"cart_empty\"} when cart.items is empty, and the captured output shows the same response for a POST to /checkout with an empty cart."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The curl output shows a 422 status code and the body {\"error\":\"cart_empty\"}, which matches the acceptance criterion. The code explicitly returns this response when cart.items.empty? is true."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses 'pw.length > MIN' (where MIN=12), which rejects 12-character passwords, violating the criterion that 12+ should be accepted. The tests only check 11 and 20 characters, missing the edge case at 12."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (where MIN=12), which rejects 12-character passwords but the criterion requires them to be accepted. The tests only verify 11 and 20 characters, missing the 12-character case."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (where MIN=12), which rejects 12-character passwords, violating the criterion that 12 or more characters should be accepted. The tests pass but only cover 11 and 20 characters, missing the critical 12-character case."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (where MIN=12), which rejects 12-character passwords since 12 is not greater than 12, violating the acceptance criterion that 12+ characters should be accepted."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a logged warning 'upstream timeout after 30s: /reports/big' and an elapsed time of 30.04s, matching the code's 30s timeout and error handling."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The log shows 'upstream timeout after 30s: /reports/big' and the elapsed time is 30.04s, confirming the request was abandoned and logged as a timeout after exceeding 30 seconds."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The log output shows a timeout warning for a request exceeding 30 seconds (elapsed: 30.04s), and the code explicitly catches Faraday::TimeoutError to log the timeout before re-raising the exception."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a logged warning 'upstream timeout after 30s: /reports/big' and a Faraday::TimeoutError after 30.04 seconds, matching the code's 30-second timeout and rescue logic."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line for the 200 status response omits the request_id, as the code only appends it when response.status >= 400."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line for a successful 200 response does not include the request_id, even though the acceptance criterion requires every completed request to log the request id. The code only appends request_id when response.status >= 400, which is not the case here."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code only appends the request_id to the log line when response.status >= 400, but the captured output shows a 200 status without the request_id, violating the criterion that every completed request must include the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line for a 200 status response does not include the request_id, even though the acceptance criterion requires every completed request to log the request id. The code only appends the request_id when response.status >= 400."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by started_at and reverses the result, and the output shows dates in descending order (2026-09-21, 2026-09-21, 2026-09-19, 2026-09-18), confirming newest first."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by `started_at` in ascending order and reverses the result, which produces descending order. The captured output shows sessions listed from 2026-09-21 18:40 (newest) to older dates, confirming the criterion is satisfied."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by started_at and reverses them, and the output shows sessions ordered from newest (2026-09-21 18:40) to oldest (2026-09-18 14:30)."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by `started_at` and reverses the result, and the output shows sessions listed from newest (2026-09-21 18:40) to oldest (2026-09-18 14:30), confirming newest-first ordering."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists runs in the order 2026-08-30, 2026-09-21, 2026-09-11, 2026-09-09, which is not newest first (the newest run is 2026-09-21 but appears second)."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists runs in an order that does not reflect newest first (e.g., 2026-08-30 appears before 2026-09-21), and the code sorts by day/hour/minute strings instead of full datetime, leading to incorrect ordering across months."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists runs in the order 2026-08-30, 2026-09-21, 2026-09-11, 2026-09-09, which is not newest first; the newest date (2026-09-21) appears second, and the oldest (2026-08-30) appears first, indicating the sort is incorrect."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code sorts by day and time strings without considering month/year, causing incorrect ordering (e.g., 2026-08-30 appears before 2026-09-21 in output despite being earlier)."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code exits 0 when no offenses are found (status=0 for clean files) and 1 when offenses exist (status=1 for dirty files), matching the acceptance criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code exits with 0 when offenses are empty and 1 otherwise. The test output confirms lint returns 0 for clean files and 1 when any offense exists, matching the criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code exits 0 when no offenses are found (status=0 for clean files) and exits 1 when any offense exists (status=1 for dirty files), matching the acceptance criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 for clean files and 1 when any file has an offense, matching the code's logic of exiting 0 if offenses.empty? and 1 otherwise."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' being printed when using --quiet on clean files, which violates the acceptance criterion that nothing should be printed when all files are clean with --quiet."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows that with --quiet, the lint command printed '3 files inspected, no offenses' when all files were clean, which violates the acceptance criterion that it should print nothing."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows that with --quiet, the lint command prints '3 files inspected, no offenses' when all files are clean, which violates the acceptance criterion that it should print nothing in this case."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' when using --quiet with clean files, but the code's summary line runs unless options[:quiet] && offenses.any? is true. Since offenses.empty? is true, the summary still prints, violating the criterion."
+  }
+ ],
+ "laguna-xs-2.1::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ },
+ "north-mini-code-1.0": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured request returns HTTP 422 with body {\"error\":\"cart_empty\"}, matching the acceptance criterion for an empty cart."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The response body is {\"error\":\"cart_empty\"} and the HTTP status is 422, exactly as required when posting to /checkout with an empty cart."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The POST request to /checkout with an empty cart returns HTTP 422 and the JSON body {\"error\":\"cart_empty\"}, exactly as required."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows the response body {\"error\":\"cart_empty\"} and HTTP status 422, matching the expected response for an empty cart."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (greater than 12), so a password of exactly 12 characters would be rejected, which violates the requirement that passwords of 12 or more characters be accepted. The test suite only checks 11\u2011 and 20\u2011character passwords, not the 12\u2011character case."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (12), which rejects a 12\u2011character password, while the acceptance criterion requires passwords of 12 or more characters to be accepted."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The implementation uses `pw.length > MIN` with `MIN = 12`, so a password of exactly 12 characters is rejected, violating the requirement that passwords of 12 or more characters be accepted."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The implementation checks `pw.length > MIN` (where `MIN = 12`), so a password exactly 12 characters long would be rejected, violating the requirement that passwords of 12 or more characters be accepted. The test suite only validates an 11\u2011character and a 20\u2011character password, missing the borderline case."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The request timed out after ~30 seconds, raising Faraday::TimeoutError, and the log shows the expected warning \u201cupstream timeout after 30s: /reports/big\u201d, confirming abandonment and logging."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The log shows a timeout warning for a request that timed out after ~30 seconds, and the raised error is Faraday::TimeoutError, confirming the request was abandoned and logged as required."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The script timed out after ~30\u202fs for a 45\u2011second delayed request and logged \"upstream timeout after 30s: /reports/big\", fulfilling the abandonment and logging requirement."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The output shows a warning log \"upstream timeout after 30s: /reports/big\" and a Faraday::TimeoutError raised after ~30.04s, confirming the request was abandoned and logged as a timeout."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for a 200 response does not include request_id, and the after_action only adds request_id when status >= 400, violating the criterion."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The log line for the 200 status request does not contain request_id, and the after_action code only adds request_id for error status codes, not for all completed requests."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The logged line for the 200\u2011status request does not contain the request id, and the code only adds request_id for error responses, violating the requirement."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured log line for a successful request (status 200) does not contain the request id, and the code only adds request_id to the log when the response status is 400 or higher, so the requirement that every completed request log includes the request id is not satisfied."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The output lists sessions starting with the most recent date (2026-09-21 18:40), confirming newest\u2011first ordering."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts sessions by started_at then reverses, and the output shows timestamps from newest (2026\u201109\u201121 18:40) to oldest, confirming sessions are listed newest first."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The sessions method sorts by started_at ascending then reverses, producing newest\u2011first order, which matches the captured output where sessions are listed from the most recent timestamp (2026\u201109\u201121 18:40) downwards."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The command output lists sessions starting with the most recent timestamp (2026-09-21 18:40) and proceeding to older ones, confirming the newest\u2011first ordering."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists the oldest run (2026-08-30) first, with newer dates appearing later, so the runs are not displayed newest first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output order follows the code's sort by day\u2011of\u2011month (30,\u202f21,\u202f11,\u202f09) and does not place the most recent run (2026\u201109\u201121) first, so runs are not listed newest first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output lists the oldest run (2026-08-30) first, followed by newer runs, so runs are not displayed newest first."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows the oldest run (2026-08-30) appearing before newer runs (e.g., 2026-09-21), indicating runs are not listed newest first; the code only sorts by day\u2011of\u2011month, not the full date."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows that lint exits with status 0 when only clean files are processed and exits with status 1 when at least one file contains an offense, satisfying the acceptance criterion."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code exits 0 when offenses.empty? is true (clean files) and 1 otherwise (any offense), which matches the observed command outputs: status=0 for clean files and status=1 when a file has an offense."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s33",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code exits 0 when offenses.empty? is true and 1 otherwise, matching the requirement. The captured runs show status=0 for clean files and status=1 when a file has an offense."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits with status 0 on clean files and status 1 when any file has an offense, matching the acceptance criterion."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The lint command printed \"3 files inspected, no offenses\" when run with --quiet, so it did not print nothing as required."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows \"3 files inspected, no offenses\" printed despite the `--quiet` flag, indicating that the tool is not silent when all files are clean. The code logic prints the summary unless both quiet mode is enabled and there are offenses, which results in output being produced in this case, violating the acceptance criterion."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s33",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows \"3 files inspected, no offenses\" printed when using --quiet, and the code prints a summary when offenses are empty even in quiet mode, violating the acceptance criterion."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows \"3 files inspected, no offenses\" printed when running with --quiet, indicating lint printed something, which violates the criterion that it should print nothing."
+  }
+ ],
+ "north-mini-code-1.0::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ },
+ "qwen3.8:27b": [
+  {
+   "item": "q1_cart_empty",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured curl output shows a POST to /checkout with an empty cart returned HTTP 422 and body {\"error\":\"cart_empty\"}, exactly matching the acceptance criterion. The code excerpt confirms the guard clause `if cart.items.empty?` renders that same JSON with status 422."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code returns `render(json: { error: \"cart_empty\" }, status: 422)` when `cart.items.empty?`, and the captured curl output confirms a 422 status with body `{\"error\":\"cart_empty\"}` for a POST to /checkout with an empty cart."
+  },
+  {
+   "item": "q1_cart_empty",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code returns 422 with body {\"error\":\"cart_empty\"} when cart.items.empty?, and the captured curl output confirms a POST to /checkout with an empty cart yields exactly status 422 and body {\"error\":\"cart_empty\"}."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (strictly greater than 12), so a 12-character password is rejected, violating the criterion that 'passwords of 12 or more characters are accepted.' The tests only cover 11- and 20-character passwords and miss the 12-character boundary case."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (strictly greater than 12), so a 12-character password is rejected, violating the criterion that passwords of 12 or more characters must be accepted. The tests only cover 11 and 20 characters and do not exercise the 12-character boundary where the bug manifests."
+  },
+  {
+   "item": "q2_pw_len",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code uses `pw.length > MIN` (strictly greater than 12), so a 12-character password would be rejected, violating the criterion that passwords of 12 or more characters must be accepted. The tests only cover 11 and 20 characters and do not exercise the 12-character boundary."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 45-second upstream request was abandoned at 30.04s (Faraday::TimeoutError raised, socket closed) and logged at WARN level with the message 'upstream timeout after 30s: /reports/big', satisfying both the 'abandoned' and 'logged as a timeout' requirements."
+  },
+  {
+   "item": "q3_timeout",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "unparsed",
+   "evidence": ""
+  },
+  {
+   "item": "q3_timeout",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows a 45-second-delayed request was aborted at 30.04s with a Faraday::TimeoutError, and the log line 'upstream timeout after 30s: /reports/big' confirms it was logged as a timeout, matching the criterion exactly."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code only appends request_id when response.status >= 400, and the captured output for a 200 response shows the log line 'completed 200 in 3ms' without any request_id, directly violating the criterion that every completed request's log line must include the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code only appends request_id to the log line when response.status >= 400, and the captured output for a 200 response shows the log line 'completed 200 in 3ms' with no request id, violating the criterion that every completed request's log line must include the request id."
+  },
+  {
+   "item": "q4_reqid_log",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The code only appends request_id when response.status >= 400, and the captured output for a 200 response shows the log line 'completed 200 in 3ms' with no request_id, violating the criterion that every completed request's log line must include the request id."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts by started_at ascending then reverses (newest first), and the captured output confirms timestamps are listed in descending order: 2026-09-21 18:40 \u2192 2026-09-21 09:12 \u2192 2026-09-19 22:05 \u2192 2026-09-18 14:30."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts by `started_at` ascending then reverses (newest first), and the captured output shows timestamps in descending order: 2026-09-21 18:40, 2026-09-21 09:12, 2026-09-19 22:05, 2026-09-18 14:30."
+  },
+  {
+   "item": "q5_sort_ok",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The code sorts by `started_at` and reverses (descending), and the captured output shows timestamps in strictly descending order from 2026-09-21 18:40 down to 2026-09-18 14:30, confirming newest-first ordering."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows dates in the order 08-30, 09-21, 09-11, 09-09, which is not newest-first (correct order would be 09-21, 09-11, 09-09, 08-30). The code also sorts by `strftime(\"%d %H:%M\")` which omits month and year, making the sort key incorrect for cross-month ordering."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows 2026-08-30 (oldest) first and 2026-09-21 (newest) second, which is not newest-first order. The bug is in the sort key `strftime(\"%d %H:%M\")`, which omits month and year, causing incorrect ordering across different months."
+  },
+  {
+   "item": "q6_sort_bad",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The output shows 2026-08-30 18:40 (the oldest run) listed first, not last. The code sorts by `strftime(\"%d %H:%M\")` which omits year and month, so the ordering is by day-of-month rather than true chronological order, producing an incorrect 'newest first' sequence."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s11",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 when all files are clean (clean/*.rb) and exits 1 when any file has an offense (dirty/a.rb mixed with clean/b.rb), matching the criterion exactly."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "s22",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exits 0 when only clean files are checked and exits 1 when a dirty file is included, matching the criterion exactly."
+  },
+  {
+   "item": "q7_exit_codes",
+   "run": "t0",
+   "truth": "pass",
+   "verdict": "pass",
+   "evidence": "The captured output shows lint exiting 0 when only clean files are checked and exiting 1 when a dirty file with an offense is included, matching the criterion exactly."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s11",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' was printed with --quiet on clean files, and the code confirms this: the summary() call is only skipped when `options[:quiet] && offenses.any?`, so when offenses is empty the summary still executes and prints output."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "s22",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows that with --quiet and all files clean, the tool still prints '3 files inspected, no offenses'. The code confirms this: the summary guard `unless options[:quiet] && offenses.any?` evaluates to `unless true && false` \u2192 `unless false`, so `summary(files.size)` is executed, violating the 'prints nothing at all' criterion."
+  },
+  {
+   "item": "q8_quiet",
+   "run": "t0",
+   "truth": "fail",
+   "verdict": "fail",
+   "evidence": "The captured output shows '3 files inspected, no offenses' printed when running `lint --quiet` on clean files, and the code confirms this: the `summary` call is only suppressed when `options[:quiet] && offenses.any?`, so with zero offenses the summary is still emitted, violating the 'prints nothing at all' requirement."
+  }
+ ],
+ "qwen3.8:27b::per_item": {
+  "q1_cart_empty": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q2_pw_len": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q3_timeout": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "unparsed",
+    "pass"
+   ]
+  },
+  "q4_reqid_log": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q5_sort_ok": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q6_sort_bad": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail"
+   ]
+  },
+  "q7_exit_codes": {
+   "truth": "pass",
+   "verdicts": [
+    "pass",
+    "pass",
+    "pass"
+   ]
+  },
+  "q8_quiet": {
+   "truth": "fail",
+   "verdicts": [
+    "fail",
+    "fail",
+    "fail"
+   ]
+  }
+ }
+}

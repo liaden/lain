@@ -1,0 +1,48 @@
+{
+  "probe": "no_vision",
+  "status": "400",
+  "seconds": 2.35,
+  "request": {
+    "model": "qwen3:4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the codeword in this image?",
+        "images": [
+          "<base64 PNG, 14576 chars>"
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "screenshot",
+          "description": "Screenshot a URL and return the image.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "think": false,
+    "truncate": false,
+    "options": {
+      "num_predict": 120,
+      "temperature": 0,
+      "seed": 1
+    }
+  },
+  "response": {
+    "error": "{\"error\":{\"code\":400,\"message\":\"Multimodal data provided, but model does not support multimodal requests.\",\"type\":\"invalid_request_error\"}}"
+  }
+}

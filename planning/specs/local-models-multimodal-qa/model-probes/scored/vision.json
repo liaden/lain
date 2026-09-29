@@ -1,0 +1,955 @@
+{
+ "ornith-1.5:9b": [
+  {
+   "item": "v1_clean_settings",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\"verdict\": \"pass\", \"defects\": []}\n```"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Badge overlaps the title text, partially obscuring 'Billing Overview' so the title is not fully readable\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Red '3 overdue' badge overlaps the title text, covering part of 'Billing Overview' so the title is not fully readable\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Title 'Billing Overview' is clipped/truncated: the red '3 overdue' badge overlaps and covers part of 'Overview', making the title not fully readable\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\"verdict\": \"fail\", \"defects\": [\"Red '3 overdue' badge overlaps the title, obscuring the middle portion so 'Billing Overview' is not fully readable\"]}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Button label 'Download invoice PDF' is truncated; only 'Download inv' is visible\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\"Blue button text is truncated: shows 'Download inv' instead of the full label 'Download invoice PDF'\"]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Blue button text is clipped/truncated: only 'Download inv' is visible instead of the full label 'Download invoice PDF'\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Button text is clipped/truncated: shows 'Download inv' instead of the full 'Download invoice PDF'\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title shows 'Monthly Report \u2014 August 2026' but spec requires 'Monthly Report \u2014 September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Card title shows 'Monthly Report \u2014 August 2026' but spec requires 'Monthly Report \u2014 September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title shows 'Monthly Report \u2014 August 2026' but spec requires 'Monthly Report \u2014 September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title shows 'August 2026' but spec requires 'September 2026'\"]}"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' has very low contrast and is not clearly readable against the white background\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' has very low contrast and is nearly invisible/unreadable against the white background, violating the 'clearly readable' requirement.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' has very low contrast (light gray on white) and is not clearly readable, violating the spec requirement\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' is too low contrast and nearly unreadable (very faint gray text on white background)\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Numbers in the Units and Revenue columns are left-aligned rather than right-aligned as required by the spec\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "{\n\"verdict\": \"fail\",\n\"defects\": [\n\"Numbers in the Units and Revenue columns are centered rather than right-aligned as required by the spec.\"\n]\n}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Numbers in Units and Revenue columns are left-aligned instead of right-aligned as required by spec\"]}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Numbers in the Units and Revenue columns are centered rather than right-aligned as specified\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row Units value (987) is missing from the Units column and appears shifted into the Revenue column\", \"$39,480 for South is placed in a separate box outside the table grid, breaking the table layout and misaligning columns\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\"verdict\": \"fail\", \"defects\": [\"South row misaligned: '987' is placed in the Revenue column instead of the Units column, and '$39,480' appears in a separate extra cell, breaking the 3-column structure\"]}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\"verdict\": \"fail\", \"defects\": [\"South row misaligned: Units column is empty, '987' appears in the Revenue column instead of Units, and '$39,480' is placed in an extra cell extending beyond the right edge of the 3-column table\"]}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"South row: Units column is empty; '987' appears in the Revenue column instead of the Units column\",\n    \"'$39,480' is placed in an extra cell to the right of the Revenue column rather than in the Revenue column, leaving the Revenue column value incorrect\"\n  ]\n}\n```"
+  }
+ ],
+ "gemma4:e4b": [
+  {
+   "item": "v1_clean_settings",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The card title is truncated. It should read 'Billing Overview', but the word 'Overview' is incomplete or missing (only 'w' is visible after the '3 overdue' badge).\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The title 'Billing Overview' is clipped/truncated, displaying only 'Billing... w'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The title 'Billing Overview' is truncated or incorrectly displayed; only 'Billing' is fully visible before the '3 overdue' badge.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The title text is incorrect and truncated. It shows 'Billing 3 overdue w' instead of the required 'Billing Overview'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The text on the blue button is truncated/incorrect. It shows 'Download inv' but should be 'Download invoice PDF'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The text on the download button is truncated and does not match the specification. It should read 'Download invoice PDF' but currently reads 'Download inv'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The blue button text is truncated, displaying 'Download inv' instead of the required 'Download invoice PDF'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The text on the 'Download invoice PDF' button is clipped/truncated, showing only 'Download inv'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The report title shows 'August 2026' but the specification requires 'September 2026'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"Report title shows August 2026 instead of September 2026\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The title shows 'August 2026' but the specification requires 'September 2026'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "```json\n{\n  \"verdict\": \"fail\",\n  \"defects\": [\n    \"The title shows 'August 2026' instead of the specified 'September 2026'.\"\n  ]\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": false,
+   "right_defect": false,
+   "content": "```json\n{\n  \"verdict\": \"pass\",\n  \"defects\": []\n}\n```"
+  }
+ ],
+ "muse-glimmer:30b": [
+  {
+   "item": "v1_clean_settings",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title 'Billing Overview' is partially obscured by red '3 overdue' badge, title not fully readable\", \"Overlapping elements: badge overlaps title text causing clipping\"] }"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title 'Billing Overview' is partially obscured by the red '3 overdue' badge, 'Overview' is truncated to 'ew' and not fully readable\", \"Badge overlaps title text causing overlapping elements\"]}"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s33",
+   "parsed": false,
+   "verdict": null,
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title 'Billing Overview' is partially obscured by the red '3 overdue' badge, making the title not fully readable\", \"Badge overlaps title text causing clipping of 'Overview'\"]"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title 'Billing Overview' partially obscured by red '3 overdue' badge, 'Overview' not fully readable\", \"Badge overlaps title text causing clipping\"] }"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label is clipped/truncated to 'Download inv' instead of 'Download invoice PDF'\"]}"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label truncated/clipped to 'Download inv' instead of 'Download invoice PDF'\"]}"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label is clipped/truncated, showing 'Download inv' instead of 'Download invoice PDF'\"]}"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label is truncated/clipped, shows 'Download inv' instead of 'Download invoice PDF'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title reads 'Monthly Report \u2014 August 2026' instead of 'Monthly Report \u2014 September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title shows 'August 2026' instead of specified 'September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title shows 'August 2026' instead of 'September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title shows 'August 2026' instead of 'September 2026'\"] }"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' is unreadable due to very low contrast\"] }"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' is very low contrast / faded and not clearly readable\"]}"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' is unreadable due to very low contrast\"] }"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' is unreadable due to low contrast / faint text\"] }"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Units and Revenue numbers appear center-aligned instead of right-aligned\"] }"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Units and Revenue numbers appear centered instead of right-aligned\"]}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": false,
+   "right_defect": null,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Units and Revenue numeric columns appear centered rather than right-aligned as specified\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row Units cell is empty and Revenue cell shows 987 instead of $39,480\", \"$39,480 value rendered in a separate overlapping box to the right of the table\", \"Table data for South is misplaced causing an overlapping element and incorrect cell content\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row Units cell is empty and Revenue cell shows 987 instead of $39,480\", \"Revenue value $39,480 rendered as a stray overlapping cell to the right of the table\", \"Table layout misaligned with overlapping/ misplaced content for the South row\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s33",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row data misplaced: Units cell empty, Revenue cell shows 987 and $39,480 appears outside the table overlapping the grid\", \"$39,480 value overlaps table boundary to the right of the Revenue column\", \"Numeric columns are not right-aligned as specified\", \"Table layout is misaligned with an extra cell protruding from the South row\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"$39,480 cell overlaps table to the right of the South row\", \"South row Units cell is empty and Revenue column shows 987 instead of $39,480\", \"South region data is misplaced / incorrect compared to specification\"]}"
+  }
+ ],
+ "qwen3.8:27b": [
+  {
+   "item": "v1_clean_settings",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v1_clean_settings",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"The red '3 overdue' badge overlaps the title, hiding part of 'Overview' (only 'Billing' and 'ew' are visible), so the title is not fully readable.\"]}"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"The red '3 overdue' badge overlaps the card title, obscuring 'Overview' so the title is not fully readable (only 'Billing' and a trailing 'ew' are visible).\"]}"
+  },
+  {
+   "item": "v2_overlap",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Red '3 overdue' badge overlaps the title, obscuring part of 'Billing Overview' so the title is not fully readable (shows 'Billing' + badge + 'ew')\"]}"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label is truncated/clipped, showing only 'Download inv' instead of the full 'Download invoice PDF' text specified\"]}"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label is truncated/clipped, showing 'Download inv' instead of the full 'Download invoice PDF'\"]}"
+  },
+  {
+   "item": "v3_truncated",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Button label is truncated/clipped to 'Download inv' instead of the full 'Download invoice PDF'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title reads 'August 2026' but spec requires 'September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title reads 'August 2026' but spec requires 'September 2026'\"]}"
+  },
+  {
+   "item": "v4_wrong_text",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Title reads 'Monthly Report \u2014 August 2026' but spec requires 'Monthly Report \u2014 September 2026'\"]}"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' is rendered in very light gray with low contrast, making it hard to read rather than clearly readable as specified.\"]}"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' has very low contrast (light gray on white) and is not clearly readable\"]}"
+  },
+  {
+   "item": "v5_low_contrast",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"Warning sentence 'Your trial ends in 3 days. Add a payment method to keep your data.' has very low contrast (faint light-gray text) and is not clearly readable as required by the spec\"]}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v6_clean_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "pass",
+   "correct_verdict": true,
+   "right_defect": null,
+   "content": "{\"verdict\": \"pass\", \"defects\": []}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s11",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row misaligned: '987' is placed in the Revenue column (Units cell empty) and '$39,480' sits in an extra column that extends beyond the table's right border\", \"Numeric values are left-aligned in their columns instead of right-aligned as specified\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "s22",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row misaligned: '987' appears in the Revenue column and '$39,480' spills into an extra fourth column, breaking the 3-column grid\", \"Numbers in the Units and Revenue columns are left-aligned instead of right-aligned as specified\"]}"
+  },
+  {
+   "item": "v7_misaligned_table",
+   "run": "t0",
+   "parsed": true,
+   "verdict": "fail",
+   "correct_verdict": true,
+   "right_defect": true,
+   "content": "{\"verdict\": \"fail\", \"defects\": [\"South row is misaligned: it contains an extra empty cell, shifting '987' and '$39,480' into additional columns so that '$39,480' overflows the table's right border instead of sitting in the Revenue column\"]}"
+  }
+ ]
+}

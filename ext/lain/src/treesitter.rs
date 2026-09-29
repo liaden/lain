@@ -8,7 +8,7 @@
 //! cannot express. The two share one grammar set -- the language is obtained via
 //! `ast_grep_language::SupportLang::get_ts_language()`, so NO separate
 //! `tree-sitter-*` grammar dependency is pulled in, and the runtime ABI matches
-//! the grammars ast-grep already links (both resolve `tree-sitter 0.26.11`).
+//! the grammars ast-grep already links (both resolve `tree-sitter 0.27.0`).
 //!
 //! Every call is STATELESS: parse an in-memory `&str`, run one compiled query,
 //! return an owned `Vec<Capture>` in match-then-capture order. There is no index
@@ -119,7 +119,7 @@ pub fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, Que
     let mut matches = cursor.matches(&compiled, tree.root_node(), src_bytes);
     let mut out = Vec::new();
     while let Some(matched) = matches.next() {
-        matched.captures.iter().for_each(|capture| {
+        matched.captures().iter().for_each(|capture| {
             let node = capture.node;
             let range = node.byte_range();
             out.push(Capture {
